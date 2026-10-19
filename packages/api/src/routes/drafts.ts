@@ -359,6 +359,8 @@ export const draftsRoutes: Route[] = [
     // proven belongs to the sender is also a deliverability-reputation liability, not only a
     // cost one.
     cost: "connection",
+    // The reservation answers every replay of a key.
+    options: { replaySafe: true },
     handler: async (req, deps, params) => {
       const key = sendKeyOf(req);
       // Attachment bytes ride here — decoded to raw and handed to the service, never persisted. An
@@ -386,6 +388,8 @@ export const draftsRoutes: Route[] = [
         serviceContext(deps, req), params.id!, key,
         {
           openSendAdapter, openFetchAdapter,
+          // Its clients replay a retryable answer under the same key.
+          rearmTransient: true,
           // THE STORAGE CAP for the sent-copy projection. Every live host declares one
           // (`ApiDeps.storageCapOf` — the hosted deployment's subscription read, the local
           // hosts' typed UNMETERED). Passed through as-is: ABSENT means the service REFUSES

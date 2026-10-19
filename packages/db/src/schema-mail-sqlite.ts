@@ -1905,6 +1905,10 @@ export const outboundSends = sqliteTable("outbound_sends", {
   // Mail 0095: who resolved this send, and when.
   resolvedBy: text("resolved_by"),
   resolvedAt: integer("resolved_at", { mode: "timestamp_ms" }),
+  // Mail 0155: the re-arm (see the server twin).
+  attempts: integer("attempts").notNull().default(1),
+  retryUntil: integer("retry_until", { mode: "timestamp_ms" }),
+  retryRefusal: text("retry_refusal"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate

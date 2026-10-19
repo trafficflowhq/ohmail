@@ -97,15 +97,18 @@ export class SentCopyAppendFailed extends Error {
   }
 }
 
-/** Where a submission stopped before the server was offered anything to deliver. */
-export type SendNotSubmittedStep = "connect" | "secure" | "login";
+/**
+ * Where a submission stopped before the server was offered anything to deliver. `token`: the OAuth
+ * access token could not be fetched, so no session was opened at all.
+ */
+export type SendNotSubmittedStep = "connect" | "secure" | "login" | "token";
 
 /**
- * THE SERVER WAS NEVER OFFERED THE MESSAGE — the socket never connected, the session died while
- * its connection was being secured, or the login was refused. At most the greeting, EHLO and
- * STARTTLS (or a refused AUTH) crossed, so the message provably did not leave: the send is failed,
- * never `unverified`, and it may be sent again. `step` names where it stopped; `cause` is the
- * client's own error.
+ * THE SERVER WAS NEVER OFFERED THE MESSAGE — the access token could not be fetched, the socket
+ * never connected, the session died while its connection was being secured, or the login was
+ * refused. At most the greeting, EHLO and STARTTLS (or a refused AUTH) crossed, so the message
+ * provably did not leave: the send is failed, never `unverified`, and it may be sent again. `step`
+ * names where it stopped; `cause` is the client's own error.
  */
 export class SendNotSubmitted extends Error {
   readonly step: SendNotSubmittedStep;
@@ -116,7 +119,8 @@ export class SendNotSubmitted extends Error {
     const c = (cause ?? {}) as { message?: unknown; code?: unknown; responseCode?: unknown; command?: unknown };
     super(typeof c.message === "string" && c.message !== "" ? c.message
       : step === "connect" ? "the mail server could not be reached"
-        : step === "secure" ? "the connection to the mail server could not be secured" : "the mail server refused the login");
+        : step === "secure" ? "the connection to the mail server could not be secured"
+          : step === "token" ? "the sign-in token could not be fetched" : "the mail server refused the login");
     this.name = "SendNotSubmitted";
     this.step = step;
     (this as { cause?: unknown }).cause = cause;

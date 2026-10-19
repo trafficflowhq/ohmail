@@ -1363,6 +1363,7 @@ export const DE: Deck = {
   replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
   replyUnreachable: "Nicht gesendet. Dein Mailserver war nicht erreichbar.",
+  replyBusy: "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an. Versuch es gleich nochmal.",
   replyNotSignedIn: "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet. Melde es in den Einstellungen neu an.",
   replyForwardOriginalUnavailable: "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
   replySentElsewhere: "Nicht gesendet: Dieser Entwurf ging bereits von einem anderen Gerät aus.",

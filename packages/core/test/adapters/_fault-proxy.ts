@@ -11,8 +11,8 @@ import type { ImapFlow } from "imapflow";
  * the COPY + EXPUNGE path. `hold` parks the first client command it matches, and everything after
  * it, until its `run` settles (another session acting between two commands of this one); with
  * `unsolicitedFirst` the parked command's reply then arrives behind the server's unsolicited flag
- * updates instead of ahead of them. Both directions are parsed literal-aware; bytes are otherwise
- * verbatim.
+ * updates instead of ahead of them. `drop` closes both sockets on the first client command it
+ * matches, once. Both directions are parsed literal-aware; bytes are otherwise verbatim.
  */
 export type ExpungeFault = "pass" | "no" | "drop" | "drop-after";
 
@@ -39,6 +39,11 @@ export interface FaultProxy {
   onlyMailbox: string | null;
   /** Armed by a test; cleared once it has matched. */
   hold: CommandHold | null;
+  /**
+   * A one-shot drop: the first client command this matches closes both sockets instead of reaching
+   * the server (a connection that died mid-read). Armed by a test; cleared once it has matched.
+   */
+  drop: ((command: string, args: string, mailbox: string | null) => boolean) | null;
   /** Flag updates an `unsolicitedFirst` hold moved ahead of the reply they followed. */
   readonly reordered: number;
   /** Flags-only answers (UID, FLAGS, MODSEQ and nothing else) inside a held command's reply, in either order. */
@@ -115,7 +120,7 @@ export async function startFaultProxy(
   const sockets = new Set<net.Socket>();
   const state = {
     fault: opts.fault ?? "pass" as ExpungeFault, onlyMailbox: opts.onlyMailbox ?? null, hold: null as CommandHold | null,
-    reordered: 0, unsolicited: 0,
+    drop: null as FaultProxy["drop"], reordered: 0, unsolicited: 0,
   };
 
   const stripCaps = (text: string): string => {
@@ -163,6 +168,12 @@ export async function startFaultProxy(
       const isExpunge = command === "EXPUNGE" || command === "UID EXPUNGE";
       const faulted = isExpunge && state.fault !== "pass"
         && (state.onlyMailbox === null || state.onlyMailbox === selected);
+      if (state.drop && state.drop(command, m[4] ?? "", selected)) {
+        state.drop = null;
+        log.push({ command, mailbox: selected, faulted: true });
+        kill();
+        return "halt";
+      }
       log.push({ command, mailbox: selected, faulted });
       const hold = state.hold;
       if (hold && !parked && hold.when(command, m[4] ?? "", selected)) {
@@ -232,6 +243,8 @@ export async function startFaultProxy(
     set onlyMailbox(m: string | null) { state.onlyMailbox = m; },
     get hold() { return state.hold; },
     set hold(h: CommandHold | null) { state.hold = h; },
+    get drop() { return state.drop; },
+    set drop(d: FaultProxy["drop"]) { state.drop = d; },
     get reordered() { return state.reordered; },
     get unsolicited() { return state.unsolicited; },
     log,

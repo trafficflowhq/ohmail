@@ -186,6 +186,8 @@ describe("the SQLite journal, applied", () => {
       "0151_mailboxes_gap_since.sql",
       // The recipients side table and its triggers, the pg expression index's twin.
       "0154_messages_recipient_keys.sql",
+      // The send re-arm's two columns, the pg columns' twins.
+      "0155_outbound_sends_rearm.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -300,6 +302,8 @@ describe("the SQLite journal, applied", () => {
       "0151_mailboxes_gap_since.sql",
       // The recipients side table and its triggers, the pg expression index's twin.
       "0154_messages_recipient_keys.sql",
+      // The send re-arm's two columns, the pg columns' twins.
+      "0155_outbound_sends_rearm.sql",
     ]);
   });
 

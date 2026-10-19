@@ -173,6 +173,14 @@ export interface SendDeps {
    * long a person will watch a button, and that is the same number on every door.
    */
   attemptCeilingMs?: number;
+  /**
+   * OFFER A PASSING PRE-SMTP FAILURE AGAIN UNDER ITS KEY. Set by `POST /drafts/:id/send` alone,
+   * whose clients replay a retryable answer under the same key once the wait it names has passed. A
+   * transient refusal of a send holding its content claim, within {@link SEND_MAX_ATTEMPTS} and
+   * {@link SEND_REARM_WINDOW_MS}, is then recorded re-armable and answered retryable. Absent, as on
+   * the scheduled pass (nobody replays it), every failure stays final with its sentence on the row.
+   */
+  rearmTransient?: boolean;
 }
 
 /**
@@ -526,6 +534,25 @@ export function sendSurfaceFor(
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
+ * HOW MANY ATTEMPTS ONE PRESS MAY HAVE, the first included. A send that failed for a passing reason
+ * before any SMTP (its mail server unreachable, busy or slow to answer, or our own per-mailbox IMAP
+ * cap full when a forward read its original) is answered retryable, and
+ * its same-key replay re-arms the one reservation (`reserve`): a retry is a replay of one row under
+ * one minted Message-ID, never a second message. Bounded by this and {@link SEND_REARM_WINDOW_MS}.
+ */
+export const SEND_MAX_ATTEMPTS = 3;
+
+/**
+ * HOW LONG AFTER THE RESERVATION A FAILED ATTEMPT MAY STILL BE RE-ARMED, from its `created_at`.
+ * Short of {@link SEND_STALE_AFTER_MS} by a whole attempt and a minute: a re-armed row is `pending`
+ * on the reservation's own clock, so its last attempt must end long before it could read as orphaned.
+ */
+export const SEND_REARM_WINDOW_MS = 120_000;
+
+/** The wait the answer names before the second attempt and before the third, in seconds. */
+export const SEND_REARM_WAIT_S: readonly number[] = [2, 5];
+
+/**
  * HOW LONG THE ENGINE KEEPS LOOKING FOR AN `unverified` SEND ITSELF. A reservation closed
  * `unverified` used to be final: nothing ever looked in the Sent folder again, and the person was
  * asked a question the engine could have answered. For this window the reconciling pass re-reads
@@ -653,6 +680,30 @@ export function sendContentFingerprint(input: {
 }
 
 /**
+ * THE CLAIM'S DIGEST FOR THIS DRAFT AND THIS REQUEST — one computation for the claim a fresh
+ * reservation takes and the proof a re-arm reads, so the two cannot disagree about what "the same
+ * message" is. The STORED text, not the assembled one: a forward's quote is covered by `forwardOf`.
+ * Inline files are digested by content; a send carrying staged files takes no claim at all.
+ */
+function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): string {
+  return sendContentFingerprint({
+    to: (d.to as EmailAddress[]) ?? [],
+    cc: (d.cc as EmailAddress[]) ?? [],
+    bcc: (d.bcc as EmailAddress[]) ?? [],
+    subject: d.subject,
+    html: d.html ?? null,
+    body: d.body,
+    inReplyToMessageId: d.inReplyToMessageId ?? null,
+    forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
+    sendAt: d.sendAt ?? null,
+    attachments: (input.attachments ?? []).map((a) => ({
+      filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
+      contentSha256: createHash("sha256").update(a.content).digest("hex"),
+    })),
+  });
+}
+
+/**
  * The Drafts-row sentence for a definite non-delivery whose cause has no sentence of its own. A
  * `ServiceError` carries one and is quoted verbatim (`finalizeFailed`); this is for everything
  * else — a socket reset during login, a storage read that threw, any unexpected fault inside the
@@ -748,7 +799,8 @@ export const SEND_WITHDRAWN_SENTENCE = "This send was cancelled before it left; 
  * WHAT THE SERVER SAYS ABOUT A CANCEL — `POST /sends/withdraw`. `withdrawn`: nothing under this key
  * left and nothing ever will, because a tombstone refuses every replay of it. `already_sent` and
  * `unverified`: the key's send is the server's, and its row answers. `in_flight`: an attempt may
- * be running and nothing is claimed. `failed`: nothing left, and the key is spent.
+ * be running and nothing is claimed. `failed`: nothing left, and the failure is final — one still
+ * waiting for its replay (`retry_until` ahead) is withdrawn instead.
  */
 export type SendWithdrawOutcome = "withdrawn" | "already_sent" | "unverified" | "in_flight" | "failed";
 
@@ -831,14 +883,16 @@ export const SEND_UNREACHABLE_STATUS = 424;
 
 /**
  * The dial failures that mean the mail server could not be reached: the socket and DNS errnos,
- * and imapflow's own for a server that timed out, hung up or never greeted. An ALLOW-LIST — a
- * code nobody classified is ours — and TLS and login refusals are deliberately not in it.
+ * imapflow's own for a server that timed out, hung up or never greeted, the adapter's own "the
+ * connection ended" (`EIMAPCLOSED`), and the OAuth client's "the token endpoint could not be asked".
+ * An ALLOW-LIST — a code nobody classified is ours — and TLS and login refusals are not in it.
  */
 const MAIL_SERVER_UNREACHABLE_CODES: ReadonlySet<string> = new Set([
   "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "EHOSTDOWN", "ENETUNREACH",
   "ENETDOWN", "EADDRNOTAVAIL", "ECONNRESET", "ECONNABORTED", "EPIPE", "ETIMEDOUT",
   "CONNECT_TIMEOUT", "GREETING_TIMEOUT", "ETIMEOUT",
   "NoConnection", "EConnectionClosed", "ClosedAfterConnectText", "ClosedAfterConnectTLS",
+  "EIMAPCLOSED", "OAUTH_TOKEN_ENDPOINT_UNAVAILABLE",
 ]);
 
 /** Did this dial fail because the mail server could not be reached? By code, never by message. */
@@ -855,6 +909,7 @@ export function mailServerUnreachable(err: unknown): boolean {
  * which dials without this door, still reads the raw error and defers.
  */
 export class MailServerUnreachable extends ServiceError {
+  readonly transient = true as const;
   constructor(cause: unknown) {
     super("send_unreachable", SEND_UNREACHABLE_STATUS, SEND_UNREACHABLE_SENTENCE, undefined, false);
     this.name = "MailServerUnreachable";
@@ -864,34 +919,45 @@ export class MailServerUnreachable extends ServiceError {
 
 /**
  * The status of every refusal the person's mail server makes at a dial, for
- * {@link SEND_UNREACHABLE_STATUS}'s reason. Every client reads these as failed and not retryable;
- * the code carries which refusal it was.
+ * {@link SEND_UNREACHABLE_STATUS}'s reason. The code carries which refusal it was, and `retryable`
+ * whether the send under this key will be offered again (`SendService.endInWindow`).
  */
 export const SEND_REFUSED_STATUS = SEND_UNREACHABLE_STATUS;
 
 /** What the person's mail server did to a dial. `null` is anything else, which is ours. */
-export type MailServerRefusalKind = "unreachable" | "not_secured" | "login_refused";
+export type MailServerRefusalKind = "unreachable" | "busy" | "timeout" | "not_secured" | "login_refused";
+
+/** The bounds of `imap-bounds.ts` that are a clock, not a count: the server was slow, not too big. */
+const TIME_BOUNDS: ReadonlySet<string> = new Set(["read_deadline", "cycle_deadline"]);
 
 /**
- * By structural evidence only: the unreachable allow-list, a TLS code, then imapflow's failed-LOGIN
- * flag. The flag is read BELOW the server's own "not now" (`UNAVAILABLE`, `LIMIT`, a throttle),
- * which is no verdict on the password and stays unclassified, as the worker's classifier reads it.
+ * By structural evidence only, never a message: the connection ceiling's own refusal, the
+ * unreachable allow-list, a TLS code, a read that ran out of its clock, a revoked OAuth grant, the
+ * server's own "not now" (`UNAVAILABLE`, `LIMIT`, a throttle — no verdict on the password), then
+ * imapflow's failed-LOGIN flag, then a command the server answered NO or BAD after the sign-in
+ * (the adapter's `isRefusedCommand`), which it took and would not serve now.
  */
 export function mailServerRefusalOf(err: unknown): MailServerRefusalKind | null {
+  if (err instanceof TransientDialRefusal) return "busy";
   if (mailServerUnreachable(err)) return "unreachable";
   if (typeof err !== "object" || err === null || err instanceof ServiceError) return null;
-  const e = err as { code?: unknown; authenticationFailed?: unknown; serverResponseCode?: unknown };
+  const e = err as {
+    code?: unknown; authenticationFailed?: unknown; serverResponseCode?: unknown; responseStatus?: unknown; bound?: unknown;
+  };
   const code = typeof e.code === "string" ? e.code : "";
   if (code.startsWith("ERR_TLS_") || code.startsWith("ERR_SSL_") || CERT_CODES.has(code)) return "not_secured";
+  if (code === "EIMAPBOUND") return typeof e.bound === "string" && TIME_BOUNDS.has(e.bound) ? "timeout" : null;
+  if (code === "OAUTH_INVALID_GRANT") return "login_refused";
   const said = typeof e.serverResponseCode === "string" ? e.serverResponseCode : "";
-  if (e.authenticationFailed === true && code !== "ETHROTTLE" && !SERVER_UNAVAILABLE_RESPONSE_CODES.has(said)) {
-    return "login_refused";
-  }
+  if (code === "ETHROTTLE" || (e.authenticationFailed === true && SERVER_UNAVAILABLE_RESPONSE_CODES.has(said))) return "busy";
+  if (e.authenticationFailed === true) return "login_refused";
+  if (e.responseStatus === "NO" || e.responseStatus === "BAD") return "busy";
   return null;
 }
 
-/** A connection the mail server would not secure, or a sign-in it refused: 424, never retried. */
+/** A connection the mail server would not secure, or a sign-in it refused: 424, never offered again. */
 export class MailServerRefused extends ServiceError {
+  readonly transient = false as const;
   constructor(kind: "not_secured" | "login_refused", cause: unknown) {
     const secure = kind === "not_secured";
     super(secure ? "send_not_secured" : "send_login_refused", SEND_REFUSED_STATUS,
@@ -901,11 +967,118 @@ export class MailServerRefused extends ServiceError {
   }
 }
 
+/**
+ * The Drafts-row sentence when the person's mail server took the dial and would not serve it now: a
+ * sign-in answered "not now", a throttle, a command refused after the sign-in, a full connection
+ * ceiling. Nothing left, and a moment later is the retry.
+ */
+export const SEND_BUSY_SENTENCE = "This was not sent — your mail server is busy right now. Send it again.";
+
+/** A mail server that would not serve the dial now: 424 `send_busy`, and a wait may cure it. */
+export class MailServerBusy extends ServiceError {
+  readonly transient = true as const;
+  constructor(cause: unknown) {
+    super("send_busy", SEND_REFUSED_STATUS, SEND_BUSY_SENTENCE, undefined, false);
+    this.name = "MailServerBusy";
+    (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
+ * The attempt ran out of time before anything was offered: the window's ceiling, or a read that ran
+ * out of its own clock. 424 when the clock ran out on the person's mail server, 504 while it may
+ * have been our own storage; either way nothing left, and a later attempt may be faster.
+ */
+export class SendTimedOut extends ServiceError {
+  readonly transient = true as const;
+  constructor(status: number, cause?: unknown) {
+    super("send_timeout", status, SEND_TIMEOUT_SENTENCE, undefined, false);
+    this.name = "SendTimedOut";
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
 /** The typed refusal for a dial error the person's mail server caused, or the error unchanged. */
 function asMailServerRefusal(err: unknown): unknown {
   const kind = mailServerRefusalOf(err);
-  if (kind === null) return err;
-  return kind === "unreachable" ? new MailServerUnreachable(err) : new MailServerRefused(kind, err);
+  if (kind === "unreachable") return new MailServerUnreachable(err);
+  if (kind === "busy") return new MailServerBusy(err);
+  if (kind === "timeout") return new SendTimedOut(SEND_UNREACHABLE_STATUS, err);
+  return kind === null ? err : new MailServerRefused(kind, err);
+}
+
+/**
+ * THE WAIT OUR OWN PER-MAILBOX IMAP CAP NAMED, when it refused a read in the window: `mailbox_busy`,
+ * raised retryable at its source (`attachments-adapter.ts`: after its two-second slot wait, or at
+ * once from the shared counter) with its `retryAfter`. Nothing was offered and a slot frees within
+ * seconds, so it passes as the server's busy does, offered again no sooner than it asked. By code and
+ * the source's own flag, never by text; `null` for every other refusal.
+ */
+function capWait(refusal: ServiceError): number | null {
+  if (refusal.code !== "mailbox_busy" || refusal.retryable !== true) return null;
+  const named = (refusal.details as { retryAfter?: unknown } | undefined)?.retryAfter;
+  return typeof named === "number" ? Math.ceil(named) : 0;
+}
+
+/**
+ * The refusal the pre-SMTP window answers with: a typed refusal as it stands, anything else as our
+ * own fault — 500 with the standing sentence and the error as its cause, still counted as ours.
+ */
+function windowRefusal(err: unknown): ServiceError {
+  if (err instanceof ServiceError) return err;
+  const ours = new ServiceError("internal", 500, SEND_FAILED_SENTENCE, undefined, false);
+  (ours as { cause?: unknown }).cause = err;
+  return ours;
+}
+
+/**
+ * What a submission that never offered the message says, by its step: a socket that never connected
+ * is unreachable; a session never secured is refused; at AUTH the server's own class decides (RFC
+ * 4954 §6: a 4xx is "not now", a 5xx or no code refused the sign-in); a token that could not be
+ * fetched is read as the OAuth client's error is read at the dial.
+ */
+function notSubmittedRefusal(err: SendNotSubmitted): ServiceError {
+  if (err.step === "connect") return new MailServerUnreachable(err);
+  if (err.step === "secure") return new MailServerRefused("not_secured", err);
+  if (err.step === "token") {
+    const typed = asMailServerRefusal(err.cause);
+    return typed instanceof ServiceError ? typed : windowRefusal(err);
+  }
+  const c = err.responseCode;
+  return typeof c === "number" && c >= 400 && c < 500 ? new MailServerBusy(err) : new MailServerRefused("login_refused", err);
+}
+
+/**
+ * THE REFUSAL AS THE WINDOW ANSWERS IT: a copy, class, fields and `notOurFault` kept, with its retry
+ * stated — `retryable` exactly, and the wait in `details.retryAfter` (seconds) when it is offered
+ * again, which the envelope sends as `Retry-After`; a final answer names no wait, whatever wait its
+ * source named (the cap's, once `retryable: false` beside `Retry-After: 2`). A copy, because a
+ * factory may hold the refusal it threw.
+ */
+function stated(refusal: ServiceError, retryable: boolean, retryAfter: number | null): ServiceError {
+  const copy = Object.create(Object.getPrototypeOf(refusal) as object, Object.getOwnPropertyDescriptors(refusal)) as ServiceError;
+  const fields = copy as { retryable?: boolean; details?: unknown };
+  fields.retryable = retryable;
+  const { retryAfter: named, ...own } = ((typeof refusal.details === "object" ? refusal.details : null) ?? {}) as { retryAfter?: unknown };
+  if (retryAfter !== null) fields.details = { ...own, retryAfter };
+  else if (named !== undefined) fields.details = Object.keys(own).length > 0 ? own : undefined;
+  return copy;
+}
+
+/**
+ * THE REFUSAL A REPLAY AFTER ITS WINDOW IS TOLD: the passing refusal its row was offered again
+ * after, not retryable. Restated at the dial's 424, since the replay is no new fault of ours, and our
+ * own full cap at its 429 under the standing sentence (the message never reached the server); `null`
+ * for a row never offered again or still inside its window (`rearm` answers that one).
+ */
+function lapsedRefusal(row: typeof outboundSends.$inferSelect, now: Date): ServiceError | null {
+  if (row.retryUntil === null || row.retryUntil.getTime() > now.getTime()) return null;
+  const code = row.retryRefusal;
+  return code === "send_unreachable" ? new MailServerUnreachable(undefined)
+    : code === "send_busy" ? new MailServerBusy(undefined)
+      : code === "send_timeout" ? new SendTimedOut(SEND_UNREACHABLE_STATUS)
+        : code === "mailbox_busy" ? new ServiceError(code, 429, SEND_FAILED_SENTENCE, undefined, false)
+          : null;
 }
 
 /** One exchange with the person's own mail server; a refusal it made becomes the typed refusal. */
@@ -923,6 +1096,8 @@ function logMailServerRefusal(deps: SendDeps, ctx: ServiceContext, draftId: stri
     (deps.log ?? defaultLog).warn("send_mail_server_unreachable", { draftId, accountId: ctx.accountId, err });
   } else if (err instanceof MailServerRefused) {
     (deps.log ?? defaultLog).warn("send_mail_server_refused", { draftId, accountId: ctx.accountId, err });
+  } else if (err instanceof MailServerBusy) {
+    (deps.log ?? defaultLog).warn("send_mail_server_busy", { draftId, accountId: ctx.accountId, err });
   }
 }
 
@@ -975,6 +1150,12 @@ type Reservation =
       msg: OutboundMessage; seq: number;
       /** A forward's original parts (and, for a husked body, its words) — read outside the tx. */
       forward?: ForwardSource;
+      /** This key's attempt: 1 for a fresh reservation, more for a re-armed one. */
+      attempt: number;
+      /** When the key was first reserved: the re-arm window's clock. */
+      reservedAt: Date;
+      /** The send holds the account's content claim (it carries no staged files): only then may it re-arm. */
+      claimed: boolean;
     }
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
 
@@ -983,10 +1164,11 @@ type Reservation =
  * `Idempotency-Key`. The invariant is NO double-send, even across a crash between the SMTP call
  * and its finalize: 1. RESERVE (short tx, NO network) — `(accountId, idempotencyKey)` via INSERT
  * … ON CONFLICT DO NOTHING, Message-ID minted UP FRONT, draft marked `sending`; a conflict
- * branches on the stored status. 2. SMTP OUTSIDE the tx. 3. FINALIZE (short tx) — `sent` +
- * providerMessageId. 4. RECOVERY (verify-by-Sent) — a same-key request finding a STALE `pending`
- * row searches Sent for the minted id: FOUND ⇒ `sent`, NOT FOUND ⇒ `unverified`; NEVER resend on
- * ambiguity. Every transition emits a `draft` change; a cross-account draft id is a 404.
+ * branches on the stored status, and re-arms a `failed` row its window recorded re-armable. 2.
+ * SMTP OUTSIDE the tx. 3. FINALIZE (short tx) — `sent` + providerMessageId. 4. RECOVERY
+ * (verify-by-Sent) — a same-key request finding a STALE `pending` row searches Sent for the minted
+ * id: FOUND ⇒ `sent`, NOT FOUND ⇒ `unverified`; NEVER resend on ambiguity. Every transition emits a
+ * `draft` change; a cross-account draft id is a 404.
  */
 export class SendService {
   /**
@@ -1057,7 +1239,22 @@ export class SendService {
         .limit(1));
       if (!row) throw new ServiceError("internal", 500, "reservation vanished");
       if (row.status === "withdrawn") return { result: { outcome: "withdrawn" } };
-      if (row.status === "failed") return { result: { outcome: "failed" } };
+      if (row.status === "failed") {
+        // A FAILURE WAITING FOR ITS REPLAY IS CANCELLED HERE: the row becomes the tombstone that
+        // replay is refused by, and its content claim goes, so the same words may be sent again.
+        if (row.retryUntil !== null && row.retryUntil.getTime() > now.getTime()) {
+          const won = await tx.update(outboundSends)
+            .set({ status: "withdrawn", resolvedBy: "person", resolvedAt: now, retryUntil: null, retryRefusal: null })
+            .where(and(eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.status, "failed")))
+            .returning({ id: outboundSends.id });
+          if (won.length > 0) {
+            await tx.delete(outboundSendFingerprints)
+              .where(and(eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, row.id)));
+            return { result: { outcome: "withdrawn" } };
+          }
+        }
+        return { result: { outcome: "failed" } };
+      }
       if (row.status === "sent") {
         return { result: { outcome: "already_sent", firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt) } };
       }
@@ -1127,10 +1324,11 @@ export class SendService {
     // envelope has been offered. A throw here used to leave the reservation `pending` — read as
     // AMBIGUOUS: `in_flight` for ten minutes, then verify-by-Sent finalizes `unverified`, "check
     // your Sent folder" for mail that never left. Closed as a WINDOW because every step in it has
-    // the identical property: `finalizeFailed` records the definite outcome, the draft returns to
-    // `draft`. OPENING THE TRANSPORT IS INSIDE IT — credential decrypt, dial and login all
-    // precede any envelope. `adapter.send` stays OUTSIDE: its failure is genuinely ambiguous. The
-    // ceiling splits on this same boundary: a timeout in here is `failed`; below, `queued`.
+    // the identical property: `endInWindow` records the definite outcome, the draft returns to
+    // `draft`, and the answer says whether the replay will be offered again. OPENING THE TRANSPORT
+    // IS INSIDE IT — credential decrypt, dial and login all precede any envelope. `adapter.send`
+    // stays OUTSIDE: its failure is genuinely ambiguous. The ceiling splits on this same boundary:
+    // a timeout in here is `failed`; below, `queued`.
     const ceiling = startAttemptCeiling(deps.attemptCeilingMs ?? SEND_ATTEMPT_CEILING_MS);
     try {
       let adapter: Awaited<ReturnType<OpenSendAdapter>>;
@@ -1156,18 +1354,7 @@ export class SendService {
       try {
         opened = await raceCeiling(opening, ceiling);
       } catch (err) {
-        // The sentence goes in with the terminal write, because on the scheduled path this row IS
-        // the only channel — see `finalizeFailed`. A typed refusal is written to be read; anything
-        // else is a diagnostic and gets the standing sentence instead.
-        await this.finalizeFailed(ctx, sendId, draftId,
-          err instanceof ServiceError ? err.message : SEND_FAILED_SENTENCE);
-        logMailServerRefusal(deps, ctx, draftId, err);
-        // The line is owed here too. This arm is the ONE class of failure the pre-SMTP window
-        // exists for, and it was the one attempt that settled without saying what it cost —
-        // "one line per settled attempt" was false for exactly the case somebody investigating
-        // a broken send would look for first.
-        this.logPhases(deps, ctx, draftId, "failed", phases, started);
-        throw err;
+        throw await this.endInWindow(ctx, deps, reservation, draftId, err, phases, started);
       }
       // `tDial` is still `tWindow` when the ceiling fired inside ASSEMBLY, so a breach there is
       // reported as the whole window spent in `openMs` with `assembleMs` at zero. That is the
@@ -1186,17 +1373,12 @@ export class SendService {
           (a) => a.close().catch(() => { /* the connection is already broken */ }),
           () => { /* the dial that timed out also failed; nothing was opened */ },
         );
-        await this.finalizeFailed(ctx, sendId, draftId, SEND_TIMEOUT_SENTENCE);
-        this.logPhases(deps, ctx, draftId, "failed", phases, started);
-        // NOT retryable, and the line above is why: `finalizeFailed` has just committed this
-        // reservation as `failed`, so the key is SPENT and a retry under it can only ever be
-        // answered 409 `failed`. Marking it retryable put the client in `queued` — "Not sent yet,
-        // ohmail is still trying" — over a non-delivery the server had already recorded and
-        // explained, and threw away `SEND_TIMEOUT_SENTENCE`, which exists to be read. Terminal
-        // here means the sentence renders and Send is the retry, which is the truth.
-        // During the dial the clock ran out on the person's mail server (424); during assembly
-        // it may have been our own storage, so that half keeps its 504.
-        throw new ServiceError("send_timeout", dialling ? SEND_UNREACHABLE_STATUS : 504, SEND_TIMEOUT_SENTENCE, undefined, false);
+        // Retryable only where the window recorded it re-armable (`endInWindow`): the replay under
+        // this key is then a second attempt of the same row. Otherwise the timeout is final, its
+        // sentence renders, and Send is the retry. During the dial the clock ran out on the person's
+        // mail server (424); during assembly it may have been our own storage, so that half is 504.
+        const timedOut = new SendTimedOut(dialling ? SEND_UNREACHABLE_STATUS : 504);
+        throw await this.endInWindow(ctx, deps, reservation, draftId, timedOut, phases, started);
       }
       adapter = opened.value;
 
@@ -1238,16 +1420,11 @@ export class SendService {
               return { status: "sent", providerMessageId: err.providerMessageId, draftId, seq };
             }
             if (err instanceof SendNotSubmitted) {
-              // NEVER OFFERED: the socket never connected, or the session died securing the
-              // connection or logging in, so the message provably did not leave. Failed with the
-              // step named, never `unverified`, and the same refusal the IMAP leg's dial gets.
+              // NEVER OFFERED: no token, the socket never connected, or the session died securing
+              // the connection or logging in, so the message provably did not leave. Failed with
+              // the step named, never `unverified`, and the same refusals the IMAP leg's dial gets.
               phases.submitMs = Date.now() - tSubmit;
-              const refusal = err.step === "connect" ? new MailServerUnreachable(err)
-                : new MailServerRefused(err.step === "secure" ? "not_secured" : "login_refused", err);
-              await this.finalizeFailed(ctx, sendId, draftId, refusal.message);
-              logMailServerRefusal(deps, ctx, draftId, refusal);
-              this.logPhases(deps, ctx, draftId, "failed", phases, started);
-              throw refusal;
+              throw await this.endInWindow(ctx, deps, reservation, draftId, notSubmittedRefusal(err), phases, started);
             }
             // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
             // before the failure). VERIFY by Sent rather than assume either way; NEVER
@@ -1316,6 +1493,38 @@ export class SendService {
     } finally {
       ceiling.cancel();
     }
+  }
+
+  /** The pre-SMTP window's one exit; answers the refusal to throw. */
+  private async endInWindow(
+    ctx: ServiceContext, deps: SendDeps, reservation: Extract<Reservation, { kind: "new" }>,
+    draftId: string, err: unknown, phases: SendPhaseTimings, started: number,
+  ): Promise<ServiceError> {
+    // The failure is recorded as the definite non-delivery it is, and the answer says whether the
+    // replay under this key is offered again: only a transient refusal on the interactive door
+    // (`rearmTransient`), of a send holding its content claim, with attempts left and its wait inside
+    // the window, is recorded re-armable (`retry_until`) and answered retryable with its wait
+    // (`details.retryAfter`). A `finalizeFailed` that throws propagates: the row stays `pending`.
+    const refusal = windowRefusal(err);
+    // A refusal says by its own `transient` flag whether a wait may cure it, and our own full cap by
+    // its code and flag (`capWait`), whose wait the attempt's own is raised to; any other is final.
+    const cap = capWait(refusal);
+    const step = SEND_REARM_WAIT_S[reservation.attempt - 1];
+    const wait = step === undefined ? null : Math.max(step, cap ?? 0);
+    const deadline = reservation.reservedAt.getTime() + SEND_REARM_WINDOW_MS;
+    const rearm = deps.rearmTransient === true && ((refusal as { transient?: unknown }).transient === true || cap !== null)
+      && reservation.claimed && reservation.attempt < SEND_MAX_ATTEMPTS && wait !== null
+      && ctx.now().getTime() + wait * 1000 < deadline;
+    // The sentence goes in with the write, because on the scheduled path this row is the only channel.
+    const won = await this.finalizeFailed(ctx, reservation.sendId, draftId, refusal.message,
+      rearm ? { until: new Date(deadline), refusal: refusal.code } : null);
+    logMailServerRefusal(deps, ctx, draftId, refusal);
+    this.logPhases(deps, ctx, draftId, "failed", phases, started);
+    const offered = won && rearm;
+    if (offered) {
+      (deps.log ?? defaultLog).info("send_rearm_offered", { draftId, accountId: ctx.accountId, attempt: reservation.attempt, retryAfter: wait });
+    }
+    return stated(refusal, offered, offered ? wait : null);
   }
 
   /**
@@ -1571,7 +1780,8 @@ export class SendService {
         );
       }
 
-      const mintedMessageId = mintMessageId(domainOf(mb?.address));
+      let mintedMessageId = mintMessageId(domainOf(mb?.address));
+      let reservedAt = ctx.now();
 
       const inserted = await tx.insert(outboundSends).values({
         accountId: ctx.accountId,
@@ -1579,18 +1789,29 @@ export class SendService {
         draftId,
         mintedMessageId,
         status: "pending",
-        createdAt: ctx.now(),
+        createdAt: reservedAt,
       })
         .onConflictDoNothing({ target: [outboundSends.accountId, outboundSends.idempotencyKey] })
         .returning({ id: outboundSends.id });
 
+      /* THE ROW THIS PRESS SENDS UNDER: the fresh reservation, or the key's own failed attempt
+         re-armed for its replay — the same row, key and Message-ID, one more attempt. */
+      let sendId: string;
+      let attempt = 1;
       if (inserted.length === 0) {
         // CONFLICT: this key was reserved before. Lock the row and branch on it.
         const [existing] = await dialect(ctx.db).forUpdate(tx.select().from(outboundSends)
           .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, idempotencyKey)))
           .limit(1));
         if (!existing) throw new ServiceError("internal", 500, "reservation vanished");
-        return { kind: "existing", row: existing, mailboxId: d.mailboxId };
+        const rearmed = await this.rearm(tx, ctx, existing, d, draftId, input, stagedIds);
+        if (rearmed === null) return { kind: "existing", row: existing, mailboxId: d.mailboxId };
+        sendId = existing.id;
+        mintedMessageId = existing.mintedMessageId;
+        reservedAt = existing.createdAt;
+        attempt = rearmed;
+      } else {
+        sendId = inserted[0]!.id;
       }
 
       // A DISABLED MAILBOX REFUSES HERE, AND THE ROLLBACK IS THE POINT. It used to be refused by
@@ -1854,47 +2075,28 @@ export class SendService {
       // name/type/size and never left), and ticket ids always differ on a re-stage — a claim
       // keyed on them never matches. Excluded, explicitly; the durable key and the draft-status
       // refusal remain.
-      if (stagedIds.length > 0) {
-        const now = ctx.now();
-        await tx.update(drafts).set({ status: "sending", updatedAt: now })
+      /** The flip every new attempt's reservation ends with: the draft to `sending`, its change recorded. */
+      const flip = async (claimed: boolean): Promise<Reservation> => {
+        await tx.update(drafts).set({ status: "sending", updatedAt: ctx.now() })
           .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
         const seq = await recordChange(tx, {
           accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
         });
         return {
-          kind: "new", sendId: inserted[0]!.id, mintedMessageId, mailboxId: d.mailboxId, msg,
-          seq: Number(seq), ...(forward ? { forward } : {}),
+          kind: "new", sendId, mintedMessageId, mailboxId: d.mailboxId, msg,
+          seq: Number(seq), ...(forward ? { forward } : {}), attempt, reservedAt, claimed,
         };
-      }
+      };
+      if (stagedIds.length > 0) return flip(false);
+      // A RE-ARMED SEND ALREADY HOLDS ITS CLAIM — `rearm` proved the claim on these words names this
+      // row — so only a fresh reservation takes one.
+      if (attempt > 1) return flip(true);
 
-      const fingerprint = sendContentFingerprint({
-        to, cc, bcc,
-        subject: d.subject,
-        // The STORED text, not the assembled `msg.text`: a forward's quoted original is covered by
-        // `forwardOf` below, and folding the quote in as well would make the digest depend on how
-        // the original renders today.
-        // BOTH halves, never collapsed — see the member's own note.
-        html: d.html ?? null,
-        body: d.body,
-        inReplyToMessageId: d.inReplyToMessageId ?? null,
-        forwardOf,
-        sendAt: d.sendAt ?? null,
-        attachments: [
-          // INLINE: the bytes are right here, decoded on the request, so they are digested. No
-          // network, no transaction cost worth naming — a hash over what the sender attached.
-          ...(input.attachments ?? []).map((a) => ({
-            filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
-            contentSha256: createHash("sha256").update(a.content).digest("hex"),
-          })),
-          // No staged entries here BY CONSTRUCTION: a send carrying staged files returns above,
-          // before this digest is computed. `stagedManifest` is still collected for the size cap,
-          // which is a different question and does not pretend to be an identity.
-        ],
-      });
+      const fingerprint = contentFingerprintOf(d, input);
       const claimNow = ctx.now();
       const claimed = await tx.insert(outboundSendFingerprints).values({
         accountId: ctx.accountId, mailboxId: d.mailboxId, fingerprint,
-        sendId: inserted[0]!.id, createdAt: claimNow,
+        sendId, createdAt: claimNow,
       })
         .onConflictDoNothing({
           target: [
@@ -1928,7 +2130,7 @@ export class SendService {
           // over a row that no longer exists.
           const retook = await tx.insert(outboundSendFingerprints).values({
             accountId: ctx.accountId, mailboxId: d.mailboxId, fingerprint,
-            sendId: inserted[0]!.id, createdAt: claimNow,
+            sendId, createdAt: claimNow,
           })
             .onConflictDoNothing({
               target: [
@@ -1999,23 +2201,44 @@ export class SendService {
           // the window's clock and not the row's birthday.
           // scoped-by: held is the fingerprint row claimed earlier in this transaction for this content
           await tx.update(outboundSendFingerprints)
-            .set({ sendId: inserted[0]!.id, createdAt: claimNow })
+            .set({ sendId, createdAt: claimNow })
             .where(eq(outboundSendFingerprints.id, held.id));
         }
       }
 
-      const now = ctx.now();
-      await tx.update(drafts).set({ status: "sending", updatedAt: now })
-        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)));
-      const seq = await recordChange(tx, {
-        accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
-      });
-
-      return {
-        kind: "new", sendId: inserted[0]!.id, mintedMessageId, mailboxId: d.mailboxId, msg,
-        seq: Number(seq), ...(forward ? { forward } : {}),
-      };
+      return flip(true);
     });
+  }
+
+  /** Re-arms the key's failed attempt for its same-key replay: the new attempt number, or `null`. */
+  private async rearm(
+    tx: LedgerTx, ctx: ServiceContext, existing: typeof outboundSends.$inferSelect,
+    d: typeof drafts.$inferSelect, draftId: string, input: SendInput, stagedIds: readonly string[],
+  ): Promise<number | null> {
+    // Only a row the window recorded re-armable (`retry_until` ahead, attempts left), about this
+    // draft, still a draft, with no staged files, and whose content claim the replay's own words
+    // still name: the claim proves the same message, inline file digests included. Then one
+    // compare-and-swap back to `pending`; the caller goes on down the new-reservation path under the
+    // same key and Message-ID, and any throw there rolls the swap back. `null` leaves the row as it
+    // is, and the replay is answered from it.
+    const now = ctx.now();
+    if (existing.status !== "failed" || existing.retryUntil === null || existing.retryUntil.getTime() <= now.getTime()) return null;
+    if (existing.attempts >= SEND_MAX_ATTEMPTS || existing.draftId !== draftId || d.status !== "draft" || stagedIds.length > 0) return null;
+    // LOCKED, as a fresh press reads it: that press re-points the claim after reading this row's
+    // status, and unlocked it could read `failed` under this uncommitted re-arm and send a twin.
+    const [claim] = await dialect(ctx.db).forUpdate(tx.select({ sendId: outboundSendFingerprints.sendId })
+      .from(outboundSendFingerprints)
+      .where(and(
+        eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.mailboxId, d.mailboxId),
+        eq(outboundSendFingerprints.fingerprint, contentFingerprintOf(d, input)),
+      ))
+      .limit(1));
+    if (claim?.sendId !== existing.id) return null;
+    const [swapped] = await tx.update(outboundSends)
+      .set({ status: "pending", attempts: sql`${outboundSends.attempts} + 1`, retryUntil: null, retryRefusal: null })
+      .where(and(eq(outboundSends.id, existing.id), eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.status, "failed")))
+      .returning({ attempts: outboundSends.attempts });
+    return swapped?.attempts ?? null;
   }
 
   /**
@@ -2145,7 +2368,7 @@ export class SendService {
    *  - `withdrawn`  → 409 `send_withdrawn`: a Cancel tombstoned the key; NOTHING is sent.
    *  - `sent`       → replay the stored result, NO resend.
    *  - `unverified` → surface the terminal ambiguous state, NO resend.
-   *  - `failed`     → surface the terminal failure, NO resend.
+   *  - `failed`     → a failure `reserve` did not re-arm: surface it, NO resend.
    *  - `pending`    → a STALE prior attempt (or concurrent in-flight): VERIFY by
    *                   Sent (recovery). Found ⇒ reconcile `sent`; not found ⇒
    *                   `unverified`. NEVER a blind resend.
@@ -2196,6 +2419,10 @@ export class SendService {
       return { status: "unverified", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
     }
     if (row.status === "failed") {
+      // A replay that came after the window it was offered (a phone held offline through it) is
+      // told why nothing went, final: the generic `failed` names no reason to press again.
+      const lapsed = lapsedRefusal(row, ctx.now());
+      if (lapsed !== null) throw lapsed;
       return { status: "failed", providerMessageId: null, draftId: draftOfTerminalAttempt(row), seq: null };
     }
 
@@ -2540,31 +2767,32 @@ export class SendService {
     )];
   }
 
-  /**
-   * FINALIZE-failed tx: the message definitively did not go out, and the code KNOWS it. `failed`
-   * was declared and handled from day one — and NOTHING EVER WROTE IT: a pre-SMTP failure left a
-   * `pending` row, finalized `unverified` — "check your Sent folder" for mail that never left.
-   * `failed` is terminal for this KEY, does not brick the draft (the client releases the key on
-   * any terminal outcome), and returns the draft to `draft`. `sendAt`/`sendKey` are cleared — an
-   * appointment outliving a definite non-delivery would be replayed. IT CARRIES THE SENTENCE: on
-   * a schedule, `send_error` is the only channel. GATED ON `send_at` STANDING: `send_error` means
-   * "the appointment could not be kept".
-   */
+  /** FINALIZE-failed tx: the message definitively did not go out. True if it won. */
   private async finalizeFailed(
     ctx: ServiceContext, sendId: string, draftId: string, sentence: string,
-  ): Promise<void> {
+    offer: { until: Date; refusal: string } | null = null,
+  ): Promise<boolean> {
+    // The code KNOWS it did not go. `failed` was declared and handled from day one — and NOTHING
+    // EVER WROTE IT: a pre-SMTP failure left a `pending` row, finalized `unverified` — "check your
+    // Sent folder" for mail that never left. `failed` is final for this KEY unless `offer` re-arms it
+    // for its replay, does not brick the draft (the client releases the key on any final outcome),
+    // and returns the draft to `draft`. `sendAt`/`sendKey` are cleared — an appointment outliving a
+    // definite non-delivery would be replayed. IT CARRIES THE SENTENCE: on a schedule, `send_error`
+    // is the only channel. GATED ON `send_at` STANDING: `send_error` means "the appointment could not
+    // be kept". (In the body, not on the member: esbuild keeps a member's note in the phone engine.)
     const now = ctx.now();
-    await asTx(ctx).transaction(async (tx) => {
+    return asTx(ctx).transaction(async (tx) => {
       // Compare-and-swap, for {@link SendService.finalizeSent}'s reason: exactly one resolver
       // writes a terminal state. This one is reachable only from the pre-SMTP window, which owns
       // the reservation it is finalizing — but "the only writer today" is not a property a
       // predicate-free UPDATE preserves, and a `failed` written over a `sent` would be the one
       // thing this whole path exists to prevent, one direction reversed.
       // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
-      const won = await tx.update(outboundSends).set({ status: "failed" })
+      const won = await tx.update(outboundSends)
+        .set({ status: "failed", retryUntil: offer?.until ?? null, retryRefusal: offer?.refusal ?? null })
         .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
         .returning({ id: outboundSends.id });
-      if (won.length === 0) return;
+      if (won.length === 0) return false;
       await tx.update(drafts)
         .set({
           status: "draft", sendAt: null, sendKey: null, updatedAt: now,
@@ -2577,6 +2805,7 @@ export class SendService {
       await recordChange(tx, {
         accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
       });
+      return true;
     });
   }
 

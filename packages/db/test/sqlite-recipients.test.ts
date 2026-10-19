@@ -81,7 +81,9 @@ describe("mail 0154 on the device store", () => {
 
   it("a store at 0153 gets its old messages' rows when 0154 applies (the backfill)", async () => {
     const before = SQLITE_JOURNAL.filter((e) => e.name < ENTRY);
-    expect(before.length).toBe(SQLITE_JOURNAL.length - 1);
+    // The entries written after 0154 apply with it, and touch no recipient.
+    const later = SQLITE_JOURNAL.filter((e) => e.name > ENTRY).map((e) => e.name);
+    expect(before.length).toBe(SQLITE_JOURNAL.length - 1 - later.length);
     const db = await open(before);
     expect(db.prepare("select name from sqlite_master where name = 'message_recipients'").all()).toEqual([]);
     const a = randomUUID();
@@ -91,7 +93,7 @@ describe("mail 0154 on the device store", () => {
     expect(await migrateSqlite({
       run: async (s: string) => { db.exec(s); },
       all: async <T,>(s: string) => db.prepare(s).all() as T[],
-    })).toEqual([ENTRY]);
+    })).toEqual([ENTRY, ...later]);
     expect(rowsOf(db, one)).toEqual([{ account_id: a, address: "old@acme.test" }]);
     expect(rowsOf(db, two)).toEqual([{ account_id: a, address: "cc@acme.test" }]);
   });

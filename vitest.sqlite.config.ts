@@ -146,6 +146,11 @@ export default defineConfig({
       // A Cancel on the device store: the standalone phone answers its own Cancel through the same
       // `SendService.withdraw` — the tombstone, the replay refusal and a settled row's answer.
       "packages/services/test/send-withdraw-dialect.test.ts",
+      // A send re-armed after a passing fault, its bounds and its Cancel: the phone re-arms on this store.
+      "packages/services/test/send-rearm.test.ts",
+      // A forward that met the mailbox's own IMAP cap, through the route and the door the Desktop and
+      // phone serve it with: offered again on this store, and its replay sends it once.
+      "packages/api/test/send-rearm-forward-cap.test.ts",
       // A reader's arrangement: the mirror write, its change row and the materializer, on the
       // store the standalone phone reads a mailbox with.
       "packages/services/test/reader-shows-the-organizers-arrangement.test.ts",
@@ -353,6 +358,8 @@ export default defineConfig({
       "apps/sidecar/test/phone-offline-send-waits.imap.test.ts",
       // …and a send's late or accepted answer and a relaunch mid-send, one row per letter.
       "apps/sidecar/test/phone-send-is-one-row.imap.test.ts",
+      // …and an outgoing server's "not now" once: the press waits under its key and goes once.
+      "apps/sidecar/test/phone-send-rearm.imap.test.ts",
       // …and a forward kept as a draft, closed, reopened and sent as a forward.
       "apps/sidecar/test/phone-forward-draft-is-a-forward.imap.test.ts",
       // …and a relaunch whose login is slow, through the app's own connect over that engine.

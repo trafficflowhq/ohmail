@@ -830,6 +830,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0151_mailboxes_gap_since — the gap window and its offer, one transaction. LOUD: every
   // mailbox read names the columns. Deploy order migration → API → worker.
   ["mailboxes", "gap_since"],
+  // mail 0155_outbound_sends_rearm — the re-arm's attempt count and deadline, one transaction. LOUD:
+  // every reservation read selects the whole row and the reconcile pass names both. Deploy order
+  // migration → API → worker.
+  ["outbound_sends", "attempts"],
 ] as const;
 
 /**
@@ -1233,7 +1237,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0153_rule_revoke_keeps_its_decisions";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0155_outbound_sends_rearm";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

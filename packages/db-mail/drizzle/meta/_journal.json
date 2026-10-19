@@ -1086,6 +1086,13 @@
       "when": 1791602600058,
       "tag": "0154_messages_recipient_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1791602600059,
+      "tag": "0155_outbound_sends_rearm",
+      "breakpoints": true
     }
   ]
 }

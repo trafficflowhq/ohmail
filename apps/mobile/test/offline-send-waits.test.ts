@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey, sendWaitsForNetwork } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { flushQueued, liveActions } from "../src/state/live";
+import { answersWaiting, flushQueued, liveActions } from "../src/state/live";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -48,10 +48,17 @@ async function scene() {
   fake.addMessage(dto("m-1", { subject: "Invoice 12", from: { name: "Ada", address: "ada@fake.test" } }));
   const net = networkSwitch("online");
   installNetworkReader(net.reader);
+  /** The engine's own answers to a draft's next sends, in order, before the fake answers any. */
+  const sendAnswers = new Map<string, Array<() => Response>>();
   const door: LocalEngineDoor = {
     sessionToken: "launch-1",
     async handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      const scripted = req.method === "POST" ? sendAnswers.get(/^\/drafts\/([^/]+)\/send$/.exec(url.pathname)?.[1] ?? "")?.shift() : undefined;
+      if (scripted) {
+        await req.text();
+        return scripted();
+      }
       // THE ENGINE WITH NO NETWORK: the send cannot reach the mail server and is refused as failed.
       if (networkNow() === "offline" && req.method === "POST" && /^\/drafts\/[^/]+\/send$/.test(url.pathname)) {
         await req.text();
@@ -78,8 +85,21 @@ async function scene() {
   await boot.engine.start();
   const toasts: string[] = [];
   const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
-  return { fake, net, engine: boot.engine, store: boot.store, actions, toasts };
+  return { fake, net, engine: boot.engine, store: boot.store, actions, toasts, sendAnswers };
 }
+
+/** The send route's re-arm: a passing refusal of the mail server, offered again after the wait it names. */
+const offeredAgain = (): Response => new Response(JSON.stringify({ error: {
+  code: "send_unreachable", message: "your mail server could not be reached", retryable: true, details: { retryAfter: 2 },
+} }), { status: 424, headers: { "content-type": "application/json", "retry-after": "2" } });
+/** The same re-arm over our own per-mailbox IMAP cap: a forward's read found both of the mailbox's slots in use. */
+const capOfferedAgain = (): Response => new Response(JSON.stringify({ error: {
+  code: "mailbox_busy", message: "this mailbox already has as many live connections as we will open at once", retryable: true,
+  details: { retryAfter: 2 },
+} }), { status: 429, headers: { "content-type": "application/json", "retry-after": "2" } });
+/** A fault of the server's own, retryable: the press flushes the whole queue under its keys. */
+const serverFault = (): Response => new Response(JSON.stringify({ error: { code: "server_error", message: "refused by test" } }),
+  { status: 500, headers: { "content-type": "application/json" } });
 
 const drafted = (fake: ReturnType<typeof mailServer>) => fake.seen.filter((r) => r.method === "POST" && r.url === "/drafts");
 const sendsOf = (fake: ReturnType<typeof mailServer>) =>
@@ -164,6 +184,68 @@ describe("a send pressed with no network", () => {
   }, 60_000);
 });
 
+/* The server offered the send again after a passing refusal, and its window for the key runs out
+   two minutes after the press whatever this phone does: a phone that stays offline past it is
+   told the refusal on the return and nothing goes. So no sentence may promise the return. */
+describe("a send the server offered again promises nothing about the network", () => {
+  it("the radio drops as the answer arrives: the press says it is still trying, never that it goes when the network is back", async () => {
+    const s = await scene();
+    s.sendAnswers.set("d-1", [() => { s.net.set("offline"); return offeredAgain(); }]);
+    const res = await s.actions.sendNew("mb-1", TO, "In a lift", "Written in a lift.");
+    expect(res.outcome).toBe("queued");
+    expect(networkNow()).toBe("offline");
+    expect(s.toasts).toEqual([Copy.replyQueued]);
+    expect(res.rearmed, "the press did not hear that the server offered it again").toBe(true);
+    expect(Copy[queuedCaptionKey(networkNow(), res.accepted === true, res.rearmed === true)]).toBe(Copy.replyQueued);
+    s.store.close();
+  }, 60_000);
+
+  it("offered again over our own full IMAP cap, the radio dropping as it answers: still trying, no promise either", async () => {
+    const s = await scene();
+    s.sendAnswers.set("d-1", [() => { s.net.set("offline"); return capOfferedAgain(); }]);
+    const res = await s.actions.sendNew("mb-1", TO, "Fwd: the plan", "Passing this along.");
+    expect(res.outcome).toBe("queued");
+    expect(res.rearmed, "the press did not hear that the server offered it again").toBe(true);
+    expect(s.toasts).toEqual([Copy.replyQueued]);
+    s.store.close();
+  }, 60_000);
+
+  it("held offline, then offered again on the return: the ledger hears it, so the composer stops promising", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const res = await s.actions.sendNew("mb-1", TO, "Offline", "Written on a train.");
+    expect(res.outcome).toBe("queued");
+    // The server never saw this one: the return does send it, so the promise is true here.
+    expect(res.rearmed).toBeUndefined();
+    expect(s.toasts).toEqual([Copy.replyQueuedOffline]);
+    s.net.set("online");
+    s.sendAnswers.set("d-1", [offeredAgain]);
+    const rearmed: string[] = [];
+    const settled = await flushQueued(s.engine, s.actions.releaseConfirmed, undefined, undefined, (key) => rearmed.push(key));
+    expect(settled.has(res.key!), "an offer again is not terminal").toBe(false);
+    expect(rearmed).toEqual([res.key]);
+    s.store.close();
+  }, 60_000);
+
+  it("offered again inside another press's flush: the answer waits for the ledger, which hears it", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const a = await s.actions.sendNew("mb-1", TO, "First", "One.");
+    expect(a.outcome).toBe("queued");
+    s.net.set("online");
+    // B's first answer is a fault of ours, so its press flushes the whole queue: A's replay is offered again.
+    s.sendAnswers.set("d-1", [offeredAgain]);
+    s.sendAnswers.set("d-2", [serverFault]);
+    const b = await s.actions.sendNew("mb-1", TO, "Second", "Two.");
+    expect(b.outcome).toBe("sent");
+    expect(answersWaiting(s.engine), "A's offer again was taken by B's flush and never reached the ledger").toBe(true);
+    const rearmed: string[] = [];
+    await flushQueued(s.engine, s.actions.releaseConfirmed, undefined, undefined, (key) => rearmed.push(key));
+    expect(rearmed).toEqual([a.key]);
+    s.store.close();
+  }, 60_000);
+});
+
 describe("the decision, in one place", () => {
   it("holds the send step on offline only", () => {
     expect(sendWaitsForNetwork("POST", "/drafts/d-1/send", "offline")).toBe(true);
@@ -179,7 +261,11 @@ describe("the decision, in one place", () => {
   it("names the waiting sentence off the network door, in the sheet and in the press's answer", () => {
     expect(queuedCaptionKey("offline")).toBe("replyQueuedOffline");
     expect(queuedCaptionKey("online")).toBe("replyQueued");
-    expect(COMPOSER).toContain('phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified');
+    // Offered again by the server: its window runs whatever the network does.
+    expect(queuedCaptionKey("offline", false, true)).toBe("replyQueued");
+    expect(queuedCaptionKey("online", false, true)).toBe("replyQueued");
+    expect(queuedCaptionKey("offline", true, true)).toBe("replySendingLong");
+    expect(COMPOSER).toContain('phase === "queued" ? Copy[queuedCaptionKey(network, accepted, rearmed)] : Copy.replyUnverified');
     expect(COMPOSER).toContain("const network = useNetworkNow();");
   });
 

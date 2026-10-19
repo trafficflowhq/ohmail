@@ -10,15 +10,15 @@ import {
 } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import {
-  MailServerRefused, MailServerUnreachable, SEND_UNREACHABLE_SENTENCE, mailServerRefusalOf,
+  MailServerBusy, MailServerRefused, MailServerUnreachable, SEND_UNREACHABLE_SENTENCE, mailServerRefusalOf,
 } from "../src/send-service.js";
 
 /**
  * A REFUSAL THE PERSON'S MAIL SERVER MADE IS A 424 WITH ITS OWN CODE, AT EVERY EXCHANGE. The
  * classifier reads structure only; the window gives the IMAP dial the SMTP leg's codes, a socket
  * that never connected is unreachable, and a Sent check the mail server failed after an ambiguous
- * SMTP error leaves the reservation for verify-by-Sent. Controls: the server's own "not now" and
- * our own faults stay unclassified.
+ * SMTP error leaves the reservation for verify-by-Sent. The server's own "not now" is busy, not a
+ * refused password. Controls: our own faults stay unclassified.
  */
 
 const svc = new SendService();
@@ -70,10 +70,14 @@ describe("mailServerRefusalOf — what the person's mail server did to a dial", 
     expect(mailServerRefusalOf(shaped({ authenticationFailed: true }))).toBe("login_refused");
   });
 
-  it("CONTROL: the server's own 'not now', our faults and typed refusals stay unclassified", () => {
-    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, serverResponseCode: "UNAVAILABLE" }))).toBeNull();
-    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, serverResponseCode: "LIMIT" }))).toBeNull();
-    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, code: "ETHROTTLE" }))).toBeNull();
+  it("the server's own 'not now' is busy, never a verdict on the password", () => {
+    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, serverResponseCode: "UNAVAILABLE" }))).toBe("busy");
+    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, serverResponseCode: "LIMIT" }))).toBe("busy");
+    expect(mailServerRefusalOf(shaped({ authenticationFailed: true, code: "ETHROTTLE" }))).toBe("busy");
+    expect(mailServerRefusalOf(shaped({ responseStatus: "NO" }))).toBe("busy");
+  });
+
+  it("CONTROL: our faults and typed refusals stay unclassified", () => {
     expect(mailServerRefusalOf(shaped({ code: "EAUTH" }))).toBeNull();
     expect(mailServerRefusalOf(new TypeError("x is undefined"))).toBeNull();
     expect(mailServerRefusalOf(Object.assign(new ServiceError("x", 502, "y"), { code: "ECONNREFUSED" }))).toBeNull();
@@ -108,11 +112,15 @@ describe("the IMAP dial inside the pre-SMTP window", () => {
     expect((await draft()).sendError).toBe(SEND_LOGIN_REFUSED_SENTENCE);
   });
 
-  it("CONTROL: a LOGIN the server answered 'not now' stays raw, ours to answer", async () => {
-    const { ctx, draftId } = await setup();
+  it("a LOGIN the server answered 'not now' is send_busy at 424, final where nothing replays it", async () => {
+    const { ctx, draftId, row } = await setup();
     const busy = shaped({ authenticationFailed: true, serverResponseCode: "UNAVAILABLE" });
     const openSendAdapter: OpenSendAdapter = async () => { throw busy; };
-    expect(await refusal(svc.send(ctx, draftId, "k-busy", { openSendAdapter }))).toBe(busy);
+    const e = await refusal(svc.send(ctx, draftId, "k-busy", { openSendAdapter })) as MailServerBusy;
+    expect(e).toBeInstanceOf(MailServerBusy);
+    expect({ code: e.code, httpStatus: e.httpStatus, retryable: e.retryable, cause: (e as { cause?: unknown }).cause })
+      .toEqual({ code: "send_busy", httpStatus: 424, retryable: false, cause: busy });
+    expect((await row()).status).toBe("failed");
   });
 });
 

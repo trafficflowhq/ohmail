@@ -345,7 +345,8 @@ export class SmtpSink {
   private answered: () => void = () => undefined;
   /** Settles when the sink has answered the end of a DATA — the event a wait reads, not a clock. */
   readonly dataAnswered = new Promise<void>((r) => { this.answered = r; });
-  constructor(private readonly script: { auth: () => { ok: boolean; afterMs: number }; dataAfterMs?: () => number }) {}
+  /** `line` is a refusal's own reply (a 454 "not now"); absent, a refused AUTH answers 535. */
+  constructor(private readonly script: { auth: () => { ok: boolean; afterMs: number; line?: string }; dataAfterMs?: () => number }) {}
   async open(): Promise<void> {
     this.server = createServer((sock) => {
       this.live.add(sock);
@@ -358,7 +359,7 @@ export class SmtpSink {
       let loginStep = 0;
       const authAnswer = (): void => {
         const a = this.script.auth();
-        later(a.afterMs, a.ok ? "235 2.7.0 accepted" : "535 5.7.8 authentication refused");
+        later(a.afterMs, a.ok ? "235 2.7.0 accepted" : (a.line ?? "535 5.7.8 authentication refused"));
       };
       say("220 sink.test ESMTP");
       sock.on("data", (chunk: Buffer) => {

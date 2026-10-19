@@ -167,12 +167,16 @@ async function answer(res: Response): Promise<{ status: number; code?: string; r
   return { status: res.status, code: body.error?.code, retryable: body.error?.retryable, message: body.error?.message, body };
 }
 
-/** A refusal the mail server made: 424 with its code, nothing offered, the draft kept, no fault row. */
-async function assertRefusedAt424(w: World, res: Response, code: string, sentence: RegExp): Promise<void> {
+/**
+ * A refusal the mail server made: 424 with its code, nothing offered, the draft kept, no fault row.
+ * `retryable` is whether a short wait may cure it: an unreachable server is offered again under the
+ * key, a refused sign-in or an unsecured connection is final.
+ */
+async function assertRefusedAt424(w: World, res: Response, code: string, sentence: RegExp, retryable = false): Promise<void> {
   const a = await answer(res);
   // ONE assertion, so a red names the old status AND the fault row it wrote.
   expect({ status: a.status, code: a.code, retryable: a.retryable, faults: w.faults.map((f) => f.status) })
-    .toEqual({ status: 424, code, retryable: false, faults: [] });
+    .toEqual({ status: 424, code, retryable, faults: [] });
   expect(a.message).toMatch(sentence);
   const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));
   expect(row!.status).toBe("failed");
@@ -194,16 +198,16 @@ describe("POST /drafts/:id/send — a refusal the mail server made answers 424",
     await assertRefusedAt424(w, await press(w, "auth-1"), "send_login_refused", /refused the sign-in/);
   });
 
-  it("SMTP: a refused DIAL is send_unreachable at 424, never unverified", async () => {
+  it("SMTP: a refused DIAL is send_unreachable at 424, offered again, never unverified", async () => {
     const w = await world(production(fakeImap()));
     await credentials(w, { port: await closedPort() }, await closedPort());
-    await assertRefusedAt424(w, await press(w, "smtp-dial-1"), "send_unreachable", /could not be reached/);
+    await assertRefusedAt424(w, await press(w, "smtp-dial-1"), "send_unreachable", /could not be reached/, true);
   });
 
-  it("SMTP: a submission server that never greets is send_unreachable at 424, never unverified", async () => {
+  it("SMTP: a submission server that never greets is send_unreachable at 424, offered again, never unverified", async () => {
     const w = await world(production(fakeImap()));
     await credentials(w, { port: await closedPort() }, await listen(net.createServer(() => { /* silent */ })));
-    await assertRefusedAt424(w, await press(w, "smtp-silent-1"), "send_unreachable", /could not be reached/);
+    await assertRefusedAt424(w, await press(w, "smtp-silent-1"), "send_unreachable", /could not be reached/, true);
   });
 
   it("IMAP: the LOGIN refused at the dial answers send_login_refused at 424, not 500", async () => {
@@ -243,12 +247,12 @@ describe("POST /drafts/:id/send — the Sent check fails after an ambiguous SMTP
 });
 
 describe("POST /drafts/:id/send — a 502 shipped clients retry keeps its status and writes no fault row", () => {
-  it("smtp_not_settled: 502, no fault row", async () => {
+  it("smtp_not_settled: 502, explicitly not retryable (the key is spent), no fault row", async () => {
     const w = await world();
     await credentials(w, { port: await closedPort(), smtpUnsettled: "connect" }, null);
     const a = await answer(await press(w, "unsettled-1"));
     expect({ status: a.status, code: a.code, retryable: a.retryable, faults: w.faults.map((f) => f.status) })
-      .toEqual({ status: 502, code: "smtp_not_settled", retryable: undefined, faults: [] });
+      .toEqual({ status: 502, code: "smtp_not_settled", retryable: false, faults: [] });
   });
 
   it("mailbox_host_refused: 502, no fault row", async () => {

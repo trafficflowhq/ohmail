@@ -2144,6 +2144,15 @@ export const outboundSends = pgTable("outbound_sends", {
   resolvedBy: text("resolved_by"),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  // ── Mail 0155 — the re-arm. `attempts` counts this key's attempts: 1 at the reservation, one more
+  // per re-arm. `retry_until` is set only on a `failed` row a same-key replay may re-arm (the end of
+  // its window, `SEND_REARM_WINDOW_MS` after `created_at`); NULL is final. `retry_refusal` is the code
+  // of the passing refusal it was offered again after, set and cleared with it: a replay after the
+  // window is told that refusal. Written by `SendService` alone, and outside the column-scoped
+  // `ohmail_admin` grant.
+  attempts: integer("attempts").notNull().default(1),
+  retryUntil: timestamp("retry_until", { withTimezone: true }),
+  retryRefusal: text("retry_refusal"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate

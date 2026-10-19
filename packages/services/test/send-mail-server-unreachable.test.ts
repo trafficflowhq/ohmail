@@ -103,16 +103,18 @@ describe("the pre-SMTP window when the mail server cannot be reached", () => {
     expect({ sendError: d!.sendError, sendKey: d!.sendKey }).toEqual({ sendError: SEND_UNREACHABLE_SENTENCE, sendKey: null });
   });
 
-  it("CONTROL: our own storage refusing with the same errno stays OUR fault — raw, never the refusal", async () => {
+  it("CONTROL: our own storage refusing with the same errno stays OUR fault — the 500, never the refusal", async () => {
     const { db, ctx, newDraft } = await setup();
     const draftId = await newDraft("appt-2");
     let dials = 0;
     const openSendAdapter: OpenSendAdapter = async () => { dials += 1; throw coded("ECONNREFUSED"); };
-    const stagedAttachments = storage(async () => { throw coded("ECONNREFUSED"); });
+    const storageErr = coded("ECONNREFUSED");
+    const stagedAttachments = storage(async () => { throw storageErr; });
     const e = await refusal(new SendService().send(ctx, draftId, "appt-2",
       { openSendAdapter, stagedAttachments, surfaceMaxTotalBytes: null }, { stagedAttachmentIds: ["t1"] }));
-    expect(e).not.toBeNull();
-    expect(e).not.toBeInstanceOf(ServiceError);
+    expect(e).not.toBeInstanceOf(MailServerUnreachable);
+    expect({ code: e!.code, httpStatus: e!.httpStatus, retryable: e!.retryable, cause: (e as { cause?: unknown }).cause })
+      .toEqual({ code: "internal", httpStatus: 500, retryable: false, cause: storageErr });
     expect(dials, "the storage read failed first; the mail server was never dialled").toBe(0);
     const [d] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     expect(d!.sendError).toBe(SEND_FAILED_SENTENCE);

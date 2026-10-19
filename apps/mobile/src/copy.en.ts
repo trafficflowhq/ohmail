@@ -2034,6 +2034,8 @@ const TABLE = {
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
   replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
+  /* It took the dial and would not serve it now, past the send's own retries. */
+  replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
   replyForwardOriginalUnavailable: "Not sent. The original could not be loaded, so it was not forwarded.",
   replySentElsewhere: "Not sent: this draft already went from another device.",

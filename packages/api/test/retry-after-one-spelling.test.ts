@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { attachments as attachmentsTbl, mailboxCredentials } from "@trafficflow/db";
+import { ServiceError } from "@trafficflow/services/mail";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
 import { makeImapProbe } from "../src/imap-probe.js";
 import { imapDoorTimedOut } from "../src/imap-budget.js";
@@ -71,15 +72,29 @@ describe("a 429 names its wait where a client reads it", () => {
     expect(a.header).toBe("10");
   });
 
-  it("the door timeout keeps its wait under the one key, and a 504 carries no header (unchanged)", async () => {
-    expect(imapDoorTimedOut(20_000).details).toEqual({ retryAfter: 5 });
+  it("the door timeout keeps its wait under the one key, and its retryable 504 names it in the header", async () => {
+    // A refusal that invites the retry says when (the send's re-arm made this the envelope's rule):
+    // the 504 is retryable, so its `details.retryAfter` reaches `Retry-After` as the 429's does.
+    const timedOut = imapDoorTimedOut(20_000);
+    expect({ details: timedOut.details, retryable: timedOut.retryable }).toEqual({ details: { retryAfter: 5 }, retryable: true });
     const app = createApp([{
       method: "GET", pattern: "/slow", cost: "unauthenticated", options: { public: true },
       handler: async () => { throw imapDoorTimedOut(20_000); },
     }] as never);
     const w = await seeded();
     const a = await waited(await app.handle(new Request("http://localhost/slow"), { ...w.deps, session: null, idempotency: null }));
-    expect({ status: a.status, header: a.header }).toEqual({ status: 504, header: null });
+    expect({ status: a.status, header: a.header }).toEqual({ status: 504, header: "5" });
+  });
+
+  it("a refusal that says it is not retryable names no wait, even at 429: the header never contradicts the flag", async () => {
+    // Once the send's final answer to a full cap: `retryable: false` beside a `Retry-After: 2`.
+    const app = createApp([{
+      method: "GET", pattern: "/final", cost: "unauthenticated", options: { public: true },
+      handler: async () => { throw new ServiceError("mailbox_busy", 429, "busy", { retryAfter: 2 }, false); },
+    }] as never);
+    const w = await seeded();
+    const a = await waited(await app.handle(new Request("http://localhost/final"), { ...w.deps, session: null, idempotency: null }));
+    expect({ status: a.status, code: a.code, header: a.header }).toEqual({ status: 429, code: "mailbox_busy", header: null });
   });
 });
 

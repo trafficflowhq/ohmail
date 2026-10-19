@@ -288,7 +288,11 @@ describe("a forward whose original moved before its bytes were read", () => {
       { openSendAdapter: async () => { throw boom; } },
     ).then(() => null, (e: unknown) => e);
 
-    expect(err).toBe(boom);
+    // A fault nobody classified is ours: the window answers 500 with its own sentence, explicitly
+    // not retryable (the key's failure is final), and the error rides as the cause for the log.
+    expect(err).toBeInstanceOf(ServiceError);
+    expect({ code: (err as ServiceError).code, httpStatus: (err as ServiceError).httpStatus, retryable: (err as ServiceError).retryable, cause: (err as { cause?: unknown }).cause })
+      .toEqual({ code: "internal", httpStatus: 500, retryable: false, cause: boom });
     // `pending` here is the whole defect: it is what routes the next request into verify-by-Sent.
     const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));
     expect(row!.status).toBe("failed");
@@ -299,7 +303,7 @@ describe("a forward whose original moved before its bytes were read", () => {
     //
     // The terminal finalize writes a sentence for the SCHEDULED path, where the throw above is
     // caught by a loop and the row is the only channel a reader has. This is the interactive
-    // path: the caller already has `boom`, and the route maps it. Writing the field anyway would
+    // path: the caller already has the refusal, and the route maps it. Writing the field anyway would
     // be read as a schedule failure by both clients, neither of which has any other meaning for
     // it — `en.json#scheduleFailedNote` says "wasn't sent at its SCHEDULED TIME", which never
     // happened here, and `live.ts#liveScheduled` lists any `draft` row carrying the field on the
@@ -353,9 +357,11 @@ describe("a forward whose original moved before its bytes were read", () => {
       { stagedAttachmentIds: ["stg_1"] },
     ).then(() => null, (e: unknown) => e);
 
-    // The original error is preserved — it already carries a true sentence and this window's job
-    // is to record the OUTCOME, not to reword every cause.
-    expect(err).toBe(boom);
+    // The original error rides as the cause: this window records the OUTCOME and answers it as our
+    // own fault, explicitly not retryable — a staged send is never offered again under its key.
+    expect(err).toBeInstanceOf(ServiceError);
+    expect({ code: (err as ServiceError).code, retryable: (err as ServiceError).retryable, cause: (err as { cause?: unknown }).cause })
+      .toEqual({ code: "internal", retryable: false, cause: boom });
     expect(smtp.sent).toEqual([]);
     expect(smtp.probed).toEqual([]);
     const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));

@@ -103,8 +103,14 @@ describe("a send the server accepted says it is still sending, never that it wai
 
   it("the composer reads the acceptance off the result and off the ledger", () => {
     expect(SHEET).toContain("setAccepted(result.accepted === true);");
-    expect(SHEET).toContain("Copy[queuedCaptionKey(network, accepted)]");
-    expect(SHEET).toContain("else if (said.accepted) setAccepted(true);");
+    expect(SHEET).toContain("Copy[queuedCaptionKey(network, accepted, rearmed)]");
+    expect(SHEET).toContain("if (said.accepted) setAccepted(true);");
+  });
+
+  it("…and an offer again by the server, after which it promises nothing of the network", () => {
+    expect(SHEET).toContain("setRearmed(result.rearmed === true);");
+    expect(SHEET).toContain("if (said.rearmed) setRearmed(true);");
+    expect(WORLD).toContain("settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), rearmed: true });");
   });
 });
 
@@ -117,6 +123,16 @@ describe("a send the mail server could not be reached for says so, and keeps its
     expect(live.toasts).toEqual([Copy.replyUnreachable]);
     expect(failedSendLine("replyUnreachable", null, true)).toBe(Copy.replyUnreachable);
     expect(failedSendLine("replyUnreachable", { kind: "lost" }, true)).toBe(Copy.composeNotSentOffline);
+  }, 30_000);
+
+  it("424 send_busy, past its retries: failed, its own sentence in both languages, the row bound", async () => {
+    const live = await scene();
+    live.fake.answerNext("POST", SEND, 424, { error: { code: "send_busy", message: "your mail server is busy", retryable: false } });
+    const res = await live.actions.sendNew("mb-1", peer, "Coffee?", "Tomorrow at ten?");
+    expect(res).toMatchObject({ outcome: "failed", failure: "replyBusy", draftId: "d-1" });
+    expect(live.toasts).toEqual([Copy.replyBusy]);
+    expect(Copy.replyBusy).toMatch(/busy/);
+    expect(DE.replyBusy).toMatch(/ausgelastet/);
   }, 30_000);
 });
 

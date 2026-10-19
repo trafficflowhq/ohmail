@@ -18,12 +18,15 @@ export function sendWaitsForNetwork(method: string, path: string, network: Netwo
 
 /**
  * Which queued sentence a waiting send earns. Accepted by the server, it is still sending (the
- * web's `statusSendingLong`); otherwise read off the network door: offline, it goes when it is back.
+ * web's `statusSendingLong`). Offered again by the server after a passing refusal (`rearmed`), its
+ * window there runs out two minutes after the press whatever this phone does, so it promises nothing
+ * of the network. Otherwise read off the network door: offline, it goes when it is back.
  */
 export function queuedCaptionKey(
   network: NetworkState,
   accepted = false,
+  rearmed = false,
 ): "replySendingLong" | "replyQueuedOffline" | "replyQueued" {
   if (accepted) return "replySendingLong";
-  return network === "offline" ? "replyQueuedOffline" : "replyQueued";
+  return network === "offline" && !rearmed ? "replyQueuedOffline" : "replyQueued";
 }

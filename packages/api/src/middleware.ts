@@ -411,10 +411,14 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         // by cloud 0033's own CHECK as well as by this branch.
         await countFault(deps, route, req, err.httpStatus, err);
       }
-      // A throttle refusal carries its wait (`retryAfter`, seconds); the header is where a client reads it.
+      // A throttle refusal, or any refusal that invites the retry, carries its wait (`retryAfter`,
+      // seconds); the header is where a client reads it. One that says it is not retryable names
+      // none, at 429 too: a header contradicting the flag.
       const wait = (err.details as { retryAfter?: unknown } | undefined)?.retryAfter;
+      const named = typeof wait === "number" && err.retryable !== false
+        && (err.httpStatus === 429 || err.httpStatus === 423 || err.retryable === true);
       return errorResponse(err.code, err.httpStatus, err.message, err.details, err.retryable,
-        typeof wait === "number" && (err.httpStatus === 429 || err.httpStatus === 423) ? { "Retry-After": String(wait) } : undefined);
+        named ? { "Retry-After": String(wait) } : undefined);
     }
     log.error("request_unhandled", { method: req.method, route: route.pattern, status: 500, err });
     await countFault(deps, route, req, 500, err);

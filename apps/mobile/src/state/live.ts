@@ -2632,7 +2632,7 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * with the file's own sentence; a forward whose original the server could not load says so,
  * because asking again cannot help; every other failure keeps the plain one.
  */
-export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyNotSignedIn"
+export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyBusy" | "replyNotSignedIn"
   | "replyForwardOriginalUnavailable" | "replyFailed" | "replySentElsewhere" | "replyDeletedElsewhere";
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
@@ -2640,9 +2640,10 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   return code === "send_not_secured" ? "replyNotSecured"
     : code === "send_login_refused" ? "replyLoginRefused"
       : code === "send_unreachable" ? "replyUnreachable"
-        : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
-          : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
-            : "replyFailed";
+        : code === "send_busy" ? "replyBusy"
+          : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
+            : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
+              : "replyFailed";
 }
 
 /** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
@@ -2650,9 +2651,10 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
   return kind === "replyNotSecured" ? refuse("replyNotSecured")
     : kind === "replyLoginRefused" ? refuse("replyLoginRefused")
       : kind === "replyUnreachable" ? refuse("replyUnreachable")
-        : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
-          : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
-            : refuse("replyFailed");
+        : kind === "replyBusy" ? refuse("replyBusy")
+          : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
+            : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
+              : refuse("replyFailed");
 }
 
 /**
@@ -2662,6 +2664,22 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
  */
 export function sendAccepted(r: MutationResult | null): boolean {
   return r !== null && r.status === "queued" && r.error?.code === "send_queued";
+}
+
+/**
+ * The passing refusals the send route offers again under the key (`SendService.endInWindow`): the
+ * mail server's, and our own per-mailbox IMAP cap's, which a forward's read can meet.
+ */
+const REARMED_CODES: ReadonlySet<string> = new Set(["send_unreachable", "send_busy", "send_timeout", "mailbox_busy"]);
+
+/**
+ * THE SERVER OFFERED THIS SEND AGAIN: a queued result whose refusal is a passing one, which the
+ * route answers retryable only when it re-armed the key. Its window there runs out two minutes after
+ * the press whatever this phone does, and a replay after it is told the refusal and sends nothing,
+ * so no sentence may promise the send goes when the network is back.
+ */
+export function sendRearmed(r: MutationResult | null): boolean {
+  return r !== null && r.status === "queued" && REARMED_CODES.has(r.error?.code ?? "");
 }
 
 /**
@@ -2681,6 +2699,8 @@ export interface SendResult {
   failure?: FailedSendCopy;
   /** `queued` only: the server accepted it ({@link sendAccepted}), so it is still sending, not waiting. */
   accepted?: true;
+  /** `queued` only: the server offered it again ({@link sendRearmed}), so nothing promises the network's return. */
+  rearmed?: true;
 }
 
 /**
@@ -2765,14 +2785,16 @@ export interface FlushedOutcome {
 
 /**
  * WHAT A LOCKED COMPOSER READS OFF THE LEDGER beside the status: the server accepted the send
- * (still sending, not waiting), or it was refused, leaving this row and earning this sentence.
+ * (still sending, not waiting), or offered it again ({@link sendRearmed}), or it was refused,
+ * leaving this row and earning this sentence.
  */
 export interface SendSettlement {
   accepted: boolean;
+  rearmed: boolean;
   draftId: string | null;
   failure: FailedSendCopy | null;
 }
-export const NO_SETTLEMENT: SendSettlement = { accepted: false, draftId: null, failure: null };
+export const NO_SETTLEMENT: SendSettlement = { accepted: false, rearmed: false, draftId: null, failure: null };
 
 /** What a queued intent was, captured while the queue still holds it — see {@link sendsOffTheQueue}. */
 interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; sendAt: string | null }
@@ -2811,7 +2833,7 @@ function keepStrays(
   engine: OhmailEngine, results: readonly MutationResult[], own: string, done: ReadonlyMap<string, DoneSaid>,
 ): void {
   const others = results
-    .filter((r) => r.key !== own && (r.status !== "queued" || sendAccepted(r)))
+    .filter((r) => r.key !== own && (r.status !== "queued" || sendAccepted(r) || sendRearmed(r)))
     .map((r) => ({ r, done: done.get(r.key) ?? null }));
   if (others.length > 0) strayAnswers.set(engine, [...(strayAnswers.get(engine) ?? []), ...others]);
 }
@@ -2855,6 +2877,8 @@ export async function flushQueued(
   onAccepted?: (key: string) => void,
   /** A waiting send whose newer words were kept back: the send under way carries the earlier ones. */
   onEarlierGoing?: (key: string) => void,
+  /** A send the server offered again ({@link sendRearmed}): not terminal, and the composer promises nothing of the network. */
+  onRearmed?: (key: string) => void,
 ): Promise<Map<string, FlushedOutcome>> {
   const kinds = new Map(engine.pendingMutations().map((p) => [p.key, queuedMetaOf(p.mutation)]));
   const offQueue = queuedSendsOf(engine);
@@ -2870,6 +2894,7 @@ export async function flushQueued(
   for (const r of results) {
     if (r.status === "queued") {
       if (sendAccepted(r)) onAccepted?.(r.key);
+      if (sendRearmed(r)) onRearmed?.(r.key);
       if (earlierVersionGoing(r)) onEarlierGoing?.(r.key);
       continue;
     }
@@ -4804,6 +4829,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (outcome === "superseded") return { outcome };
     /* The 202 is said once, then later answers for the key are `in_flight`: either one counts. */
     const accepted = outcome === "queued" && (sendAccepted(first) || sendAccepted(settled));
+    /* Offered again by the server: its window there runs whatever the network does. */
+    const rearmed = outcome === "queued" && (sendRearmed(first) || sendRearmed(settled));
     /**
      * WHICH MESSAGE THIS CONFIRMATION IS ABOUT. A press that resumed a standing key is answered
      * from the first reservation when there is one — never two copies — and when its changed words
@@ -4818,7 +4845,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(
         outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
           : outcome === "queued"
-            ? refuse(accepted ? "replySendingLong" : networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
+            ? refuse(accepted ? "replySendingLong" : !rearmed && networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
               : refusedSendSay(failedSendCopy(settled)),
       );
@@ -4829,6 +4856,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...(outcome === "failed" && settled?.entityId ? { draftId: settled.entityId } : {}),
       ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
       ...(accepted ? { accepted: true as const } : {}),
+      ...(rearmed ? { rearmed: true as const } : {}),
     };
   };
 

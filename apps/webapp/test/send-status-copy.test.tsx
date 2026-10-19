@@ -142,6 +142,22 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
+  it("send_busy says the mail server would not take it now, in both scopes and both languages", () => {
+    const send: SendState = { phase: "failed", reason: "This was not sent — your mail server is busy.", code: "send_busy" };
+    for (const scope of ["reply", "compose"] as const) {
+      const en1 = render(send, en, "en", scope);
+      expect(en1).toContain("Your mail server is busy");
+      expect(en1).toContain("draft is kept");
+      expect(en1).not.toContain("Sending didn't work");
+      act(() => root?.unmount());
+      host?.remove();
+      const de1 = render(send, de, "de", scope);
+      expect(de1).toContain("Dein Mailserver ist gerade ausgelastet");
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
   it("a forward's refusals and a timed-out dial say what happened, in both scopes and both languages", () => {
     // 2026-10-19: a forward refused `attachment_part_mismatch` showed "Sending didn't work … Try
     // again" — the one sentence that says nothing about what failed. Each code below can reach a

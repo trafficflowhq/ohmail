@@ -5041,7 +5041,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // (`mail.data.auth`, honoured by `smtp-transport` `getAuth`), which issues XOAUTH2 for this one
     // send. A password config leaves the transporter's static auth in place and adds nothing.
     if (isOAuthAuth(this.config.auth)) {
-      const accessToken = await this.config.auth.fetchAccessToken();
+      // No token, no session: a throw here offered nothing, so it is a definite non-delivery.
+      let accessToken: string;
+      try {
+        accessToken = await this.config.auth.fetchAccessToken();
+      } catch (err) {
+        throw new SendNotSubmitted("token", err);
+      }
       (mail as MailWithOAuth).auth = { type: "OAuth2", user: this.config.auth.user, accessToken };
     }
 

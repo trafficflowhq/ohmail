@@ -640,6 +640,10 @@ async function claimStale(
       // is by definition a terminal outcome.
       resolvedBy: outboundSends.resolvedBy,
       resolvedAt: outboundSends.resolvedAt,
+      // Mail 0155: a `pending` row's `retry_until` is NULL.
+      attempts: outboundSends.attempts,
+      retryUntil: outboundSends.retryUntil,
+      retryRefusal: outboundSends.retryRefusal,
       mailboxId: drafts.mailboxId,
       mailboxStatus: mailboxes.status,
     })
@@ -708,6 +712,7 @@ async function claimStale(
           // rows through `INNER JOIN drafts` and only ever handles `pending`, so neither field
           // is ever set on anything it sees.
           resolvedBy: r.resolvedBy, resolvedAt: r.resolvedAt,
+          attempts: r.attempts, retryUntil: r.retryUntil, retryRefusal: r.retryRefusal,
         },
         kind: r.kind,
         mailboxId: r.mailboxId,

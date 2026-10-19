@@ -1424,16 +1424,21 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     for (const m of pending) tried.current.add(m.key);
     const flushed = engine;
     flushing.current = flushed;
-    let acceptedNow = false;
+    let heardNow = false;
     void flushQueued(flushed, acts.releaseConfirmed, (key) => {
       if (backendEngineRef.current !== flushed) return;
       settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), accepted: true });
-      acceptedNow = true;
+      heardNow = true;
     }, (key) => {
       // Said once per key: a waiting send that carries the earlier words, never the newer ones.
       if (backendEngineRef.current !== flushed || saidGoing.current.has(key)) return;
       saidGoing.current.add(key);
       showToast(refuse("earlierGoing"));
+    }, (key) => {
+      // Offered again by the server: the composer stops promising the network's return.
+      if (backendEngineRef.current !== flushed) return;
+      settlements.current.set(key, { ...(settlements.current.get(key) ?? NO_SETTLEMENT), rearmed: true });
+      heardNow = true;
     })
       .then((settled) => {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
@@ -1441,7 +1446,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         if (backendEngineRef.current !== flushed) return;
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
-          settlements.current.set(key, { accepted: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
+          settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
           // The one visible sentence per terminal outcome — a background send confirming
           // announces itself (the queued toast promised it would keep trying), an
           // unverified one says check-Sent, and any other rollback says it plainly.
@@ -1469,7 +1474,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
             showToast(refuse("liveSaveFailed"));
           }
         }
-        if (settled.size > 0 || acceptedNow) setOutcomeSeq((n) => n + 1);
+        if (settled.size > 0 || heardNow) setOutcomeSeq((n) => n + 1);
       })
       .finally(() => {
         if (flushing.current === flushed) flushing.current = null;

@@ -11,9 +11,10 @@ import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js
 /**
  * A SEND WHOSE MAIL SERVER CANNOT BE REACHED IS A REFUSAL, NEVER A 500. Driven through the real
  * route, the real `makeSendAdapter` and a real socket: a refused port and a server that never
- * greets. The answer is 424 `send_unreachable`, not retryable, the send recorded `failed`, the
- * draft an ordinary draft again, and no fault row for the 5xx alerts. Controls: an internal
- * fault still answers 500 and is counted; an SMTP 550 for the message keeps `unverified`.
+ * greets. The answer is 424 `send_unreachable`, the send recorded `failed`, the draft an ordinary
+ * draft again, and no fault row for the 5xx alerts; the same key is offered again twice and the
+ * third attempt is final. Controls: an internal fault still answers 500 and is counted; an SMTP 550
+ * for the message keeps `unverified`.
  */
 
 const app = createApp(apiRoutes);
@@ -99,36 +100,44 @@ async function credentials(
 const press = (w: Awaited<ReturnType<typeof world>>, key: string): Promise<Response> =>
   H(req("POST", `/drafts/${w.draftId}/send`, { bearer: w.s.token, headers: { "idempotency-key": key } }), w.deps);
 
-async function assertRefusedAndKept(w: Awaited<ReturnType<typeof world>>, res: Response, key: string): Promise<void> {
-  const body = await res.json() as { error?: { code?: string; message?: string; retryable?: boolean } };
-  expect({ status: res.status, code: body.error?.code, retryable: body.error?.retryable })
-    .toEqual({ status: 424, code: "send_unreachable", retryable: false });
-  expect(body.error?.message).toMatch(/not sent.*could not be reached/i);
-  const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));
-  expect(row!.status).toBe("failed");
-  const [d] = await w.db.select().from(drafts).where(eq(drafts.id, w.draftId));
-  expect({ status: d!.status, sendKey: d!.sendKey }).toEqual({ status: "draft", sendKey: null });
+/**
+ * The outage answered three times under one key: offered again after 2 s and after 5 s, then final.
+ * Each answer is the 424 refusal with its sentence, the row `failed` and the draft an ordinary draft;
+ * the fourth press is told the send failed and dials nothing.
+ */
+async function assertOfferedThenFinal(w: Awaited<ReturnType<typeof world>>, key: string): Promise<void> {
+  for (const [n, retryable, wait] of [[1, true, "2"], [2, true, "5"], [3, false, null]] as const) {
+    const res = await press(w, key);
+    const body = await res.json() as { error?: { code?: string; message?: string; retryable?: boolean } };
+    expect({ attempt: n, status: res.status, code: body.error?.code, retryable: body.error?.retryable, wait: res.headers.get("retry-after") })
+      .toEqual({ attempt: n, status: 424, code: "send_unreachable", retryable, wait });
+    expect(body.error?.message).toMatch(/not sent.*could not be reached/i);
+    const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));
+    expect({ status: row!.status, attempts: row!.attempts }).toEqual({ status: "failed", attempts: n });
+    const [d] = await w.db.select().from(drafts).where(eq(drafts.id, w.draftId));
+    expect({ status: d!.status, sendKey: d!.sendKey }).toEqual({ status: "draft", sendKey: null });
+  }
   expect(w.faults, "an outage of the person's mail server was counted as our 5xx").toEqual([]);
-  // The key is spent: a retry under it is told the send failed, and nothing dials again.
+  // Three attempts spent the key: a fourth press is told the send failed.
   const again = await press(w, key);
   expect(again.status).toBe(409);
   expect((await again.json() as { status?: string }).status).toBe("failed");
 }
 
 describe("POST /drafts/:id/send when the mail server cannot be reached", () => {
-  it("a REFUSED dial answers 424 send_unreachable through the production factory", async () => {
+  it("a REFUSED dial answers 424 send_unreachable through the production factory, offered again twice", async () => {
     const w = await world();
     await credentials(w, await closedPort(), await closedPort());
-    await assertRefusedAndKept(w, await press(w, "refused-1"), "refused-1");
+    await assertOfferedThenFinal(w, "refused-1");
   });
 
-  it("a server that never GREETS answers the same refusal, not a 500", async () => {
+  it("a server that never GREETS answers the same refusal, not a 500, offered again twice", async () => {
     const short = { connectionMs: 400, greetingMs: 400, socketMs: 5_000 };
     const w = await world({
       sendAdapter: (deps) => (id: string) => makeSendAdapter(deps(), id, { timeouts: short }, undefined, new SendConnections({ timers })),
     });
     await credentials(w, await silentServer(), await closedPort());
-    await assertRefusedAndKept(w, await press(w, "silent-1"), "silent-1");
+    await assertOfferedThenFinal(w, "silent-1");
   });
 
   it("CONTROL: a fault of ours in the same window still answers 500 and is counted", async () => {

@@ -847,6 +847,9 @@ describe("the baseline cutoff is frozen", () => {
       // The recipient keys: CREATE OR REPLACE FUNCTION and CREATE INDEX IF NOT EXISTS, no column and
       // no data. Safe over any history.
       "0154_messages_recipient_keys",
+      // The send re-arm: two ADD COLUMN IF NOT EXISTS on outbound_sends, a constant default and a
+      // nullable deadline, no data. Safe over any history.
+      "0155_outbound_sends_rearm",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

@@ -331,8 +331,9 @@ export function makeAttachmentStagingPort(deps: {
         }
         // EVERY ONE OF THESE ENDS THE SEND. A message that quietly left without a file the
         // composer showed is a wrong send — the same ruling the forward path already made about a
-        // failed IMAP stream. The reservation stays `pending` and the user retries under the same
-        // key, which is exactly why the ticket is not consumed by a send.
+        // failed IMAP stream. The pre-SMTP window records the reservation `failed`, final (a staged
+        // send is never re-armed), and the next press is a new key: the ticket is not consumed by
+        // a send, so that press can name it again.
         switch (res.failure.reason) {
           case "unknown":
             throw new ServiceError("not_found", 404, "an uploaded attachment was not found");

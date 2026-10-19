@@ -1184,6 +1184,8 @@ export function ComposeSheet({
   const [queuedKey, setQueuedKey] = useState<string | null>(null);
   /** The queued send is the server's (`SendResult.accepted`): it says it is still sending. */
   const [accepted, setAccepted] = useState(false);
+  /** The server offered it again (`SendResult.rearmed`): its window runs, so nothing promises the network. */
+  const [rearmed, setRearmed] = useState(false);
   /** The phone's network, so a send waiting for it says so in place (`send-waits.ts`). */
   const network = useNetworkNow();
   /**
@@ -1362,6 +1364,7 @@ export function ComposeSheet({
       // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
       setAccepted(false);
+      setRearmed(false);
       setPhase("idle");
       // …and the send did NOT go after all, so the too-late sentence may not stand over a
       // re-armed Send. Cleared with the phase that raised it.
@@ -1373,8 +1376,11 @@ export function ComposeSheet({
       setFailNote(said.failure ?? "replyFailed");
     }
     else if (settled === "unverified") setPhase("unverified");
-    // Still queued, and the server has said it holds the send: it is sending, not waiting.
-    else if (said.accepted) setAccepted(true);
+    // Still queued: the server holds the send (sending, not waiting), or offered it again.
+    else {
+      if (said.accepted) setAccepted(true);
+      if (said.rearmed) setRearmed(true);
+    }
     // `unverified` stays locked: the server could not say whether the message left, so the
     // only honest controls are the check-Sent sentence (in place and toasted) and Cancel.
   }, [phase, queuedKey, w, onClose]);
@@ -1547,6 +1553,7 @@ export function ComposeSheet({
     if (result.outcome === "queued") {
       setQueuedKey(result.key ?? null);
       setAccepted(result.accepted === true);
+      setRearmed(result.rearmed === true);
       setPhase("queued");
       return;
     }
@@ -1573,7 +1580,7 @@ export function ComposeSheet({
     ) : null,
     phase === "queued" || phase === "unverified" ? (
       <Txt key="queued" variant="caption" tone="ink3">
-        {phase === "queued" ? Copy[queuedCaptionKey(network, accepted)] : Copy.replyUnverified}
+        {phase === "queued" ? Copy[queuedCaptionKey(network, accepted, rearmed)] : Copy.replyUnverified}
       </Txt>
     ) : null,
     phase === "unverified" && againNote ? (

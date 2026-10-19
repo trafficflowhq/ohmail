@@ -4,6 +4,7 @@ import {
   ImapAdapter, imapFlowOptions, smtpTransportOptions, resolveImapAuth, isOAuthAuth,
   type ImapConfig,
 } from "../../src/adapters/imap.js";
+import { SendNotSubmitted } from "../../src/send.js";
 
 /**
  * OAUTH2 AT THE ADAPTER — the freshness story, proven at the line.
@@ -140,6 +141,27 @@ describe("ImapAdapter.send — OAuth is a PER-MESSAGE override, fetched at send 
     expect(sent[0].auth).toEqual({ type: "OAuth2", user: "u@contoso-com.example", accessToken: "SEND-TOKEN-2" });
     // The Sent copy was still appended.
     expect(client.appended).toHaveLength(1);
+  });
+
+  it("a token that cannot be fetched at send time offered nothing: SendNotSubmitted at `token`, nodemailer never called", async () => {
+    let calls = 0;
+    const outage = Object.assign(new Error("token endpoint 503"), { code: "OAUTH_TOKEN_ENDPOINT_UNAVAILABLE" });
+    const adapter = new ImapAdapter(
+      {
+        host: "imap.example.net", port: 993, secure: true,
+        auth: { user: "u@contoso-com.example", fetchAccessToken: async () => { calls += 1; if (calls > 1) throw outage; return "IMAP-TOKEN"; } },
+        smtp: { host: "smtp.office365.com", port: 587, secure: false },
+      },
+      { client: new SendFakeClient() },
+    );
+    await adapter.connect();
+    let offered = 0;
+    (adapter as unknown as { transporter: { sendMail: () => Promise<unknown> } }).transporter.sendMail = async () => { offered += 1; return {}; };
+    const err = await adapter.send({ from: "u@contoso-com.example", to: "b@example.net", subject: "s", text: "t", messageId: "<t@contoso-com.example>" })
+      .then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(SendNotSubmitted);
+    expect({ step: (err as SendNotSubmitted).step, cause: (err as { cause?: unknown }).cause }).toEqual({ step: "token", cause: outage });
+    expect(offered, "nothing was handed to SMTP").toBe(0);
   });
 
   it("a password config leaves the message with NO per-message auth override", async () => {

@@ -480,5 +480,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n  SELECT m.account_id, m.id, lower(je.value ->> '$.address')\n    FROM messages m, json_each(CASE WHEN json_valid(m.to_addresses) THEN m.to_addresses ELSE '[]' END) je\n   WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;",
       "INSERT OR IGNORE INTO message_recipients (account_id, message_id, address)\n  SELECT m.account_id, m.id, lower(je.value ->> '$.address')\n    FROM messages m, json_each(CASE WHEN json_valid(m.cc_addresses) THEN m.cc_addresses ELSE '[]' END) je\n   WHERE je.type = 'object' AND coalesce(je.value ->> '$.address', '') <> '' AND length(je.value ->> '$.address') <= 254;"
     ]
+  },
+  {
+    "name": "0155_outbound_sends_rearm.sql",
+    "statements": [
+      "ALTER TABLE \"outbound_sends\" ADD COLUMN \"attempts\" integer NOT NULL DEFAULT 1;",
+      "ALTER TABLE \"outbound_sends\" ADD COLUMN \"retry_until\" integer;",
+      "ALTER TABLE \"outbound_sends\" ADD COLUMN \"retry_refusal\" text;"
+    ]
   }
 ] as const;
