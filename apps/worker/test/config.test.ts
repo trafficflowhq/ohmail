@@ -22,6 +22,19 @@ function refusal(env: Record<string, string>): WorkerConfigError {
   throw new Error("expected loadConfig to refuse");
 }
 
+describe("OHMAIL_BLANK_REPAIR", () => {
+  it("reads the repair's mode, unset or empty as apply, and refuses any other value by name", () => {
+    // The worker, the self-host organizer and the reconcile backstop all take their mode from here.
+    expect(loadConfig(BASE).blankRepair).toBe("apply");
+    expect(loadConfig({ ...BASE, OHMAIL_BLANK_REPAIR: "" }).blankRepair).toBe("apply");
+    expect(loadConfig({ ...BASE, OHMAIL_BLANK_REPAIR: "off" }).blankRepair).toBe("off");
+    expect(loadConfig({ ...BASE, OHMAIL_BLANK_REPAIR: "dry" }).blankRepair).toBe("dry");
+    expect(loadConfig({ ...BASE, OHMAIL_BLANK_REPAIR: "apply" }).blankRepair).toBe("apply");
+    // A mistyped `off` read as the default would repair: it refuses the boot instead.
+    expect(refusal({ OHMAIL_BLANK_REPAIR: "of" }).configVar).toBe("OHMAIL_BLANK_REPAIR");
+  });
+});
+
 describe("attach concurrency and deadline", () => {
   it("ships four at once, a ceiling of eight and a three-minute deadline", () => {
     expect(DEFAULT_ATTACH_CONCURRENCY).toBe(4);

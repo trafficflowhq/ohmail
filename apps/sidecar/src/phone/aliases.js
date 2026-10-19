@@ -187,6 +187,10 @@ const WORKSPACE_MODULE_SUBSTITUTES = {
   "packages/db/dialect/index": { "./pg.js": path.join(PHONE, "dialect-pg.ts") },
   /* `/events`, which every local composition switches off: the twin answers that refusal. */
   "packages/api/routes/local": { "./events.js": path.join(PHONE, "events.ts") },
+  /* The blank repair, which the phone's composition switches off (`blankRepair: "off"` in
+     `mobile.ts`): the pass and its one store read, each twin refusing by name (about 11 KB). */
+  "apps/worker/sync": { "./blank-repair.js": path.join(PHONE, "blank-repair.ts") },
+  "packages/core/adapters/drizzle-repo": { "./blank-rows.js": path.join(PHONE, "blank-rows.ts") },
 };
 
 /** The {@link WORKSPACE_MODULE_SUBSTITUTES} key of a file in the workspace, or null outside it. */

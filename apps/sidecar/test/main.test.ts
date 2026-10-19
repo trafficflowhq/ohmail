@@ -149,6 +149,17 @@ describe("configFromEnv", () => {
       .toBeUndefined();
   });
 
+  it("reads OHMAIL_BLANK_REPAIR as the hosted worker does, composes none when unset, and refuses another value", () => {
+    // The engine hands it to every cycle (`SidecarConfig.blankRepair`); absent is the engine's apply.
+    expect(configFromEnv(base as NodeJS.ProcessEnv).blankRepair).toBeUndefined();
+    expect(configFromEnv({ ...base, OHMAIL_BLANK_REPAIR: " " } as NodeJS.ProcessEnv).blankRepair).toBeUndefined();
+    expect(configFromEnv({ ...base, OHMAIL_BLANK_REPAIR: "off" } as NodeJS.ProcessEnv).blankRepair).toBe("off");
+    expect(configFromEnv({ ...base, OHMAIL_BLANK_REPAIR: "DRY" } as NodeJS.ProcessEnv).blankRepair).toBe("dry");
+    expect(configFromEnv({ ...base, OHMAIL_BLANK_REPAIR: "apply" } as NodeJS.ProcessEnv).blankRepair).toBe("apply");
+    // A mistyped `off` read as the default would repair: the boot refuses, naming the variable.
+    expect(() => configFromEnv({ ...base, OHMAIL_BLANK_REPAIR: "of" } as NodeJS.ProcessEnv)).toThrow(/OHMAIL_BLANK_REPAIR/);
+  });
+
   it("a launch with no password is configured, not refused", () => {
     const env = { ...base } as Record<string, string>;
     delete env.OHMAIL_IMAP_PASS;

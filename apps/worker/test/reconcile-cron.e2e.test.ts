@@ -1,8 +1,9 @@
-import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
+import { UNMETERED_STORAGE_CAP, commitChange, planChange } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
-import { folderState, mailboxes, messages } from "@trafficflow/db";
+import { folderState, mailboxes, messageFailures, messageInstances, messages } from "@trafficflow/db";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { workerHeartbeats } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
@@ -507,4 +508,53 @@ describe("cron reconciler backstop", () => {
       .where(and(eq(workerHeartbeats.shardIndex, 0), sql`${workerHeartbeats.instanceId} like 'reconcile-cron:%'`));
     expect(beat?.leader ?? false).toBe(false);
   }, 30000);
+
+  /* ══ THE BLANK REPAIR'S MODE HOLDS ON THIS DOOR TOO ══════════════════════════════════════════
+     The sweep's two cycles run the visit's passes, the blank repair among them, so the mode an
+     operator set with OHMAIL_BLANK_REPAIR has to reach them: off and dry change nothing, and only
+     apply (unset) puts back the letter an older build's blank carried into the Screener.
+     MUTATION WATCHED: drop the `blankRepair` line from `reconcile-cron.ts`'s deps, and the off sweep
+     moves the letter to INBOX. */
+  it("honours OHMAIL_BLANK_REPAIR: off and dry change nothing, and apply returns the letter", async () => {
+    const h = await makeHarness();
+    closers.push(() => h.adapter.close());
+    const screener = serverPath("ohmail/Screener");
+    const c = await rawClient(h.cfg);
+    let place = { uidValidity: "", uid: 0 };
+    try {
+      await c.append(screener, emlOf({ from: "anna@x.example", subject: "hidden by a blank", messageId: "bk1@x" }));
+      const lock = await c.getMailboxLock(screener);
+      try {
+        const uids = await c.search({ all: true }, { uid: true }) as number[];
+        place = { uidValidity: String((c.mailbox as { uidValidity: bigint }).uidValidity), uid: Math.max(...uids) };
+      } finally { lock.release(); }
+    } finally { await c.logout(); }
+    // THE DAMAGE, as an older build stored it: the blank at the letter's place, filed there by ohmail.
+    const blankId = await h.db.transaction(async (tx) => {
+      const r = makeDrizzleRepo(tx as never);
+      const plan = await planChange({
+        type: "create", locator: { folder: "ohmail/Screener", ref: `${place.uidValidity}:${place.uid}` },
+        raw: Buffer.from("\r\n"), seen: false,
+      }, { repo: r, accountId: h.accountId, mailboxId: h.mailboxId, readerMode: false });
+      return (await commitChange(plan, {
+        storageCap: UNMETERED_STORAGE_CAP, repo: r, accountId: h.accountId, mailboxId: h.mailboxId,
+      })).messageId;
+    });
+    await h.repo.upsertFolderState(blankId, { desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us" });
+    const places = async () => (await h.db.select({ uid: messageInstances.uid }).from(messageInstances)
+      .where(eq(messageInstances.messageId, blankId))).length;
+    const owed = async () => (await h.db.select({ uid: messageFailures.uid }).from(messageFailures)
+      .where(eq(messageFailures.mailboxId, h.mailboxId))).length;
+
+    for (const mode of ["off", "dry"] as const) {
+      expect(await runReconcileCron({ ...cfgFrom(h), blankRepair: mode }), mode).toEqual({ ran: true });
+      expect(await folderHolding(h.cfg, "bk1@x"), `the ${mode} sweep moved the letter`).toBe("ohmail/Screener");
+      expect(await places(), `the ${mode} sweep let go of the blank's place`).toBe(1);
+      expect(await owed(), `the ${mode} sweep owed a re-read`).toBe(0);
+    }
+    // CONTROL: unset is apply, and the sweep puts the letter back where the blank took it from.
+    expect(await runReconcileCron(cfgFrom(h))).toEqual({ ran: true });
+    expect(await folderHolding(h.cfg, "bk1@x")).toBe("INBOX");
+    expect(await places()).toBe(0);
+  }, 60000);
 });

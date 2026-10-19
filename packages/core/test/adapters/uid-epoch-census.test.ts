@@ -188,6 +188,8 @@ const PINS: Record<string, { kind: Kind; with?: string; why: string }> = {
     { kind: "within-one-call", why: "a STATUS answer, read and spent" },
   "adapters/organizer-profile.ts ProfileImapClient.uid":
     { kind: "not-a-stored-uid", why: "the SEARCH criterion string and the fetch flag" },
+  "blank-repair.ts BlankPlace.uid":
+    { kind: "epoch-beside-it", with: "uidValidity", why: "one place a blank row holds, read only at its own epoch" },
   "epoch.ts UidRef.uid":
     { kind: "epoch-beside-it", with: "epoch", why: "the pair this whole rule is written as" },
 };

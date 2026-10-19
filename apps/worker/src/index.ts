@@ -2696,6 +2696,8 @@ export async function startWorkerWithLock(
           // and this composition is the metered one.
           storageCap: await storageCapFor(mb.accountId),
           log,
+          // `OHMAIL_BLANK_REPAIR`, as the config read it: unset is apply (`blank-repair.ts`).
+          ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
           // ── THE ONE-TIME SWEEP'S COMMAND PORT (FOLDERS-SPEC.md §16.1) ─────────────────
           //
           // Built HERE because this is where the database handle and this mailbox's adapter

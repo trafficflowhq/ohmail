@@ -449,6 +449,10 @@ export default defineConfig({
       "apps/worker/test/gone-folder-leaves-the-list.test.ts",
       // A message over the download ceiling, listed from its headers on the phone's store too.
       "apps/worker/test/too-large-message-is-listed.e2e.test.ts",
+      // The blank repair's read and its writes on the device store: the desktop repairs a blank
+      // message through the same pass (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS); the phone's
+      // build leaves the repair out (apps/mobile/test/phone-engine-leaves-out-blank-repair.test.ts).
+      "apps/worker/test/blank-repair.test.ts",
       // THE UNSUBSCRIBE DRAIN'S TWO MEMORIES (mail 0116), as STATEMENTS. The mark's insert takes
       // an `ON CONFLICT DO NOTHING` on a primary key and the cursor's an `ON CONFLICT DO UPDATE`
       // reading `excluded`, and `cursor_at` is a timestamp column the two stores spell

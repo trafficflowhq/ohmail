@@ -2,8 +2,8 @@ import { hostname } from "node:os";
 import {
   keyProviderFromEnvOptional, kekFingerprintFromEnv, kekEnvIdentity,
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
-  callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId,
-  type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
+  callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId, blankRepairModeFrom,
+  type BlankRepairMode, type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
   type KekEnvIdentity, type Logger, type AnthropicCallReport,
 } from "@trafficflow/core";
 import {
@@ -330,6 +330,11 @@ export interface WorkerConfig {
   mailboxRetryMs?: number;
   /** Consecutive runtime sync failures before a mailbox is detached + quarantined. */
   maxSyncFailures?: number;
+  /**
+   * The blank repair's mode (`blank-repair.ts`), from `OHMAIL_BLANK_REPAIR`: `off`, `dry` or `apply`,
+   * unset meaning apply. `dry` lets an operator read the counts before the first repair runs.
+   */
+  blankRepair?: BlankRepairMode;
   /**
    * THIS DEPLOYMENT'S POLICY ON THE HOSTS IT MAY DIAL, and unlike the seam below `loadConfig` DOES
    * populate it — from `TF_PROBE_ALLOW_PRIVATE`, the same variable the API reads for its add-time
@@ -970,7 +975,12 @@ export function loadConfig(
   const entitlements = loadEntitlements(env);
   const ai = workerAiEnv(env);
   assertMeteredAi(entitlements, ai);
+  const blankRepair = blankRepairModeFrom(env.OHMAIL_BLANK_REPAIR);
+  if (blankRepair === null) {
+    throw new WorkerConfigError("OHMAIL_BLANK_REPAIR", "OHMAIL_BLANK_REPAIR must be off, dry or apply");
+  }
   return {
+    blankRepair,
     databaseUrl: url,
     entitlements,
     // BOOTSTRAP-ONLY. It pairs with TF_MAILBOX_ID for the one-shot env-creds seed and

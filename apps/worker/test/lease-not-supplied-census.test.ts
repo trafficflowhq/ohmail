@@ -95,6 +95,8 @@ const HAND_INS: Record<string, string> = {
   "apps/worker/src/index.ts:attach": "hooks.writeAuthority",
   // The operator sweep: a permit under `--execute`; a dry run holds none and asks no write.
   "apps/worker/src/run-junk-sweep.ts:<module>": `{ lease: permit ?? { noLease: "not_supplied" } }`,
+  // The operator blank repair: the permit it took under `--apply`; a dry run never reaches the pass.
+  "apps/worker/src/run-blank-repair.ts:<module>": "{ lease: permit }",
 };
 
 /** EVERY CALL OF THE TWO GUARDS, by what it is handed. A seeded carrier names the gate it sits under. */
@@ -115,9 +117,12 @@ const GUARDS: Record<string, { arg: string; gate?: string }> = {
   "apps/worker/src/junk-rescue.ts:junkRescuePass:writeDoorOf": { arg: "deps.writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:assertMayWriteToMailbox": { arg: "writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:writeDoorOf": { arg: "writeAuthority" },
+  "apps/worker/src/blank-repair.ts:blankRepairPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "apps/worker/src/blank-repair.ts:blankRepairPass:writeDoorOf": { arg: "deps.writeAuthority" },
   // A permit this function took itself.
   "apps/worker/src/reconcile-cron.ts:runReconcileCron:writeDoorOf": { arg: "{ lease: permit }" },
   "apps/worker/src/run-redacted-restore.ts:<module>:writeDoorOf": { arg: "{ lease: permit }" },
+  "apps/worker/src/run-blank-repair.ts:<module>:writeDoorOf": { arg: "{ lease: permit }" },
   // A SEEDED carrier (it starts `not_supplied`), reached only under its gate's organize answer.
   "apps/worker/src/index.ts:attach:writeDoorOf": { arg: "{ lease: leaseState.leasePermit }", gate: `role === "organizer"` },
   "apps/worker/src/index.ts:visitMailbox:writeDoorOf": { arg: "{ lease: rt.leasePermit }", gate: "organize && !wasOrganizer" },

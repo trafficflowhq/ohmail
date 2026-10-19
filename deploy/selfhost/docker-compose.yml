@@ -371,6 +371,10 @@ services:
       TF_ALERT_WEBHOOK_URL: ${TF_ALERT_WEBHOOK_URL:-}
       TF_ALERT_TELEGRAM_BOT_TOKEN: ${TF_ALERT_TELEGRAM_BOT_TOKEN:-}
       TF_ALERT_TELEGRAM_CHAT_ID: ${TF_ALERT_TELEGRAM_CHAT_ID:-}
+      # THE BLANK REPAIR'S MODE, from `.env` (named there): `off` runs nothing, `dry` reads and counts
+      # and writes nothing, empty or `apply` repairs. Any other value stops the organizer at start,
+      # naming the variable. On this service alone: the api never runs the repair.
+      OHMAIL_BLANK_REPAIR: ${OHMAIL_BLANK_REPAIR:-}
       MS_OAUTH_CLIENT_ID: ${MS_OAUTH_CLIENT_ID:-}
       MS_OAUTH_CLIENT_SECRET: ${MS_OAUTH_CLIENT_SECRET:-}
       MS_OAUTH_TENANT: ${MS_OAUTH_TENANT:-}

@@ -270,6 +270,9 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // projecting nothing new). These landed UNCLASSIFIED and the guard suite was red in HEAD from
   // that wave until the 0071 slice ran it again — the dirty-by-default rule did its job late.
   "getMailboxSpecialFolders", "listAiAutoAppliedQuarantine", "listJunkFiledHusks",
+  // The blank repair's candidate read (rows joined to folder_state, then their instances): a read.
+  // Its `forgetInstanceAt` is not named, so a place it forgets drops the memo.
+  "listBlankMessages",
   // writes to tables this projection does not read
   "markKickstarted", "upsertContacts", "upsertMailboxFolder", "upsertMailboxFolders", "recordMessageFailure",
   // `list_addresses` (mail 0150) — a table this projection does not join.

@@ -153,6 +153,10 @@ const CLASSIFIED: Record<string, Row> = {
     classes: ["display", "dedup-content", "threading-corroborated"],
     why: "the store: writes the columns, serves `findByMessageIdHeader` account- and mailbox-scoped to a row with a Sent instance, and hands `isCorrespondent`'s and `citesOwnWriting`'s ids to the one predicate",
   },
+  "packages/core/src/adapters/blank-rows.ts": {
+    terms: ["messageIdHeader", "toAddresses"], classes: ["dedup-content"],
+    why: "the blank repair's store read: a row whose dedup key is an EMPTY source's and whose id and recipients are absent; no header value is compared, and the bytes on the server decide every action",
+  },
   // ── the correspondent predicate (FIX-023) and the passes that ask it ────────────────────
   "packages/core/src/correspondent.ts": {
     terms: ["ccAddresses", "in-reply-to", "inReplyTo", "messageIdHeader", "references", "toAddresses"],

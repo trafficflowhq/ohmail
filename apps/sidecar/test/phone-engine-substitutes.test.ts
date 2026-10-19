@@ -38,6 +38,8 @@ import { hostPairRoutes } from "../src/phone/host-pair-routes.js";
 import { createHostStatic } from "../src/phone/host-static.js";
 import { desktopHostRoutes } from "../src/phone/desktop-host.js";
 import { closeAfterFailedStart, openLocalDb } from "../src/phone/db.js";
+import { blankRepairPass } from "../src/phone/blank-repair.js";
+import { listBlankMessageRows } from "../src/phone/blank-rows.js";
 import {
   PHONE_AI_REFUSAL, PHONE_DEFAULT_AI_SETTINGS, createLocalAi as createPhoneAi,
 } from "../src/phone/ai-provider.js";
@@ -128,7 +130,7 @@ describe("the workspace rows name real modules, and the desktop keeps them", () 
       }
     }
     expect(missing).toEqual([]);
-    expect(Object.keys(aliases.WORKSPACE_MODULE_SUBSTITUTES)).toHaveLength(3);
+    expect(Object.keys(aliases.WORKSPACE_MODULE_SUBSTITUTES)).toHaveLength(5);
   });
 
   /* The DESKTOP engine's metafile, which `scripts/build-engine.mjs` writes: the real modules are
@@ -139,7 +141,9 @@ describe("the workspace rows name real modules, and the desktop keeps them", () 
       (JSON.parse(readFileSync(DESKTOP_META, "utf8")) as { inputs: Record<string, unknown> }).inputs,
     );
     for (const real of [/^packages\/api\/(dist|src)\/routes\/health-markers\.(js|ts)$/,
-      /^packages\/api\/(dist|src)\/routes\/events\.(js|ts)$/, /^packages\/db\/(dist|src)\/dialect\/pg\.(js|ts)$/]) {
+      /^packages\/api\/(dist|src)\/routes\/events\.(js|ts)$/, /^packages\/db\/(dist|src)\/dialect\/pg\.(js|ts)$/,
+      // The blank repair runs on the desktop: its pass and its store read are the real modules there.
+      /^apps\/worker\/(dist|src)\/blank-repair\.(js|ts)$/, /^packages\/core\/(dist|src)\/adapters\/blank-rows\.(js|ts)$/]) {
       expect(inputs.filter((p) => real.test(p)), String(real)).toHaveLength(1);
     }
     expect(inputs.filter((p) => p.startsWith("apps/sidecar/src/phone/"))).toEqual([]);
@@ -206,6 +210,11 @@ describe("the substitutes that are unreachable refuse by name", () => {
   it("the two route tables are empty", () => {
     expect(hostPairRoutes).toEqual([]);
     expect(desktopHostRoutes).toEqual([]);
+  });
+
+  it("the blank repair and its store read refuse: the phone composes the repair off", async () => {
+    await expect(blankRepairPass({})).rejects.toThrow(/does not repair blank messages/);
+    await expect(listBlankMessageRows(null, "m", 5)).rejects.toThrow(/does not repair blank messages/);
   });
 });
 
@@ -294,11 +303,11 @@ describe("the substitutes reach no Node builtin and open no socket", () => {
   });
 
   it("is not vacuous — it read fifteen real files with content in them", () => {
-    // A path list that stopped resolving would make both cases above pass over nothing. FIFTEEN
-    // since the desktop's streamed save (`attachment-file-route.ts`), fourteen since the three workspace
-    // twins. The count moves with the table on purpose, so a row that disappears is a red and not
-    // a silence.
-    expect(files).toHaveLength(15);
+    // A path list that stopped resolving would make both cases above pass over nothing. SEVENTEEN
+    // since the blank repair's two twins, fifteen since the desktop's streamed save
+    // (`attachment-file-route.ts`), fourteen since the three workspace twins. The count moves with
+    // the table on purpose, so a row that disappears is a red and not a silence.
+    expect(files).toHaveLength(17);
     for (const file of files) {
       expect(readFileSync(file, "utf8").length, basename(file)).toBeGreaterThan(200);
     }

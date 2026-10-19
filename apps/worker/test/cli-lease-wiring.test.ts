@@ -9,7 +9,7 @@ import { PermitClock } from "./_permit-clock.js";
 /**
  * THE TWO OPERATOR CLIs' LEASE WIRING — the seam the pg suite could not see.
  *
- * @reads: apps/worker/src/run-junk-sweep.ts apps/worker/src/run-redacted-restore.ts
+ * @reads: apps/worker/src/run-junk-sweep.ts apps/worker/src/run-redacted-restore.ts apps/worker/src/run-blank-repair.ts
  *
  * This file builds its read path at runtime, so no landing pass can pair it with the sources
  * it reads: K55 moved their literals and the tier read it RED with every gate green. The line
@@ -59,7 +59,7 @@ import { PermitClock } from "./_permit-clock.js";
  * again — with its own base-copy control, so the two files are one claim and neither repeats it.
  */
 
-const CLI_SOURCES = ["run-junk-sweep.ts", "run-redacted-restore.ts"] as const;
+const CLI_SOURCES = ["run-junk-sweep.ts", "run-redacted-restore.ts", "run-blank-repair.ts"] as const;
 const LEASE_DOOR = "run-cli.ts";
 
 function sourceOf(name: string): string {
@@ -158,6 +158,22 @@ describe("the operator CLIs' organizer-lease wiring", () => {
     // only server mutation, so ordering is the whole of the requirement here — and the door it is
     // handed is the permit this runner took, so every CREATE asks that same claim.
     expect(acquire).toBeLessThan(ensure);
+    expect(code).toContain("adapter.ensureFolders(writeDoorOf({ lease: permit }))");
+  });
+
+  it("run-blank-repair.ts reads nothing from the server and takes no lease unless --apply, then takes it before any write", () => {
+    const code = codeOf("run-blank-repair.ts");
+    const dry = code.indexOf("if (!apply)");
+    const acquire = code.indexOf("takeRunnerLease(");
+    const ensure = code.indexOf("adapter.ensureFolders(");
+    const pass = code.indexOf("blankRepairPass(");
+    expect(Math.min(dry, acquire, ensure, pass)).toBeGreaterThan(-1);
+    // A dry run promises nothing read from the mail server and nothing written; the lease gate APPENDS.
+    expect(dry).toBeLessThan(code.indexOf("adapter.connect("));
+    expect(acquire).toBeLessThan(ensure);
+    expect(acquire).toBeLessThan(pass);
+    // The permit is the authority the pass's one server write, the move back to INBOX, asks.
+    expect(code).toMatch(/writeAuthority\s*:\s*\{\s*lease\s*:\s*permit\s*\}/);
     expect(code).toContain("adapter.ensureFolders(writeDoorOf({ lease: permit }))");
   });
 });

@@ -70,6 +70,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // The queued "not junk", one move per press — a user-commanded organizing act the organizer
   // executes, so the permit is asked before every one of them and never once per pass.
   "apps/worker/src/junk-rescue.ts:junkRescuePass:move": "needs_permit",
+  // The blank repair's one server write: a letter the blank's own move filed away goes back to INBOX.
+  "apps/worker/src/blank-repair.ts:blankRepairPass:move": "needs_permit",
   // The user-commanded folder verbs.
   "apps/worker/src/folder-ops.ts:runCreate:createFolder": "needs_permit",
   "apps/worker/src/folder-ops.ts:runRename:renameFolder": "needs_permit",

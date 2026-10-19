@@ -38,6 +38,9 @@ export * from "./pipeline.js";
 // worker's convergence pass. Mail-half by the same test as `pipeline.js` beside it: it names no
 // model and imports only the mail schema and this package's own identity/mime vocabulary.
 export * from "./husk-restore.js";
+// What a blank message is and what its repair does at one place — pure, shared by the worker's pass
+// and its operator command.
+export * from "./blank-repair.js";
 // The search document (mail 0125): its parts, its one writer, the store-only backfill's page — and
 // the html-to-text rendering an HTML-only message's words come from.
 export * from "./html-text.js";

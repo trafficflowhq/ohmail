@@ -3,7 +3,7 @@ import { hostname } from "node:os";
 import { and, eq, sql } from "drizzle-orm";
 import {
   StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
-  type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
+  type BlankRepairMode, type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
@@ -361,6 +361,14 @@ export interface SidecarConfig {
    * {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a positive number refuses the boot.
    */
   heartbeatTimeoutMs?: number;
+  /**
+   * The blank repair's mode (`apps/worker/src/blank-repair.ts`), handed to every cycle: `off` runs
+   * nothing, `dry` reads and counts and writes nothing, `apply` repairs. Absent is apply. The desktop
+   * reads `OHMAIL_BLANK_REPAIR` (`main.ts`), as the hosted worker does. The phone (`mobile.ts`) passes
+   * `off`, always: its build carries no repair (the alias table substitutes a twin that refuses,
+   * `phone/blank-repair.ts`), so it never runs one, whole or in part.
+   */
+  blankRepair?: BlankRepairMode;
   /**
    * Diagnostics. NEVER stdout in the real process — stdout is the frame stream.
    *
@@ -4463,6 +4471,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            is read again by the next build, the version arm of `claimMessageFailures`. Absent or
            the shell's `unknown`: the environment's answer, `dev` on every local door. */
         ...(engineBuild === null ? {} : { buildVersion: engineBuild }),
+        // The blank repair's one mode, as this install was configured (`SidecarConfig.blankRepair`):
+        // `off` and `dry` hold on this door as on the hosted worker's. Absent is apply.
+        ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
       };
 
       let stopped = false;

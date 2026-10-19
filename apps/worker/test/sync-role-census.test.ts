@@ -153,6 +153,27 @@ describe("every composition that runs the pipeline names the role", () => {
     expect(checked, "no composition roots were checked — the list lost its entries").toBe(3);
   });
 
+  it("every COMPOSITION ROOT hands the cycle its config's blank repair mode", () => {
+    /* `SyncDeps.blankRepair` absent is APPLY, a pass that writes to people's mailboxes, so a root
+       that forgets the field runs the repair while OHMAIL_BLANK_REPAIR says off or dry. The reconcile
+       backstop and the desktop and phone engine did, and `off` held on the worker's own loop only.
+       Each root states the mode from its own configuration, the one the operator's variable fills. */
+    const files = found();
+    let checked = 0;
+    for (const [file, kind] of Object.entries(CYCLE_SITES)) {
+      if (kind !== "role") continue;
+      const src = files.get(file);
+      expect(src, `${file} is listed as a composition root and the walk did not find it`).toBeDefined();
+      expect(
+        /\bblankRepair:\s*config\.blankRepair\b/.test(src!),
+        `${file} builds SyncDeps without \`blankRepair\` — the repair would run as apply there `
+        + "whatever OHMAIL_BLANK_REPAIR says",
+      ).toBe(true);
+      checked++;
+    }
+    expect(checked, "no composition roots were checked — the list lost its entries").toBe(3);
+  });
+
   it("`readerMode` is DERIVED IN ONE PLACE, and that place is `sync.ts`", () => {
     // The property that makes the role and the router unable to disagree about one message. A
     // second derivation anywhere is two answers to one question, which is how `screeningCutoff`'s

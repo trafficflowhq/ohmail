@@ -19,6 +19,8 @@ import {
   unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
   type JunkHuskIdentity, type JunkUnhuskOutcome,
 } from "../husk-restore.js";
+import type { BlankMessageRow } from "../blank-repair.js";
+import { listBlankMessageRows } from "./blank-rows.js";
 import { foldMessageIdDomain } from "../identity.js";
 import { MAX_THREAD_PARTICIPANTS } from "../threading.js";
 import { MAX_STORED_ADDRESS_CHARS, storedAddress, storedMessageId, storedSubject } from "../stored-values.js";
@@ -584,6 +586,14 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
     accountId: string, mailboxId: string,
     opts: { limit: number; afterId?: string; messageIds?: readonly string[] },
   ): Promise<JunkFiledHuskRow[]>;
+  /**
+   * The mailbox's live BLANK rows (`blank-repair.ts`): one of the two dedup keys an empty source
+   * normalizes to, and every column an empty parse leaves empty. Each with its places, primary
+   * first, at most `placeLimit` in all, how many it holds in all, and its folder_state. A real
+   * content-free letter matches too; the repair tells the two apart by the bytes. Optional: absent
+   * reads as none.
+   */
+  listBlankMessages?(mailboxId: string, placeLimit?: number): Promise<BlankMessageRow[]>;
   /**
    * VERIFY + REWRITE one `junk_filed` husk from bytes the caller re-read off the mail server —
    * the shared seam (`husk-restore.ts`) both restore doors end at; see its header for the
@@ -1494,6 +1504,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       uidValidity: String(r.uidValidity),
       uid: r.uid,
     }));
+  }
+
+  /**
+   * See {@link WorkerRepo.listBlankMessages}. The reads live in `blank-rows.ts`, which the phone's
+   * build substitutes with a twin that refuses: the phone runs no blank repair and carries none.
+   */
+  async listBlankMessages(mailboxId: string, placeLimit = 100): Promise<BlankMessageRow[]> {
+    return listBlankMessageRows(this.db, mailboxId, placeLimit);
   }
 
   /** The shared verify/rewrite, on this repo's connection — the worker's fence tx when fenced. */

@@ -78,6 +78,21 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter; writes through the fenced group",
   },
   {
+    name: "blank_repair",
+    module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
+    // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the
+    // desktop and phone engines, which import it as `@trafficflow/worker/sync` (junk_rescue's
+    // reasoning). Each composition hands the cycle its one OHMAIL_BLANK_REPAIR mode
+    // (`sync-role-census.test.ts`).
+    triggers: ["visit", "cli"], cli: ["run-blank-repair.ts"],
+    cadence: "at the visit's tail, only when the cycle deferred nothing; OHMAIL_BLANK_REPAIR off | dry | apply (unset: apply)",
+    budget: "BLANK_REPAIR_PLACES_PER_VISIT places per visit, each downloaded at most once per process under "
+      + "BLANK_REPAIR_MAX_BYTES; a place left unread, deferred or with a failed move waits "
+      + "BLANK_REPAIR_RETRY_BASE_MS, doubling to BLANK_REPAIR_RETRY_MAX_MS",
+    owns: "a blank message an older build stored in a letter's place gives the place back, and a letter its move filed away returns to INBOX",
+    fence: "the visit's leased adapter, the lease asked before the one move; writes through the fenced group; a reader moves nothing",
+  },
+  {
     name: "own_mail_release",
     module: `${DB}/own-mail.ts`, entry: "releaseOwnMailAtGate",
     // Called through the visit's repo (`WorkerRepo.releaseOwnMailAtGate`); the desktop engine runs

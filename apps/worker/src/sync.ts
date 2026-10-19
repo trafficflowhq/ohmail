@@ -1,6 +1,6 @@
 import {
   planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
-  type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
+  type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
   type ImportHold, type Logger, type OhboxPolicy, type ProcessResult, type StorageCap,
 } from "@trafficflow/core/mail";
 import {
@@ -35,6 +35,7 @@ import {
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
+import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
 import {
@@ -142,6 +143,14 @@ export interface SyncDeps {
    * one would charge the wrong customer.
    */
   credits?: CreditGate;
+  /**
+   * The blank repair's mode (`blank-repair.ts`): `off`, `dry` (read and count, write nothing) or
+   * `apply`. Absent means apply. Every composition root hands over its configuration's mode
+   * (`sync-role-census.test.ts`): the worker and the reconcile backstop read `OHMAIL_BLANK_REPAIR`,
+   * the desktop engine the same variable, and the phone passes `off` (its build carries no repair:
+   * `apps/sidecar/src/phone/blank-repair.ts`).
+   */
+  blankRepair?: BlankRepairMode;
   /**
    * The authserv-ids this MAILBOX's own provider signs `Authentication-Results` with —
    * `providerAuthservIds(<the IMAP host this connection dials>)`, resolved where the adapter is built
@@ -659,7 +668,7 @@ function writeAuthorityOf(deps: Pick<SyncDeps, "fence" | "writeAuthority">): Mai
 }
 
 /** The passes a cycle writes in — the vocabulary its stand-down verdict names a place with. */
-export type CyclePass = "folder_ops" | "junk_rescue" | "junk_sweep" | "filing" | "flags";
+export type CyclePass = "folder_ops" | "junk_rescue" | "junk_sweep" | "blank_repair" | "filing" | "flags";
 
 /**
  * WHERE THIS CYCLE WAS WHEN IT LAST ASKED THE LEASE — one mutable cursor per cycle, advanced at the
@@ -1627,6 +1636,32 @@ async function syncCycleWithin(
       }
       rethrowRefusal(err);
       log?.warn("junk_restore_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
+  /* THE BLANK REPAIR (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS): the junk restore's place and
+     rule, the visit's tail and only when nothing was deferred. A blank an older build stored in a
+     letter's place gives the place back, and a letter its move filed away goes back to INBOX; the
+     reconcile below sees no desire left for it. See `blank-repair.ts`. */
+  const blankMode = deps.blankRepair ?? "apply";
+  if (deferred.size === 0 && blankMode !== "off") {
+    try {
+      openPage(at, "blank_repair");
+      await blankRepairPass({
+        repo, adapter, accountId, mailboxId, role: readerMode ? "reader" : "organizer", mode: blankMode,
+        write: (fn) => fencedLiveGroup(deps, fn), writeAuthority: writeAuthorityOf(deps), version,
+        ...(log !== undefined ? { log } : {}),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("blank_repair_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so nothing more was written",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("blank_repair_pass_failed", { mailboxId, accountId, err });
     }
   }
 

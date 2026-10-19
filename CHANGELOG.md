@@ -33,6 +33,21 @@ it builds. A first start opened the store in 2.2 s instead of 3.7 s on a Linux t
 macOS and Windows, where each of those 241 writes waited for the drive. A store that already holds your mail is
 still written to the disk after every change.
 
+### Letters an empty message stood in for are imported
+
+Reading or flagging a message in another app while ohmail imported your mail could leave an empty message in
+a letter's place; 0.27.4 stopped new ones. The syncs after this update repair the ones already there, a few
+at a time: the empty message leaves your list, each letter it stood in for is imported, and a letter ohmail
+moved into the ohmail Screener folder because of it goes back to your Inbox, where your rules sort it as
+usual. A message that really has no content is left alone.
+
+The repair runs in the desktop app, on Cloud and on your own server. The phone app gets it in a later version;
+it already has the 0.27.4 fix, so it stores no new empty messages.
+
+On your own server, `OHMAIL_BLANK_REPAIR` sets what the organizer does: unset, it repairs; `dry` reads each
+affected message once while the organizer runs and logs counts of what the repair would do, changing nothing;
+`off` turns the repair off. Any other value stops the organizer from starting.
+
 ### Still to come
 
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See

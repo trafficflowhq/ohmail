@@ -82,6 +82,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "retention-prune.ts::retentionPrunePass",
   "retention-prune.ts::signInRetentionPass",
   "away-reply-flag-redeliver.ts::awayReplyFlagRedeliverPass",
+  "blank-repair.ts::blankRepairPass",
   "bubble-up-cron.ts::runBubbleUpCron",
   "bubble-up-pass.ts::bubbleUpPass",
   "folder-ops.ts::folderOpsPass",

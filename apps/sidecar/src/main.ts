@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { type Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { blankRepairModeFrom } from "@trafficflow/core/mail";
 import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
 import { armFirstPageGate } from "./first-page-gate.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
@@ -166,6 +167,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
   // carries only the key. A launch with neither is not an error either — the engine serves the
   // mirror and the shell asks for a password.
   const pass = env.OHMAIL_IMAP_PASS;
+  // THE BLANK REPAIR'S MODE, the hosted worker's variable and parser: an unknown value refuses the
+  // boot by name, because a mistyped `off` read as the default would repair.
+  const blankRepair = blankRepairModeFrom(env.OHMAIL_BLANK_REPAIR);
+  if (blankRepair === null) {
+    throw new Error("OHMAIL_BLANK_REPAIR must be off, dry or apply; unset it to repair");
+  }
   return {
     dataDir: env.OHMAIL_DATA_DIR ?? required("OHMAIL_DATA_DIR"),
     ...(env.OHMAIL_ATTACHMENT_STAGING_DIR ? { attachmentStagingDir: env.OHMAIL_ATTACHMENT_STAGING_DIR } : {}),
@@ -204,6 +211,8 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConf
     // declare every mailbox unreachable on every poll, which is a misconfiguration wearing an
     // outage's clothes rather than a degraded feature.
     ...(env.OHMAIL_HEARTBEAT_MS ? { heartbeatTimeoutMs: Number(env.OHMAIL_HEARTBEAT_MS) } : {}),
+    // Composed only when set: an ordinary launch passes nothing and the engine's apply stands.
+    ...(env.OHMAIL_BLANK_REPAIR?.trim() ? { blankRepair } : {}),
     /* HOW OFTEN THE ENGINE WRITES ITS OWN MEMORY DOWN. Absent is the shipped five minutes, and
        a measurement run shorter than that reads no figure of the engine's own — which is why
        every recorded reading of this app so far came from an external sampler. The value is

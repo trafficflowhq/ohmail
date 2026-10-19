@@ -419,6 +419,9 @@ export async function runReconcileCron(
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
       fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),
+      // `OHMAIL_BLANK_REPAIR`, as this process's config read it — the worker's one mode, so `off`
+      // and `dry` hold while the backstop sweeps in the worker's place (unset is apply).
+      ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
       // ── NO `knownSet`, AND THAT IS A RULING RATHER THAN AN OMISSION ────────────────────────
       //
       // The known-set memo (`known-set.ts`) is worth having because the hosted worker re-reads the

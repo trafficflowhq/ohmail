@@ -614,6 +614,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // address — named so, because a bare `endpoint` here would admit a push URL anywhere; `metered` is
   // the organizer's boolean, ENTITLEMENTS_URL set. `kind` is admitted above.
   "aiEndpoint", "metered",
+  // THE BLANK REPAIR (`blank_repair`, apps/worker/src/blank-repair.ts), added WITH its call site:
+  // `mode` is the closed word off | dry | apply, the other three counts of rows and places. `kept`,
+  // `released`, `owed` and `unreadable` are admitted above. No folder, UID or message on the line.
+  "mode", "blanks", "places", "returned",
 ] as const;
 
 /**
