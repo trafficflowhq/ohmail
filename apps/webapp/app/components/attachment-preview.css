@@ -61,6 +61,9 @@ body.ap-lock { overflow: hidden; }
   cursor: pointer; transition: background .16s var(--swift), border-color .16s var(--swift);
 }
 .ap-btn:hover { background: var(--tint2); border-color: var(--hair); }
+/* A desktop save running: the loader in the glyph's place, and the press inert. */
+.ap-btn[aria-disabled] { cursor: default; }
+.ap-btn .ap-spin { width: 14px; height: 14px; }
 
 .ap-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;

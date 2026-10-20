@@ -1,12 +1,9 @@
 /**
- * pdf.js, absent from BOTH desktop artifacts. `AttachmentPreview.tsx` dynamically imports
- * `pdfjs-dist`; `vite.config.ts` aliases it here, OUTSIDE the build conditional, because this
- * is a property of the WINDOW: the CSP says `worker-src 'none'` in both artifacts
- * (`tauri.conf.json`; the engine conf overrides `bundle` alone), pdf.js cannot start its
- * worker, and its module-initialisation breaks the bundle's boot under the locked policy.
- * Inline PDF preview is therefore not a capability either artifact has: a PDF is handed to the
- * shell (`app/shell/open-attachment.ts`), written under its own directory, opened with the
- * platform's opener — and `MessagePane` withholds the in-app viewer for PDFs.
+ * pdf.js, absent from the HOST CLIENT only, the page a desktop host serves to a phone.
+ * `AttachmentPreview.tsx` dynamically imports `pdfjs-dist`; `vite.config.ts` aliases it here in
+ * that build, whose policy says `worker-src 'none'` (`host.html`), so pdf.js has no worker to
+ * start. The overlay opens and says it cannot show the PDF, with a Download. The window build
+ * gets the real library instead (`window-pdfjs.ts`).
  */
 
 /*
@@ -26,9 +23,8 @@
 export const GlobalWorkerOptions: { workerSrc: string } = { workerSrc: "" };
 
 /**
- * The one entry point the reader calls, and the line that actually refuses. Unreachable in the
- * fixtures-only build, which has no attachment bytes to open; REACHED in the engine-bearing one,
- * every time somebody opens a PDF. The reader catches this and shows its cannot-render state.
+ * The one entry point the reader calls, and the line that actually refuses, every time somebody
+ * opens a PDF on the served page. The reader catches this and shows its cannot-render state.
  */
 export function getDocument(): never {
   throw new Error("pdf preview is not available in this build");

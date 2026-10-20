@@ -59,6 +59,8 @@ export interface AttachmentItem {
   inline?: boolean;
   /** A desktop text preview over the shell's inline cap: the overlay offers the save instead. */
   previewTooLarge?: boolean;
+  /** A desktop save of this `ready` part is running; the tile and the preview's Download read busy. */
+  saving?: boolean;
 }
 
 /**
@@ -420,9 +422,13 @@ function Tile({
 }) {
   const size = formatSize(item.sizeBytes);
   const [stem, ext] = splitName(item.filename);
+  const loading = item.state === "loading";
+  /* A desktop save of a part on screen fetches it from the mailbox again and says so here. The part
+     stays `ready`, so its preview still opens; only the save is busy. */
+  const saving = item.state === "ready" && item.saving === true;
 
   const stateLine: ReactNode =
-    item.state === "loading" ? (
+    loading || saving ? (
       <>
         <Spinner className="att-spin" />
         {COPY.loading}
@@ -472,7 +478,6 @@ function Tile({
   /* One element across idle → loading → ready/failed, so focus survives the fetch it
      started. While loading the press is inert (guarded, not `disabled` — `disabled`
      would drop that focus mid-wait). */
-  const loading = item.state === "loading";
   /**
    * CAN THIS TILE'S PRESS SHOW SOMETHING? `onPreview` arrives already filtered by `canPreview`
    * (`ReadyStrip` does that, so the security judgement stays in one place), and a `failed` tile is
@@ -483,14 +488,16 @@ function Tile({
    * any tile whose bytes failed. One verb, no second name for it.
    */
   const canLook = item.state !== "failed" && onPreview != null;
+  // The press that saves is inert while its save runs; a look at a part on screen never is.
+  const inert = loading || (saving && !canLook);
   return (
     <div className="att-item" data-side={canLook ? "" : undefined}>
       <button
         type="button"
         className="att-tile"
         data-state={item.state}
-        aria-busy={loading || undefined}
-        aria-disabled={loading || undefined}
+        aria-busy={loading || saving || undefined}
+        aria-disabled={inert || undefined}
         title={
           item.state === "failed"
             ? fileFaultSentence(item)
@@ -498,7 +505,7 @@ function Tile({
               ? COPY.preview(item.filename)
               : COPY.download(item.filename)
         }
-        onClick={loading ? undefined : () => (canLook ? onPreview!(item.id) : onOpen(item.id))}
+        onClick={inert ? undefined : () => (canLook ? onPreview!(item.id) : onOpen(item.id))}
       >
         {body}
       </button>
@@ -508,8 +515,8 @@ function Tile({
           className="att-side"
           aria-label={COPY.download(item.filename)}
           title={COPY.download(item.filename)}
-          aria-disabled={loading || undefined}
-          onClick={loading ? undefined : () => onOpen(item.id)}
+          aria-disabled={loading || saving || undefined}
+          onClick={loading || saving ? undefined : () => onOpen(item.id)}
         >
           {GLYPH_SAVE}
         </button>

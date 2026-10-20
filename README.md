@@ -257,8 +257,9 @@ them.
 - **Calendar invites as event cards** — invitations, replies, cancellations and
   proposed new times, downloadable as a standard `.ics`.
 - **Search that sorts** — best match, newest, oldest, by mailbox or by sender.
-- **Attachments open natively.** One press opens a file in the app your
-  computer already uses for it; Download all gives you files, not a zip.
+- **Attachments preview in the app.** Pictures, PDFs and text open in a preview
+  over your mail; Download saves a file to your Downloads folder, and Download
+  all gives you files, not a zip.
 - **Every filing verb can be undone.** Move, file, Junk, Done, Later, Park,
   delete and the bulk verbs raise one toast with Undo — `z` from the keyboard —
   and a notice that arrives meanwhile shows beneath it instead of taking it

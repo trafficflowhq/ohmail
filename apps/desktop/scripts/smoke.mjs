@@ -706,8 +706,11 @@ check("index.html names an entry script to inspect", entryScripts.length > 0);
    goes to the network for a module the artifact does not contain. Matched
    anywhere rather than at a statement boundary, because there is no position
    this may legally appear in. A string could in principle say `import(` and fail
-   this wrongly — that direction is loud and fixable; the other is a silent green. */
-const DYNAMIC_IMPORT = /\bimport\s*\(/;
+   this wrongly — that direction is loud and fixable; the other is a silent green.
+   ONE import is admitted, by its exact expression: `src/window-pdfjs.ts` loading
+   pdf.js on the first PDF from the dist's own `pdf.min.mjs`, which must be there. */
+const DYNAMIC_IMPORT = /\bimport\s*\(/g;
+const OWN_PDFJS = /^import\(\s*new URL\(\s*"pdf\.min\.mjs"\s*,\s*document\.baseURI\s*\)\.href\s*\)/;
 
 for (const src of entryScripts) {
   const file = path.join(DIST, src.replace(/^\.?\//, ""));
@@ -742,15 +745,21 @@ for (const src of entryScripts) {
       : `${parseError.message} — the window arm must build as an IIFE ` +
         "(vite.config.ts rollupOptions.output.format), which is what keeps module-only syntax out",
   );
-  const dynamic = DYNAMIC_IMPORT.exec(code);
+  const imports = [...code.matchAll(DYNAMIC_IMPORT)];
+  const own = imports.filter((m) => OWN_PDFJS.test(code.slice(m.index)));
+  const dynamic = imports.find((m) => !own.includes(m));
   check(
-    `${src} pulls in no further module at runtime`,
-    dynamic === null,
-    dynamic === null
+    `${src} pulls in no further module at runtime but the dist's own pdf.js`,
+    dynamic === undefined,
+    dynamic === undefined
       ? ""
       : `dynamic import at offset ${dynamic.index}: ${JSON.stringify(code.slice(dynamic.index, dynamic.index + 48))}` +
         " — the chunk is meant to be self-contained (build.rollupOptions.output.inlineDynamicImports)",
   );
+  if (own.length > 0) {
+    check(`${src} imports pdf.js once, from a file the dist holds`,
+      own.length === 1 && fs.existsSync(path.join(DIST, "pdf.min.mjs")), `${own.length} import(s)`);
+  }
 }
 
 const consoleErrors = [];

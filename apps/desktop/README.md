@@ -122,7 +122,7 @@ find, which is the no-demo rule as bytes rather than as intent.
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
 img-src 'self' data: blob: attachment-preview: http://attachment-preview.localhost;
 font-src 'self'; connect-src ipc:; media-src 'none'; object-src 'none';
-frame-src 'none'; worker-src 'none'; base-uri 'none'; form-action 'none';
+frame-src 'none'; worker-src 'self'; base-uri 'none'; form-action 'none';
 frame-ancestors 'none'
 ```
 
@@ -139,6 +139,14 @@ the part into its staging folder and serves it by a random token
 (`src-tauri/src/attachment_preview.rs`), so the image never crosses the command
 channel, which carries raw bytes as a JSON array. It names no file and serves only
 files the shell staged there, to the main window, as one of four raster types.
+
+`worker-src 'self'` admits one worker, pdf.js's, which draws a PDF in the preview
+from a file of the bundle (`src/window-pdfjs.ts`). The window builds it and hands
+it to pdf.js as a port, so a refused worker fails the PDF instead of parsing it on
+the page's own thread. A worker obeys the policy of its own script, not the page's,
+so the shell answers every file of the app's that is not a page with
+`default-src 'none'` (`src-tauri/src/navigation.rs`): inside the worker there is no
+connection, no import and no eval.
 
 `connect-src` is the load-bearing one. Its one source is Tauri's in-process
 command scheme, which every shell command already rides: a POST this app's own
@@ -284,7 +292,11 @@ the complete list on every run and reports its size beside it, so the number her
 is reconciled against a run rather than remembered: at 0.8.0 it is **38 on Linux
 and 29 on Windows**. Neither is asserted in the workflow, deliberately — a
 toolchain bump moves them for reasons nobody can act on, and the check that has to
-hold is the allow-list below.
+hold is the allow-list below. pdf.js's two files, which the window bundle carries
+for the PDF preview, add the XML namespace constants it reads documents with (XFA,
+XMP, XFDF, XHTML, SVG and a few more), its Apache licence link, and two base
+addresses it resolves relative links against (`http://example.com`,
+`https://foo.bar`); nothing dials any of them.
 
 **What CI actually fails on is the allow-list, and it is spelled out one entry at
 a time.** Every URL in the binary naming `ohmail` or `trafficflow` must be one of:

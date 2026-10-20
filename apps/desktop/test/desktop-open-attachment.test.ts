@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,7 +32,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *  2. the window sends no path and no directory — the payload has exactly two fields, so there is
  *     no value a message could shape into a place on the disk;
  *  3. the WEB app is untouched: no command, and the anchor keeps the browser's own semantics;
- *  4. a PDF is not offered the in-app viewer on the desktop, because that build cannot draw one;
+ *  4. the in-app viewer is offered on exactly the types the web previews, PDF included: no shared
+ *     source keeps a desktop exception (`desktop-attachment-spotlight.test.tsx` presses it);
  *  5. the shell's grant names the command — the silent shape this family is prone to, since a
  *     command registered and not granted fails at the ACL with no window and no log;
  *  6. the name a message chose cannot name a file outside the shell's own directory (the Rust
@@ -51,10 +52,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *    `desktopAttachmentsEnabled()`
  *  · have `saveAttachmentToDownloads` send a third field            → the payload-shape case goes
  *    (a path, a directory, the bytes)                                 red;
- *  · make `opensInSystemViewer` answer true without arming          → the web-app preview case
- *                                                                     goes red;
- *  · make `opensInSystemViewer` answer false for `application/pdf`  → the desktop preview case
- *                                                                     goes red;
+ *  · put a desktop exception back into `MessageFiles`' `canPreview` → the canPreview case goes
+ *    (`&& !opensInSystemViewer(…)`)                                    red, and so does the census;
  *  · register `save_attachment` and leave it out of the capability  → the grant case goes red;
  *  · bring `open_attachment` back anywhere (handler, grant, build)  → the no-open case goes red;
  *  · drop `enableDesktopAttachments()` from `main.tsx`              → the arming case goes red.
@@ -289,39 +288,6 @@ describe("the web app is not touched", () => {
       { href: "blob:http://localhost/2", download: "Photo.jpg" },
     ]);
   });
-
-  it("and a PDF keeps its in-app viewer there", async () => {
-    const { opensInSystemViewer } = await freshModule();
-    expect(opensInSystemViewer("application/pdf")).toBe(false);
-  });
-});
-
-/* ─────────────────────────────────────────────────────────────────────────────────────────
-   WHICH TYPES THE WINDOW GIVES UP ON — one, and for a stated reason.
-   ───────────────────────────────────────────────────────────────────────────────────────── */
-
-describe("what the desktop hands over rather than drawing", () => {
-  it("a PDF, because this build has no PDF renderer at all", async () => {
-    const mod = await freshModule();
-    mod.enableDesktopAttachments();
-    expect(mod.opensInSystemViewer("application/pdf")).toBe(true);
-    // The parameters a mail header carries are not part of the type.
-    expect(mod.opensInSystemViewer("application/PDF; name=x.pdf")).toBe(true);
-  });
-
-  it("and nothing else — an image and a text part are drawn from bytes already in hand", async () => {
-    const mod = await freshModule();
-    mod.enableDesktopAttachments();
-    for (const mime of [
-      "image/png", "image/jpeg", "image/gif", "image/webp",
-      "text/plain", "text/calendar",
-      // Not previewable anywhere; its tile already saves, and this predicate must not be the
-      // thing that decides that — `isPreviewable` owns it, in one place.
-      "application/zip", "image/svg+xml",
-    ]) {
-      expect(mod.opensInSystemViewer(mime), `${mime} was taken off the in-app viewer`).toBe(false);
-    }
-  });
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
@@ -444,20 +410,33 @@ describe("the window entry arms it", () => {
   });
 });
 
-describe("the reading pane withholds the in-app viewer for the type this build cannot draw", () => {
-  it("MessageFiles asks `opensInSystemViewer` alongside `isPreviewable`", () => {
+describe("the reading pane offers the in-app viewer on the types the web previews", () => {
+  const shared = (() => {
+    try {
+      readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/MessageFiles.tsx"));
+      return resolve(process.cwd(), "apps/webapp/app");
+    } catch {
+      return resolve(process.cwd(), "../webapp/app");
+    }
+  })();
+
+  it("MessageFiles' canPreview is exactly isPreviewable(item.mimeType)", () => {
     // The strip is `MessageFiles`, which every reading pane renders; the pane is held to it.
-    const read = (name: string): string => {
-      try {
-        return readFileSync(resolve(process.cwd(), `apps/webapp/app/shell/${name}`), "utf8");
-      } catch {
-        return readFileSync(resolve(process.cwd(), `../webapp/app/shell/${name}`), "utf8");
+    expect(readFileSync(resolve(shared, "shell/MessagePane.tsx"), "utf8")).toMatch(/<MessageFiles messageId=\{message\.id\} \/>/);
+    const pane = readFileSync(resolve(shared, "shell/MessageFiles.tsx"), "utf8");
+    expect(pane.match(/canPreview=\{[^\n]*\}/g)).toEqual(["canPreview={(item) => isPreviewable(item.mimeType)}"]);
+  });
+
+  it("no shared source keeps a desktop exception to the preview", () => {
+    const named: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = resolve(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(e.name) && readFileSync(p, "utf8").includes("opensInSystemViewer")) named.push(p);
       }
     };
-    expect(read("MessagePane.tsx")).toMatch(/<MessageFiles messageId=\{message\.id\} \/>/);
-    const pane = read("MessageFiles.tsx");
-    expect(pane).toMatch(
-      /canPreview=\{\(item\) => isPreviewable\(item\.mimeType\) && !opensInSystemViewer\(item\.mimeType\)\}/,
-    );
+    walk(shared);
+    expect(named, "a shared source still hands a type the web previews to the system viewer").toEqual([]);
   });
 });

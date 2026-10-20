@@ -1601,6 +1601,11 @@ export interface AttachmentItem {
    * ({@link StagedPreview}). The file itself is fine — the overlay offers the save instead.
    */
   previewTooLarge?: boolean;
+  /**
+   * A desktop save of this `ready` part is running ({@link OhmailEngine.deliverAttachment}): `state`
+   * and the bytes stay as they are, so a preview showing them stays too; a control may read busy.
+   */
+  saving?: boolean;
   /** The server's own sentence when `state` is `failed` or `too_large`. */
   error?: string;
   /**
@@ -10452,34 +10457,59 @@ export class OhmailEngine {
 
   /**
    * A SAVE THAT NEVER HOLDS THE BYTES: the desktop's, where the shell has the engine stream the part
-   * to disk. Same guards and single flight as {@link openAttachment}; the item reads `loading` while
-   * `deliver` runs and goes back to where it was, and a throw lands on it as a fetch refusal would.
-   * Answers `deliver`'s value, or `undefined` when nothing was asked or it threw.
+   * to disk. Same guards and single flight as {@link openAttachment}. An item not yet fetched reads
+   * `loading` while `deliver` runs and goes back to `idle`, and a throw lands on it as a fetch refusal
+   * would. A `ready` item is one this window shows (a preview, a drawn picture): the save leaves it
+   * as it is, as a browser's download leaves the page, and marks it `saving` meanwhile; a throw then
+   * answers `opts.refused`, for the press to say. Answers `deliver`'s value, or `undefined` when
+   * nothing was asked or it threw.
    */
   async deliverAttachment<T>(
-    messageId: string, attachmentId: string, deliver: () => Promise<T>, opts: { retry?: boolean } = {},
+    messageId: string, attachmentId: string, deliver: () => Promise<T>,
+    opts: { retry?: boolean; refused?: (err: unknown) => T } = {},
   ): Promise<T | undefined> {
     const flightKey = `${messageId}:${attachmentId}`;
     // A second press during a save is not a second save; a press during a preview's fetch waits for it.
     if (this.attachmentDeliveries.has(flightKey)) return undefined;
     await this.attachmentRequests.get(flightKey);
-    if (this.attachmentRequests.has(flightKey)) return undefined;
+    if (this.attachmentRequests.has(flightKey) || this.attachmentDeliveries.has(flightKey)) return undefined;
     const current = this.itemOf(messageId, attachmentId);
     if (!current || current.state === "too_large") return undefined;
     if (current.state === "failed" && !opts.retry) return undefined;
-    const settled: Partial<AttachmentItem> = current.state === "ready" ? { state: "ready" } : { state: "idle" };
+    if (current.state === "ready") return this.deliverShown(messageId, attachmentId, deliver, opts.refused);
     this.patchAttachment(messageId, attachmentId, {
       state: "loading", error: undefined, code: undefined, retryable: undefined, status: undefined,
     });
     let answer: T | undefined;
     const request = deliver().then(
-      (got) => { answer = got; this.patchAttachment(messageId, attachmentId, settled); },
+      (got) => { answer = got; this.patchAttachment(messageId, attachmentId, { state: "idle" }); },
       (err: unknown) => this.refuseAttachment(messageId, attachmentId, err),
     ).finally(() => { this.attachmentRequests.delete(flightKey); this.attachmentDeliveries.delete(flightKey); });
     this.attachmentRequests.set(flightKey, request);
     this.attachmentDeliveries.add(flightKey);
     await request;
     return answer;
+  }
+
+  /**
+   * {@link deliverAttachment} for a part this window shows. Not a flight of
+   * {@link attachmentRequests}: a preview opened again meanwhile (its staged file released) must
+   * stage the part, not wait on a save that stages nothing.
+   */
+  private async deliverShown<T>(
+    messageId: string, attachmentId: string, deliver: () => Promise<T>, refused?: (err: unknown) => T,
+  ): Promise<T | undefined> {
+    const flightKey = `${messageId}:${attachmentId}`;
+    this.attachmentDeliveries.add(flightKey);
+    this.patchAttachment(messageId, attachmentId, { saving: true });
+    try {
+      return await deliver();
+    } catch (err) {
+      return refused?.(err);
+    } finally {
+      this.attachmentDeliveries.delete(flightKey);
+      this.patchAttachment(messageId, attachmentId, { saving: undefined });
+    }
   }
 
   /**

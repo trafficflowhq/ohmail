@@ -407,7 +407,10 @@ describe("tauri.conf.json", () => {
     expect(d["connect-src"]).toEqual(["'none'"]);
     expect(d["object-src"]).toEqual(["'none'"]);
     expect(d["frame-src"]).toEqual(["'none'"]);
-    expect(d["worker-src"]).toEqual(["'none'"]);
+    // One worker, pdf.js's, a file of the bundle (`src/window-pdfjs.ts`), so a PDF previews in
+    // the window as on the web. `'self'` alone: no blob:, no data:, no scheme. The worker reaches
+    // nothing because the shell answers its script with `default-src 'none'` (`navigation.rs`).
+    expect(d["worker-src"]).toEqual(["'self'"]);
     expect(d["base-uri"]).toEqual(["'none'"]);
     expect(d["form-action"]).toEqual(["'none'"]);
     expect(d["frame-ancestors"]).toEqual(["'none'"]);
@@ -437,7 +440,7 @@ describe("tauri.conf.json", () => {
     // The regression this pins is directional: the fix for the blank image preview must never
     // creep into a directive where blob: means a document, a script or a worker — those are
     // the execution shapes `AttachmentPreview`'s header forbids, and `frame-src 'none'` /
-    // `object-src 'none'` / `worker-src 'none'` above are load-bearing for it.
+    // `object-src 'none'` / `worker-src 'self'` above are load-bearing for it.
     const d = directives(conf.app.security.csp);
     for (const [directive, sources] of Object.entries(d)) {
       if (directive === "img-src") continue;
@@ -718,7 +721,8 @@ describe("the Rust side", () => {
       // in the crate to. One predicate admits the app's own origin in this platform's spelling, the
       // message frame's `about:srcdoc` and, in a debug build only, `devUrl`. It opens and spawns
       // nothing itself: a refusal is one line through the shell's existing sinks, and on macOS a
-      // refused link is handed to the engine's link door.
+      // refused link is handed to the engine's link door. Every file the app serves that is not a
+      // page is answered with `default-src 'none'`, which binds pdf.js's worker.
       "navigation.rs",
       "navigation_tests.rs",
       // The Omarchy theme feed (§3c): `omarchy_core.rs` is the Tauri-free machinery — detection,

@@ -5,7 +5,9 @@
 //! window's handler applies. A refusal is one line naming the scheme's class and the host's, never
 //! the address.
 
+use std::borrow::Cow;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use tauri::http::{header, HeaderValue, Request, Response};
 use tauri::{Config, Manager, Runtime, Url, WebviewWindowBuilder};
 
 /// The app's own origin as each platform's webview serves it (Tauri's `tauri_protocol_url`).
@@ -172,7 +174,28 @@ pub fn guard(config: &Config, debug_build: bool, door: Option<Box<Door>>) -> imp
     }
 }
 
-/// THE ONE WAY A WEBVIEW IS BUILT HERE: the guard, and the scheme it was decided for.
+/// The policy a file of the app's own that is not a page is answered with.
+pub const NON_DOCUMENT_CSP: &str = "default-src 'none'";
+
+/// THE NON-DOCUMENT RULE. Tauri puts the window's policy on its pages only, and a worker is bound
+/// by the policy of its own script's response, not the page's: without this, pdf.js's worker
+/// (`src/window-pdfjs.ts`) could fetch, import and eval anything. So every response on the app's
+/// scheme that is not `text/html` and carries no policy gets `default-src 'none'`. A page ignores
+/// the header on a script, a style or a picture it loads; a policy already set is never replaced.
+pub fn confine_non_documents(_request: Request<Vec<u8>>, response: &mut Response<Cow<'static, [u8]>>) {
+    let headers = response.headers_mut();
+    let document = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/html"));
+    if !document && !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, HeaderValue::from_static(NON_DOCUMENT_CSP));
+    }
+}
+
+/// THE ONE WAY A WEBVIEW IS BUILT HERE: the guard, the scheme it was decided for, and the rule
+/// above for every file the app serves itself.
 pub fn lock<'a, R: Runtime, M: Manager<R>>(
     builder: WebviewWindowBuilder<'a, R, M>,
     config: &Config,
@@ -181,6 +204,7 @@ pub fn lock<'a, R: Runtime, M: Manager<R>>(
     builder
         .use_https_scheme(uses_https_scheme(config))
         .on_navigation(guard(config, cfg!(debug_assertions), door))
+        .on_web_resource_request(confine_non_documents)
 }
 
 #[cfg(test)]

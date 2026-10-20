@@ -4,15 +4,14 @@
  * `<a download>` (`attachments.ts#saveObjectUrl`); the `download` attribute asks the webview to
  * turn the navigation into a download, and a webview with no download handler CANCELS it. Not the
  * CSP (downloads consult no policy), not a permission (nothing was invoked), not the link
- * interceptor (the download is cancelled a layer below where the click is judged). The PDF panel
- * was a second dead end: pdf.js needs a worker `worker-src 'none'` forbids, so both desktop
- * bundles alias it away (`no-pdfjs.ts`) — a panel saying "download it" above a dead button.
+ * interceptor (the download is cancelled a layer below where the click is judged).
  */
 
 /**
  * The shape: the window names a part by its id and the shell does the rest — the engine streams it
- * into a staging file the shell names, and the shell saves it into Downloads or stages it for the
- * in-app preview. No attachment byte crosses the command channel, and there is no command that
+ * into a staging file the shell names, and the shell saves it into Downloads or stages a picture or
+ * a text for the in-app preview. A save moves no byte through this window; a PDF's preview reads
+ * its bytes as the browser does (`attachments.ts#ensurePreview`). There is no command that
  * writes bytes the window chose and opens them (the old `open_attachment`, removed). Off everywhere
  * except the one build that needs it: {@link enableDesktopAttachments} is called by the desktop
  * entry point of the engine-bearing build and nothing else — the web app keeps browser semantics;
@@ -60,21 +59,6 @@ export function enableDesktopAttachments(): void {
 /** Whether the desktop's shell handoffs are armed. Read by the seam and by the suite. */
 export function desktopAttachmentsEnabled(): boolean {
   return armed;
-}
-
-/**
- * Whether this build must hand a type to the operating system rather than draw it itself. PDF and
- * PDF only: the renderer is aliased out of both desktop bundles because it cannot start under this
- * window's `worker-src 'none'` (`apps/desktop/src/no-pdfjs.ts`), while images and text are drawn
- * from bytes the app already holds. `MessagePane` reads this to decide which tiles are offered the
- * in-app viewer — a `true` removes the small eye, because an eye whose only outcome is a panel
- * saying to download instead is a control that lies. The tile's press then saves the file like
- * every other. The type test is spelled here rather than imported from `AttachmentPreview`, which
- * would be a cycle; it is one string, and the suite pins the pair.
- */
-export function opensInSystemViewer(mimeType: string): boolean {
-  if (!armed) return false;
-  return (mimeType.split(";")[0] ?? "").trim().toLowerCase() === "application/pdf";
 }
 
 interface TauriInternals {

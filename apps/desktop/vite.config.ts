@@ -5,6 +5,7 @@ import { build as viteBuild, defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { UPDATER_HTML, UPDATER_JS } from "./src/updater-window";
 import { withWindowCsp } from "./src/window-csp";
+import { PDFJS_FILES } from "./src/window-pdfjs";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 
@@ -581,6 +582,23 @@ function updaterProgressPage(): Plugin {
 }
 
 /**
+ * pdf.js's library and worker at the root of the WINDOW dist, byte for byte from this package's
+ * own `pdfjs-dist` build. `src/window-pdfjs.ts` imports the library from there on the first PDF
+ * and starts the worker from there, so neither is in the boot chunk. Emitted from the install for
+ * the updater page's reason: no `public/` folder reaches the publish payload.
+ */
+function windowPdfjs(): Plugin {
+  return {
+    name: "ohmail:window-pdfjs",
+    generateBundle() {
+      for (const file of PDFJS_FILES) {
+        this.emitFile({ type: "asset", fileName: file, source: fs.readFileSync(r(`./node_modules/pdfjs-dist/build/${file}`)) });
+      }
+    },
+  };
+}
+
+/**
  * Emit the host client's document as `index.html`, whatever the INPUT file is called.
  *
  * The input has to be a second html file (`host.html` — two artifacts cannot share `index.html`
@@ -674,15 +692,16 @@ export default defineConfig({
   base: HOST_CLIENT ? "/" : "./",
   plugins: [
     shellMessagesOnly(),
-    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), bootStamp()]),
+    ...(HOST_CLIENT ? [hostIndexName()] : [updaterProgressPage(), windowPdfjs(), bootStamp()]),
     react(),
     {
       /* The webview loads the bundle as an ES module, where `import.meta` is valid; the smoke test
          loads it as a CLASSIC script in jsdom (which cannot run module scripts), where `import.meta`
-         is a syntax error that aborts boot and renders nothing. With the single dynamic import
-         inlined (AttachmentPreview's pdf stub), the only `import.meta.url` left is vite's dynamic-
-         import preload-helper argument — and with no dependencies to resolve it is never read, in
-         either load context. Neutralise it to an empty string so the classic-script load parses. */
+         is a syntax error that aborts boot and renders nothing. With AttachmentPreview's
+         `import("pdfjs-dist")` inlined (the window's `window-pdfjs.ts`, the host client's stub), the
+         only `import.meta.url` left is vite's dynamic-import preload-helper argument — and with no
+         dependencies to resolve it is never read, in either load context. Neutralise it to an empty
+         string so the classic-script load parses. */
       name: "ohmail:neutralise-unused-import-meta",
       enforce: "post",
       renderChunk(code) {
@@ -775,12 +794,11 @@ export default defineConfig({
       { find: "@tiptap/pm/view", replacement: r("./node_modules/@tiptap/pm/view") },
       { find: "dompurify", replacement: r("./node_modules/dompurify") },
       { find: "parse5", replacement: r("./node_modules/parse5") },
-      /* pdf.js is kept OUT of the runtime bundle: the desktop window never previews a PDF inline
-         (worker-src 'none'; a PDF is saved by id over `save_attachment`), and the real
-         library's module-init breaks boot under the locked CSP.
-         The dynamic import resolves to a no-op stub. tsconfig.json still points the TYPE at the
-         real package, so AttachmentPreview.tsx typechecks against pdf.js. */
-      { find: "pdfjs-dist", replacement: r("./src/no-pdfjs.ts") },
+      /* pdf.js stays OUT of the boot chunk. The window gets `src/window-pdfjs.ts`, which loads the
+         library and its worker from the two files `windowPdfjs()` emits, on the first PDF; the host
+         client keeps the refusing stub (its policy says `worker-src 'none'`). tsconfig.json still
+         points the TYPE at the real package, so AttachmentPreview.tsx typechecks against pdf.js. */
+      { find: "pdfjs-dist", replacement: HOST_CLIENT ? r("./src/no-pdfjs.ts") : r("./src/window-pdfjs.ts") },
 
       /* Anchored at both ends: a RegExp `find` replaces only the matched span,
          so a pattern that leaves the leading "./" behind yields a broken path.
@@ -944,12 +962,13 @@ export default defineConfig({
        hash). The host arm keeps Vite's default. */
     ...(HOST_CLIENT ? {} : { cssCodeSplit: false }),
     /* Emit ONE chunk, no dynamic-import split. The shared shell's only dynamic import is
-       AttachmentPreview.tsx's `import("pdfjs-dist")` (here a no-op stub — the desktop opens
-       attachments in the platform's viewer). Vite otherwise code-splits it and wraps the call in a preload helper
+       AttachmentPreview.tsx's `import("pdfjs-dist")`, which resolves to a small module here
+       (`window-pdfjs.ts`, or the host client's stub). Vite otherwise code-splits it and wraps the call in a preload helper
        that references `import.meta.url`; the smoke loads the bundle as a CLASSIC script (jsdom cannot
        run module scripts), where `import.meta` is a syntax error that aborts the whole boot and
        renders nothing. Inlining removes the split and the `import.meta`, so the bundle boots as one
-       file. The stub is tiny, so nothing is deferred that mattered. */
+       file. The library itself is not in the chunk: `window-pdfjs.ts` imports the dist's own
+       `pdf.min.mjs` at runtime, the one dynamic import the smoke admits. */
     rollupOptions: {
       /* The host client enters through its own document; the window artifacts keep the implicit
          root `index.html`. `hostIndexName()` renames the emission — see the plugin. */

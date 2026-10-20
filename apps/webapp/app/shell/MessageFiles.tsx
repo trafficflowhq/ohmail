@@ -10,7 +10,6 @@ import { useEffect } from "react";
 import { isPreviewable } from "../components/AttachmentPreview";
 import { AttachmentStrip } from "../components/AttachmentStrip";
 import { useMessageChrome } from "./message-chrome";
-import { opensInSystemViewer } from "./open-attachment";
 
 export function MessageFiles({ messageId }: { messageId: string }) {
   const chrome = useMessageChrome();
@@ -27,10 +26,10 @@ export function MessageFiles({ messageId }: { messageId: string }) {
          head's count and the saved set agree. */
       items={attachments.itemsOf(messageId, { includeInlineParts: true })}
       onOpen={(attachmentId) => attachments.open(messageId, attachmentId)}
-      /* Looking is offered on the types this app can draw (image, PDF, text), minus the desktop's
-         system-viewer types; everything else saves. The judgement has one owner, not the strip. */
+      /* Looking is offered on the types this app can draw (image, PDF, text), on the web and the
+         desktop alike; everything else saves. The judgement has one owner, not the strip. */
       onPreview={(attachmentId) => chrome.openAttachmentPreview(messageId, attachmentId)}
-      canPreview={(item) => isPreviewable(item.mimeType) && !opensInSystemViewer(item.mimeType)}
+      canPreview={(item) => isPreviewable(item.mimeType)}
       onDownloadAll={() => attachments.downloadAll(messageId, { includeInlineParts: true })}
       downloadingAll={attachments.downloadingAll(messageId)}
       calendarTextOf={(attachmentId) => attachments.calendarTextsOf(messageId).get(attachmentId)}

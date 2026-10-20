@@ -173,6 +173,44 @@ const NO_FIXTURES_REFUSAL = "ohmail Desktop carries no sample mail";
  */
 const OMARCHY_MAP_MARKER = "OHMARCHY_MAP";
 
+/**
+ * PDF.JS — the library and its worker at the window's dist root, byte for byte this package's own
+ * `pdfjs-dist` build at the version the manifest pins, and neither in the boot chunk (the globals
+ * each file sets name it). The host client carries neither file and keeps the refusing stub
+ * (`src/no-pdfjs.ts`), whose sentence the window must not carry.
+ */
+const PDFJS_FILES = ["pdf.min.mjs", "pdf.worker.min.mjs"];
+const PDFJS_GLOBALS = ["pdfjsLib", "pdfjsWorker"];
+const PDFJS_STUB_REFUSAL = "pdf preview is not available in this build";
+const PDFJS_PIN = JSON.parse(fs.readFileSync(path.join(APP, "package.json"), "utf8")).dependencies["pdfjs-dist"];
+const pdfjsFiles = PDFJS_FILES.map((name) => {
+  const file = path.join(DIST, name);
+  if (!fs.existsSync(file)) return { name, present: false };
+  const bytes = fs.readFileSync(file);
+  const installed = path.join(APP, "node_modules", "pdfjs-dist", "build", name);
+  return {
+    name,
+    present: true,
+    version: /pdfjsVersion = ([0-9][0-9.]*)/.exec(bytes.toString("latin1"))?.[1] ?? null,
+    sameAsInstalled: fs.existsSync(installed) && bytes.equals(fs.readFileSync(installed)),
+  };
+});
+/** Every emitted script but pdf.js's own two files: the boot chunk, the boot stamp, the updater's. */
+const bootText = (() => {
+  let out = "";
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|mjs)$/.test(e.name) && !(d === DIST && PDFJS_FILES.includes(e.name))) out += fs.readFileSync(p, "utf8");
+    }
+  };
+  walk(DIST);
+  return out;
+})();
+const pdfjsGlobalsInBoot = PDFJS_GLOBALS.filter((g) => bootText.includes(g));
+const pdfjsStubPresent = text.includes(PDFJS_STUB_REFUSAL);
+
 const hostedSuggestPresent = text.includes(HOSTED_SUGGEST_MARKER);
 const commandsPresent = SHELL_COMMAND_MARKERS.filter((m) => text.includes(m));
 const commandsMissing = SHELL_COMMAND_MARKERS.filter((m) => !commandsPresent.includes(m));
@@ -251,6 +289,22 @@ if (wantsEngine) {
         "ohmarchy look unable to follow a desktop theme, and nothing else would say so.",
     );
   }
+  for (const f of pdfjsFiles) {
+    if (!f.present) {
+      failures.push(`the window bundle has no ${f.name} at its root — the PDF preview has no pdf.js to load (windowPdfjs in vite.config.ts)`);
+    } else if (f.version !== PDFJS_PIN || !f.sameAsInstalled) {
+      failures.push(
+        `${f.name} is not pdfjs-dist ${PDFJS_PIN}'s build byte for byte (stamped ${f.version ?? "nothing"}) — ` +
+          "the window must carry the library and worker the manifest pins, unaltered",
+      );
+    }
+  }
+  if (pdfjsGlobalsInBoot.length > 0) {
+    failures.push(`pdf.js is in the boot chunk (${pdfjsGlobalsInBoot.join(", ")}) — it is loaded on the first PDF, never at boot`);
+  }
+  if (pdfjsStubPresent) {
+    failures.push("the window bundle carries the host client's pdf.js stub — the pdfjs-dist alias in vite.config.ts took the wrong arm");
+  }
 } else {
   if (present.length > 0) {
     failures.push(`the served host client carries the local-model surface: ${present.join(", ")}`);
@@ -274,6 +328,13 @@ if (wantsEngine) {
         "Linux desktop's current theme, which a served page has no way to observe and no business " +
         "shipping.",
     );
+  }
+  const pdfjsShipped = pdfjsFiles.filter((f) => f.present).map((f) => f.name);
+  if (pdfjsShipped.length > 0) {
+    failures.push(`the served host client carries ${pdfjsShipped.join(" and ")} — its policy admits no worker, and pdf.js is the window's`);
+  }
+  if (!pdfjsStubPresent) {
+    failures.push("the served host client lost the pdf.js stub's sentence — check the pdfjs-dist alias in vite.config.ts (src/no-pdfjs.ts)");
   }
 }
 

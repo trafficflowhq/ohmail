@@ -44,7 +44,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { fileFaultSentence, fileRetryIsOffered, type AttachmentItem } from "./AttachmentStrip";
 import { useKeyBindings } from "../shell/keymap";
-import { opensInSystemViewer } from "../shell/open-attachment";
 import "./attachment-preview.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
@@ -97,9 +96,10 @@ const EN = {
   failedTitle: "Couldn't fetch this file",
   pdfErrorTitle: "Can't show this PDF here",
   /* NOT "the file may be damaged", which is what this said and which is false wherever the PDF
-     renderer is absent by design — the desktop builds alias it away, so the commonest reason to
-     see this line is a working file and a viewer that was never there. Blaming somebody's document
-     for the app's own limits sends them looking for a problem they do not have. */
+     renderer cannot run — the page a desktop host serves a phone aliases it away, and a webview
+     older than pdf.js needs refuses it — so the commonest reason to see this line is a working
+     file. Blaming somebody's document for the app's own limits sends them looking for a problem
+     they do not have. */
   pdfErrorDetail: "Download it to open in another app.",
   textTruncated: "— preview truncated. Download to read the rest.",
   /* Under `tooLargeTitle`, for a text the desktop shell would not hand over inline (over its cap). */
@@ -225,8 +225,7 @@ export function AttachmentPreview({
   const index = Math.max(0, items.findIndex((i) => i.id === activeId));
   const active: AttachmentItem | undefined = items.find((i) => i.id === activeId) ?? items[0];
   const kind = active ? previewKind(active.mimeType) : "other";
-  // A type the desktop hands to the system viewer (PDF) is never fetched for this overlay.
-  const canPreview = active ? isPreviewable(active.mimeType) && !opensInSystemViewer(active.mimeType) : false;
+  const canPreview = active ? isPreviewable(active.mimeType) : false;
 
   const releaseRef = useRef(onRelease);
   releaseRef.current = onRelease;
@@ -446,6 +445,8 @@ export function AttachmentPreview({
     [active],
   );
   const canDownload = active != null && active.state !== "too_large";
+  // A desktop save of the part on screen is running; the part itself stays as it is.
+  const saving = active?.state === "ready" && active.saving === true;
 
   return (
     <div
@@ -483,8 +484,9 @@ export function AttachmentPreview({
               </span>
             ) : null}
             {canDownload ? (
-              <button type="button" className="ap-btn" onClick={() => active && onDownload(active.id)}>
-                {DOWNLOAD_GLYPH}
+              <button type="button" className="ap-btn" aria-busy={saving || undefined} aria-disabled={saving || undefined}
+                onClick={saving ? undefined : () => active && onDownload(active.id)}>
+                {saving ? <Spinner className="ap-spin" /> : DOWNLOAD_GLYPH}
                 {COPY.download}
               </button>
             ) : null}

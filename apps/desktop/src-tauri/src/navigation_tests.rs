@@ -113,6 +113,55 @@ fn the_guard_reads_dev_url_through_the_debug_flag_and_lock_passes_the_builds_own
     );
 }
 
+/// The policy left on one response the app served, after the non-document rule ran.
+fn policy_after(content_type: Option<&str>, policy: Option<&str>) -> Option<String> {
+    let mut builder = Response::builder();
+    if let Some(value) = content_type {
+        builder = builder.header(header::CONTENT_TYPE, value);
+    }
+    if let Some(value) = policy {
+        builder = builder.header(header::CONTENT_SECURITY_POLICY, value);
+    }
+    let mut response = builder.body(Cow::Borrowed(&b"x"[..])).expect("a response");
+    confine_non_documents(Request::new(Vec::new()), &mut response);
+    let all: Vec<String> = response
+        .headers()
+        .get_all(header::CONTENT_SECURITY_POLICY)
+        .iter()
+        .map(|value| value.to_str().expect("ASCII").to_string())
+        .collect();
+    assert!(all.len() <= 1, "two policies on one response: {all:?}");
+    all.into_iter().next()
+}
+
+#[test]
+fn a_file_that_is_not_a_page_is_answered_with_no_reach_at_all() {
+    assert_eq!(NON_DOCUMENT_CSP, "default-src 'none'");
+    for kind in ["text/javascript", "application/javascript", "text/css", "image/png", "image/svg+xml", "font/woff2"] {
+        assert_eq!(policy_after(Some(kind), None).as_deref(), Some(NON_DOCUMENT_CSP), "{kind}");
+    }
+    assert_eq!(policy_after(None, None).as_deref(), Some(NON_DOCUMENT_CSP), "a response with no type");
+}
+
+#[test]
+fn a_page_keeps_the_policy_tauri_gave_it_and_no_policy_is_replaced() {
+    let window = "default-src 'self'; worker-src 'self'";
+    for kind in ["text/html", "text/html; charset=utf-8", "TEXT/HTML"] {
+        assert_eq!(policy_after(Some(kind), Some(window)).as_deref(), Some(window), "{kind}");
+        assert_eq!(policy_after(Some(kind), None), None, "{kind} was given the non-document policy");
+    }
+    assert_eq!(policy_after(Some("text/javascript"), Some(window)).as_deref(), Some(window));
+}
+
+#[test]
+fn lock_answers_every_file_the_app_serves_by_the_non_document_rule() {
+    let source = code_of(include_str!("navigation.rs"));
+    assert!(
+        source.contains(".on_web_resource_request(confine_non_documents)"),
+        "lock no longer installs the non-document rule"
+    );
+}
+
 #[test]
 fn this_build_spells_its_origin_the_way_tauri_serves_it() {
     #[cfg(any(windows, target_os = "android"))]

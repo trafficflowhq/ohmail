@@ -46,7 +46,8 @@ export function cspFor(platform: string | null, where: "header" | "meta" = "head
     "media-src 'none'",
     "object-src 'none'",
     "frame-src 'none'",
-    "worker-src 'none'",
+    // pdf.js's worker, a file of the bundle (`window-pdfjs.ts`); the shell gives it its own policy.
+    "worker-src 'self'",
     "base-uri 'none'",
     "form-action 'none'",
     ...(where === "header" ? ["frame-ancestors 'none'"] : []),

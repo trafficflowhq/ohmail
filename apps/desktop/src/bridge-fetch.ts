@@ -451,10 +451,11 @@ export const BRIDGE_DEADLINE_MS = SHELL_DEADLINE_MS;
  */
 export const bridgeFetch: BridgeFetch = async (url, init) => {
   const options = (init ?? {}) as BridgeInit;
+  const method = (options.method ?? "GET").toUpperCase();
   const bytes = await withDeadline(
     "the local engine",
     () => shell().invoke(REQUEST_COMMAND, {
-      method: (options.method ?? "GET").toUpperCase(),
+      method,
       url,
       headers: headerPairs(options.headers),
       ...bodyField(options.body),
@@ -464,7 +465,8 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
       /* Only when present: `withDeadline` refuses `{ ms: undefined }` by name, so forwarding an
          absent field would refuse every call that names none. */
       ...(options.deadlineMs !== undefined ? { ms: options.deadlineMs }
-        : url.startsWith(STAGED_UPLOAD_PATH_PREFIX) ? { ms: STAGED_UPLOAD_DEADLINE_MS } : {}),
+        : url.startsWith(STAGED_UPLOAD_PATH_PREFIX) ? { ms: STAGED_UPLOAD_DEADLINE_MS }
+        : method === "GET" && ATTACHMENT_BYTES_PATH.test(url) ? { ms: ATTACHMENT_BYTES_DEADLINE_MS } : {}),
     },
   );
   return toResponse(asBytes(bytes), url);
@@ -923,6 +925,17 @@ export const STAGED_UPLOAD_PATH_PREFIX = "/cloud/staged-upload/";
  * minute every other request has. Decided in {@link bridgeFetch}, by the path the engine minted.
  */
 export const STAGED_UPLOAD_DEADLINE_MS = 5 * 60_000 + 15_000;
+
+/** One attachment's bytes, `GET /attachments/<id>`: what a PDF's preview reads, as a browser does. */
+const ATTACHMENT_BYTES_PATH = /^\/attachments\/[^/?#]+$/;
+
+/**
+ * A whole file over the person's mail link, so the bytes route gets the engine's own bound on that
+ * read (one IMAP read, 180 s) and a minute for the slot, the dial and the login before it, rather
+ * than the minute: a large PDF on a slow link saved, through the shell with no window deadline, and
+ * its preview gave up at 60 s. Decided in {@link bridgeFetch}; every other request keeps the minute.
+ */
+export const ATTACHMENT_BYTES_DEADLINE_MS = 3 * 60_000 + 60_000;
 
 /** The local engine's door for one Search's timings — see {@link reportWindowSearchPhases}. */
 export const WINDOW_SEARCH_PHASES_PATH = "/local/window/search-phases";

@@ -5,12 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * `ensurePreview` (`webapp/app/shell/attachments.ts`) is what the overlay calls. Armed, it asks the
  * shell to stage the part by id and type, and the engine holds the shell's URL (an image), the
- * capped text, or "too large" — the adapter's byte fetch, which returns through the command channel
- * as a JSON array, is never called. A PDF, which the desktop hands to the system viewer, is not
- * asked for at all. Disarmed (the browser), the overlay fetches as it always did.
+ * capped text, or "too large" — the adapter's byte fetch is never called for them. A PDF is the one
+ * type read as the browser reads it: pdf.js parses bytes, which cross the command scheme raw, and
+ * the engine keeps them as its Blob; nothing is staged. Disarmed (the browser), the overlay fetches
+ * as it always did.
  *
  * Mutations watched: `ensurePreview` falling back to `openAttachment` when armed → the first case
- * is red (a byte fetch, no stage); the PDF guard removed → the PDF case is red.
+ * is red (a byte fetch, no stage); the PDF arm removed → the PDF case is red.
  */
 
 type Invoked = { command: string; payload?: Record<string, unknown> };
@@ -97,12 +98,14 @@ describe("the desktop preview stages the part by id", () => {
     expect(item(TXT)?.previewTooLarge).toBeUndefined();
   });
 
-  it("a PDF, which this window hands to the system viewer, is not fetched for a preview at all", async () => {
+  it("a PDF's bytes come through the engine's own fetch once, no shell command, and the item holds a PDF Blob", async () => {
     const { seam, engine, fetched, item } = await world(true);
     await seam.ensurePreview(engine, "m1", PDF);
-    expect(invoked).toEqual([]);
-    expect(fetched).toEqual([]);
-    expect(item(PDF)?.state).toBe("idle");
+    await seam.ensurePreview(engine, "m1", PDF);
+    expect(fetched, "the PDF's bytes were not read for the preview, or read twice").toEqual([PDF]);
+    expect(invoked, "a PDF went to the shell, which stages pictures and text only").toEqual([]);
+    expect(item(PDF)?.state).toBe("ready");
+    expect(engine.attachmentBlobOf("m1", PDF)?.type).toBe("application/pdf");
   });
 
   it("the shell's refusal of the part lands on the item as the engine's facts", async () => {

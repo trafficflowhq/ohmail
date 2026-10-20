@@ -6481,10 +6481,10 @@ fn open_external(set: tauri::State<'_, crate::rendered_links::RenderedLinks>, ur
 // component whose correct answer is "no", and there was no error to find anywhere — exactly the
 // shape that made every link in the app do nothing before [`open_external`] existed.
 //
-// The PDF viewer is a second, independent reason and it is a deliberate one: this window's policy
-// says `worker-src 'none'`, the in-page PDF renderer will not run without a worker, and it is
-// aliased out of both bundles for that reason. So a reader who pressed a PDF got a panel saying to
-// download it instead, over a Download that could not deliver a file. Two dead ends, one press.
+// The PDF viewer was a second, independent reason then: the window's policy said `worker-src
+// 'none'` and the in-page PDF renderer was aliased out, so a reader who pressed a PDF got a panel
+// saying to download it instead, over a Download that could not deliver a file. The window has
+// run pdf.js with its own worker since (`src/window-pdfjs.ts`).
 //
 // ── THE SHAPE ──────────────────────────────────────────────────────────────────────────────
 //

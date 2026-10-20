@@ -111,7 +111,11 @@ Every other dependency is installed, not copied in:
                   apps/desktop/src-tauri/Cargo.lock. Tauri is MIT OR
                   Apache-2.0, and its transitive tree is predominantly the
                   same two.
-                  npm: react, react-dom and use-intl at runtime (MIT);
+                  npm: react, react-dom and use-intl at runtime (MIT), and
+                  pdf.js (pdfjs-dist, copyright Mozilla Foundation,
+                  Apache-2.0), whose library and worker the window bundle
+                  carries byte for byte for the PDF preview, its licence
+                  notice heading each file;
                   typescript (Apache-2.0), vite, @vitejs/plugin-react, jsdom,
                   @tauri-apps/cli and the @types packages to build and test
                   (MIT). apps/desktop/package.json is the exact set; Cargo.lock

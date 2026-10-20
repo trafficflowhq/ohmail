@@ -107,13 +107,13 @@ function BootFailure({ error }: { error: unknown }) {
    nothing, in a mail body and out of it. `open-external.ts` carries the mechanism; this is the
    one call that arms it, on this document. A message frame's links reach the shell as the
    new-window request itself (`popup_route` in `engine.rs`). */
-/* AND AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS, SWITCHED ON HERE FOR THE SAME
-   REASONS. In a tab, a hidden `<a download>` saves the file. In this window the webview asks its
-   host to perform the download and, finding no handler registered, cancels it — so every
-   attachment press did nothing, silently, exactly as every link did. `open-attachment.ts`
-   carries the mechanism; the shell writes the bytes under its own directory and opens the path
-   with the platform's opener, which is Preview and Quick Look on macOS. Outside the app both
-   arms find no shell and refuse per their own contracts. */
+/* AND AN ATTACHMENT SAVES THROUGH THE SHELL, SWITCHED ON HERE FOR THE SAME REASONS. In a tab, a
+   hidden `<a download>` saves the file. In this window the webview asks its host to perform the
+   download and, finding no handler registered, cancels it — so every attachment press did
+   nothing, silently, exactly as every link did. `open-attachment.ts` carries the mechanism: a
+   Download saves by id into the person's Downloads folder, and the in-app preview has the shell
+   stage a picture or a text, while a PDF is drawn by pdf.js (`window-pdfjs.ts`). Outside the app
+   both arms find no shell and refuse per their own contracts. */
 enableExternalLinks();
 interceptLinkClicks(document, { trustSameOrigin: true });
 /* …AND THE LINKS ON SCREEN GO TO THE SHELL AS THEY ARE DRAWN. The shell's opener and its

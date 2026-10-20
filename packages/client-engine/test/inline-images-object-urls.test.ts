@@ -146,24 +146,24 @@ describe("inlineImageUrls: \"object\" — the frame draws the part's own object 
     });
   }
 
-  it("a revoked URL leaves the map with it: a fetch over a drawn part never leaves a dead URL in the frame", async () => {
-    const { engine } = rig([wire()], { mode: "object" });
+  it("a refused desktop save over a drawn part leaves it drawn: nothing revoked, nothing fetched again", async () => {
+    // A save leaves a part the window shows as it is, so the failed card a retry fetched over is gone.
+    const { engine, fetched } = rig([wire()], { mode: "object" });
     await engine.loadInlineImages("m1", ["logo@corp"]);
     const first = engine.inlineImagesOf("m1").get("logo@corp")!;
     const dead: string[] = [];
     const stop = engine.subscribe(() => {
       for (const url of engine.inlineImagesOf("m1").values()) if (!live.has(url)) dead.push(url);
     });
-    // A desktop save over the drawn part fails; the press over the failed card fetches again.
     await engine.deliverAttachment("m1", "a1", async () => { throw new Error("the disk is full"); });
     await engine.openAttachment("m1", "a1", { retry: true });
     await settle();
     stop();
-    expect(revoked).toContain(first);
+    expect(revoked, "the save revoked the drawn part's URL").toEqual([]);
     expect(dead, "the map named a revoked URL").toEqual([]);
-    const now = engine.inlineImagesOf("m1").get("logo@corp");
-    expect(now).toBe(itemOf(engine, "m1", "a1")?.objectUrl);
-    expect(live.has(now!)).toBe(true);
+    expect(fetched, "the drawn part was fetched again").toEqual(["a1"]);
+    expect(engine.inlineImagesOf("m1").get("logo@corp")).toBe(first);
+    expect(itemOf(engine, "m1", "a1")).toMatchObject({ state: "ready", objectUrl: first });
   });
 
   it("a URL revoked while the pass walked on is not drawn from; the next pass draws the live one", async () => {
@@ -174,15 +174,20 @@ describe("inlineImageUrls: \"object\" — the frame draws the part's own object 
     await settle();
     const first = itemOf(engine, "m1", "a1")?.objectUrl;
     expect(first).toMatch(/^blob:/);
-    await engine.deliverAttachment("m1", "a1", async () => { throw new Error("the disk is full"); });
-    await engine.openAttachment("m1", "a1", { retry: true });
+    // The list asked again as a fresh question while the pass waits on a2: every URL it held goes.
+    await engine.reaskAttachments("m1");
     expect(revoked).toContain(first);
     let2go();
     await pass;
     await settle();
-    const map = engine.inlineImagesOf("m1");
+    let map = engine.inlineImagesOf("m1");
     expect([...map.values()].filter((url) => !live.has(url)), "a revoked URL was drawn from").toEqual([]);
+    expect(map.has("c1")).toBe(false);
+    expect(map.get("c2")).toBe(itemOf(engine, "m1", "a2")?.objectUrl);
+    await engine.loadInlineImages("m1", ["c1", "c2"]);
+    map = engine.inlineImagesOf("m1");
     expect(map.get("c1")).toBe(itemOf(engine, "m1", "a1")?.objectUrl);
-    expect(map.get("c2")).toMatch(/^blob:/);
+    expect(live.has(map.get("c1")!)).toBe(true);
+    expect([...map.values()].filter((url) => !live.has(url))).toEqual([]);
   });
 });

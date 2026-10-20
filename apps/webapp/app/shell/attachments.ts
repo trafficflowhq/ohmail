@@ -21,11 +21,12 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { watchWireFailedLists, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
+import { previewKind } from "../components/AttachmentPreview";
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
 } from "../components/AttachmentStrip";
 import {
-  desktopAttachmentsEnabled, opensInSystemViewer, saveAttachmentToDownloads, stageAttachmentPreview, type SaveRefusal,
+  desktopAttachmentsEnabled, saveAttachmentToDownloads, stageAttachmentPreview, type SaveRefusal,
 } from "./open-attachment";
 import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
 
@@ -137,7 +138,8 @@ export function saveObjectUrl(url: string, filename: string, doc: Document): voi
 /**
  * How one file reached the person: into their Downloads folder, into the browser's, or not at all —
  * `refused` when there was no shell to ask, `failed` when the part itself was refused (its tile
- * carries why), a {@link SaveRefusal} when the shell would not save.
+ * carries why), a {@link SaveRefusal} when the shell would not save, or when a part already on
+ * screen was refused (`not-saved`: its tile stays as it was).
  */
 export type Delivery = "saved" | "downloaded" | "refused" | "failed" | SaveRefusal;
 
@@ -158,7 +160,8 @@ export interface DeliverableFile {
  * cancelled silently by a webview with no download handler, so the desktop arm asks the shell to
  * SAVE, and never falls back to the anchor — there it is nothing at all. It names the part, not its
  * bytes: the engine streams it to disk, so a 40 MiB file costs this window nothing, and the tile
- * reads `loading` meanwhile.
+ * reads busy meanwhile. A part already on screen stays as it is through the save, as it does in a
+ * browser, so the part's own refusal of that save is the press's to say: "not saved".
  */
 export async function deliverFile(
   engine: Pick<OhmailEngine, "deliverAttachment">,
@@ -168,7 +171,13 @@ export async function deliverFile(
   if (desktopAttachmentsEnabled()) {
     const answer = await engine.deliverAttachment(
       file.messageId, file.attachmentId, () => saveAttachmentToDownloads(file.attachmentId, file.filename),
-      file.retry ? { retry: true } : {},
+      {
+        ...(file.retry ? { retry: true } : {}),
+        refused: (err: unknown) => {
+          console.error(`ohmail: ${file.filename} was not saved`, err);
+          return "not-saved" as const;
+        },
+      },
     );
     return answer === undefined ? "failed" : answer === true ? "saved" : answer === false ? "refused" : answer;
   }
@@ -181,8 +190,9 @@ export async function deliverFile(
  * Bring one item to `ready` for the preview overlay. A browser fetches the bytes (`openAttachment`).
  * The desktop asks the shell to stage the part by id instead: the command channel returns raw bytes
  * as a JSON array through `eval`, which cost the renderer 1.3 GiB for a 40 MiB picture, so an image
- * is loaded from the shell's preview scheme and text arrives only under the shell's cap. A type the
- * desktop hands to the system viewer (PDF) is not fetched for a preview at all.
+ * is loaded from the shell's preview scheme and text arrives only under the shell's cap. A PDF is
+ * read as the browser reads it: pdf.js parses bytes, which cross the command scheme raw, and they
+ * stay this document's, as the engine's Blob; nothing is staged on disk.
  */
 export function ensurePreview(
   engine: Pick<OhmailEngine, "openAttachment" | "stageAttachment" | "attachmentsOf">,
@@ -194,7 +204,8 @@ export function ensurePreview(
   if (!desktopAttachmentsEnabled()) return engine.openAttachment(messageId, attachmentId, retry);
   const held = engine.attachmentsOf(messageId, { includeInlineParts: true });
   const item = held.state === "ready" ? held.items.find((i) => i.id === attachmentId) : undefined;
-  if (!item || opensInSystemViewer(item.mimeType)) return Promise.resolve();
+  if (!item) return Promise.resolve();
+  if (previewKind(item.mimeType) === "pdf") return engine.openAttachment(messageId, attachmentId, retry);
   return engine.stageAttachment(messageId, attachmentId, () => stageAttachmentPreview(attachmentId, item.mimeType), retry);
 }
 
@@ -283,7 +294,8 @@ function attachmentsFingerprint(engine: OhmailEngine, ids: Iterable<string>): st
     if (held.state === "ready") {
       const maps = `img${serialOf(engine.inlineImagesOf(id))}:cal${serialOf(engine.calendarTextsOf(id))}`;
       // A failed item's code too: the sentence names the side, and a re-ask can fail on another.
-      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}${i.state === "failed" ? `:${i.code ?? ""}` : ""}`).join(",")}:${maps}`);
+      // A desktop save of a part on screen moves `saving` alone.
+      parts.push(`${id}:ready:${held.items.map((i) => `${i.id}=${i.state}${i.saving === true ? "+saving" : ""}${i.state === "failed" ? `:${i.code ?? ""}` : ""}`).join(",")}:${maps}`);
     } else if (held.state === "failed") {
       parts.push(`${id}:failed:${held.code ?? ""}`);
     } else if (held.state === "loading") {
