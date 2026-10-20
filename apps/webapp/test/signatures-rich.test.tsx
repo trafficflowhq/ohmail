@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { createElement as h } from "react";
@@ -10,6 +10,7 @@ import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
 import { SIG_FOLLOWING, type SignatureState } from "../app/shell/signature";
 import { publicPath } from "../../../test/support/public-root.mjs";
+import { readChangelogText } from "../../../scripts/changelog-fold.mjs";
 
 /**
  * ═══ A SIGNATURE WITH FORMATTING IN IT — the pane that writes it, the block that shows it ════
@@ -310,7 +311,8 @@ describe("the copy does not claim a signature is plain text", () => {
    * than silently making a released note untrue.
    */
   it("the released note's what-you-see-is-what-ships sentence is still backed by the block", () => {
-    const changelog = readFileSync(publicPath("CHANGELOG.md"), "utf8");
+    // Through readChangelogText: a pinned sentence sits in changelog.d/ until the release folds it.
+    const changelog = readChangelogText(dirname(publicPath("CHANGELOG.md")));
     expect(changelog, "the claim this guard exists for is gone — re-read it before deleting me")
       .toContain("What you see is what ships");
     const block = read("apps/webapp/app/shell/SignatureBlock.tsx");

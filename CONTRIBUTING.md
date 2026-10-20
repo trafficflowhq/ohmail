@@ -69,6 +69,11 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   never hand-written in a view; no message is ever replaced by a "N more"
   placeholder. The test suite enforces both, and it is meant to.
 - Add or extend a test for behaviour you change.
+- Put the release note for a change people will notice in
+  `changelog.d/<slug>.md`, one file per pull request, and leave `CHANGELOG.md`
+  alone: the release gathers those files into it, so two pull requests never
+  conflict over the changelog. [changelog.d/README.md](changelog.d/README.md)
+  has the format.
 - Match the surrounding style. There is no formatter config to fight with.
 
 ## Running the tests
@@ -120,6 +125,9 @@ npx playwright install chromium        # the layout tests render in it
 
 - `npm run test:sqlite` runs the files that also run on SQLite, the phone's and
   the desktop's store.
+- `node scripts/changelog-fold.mjs --check` checks the entries in
+  `changelog.d/` (`npm test` runs the same check); `--preview` prints the
+  section the next release would write.
 - **The desktop app's** tests live in `apps/desktop/test` and run in `npm test`.
   The few that load the desktop's own vite config need `apps/desktop` installed
   (without it, `npm test` leaves them out and says so); CI runs them in a job of

@@ -90,6 +90,9 @@ The phone app (`apps/mobile`) has two root commands: `npm run typecheck:mobile` 
 ## Contributing
 
 - Match the surrounding style; there is no formatter config to fight with.
+- A change people notice brings its release note as `changelog.d/<slug>.md` (format in `changelog.d/README.md`);
+  never edit `CHANGELOG.md`, the release bump folds the files into it. `node scripts/changelog-fold.mjs --check`
+  checks them.
 - Open an issue before a large change, and before any IMAP or sync change: that layer has a design that is not
   published yet.
 - Security reports go the way [SECURITY.md](SECURITY.md) describes, never into an issue.

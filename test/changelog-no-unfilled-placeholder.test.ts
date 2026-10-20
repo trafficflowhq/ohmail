@@ -1,10 +1,15 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { fold, isDatedHeading, PLACEHOLDER_WORDS, placeholdersByBlock, readFragments } from "../scripts/changelog-fold.mjs";
 import { publicPath } from "./support/public-root.mjs";
 
 /**
- * ═══ A PLACEHOLDER MAY WAIT IN [Unreleased]. IT MAY NOT SHIP IN A DATED BLOCK ════════════════
+ * ═══ A PLACEHOLDER MAY WAIT IN AN UNRELEASED ENTRY. IT MAY NOT SHIP IN A DATED BLOCK ═════════
+ *
+ * Unreleased entries are files in changelog.d/ now (scripts/changelog-fold.mjs); the reasoning below
+ * holds for them, and the fold refuses a placeholder before it writes the dated block.
  *
  * Some notes cannot be finished when the code lands. A hosted fix names the day it reached ohmail
  * Cloud, and that day is the DEPLOY's, not the commit's — so the section is written with a
@@ -26,58 +31,12 @@ import { publicPath } from "./support/public-root.mjs";
 
 const CHANGELOG = publicPath("CHANGELOG.md");
 
-/**
- * THE PLACEHOLDER WORDS, A NAMED SET — not "any angle-bracketed lowercase word".
- *
- * The first version of this guard was that wider pattern and it went RED on the shipped file, on
- * `<time>` inside a line of quoted PRODUCT COPY: `"As of <time> · catching up"` (0.12.1). That is
- * a template the UI fills at render, described accurately in a release note — innocent content,
- * and a guard that fires on innocent content is the same defect as one that cannot fire and more
- * expensive, because it discards real work while looking like diligence.
- *
- * So the set is the three values a changelog section genuinely cannot know when it is written,
- * and the quote exemption below covers the case where one of THOSE words is being quoted rather
- * than left to fill.
+/*
+ * The detector lives in scripts/changelog-fold.mjs, which refuses the same placeholder at the release
+ * fold. THE WORDS ARE A NAMED SET, not "any angle-bracketed word": the wider pattern went red on
+ * `"As of <time> · catching up"`, quoted product copy in 0.12.1. A placeholder inside double quotes on
+ * its line is copy and is spared.
  */
-const PLACEHOLDER_WORDS = ["date", "version", "sha"] as const;
-const PLACEHOLDER = new RegExp(`<(?:${PLACEHOLDER_WORDS.join("|")})>`, "g");
-
-/**
- * Is this match inside a double-quoted span on its line — product copy, not a hole to fill?
- *
- * Counting quote characters before the match: an odd count means the match opened inside a quote.
- * Crude, and deliberately so — the alternative is parsing Markdown to find code spans, and the
- * only thing that has ever needed exempting is a quoted UI string on one line.
- */
-function insideQuotes(line: string, index: number): boolean {
-  let quotes = 0;
-  for (let i = 0; i < index; i++) {
-    const ch = line[i]!;
-    if (ch === '"' || ch === "\u201c" || ch === "\u201d") quotes++;
-  }
-  return quotes % 2 === 1;
-}
-
-/** `## [0.15.0] — 2026-09-09` is dated; `## [Unreleased]` is not. */
-function isDatedHeading(line: string): boolean {
-  return /^## /.test(line) && /\d{4}-\d{2}-\d{2}/.test(line);
-}
-
-/** Every placeholder, with the `## ` heading that encloses it. */
-export function placeholdersByBlock(text: string): Array<{ heading: string; line: number; found: string }> {
-  const out: Array<{ heading: string; line: number; found: string }> = [];
-  let heading = "(above the first heading)";
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (/^## /.test(line)) { heading = line.trim(); continue; }
-    for (const m of line.matchAll(PLACEHOLDER)) {
-      if (insideQuotes(line, m.index)) continue;
-      out.push({ heading, line: i + 1, found: m[0] });
-    }
-  }
-  return out;
-}
 
 describe("the changelog carries no unfilled placeholder in a released section", () => {
   const text = readFileSync(CHANGELOG, "utf8");
@@ -163,5 +122,27 @@ describe("the changelog carries no unfilled placeholder in a released section", 
    */
   it("carries no placeholder anywhere now that the deploy date is filled", () => {
     expect(placeholdersByBlock(text)).toEqual([]);
+  });
+
+  /* Entries wait in changelog.d/ now, so that is where a placeholder waits, and the release fold is
+   * what turns it into a dated block: it must refuse there, before anything is written. */
+  it("may wait in a fragment, and --release refuses it", () => {
+    expect([...PLACEHOLDER_WORDS]).toEqual(["date", "version", "sha"]);
+    const root = mkdtempSync(join(tmpdir(), "changelog-placeholder-"));
+    try {
+      mkdirSync(join(root, "changelog.d"));
+      writeFileSync(join(root, "changelog.d", "hosted-fix.md"), "### A hosted fix\n\nFixed on ohmail Cloud on <date>.\n");
+      const { fragments, problems } = readFragments(root);
+      expect(problems).toEqual([]);
+      const changelog = [
+        "# Changelog", "", "## [Unreleased]", "", "See [changelog.d/](changelog.d/).", "", "### Still to come", "",
+        "## [0.15.0] — 2026-09-09", "", "### Earlier", "", "Text.", "",
+        "[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.15.0...HEAD", "",
+      ].join("\n");
+      expect(() => fold(changelog, fragments, "0.15.1", "2026-09-10")).toThrow("changelog.d/hosted-fix.md:3: an unfilled <date>");
+      const filled = [{ ...fragments[0]!, body: "Fixed on ohmail Cloud on 2026-09-10." }];
+      const out = fold(changelog, filled, "0.15.1", "2026-09-10");
+      expect(placeholdersByBlock(out).filter((p) => isDatedHeading(p.heading))).toEqual([]);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
