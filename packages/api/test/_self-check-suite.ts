@@ -20,7 +20,10 @@ export function serverShapeSuite(shape: () => Shape): void {
     return out;
   };
 
-  describe(`the mailbox self-check against ${shape().name}`, () => {
+  /* 30 s per case: each is real work (about nine logins, a PGlite store, the self-check with its
+     default 5 s folder deadline, and a 1.1 s sleep for a new UIDVALIDITY), 2-4.2 s on an idle
+     runner. About 7x the slowest; covers one folder deadline plus setup on a loaded host. */
+  describe(`the mailbox self-check against ${shape().name}`, { timeout: 30_000 }, () => {
     it("a clean mirror reads in step, and the read changes nothing on either side", async () => {
       const s = shape(); const user = s.user();
       await seedServer(s, user, { INBOX: 3, Archive: 2 });

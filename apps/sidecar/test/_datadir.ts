@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
+import {
+  cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MAIL_JOURNAL } from "@trafficflow/db/journal";
+import { encodeMirrorRecord, normalizeBase } from "../src/cloud-origin.js";
 import { LOCAL_STORE_EXTENSIONS, PGDATA_SUBDIR, openLocalDb } from "../src/db.js";
 
 /**
@@ -154,5 +157,23 @@ export async function freshDataDir(
   // Read at CALL time, not at module load: a test that turns the template off has to be able to.
   if (process.env.OHMAIL_PGDATA_TEMPLATE === "0") return dir;
   cpSync(await templatePgdata(opts.withoutSearchExtensions === true), join(dir, PGDATA_SUBDIR), { recursive: true });
+  return dir;
+}
+
+/**
+ * {@link freshDataDir} for a Cloud launch at `cloudUrl`, with the `mirror-owner` record a first
+ * launch at that server writes. Without it a launch at any server but the managed one reads the
+ * copied `pgdata` as another server's mirror (`mirrorIsForeign` with no record), discards it and
+ * runs `initdb` inside the test. A test whose subject is that adopt-or-discard decision keeps
+ * {@link freshDataDir}.
+ */
+export async function freshCloudDataDir(
+  tag: string, o: { address: string | null; cloudUrl: string },
+): Promise<string> {
+  const base = normalizeBase(o.cloudUrl);
+  if (base === null) throw new Error(`[datadir] ${o.cloudUrl} is not a server base`);
+  const dir = await freshDataDir(tag);
+  writeFileSync(join(dir, "mirror-owner"),
+    encodeMirrorRecord(o.address?.trim().toLowerCase() ?? null, base), { mode: 0o600 });
   return dir;
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createCloudSidecar, readMirrorAccount, type CloudSidecar } from "../../src/cloud-engine.js";
 import { decodeMirrorRecord, encodeMirrorRecord } from "../../src/cloud-origin.js";
 import { hostedMailbox, mailboxList } from "../fixtures/hosted-mailbox.js";
-import { freshDataDir } from "../_datadir.js";
+import { freshCloudDataDir } from "../_datadir.js";
 
 /**
  * PAIRING WITH ANOTHER MACHINE'S DESKTOP — the third way a Cloud-mode install gets a session.
@@ -35,8 +35,9 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+/* With the record a first launch at this server writes, or every boot discards the copied database. */
 const freshDir = async (): Promise<string> => {
-  const d = await freshDataDir("ohmail-pair-redeem-");
+  const d = await freshCloudDataDir("ohmail-pair-redeem-", { address: ADDRESS, cloudUrl: "https://desk.test" });
   dirs.push(d);
   return d;
 };
@@ -525,5 +526,15 @@ describe("POST /cloud/pair-redeem — startOver", () => {
     expect((await res.clone().json()).restartRequired).toBeUndefined();
     expect(s.signedIn()).toBe(true);
     expect(decodeMirrorRecord(readFileSync(join(dir, "mirror-owner"), "utf8")).discardPending).toBe(false);
+  });
+});
+
+describe("the directory every case here boots on", () => {
+  it("a never-paired directory on the same server keeps its database across the launch", async () => {
+    const dir = await freshDir();
+    const before = statSync(join(dir, "pgdata", "PG_VERSION")).ino;
+    await boot(dir, desktopHost());
+    expect(statSync(join(dir, "pgdata", "PG_VERSION")).ino,
+      "the launch discarded the copied database and ran initdb").toBe(before);
   });
 });

@@ -133,7 +133,8 @@ describe.skipIf(!PG_UP)("the open read, on real Postgres", () => {
     expect(blocked, "the read never waited on the rival: the interleaving was not driven").toBe(true);
     // MUTATION WATCHED: drop the NOT EXISTS from the stamp's WHERE and the parked row is stamped.
     expect(await stampOf(accountId, ids), "a parked row took the open read").toBeNull();
-  });
+    // Above `waitForLockWait`'s 10 s, so an interleaving that never blocks fails on `blocked`.
+  }, 30_000);
 
   it("RACE, the other order: the park commits first, then the read — unstamped, and the read lands", async () => {
     const { accountId, ids } = await seed(ONE);

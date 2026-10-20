@@ -163,7 +163,8 @@ describe("a DavMail-shaped server — UID EXPUNGE is never answered (the fixture
     expect(waited).toBeGreaterThanOrEqual(3_500);
     for (let i = 0; i < 40 && c.usable; i++) await new Promise((r) => setTimeout(r, 50));
     expect(c.usable).toBe(false);
-  });
+    // Ends on its own 4 s socket timer, plus a GreenMail seed and up to 2 s of polling: 4.5 s idle.
+  }, 30_000);
 });
 
 /** Short deadlines: a command DavMail never answers fails in seconds here, not in two minutes. */

@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
+import { installDigestNow } from "./_digest-now.js";
 
 /**
  * A PAIRING STARTED FROM A DOOR IS PROVISIONAL UNTIL THE OTHER COMPUTER ACCEPTS. Settings →
@@ -298,8 +299,11 @@ async function leaveTheCard(): Promise<void> {
   for (let i = 0; i < 30; i += 1) await advance(500);
 }
 
+/* The link's hash settles in fake time, not on the threadpool (see `_digest-now.ts`). */
+let restoreDigest: (() => void) | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
+  restoreDigest = installDigestNow();
   window.location.hash = "";
   localStorage.clear();
 });
@@ -309,6 +313,8 @@ afterEach(async () => {
   root = null;
   el = null;
   delete host.__TAURI_INTERNALS__;
+  restoreDigest?.();
+  restoreDigest = null;
   vi.useRealTimers();
   window.location.hash = "";
   localStorage.clear();

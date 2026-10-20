@@ -11,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../../webapp/app/shell/locale";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
-import { hostLabelOf } from "../src/doors.js";
+import { hostLabelOf, linkTokenHash } from "../src/doors.js";
 import messages from "../../webapp/messages/en.json";
+import { digestNow, installDigestNow } from "./_digest-now.js";
 
 /**
  * THE FIRST-RUN CHOOSER HOLDS ITS PAIRING CARD UNTIL THE PAIRING ANSWERS, and the answer is the
@@ -217,8 +218,11 @@ async function pairFromFirstRun(shell: ReturnType<typeof fakeShell>): Promise<st
   return shown;
 }
 
+/* The link's hash settles in fake time, not on the threadpool (see `_digest-now.ts`). */
+let restoreDigest: (() => void) | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
+  restoreDigest = installDigestNow();
   window.location.hash = "";
   localStorage.clear();
 });
@@ -228,6 +232,8 @@ afterEach(async () => {
   root = null;
   el = null;
   delete host.__TAURI_INTERNALS__;
+  restoreDigest?.();
+  restoreDigest = null;
   vi.useRealTimers();
   window.location.hash = "";
   localStorage.clear();
@@ -371,5 +377,25 @@ describe("the refused card's words are in both catalogues", () => {
     expect(DOOR_COPY.hostRefuseRefused("kestrel")).toBe("kestrel hat diese Kopplung abgelehnt. Erstelle dort unter Einstellungen → Geräte einen neuen Link und versuche es erneut.");
     expect(DOOR_COPY.hostChooseAnother).toBe("Anderen Weg wählen");
     expect(DOOR_COPY.gateTryAgain).toBe("Erneut versuchen");
+  });
+});
+
+describe("the link's hash in fake time is WebCrypto's hash", () => {
+  it("the stand-in digest equals WebCrypto byte for byte, and the link check sends the same hash", async () => {
+    restoreDigest?.();
+    restoreDigest = null;
+    const real = crypto.subtle.digest.bind(crypto.subtle);
+    const padded = new TextEncoder().encode("xx tok_9f/+= é xx");
+    const inputs: BufferSource[] = [
+      new Uint8Array(0), new TextEncoder().encode("tok_xyz"), padded.subarray(3, 14), padded.slice(3).buffer,
+    ];
+    for (const data of inputs) {
+      for (const alg of ["SHA-256", { name: "sha-256" }, "SHA-1"] as AlgorithmIdentifier[]) {
+        expect(new Uint8Array(await digestNow(alg, data)), JSON.stringify(alg)).toEqual(new Uint8Array(await real(alg, data)));
+      }
+    }
+    const viaWebCrypto = await linkTokenHash(" tok_xyz ");
+    restoreDigest = installDigestNow();
+    expect(await linkTokenHash(" tok_xyz ")).toBe(viaWebCrypto);
   });
 });

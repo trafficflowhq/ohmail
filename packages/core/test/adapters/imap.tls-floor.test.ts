@@ -39,7 +39,17 @@ import { LOOPBACK_ADMITTED, LOOPBACK_LOOKALIKES } from "./_loopback-table.js";
 
 interface Fake { port: number; lines: string[]; close: () => Promise<void> }
 
-function serve(onLine: (line: string, write: (s: string) => void, sock: net.Socket) => void, greeting: string): Promise<Fake> {
+/** The reply to the first bytes after a yes to STARTTLS: not a TLS record, so the handshake dies at once. */
+const NOT_A_SERVER_HELLO = "plaintext-garbage-not-a-server-hello\r\n";
+
+/**
+ * A line server. After the handler says yes to STARTTLS (`saidYes`), lines are still RECORDED,
+ * so a plaintext LOGIN stays visible to the transcript checks, but never ANSWERED: the client's
+ * ClientHello holds a CRLF in a few percent of runs, and answering that "line" echoes bytes that
+ * start like a TLS record header, so the client waits for the rest until imapflow's 10 s
+ * upgrade timer. The first chunk after the yes gets {@link NOT_A_SERVER_HELLO} instead.
+ */
+function serve(onLine: (line: string, write: (s: string) => void, saidYes: () => void) => void, greeting: string): Promise<Fake> {
   const lines: string[] = [];
   const live = new Set<net.Socket>();
   const srv = net.createServer((sock) => {
@@ -47,16 +57,21 @@ function serve(onLine: (line: string, write: (s: string) => void, sock: net.Sock
     sock.on("error", () => { /* a client that hangs up mid-refusal is the normal case here */ });
     sock.on("close", () => live.delete(sock));
     const write = (s: string): void => { if (!sock.destroyed) sock.write(s); };
+    let upgraded = false;
+    let refused = false;
+    const saidYes = (): void => { upgraded = true; };
     let buf = "";
     sock.on("data", (d) => {
+      const afterYes = upgraded;
       buf += d.toString("utf8");
       let i: number;
       while ((i = buf.indexOf("\r\n")) >= 0) {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 2);
         lines.push(line);
-        onLine(line, write, sock);
+        if (!upgraded) onLine(line, write, saidYes);
       }
+      if (afterYes && !refused) { refused = true; write(NOT_A_SERVER_HELLO); }
     });
     write(greeting);
   });
@@ -79,17 +94,17 @@ function serve(onLine: (line: string, write: (s: string) => void, sock: net.Sock
  */
 function fakeImap(o: { advertiseStartTls?: boolean; startTlsReply?: "OK" | "BAD"; acceptLogin?: boolean } = {}): Promise<Fake> {
   const caps = `IMAP4rev1${o.advertiseStartTls ? " STARTTLS" : ""}`;
-  return serve((line, write, sock) => {
+  return serve((line, write, saidYes) => {
     const [tag, cmd, ...args] = line.split(" ");
     const c = (cmd ?? "").toUpperCase();
     if (c === "CAPABILITY") write(`* CAPABILITY ${caps}\r\n${tag} OK done\r\n`);
     else if (c === "STARTTLS") {
       if (o.startTlsReply === "OK") {
         write(`${tag} OK begin TLS\r\n`);
-        // The next bytes are the client's TLS ClientHello, which this plaintext fake cannot
-        // answer. Reply with plaintext garbage so the handshake dies IMMEDIATELY (OpenSSL's
-        // "wrong version number") instead of hanging the suite until imapflow's upgrade timer.
-        sock.once("data", () => { if (!sock.destroyed) sock.write("plaintext-garbage-not-a-server-hello\r\n"); });
+        // The next bytes are the client's ClientHello, which this plaintext fake cannot answer:
+        // `serve` replies with garbage so the handshake dies IMMEDIATELY (OpenSSL's "wrong
+        // version number") instead of hanging the suite until imapflow's upgrade timer.
+        saidYes();
       } else {
         write(`${tag} BAD TLS unavailable\r\n`);
       }
@@ -111,12 +126,14 @@ function fakeImap(o: { advertiseStartTls?: boolean; startTlsReply?: "OK" | "BAD"
  * assertion would pass for the wrong reason and survive the mutation it exists to catch.
  */
 function fakeSmtp(o: { advertiseStartTls?: boolean; startTlsReply?: "220" | "454" } = {}): Promise<Fake> {
-  return serve((line, write) => {
+  return serve((line, write, saidYes) => {
     const c = line.toUpperCase();
     if (c.startsWith("EHLO")) {
       write(`250-fake greets you\r\n${o.advertiseStartTls ? "250-STARTTLS\r\n" : ""}250 AUTH PLAIN LOGIN\r\n`);
     } else if (c.startsWith("HELO")) write("250 fake\r\n");
-    else if (c.startsWith("STARTTLS")) write(o.startTlsReply === "220" ? "220 go ahead\r\n" : "454 TLS not available\r\n");
+    else if (c.startsWith("STARTTLS")) {
+      if (o.startTlsReply === "220") { write("220 go ahead\r\n"); saidYes(); } else write("454 TLS not available\r\n");
+    }
     else if (c.startsWith("AUTH")) write("535 fake server refuses every password\r\n");
     else if (c.startsWith("QUIT")) write("221 bye\r\n");
     else write("500 unsupported\r\n");
@@ -351,6 +368,32 @@ describe("IMAP on the wire", () => {
     expect(sawLogin(srv), `LOGIN reached the wire in plaintext. transcript: ${JSON.stringify(srv.lines)}`).toBe(false);
     expect(srv.lines.join("\n")).not.toContain(PASSWORD);
     expect(err).toBeInstanceOf(Error);
+  });
+
+  it("the fake RECORDS what follows its yes to STARTTLS and answers none of it", async () => {
+    // What keeps the case above from hanging, and its transcript honest: a LOGIN after the yes
+    // is on `lines` for `sawLogin`, and the only reply is the garbage that ends the handshake.
+    const srv = await open(fakeImap({ advertiseStartTls: true, startTlsReply: "OK" }));
+    const sock = net.connect(srv.port, "127.0.0.1");
+    closers.push(async () => { sock.destroy(); });
+    sock.on("error", () => { /* closed by the afterEach */ });
+    sock.setEncoding("utf8");
+    let got = "";
+    const waiters: Array<() => void> = [];
+    sock.on("data", (d: string) => { got += d; for (const w of waiters.splice(0)) w(); });
+    const seen = async (s: string): Promise<void> => {
+      while (!got.includes(s)) await new Promise<void>((r) => waiters.push(r));
+    };
+
+    await seen("fake imap ready\r\n");
+    sock.write("a1 STARTTLS\r\n");
+    await seen("a1 OK begin TLS\r\n");
+    const before = got.length;
+    sock.write(`a2 LOGIN victim ${PASSWORD}\r\n`);
+    await seen(NOT_A_SERVER_HELLO);
+
+    expect(got.slice(before), "a line after the yes was answered").toBe(NOT_A_SERVER_HELLO);
+    expect(sawLogin(srv), `transcript: ${JSON.stringify(srv.lines)}`).toBe(true);
   });
 
   it("LOOPBACK still authenticates — and that is the only reason the plaintext harness works", async () => {

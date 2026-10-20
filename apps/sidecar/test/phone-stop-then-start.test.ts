@@ -15,7 +15,7 @@ import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -28,6 +28,11 @@ import {
   startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows,
 } from "../src/mobile.js";
 import { releaseRefusal } from "./_release-refusal.js";
+
+/* 30 s per case: the SQL runner below waits a real `setTimeout(0)` before every statement, as the
+   phone's async database bridge does, so a case is 0.8-2.7 s of waiting on an idle host and up to
+   3.9 s on a starved one. About 8x that, which the default 5 s is not. */
+vi.setConfig({ testTimeout: 30_000 });
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {
@@ -443,8 +448,11 @@ describe.runIf(ON_DEVICE_STORE)("the person's stop, on the device store", () => 
     /* THE TWO FACTS, AND THEY ARE NOT THE SAME ONE. */
     expect(p.organizer(), "the runtime read as a mailbox this install has let go")
       .toEqual({ organizing: false, releaseRequestedAt: expect.any(String) });
+    /* AT LEAST ONE: the 202 route rings the mailbox and `stopOrganizing` then forces a resume, two
+       designed triggers. On a fast host their cycles merge into one; on a starved one each runs. */
     expect(p.said("organizer_claim_release_unconfirmed"),
-      "the cycle did not reach the unconfirmed arm — this case measured something else").toBe(1);
+      "the cycle did not reach the unconfirmed arm — this case measured something else").toBeGreaterThanOrEqual(1);
+    expect(p.said("organizer_claim_released"), "a cycle read the refused release as done").toBe(0);
     const row = p.row();
     expect(row.role, "the row demoted over a claim that is still in the mailbox").toBe("organizer");
     expect(row.release, "the request was spent over a release that never happened").not.toBeNull();
