@@ -1,15 +1,15 @@
 # Contributing
 
 ohmail is built by a small team at [TrafficFlow GmbH](https://trafficflow.ch) in
-Zürich. This repository is the free desktop client — one application on macOS,
-Windows and Linux. Contributions are welcome, and so is a plain "this is wrong" —
-the client is early enough that direction still moves.
+Zürich. This repository is the whole program: the desktop app for macOS, Windows
+and Linux, the phone app, the web app and the server. Contributions are welcome,
+and so is a plain "this is wrong" — the project is early enough that direction
+still moves.
 
 ## What is most useful right now
 
-Every build now connects to a real mailbox
-([status](README.md#status--read-this-first)), so the most valuable input is
-about how it behaves against real mail:
+Every build connects to a real mailbox ([README](README.md)), so the most
+valuable input is about how it behaves against real mail:
 
 - **Design and interaction** — the Blanc surfaces, keyboard flow, compact
   (≤ 390 px) layout, reduced-motion behaviour, screen-reader gaps.
@@ -21,7 +21,7 @@ about how it behaves against real mail:
 - **The engine seam** — the window talks to the engine over a private pipe and
   nothing else. If you find a path around it, that is worth reporting even if
   nothing breaks yet.
-- **Correctness of the honest claims** — if the README or
+- **Correctness of the honest claims** — if the README, a page under `docs/` or
   `apps/desktop/README.md` overstates something, that is a bug too, and a
   serious one.
 
@@ -151,8 +151,8 @@ npx playwright install chromium        # the layout tests render in it
     store's own project. The tests that read the phone's mail engine bundle it
     themselves; to bundle it by hand, `node apps/mobile/scripts/bundle-engine.mjs`.
     The bundle is the same whether or not you ran `npm run build` first.
-- The whole desktop build, with the engine in it, is "Build the desktop app
-  yourself" in the README.
+- The whole desktop build, with the engine in it, is
+  [docs/build.md](docs/build.md).
 
 ## Sign your commits (DCO) — and no CLA
 

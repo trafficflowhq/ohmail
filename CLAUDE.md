@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Notes for coding assistants working in this repository. People: read [CONTRIBUTING.md](CONTRIBUTING.md)
-first — everything here is said there or in the README, in the form an assistant reads.
+first — everything here is said there, in the README or under `docs/`, in the form an assistant reads.
 
 ## What this repository is
 
@@ -36,8 +36,8 @@ npm run ui:build:engine   # the bundle the app embeds, into dist/
 npm run smoke             # renders the built bundle and audits it offline
 ```
 
-The toolchain is Node 22 and stable Rust; "Build the desktop app yourself" in the README has the platform
-packages and the whole build.
+The toolchain is Node 22 and stable Rust; [docs/build.md](docs/build.md) has the platform packages and the whole
+build.
 
 ## Tests and CI
 
