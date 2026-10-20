@@ -27,8 +27,9 @@
  *
  * ── WHAT THIS SCRIPT REFUSES TO WRITE ─────────────────────────────────────────────────────
  *
- * One thing: a bundle without the literals of this repository's nodemailer patch, which the
- * release builds install with npm and must apply themselves. Otherwise it builds, writes and
+ * Two things: a bundle without the literals of this repository's nodemailer patch, which the
+ * release builds install with npm and must apply themselves, and one whose source-comment strip
+ * changed anything but comments ({@link assertSameCode}). Otherwise it builds, writes and
  * reports, and the censuses decide — a gate a person can watch fail, where the desktop engine's
  * builder refuses a bundle carrying the private half because there the refusal IS the gate.
  */
@@ -37,6 +38,8 @@ import { createRequire } from "node:module";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { parse } from "acorn";
 
 import aliases from "../../sidecar/src/phone/aliases.js";
 
@@ -95,6 +98,70 @@ export function stripBuildPaths(text, repo = REPO) {
   const prefix = `${repo.replace(/\/+$/, "")}/`;
   return text.replace(/^\/\/ (\/[^\n]*)$/gm, (line, path) =>
     path.startsWith(prefix) ? `// ${path.slice(prefix.length)}` : "// (a module outside the repository)");
+}
+
+/* The comments the artifact keeps: esbuild's module markers (the censuses attribute lines by
+   them), its pure annotations and the license block. */
+const atLineStart = (text, i) => i === 0 || text[i - 1] === "\n";
+const atLineEnd = (text, i) => i === text.length || text[i] === "\n";
+const isModuleMarker = (text, c) => !c.block && atLineStart(text, c.start) && atLineEnd(text, c.end) && /^ \S/.test(c.value);
+const isPureAnnotation = (c) => c.block && /^\s*[@#]__(?:PURE|NO_SIDE_EFFECTS)__\s*$/.test(c.value);
+const isLegalComment = (c) => (c.block && c.value.startsWith("!")) || /@license|@preserve/.test(c.value);
+
+/**
+ * Removes the source comments esbuild copies into the output (leading comments on members,
+ * properties, elements and arguments, under any `legalComments`). Comment positions come from
+ * acorn's parser, so nothing inside a string, template or regex is touched. A comment alone on its
+ * lines goes with its lines; a trailing one goes with the blanks before it; an inline one becomes
+ * a space, or a newline if it spans lines, so ASI reads the code as before.
+ */
+export function stripSourceComments(text) {
+  const comments = [];
+  parse(text, {
+    ecmaVersion: "latest", sourceType: "script", allowHashBang: true,
+    onComment: (block, value, start, end) => { comments.push({ block, value, start, end }); },
+  });
+  let out = "";
+  let at = 0;
+  for (const c of comments) {
+    if (isModuleMarker(text, c) || isPureAnnotation(c) || isLegalComment(c)) continue;
+    let s = c.start;
+    while (s > at && (text[s - 1] === " " || text[s - 1] === "\t")) s--;
+    let e = c.end;
+    while (e < text.length && (text[e] === " " || text[e] === "\t")) e++;
+    if (atLineEnd(text, e)) {
+      out += text.slice(at, s);
+      at = atLineStart(text, s) && e < text.length ? e + 1 : e;
+    } else {
+      out += text.slice(at, c.start) + (/[\n\r\u2028\u2029]/.test(text.slice(c.start, c.end)) ? "\n" : " ");
+      at = c.end;
+    }
+  }
+  return out + text.slice(at);
+}
+
+/**
+ * Refuses a comment strip that changed anything but comments: esbuild's whitespace-minified
+ * reading of both texts must be byte-identical, and the module markers, pure annotations and
+ * license block (which that reading does not see) must be unchanged.
+ */
+export async function assertSameCode(before, after, esbuild) {
+  const firstDiff = (what, a, b) => {
+    let i = 0;
+    while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    const at = (x) => JSON.stringify(typeof x === "string" ? x.slice(i, i + 60) : x[i] ?? "(none)");
+    return new Error(`the comment strip changed the ${what} at ${i}: ${at(a)} became ${at(b)}; the artifact was refused.`);
+  };
+  const min = (s) => esbuild.transform(s, { loader: "js", minifyWhitespace: true, legalComments: "none" }).then((r) => r.code);
+  const [a, b] = await Promise.all([min(before), min(after)]);
+  if (a !== b) throw firstDiff("code", a, b);
+  const markers = (s) => s.match(/^\/\/ \S[^\n]*$/gm) ?? [];
+  const ma = markers(before), mb = markers(after);
+  if (ma.join("\n") !== mb.join("\n")) throw firstDiff("module markers", ma, mb);
+  const pure = (s) => (s.match(/\/\*\s*[@#]__(?:PURE|NO_SIDE_EFFECTS)__\s*\*\//g) ?? []).length;
+  if (pure(before) !== pure(after)) throw new Error(`the comment strip changed the pure annotations from ${pure(before)} to ${pure(after)}; the artifact was refused.`);
+  const legal = (s) => (s.match(/\/\*![\s\S]*?\*\//g) ?? []).join("\n");
+  if (legal(before) !== legal(after)) throw firstDiff("license block", legal(before), legal(after));
 }
 
 /** The bundler this artifact is reproducible for. One spelling, read by the refusal below too. */
@@ -526,13 +593,23 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
   /* Stripped BEFORE anything else sees it, so `text` and the bytes on disk are the same artifact:
      a caller that censused `text` and a test that censused the file would otherwise be measuring
      two different things, and only one of them ships. */
-  const text = stripBuildPaths(result.outputFiles[0].text);
+  const built = stripBuildPaths(result.outputFiles[0].text);
+  /* The source comments go before anything is written, and only with the proof that no code
+     changed; a refusal also removes a previous build's files, as the patch refusal does. */
+  let text;
+  try {
+    text = stripSourceComments(built);
+    await assertSameCode(built, text, esbuild);
+  } catch (e) {
+    if (write) for (const f of [BUNDLE, TYPES, METAFILE]) rmSync(f, { force: true });
+    throw e;
+  }
   if (write) {
     writeFileSync(BUNDLE, text);
     writeFileSync(TYPES, declarationFor());
     markCommonJs(PACKAGED_DIR);
     writeFileSync(METAFILE, JSON.stringify(result.metafile));
-    /* The one refusal this script makes: the phone sends with nodemailer, which carries a patch of
+    /* The patch refusal: the phone sends with nodemailer, which carries a patch of
      * ours (`patches/`), and an npm install that skipped `apply-patches.mjs apply` bundles the
      * unpatched copy. A bundle without the patch's literals is removed before the app can take it. */
     const patched = spawnSync(process.execPath, [join(REPO, "scripts", "apply-patches.mjs"), "assert",
@@ -548,6 +625,7 @@ export async function buildPhoneEngine({ write = true, workspaceSources = false 
     metafile: result.metafile,
     inputs: Object.keys(result.metafile.inputs),
     text,
+    sourceCommentBytes: Buffer.byteLength(built) - Buffer.byteLength(text),
     applied,
     bundlePath: BUNDLE,
     metafilePath: METAFILE,
@@ -706,6 +784,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const node = nodeSpecifiersIn(built.metafile);
   const ext = externalsIn(built.metafile);
   console.log(`phone engine: ${built.inputs.length} inputs, ${(built.text.length / 1024 / 1024).toFixed(2)} MiB`);
+  console.log(`source comments stripped: ${built.sourceCommentBytes} bytes`);
   console.log(`substitutions applied: ${built.applied.length}`);
   console.log(`node: specifiers surviving: ${node.length}${node.length ? `\n  ${node.join("\n  ")}` : ""}`);
   console.log(`externals: ${ext.length}${ext.length ? `\n  ${ext.join("\n  ")}` : ""}`);

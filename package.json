@@ -76,6 +76,7 @@
   },
   "devDependencies": {
     "esbuild": "0.24.0",
+    "acorn": "8.18.0",
     "vitest": "2.1.9",
     "jsdom": "25.0.1",
     "tsx": "4.23.1",
