@@ -989,40 +989,35 @@ export function wireInstant(at: Date | null): string | null {
 export class MailboxService {
   constructor(private readonly deps: MailboxServiceDeps = {}) {}
 
-  /**
-   * The gate this instance runs. `??` and not a constructor default, so the paid gate is what an
-   * explicit `undefined` resolves to as well — `makeMailboxService({ allowance: cfg.allowance })`
-   * on a host whose config forgot the field must not become the free tier.
-   */
   private get allowance(): MailboxAllowancePolicy {
+    // The gate this instance runs. `??` and not a constructor default, so the paid gate is what an
+    // explicit `undefined` resolves to as well — `makeMailboxService({ allowance: cfg.allowance })`
+    // on a host whose config forgot the field must not become the free tier.
     return this.deps.allowance ?? defaultMailboxAllowance();
   }
 
-  /**
-   * The account's access verdict, read OUTSIDE any transaction — the allowance gate needs it and
-   * may not ask for it under a row lock.
-   *
-   * `null` when this host declared no reader, and that is NOT unmetered: an unmetered host says so
-   * with a verdict carrying null limits. Defaulting to unmetered here would have silently removed
-   * the plan limit from any host that wired the paid gate and forgot this — the exact failure
-   * `mailbox-allowance-registry.ts` refuses by name one seam over, reintroduced one seam up. The
-   * paid gate refuses a `null`; the unmetered policy ignores it.
-   */
   private async access(accountId: string): Promise<AccessVerdict | null> {
+    // The account's access verdict, read OUTSIDE any transaction — the allowance gate needs it and
+    // may not ask for it under a row lock.
+    //
+    // `null` when this host declared no reader, and that is NOT unmetered: an unmetered host says so
+    // with a verdict carrying null limits. Defaulting to unmetered here would have silently removed
+    // the plan limit from any host that wired the paid gate and forgot this — the exact failure
+    // `mailbox-allowance-registry.ts` refuses by name one seam over, reintroduced one seam up. The
+    // paid gate refuses a `null`; the unmetered policy ignores it.
     return this.deps.accessOf ? this.deps.accessOf(accountId) : null;
   }
 
-  /**
-   * List the account's mailboxes. The counts variant is OPT-IN, and the default path runs no
-   * aggregate over `messages`: this route is POLLED — the shell reads it every 30 s in every open
-   * tab, Settings every 10 s — and `messageCount` is an aggregate over the account's whole
-   * message history, so it is computed only for `GET /mailboxes?counts=1` and ABSENT otherwise,
-   * never sent as `0`. ONE statement for the whole account, taken BEFORE the per-mailbox loop:
-   * reading the count inside `toDTO` would be one aggregate per mailbox, the shape this method
-   * already pays twice for folders and pending moves and must not pay a third time over a table
-   * whose size is the product's whole point.
-   */
   async list(ctx: ServiceContext, opts: ListMailboxesOptions = {}): Promise<MailboxDTO[]> {
+    // List the account's mailboxes. The counts variant is OPT-IN, and the default path runs no
+    // aggregate over `messages`: this route is POLLED — the shell reads it every 30 s in every open
+    // tab, Settings every 10 s — and `messageCount` is an aggregate over the account's whole
+    // message history, so it is computed only for `GET /mailboxes?counts=1` and ABSENT otherwise,
+    // never sent as `0`. ONE statement for the whole account, taken BEFORE the per-mailbox loop:
+    // reading the count inside `toDTO` would be one aggregate per mailbox, the shape this method
+    // already pays twice for folders and pending moves and must not pay a third time over a table
+    // whose size is the product's whole point.
+
     /* A FINISHED ERASURE IS NOT LISTED. Its row survives only as the fence a late writer is
        refused by; listed, it read as a disconnected mailbox ohmail still held mail for, beside the
        receipt saying none is left. One still running is listed with `erasure.remaining`, and a
@@ -1042,14 +1037,12 @@ export class MailboxService {
     return out;
   }
 
-  /**
-   * How many messages each mailbox holds, in one grouped statement, counting only what the
-   * account OWNS by History's own predicate ({@link ownedMessages}): deleted rows stay out.
-   * Invariant #9 lives in the WHERE — the account predicate is in the SAME statement as the
-   * `GROUP BY`, and a real-Postgres test reads it off the statement the driver sent. `::int`
-   * because `count(*)` is `bigint` and postgres-js hands bigint back as a STRING.
-   */
   private async messageCounts(ctx: ServiceContext): Promise<Map<string, number>> {
+    // How many messages each mailbox holds, in one grouped statement, counting only what the
+    // account OWNS by History's own predicate ({@link ownedMessages}): deleted rows stay out.
+    // Invariant #9 lives in the WHERE — the account predicate is in the SAME statement as the
+    // `GROUP BY`, and a real-Postgres test reads it off the statement the driver sent. `::int`
+    // because `count(*)` is `bigint` and postgres-js hands bigint back as a STRING.
     const rows = await ctx.db
       .select({
         mailboxId: messages.mailboxId,
@@ -1065,26 +1058,6 @@ export class MailboxService {
     return this.toDTO(ctx, await this.ownedRow(ctx, id));
   }
 
-  /**
-   * Connect a mailbox: insert the row, envelope-encrypt the password(s) per transport; `meta`
-   * carries only non-secret params. The limit gate and the insert are ONE transaction, in this
-   * order: `assertMayAddMailbox` takes `FOR UPDATE` on the account row before counting, so two
-   * creates at limit−1 admit exactly one. Row and credentials commit together (separate
-   * autocommits once left a connected mailbox with no login). The credentials are TRIED FIRST —
-   * this used to answer 201 `connected` for host `nope.invalid`. Probed BEFORE the transaction:
-   * the runtime handle is `max: 1`. Oauth skips; what is probed is what is stored. SMTP is probed
-   * too when `opts.smtpProbe` is injected.
-   */
-  /**
-   * Try a login and say what happened. Writes nothing, stores nothing, creates no mailbox. The
-   * only way to learn whether details worked used to be submitting them — the affirmative half of
-   * the verdict had never been written. It shares `create`'s refusal BY CONSTRUCTION: a failure
-   * throws exactly what a failing `create` throws ({@link probeRefused}, same code, taxonomy,
-   * {@link ProbeTlsDetail}), so every client renders a test failure with no new copy; only
-   * SUCCESS needed a new sentence. "Ok" includes the FOLDER COUNT: an accepted LOGIN does not
-   * prove the account can READ anything. No ownership check (a PRE-create action); the injected
-   * probe closure bounds it: the SSRF/port guard, the admission counter, the deadline.
-   */
   async probeConnection(
     ctx: ServiceContext,
     input: {
@@ -1094,6 +1067,14 @@ export class MailboxService {
     },
     opts: { probe: MailboxProbe; smtpProbe?: SmtpProbe },
   ): Promise<{ ok: true; host: string; user: string; folders: number | null; sending?: SendingProbe }> {
+    // Try a login and say what happened. Writes nothing, stores nothing, creates no mailbox. The
+    // only way to learn whether details worked used to be submitting them — the affirmative half of
+    // the verdict had never been written. It shares `create`'s refusal BY CONSTRUCTION: a failure
+    // throws exactly what a failing `create` throws ({@link probeRefused}, same code, taxonomy,
+    // {@link ProbeTlsDetail}), so every client renders a test failure with no new copy; only
+    // SUCCESS needed a new sentence. "Ok" includes the FOLDER COUNT: an accepted LOGIN does not
+    // prove the account can READ anything. No ownership check (a PRE-create action); the injected
+    // probe closure bounds it: the SSRF/port guard, the admission counter, the deadline.
     const address = canonicalAddress(input.address ?? "");
     if (!address) throw new ServiceError("validation_failed", 400, "address is required");
     const host = (input.imap?.host ?? "").trim();
@@ -1142,16 +1123,6 @@ export class MailboxService {
     };
   }
 
-  /**
-   * THE SUBMISSION LEG OF A CONNECTION TEST — what `create` would find, without writing anything.
-   *
-   * The connect dials BOTH servers and refuses the whole mailbox when the submission one says no,
-   * so a test that tried only the incoming leg reported a green over a connect that was about to
-   * fail — and the field to correct is the one the test never touched. A blank outgoing host is
-   * an ANSWER (`not_configured`): this product records a pair with nothing on the outgoing side.
-   * The identity is the one the connect will dial: the incoming login unless a submission user
-   * was typed, and the incoming password unless a submission one was.
-   */
   private async probeSending(
     ctx: ServiceContext,
     address: string,
@@ -1162,6 +1133,14 @@ export class MailboxService {
     },
     smtpProbe: SmtpProbe,
   ): Promise<SendingProbe> {
+    // THE SUBMISSION LEG OF A CONNECTION TEST — what `create` would find, without writing anything.
+    //
+    // The connect dials BOTH servers and refuses the whole mailbox when the submission one says no,
+    // so a test that tried only the incoming leg reported a green over a connect that was about to
+    // fail — and the field to correct is the one the test never touched. A blank outgoing host is
+    // an ANSWER (`not_configured`): this product records a pair with nothing on the outgoing side.
+    // The identity is the one the connect will dial: the incoming login unless a submission user
+    // was typed, and the incoming password unless a submission one was.
     const host = (input.smtp?.host ?? "").trim();
     if (!host) return { state: "not_configured" };
     const verdict = await smtpProbe({
@@ -1186,6 +1165,14 @@ export class MailboxService {
   async create(
     ctx: ServiceContext, body: CreateMailboxBody, opts: CreateMailboxOptions,
   ): Promise<MailboxDTO> {
+    // Connect a mailbox: insert the row, envelope-encrypt the password(s) per transport; `meta`
+    // carries only non-secret params. The limit gate and the insert are ONE transaction, in this
+    // order: `assertMayAddMailbox` takes `FOR UPDATE` on the account row before counting, so two
+    // creates at limit−1 admit exactly one. Row and credentials commit together (separate
+    // autocommits once left a connected mailbox with no login). The credentials are TRIED FIRST —
+    // this used to answer 201 `connected` for host `nope.invalid`. Probed BEFORE the transaction:
+    // the runtime handle is `max: 1`. Oauth skips; what is probed is what is stored. SMTP is probed
+    // too when `opts.smtpProbe` is injected.
     const kp = this.requireKeyProvider();
     // Canonicalized BEFORE the emptiness check, so `"   "` is refused rather than stored as a
     // blank address that the index would then treat as a legitimate distinct key.
@@ -1370,19 +1357,17 @@ export class MailboxService {
     return this.toDTO(ctx, mb);
   }
 
-  /**
-   * Connect or reconnect an OAuth2 mailbox — the write end of the consent ceremony. Neither `POST
-   * /mailboxes` nor `PATCH` can serve this: nobody typed the address (it comes from the
-   * `id_token`'s `preferred_username`, so this method resolves the row itself), and a reconnect
-   * and a first connect are the same button. `mailboxes_active_address_uq` guarantees at most one
-   * live mailbox per address; DISABLED rows are excluded — reviving a tombstone would resurrect a
-   * mailbox somebody removed, so a fresh consent for a disconnected address CREATES. A racing row
-   * is caught by the 23505 → 409 mapping. Probed BEFORE stored; a refused probe writes NOTHING —
-   * the existing mailbox keeps the only credential an oauth mailbox has.
-   */
   async connectOAuth(
     ctx: ServiceContext, input: ConnectOAuthMailboxInput, opts: ConnectOAuthOptions,
   ): Promise<ConnectOAuthResult> {
+    // Connect or reconnect an OAuth2 mailbox — the write end of the consent ceremony. Neither `POST
+    // /mailboxes` nor `PATCH` can serve this: nobody typed the address (it comes from the
+    // `id_token`'s `preferred_username`, so this method resolves the row itself), and a reconnect
+    // and a first connect are the same button. `mailboxes_active_address_uq` guarantees at most one
+    // live mailbox per address; DISABLED rows are excluded — reviving a tombstone would resurrect a
+    // mailbox somebody removed, so a fresh consent for a disconnected address CREATES. A racing row
+    // is caught by the 23505 → 409 mapping. Probed BEFORE stored; a refused probe writes NOTHING —
+    // the existing mailbox keeps the only credential an oauth mailbox has.
     const kp = this.requireKeyProvider();
     const address = canonicalAddress(input.address ?? "");
     if (!input.provider || !address) {
@@ -1541,19 +1526,17 @@ export class MailboxService {
     return { created: out.created, mailbox: await this.toDTO(ctx, out.row) };
   }
 
-  /**
-   * Patch mailbox fields and, with new secrets, re-encrypt + upsert the credential row(s); 404 if
-   * not owned. RE-ENABLING IS A CREATE: `delete` is a soft delete, so without this gate the limit
-   * is trivially bypassed; only the disabled → not-disabled TRANSITION is gated. It may not step
-   * around the worker's failure state machine (mail 0023): `status: 'error'` from a client is
-   * refused, and leaving `error` clears the four outage columns in the same UPDATE — `failed_at`
-   * is COALESCEd, so a stale episode would be inherited by the next failure. A rotated credential
-   * is probed; `opts` is optional where `create`'s is not — the enforcement is the runtime throw
-   * in {@link probedImapMeta}, mutation-checked at the API layer.
-   */
   async update(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, opts?: UpdateMailboxOptions,
   ): Promise<MailboxDTO> {
+    // Patch mailbox fields and, with new secrets, re-encrypt + upsert the credential row(s); 404 if
+    // not owned. RE-ENABLING IS A CREATE: `delete` is a soft delete, so without this gate the limit
+    // is trivially bypassed; only the disabled → not-disabled TRANSITION is gated. It may not step
+    // around the worker's failure state machine (mail 0023): `status: 'error'` from a client is
+    // refused, and leaving `error` clears the four outage columns in the same UPDATE — `failed_at`
+    // is COALESCEd, so a stale episode would be inherited by the next failure. A rotated credential
+    // is probed; `opts` is optional where `create`'s is not — the enforcement is the runtime throw
+    // in {@link probedImapMeta}, mutation-checked at the API layer.
     const kp = this.requireKeyProvider();
 
     // Widened deliberately: the type forbids it, the wire does not.
@@ -1715,23 +1698,20 @@ export class MailboxService {
     });
   }
 
-  /**
-   * Disconnect a mailbox. SOFT delete: `status='disabled'` AND remove its credential rows so the
-   * worker stops. Deliberately no hard delete — `messages.mailbox_id` FK-references the row, and
-   * a hard delete would orphan real message history. 404 if not owned. ONE TRANSACTION, UNDER A
-   * ROW LOCK: this used to be three autocommits (an unlocked read, the status flip, the
-   * credential delete), leaving two windows a concurrent credential PATCH could commit into — the
-   * second ends with a disabled mailbox that still owns a live IMAP secret. The lock is taken in
-   * the same order as the dedup resolver's, and `update` takes it too, so no two of the three can
-   * interleave into that state and none can deadlock.
-   */
-  /**
-   * @returns the `change_log` seq this removal emitted, or null when it closed no appointment.
-   *   The route echoes it as `X-Sync-Seq` — see the close below.
-   */
   async delete(
     ctx: ServiceContext, id: string, opts: MailboxDeleteOptions = {},
   ): Promise<MailboxDeleteResult> {
+    // Disconnect a mailbox. SOFT delete: `status='disabled'` AND remove its credential rows so the
+    // worker stops. Deliberately no hard delete — `messages.mailbox_id` FK-references the row, and
+    // a hard delete would orphan real message history. 404 if not owned. ONE TRANSACTION, UNDER A
+    // ROW LOCK: this used to be three autocommits (an unlocked read, the status flip, the
+    // credential delete), leaving two windows a concurrent credential PATCH could commit into — the
+    // second ends with a disabled mailbox that still owns a live IMAP secret. The lock is taken in
+    // the same order as the dedup resolver's, and `update` takes it too, so no two of the three can
+    // interleave into that state and none can deadlock.
+    //
+    // @returns the `change_log` seq this removal emitted, or null when it closed no appointment.
+    //   The route echoes it as `X-Sync-Seq` — see the close below.
     return asTx(ctx).transaction(async (tx) => {
       /* ── THE ERASURE FENCE, FIRST IN THE TRANSACTION ────────────────────────────────────
        *
@@ -1846,11 +1826,9 @@ export class MailboxService {
     });
   }
 
-  /**
-   * Force a reconcile pass. Clearing each folder's CONDSTORE cursor + delta_token
-   * makes the worker re-scan from scratch on its next cycle (durable marker).
-   */
   async requestResync(ctx: ServiceContext, id: string): Promise<void> {
+    // Force a reconcile pass. Clearing each folder's CONDSTORE cursor + delta_token
+    // makes the worker re-scan from scratch on its next cycle (durable marker).
     await this.ownedRow(ctx, id); // 404 if not owned
     /**
      * A reader does not re-sync a mailbox it does not organize (mail 0083). This nulls every
@@ -1867,16 +1845,14 @@ export class MailboxService {
       .where(eq(mailboxFolders.mailboxId, id));
   }
 
-  /**
-   * Dismiss the forwarding-detection notice (mail 0078) — "this mailbox is quiet and I know it".
-   * One timestamp, stamped over whatever stood (a repeat press only makes it MORE durable; the
-   * client compares `dismissedAt < since`). The worker never clears it; the notice returns only
-   * when a NEW episode's `since` postdates it — "state changes re-notify, sameness holds", two
-   * instants instead of a state machine. Deliberately legal with NO episode standing: refusing a
-   * dismissal because the episode cleared a second ago would 409 a person agreeing with us. No
-   * change_log row; the panel polls `GET /mailboxes`.
-   */
   async dismissInboundQuiet(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
+    // Dismiss the forwarding-detection notice (mail 0078) — "this mailbox is quiet and I know it".
+    // One timestamp, stamped over whatever stood (a repeat press only makes it MORE durable; the
+    // client compares `dismissedAt < since`). The worker never clears it; the notice returns only
+    // when a NEW episode's `since` postdates it — "state changes re-notify, sameness holds", two
+    // instants instead of a state machine. Deliberately legal with NO episode standing: refusing a
+    // dismissal because the episode cleared a second ago would 409 a person agreeing with us. No
+    // change_log row; the panel polls `GET /mailboxes`.
     await this.ownedRow(ctx, id); // 404 if not owned
     await asTx(ctx).update(mailboxes)
       .set({ inboundQuietDismissedAt: ctx.now() })
@@ -1884,17 +1860,15 @@ export class MailboxService {
     return this.toDTO(ctx, await this.ownedRow(ctx, id));
   }
 
-  /**
-   * Dismiss the organizer notice (mail 0088) — "yes, I know who organizes this". The same
-   * two-instant shape as `dismissInboundQuiet`: the notice is `organizer_event_at >
-   * coalesce(seen_at, -infinity)`, so a dismissal is one timestamp; it suppresses only an event
-   * that PREDATES the press. Deliberately legal with no event standing: the gate stamps on a
-   * sixty-second cycle while a person is looking at the notice, and refusing because the row
-   * moved a second ago would 409 somebody agreeing with us. No step-up, and that is an argument:
-   * this decides whether a line is on a screen — a second factor would teach people that
-   * dismissing a notice is dangerous. No `change_log` row; the panel polls.
-   */
   async dismissOrganizerNotice(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
+    // Dismiss the organizer notice (mail 0088) — "yes, I know who organizes this". The same
+    // two-instant shape as `dismissInboundQuiet`: the notice is `organizer_event_at >
+    // coalesce(seen_at, -infinity)`, so a dismissal is one timestamp; it suppresses only an event
+    // that PREDATES the press. Deliberately legal with no event standing: the gate stamps on a
+    // sixty-second cycle while a person is looking at the notice, and refusing because the row
+    // moved a second ago would 409 somebody agreeing with us. No step-up, and that is an argument:
+    // this decides whether a line is on a screen — a second factor would teach people that
+    // dismissing a notice is dangerous. No `change_log` row; the panel polls.
     await this.ownedRow(ctx, id); // 404 if not owned
     await asTx(ctx).update(mailboxes)
       .set({ organizerEventSeenAt: ctx.now() })
@@ -1902,15 +1876,13 @@ export class MailboxService {
     return this.toDTO(ctx, await this.ownedRow(ctx, id));
   }
 
-  /**
-   * The person's answer to the gap offer (mail 0151). "File" stamps `gap_pressed_at` only while
-   * the row offers exactly the count they were shown, on a mailbox this install organizes; the
-   * organizer's next pass files that set or offers the new count. A stale count writes nothing and
-   * answers `changed`. "Leave" closes the window and moves nothing. Under the row's lock.
-   */
   async answerGapLetters(
     ctx: ServiceContext, id: string, answer: { file: boolean; count: unknown },
   ): Promise<{ outcome: "pressed" | "left" | "changed"; mailbox: MailboxDTO }> {
+    // The person's answer to the gap offer (mail 0151). "File" stamps `gap_pressed_at` only while
+    // the row offers exactly the count they were shown, on a mailbox this install organizes; the
+    // organizer's next pass files that set or offers the new count. A stale count writes nothing and
+    // answers `changed`. "Leave" closes the window and moves nothing. Under the row's lock.
     const outcome = await asTx(ctx).transaction(async (tx) => {
       const m = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
       // A replay of a press that landed answers as it did, writing nothing.
@@ -1924,17 +1896,15 @@ export class MailboxService {
     return { outcome, mailbox: await this.toDTO(ctx, await this.ownedRow(ctx, id)) };
   }
 
-  /**
-   * Stop organizing this mailbox here, and keep my mail (mail 0088) — the mirror of {@link
-   * organizeHere}. IT AUTHORIZES A CEASING, IT DOES NOT PERFORM ONE: the claim lives in the
-   * customer's IMAP folder, and IMAP writes belong to the process holding the connection — this
-   * writes one timestamp; the organizer's next pass honours it FIRST, releases the claim, writes
-   * the reader role, closes the appointments, clears the column. The `FOR UPDATE` is the same
-   * lock the other three doors take, so the four serialize — a release and a claim-back are
-   * opposite instructions. A tombstone is refused, never revived. A mailbox this install does NOT
-   * organize is a no-op that answers honestly: the person's intent is already true.
-   */
   async release(ctx: ServiceContext, id: string): Promise<MailboxReleaseResult> {
+    // Stop organizing this mailbox here, and keep my mail (mail 0088) — the mirror of {@link
+    // organizeHere}. IT AUTHORIZES A CEASING, IT DOES NOT PERFORM ONE: the claim lives in the
+    // customer's IMAP folder, and IMAP writes belong to the process holding the connection — this
+    // writes one timestamp; the organizer's next pass honours it FIRST, releases the claim, writes
+    // the reader role, closes the appointments, clears the column. The `FOR UPDATE` is the same
+    // lock the other three doors take, so the four serialize — a release and a claim-back are
+    // opposite instructions. A tombstone is refused, never revived. A mailbox this install does NOT
+    // organize is a no-op that answers honestly: the person's intent is already true.
     return asTx(ctx).transaction(async (tx) => {
       const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
       // The tombstone, checked before the role for `organizeHere`'s reason: a removed mailbox's
@@ -2009,22 +1979,20 @@ export class MailboxService {
     });
   }
 
-  /**
-   * Ring the worker's doorbell for every connected mailbox — the "Pull new mail" server half
-   * (mail 0049). NOT {@link requestResync}: a resync clears every CONDSTORE cursor and re-walks
-   * the mailbox — the heaviest thing a POST can ask; this stamps one nullable column and the kick
-   * scan serves one ORDINARY bounded batch out of turn. The rate limit lives in the UPDATE's
-   * predicate: a stamp younger than {@link MailboxService.PULL_MIN_GAP_MS} is left standing — the
-   * column IS the state. One transaction, row locks first, DB clock throughout: PER MAILBOX (a
-   * young stamp keeps its own bar); ATOMIC against the kick's compare-and-clear; the DATABASE's
-   * clock on both sides, so no host or client wall clock enters the comparison.
-   */
   async requestPull(ctx: ServiceContext): Promise<{
     requested: number;
     /** The NEWEST effective stamp — a convenience for logging; the per-mailbox list is the contract. */
     requestedAt: string;
     mailboxes: Array<{ id: string; requestedAt: string }>;
   }> {
+    // Ring the worker's doorbell for every connected mailbox — the "Pull new mail" server half
+    // (mail 0049). NOT {@link requestResync}: a resync clears every CONDSTORE cursor and re-walks
+    // the mailbox — the heaviest thing a POST can ask; this stamps one nullable column and the kick
+    // scan serves one ORDINARY bounded batch out of turn. The rate limit lives in the UPDATE's
+    // predicate: a stamp younger than {@link MailboxService.PULL_MIN_GAP_MS} is left standing — the
+    // column IS the state. One transaction, row locks first, DB clock throughout: PER MAILBOX (a
+    // young stamp keeps its own bar); ATOMIC against the kick's compare-and-clear; the DATABASE's
+    // clock on both sides, so no host or client wall clock enters the comparison.
     const gapSeconds = MailboxService.PULL_MIN_GAP_MS / 1000;
     const rows = await asTx(ctx).transaction(async (tx) => {
       // Lock the account's connected rows so the kick pass's compare-and-clear serializes with
@@ -2091,24 +2059,21 @@ export class MailboxService {
    */
   private static readonly PULL_MIN_GAP_MS = 5_000;
 
-  /**
-   * The account's screening state — the consent's non-mailbox half. Three columns, one upsert;
-   * the baseline is the one that matters: without it the chosen window has nothing to be measured
-   * from and the whole backlog moves. `COALESCE` on the baseline so a live account keeps its
-   * instant; the dials are overwritten because they ARE the answer just given. Settings before
-   * the mailbox row — one lock chain, one direction. A method because it has TWO callers in
-   * {@link organizeHere}: the first consent, and a re-run of setup — which wrote nothing for a
-   * while, so the window control was decorative on every re-run. The bounds throw before anything
-   * is written, on both paths.
-   */
-  /**
-   * CONSENT IS THE BASELINE — stamped once per account, never moved.
-   *
-   * Separate from {@link writeScreeningAnswer} because the dials are the answer a person just
-   * gave and this is a fact about when they first agreed: a door that sends no window still
-   * establishes one, and a re-run must not slide a live account's cutline (the `coalesce`).
-   */
   private async stampScreeningBaseline(tx: Tx, ctx: ServiceContext): Promise<void> {
+    // The account's screening state — the consent's non-mailbox half. Three columns, one upsert;
+    // the baseline is the one that matters: without it the chosen window has nothing to be measured
+    // from and the whole backlog moves. `COALESCE` on the baseline so a live account keeps its
+    // instant; the dials are overwritten because they ARE the answer just given. Settings before
+    // the mailbox row — one lock chain, one direction. A method because it has TWO callers in
+    // {@link organizeHere}: the first consent, and a re-run of setup — which wrote nothing for a
+    // while, so the window control was decorative on every re-run. The bounds throw before anything
+    // is written, on both paths.
+    //
+    // CONSENT IS THE BASELINE — stamped once per account, never moved.
+    //
+    // Separate from {@link writeScreeningAnswer} because the dials are the answer a person just
+    // gave and this is a fact about when they first agreed: a door that sends no window still
+    // establishes one, and a re-run must not slide a live account's cutline (the `coalesce`).
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, screeningBaselineAt: ctx.now(), updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -2123,12 +2088,10 @@ export class MailboxService {
       });
   }
 
-  /**
-   * IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question `already_organizing` never
-   * asked. A row with a NULL baseline is not readable for this purpose either: it is a record
-   * that cannot answer the question, which is the same damage under a row that exists.
-   */
   private async settingsRecordReadable(tx: Tx, accountId: string): Promise<boolean> {
+    // IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question `already_organizing` never
+    // asked. A row with a NULL baseline is not readable for this purpose either: it is a record
+    // that cannot answer the question, which is the same damage under a row that exists.
     const [row] = await tx
       .select({ baseline: accountSettings.screeningBaselineAt })
       .from(accountSettings)
@@ -2137,12 +2100,10 @@ export class MailboxService {
     return row !== undefined && row.baseline !== null;
   }
 
-  /**
-   * THE BASELINE ALONE, for a consent that asked no window over an account with no settings
-   * record. No dials: the person answered no second question, so nothing here may store a choice
-   * they did not make — the `coalesce` keeps a racing consent to one baseline, as everywhere else.
-   */
   private async writeConsentBaseline(tx: Tx, ctx: ServiceContext): Promise<void> {
+    // THE BASELINE ALONE, for a consent that asked no window over an account with no settings
+    // record. No dials: the person answered no second question, so nothing here may store a choice
+    // they did not make — the `coalesce` keeps a racing consent to one baseline, as everywhere else.
     await tx.insert(accountSettings)
       .values({ accountId: ctx.accountId, screeningBaselineAt: ctx.now(), updatedAt: ctx.now() })
       .onConflictDoUpdate({
@@ -2509,25 +2470,18 @@ export class MailboxService {
     });
   }
 
-  /**
-   * Envelope-encrypt `pass` and insert/update the `(mailboxId, transport)` row ON THE GIVEN
-   * EXECUTOR. It takes `tx` rather than reaching for `ctx.db` because the write paths are
-   * transactional now: a credential written on the ambient handle would commit
-   * independently of the mailbox row it belongs to.
-   */
-  /**
-   * Resolve the config a credential rotation will be STORED with, having just proved it works.
-   * Returns the merged non-secret `meta`; throws on any refusal. The MERGE is the point, not a
-   * convenience: `PATCH` bodies are partial by design — "here is my new password", or "my
-   * provider moved hosts, same everything else" — so neither half is dialable alone: the patch
-   * has no port (`metaOf` drops the undefined rather than inventing one), and the stored config
-   * ignores the correction the user just typed. Probing either alone would prove a login the
-   * worker will never make — a green light with a different config's name on it. Patch WINS field
-   * by field, because the patch is the newer statement about the same mailbox.
-   */
   private async probedImapMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, opts?: UpdateMailboxOptions,
   ): Promise<ProbedMeta> {
+    // Resolve the config a credential rotation will be STORED with, having just proved it works.
+    // Returns the merged non-secret `meta`; throws on any refusal. The MERGE is the point, not a
+    // convenience: `PATCH` bodies are partial by design — "here is my new password", or "my
+    // provider moved hosts, same everything else" — so neither half is dialable alone: the patch
+    // has no port (`metaOf` drops the undefined rather than inventing one), and the stored config
+    // ignores the correction the user just typed. Probing either alone would prove a login the
+    // worker will never make — a green light with a different config's name on it. Patch WINS field
+    // by field, because the patch is the newer statement about the same mailbox.
+
     // The guard the type cannot enforce in a package whose tests are not compiled. See
     // {@link UpdateMailboxOptions}: this throw is the half that runs.
     if (!opts?.probe) throw probeMissing();
@@ -2586,15 +2540,13 @@ export class MailboxService {
     return { meta: mergedTransportMeta(stored, patch.imap, verdict.proven, "imap"), proven: verdict.proven };
   }
 
-  /**
-   * The SMTP sibling of {@link probedImapMeta}: merge the patch over the stored `smtp` meta,
-   * dial the merged config, and return the merge with the PROVEN port/TLS mode applied. Same
-   * ordering rules (before the transaction, 404 and disabled-refusal first) and the same consent
-   * claim, re-proved for the submission server on its own.
-   */
   private async probedSmtpMeta(
     ctx: ServiceContext, id: string, patch: UpdateMailboxBody, smtpProbe: SmtpProbe,
   ): Promise<ProbedMeta & { maxMessageBytes: number | null }> {
+    // The SMTP sibling of {@link probedImapMeta}: merge the patch over the stored `smtp` meta,
+    // dial the merged config, and return the merge with the PROVEN port/TLS mode applied. Same
+    // ordering rules (before the transaction, 404 and disabled-refusal first) and the same consent
+    // claim, re-proved for the submission server on its own.
     const current = await this.ownedRow(ctx, id); // 404 before anything is dialled
     refuseOAuthPassword(current, patch);
 
@@ -2640,15 +2592,13 @@ export class MailboxService {
     };
   }
 
-  /**
-   * WHAT A PATCH OF ONE TRANSPORT MERGES OVER — the credential row's `meta`, exactly as before,
-   * and only where that row is ABSENT, what a sign-out kept of it (mail 0127). Without the second
-   * a pass-only press on a signed-out mailbox merged over nothing and was refused "imap host is
-   * required", though the row says where the mailbox lives. `undefined` when neither exists.
-   */
   private async mergeBaseOn(
     on: Tx, mailboxId: string, transport: ProbeTransport,
   ): Promise<Record<string, unknown> | null | undefined> {
+    // WHAT A PATCH OF ONE TRANSPORT MERGES OVER — the credential row's `meta`, exactly as before,
+    // and only where that row is ABSENT, what a sign-out kept of it (mail 0127). Without the second
+    // a pass-only press on a signed-out mailbox merged over nothing and was refused "imap host is
+    // required", though the row says where the mailbox lives. `undefined` when neither exists.
     const [row] = await on.select({ meta: mailboxCredentials.meta })
       .from(mailboxCredentials)
       .where(and(
@@ -2663,19 +2613,17 @@ export class MailboxService {
     return kept === null ? undefined : { ...kept };
   }
 
-  /**
-   * Compare-and-set for a merge computed OUTSIDE the transaction that is written INSIDE it.
-   * Throws {@link configMoved}; returns nothing — the only legal continuation is "the merge is
-   * still the answer". MUST be called on `tx`, after `ownedRowOn(..., { forUpdate: true })`: on
-   * the ambient handle the read is a fresh snapshot with no ordering against the other writer —
-   * reads as protection, is not. The rebuild runs {@link mergedTransportMeta} with the same patch
-   * and proven endpoint, so the ONLY input that can differ is the stored meta: would this patch,
-   * re-decided now, still store what it just verified?
-   */
   private async assertMergeCurrent(
     tx: Tx, mailboxId: string, transport: ProbeTransport,
     patch: TransportInput | undefined, dialled: ProbedMeta,
   ): Promise<void> {
+    // Compare-and-set for a merge computed OUTSIDE the transaction that is written INSIDE it.
+    // Throws {@link configMoved}; returns nothing — the only legal continuation is "the merge is
+    // still the answer". MUST be called on `tx`, after `ownedRowOn(..., { forUpdate: true })`: on
+    // the ambient handle the read is a fresh snapshot with no ordering against the other writer —
+    // reads as protection, is not. The rebuild runs {@link mergedTransportMeta} with the same patch
+    // and proven endpoint, so the ONLY input that can differ is the stored meta: would this patch,
+    // re-decided now, still store what it just verified?
     const fresh = await this.mergeBaseOn(tx, mailboxId, transport);
     const rebuilt = mergedTransportMeta(fresh, patch, dialled.proven, transport);
     if (stableJson(rebuilt) !== stableJson(dialled.meta)) throw configMoved(transport);
@@ -2732,12 +2680,10 @@ export class MailboxService {
     return this.deps.keyProvider;
   }
 
-  /**
-   * `mailboxes.signed_out_at` as it stands NOW, unlocked — what a credential write records before
-   * it dials so the fence can tell whether a sign-out landed while it was out. `undefined` for an
-   * id this account does not own; the 404 belongs to `ownedRow`, not here.
-   */
   private async signedOutAtOf(ctx: ServiceContext, id: string): Promise<Date | null | undefined> {
+    // `mailboxes.signed_out_at` as it stands NOW, unlocked — what a credential write records before
+    // it dials so the fence can tell whether a sign-out landed while it was out. `undefined` for an
+    // id this account does not own; the 404 belongs to `ownedRow`, not here.
     const [row] = await asTx(ctx).select({ signedOutAt: mailboxes.signedOutAt })
       .from(mailboxes)
       .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)))
@@ -2750,19 +2696,17 @@ export class MailboxService {
     return this.ownedRowOn(asTx(ctx), ctx, id);
   }
 
-  /**
-   * {@link ownedRow} on an explicit db handle — the transactional read the write paths need.
-   *
-   * `forUpdate` is OPT-IN, on the `liveSubscriptionOf` pattern, and only `update` and `delete`
-   * pass it. The read paths (`get`, `list`, `requestResync`, the DTO build) must not take write
-   * locks on every request — a lock on the read path would serialize the mailbox panel behind
-   * whatever mutation happens to be in flight. When it IS passed the handle must be a real
-   * transaction: a row lock taken outside one is released immediately and serializes
-   * nothing, which is worse than not taking it because it reads as protection.
-   */
   private async ownedRowOn(
     tx: Tx, ctx: ServiceContext, id: string, opts: { forUpdate?: boolean } = {},
   ): Promise<MailboxRow> {
+    // {@link ownedRow} on an explicit db handle — the transactional read the write paths need.
+    //
+    // `forUpdate` is OPT-IN, on the `liveSubscriptionOf` pattern, and only `update` and `delete`
+    // pass it. The read paths (`get`, `list`, `requestResync`, the DTO build) must not take write
+    // locks on every request — a lock on the read path would serialize the mailbox panel behind
+    // whatever mutation happens to be in flight. When it IS passed the handle must be a real
+    // transaction: a row lock taken outside one is released immediately and serializes
+    // nothing, which is worse than not taking it because it reads as protection.
     const base = tx.select().from(mailboxes)
       .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
     const [m] = await (opts.forUpdate ? dialect(ctx.db).forUpdate(base) : base);
@@ -2770,26 +2714,15 @@ export class MailboxService {
     return m as MailboxRow;
   }
 
-  /**
-   * MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials.
-   *
-   * `messageCount` is PASSED IN rather than read here, and `undefined` means the caller did not
-   * ask. The aggregate behind it is per-ACCOUNT, so computing it inside this per-mailbox
-   * projection would be one full scan per row; `list` takes it once and hands each row its
-   * share. Every other caller (`get`, `create`, `update`) omits the argument and the field is
-   * absent from their DTOs — a single mailbox read is not a surface that asks "how many".
-   */
-  /**
-   * When the organizer's last pass finished — one read per REQUEST, whichever door asked.
-   * Memoized on the `ServiceContext` OBJECT, not the service: the service is a singleton across
-   * requests, and a cached heartbeat would serve one tab's poll the figure from another tab's
-   * poll minutes earlier — a stale "last pass" is exactly the lie this field replaces. The
-   * context is minted per request, so a WeakMap keyed on it is per-request by construction and
-   * collects itself. It sits here rather than in `list`'s pre-loop so EVERY door answers the same
-   * way — hoisting it would leave the write doors' DTOs reporting `null` for a deployment that
-   * can tell. A throw resolves to `null`.
-   */
   private async lastCycleAtFor(ctx: ServiceContext): Promise<string | null> {
+    // When the organizer's last pass finished — one read per REQUEST, whichever door asked.
+    // Memoized on the `ServiceContext` OBJECT, not the service: the service is a singleton across
+    // requests, and a cached heartbeat would serve one tab's poll the figure from another tab's
+    // poll minutes earlier — a stale "last pass" is exactly the lie this field replaces. The
+    // context is minted per request, so a WeakMap keyed on it is per-request by construction and
+    // collects itself. It sits here rather than in `list`'s pre-loop so EVERY door answers the same
+    // way — hoisting it would leave the write doors' DTOs reporting `null` for a deployment that
+    // can tell. A throw resolves to `null`.
     const read = this.deps.lastOrganizerCycleAt;
     if (!read) return null;
     const memo = MailboxService.lastCycleMemo.get(ctx);
@@ -2805,6 +2738,13 @@ export class MailboxService {
   private async toDTO(
     ctx: ServiceContext, m: MailboxRow, messageCount?: number,
   ): Promise<MailboxDTO> {
+    // MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials.
+    //
+    // `messageCount` is PASSED IN rather than read here, and `undefined` means the caller did not
+    // ask. The aggregate behind it is per-ACCOUNT, so computing it inside this per-mailbox
+    // projection would be one full scan per row; `list` takes it once and hands each row its
+    // share. Every other caller (`get`, `create`, `update`) omits the argument and the field is
+    // absent from their DTOs — a single mailbox read is not a surface that asks "how many".
     const lastCycleAt = await this.lastCycleAtFor(ctx);
     const [aside] = await ctx.db.select({
       n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
