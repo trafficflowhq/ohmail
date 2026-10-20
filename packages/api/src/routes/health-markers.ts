@@ -929,6 +929,9 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // and without this index that is a scan of the account's rules. Committed with 0144's two backfill
   // classes in one transaction, so its presence also says they ran.
   ["rules_account_key_idx", "ON public.rules USING btree (account_id, TRIM(BOTH FROM lower(match)))"],
+  // mail 0157_messages_sender_date. The SILENT kind: the Screener cutline probe dates each held
+  // sender's mail by this key, and without it reads every message of the sender from the heap.
+  ["messages_account_sender_date_idx", "ON public.messages USING btree (account_id, lower(from_address), COALESCE(date, created_at))"],
 ];
 
 /**
@@ -1241,7 +1244,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0156_routing_decisions_sender_reason";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0157_messages_sender_date";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

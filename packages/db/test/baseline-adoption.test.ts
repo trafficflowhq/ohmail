@@ -855,6 +855,8 @@ describe("the baseline cutoff is frozen", () => {
       // The fact that capped a stored suggestion: one nullable ADD COLUMN IF NOT EXISTS on
       // routing_decisions, no default, no data. Safe over any history.
       "0156_routing_decisions_sender_reason",
+      // The Screener cutline probe's index: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
+      "0157_messages_sender_date",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

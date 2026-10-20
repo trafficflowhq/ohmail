@@ -243,6 +243,8 @@ export default defineConfig({
       /* The address search by recipient: mail 0154's side table on this store. */
       "packages/services/test/search-address-recipients.test.ts",
       "packages/db/test/sqlite-recipients.test.ts",
+      /* The Screener cutline probe's range on mail 0157's index, with no planner statistics. */
+      "packages/db/test/sqlite-sender-date-index.test.ts",
       "packages/services/test/search-page-fused-date.test.ts",
       "packages/services/test/search-eszett-fold.test.ts",
       "packages/api/test/search.test.ts",

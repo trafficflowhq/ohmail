@@ -3044,6 +3044,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0156_routing_decisions_sender_reason": [
     "62b940f43f03a210",   // ADD COLUMN IF NOT EXISTS routing_decisions.sender_reason text
   ],
+  // THE SCREENER CUTLINE PROBE'S INDEX — one btree on messages over the cutline's own key, prebuilt
+  // CONCURRENTLY by setup (SENDER_DATE_PREBUILD_SPEC), so this no-ops on a live server. No DML.
+  "0157_messages_sender_date": [
+    "4075edd93e0d71f6",   // create index if not exists messages_account_sender_date_idx (account_id, lower(from_address), coalesce(date, created_at))
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4027,12 +4032,14 @@ describe("the two journals are well-formed", () => {
   // 0154_messages_recipient_keys's.
   // 156 → 157 for `0156_routing_decisions_sender_reason`: its `when` (1791602600060) is strictly
   // above 0155_outbound_sends_rearm's.
+  // 157 → 158 for `0157_messages_sender_date`: its `when` (1791602600061) is strictly above
+  // 0156_routing_decisions_sender_reason's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 157], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 158], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

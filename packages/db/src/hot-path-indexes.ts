@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { ARRIVAL_ORDER_INDEX_DDL, RECIPIENT_KEYS_PREBUILD_SPEC } from "./search-setup.js";
+import { ARRIVAL_ORDER_INDEX_DDL, RECIPIENT_KEYS_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC } from "./search-setup.js";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
 } from "./concurrent-index.js";
@@ -101,6 +101,8 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   // The prebuild's own spec, function prelude and all, so setup-prod's read-back checks it valid
   // and a database at any position can build it.
   RECIPIENT_KEYS_PREBUILD_SPEC,
+  // THE SCREENER CUTLINE PROBE (mail 0157): a held sender's mail dated by the cutline's own key.
+  SENDER_DATE_PREBUILD_SPEC,
   {
     // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0148), by account then id. Every row is NULL
     // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,
