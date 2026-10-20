@@ -198,7 +198,8 @@ describe("the organizer's environment is derived in exactly one place", () => {
 
     expect(offenders, "call organizerEnvironment() / resolveCloudInstallId(process.env) instead")
       .toEqual([]);
-  });
+    // A parse of every source file, no wait of its own: up to 4.8 s on the CI VMs, 120 s under 10% of a CPU.
+  }, 180_000);
 
   it("the canonical function and the two label readers still exist, so the exemptions are not stale", () => {
     const repoRoot = process.cwd().endsWith("/test") ? join(process.cwd(), "..") : process.cwd();

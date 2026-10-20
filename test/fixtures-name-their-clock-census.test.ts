@@ -200,7 +200,9 @@ describe("a test names the clock its fixtures are dated by", () => {
     // A census that reads no calls measured nothing; 200+ exist across the four roots today.
     expect(calls, "the scan reached no registered call").toBeGreaterThan(100);
     expect(findings, "pass the clock the fixtures are dated by (the world's, FIXED_NOW, DEMO_NOW)").toEqual([]);
-  });
+    // A parse of every file in the four test roots, no wait of its own: up to 2.9 s on the CI VMs, 116 s
+    // under 10% of a CPU.
+  }, 180_000);
 });
 
 describe("the census, driven over planted sources", () => {

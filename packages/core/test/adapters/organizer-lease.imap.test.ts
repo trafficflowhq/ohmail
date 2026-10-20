@@ -178,7 +178,8 @@ async function listFolders(cfg: Cfg): Promise<Array<{ path: string; subscribed?:
 const NOW = new Date();
 const STALE_LATER = new Date(NOW.getTime() + DEFAULT_STALE_AFTER_MS + 60_000);
 
-describe("the organizer lease, against GreenMail", () => {
+// Two installs' sessions on GreenMail per case, no wait of its own: 0.8-2.8 s each on the CI VMs.
+describe("the organizer lease, against GreenMail", { timeout: 30_000 }, () => {
   const open: ImapAdapter[] = [];
   afterEach(async () => {
     await Promise.all(open.splice(0).map((a) => a.close().catch(() => undefined)));

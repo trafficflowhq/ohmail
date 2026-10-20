@@ -70,7 +70,9 @@ describe("runPlatformSignalPass — the unconfigured state", () => {
     const rows = await db.select().from(platformSignals);
     expect(rows, "an unconfigured deployment has measured nothing, and says so by absence")
       .toEqual([]);
-  });
+    // The file's first test, its first store: 0.5 s as a rule, 2.7 s once on a loaded CI VM, 9 s under
+    // 10% of a CPU; no wait of its own.
+  }, 30_000);
 
   it("a FAILED fetch also writes no row — the previous window is not overwritten with a guess", async () => {
     const db = await makeTestDb();

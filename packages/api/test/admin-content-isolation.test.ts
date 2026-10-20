@@ -1925,7 +1925,9 @@ describe("no staff surface carries a marker from ANY column of the schema", () =
     // ANTI-VACUITY: every marker is READABLE BACK. An UPDATE that matched zero rows, or a
     // driver that silently swallowed one, would make the whole file pass for the wrong reason.
     expect(await verifyTaint(db, sweep.tainted)).toEqual([]);
-  });
+    // The file's first test, its first store and a write to every column: 0.8 s as a rule, 2.9 s once on
+    // a loaded CI VM, 41 s under 10% of a CPU; no wait of its own.
+  }, 90_000);
 
   it("not one of them appears in any staff response", async () => {
     const { db, deps, world, sweep } = await taintedWorld();

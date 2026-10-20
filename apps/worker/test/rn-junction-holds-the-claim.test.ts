@@ -82,7 +82,9 @@ describe("a brand at an r|n junction through real ingest", () => {
       const deliver = await world("partner-firma.invalid");
       expect(await deliver(`"${name}" <service@partner-firma.invalid>`, SUBJ(10 + n)), name).toEqual({ ...HELD, brand: "PostFinance" });
     }
-  });
+    // Three worlds through real ingest, no wait of its own: 0.9 s as a rule, 2.7 s once on a loaded CI
+    // VM, 77 s under 10% of a CPU.
+  }, 120_000);
 
   it("on the reply arm: a message citing a Sent copy is held with the claim", async () => {
     const deliver = await world(null);

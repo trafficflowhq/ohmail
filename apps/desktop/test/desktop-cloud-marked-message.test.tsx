@@ -177,5 +177,7 @@ describe("a marked message on the Cloud-mode desktop", () => {
     });
     expect(host.querySelector('.msg-from > .msg-from-check[data-reason="identity"]')?.textContent ?? "")
       .toContain("PostFinance");
-  });
+    // A PGlite store opened cold, a mirror pass and a render, no wait of its own: up to 4.0 s on the
+    // CI VMs, 145 s under 10% of a CPU.
+  }, 240_000);
 });

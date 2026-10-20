@@ -180,7 +180,8 @@ describe("rows arriving above every index", () => {
     for (let px = scroller.scrollTop; px < CHROME_PX + 760 * 90; px += 500) await scrollTo(scroller, px);
     const [p0, p3] = offsets(scroller);
     expect(p3! - p0!, "three arrivals above the reader, priced once").toBeCloseTo(o3! - o0!, 6);
-  });
+    // About 92 scroll steps of 30 ms each, 2.8 s of waiting: 3.1 s on the CI VMs.
+  }, 15_000);
 
   it("read at the top, the chrome is what is read: the new rows show on top and nothing scrolls", async () => {
     const { root, scroller } = await mount();

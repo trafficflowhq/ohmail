@@ -717,7 +717,9 @@ describe("every writer under a sender's key takes one lock order", () => {
     const red = DERIVED.flatMap((w) => readingOf(w.file, w.node, w.name).out.map((o) => `${w.file}#${w.name}: ${o}`));
     expect(red.filter((r) => !KNOWN_READINGS.has(r)), "a writer out of order").toEqual([]);
     expect([...KNOWN_READINGS].filter((r) => !red.includes(r)), "a named reading that is gone: remove it").toEqual([]);
-  });
+    // Every derived writer read in one synchronous walk: up to 9.2 s on the CI VMs and 190 s under 10%
+    // of a CPU, past the 5 s default only because it never yields. No wait of its own.
+  }, 300_000);
 
   for (const w of EXPECTED) {
     it(`${w.fn ?? w.closure} (${w.file})`, () => {

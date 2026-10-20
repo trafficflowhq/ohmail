@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapFlow } from "imapflow";
 
 import { ImapAdapter } from "../../src/adapters/imap.js";
@@ -22,6 +22,10 @@ import { metaRelay, type MetaRelay, type MetaRelayOptions } from "./_meta-relay.
  * messages after each one. The relay counts what it rewrote, so a green through it is a relay
  * that fired. The in-process twins are `organizer-profile-presence.test.ts`.
  */
+
+/* Every case is several real sessions (adapter, witness, relay) and five writes, no wait of its own:
+   2.6-4.4 s each on the CI VMs, GreenMail the slower. 6x the slowest, on the ladder, for the file. */
+vi.setConfig({ testTimeout: 30_000 });
 
 function dovecotConfig(): ImapConfig {
   return {

@@ -296,7 +296,8 @@ describe("ZERO Set-Cookie across the ENTIRE door", () => {
     expect(viaBody.headers.getSetCookie()).toEqual([]);
     expect(((await viaBody.json()) as { tokens: { refreshToken: string } }).tokens.refreshToken)
       .not.toBe(tokens.refreshToken);
-  });
+    // No wait of its own: 0.3 s as a rule, 2.8 s once on a loaded CI VM, 27 s under 10% of a CPU.
+  }, 60_000);
 });
 
 describe("the paired-device lifecycle over the door — redeem, devices, refresh, logout", () => {

@@ -626,7 +626,8 @@ describe("level None ships the original bytes", () => {
     expect(hasExif(await bytesOf(result.blob))).toBe(true);
     expect(decodeCalls).toHaveLength(0);
     expect(encodeCalls).toHaveLength(0);
-  });
+    // No wait of its own: 1.0 s as a rule, 2.6 s once on a loaded CI VM, 23 s under 10% of a CPU.
+  }, 60_000);
 });
 
 describe("a browser that cannot do it sends the original — never an error", () => {

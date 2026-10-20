@@ -121,7 +121,9 @@ describe("A. a rule added on a device that does not organize the mailbox", () =>
       const [row] = await w.laptop.select({ priority: rules.priority }).from(rules).where(eq(rules.accountId, ACCT));
       expect(row!.priority, `the organizer's rule after a create naming ${stated ?? "no"} priority`).toBe(stated ?? 5);
     }
-  });
+    // Two worlds of two PGlite stores each, no wait of its own: up to 3.8 s on the CI VMs, 94 s under
+    // 10% of a CPU.
+  }, 180_000);
 
   it("CONTROL: a change to an existing rule, from the same door, is carried out by the organizer", async () => {
     const w = await world(false);

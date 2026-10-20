@@ -475,5 +475,7 @@ describe("a pile past the body budget costs one body per pass", () => {
     const listings = server.log.filter((l) => l === `fetch ${META} 1:*`).length;
     const bodies = server.log.filter((l) => l.startsWith(`fetch ${META} `) && l.includes("<0.")).length;
     expect(bodies, `${bodies} body reads over ${listings} listings`).toBeLessThanOrEqual(2 * listings);
-  });
+    // No wait of its own: 140 MB through the in-memory server, up to 23.6 s on the CI VMs and 340 s
+    // under 10% of a CPU. It never yields, so no budget can fire; this is the ladder's top.
+  }, 300_000);
 });

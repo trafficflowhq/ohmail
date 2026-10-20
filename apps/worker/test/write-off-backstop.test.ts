@@ -86,7 +86,8 @@ describe("the local backstop, at any arrival rate", () => {
     for (let i = 0; i < 20; i++) { w.arrive(`victim ${2 * i}`, `victim ${2 * i + 1}`); await w.cycle(ledger); }
     expect(await w.writtenOff()).toBe(CAP);
     expect(ledger.writeOffsHeldSince).toBeInstanceOf(Date);
-  });
+    // Twenty cycles, no wait of its own: up to 2.7 s on the CI VMs, 77 s under 10% of a CPU.
+  }, 120_000);
 
   it("one every third cycle, clean cycles between: the same bound — a clean cycle resets nothing", async () => {
     const w = await world();
@@ -136,7 +137,9 @@ describe("the hold lives in the store, under the build label that set it", () =>
       if (launch > 0) expect(ledger.writeOffsHeldSince, `launch ${launch}`).toBeInstanceOf(Date);
     }
     expect(await w.writtenOff()).toBe(CAP);
-  });
+    // Eighteen cycles over thirty messages, no wait of its own: up to 3.1 s on the CI VMs, 101 s under
+    // 10% of a CPU.
+  }, 180_000);
 
   it("a relaunch under the same label is held before it writes anything off", async () => {
     const w = await world();

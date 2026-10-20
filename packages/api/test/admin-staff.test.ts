@@ -426,7 +426,9 @@ describe("staff enrolment — replacing the authenticator is not a cookie-only p
     const wrong = await H(post("/admin/staff/totp/begin",
       { sessionToken: token, password: "not the password" }, { bearer: SECRET }), deps);
     expect(wrong.status).toBe(401);
-  });
+    // Password hashes and a store, no wait of its own: 1.2 s as a rule, 2.6 s once on a loaded CI VM,
+    // 41 s under 10% of a CPU.
+  }, 90_000);
 
   it("allows re-enrolment with the session AND the password — a lost phone is still recoverable", async () => {
     const deps = await deps0();

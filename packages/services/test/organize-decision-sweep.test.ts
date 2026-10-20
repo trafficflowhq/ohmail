@@ -301,7 +301,9 @@ describe("the hand-back's rulings", () => {
     expect(await sweep(w, AT)).toMatchObject({ kind: "swept", total: 1000 });
     for (const k of [0, 1, 999]) expect(await desired(w, ids[k]!)).toBe(GATE);
     for (const k of [1000, 1001, 1002]) expect(await desired(w, ids[k]!)).toBe(INBOX);
-  });
+    // 1003 letters through the store and the sweep: up to 7.9 s on the CI VMs and 200 s under 10% of a
+    // CPU, past the 5 s default only because it never yields. No wait of its own.
+  }, 300_000);
 
   it("undated letters never stand in front of a dated one: under All time the dated letter moves, the undated stay", async () => {
     const w = await world();

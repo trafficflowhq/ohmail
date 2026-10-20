@@ -394,7 +394,9 @@ describe("the door repairs an older row's section at first use", () => {
 
     expect([(e1 as ServiceError).code, (e1 as ServiceError).retryable, (e2 as ServiceError).code]).toEqual(["not_found", true, "not_found"]);
     expect(gone.state.structures).toBe(1);
-  });
+    // Two requests, each sitting out the 1.5 s MOVED_LOCATOR_SETTLE_MS for a move that never comes:
+    // 3.0 s of waiting, 3.2 s on the CI VMs on both stores, 26 s under 10% of a CPU.
+  }, 60_000);
 
   it("the write is this account's: another account's row keeps its section, and the write says it did not land", async () => {
     const { db, accountId, mailboxId, ctx } = await makeCtx();

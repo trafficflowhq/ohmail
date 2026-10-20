@@ -248,7 +248,8 @@ describe("applyMetaRequests — the happy path", () => {
     expect(acks).toHaveLength(1);
     expect(acks[0]!.requestId).toBe(requestId);
     expect(acks[0]!.outcome).toBe("applied");
-  });
+    // No wait of its own: 1.4 s as a rule, 2.9 s once on a loaded CI VM, 32 s under 10% of a CPU.
+  }, 60_000);
 
   /** ONE fetch per drain — the folder's three record types come off a single read. */
   it("reads the folder once per drain", async () => {

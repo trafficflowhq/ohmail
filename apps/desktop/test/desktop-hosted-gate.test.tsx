@@ -384,5 +384,6 @@ describe("the auth key, pinned at the source", () => {
     await settleThroughFastProbe();
     expect(shell.healthAsks() - atSettle, "a settled state asks nothing more on the fast cadence")
       .toBe(0);
-  });
+    // Four 1 s windows of the real 400 ms loop and the mount's settle, 4.1 s of waiting: 4.2 s on the CI VMs.
+  }, 15_000);
 });

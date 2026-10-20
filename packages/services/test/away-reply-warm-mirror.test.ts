@@ -301,7 +301,9 @@ describe("the away-reply flag reaches a mirror that predates it", () => {
     expect(r.done, "the gate closed on an unfinished sweep").toBe(true);
     // The database's own count of what was written, for every seeded id.
     expect(await changeRowsFor(w, ids) - before).toBe(total);
-  });
+    // 1001 rows seeded and swept in the in-process store, no wait of its own: up to 4.6 s on the CI
+    // VMs, 140 s under 10% of a CPU.
+  }, 240_000);
 
   /**
    * EXACTLY THE PAGE SIZE — the off-by-one either side of "a short page means the end".

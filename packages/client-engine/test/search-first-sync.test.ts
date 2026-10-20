@@ -125,5 +125,6 @@ describe("the search route says the store is still taking the mailbox in", () =>
     expect(done.state).toBe("ready");
     expect("importing" in done).toBe(false);
     expect("importing" in (await w.adapter.searchAddressServer(sender, {}))).toBe(false);
-  });
+    // No wait of its own: 0.3 s as a rule, 2.9 s once on a loaded CI VM, 43 s under 10% of a CPU.
+  }, 90_000);
 });

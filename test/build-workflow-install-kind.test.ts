@@ -152,7 +152,8 @@ describe("the mounted AppImage says it is an AppImage", () => {
     const r = run(AMD64, {});
     expect(r.code).not.toBe(0);
     expect(r.err).toContain("INSTALL-KIND-NOT-READ");
-  });
+    // The step's whole 120-poll wait, 6 s at the stub's 0.05 s, plus its spawns: 6.4 s on the CI VMs.
+  }, 15_000);
 
   it("names an image that could not start, with what the runtime said", () => {
     const r = run(AMD64, { exitEarly: 127 });

@@ -156,7 +156,9 @@ describe("the draft's usage rides its release", () => {
     expect(out).toEqual({ draftId: expect.any(String), seq: expect.any(Number) });
     expect(w.credits.releases).toEqual([]);
     expect(lines.map((l) => l.why)).toEqual(["no_time"]);
-  });
+    // The spend is the fake's clock, no wait of its own: 0.3 s as a rule, 2.5 s once on a loaded CI VM,
+    // 13 s under 10% of a CPU.
+  }, 30_000);
 
   it("the boundary: the release, the fault record and the response margin fit exactly, and one ms more does not", async () => {
     const edge = 60_000 - DRAFT_ADMISSION.spendCallCeilingMs - DRAFT_USAGE_RELEASE.faultRecordMs

@@ -94,7 +94,8 @@ async function countIn(cfg: ImapConfig, canonical: string): Promise<number> {
   } finally { await c.logout(); }
 }
 
-describe("a handover mid-scan stops the losing cycle within a page, on a real server", () => {
+// Two worlds on a real server and a seeded inbox per case, no wait of its own: 2.3-2.9 s on the CI VMs.
+describe("a handover mid-scan stops the losing cycle within a page, on a real server", { timeout: 30_000 }, () => {
   const open: ImapAdapter[] = [];
   afterEach(async () => {
     await Promise.all(open.splice(0).map((a) => a.close().catch(() => undefined)));

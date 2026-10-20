@@ -159,7 +159,9 @@ describe("every client rule write over a list is one per key", () => {
       return hit;
     });
     expect(viaImport.length).toBeGreaterThan(0);
-  });
+    // A parse of the engine's import tree, no wait of its own: 1.4 s as a rule, up to 2.7 s on a loaded
+    // CI VM, 43 s under 10% of a CPU.
+  }, 90_000);
 
   it("no named entry without a site", () => {
     expect(Object.keys(NAMED).filter((k) => !found.includes(k))).toEqual([]);

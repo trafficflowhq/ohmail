@@ -28,7 +28,8 @@ function eml(o: { from: string; to: string; subject: string; messageId: string }
   ].join("\r\n");
 }
 
-describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (GreenMail + real Postgres)", () => {
+// A harness on GreenMail and Postgres per case, no wait of its own: 1.0-2.7 s each on the CI VMs.
+describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (GreenMail + real Postgres)", { timeout: 30_000 }, () => {
   beforeAll(async () => { await runMigrations(DB_URL); });
   const closers: Array<() => Promise<void>> = [];
   afterEach(async () => { for (const c of closers.splice(0)) await c(); });

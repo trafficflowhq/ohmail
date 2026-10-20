@@ -306,7 +306,9 @@ describe("a run that ends without an answer hands its claims back through one do
     const res = await svc.suggest(w.ctx, { senders: ["alice@ex.example", "bob@ex.example"] });
     expect(res.skipped).toEqual([{ sender: "alice@ex.example", reason: "spend_unavailable" }]);
     expect(w.credits.releases.map((r) => r.attemptKey)).toEqual([screenerAttemptKey(await bobId(w))]);
-  });
+    // It sits out the service's 2.5 s wait for the other caller's claim (INFLIGHT_WAIT_MS): 2.8 s on the
+    // CI VMs, 22 s under 10% of a CPU.
+  }, 60_000);
 });
 
 async function idOf(w: Awaited<ReturnType<typeof world>>, from: string): Promise<string> {

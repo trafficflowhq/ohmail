@@ -1174,7 +1174,9 @@ describe("a document too large to apply in one transaction is refused, and never
       w.ctx, w.mailboxId, { fingerprint: profileFingerprint(d) }, { read: foundReader(d).read },
     );
     expect(applied.imported.tags).toBe(PROFILE_IMPORT_MAX.tagNames);
-  });
+    // A document at every ceiling, offered and applied, no wait of its own: 1.1 s as a rule, 2.7 s once
+    // on a loaded CI VM, 78 s under 10% of a CPU.
+  }, 120_000);
 });
 
 /**

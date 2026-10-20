@@ -362,7 +362,8 @@ describe("the ways a request ends, and the ways the server says wait", () => {
       globalThis.fetch = original;
       document.cookie = "tf_owner=; max-age=0; path=/";
     }
-  });
+    // The client's own renewal retries before the sentence (3.7 s on the CI VMs), under the 8 s waitFor.
+  }, 15_000);
 
   it("a busy read is retried and the page renders; a busy confirm keeps Confirm live", async () => {
     readAnswers = [() => Promise.reject(busy()), () => Promise.resolve(facts())];

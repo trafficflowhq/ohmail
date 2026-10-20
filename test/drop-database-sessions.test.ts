@@ -97,7 +97,9 @@ describe("every DROP DATABASE runs on a session with no statement timeout", () =
     const raw = census.filter((c) => c.raw.length > 0).map((c) => c.file).sort();
     expect(raw.filter((f) => !RAW.includes(f)), "a new file drops on a session the role's timeout reaches: take the testing door's throwaway database, or clear both timeouts").toEqual([]);
     expect(RAW.filter((f) => !raw.includes(f)), "a RAW file now clears its timeout or drops nothing: take it off RAW").toEqual([]);
-  });
+    // A synchronous read of every tracked source, no wait of its own: up to 3.9 s on the CI VMs, 94 s
+    // under 10% of a CPU.
+  }, 180_000);
 
   it("reads the three session shapes a file clears by, and the raw one", () => {
     const [clears, raw] = [
