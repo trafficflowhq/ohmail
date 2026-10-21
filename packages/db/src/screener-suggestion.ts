@@ -44,6 +44,12 @@ export interface ScreenerSuggestionRow {
   confidence: number;
   rationale: string;
   spam: boolean;
+  /**
+   * The sender check's code that capped the verdict, or `none` (`capSuggestion`'s `reasonCode`).
+   * Required: the act reads a missing reason as "may not rule", so a writer that forgot it would
+   * quietly stop every rule its advice could write.
+   */
+  senderReason: string;
 }
 
 /**
@@ -72,6 +78,7 @@ export async function storeScreenerSuggestion(db: Tx, row: ScreenerSuggestionRow
       rationale: row.rationale,
       spam: row.spam,
       status: SCREENER_SUGGESTION_STATUS,
+      senderReason: row.senderReason,
     }).returning({ id: routingDecisions.id });
     await recordChanges(tx, [
       ...removed.map((d) => ({
@@ -151,6 +158,8 @@ export interface StoredSenderSuggestion {
   actRefusal: string | null;
   /** The advised message's `auth_verdict`: whether its provider confirmed the sender (`pass`), or NULL. */
   authVerdict: string | null;
+  /** The fact that capped the verdict, or `none`; NULL on a row stored before mail 0156. */
+  senderReason: string | null;
 }
 
 /**
@@ -185,6 +194,7 @@ export async function screenerSuggestionsBySender(
     spam: routingDecisions.spam,
     actRefusal: routingDecisions.actRefusal,
     authVerdict: messages.authVerdict,
+    senderReason: routingDecisions.senderReason,
     rank: sql<number>`row_number() over (
       partition by ${sender}
       order by ${routingDecisions.createdAt} desc, ${routingDecisions.id} desc
@@ -213,6 +223,7 @@ export async function screenerSuggestionsBySender(
     spam: ranked.spam,
     actRefusal: ranked.actRefusal,
     authVerdict: ranked.authVerdict,
+    senderReason: ranked.senderReason,
   }).from(ranked).where(eq(ranked.rank, 1));
 
   for (const r of rows) {
@@ -225,6 +236,7 @@ export async function screenerSuggestionsBySender(
       spam: r.spam,
       actRefusal: r.actRefusal ?? null,
       authVerdict: r.authVerdict ?? null,
+      senderReason: r.senderReason ?? null,
     });
   }
   return out;

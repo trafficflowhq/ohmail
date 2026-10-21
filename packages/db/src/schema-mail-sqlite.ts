@@ -1144,9 +1144,11 @@ export const routingDecisions = sqliteTable("routing_decisions", {
   status: text("status").notNull(),                     // auto_applied|pending_approval|approved|rejected
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-  // A refused act on this stored suggestion, when and why. See the server twin. LAST.
+  // A refused act on this stored suggestion, when and why. See the server twin.
   actRefusedAt: integer("act_refused_at", { mode: "timestamp_ms" }),
   actRefusal: text("act_refusal"),
+  // Mail 0156: the fact that capped a stored suggestion, or `none`. See the server twin. LAST.
+  senderReason: text("sender_reason"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
-  CAP_CONFIDENCE, SOFT_CEILING, capSuggestion, claimedIdentity, identityOfRow, normalizeSubject,
+  CAP_CONFIDENCE, SOFT_CEILING, capSuggestion, claimedIdentity, denyMayRuleTheAddress, identityOfRow, normalizeSubject,
   registrableDomain, senderCheck, senderCheckAll, senderDomainOf, senderFacts,
-  type CheckedSuggestion, type SenderCheckInput,
+  type CheckedSuggestion, type SenderCheckInput, type SenderReasonCode,
 } from "../src/sender-check.js";
 import { BRANDS } from "../src/brands.js";
 import { isSharedProviderDomain } from "../src/rule-order.js";
@@ -125,6 +125,38 @@ describe("fixture B — one subject, two strangers", () => {
     const [x] = senderCheckAll([one, two]);
     expect(x?.reasonCode).toBe("campaign");
     expect(capSuggestion(READS_095, x!).destination).toBe("ohmail/Quarantine");
+  });
+});
+
+/* WHICH STORED REASON A DENY MAY STAND ON AS A RULE (the act on suggestions). Only facts about the
+   sender's own letter: none, its forged identity, a brand it names. The crowd is other senders' mail;
+   NULL is a row stored before the reason was, and an unknown word is no reason. Both fail closed. */
+describe("a stored reason, and whether a deny may rule the address", () => {
+  const CODES: Record<SenderReasonCode | "none", boolean> = {
+    none: true, impersonation: true, brand_mismatch: true,
+    campaign: false, auth_fail: false, correspondent: false,
+  };
+  it.each(Object.entries(CODES))("%s → %s", (reason, may) => {
+    expect(denyMayRuleTheAddress(reason)).toBe(may);
+  });
+
+  it("NULL, absent and unknown words may not", () => {
+    for (const reason of [null, undefined, "", "None", "campaign ", "spam"]) {
+      expect(denyMayRuleTheAddress(reason), String(reason)).toBe(false);
+    }
+  });
+
+  it("the crowd's cap is the one a confirmed shop's receipt meets: Quarantine at the act's bar, reason campaign", () => {
+    const shop = (d: string) => ({ fromAddress: `orders@${d}`, subject: "Your order has shipped", snippet: "" });
+    const [a] = senderCheckAll([shop("shop-a.example"), shop("shop-b.example")]);
+    const receipts: CheckedSuggestion = { destination: "ohmail/Receipts", confidence: 0.95, rationale: "a receipt", spam: false };
+    const capped = capSuggestion(receipts, a!);
+    expect(capped).toMatchObject({ destination: "ohmail/Quarantine", confidence: 0.95, spam: true, reasonCode: "campaign" });
+    expect(denyMayRuleTheAddress(capped.reasonCode ?? "none")).toBe(false);
+    // CONTROL: the same answer with no signal is stored as it came, and its reason is none.
+    const alone = capSuggestion(receipts, senderCheck(shop("shop-a.example")));
+    expect(alone).toBe(receipts);
+    expect(denyMayRuleTheAddress(alone.reasonCode ?? "none")).toBe(true);
   });
 });
 

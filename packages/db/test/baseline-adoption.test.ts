@@ -850,6 +850,9 @@ describe("the baseline cutoff is frozen", () => {
       // The send re-arm: two ADD COLUMN IF NOT EXISTS on outbound_sends, a constant default and a
       // nullable deadline, no data. Safe over any history.
       "0155_outbound_sends_rearm",
+      // The fact that capped a stored suggestion: one nullable ADD COLUMN IF NOT EXISTS on
+      // routing_decisions, no default, no data. Safe over any history.
+      "0156_routing_decisions_sender_reason",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

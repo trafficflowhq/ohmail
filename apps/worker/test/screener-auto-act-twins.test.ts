@@ -46,7 +46,7 @@ describe("the auto-act beside a rule written after its page was read", () => {
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-      destination, confidence: 0.99, rationale: "", spam: destination === SPAM, status: SCREENER_SUGGESTION_STATUS,
+      destination, confidence: 0.99, rationale: "", spam: destination === SPAM, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
     });
     return { accountId, messageId: m!.id };
   }

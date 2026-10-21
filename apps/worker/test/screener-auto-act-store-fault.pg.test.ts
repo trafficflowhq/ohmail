@@ -56,7 +56,7 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
       });
       await db.insert(routingDecisions).values({
         accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-        destination: SPAM, confidence: 0.99, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+        destination: SPAM, confidence: 0.99, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
       });
       return m!.id;
     };

@@ -757,22 +757,25 @@ describe("every writer under a sender's key takes one lock order", () => {
     expect([...out]).toEqual([]);
   });
 
-  /* THE ACT'S FILING OF UNCONFIRMED LETTERS writes nothing standing: no rule, no contact, no settings
-     row, the decision's own order for what it does take. Helpers followed, as for the writers. */
-  it("the act's filing of unconfirmed letters keeps the order and writes no rule, contact or setting", () => {
-    const decl = declsOf("packages/db/src/screener-apply.ts").get("rerouteUnconfirmedHeld");
-    expect(decl, "rerouteUnconfirmedHeld is gone").toBeDefined();
-    const out = new Set<string>();
-    const seen = new Set<number>();
-    const took: string[] = [];
-    fn(decl!.body!, single(start([ACCOUNT])), {
-      file: "packages/db/src/screener-apply.ts", stack: ["rerouteUnconfirmedHeld"], off: new Set(), out, seen, took,
+  /* THE ACT'S FILINGS WITHOUT A RULE (unconfirmed letters, and the one letter advice that may not stand
+     was about) write nothing standing: no rule, no contact, no settings row, the decision's own order
+     for what they do take. Helpers followed, as for the writers. */
+  for (const door of ["rerouteUnconfirmedHeld", "rerouteAdvisedLetter"]) {
+    it(`the act's filing without a rule (${door}) keeps the order and writes no rule, contact or setting`, () => {
+      const decl = declsOf("packages/db/src/screener-apply.ts").get(door);
+      expect(decl, `${door} is gone`).toBeDefined();
+      const out = new Set<string>();
+      const seen = new Set<number>();
+      const took: string[] = [];
+      fn(decl!.body!, single(start([ACCOUNT])), {
+        file: "packages/db/src/screener-apply.ts", stack: [door], off: new Set(), out, seen, took,
+      });
+      expect([...out]).toEqual([]);
+      expect([...seen]).toEqual(expect.arrayContaining([RULE_KEY, FOLDER_STATE, COUNTER]));
+      expect([...seen].filter((c) => c === CONTACTS || c === SETTINGS || c === GRADUATION).map((c) => CHAIN[c])).toEqual([]);
+      expect(took.filter((l) => /\brules\b|rulesTbl|writeRuleUnderKey|convergeRuleKey/.test(l)), "it writes a rule").toEqual([]);
     });
-    expect([...out]).toEqual([]);
-    expect([...seen]).toEqual(expect.arrayContaining([RULE_KEY, FOLDER_STATE, COUNTER]));
-    expect([...seen].filter((c) => c === CONTACTS || c === SETTINGS || c === GRADUATION).map((c) => CHAIN[c])).toEqual([]);
-    expect(took.filter((l) => /\brules\b|rulesTbl|writeRuleUnderKey|convergeRuleKey/.test(l)), "it writes a rule").toEqual([]);
-  });
+  }
 });
 
 describe("the census's own controls", () => {

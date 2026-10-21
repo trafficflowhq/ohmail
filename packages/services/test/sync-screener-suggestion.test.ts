@@ -63,9 +63,10 @@ describe("a bought suggestion rides /sync as the narrow verdict entity", () => {
     const messageId = await screenerMessage(db, accountId, mailboxId, "Stranger@Corp.test");
 
     const bought = Date.now();
+    // Stored with the fact that capped it, which the act reads and the wire never carries.
     await storeScreenerSuggestion(db, {
       accountId, messageId, destination: "INBOX", confidence: 0.8,
-      rationale: "a person writing for the first time", spam: false,
+      rationale: "a person writing for the first time", spam: false, senderReason: "correspondent",
     });
 
     const rows = await db.select().from(changeLog).where(and(
@@ -95,7 +96,7 @@ describe("a bought suggestion rides /sync as the narrow verdict entity", () => {
     const messageId = await screenerMessage(db, accountId, mailboxId, "x@y.test");
     await storeScreenerSuggestion(db, {
       accountId, messageId, destination: "INBOX", confidence: 0.9,
-      rationale: "best held at the Screener until a person decides", spam: false,
+      rationale: "best held at the Screener until a person decides", spam: false, senderReason: "none",
     });
     const { creates } = suggestionChanges(await svc.getChanges(ctx, {}));
     expect(creates[0]!.entity).toMatchObject({ decision: "hold", destination: "INBOX" });
@@ -106,7 +107,7 @@ describe("a bought suggestion rides /sync as the narrow verdict entity", () => {
     await db.insert(accountSettings).values({ accountId, ohboxPolicy: "people_only" });
     const messageId = await screenerMessage(db, accountId, mailboxId, "news@list.test");
     await storeScreenerSuggestion(db, {
-      accountId, messageId, destination: "ohmail/News", confidence: 0.9, rationale: "", spam: false,
+      accountId, messageId, destination: "ohmail/News", confidence: 0.9, rationale: "", spam: false, senderReason: "none",
     });
     const { creates } = suggestionChanges(await svc.getChanges(ctx, {}));
     expect(creates[0]!.entity).toMatchObject({ decision: "no", destination: "ohmail/News" });
@@ -116,13 +117,13 @@ describe("a bought suggestion rides /sync as the narrow verdict entity", () => {
     const { db, accountId, mailboxId, ctx } = await setup();
     const messageId = await screenerMessage(db, accountId, mailboxId, "x@y.test");
     await storeScreenerSuggestion(db, {
-      accountId, messageId, destination: "INBOX", confidence: 0.5, rationale: "", spam: false,
+      accountId, messageId, destination: "INBOX", confidence: 0.5, rationale: "", spam: false, senderReason: "none",
     });
     const first = await svc.getChanges(ctx, {});
     const firstId = suggestionChanges(first).creates[0]!.id;
 
     await storeScreenerSuggestion(db, {
-      accountId, messageId, destination: "ohmail/News", confidence: 0.7, rationale: "", spam: false,
+      accountId, messageId, destination: "ohmail/News", confidence: 0.7, rationale: "", spam: false, senderReason: "none",
     });
     const tail = await svc.getChanges(ctx, { since: first.cursor });
     const { creates, deletes } = suggestionChanges(tail);
@@ -159,7 +160,7 @@ describe("a bought suggestion rides /sync as the narrow verdict entity", () => {
     const m2 = await screenerMessage(db, accountId, mailboxId, "z@y.test");
     for (const messageId of [m1, m2]) {
       await storeScreenerSuggestion(db, {
-        accountId, messageId, destination: "INBOX", confidence: 0.5, rationale: "", spam: false,
+        accountId, messageId, destination: "INBOX", confidence: 0.5, rationale: "", spam: false, senderReason: "none",
       });
     }
     const before = await svc.getChanges(ctx, {});

@@ -101,7 +101,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
         await db.insert(routingDecisions).values({
           accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
           destination: SPAM, confidence: 0.95, rationale: "", spam: true,
-          status: SCREENER_SUGGESTION_STATUS,
+          status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
         });
       }
       ids.push(m!.id);

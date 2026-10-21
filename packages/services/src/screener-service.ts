@@ -2575,16 +2575,19 @@ export class ScreenerService extends ScreenerReadService {
       confidence: result.confidence,
       rationale: result.rationale,
       spam: result.spam,
+      // Which fact capped it: the act writes no rule on the address from the crowd's cap.
+      senderReason: result.reasonCode ?? "none",
     });
   }
 }
 
-/** The classifier's answer, as much of it as this file stores. */
+/** The classifier's answer, as much of it as this file stores: after `capSuggestion`, with its reason. */
 interface ClassifierResultLike {
   destination: string;
   confidence: number;
   rationale: string;
   spam: boolean;
+  reasonCode?: SenderReasonCode;
 }
 
 /**

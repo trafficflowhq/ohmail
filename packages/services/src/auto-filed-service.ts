@@ -8,8 +8,9 @@ import { bridgeTx, type ServiceContext } from "./context.js";
 
 /**
  * WHAT THE SCREENER FILED ON ITS OWN, AND PUTTING IT BACK (row 140). The auto-apply pass, and the
- * act on suggestions where it files a letter with no rule (`rerouteUnconfirmedHeld`), write one
- * `screener_auto_apply_move` audit row per message filed, with the undo as its inverse.
+ * act on suggestions where it files a letter with no rule (`rerouteUnconfirmedHeld`,
+ * `rerouteAdvisedLetter`), write one `screener_auto_apply_move` audit row per message filed, with
+ * the undo as its inverse.
  * The read lists the recent ones still where the pass put them; the undo moves each back to the
  * gate through the ordinary move door and marks `folder_state.auto_filing_undone_at` in the same
  * transaction, which the pass's candidate statement reads as its sixth exclusion — put back is

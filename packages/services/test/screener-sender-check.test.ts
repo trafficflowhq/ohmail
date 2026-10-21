@@ -72,6 +72,8 @@ describe("a first-time sender naming a company it is not", () => {
     const [stored] = await w.rows();
     expect(stored!.destination).toBe("ohmail/Quarantine");
     expect(stored!.spam).toBe(true);
+    // The fact that capped it is stored beside it: the act reads it before it writes a rule.
+    expect(stored!.senderReason).toBe("impersonation");
   });
 
   it("hands the model the facts it could not derive, and no verdict", async () => {
@@ -147,6 +149,11 @@ describe("one subject, two strangers", () => {
         destination: "ohmail/Quarantine", reasonCode: "campaign", reasonCount: 2,
       });
     }
+    // Stored with the crowd as its reason, which no automatic act turns into a rule on the address.
+    const stored = await w.rows();
+    expect(stored.map((r) => [r.destination, r.senderReason])).toEqual([
+      ["ohmail/Quarantine", "campaign"], ["ohmail/Quarantine", "campaign"],
+    ]);
   });
 });
 
@@ -174,6 +181,7 @@ describe("the sender's own authentication", () => {
     expect(clean.destination).toBe("ohmail/News");
     expect(clean.confidence).toBe(0.95);
     expect("reasonCode" in clean).toBe(false);
+    expect((await w.rows()).map((r) => r.senderReason).sort()).toEqual(["auth_fail", "none"]);
   });
 });
 
@@ -195,6 +203,7 @@ describe("the positive control — no signal, and nothing about the row moves", 
     expect(stored!.confidence).toBeCloseTo(0.95, 5);
     expect(stored!.rationale).toBe(READS.rationale);
     expect(stored!.spam).toBe(false);
+    expect(stored!.senderReason, "no fact capped it, and the row says so").toBe("none");
 
     // …and the request carried no facts block at all, so it is the request it always was.
     expect((w.classifier.seen[0] as ClassifierInput & { senderFacts?: string }).senderFacts)

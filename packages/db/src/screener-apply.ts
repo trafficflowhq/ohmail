@@ -11,6 +11,7 @@ import { upsertDesiredSeenMany } from "./flag-intent.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 import { storedAuthScreens, unconfirmedSql } from "./screening-verdicts.js";
+import { automaticAiAdmits } from "./screener-suggestion.js";
 import { auditAction } from "./staff-channels.js";
 
 /**
@@ -349,11 +350,11 @@ export async function rerouteOwnHeldBag(
   return { rerouted: moved.rerouted.length, lastSeq: moved.lastSeq };
 }
 
-/** What {@link rerouteUnconfirmedHeld} did. */
+/** What {@link rerouteUnconfirmedHeld} or {@link rerouteAdvisedLetter} did. */
 export interface UnconfirmedRerouteResult {
   /** `ruled`: the sender's key has a rule, enabled or paused, and nothing was filed. */
   skipped?: "ruled";
-  /** The held letters it filed: only ones their provider did not confirm. */
+  /** The held letters it filed: only the ones its door admits. */
   rerouted: AppliedScreenerRow[];
   /** Mailboxes holding such letters that this install does not organize; nothing was written there. */
   heldElsewhere: HeldElsewhereMailbox[];
@@ -374,9 +375,37 @@ export interface UnconfirmedRerouteResult {
 export async function rerouteUnconfirmedHeld(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; only?: string },
 ): Promise<UnconfirmedRerouteResult> {
+  const unconfirmed = unconfirmedSql(sql`${messages.authVerdict}`);
+  return fileWithoutRule(tx, input, "rerouteUnconfirmedHeld",
+    input.only === undefined ? unconfirmed : and(unconfirmed, eq(messages.id, input.only))!);
+}
+
+/**
+ * A PASS'S DENY THAT MAY NOT STAND AS A RULE, ON A CONFIRMED LETTER (the act on suggestions): advice
+ * capped by other senders' mail (one subject from other first-time senders) or stored before its
+ * reason was is no fact about the address. It files exactly the held letter it was bought about,
+ * whatever its verdict, and nothing else of the address's; nothing standing, each filing listed with
+ * its undo, as {@link rerouteUnconfirmedHeld}. Never a letter put back, deleted, or one no automatic
+ * path may read (`automaticAiAdmits`: `no_ai`, a sensitivity category). Same fences and refusals.
+ */
+export async function rerouteAdvisedLetter(
+  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; messageId: string },
+): Promise<UnconfirmedRerouteResult> {
+  return fileWithoutRule(tx, input, "rerouteAdvisedLetter",
+    and(eq(messages.id, input.messageId), automaticAiAdmits(messages))!);
+}
+
+/**
+ * The two doors' one body: the erased account, the rule-key lock before the bag's mailbox locks, a
+ * ruled key skipped, the sender's held letters `within` admits (none put back) filed, and an
+ * automatic filing's audit row with its inverse per letter. Deny destinations only.
+ */
+async function fileWithoutRule(
+  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, door: string, within: SQL,
+): Promise<UnconfirmedRerouteResult> {
   const { accountId, appliedFolder, now } = input;
   if (!DECIDABLE_FOLDERS.has(appliedFolder) || admitsDestination(appliedFolder)) {
-    throw new Error(`rerouteUnconfirmedHeld files only to a deny destination, not ${appliedFolder}`);
+    throw new Error(`${door} files only to a deny destination, not ${appliedFolder}`);
   }
   const address = input.address.toLowerCase();
   if (await readAccountErasedAt(tx, dialect(tx), accountId) != null) throw new AccountErasedError(accountId);
@@ -385,10 +414,7 @@ export async function rerouteUnconfirmedHeld(
     kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
   });
   if (ruled.length > 0) return { skipped: "ruled", rerouted: [], heldElsewhere: [], lastSeq: null };
-  const unconfirmed = unconfirmedSql(sql`${messages.authVerdict}`);
-  const held = await heldRowsForSender(tx, accountId, address, undefined, {
-    skipPutBack: true, within: input.only === undefined ? unconfirmed : and(unconfirmed, eq(messages.id, input.only))!,
-  });
+  const held = await heldRowsForSender(tx, accountId, address, undefined, { skipPutBack: true, within });
   const { rerouted, heldElsewhere, lastSeq } = await rerouteHeldBag(tx, accountId, held, appliedFolder, now);
   for (let i = 0; i < rerouted.length; i += DECISION_BATCH_MAX) {
     await tx.insert(auditLog).values(rerouted.slice(i, i + DECISION_BATCH_MAX).map((m) => ({

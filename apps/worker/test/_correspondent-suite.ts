@@ -117,7 +117,7 @@ export function defineCorrespondentSuite(
     async function suggest(w: World, messageId: string, destination: string, confidence: number): Promise<void> {
       await db.insert(routingDecisions).values({
         accountId: w.accountId, messageId, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-        destination, confidence, rationale: "", spam: destination === SPAM, status: SCREENER_SUGGESTION_STATUS,
+        destination, confidence, rationale: "", spam: destination === SPAM, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
       });
     }
 

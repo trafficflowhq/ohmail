@@ -834,6 +834,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // every reservation read selects the whole row and the reconcile pass names both. Deploy order
   // migration → API → worker.
   ["outbound_sends", "attempts"],
+  // mail 0156_routing_decisions_sender_reason — the fact that capped a stored suggestion. Both
+  // suggestion writers (the pressed purchase and the worker's pass) insert it and the act reads it,
+  // so an API or worker ahead of the migration 42703s. Deploy order migration → API → worker.
+  ["routing_decisions", "sender_reason"],
 ] as const;
 
 /**
@@ -1237,7 +1241,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0155_outbound_sends_rearm";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0156_routing_decisions_sender_reason";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

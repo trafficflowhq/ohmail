@@ -173,7 +173,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — no organizer, no spend", () => 
         await storeScreenerSuggestion(db, {
           accountId: w.accountId, messageId,
           destination: "ohmail/News", confidence: 0.9, rationale: "somebody else asked",
-          spam: false,
+          spam: false, senderReason: "none",
         });
         return out;
       },

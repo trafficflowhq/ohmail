@@ -6,7 +6,7 @@ import { carryDialect } from "../src/dialect/index.js";
 import type { Tx } from "../src/change-log.js";
 import { AccountErasedError } from "../src/erasure-fence.js";
 import { accounts, auditLog, changeLog, contacts, folderState, learningSignals, mailboxes, messages, rules } from "../src/schema.js";
-import { applyScreenerDecision, rerouteUnconfirmedHeld, SCREENER_FOLDER } from "../src/screener-apply.js";
+import { applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, SCREENER_FOLDER } from "../src/screener-apply.js";
 
 /**
  * A PASS'S DENY ON A LETTER ITS PROVIDER DID NOT CONFIRM, on this store: the filing moves only the
@@ -180,5 +180,90 @@ describe("a pass's deny on a letter its provider did not confirm", () => {
     expect(written).toHaveLength(1);
     expect(written[0]).toMatchObject({ kind: "sender", match: SENDER, destination: SPAM, provenance: "promoted", enabled: true });
     expect(written[0]!.personDecidedAt, "the person's press no longer stamps the rule").toEqual(NOW);
+  });
+});
+
+/**
+ * A PASS'S DENY THAT MAY NOT STAND AS A RULE ON A CONFIRMED LETTER (the crowd's cap, or a row stored
+ * before its reason was): the filing moves exactly the advised held letter, whatever its verdict, and
+ * nothing beside it; never one put back, deleted or sensitive (`no_ai`, a sensitivity category); and
+ * writes nothing standing, each filing recorded with its undo. The same refusals as the door above.
+ */
+describe("a pass's deny filed as the one letter it was about", () => {
+  const fileAdvised = (w: Awaited<ReturnType<typeof world>>, messageId: string, appliedFolder = SPAM, address = SENDER) =>
+    w.inTx((tx) => rerouteAdvisedLetter(tx, { accountId: w.own.accountId, address, appliedFolder, now: NOW, messageId }));
+
+  for (const verdict of ["pass", "unavailable", null] as const) {
+    it(`files the advised letter (${String(verdict)}) and nothing beside it, with its undo and nothing standing`, async () => {
+      const w = await world();
+      const beside = [await w.letter(SENDER, "pass"), await w.letter(SENDER, "unavailable")];
+      const advised = await w.letter(SENDER, verdict);
+      const r = await fileAdvised(w, advised);
+      expect(r.skipped).toBeUndefined();
+      expect(r.rerouted.map((x) => x.messageId)).toEqual([advised]);
+      expect(await w.desiredOf(advised)).toBe(SPAM);
+      for (const id of beside) expect(await w.desiredOf(id), "a letter rode advice bought on another").toBe(SCREENER_FOLDER);
+      expect(await w.ofAccount.moves()).toEqual([advised]);
+      expect(await w.ofAccount.rules(), "a rule was written").toEqual([]);
+      expect(await w.ofAccount.contacts(), "a contact was written").toEqual([]);
+      expect(await w.ofAccount.signals(), "a learning signal was written").toEqual([]);
+      expect((await w.ofAccount.audits()).map((a) => ({ action: a.action, payload: a.payload, inverse: a.inverse }))).toEqual([{
+        action: "screener_auto_apply_move",
+        payload: { mailboxId: w.own.mailboxId, messageId: advised, from: SCREENER_FOLDER, to: SPAM },
+        inverse: { messageId: advised, from: SPAM, to: SCREENER_FOLDER },
+      }]);
+      expect((await fileAdvised(w, advised)).rerouted, "a letter no longer held was filed again").toEqual([]);
+    });
+  }
+
+  it("MUTATION-WATCH: leaves a letter put back, deleted, marked no-AI or sensitive, and another sender's", async () => {
+    const w = await world();
+    const putBack = await w.letter(SENDER, "pass");
+    await w.db.update(folderState).set({ autoFilingUndoneAt: NOW }).where(eq(folderState.messageId, putBack));
+    const deleted = await w.letter(SENDER, "pass");
+    await w.db.update(messages).set({ deletedAt: NOW }).where(eq(messages.id, deleted));
+    const noAi = await w.letter(SENDER, "pass");
+    await w.db.update(messages).set({ noAi: true }).where(eq(messages.id, noAi));
+    const sensitive = await w.letter(SENDER, "pass");
+    await w.db.update(messages).set({ sensitivityCategory: "otp" }).where(eq(messages.id, sensitive));
+    const others = await w.letter("other@shop.test", "pass");
+    for (const [id, what] of [[putBack, "put back"], [deleted, "deleted"], [noAi, "no-AI"], [sensitive, "sensitive"], [others, "another sender's"]] as const) {
+      expect((await fileAdvised(w, id)).rerouted, `a ${what} letter was filed`).toEqual([]);
+      expect(await w.desiredOf(id)).toBe(SCREENER_FOLDER);
+    }
+    expect(await w.ofAccount.moves()).toEqual([]);
+    expect(await w.ofAccount.audits()).toEqual([]);
+  });
+
+  for (const enabled of [true, false]) {
+    it(`a sender whose key has a rule${enabled ? "" : " (paused)"} is not this filing's: nothing moves`, async () => {
+      const w = await world();
+      await w.db.insert(rules).values({
+        accountId: w.own.accountId, kind: "sender", match: SENDER, destination: "INBOX", provenance: "manual", enabled,
+      });
+      const id = await w.letter(SENDER, "pass");
+      expect(await fileAdvised(w, id)).toMatchObject({ skipped: "ruled", rerouted: [] });
+      expect(await w.desiredOf(id)).toBe(SCREENER_FOLDER);
+      expect(await w.ofAccount.audits()).toEqual([]);
+    });
+  }
+
+  it("cannot admit, and an erased account is refused, before anything is written", async () => {
+    const w = await world();
+    const id = await w.letter(SENDER, "pass");
+    for (const dest of ["INBOX", "ohmail/News", "ohmail/Reads", "ohmail/Receipts", SCREENER_FOLDER, "ohmail/Nowhere"]) {
+      await expect(fileAdvised(w, id, dest), dest).rejects.toThrow(/deny destination/);
+    }
+    expect(await w.desiredOf(id)).toBe(SCREENER_FOLDER);
+    await w.db.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, w.own.accountId));
+    await expect(fileAdvised(w, id)).rejects.toBeInstanceOf(AccountErasedError);
+    expect(await w.ofAccount.moves()).toEqual([]);
+  });
+
+  it("CONTROL: the other deny destination files it too", async () => {
+    const w = await world();
+    const id = await w.letter(SENDER, "pass");
+    expect((await fileAdvised(w, id, "ohmail/Screened")).rerouted.map((x) => x.messageId)).toEqual([id]);
+    expect(await w.desiredOf(id)).toBe("ohmail/Screened");
   });
 });

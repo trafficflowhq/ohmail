@@ -19,6 +19,26 @@ export type SenderReasonCode =
   | "impersonation" | "campaign" | "auth_fail" | "brand_mismatch" | "correspondent";
 
 /**
+ * MAY A DENY STORED UNDER THIS REASON STAND AS A RULE ON THE ADDRESS (`routing_decisions.sender_reason`,
+ * mail 0156) — the act on suggestions asks before it writes one. Only a fact about the sender's own
+ * letter may: none fired, its forged identity, a brand it names. The crowd (`campaign`) is other
+ * senders' mail with the same subject, `auth_fail` says the letter is not the address's, and a
+ * correspondent's advice never denies. NULL (stored before the column) and an unknown word may not.
+ */
+export function denyMayRuleTheAddress(reason: string | null | undefined): boolean {
+  const r = reason as SenderReasonCode | "none";
+  switch (r) {
+    case "none": case "impersonation": case "brand_mismatch": return true;
+    case "campaign": case "auth_fail": case "correspondent": return false;
+    default: {
+      const exhaustive: never = r;
+      void exhaustive;
+      return false;
+    }
+  }
+}
+
+/**
  * The offline DKIM verdict, as `messages.auth_verdict` spells it. NULL/absent is PERMISSIVE.
  * NOT `rules.ts#AuthVerdict`, which is routing's four-member evidence vocabulary
  * (`unauthenticated | unavailable | pass | fail`) and demotes only. This is the COLUMN's union:

@@ -188,6 +188,8 @@ describe("the SQLite journal, applied", () => {
       "0154_messages_recipient_keys.sql",
       // The send re-arm's two columns, the pg columns' twins.
       "0155_outbound_sends_rearm.sql",
+      // The fact that capped a stored suggestion, the pg column's twin.
+      "0156_routing_decisions_sender_reason.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -304,6 +306,8 @@ describe("the SQLite journal, applied", () => {
       "0154_messages_recipient_keys.sql",
       // The send re-arm's two columns, the pg columns' twins.
       "0155_outbound_sends_rearm.sql",
+      // The fact that capped a stored suggestion, the pg column's twin.
+      "0156_routing_decisions_sender_reason.sql",
     ]);
   });
 

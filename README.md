@@ -67,8 +67,9 @@ confirmed often enough graduates and files itself from then on, spam included;
 or switch on "Act on confident suggestions for me" and a sender whose suggestion
 is confident is filed for you — never someone you have written to — with the
 rule listed for you to undo. A screen-out or spam verdict about a message your
-provider did not confirm files only that message, writes no rule, and lists it
-under Filed automatically to put back. Every move is recorded and reversible. A
+provider did not confirm, or one that rests only on the same subject from other
+first-time senders, files only that message, writes no rule, and lists it under
+Filed automatically to put back. Every move is recorded and reversible. A
 one-time code inside a message is stripped before any model sees it, and
 automatic routing leaves that mail alone entirely.
 

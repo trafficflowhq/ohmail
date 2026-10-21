@@ -488,5 +488,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"outbound_sends\" ADD COLUMN \"retry_until\" integer;",
       "ALTER TABLE \"outbound_sends\" ADD COLUMN \"retry_refusal\" text;"
     ]
+  },
+  {
+    "name": "0156_routing_decisions_sender_reason.sql",
+    "statements": [
+      "ALTER TABLE \"routing_decisions\" ADD COLUMN \"sender_reason\" text;"
+    ]
   }
 ] as const;

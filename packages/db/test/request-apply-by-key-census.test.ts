@@ -302,8 +302,8 @@ describe("every rules writer takes the rule-key lock first", () => {
 const OPENER_CALLS = new Set(["withAccountTx", "fencedAccountWrite", "transaction"]);
 const LOCKS = new Set([
   "lockAccountRuleKeys", "allowSender", "applyScreenerDecision", "writeRuleUnderKey", "convergeRuleKey", "applyOrganizerProfile",
-  // Writes no rule, but takes the rule-key lock before the bag's mailbox locks, as the decision does.
-  "rerouteUnconfirmedHeld",
+  // Write no rule, but take the rule-key lock before the bag's mailbox locks, as the decision does.
+  "rerouteUnconfirmedHeld", "rerouteAdvisedLetter",
 ]);
 const MAILBOX_ARM = new Set(["fenceErasedMailbox", "readMailboxErasedAt", "readOrganizerRole", "assertOrganizerRole"]);
 

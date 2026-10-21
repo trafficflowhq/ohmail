@@ -3036,6 +3036,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "35f97525eedb4ba5",   // ADD COLUMN IF NOT EXISTS outbound_sends.retry_until timestamptz
     "60e53cf82eaf0be4",   // ADD COLUMN IF NOT EXISTS outbound_sends.retry_refusal text
   ],
+  // THE FACT THAT CAPPED A STORED SUGGESTION — one nullable text column on routing_decisions, IF NOT
+  // EXISTS: no default, no CHECK, no index, no DML (NULL is a row stored before it).
+  "0156_routing_decisions_sender_reason": [
+    "62b940f43f03a210",   // ADD COLUMN IF NOT EXISTS routing_decisions.sender_reason text
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4010,11 +4015,13 @@ describe("the two journals are well-formed", () => {
   // 0153_rule_revoke_keeps_its_decisions's.
   // 155 → 156 for `0155_outbound_sends_rearm`: its `when` (1791602600059) is strictly above
   // 0154_messages_recipient_keys's.
+  // 156 → 157 for `0156_routing_decisions_sender_reason`: its `when` (1791602600060) is strictly
+  // above 0155_outbound_sends_rearm's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
-  it.each([["mail", MAIL_DIR, 156], ["cloud", CLOUD_DIR, 36]] as const)(
+  it.each([["mail", MAIL_DIR, 157], ["cloud", CLOUD_DIR, 36]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

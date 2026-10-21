@@ -91,7 +91,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     });
     await base.db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
     });
 
     // The pass asks its consent twice: once before the page, once per sender inside the sender's
@@ -150,7 +150,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       });
       await base.db.insert(routingDecisions).values({
         accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-        destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+        destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
       });
     }
     await base.db.update(accounts).set({ erasedAt: NOW }).where(eq(accounts.id, accountId));
@@ -197,7 +197,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const forged = await letter(401, "unavailable", NOW);
     await base.db.insert(routingDecisions).values({
       accountId, messageId: forged, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
-      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS,
+      destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
     });
     const desiredOf = async (id: string): Promise<string> =>
       (await base.db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;

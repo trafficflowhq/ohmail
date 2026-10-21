@@ -1287,10 +1287,18 @@ export const routingDecisions = pgTable("routing_decisions", {
   /**
    * On a stored SUGGESTION only: when the act on suggestions tried to file this sender
    * and was refused, and why (`SCREENER_ACT_REFUSALS`). NULL on every other row. Cleared by the
-   * next successful act; a new buy replaces the row. LAST: `ADD COLUMN` appends.
+   * next successful act; a new buy replaces the row. `ADD COLUMN` appends.
    */
   actRefusedAt: timestamp("act_refused_at", { withTimezone: true }),
   actRefusal: text("act_refusal"),
+  /**
+   * Mail 0156 — on a stored SUGGESTION only: the sender check's code that capped it, or `none`
+   * (`@trafficflow/core#SenderReasonCode`). The act on suggestions writes a standing deny rule only
+   * on a reason about the sender's own letter. NULL: stored before the column, or not a suggestion;
+   * read as "may not rule". No CHECK: the reader fails closed on a value it does not know. Not on the
+   * wire, not granted to staff. LAST.
+   */
+  senderReason: text("sender_reason"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),

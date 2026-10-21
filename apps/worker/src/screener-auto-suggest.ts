@@ -524,6 +524,8 @@ export async function screenerAutoSuggestPass(
         confidence: capped.confidence,
         rationale: capped.rationale,
         spam: capped.spam,
+        // Which fact capped it: the act writes no rule on the address from the crowd's cap.
+        senderReason: capped.reasonCode ?? "none",
       });
       result.bought++;
     } finally {
