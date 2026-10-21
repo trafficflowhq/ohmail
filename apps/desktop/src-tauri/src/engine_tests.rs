@@ -1221,14 +1221,16 @@ fn the_supervisor_sleeps_through_an_idle_engine() {
 ///
 /// The supervisor sleeps now, so something has to wake it, and that something is the end of the
 /// child's pipes: a process exit closes them, both readers return, and `reader_finished` says so.
-/// Watched fail by taking the notify out of `reader_finished` — the quit then waits the whole
-/// grace period out and kills a process that had already gone. The grace is three seconds here
-/// rather than `quick`'s 400 ms so that the two outcomes are an order of magnitude apart.
+/// Proved by structure, not by a clock: no turn of the supervisor's wait may end on its timeout
+/// between the quit and the reaped exit. The grace is twenty seconds, so only a missing wake can
+/// reach the deadline. Watched fail by taking the notify out of `reader_finished`: the wait then
+/// ends on the deadline, `try_wait` reaps the child that had already gone, and nothing is killed,
+/// so the timeout count is the only thing that tells the two apart.
 #[test]
 fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
     let _live = live_process();
     let fixture = Fixture::new("prompt");
-    let timings = Timings { stop_grace: Duration::from_secs(3), ..quick() };
+    let timings = Timings { stop_grace: Duration::from_secs(20), ..quick() };
     let engine = Engine::spawn_with(fixture.launch("serve"), timings);
     wait_for(
         || matches!(engine.state(), EngineState::Serving { .. }),
@@ -1236,13 +1238,13 @@ fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
         "the engine to announce itself",
     );
 
-    let began = Instant::now();
+    let timer_wakes = engine.supervisor_timer_wakes();
     engine.stop(Leaving::Quit);
 
-    assert!(
-        began.elapsed() < Duration::from_millis(500),
-        "the quit took {:?} for a child that left at once",
-        began.elapsed()
+    assert_eq!(
+        engine.supervisor_timer_wakes(),
+        timer_wakes,
+        "the supervisor waited on its timer for a child that left at once"
     );
     // It was asked, not killed: the kernel had a clean status for the run that served.
     let exit = engine.last_exit().expect("the run ended");

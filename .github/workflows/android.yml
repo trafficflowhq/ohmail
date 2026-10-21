@@ -168,7 +168,7 @@ jobs:
           java-version: 17
 
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
       # them the TLS transport's Android half and the mail sender; this applies them to every
@@ -423,7 +423,7 @@ jobs:
           esac
 
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code. `patches/` holds this repository's changes to it, among
       # them the TLS transport's Android half and the mail sender; this applies them to every

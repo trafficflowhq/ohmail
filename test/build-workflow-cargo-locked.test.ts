@@ -25,11 +25,12 @@ import { publicRel } from "./support/public-root.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW = publicRel("github/workflows/build.yml");
 
-/** Every cargo invocation line in a run block (never comments), kept whole for the refusal. */
+/** Every cargo invocation line in a run block (never comments), kept whole for the refusal: at the
+ *  start of the line or of a one-line `run:`, or after a retry wrapper's `--`. */
 export function cargoInvocations(text: string): string[] {
   return text
     .split("\n")
-    .filter((l) => /^\s*cargo\s+(test|build|check|run)\b/.test(l));
+    .filter((l) => /^\s*(?:run:\s+)?(?:bash\s+\S*retry-infra\.sh"?\s+\S+\s+--\s+)?cargo\s+(test|build|check|run)\b/.test(l));
 }
 
 /** The bundler steps: every `run:` line that invokes app:build:engine. */
@@ -52,6 +53,8 @@ describe("the published tag build runs cargo --locked", () => {
     const all = cargoInvocations(text);
     // Four jobs (macOS, Windows, Linux x64, Linux aarch64) × two configurations.
     expect(all.length, `no cargo invocation found in ${WORKFLOW} — the census read nothing`).toBeGreaterThanOrEqual(8);
+    // macOS compiles the default configuration through the retry wrapper first; that counts too.
+    expect(all.filter((l) => l.includes("retry-infra.sh")).length, "the wrapped compile was not read").toBe(1);
     expect(unlockedCargo(text), "cargo steps without --locked (each rewrites a drifted lock and blinds every later step)").toEqual([]);
   });
 
@@ -70,6 +73,10 @@ describe("the published tag build runs cargo --locked", () => {
     // And the admitted shapes pass through the same readers.
     expect(unlockedCargo("          cargo test --locked --features local-engine\n")).toEqual([]);
     expect(bundlersWithoutLocked("        run: npm run app:build:engine -- --bundles nsis -- -- --locked\n")).toEqual([]);
+    // A wrapped compile is read after the wrapper's `--`, and refused without --locked.
+    const wrapped = '          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" cargo-exec-126 -- cargo test --no-run\n';
+    expect(unlockedCargo(wrapped)).toHaveLength(1);
+    expect(unlockedCargo(wrapped.replace("cargo test", "cargo test --locked"))).toEqual([]);
     // A comment line is not an invocation: the workflow's own prose may name unlocked cargo.
     expect(cargoInvocations("      # cargo build --locked from a fresh clone\n")).toEqual([]);
   });

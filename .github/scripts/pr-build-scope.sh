@@ -37,7 +37,7 @@ shared() {
   case "$1" in
     apps/sidecar/* | apps/worker/* | packages/* | patches/* | scripts/*) return 0 ;;
     package.json | package-lock.json | tsconfig*.json) return 0 ;;
-    .github/scripts/pr-build-scope.sh) return 0 ;;
+    .github/scripts/pr-build-scope.sh | .github/scripts/retry-infra.sh) return 0 ;;
   esac
   return 1
 }

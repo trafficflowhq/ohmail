@@ -141,12 +141,21 @@ say(`4/4 · build the app (${distribution})`);
  * through a shell to paper over that is the quoting problem `build-ui.mjs` exists to avoid. */
 const cli = join(APP, "node_modules", "@tauri-apps", "cli", "tauri.js");
 if (!existsSync(cli)) die(`the Tauri CLI is not installed at ${cli} — run \`npm install\` in apps/desktop`);
-run(process.execPath, [
-  cli, "build",
+const tauriArgs = [
   /* ONE `--features`, comma-joined. Repeating the flag is not the same thing: whether a second
      one appends or replaces is the CLI's business and not something an artifact should depend on. */
   "--features", ["local-engine", ...(distribution === "mas" ? ["mas"] : [])].join(","),
   "--config", join(APP, "src-tauri", "tauri.engine.conf.json"),
   ...(bundles ? ["--bundles", bundles] : []),
   ...passThrough,
-], APP);
+];
+/* A DMG ON macOS: hdiutil can find its image busy on a hosted runner, so this one call runs through
+ * the CI retry wrapper (one retry, on that error only, with a warning), and verbose, because Tauri
+ * logs bundle_dmg.sh's own output only then. Stages 1-3 above are never retried. */
+if (process.platform === "darwin" && (bundles ?? "").split(",").includes("dmg")) {
+  const retry = join(ROOT, ".github", "scripts", "retry-infra.sh");
+  if (!existsSync(retry)) die(`the retry wrapper is not at ${retry}`);
+  run("bash", [retry, "hdiutil-busy", "--", process.execPath, cli, "build", "--verbose", ...tauriArgs], APP);
+} else {
+  run(process.execPath, [cli, "build", ...tauriArgs], APP);
+}

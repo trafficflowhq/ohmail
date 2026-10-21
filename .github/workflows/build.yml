@@ -231,7 +231,7 @@ jobs:
       # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -250,6 +250,14 @@ jobs:
         working-directory: apps/desktop
         run: npm run smoke
 
+      # The first compile alone, before the tests, so a hosted runner that will not execute the job's
+      # first freshly linked build scripts (exit 126, seen on macos-15-arm64) is retried here once and
+      # never in the tests. The default configuration only: compiling local-engine here as well makes
+      # the test step below relink the default one.
+      - name: Compile the Rust tests (default configuration)
+        working-directory: apps/desktop/src-tauri
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" cargo-exec-126 -- cargo test --locked --no-run
+
       - name: cargo test (both configurations)
         working-directory: apps/desktop/src-tauri
         run: |
@@ -259,7 +267,7 @@ jobs:
 
       # ── 2 + 3 · the engine and the runtime it is spawned with ──────────────
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
@@ -499,7 +507,13 @@ jobs:
         run: npm run app:build:engine -- --bundles app,dmg -- --target universal-apple-darwin -- --locked
 
       - name: Note how long the build step took
-        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
+        run: |
+          if [ "${OHMAIL_RETRIED_AT:-0}" -ge "${OHMAIL_BUILD_STEP_T0:?the build step start was not noted}" ]; then
+            echo "OHMAIL_BUILD_STEP_S=" >> "$GITHUB_ENV"
+            echo "the build step ran a retry, so its seconds are no runner reading and stay unread"
+          else
+            echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - OHMAIL_BUILD_STEP_T0 ))" >> "$GITHUB_ENV"
+          fi
 
       - name: Name the artifacts what the download page links
         run: |
@@ -693,7 +707,7 @@ jobs:
             fi
             spctl -a -t exec -vv "$APP" || true
           fi
-          hdiutil detach "$MNT"
+          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" hdiutil-busy -- hdiutil detach "$MNT"
 
       # THE PACKAGED APP'S OWN ENGINE, STARTED FROM THE PACKAGED LAYOUT, with a
       # PATH that has no node on it — which is what a Finder launch actually
@@ -918,7 +932,7 @@ jobs:
       # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -942,7 +956,7 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
@@ -985,7 +999,13 @@ jobs:
         run: npm run app:build:engine -- --bundles nsis -- -- --locked
 
       - name: Note how long the build step took
-        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
+        run: |
+          if [ "${OHMAIL_RETRIED_AT:-0}" -ge "${OHMAIL_BUILD_STEP_T0:?the build step start was not noted}" ]; then
+            echo "OHMAIL_BUILD_STEP_S=" >> "$GITHUB_ENV"
+            echo "the build step ran a retry, so its seconds are no runner reading and stay unread"
+          else
+            echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - OHMAIL_BUILD_STEP_T0 ))" >> "$GITHUB_ENV"
+          fi
 
       # THE BOOT'S TIMING, beside the build step's seconds. Windows has no
       # distribution of this reading yet, so it is RECORDED and reddens nothing
@@ -1296,7 +1316,7 @@ jobs:
       # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -1320,7 +1340,7 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
@@ -1389,7 +1409,13 @@ jobs:
         run: npm run app:build:engine -- --bundles appimage,deb,rpm -- -- --locked
 
       - name: Note how long the build step took
-        run: echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - ${OHMAIL_BUILD_STEP_T0:?the build step start was not noted} ))" >> "$GITHUB_ENV"
+        run: |
+          if [ "${OHMAIL_RETRIED_AT:-0}" -ge "${OHMAIL_BUILD_STEP_T0:?the build step start was not noted}" ]; then
+            echo "OHMAIL_BUILD_STEP_S=" >> "$GITHUB_ENV"
+            echo "the build step ran a retry, so its seconds are no runner reading and stay unread"
+          else
+            echo "OHMAIL_BUILD_STEP_S=$(( $(date +%s) - OHMAIL_BUILD_STEP_T0 ))" >> "$GITHUB_ENV"
+          fi
 
       - name: Name the artifacts what the download page links
         run: |
@@ -2472,7 +2498,7 @@ jobs:
       # platform binary without its own.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       - name: tsc --noEmit
         working-directory: apps/desktop
@@ -2498,7 +2524,7 @@ jobs:
           cargo test --locked --features local-engine
 
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
@@ -3795,7 +3821,7 @@ jobs:
       # From the committed package-lock.json, so the dependency tree is the same
       # on every machine — the reproducibility the exact-pinned manifests promise.
       - name: Install the locked dependency tree
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       # `npm ci` installs upstream's code; `patches/` holds this repository's changes to it (the
       # engine's mail sender among them). Applied to every installed copy, refused by name when one
@@ -3814,7 +3840,7 @@ jobs:
       # ^10.1 and its dependencies), installed beside the locked tree, scriptless, read by tsc only.
       - name: Typecheck the engine source
         run: |
-          npm install --no-save --ignore-scripts --no-audit --no-fund \
+          bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm install --no-save --ignore-scripts --no-audit --no-fund \
             typescript@5.9.3 \
             @types/node@22.20.1 \
             @types/nodemailer@6.4.24 \
@@ -3933,7 +3959,7 @@ jobs:
       # platform jobs install exactly this and nothing else. No install script runs.
       - name: Install the desktop tree from its lockfile
         working-directory: apps/desktop
-        run: npm ci --ignore-scripts --no-audit --no-fund
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build the engine-bearing UI bundle
         working-directory: apps/desktop
