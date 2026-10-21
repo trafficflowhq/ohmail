@@ -310,6 +310,7 @@ export class FakeMetaFolder implements LeaseIo, ProfileIo {
     // For fidelity, not for any assertion: a closed connection cannot EXPUNGE either. Unreachable
     // while dead in practice, because every caller reads the folder first and that already threw.
     this.refuseIfDead();
+    this.onEvent("claim_remove");
     const gone = new Set(refs);
     for (let i = this.messages.length - 1; i >= 0; i--) {
       if (gone.has(this.messages[i]!.ref)) {
@@ -359,6 +360,7 @@ export class FakeMetaFolder implements LeaseIo, ProfileIo {
   async appendProfile(raw: string): Promise<void> {
     this.refuseIfDead();
     this.profileAppends++;
+    this.onEvent("profile_append");
     this.messages.push({ ref: this.nextUid++, raw });
   }
 
@@ -389,7 +391,9 @@ export type FakeEvent =
   | "connect_start" | "force_close"
   | "sync_start" | "sync_end" | "watch" | "rearm" | "move"
   /** A targeted re-read by UID — the retry's and the junk restore's door into the folder. */
-  | "fetch_by_uid";
+  | "fetch_by_uid"
+  /** A settings document appended, and a claim removal asked of `_meta` — the release's order. */
+  | "profile_append" | "claim_remove";
 
 export interface FakeTraceEntry {
   mailboxId: string;

@@ -412,8 +412,11 @@ export interface LocalMailboxRuntime {
   ring(): void;
   /** Stop this mailbox's timer, wait for the in-flight cycle and close its login. Leaves the
    *  store alone — the store is the install's, not this row's. `"restart"` (the install's stop
-   *  the shell marked) keeps the claim for the relaunch; every other caller passes `"quit"`. */
-  detach(leaving: "quit" | "restart"): Promise<void>;
+   *  the shell marked) keeps the claim for the relaunch; every other caller passes `"quit"`.
+   *  `leaveSettings`: the install's own quit, which writes the settings and the instant it let go
+   *  before the claim goes back (RULING-026 lane A, as amended); a removal or a
+   *  re-point leaves it out. */
+  detach(leaving: "quit" | "restart", opts?: { leaveSettings?: boolean }): Promise<void>;
   /**
    * Re-dial now if this mailbox's connection is dead — the foreground wake, exposed. The engine
    * already re-dials a dead connection at the top of its poll, the right cadence for a desktop whose

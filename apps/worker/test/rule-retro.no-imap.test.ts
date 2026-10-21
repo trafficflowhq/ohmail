@@ -116,7 +116,8 @@ function siblingsOf(file: string, who: string): string[] {
 const SIBLINGS: Record<string, string[]> = {
   "rule-retro.ts": ["./rule-pass.js"],
   "gate-release.ts": ["./sender-check-backfill.js"],
-  "gap-catchup.ts": ["./rule-pass.js"],
+  // And where a look opens its window (RULING-026 lane A): a leaf of db + drizzle, re-exported.
+  "gap-catchup.ts": ["./rule-pass.js", "./gap-window.js"],
 };
 
 describe.each(MOVERS)("%s opens no IMAP connection", (name, file) => {

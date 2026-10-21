@@ -388,6 +388,8 @@ export default defineConfig({
       // A HAND-BACK OPENS THE GAP AT THE PRESS: the phone's stop, a letter taken in
       // before the first look, the offer after Organize here. Same composition, no mail server.
       "apps/sidecar/test/gap-window-opens-at-release.test.ts",
+      // THE GAP TRAVELS ACROSS INSTALLS: two phone engines, two stores, one in-memory `_meta`.
+      "apps/sidecar/test/gap-travels-across-installs.test.ts",
       // ORGANIZE HERE AFTER A HAND-BACK CLAIMS AT ONCE (VERIFY-026 L6): the same composition, the
       // person's press through the phone's door, no mail server and no box.
       "apps/sidecar/test/phone-organize-here-wakes.test.ts",

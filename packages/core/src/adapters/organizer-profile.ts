@@ -224,6 +224,22 @@ export interface ProfileScreening {
   scope: "window" | "all_time";
 }
 
+/**
+ * WHERE THE LAST HAND-BACK LEFT THE GAP — an ENVELOPE fact, outside the payload and the fingerprint.
+ * Written only by the releasing organizer's last flush: `since` is the instant the gap opened (the
+ * person's press, or its own uncounted window), `by` the releasing install (its message's
+ * `X-Ohmail-Install-Id`), `at` the release. The next install's look opens its window from it; any
+ * other write leaves it out. Absent = unstated. `PROFILE_VERSION` does not move.
+ */
+export interface ProfileGap {
+  since: string;
+  by: string;
+  at: string;
+}
+
+/** The longest install id a gap key may name; the lease's ids are far shorter. */
+const GAP_BY_MAX = 256;
+
 /** The window bounds the write site enforces (`dormancy_days` is 1-365); the parser refuses outside. */
 const SCREENING_DAYS_MIN = 1;
 const SCREENING_DAYS_MAX = 365;
@@ -245,6 +261,8 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
   };
   /** The organizer's screening window ({@link ProfileScreening}); absent = unstated. */
   screening?: ProfileScreening;
+  /** Where the last hand-back left the gap ({@link ProfileGap}); absent = unstated. */
+  gap?: ProfileGap;
 }
 
 /** A payload with nothing in it — what a mailbox with no configuration serializes to. */
@@ -686,7 +704,7 @@ export function compareProfileFingerprints(a: string, b: string): "same" | "diff
  */
 export function makeProfileDoc(
   payload: OrganizerProfilePayload,
-  meta: { updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening },
+  meta: { updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap },
   version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
   const canonical = canonicalizeProfilePayload(payload, version);
@@ -699,6 +717,8 @@ export function makeProfileDoc(
     ...(meta.screening === undefined ? {} : {
       screening: { baselineAt: meta.screening.baselineAt, dormancyDays: meta.screening.dormancyDays, scope: meta.screening.scope },
     }),
+    // ENVELOPE too, after `screening`: only a release flush supplies it.
+    ...(meta.gap === undefined ? {} : { gap: { since: meta.gap.since, by: meta.gap.by, at: meta.gap.at } }),
     screener: canonical.screener,
     rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
@@ -777,6 +797,8 @@ const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
   /* An instant and an enum, written plain: an older holder then reads its copy as not-as-written and
      rewrites it once without the key, so a stale window never outlives the organizer that wrote it. */
   "screening.baselineAt", "screening.scope",
+  // Two instants and an install id, which every claim header already carries in clear.
+  "gap.since", "gap.by", "gap.at",
 ]);
 
 const hex4 = (unit: number): string => `\\u${unit.toString(16).padStart(4, "0")}`;
@@ -892,6 +914,8 @@ export interface ParsedProfileMessage {
    * `screening`: a reader then reads the window as unstated rather than as a value nobody wrote.
    */
   screeningRefused?: string;
+  /** The envelope's `gap` key was PRESENT and unreadable — named, and the document carries no `gap`. */
+  gapRefused?: string;
 }
 
 export type ProfileRecord = ParsedProfileMessage | MalformedProfile;
@@ -926,6 +950,26 @@ export function readProfileScreening(raw: unknown): ProfileScreening | { refused
   }
   if (o.scope !== "window" && o.scope !== "all_time") return { refused: "screening.scope is not a known mode" };
   return { baselineAt: base as string | null, dormancyDays: days, scope: o.scope };
+}
+
+/**
+ * THE ENVELOPE'S GAP KEY, well-formed only: absent ⇒ `undefined`; present and readable ⇒ the gap;
+ * anything else ⇒ the reason, and no gap. `installId` is the message's own header: a key naming any
+ * other writer is refused.
+ */
+export function readProfileGap(raw: unknown, installId: string | null): ProfileGap | { refused: string } | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { refused: "gap is not an object" };
+  const o = raw as Record<string, unknown>;
+  if (typeof o.since !== "string" || !isWrittenInstant(o.since)) return { refused: "gap.since is not the ISO form ohmail writes" };
+  if (typeof o.at !== "string" || !isWrittenInstant(o.at)) return { refused: "gap.at is not the ISO form ohmail writes" };
+  if (Date.parse(o.since) > Date.parse(o.at)) return { refused: "gap.since is after gap.at" };
+  // eslint-disable-next-line no-control-regex
+  if (typeof o.by !== "string" || o.by.length === 0 || o.by.length > GAP_BY_MAX || /[\u0000-\u001f\u007f]/.test(o.by)) {
+    return { refused: "gap.by is not an install id" };
+  }
+  if (o.by !== installId) return { refused: "gap.by is not the install that wrote the message" };
+  return { since: o.since, by: o.by, at: o.at };
 }
 
 /** The tolerant reader of one section entry. Drops entries missing their natural key. */
@@ -1106,6 +1150,8 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   const payload = readPayload(rawDoc);
   const screening = readProfileScreening(rawDoc.screening);
   const screeningRefused = screening !== undefined && "refused" in screening ? screening.refused : undefined;
+  const gap = readProfileGap(rawDoc.gap, installId);
+  const gapRefused = gap !== undefined && "refused" in gap ? gap.refused : undefined;
   const producerRaw = typeof rawDoc.producer === "object" && rawDoc.producer !== null
     ? rawDoc.producer as Record<string, unknown> : {};
   const doc: OrganizerProfileDoc = {
@@ -1118,11 +1164,13 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
       ...(producerRaw.stamped === true ? { stamped: true as const } : {}),
     },
     ...(screening === undefined || screeningRefused !== undefined ? {} : { screening: screening as ProfileScreening }),
+    ...(gap === undefined || gapRefused !== undefined ? {} : { gap: gap as ProfileGap }),
     ...payload,
   };
   return {
     status: "ok", doc, v, installId, encoded: isEncodedAsWritten(slice, rawDoc),
     ...(screeningRefused === undefined ? {} : { screeningRefused }),
+    ...(gapRefused === undefined ? {} : { gapRefused }),
     ...(ref === undefined ? {} : { ref }),
   };
 }
@@ -1725,6 +1773,8 @@ export type ProfileReadResult =
     encoded?: boolean;
     /** The chosen document's `screening` key was present and unreadable ({@link ParsedProfileMessage.screeningRefused}). */
     screeningRefused?: string;
+    /** The chosen document's `gap` key was present and unreadable ({@link ParsedProfileMessage.gapRefused}). */
+    gapRefused?: string;
     /**
      * The generation `ref` was read under (mail 0094's mirror writer needs it). `ref` alone is a
      * uid, and storing one without its generation is the defect this pair prevents. This value
@@ -2159,6 +2209,7 @@ export async function readOrganizerProfile(
     state: "found", doc: newest.doc!, installId: newest.installId, ref: newest.ref,
     encoded: newest.encoded === true,
     ...(newest.screeningRefused === undefined ? {} : { screeningRefused: newest.screeningRefused }),
+    ...(newest.gapRefused === undefined ? {} : { gapRefused: newest.gapRefused }),
     /* THE ONE THE UID WAS READ UNDER — taken from the messages this read parsed, never from the
        connection at this moment. */
     generation,

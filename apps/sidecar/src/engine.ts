@@ -171,7 +171,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import { OrganizerProfileSync, sweepHeld, syncProfileMirror } from "@trafficflow/worker/profile";
+import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror } from "@trafficflow/worker/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
@@ -193,7 +193,9 @@ import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
 /* MAIL FROM A GAP, the worker's pass for the same reason: on this door no worker rules the mail
    that arrived while nothing organized the mailbox. */
-import { gapCatchupPass, NO_FOLDER_READ } from "@trafficflow/worker/gap-catchup";
+import {
+  gapCatchupPass, gapKeyFrom, gapOpenStart, NO_FOLDER_READ, travellingGapColumns, type TravelledGap,
+} from "@trafficflow/worker/gap-catchup";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerAutoActSettings,
@@ -4852,6 +4854,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * flag because the peek's change test reads an empty folder as equal to the NULL seed.
        */
       let gapOpen: boolean | null = null;
+      /** When this install last looked (epoch ms): a look after a quiet stretch writes the window again. */
+      let lastLookAt: number | null = null;
       /** The role the last gated pass ran under — what `noteIdleOutcome` licenses the catch-up on. */
       let lastPassOrganizing = false;
 
@@ -4990,9 +4994,37 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              opens it once (`coalesce`, the store's own clock, the clock `created_at` is written
              with); a look that finds one CLOSES it with any offer made from it. Asked apart from
              `same`: an empty folder compares equal to the NULL seed. */
+          /* AFTER A QUIET STRETCH THE WINDOW IS WRITTEN AGAIN (RULING-026 lane A): a hand-back's
+             latch, the OS asleep or a long backoff can hide a whole tenure between two looks, and
+             only a fresh write reads the key that tenure's release left. Idempotent otherwise. */
+          const lookedAt = now().getTime();
+          const quiet = lastLookAt !== null && lookedAt - lastLookAt > 2 * idlePollCeilingMs;
+          lastLookAt = lookedAt;
+          const opening = state !== "held" && (gapOpen !== true || quiet);
+          /* WHERE IT OPENS: a stopped claim's last server stamp; otherwise the gap the last hand-back
+             left in the settings document, read here and never written or cached. */
+          let travelled: TravelledGap | null = null;
+          let written: { by: string | null; at: Date } | null = null;
+          if (opening && state === null) {
+            const mkIo = (adapter as Partial<{
+              profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
+            }>).profileIo;
+            if (typeof mkIo === "function") {
+              const left = await readNewestSettings(mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.id }), log);
+              if (left !== null) written = { by: left.by, at: left.at };
+              if (left?.gap) travelled = { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) };
+            }
+          }
+          const beats = seen.holders.map((h) => h.heartbeat.getTime());
           const gapWrite = state === "held"
             ? (gapOpen === false ? null : { gapSince: null, gapLetters: null, gapPressedAt: null })
-            : (gapOpen === true ? null : { gapSince: sql`coalesce(${mailboxes.gapSince}, ${dialect(db).now()})` });
+            : (!opening ? null : {
+              gapSince: gapOpenStart(dialect(db), {
+                occupancy: state === "stopped" ? "stopped" : "none",
+                stoppedAt: beats.length === 0 ? null : new Date(Math.max(...beats)),
+                travelled, written, self: installId,
+              }),
+            });
           if (same) {
             if (gapWrite !== null) {
               await db.update(mailboxes).set(gapWrite).where(eq(mailboxes.id, mb.id));
@@ -5036,6 +5068,48 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * reaches here is the WRITE below failing — which is still a pass that learned nothing. */
           markLeaseUnreadable(err, "list_claims");
         }
+      };
+
+      /**
+       * WHERE THIS HAND-BACK SAYS THE GAP BEGAN (RULING-026 lane A), read from the row before the
+       * release clears it: the key the release's flush leaves in the settings document, so the install
+       * that organizes next opens its window there. Never throws; no key is the old behaviour.
+       */
+      const leavingGap = async (): Promise<{ gap: { since: string; by: string; at: string } } | undefined> => {
+        try {
+          const cols = travellingGapColumns(dialect(db), { sibling: true });
+          const [row] = await db.select({ since: cols.since, at: cols.at }).from(mailboxes).where(eq(mailboxes.id, mb.id));
+          const gap = row === undefined ? null : gapKeyFrom(row, installId);
+          return gap === null ? undefined : { gap };
+        } catch (err) {
+          log("organizer_gap_read_failed", {
+            err, reason: "where the gap began could not be read, so the settings leave without it",
+          });
+          return undefined;
+        }
+      };
+
+      /**
+       * THE INSTANT THIS INSTALL LETS GO WITHOUT A PRESS (RULING-026 lane A, as amended):
+       * the app quitting and the phone leaving the foreground leave it in the settings document, the
+       * document before the claim, so an install that slept through this turn counts from here and
+       * never back over it. `since` is `at`: the turn ends now. The engine's own clock, the one its
+       * claim was stamped with.
+       */
+      const lettingGo = (): { gap: { since: string; by: string; at: string } } => {
+        const at = now().toISOString();
+        return { gap: { since: at, by: installId, at } };
+      };
+      /** Such an exit's settings write did not land: said once, and the claim goes back regardless. */
+      const settingsNotLeft = (
+        left: Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>>, phase: "quit" | "background",
+      ): void => {
+        if (left === "saved") return;
+        log("organizer_settings_leave_failed", {
+          mailboxId: mb.id, phase, outcome: left,
+          reason: "the settings and the instant this install let go could not be written into the "
+            + "mailbox, so the claim goes back without them",
+        });
       };
 
       const mayOrganize = async (): Promise<boolean> => {
@@ -5151,7 +5225,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* THE SETTINGS GO FIRST, while the claim from the last organizing pass is still ours: a
              decision made since the debounced write would otherwise stay on this install only. */
           const settingsLeft = organizer.organizing && organizer.claimed
-            ? await profileSync.flushBeforeLeaving(leasePermit, adapter) : undefined;
+            ? await profileSync.flushBeforeLeaving(leasePermit, adapter, await leavingGap()) : undefined;
           const released = await releaseOwnClaim(
             adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
             "the claim ages out of the mailbox on its own; until it does, another "
@@ -8093,7 +8167,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * `close()`'s LOGOUT) share one drain interval, and when it runs out the socket is
          * DESTROYED, ending the hung command.
          */
-        async detach(leaving: "quit" | "restart") {
+        async detach(leaving: "quit" | "restart", opts: { leaveSettings?: boolean } = {}) {
           stopped = true;
           if (timer) clearTimeout(timer);
           if (heartbeatTimer) clearTimeout(heartbeatTimer);
@@ -8136,12 +8210,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                AND NOT ON A RESTART THE SHELL MARKED: the relaunch continues this claim under the same
                install id (lease rule 3); a restart that never comes back leaves it to age out. */
             const keepForRestart = leaving === "restart";
+            /* THE APP'S OWN QUIT LEAVES ITS SETTINGS FIRST (RULING-026 lane A, as amended):
+               the last write, with the instant this install let go, while the claim is still ours and
+               inside this same bound. A refused write is said once and the claim still goes back; one
+               that hangs runs out the bound the release has, and the claim then ages out as before.
+               Only `stop()` asks: a removal (its route released the claim and wiped the store before
+               this) and a re-point (attached again at once) never do. */
+            const settingsFirst = async (): Promise<void> => {
+              if (opts.leaveSettings !== true || !organizer.organizing) return;
+              // Not `left`: that name is this method's own budget, read again below.
+              let written: Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> = "not_saved";
+              try {
+                written = await profileSync.flushBeforeLeaving(leasePermit, adapter, lettingGo());
+              } catch { /* never thrown by its contract; said below as not saved if it is */ }
+              settingsNotLeft(written, "quit");
+            };
             const politely = Promise.resolve().then(() => (organizer.claimed && !launchSkipped && !keepForRestart
-              ? releaseOwnClaim(
+              ? settingsFirst().then(() => releaseOwnClaim(
                 adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
                 "this install is stopping and its claim could not be removed; it ages out of "
                   + "ohmail/_meta on its own and another install takes the mailbox then",
-              ).then((released) => {
+              )).then((released) => {
                 leaseNonce = null;
                 organizer = { ...organizer, organizing: false };
                 if (typeof released === "number" && released > 0) {
@@ -8228,11 +8317,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           return serialize(async () => {
             if (stopped) return 0;
             /* The release arm's rule: the settings first, while the claim is still ours — on the
-               connection the release itself goes out on, so a dead runtime socket costs neither. */
+               connection the release itself goes out on, so a dead runtime socket costs neither.
+               They carry the instant this install let go (the latch above stopped its drains), one
+               key for the whole hand-back, so a second connection's flush finds it written. */
             let settingsLeft = undefined as Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> | undefined;
+            const leaving = lettingGo();
             const ask = async (conn: MailboxAdapter) => {
               if (organizer.organizing && organizer.claimed) {
-                settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn);
+                settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn, leaving);
               }
               return releaseOwnClaim(
                 conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
@@ -8264,6 +8356,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 void Promise.resolve(fresh.close()).catch(() => undefined);
               }
             }
+            // The settings' last answer, once: a fresh connection's flush may have written what the dead one could not.
+            if (settingsLeft !== undefined) settingsNotLeft(settingsLeft, "background");
             /* A sibling refusal at a hand-back is a COMPLETE answer that none of this runtime's
                claims stand (`0`), not a "could not look": the record it saw is a clone's, live,
                and not this install's to remove (mail 0121). The release ROUTE is where that refusal
@@ -10286,7 +10380,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            stop. `detach()` sets `stopped` first and releases after the queue has settled, which is
            the only ordering where both are true. */
         const leaving = leavingForRestart ? "restart" : "quit";
-        await Promise.allSettled(runtimes.all().map((r) => r.detach(leaving)));
+        // The quit leaves each organized mailbox's settings and the instant it let go, before its claim.
+        await Promise.allSettled(runtimes.all().map((r) => r.detach(leaving, { leaveSettings: leaving === "quit" })));
         // The send door's kept connections go with the install: nothing outlives the stop.
         await sendConnections.closeAll();
         await opened.close();

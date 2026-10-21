@@ -162,9 +162,18 @@ describe("the sidecar writes this mailbox's settings into ohmail/_meta", () => {
     await sidecar.syncUntilQuiet();
     expect((await profileDocs(cfg))[0]!.doc!.updatedAt).toBe(updatedAtBeforeRelaunch);
 
-    // RELAUNCH, same data directory: the same install finds its OWN document, seeds its dirty
-    // check from it, and rewrites nothing — `updatedAt` is the witness that no append happened.
+    // THE QUIT WRITES ONCE ON THE WAY OUT, and that is the one rewrite of an unchanged store: the
+    // instant it let go travels in `gap` (RULING-026 lane A, as amended), so an install that slept
+    // through this turn counts from there. Still one document, the same content.
     await sidecar.stop();
+    const quit = await profileDocs(cfg);
+    expect(quit).toHaveLength(1);
+    expect(quit[0]!.doc!.gap, "the quit left no moment").toMatchObject({ by: accountId });
+    expect(quit[0]!.doc!.tagNames).toEqual(["Invoices", "travel"]);
+
+    // RELAUNCH, same data directory: the same install finds its OWN document and seeds its dirty
+    // check from it. Its first publish drops the quit's key (a key never outlives its exit), and
+    // after that it rewrites nothing — `updatedAt` is the witness that no append happened.
     const second = await createSidecar({
       dataDir: dir, imap: cfg, machineName: "Mila's MacBook",
       pollIntervalMs: 60_000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
@@ -175,7 +184,12 @@ describe("the sidecar writes this mailbox's settings into ohmail/_meta", () => {
     await second.syncUntilQuiet();
     const afterRelaunch = await profileDocs(cfg);
     expect(afterRelaunch).toHaveLength(1);
-    expect(afterRelaunch[0]!.doc!.updatedAt, "an unchanged store must not be rewritten on relaunch").toBe(updatedAtBeforeRelaunch);
+    expect(afterRelaunch[0]!.installId, "the relaunch did not take the document as its own").toBe(accountId);
+    expect(afterRelaunch[0]!.doc!.gap, "the quit's key outlived its exit").toBeUndefined();
+    expect(afterRelaunch[0]!.doc!.tagNames).toEqual(["Invoices", "travel"]);
+    const relaunchedAt = afterRelaunch[0]!.doc!.updatedAt;
+    await second.syncUntilQuiet();
+    expect((await profileDocs(cfg))[0]!.doc!.updatedAt, "an unchanged store must not be rewritten after the relaunch").toBe(relaunchedAt);
 
     // A change AFTER the relaunch flows again — the seed resumed write-behind, not just reads.
     await second.db.insert(tags).values({ accountId: second.world.accountId, name: "after-relaunch", hue: "moss" });

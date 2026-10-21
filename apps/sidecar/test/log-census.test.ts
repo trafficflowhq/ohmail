@@ -599,6 +599,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // screen can name the holder. `err` + `reason`, no holder and no mailbox: the whole content of a
   // FAILED look is that there was one, and the sentence says what the row keeps in the meantime.
   organizer_peek_failed: "error",
+  // `organizer_gap_read_failed` — the release arm's read of where the gap began, before the
+  // settings flush (RULING-026 lane A). `err` + `reason`: the release goes ahead and the settings
+  // leave without the key, so the next install opens its window at its own look.
+  organizer_gap_read_failed: "error",
   // ── engine.ts — THE TAKEOVER STAMP'S PER-CYCLE RE-READ. Rostered with the line. ────────────
   //
   // `err` + `reason` and nothing else: the read is one indexed lookup by mailbox id against this
@@ -1316,6 +1320,12 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      took it. `mailboxId` + `claims` + `reason`. Its failure arm is the shared
      `organizer_claim_release_failed`, rostered once above. */
   organizer_claim_handed_back: "info",
+  /* THE SETTINGS AN EXIT WITHOUT A PRESS COULD NOT LEAVE — the app quitting or the phone leaving the
+     foreground (RULING-026 lane A, as amended). `error` on the derivation: the write was
+     refused or held, so the instant this install let go is not in the mailbox, and the claim went
+     back without it. Said once per exit. `mailboxId` + `phase` (`quit`/`background`) + `outcome` +
+     `reason`. */
+  organizer_settings_leave_failed: "error",
   /* A DRAIN STOPPED AT ITS CYCLE EDGE FOR A HAND-BACK. `info`: nothing failed, and it is the line a
      device log reads between the app leaving and the release. `mailboxId` + `cycles`. */
   organizer_hand_back_at_cycle_edge: "info",

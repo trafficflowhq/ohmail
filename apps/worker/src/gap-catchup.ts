@@ -21,6 +21,9 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow 
    count. On their press (`gap_pressed_at`) it decides again with the same function, in one
    transaction, and files that set only while its size is the count they were shown. */
 
+/* Where a look opens the window: a leaf, so both engines read one arbitration. */
+export { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap } from "./gap-window.js";
+
 /** Rows read per page of the walk. */
 export const GAP_CATCHUP_BATCH = 100;
 

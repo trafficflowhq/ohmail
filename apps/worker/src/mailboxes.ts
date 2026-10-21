@@ -20,6 +20,7 @@ import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
 import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "./sync.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { gapKeyFrom, travellingGapColumns } from "./gap-window.js";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is
@@ -1598,6 +1599,8 @@ export async function refreshOrganizerHolder(
     fence?: LeaderFence; now?: Date; stateChanged?: boolean;
     /** The gap window this look writes: `open` found no live holder, `close` found one (mail 0151). */
     gap?: "open" | "close";
+    /** Where an `open` starts ({@link gapOpenStart}); absent = today's `coalesce(gap_since, now())`. */
+    opensAt?: SQL;
   } = {},
 ): Promise<boolean> {
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes)
@@ -1626,11 +1629,24 @@ export async function refreshOrganizerHolder(
       ...(opts.stateChanged ? { organizerEventAt: opts.now ?? new Date() } : {}),
       /* THE GAP THIS READER IS LOOKING AT NOW: `coalesce`, so the earliest instant nothing organized
          stands; a held look closes it with the offer made from it. */
-      ...(opts.gap === "open" ? { gapSince: sql`coalesce(${mailboxes.gapSince}, now())` } : {}),
+      ...(opts.gap === "open" ? { gapSince: opts.opensAt ?? sql`coalesce(${mailboxes.gapSince}, now())` } : {}),
       ...(opts.gap === "close" ? { gapSince: null, gapLetters: null, gapPressedAt: null } : {}),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id }));
+}
+
+/**
+ * WHERE THIS ORGANIZER'S HAND-BACK SAYS THE GAP BEGAN, read from its row before the release clears it
+ * ({@link travellingGapColumns}): the key its release flush leaves in the settings document. One
+ * SELECT, no write; `null` when the row is gone.
+ */
+export async function readTravellingGapSince(
+  db: WorkerDb, mailboxId: string, by: string,
+): Promise<{ since: string; by: string; at: string } | null> {
+  const cols = travellingGapColumns(dialect(db as unknown as Tx), { sibling: false });
+  const [row] = await db.select({ since: cols.since, at: cols.at }).from(mailboxes).where(eq(mailboxes.id, mailboxId));
+  return row === undefined ? null : gapKeyFrom(row, by);
 }
 
 /**

@@ -27,6 +27,7 @@ import {
   writeOrganizerProfile,
   type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
+  type ProfileGap,
 } from "@trafficflow/core/adapters/organizer-profile";
 
 /** (install, mailbox, folder generation) the holder has re-encoded a plain settings message under. */
@@ -195,6 +196,13 @@ export class OrganizerProfileSync {
    * is outside the fingerprint, so a dial moved with an unchanged payload is dirty only through this.
    */
   private lastWrittenScreening: string | null = null;
+  /**
+   * THE GAP THE LAST WRITE PUBLISHED ({@link gapKeyOf}). Only a release flush writes one
+   * ({@link leavingGap}), so every other write drops a key this install left earlier.
+   */
+  private lastWrittenGap: string = GAP_ABSENT;
+  /** Set for the length of one {@link flushBeforeLeaving}: the gap this hand-back leaves. */
+  private leavingGap: ProfileGap | null = null;
   /**
    * A TIDY OF `ohmail/_meta` IS OWED: the seed, a read's residue or a write's failed removal said
    * so. Cleared when a pass leaves nothing removable (in `count` mode, after each logged plan).
@@ -445,6 +453,8 @@ export class OrganizerProfileSync {
     this.consecutiveFailures = 0;
     this.lastFailureCode = null;
     this.everSucceeded = false;
+    this.lastWrittenGap = GAP_ABSENT;
+    this.leavingGap = null;
   }
 
   /**
@@ -997,6 +1007,8 @@ export class OrganizerProfileSync {
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
       const { payload, leftOut, screening } = await serializeOrganizerProfileCounted(deps.db, deps.accountId, deps.mailboxId);
       const screeningKey = screeningKeyOf(screening);
+      const leavingGap = this.leavingGap;
+      const gapKey = gapKeyOf(leavingGap ?? undefined);
       this.sayBounded(leftOut, payload, deps.mailboxId, log);
       const fp = profileFingerprint(payload);
 
@@ -1146,7 +1158,7 @@ export class OrganizerProfileSync {
       // except a standing found hold, which writes beside its held record below.
       if (this.blockedByNewer) return;
       // THE SECOND TRIGGER: the window travels in the envelope, outside `fp`.
-      if (fp === this.lastWrittenFingerprint && screeningKey === this.lastWrittenScreening) {
+      if (fp === this.lastWrittenFingerprint && screeningKey === this.lastWrittenScreening && gapKey === this.lastWrittenGap) {
         // Nothing to write — but LOOK once per interval anyway. This is what owes a tidy for the
         // residue of a transient organizer overlap (two documents from two writers, neither of
         // which will ever change its store again) and what notices a document appearing
@@ -1172,6 +1184,8 @@ export class OrganizerProfileSync {
         updatedAt: now,
         producer: { kind: deps.self.kind, version: deps.producerVersion },
         screening,
+        // Only the release flush's tick carries the gap; every other write leaves it out.
+        ...(leavingGap === null ? {} : { gap: leavingGap }),
       });
       /* ONE WRITE, and a second one only from the never-owned `foreign` arm, which holds the
          document it met and then publishes this install's own settings beside it. */
@@ -1192,6 +1206,7 @@ export class OrganizerProfileSync {
         if (result.written) {
           this.lastWrittenFingerprint = fp;
           this.lastWrittenScreening = screeningKey;
+          this.lastWrittenGap = gapKey;
           this.seenForeignFingerprints.clear();
           if (result.owed === true) this.tidyOwed = true;
           log("organizer_profile_written", {
@@ -1345,8 +1360,14 @@ export class OrganizerProfileSync {
    * not overwrite; a found or declined one no longer does, because the write publishes beside it.
    * Each tick first asks whether the pass's permit stood down, the drain's own publish rule: a
    * mailbox that changed hands is not written. Never throws.
+   *
+   * `leaving.gap`: the release's own flush leaves where the gap began (RULING-026 lane A), so the
+   * install that organizes next opens its window there. Carried only by this call's ticks; a store
+   * that never published writes nothing to carry it.
    */
-  async flushBeforeLeaving(authority: OrganizerWriteAuthority, pinned?: MailboxAdapter): Promise<SettingsLeft> {
+  async flushBeforeLeaving(
+    authority: OrganizerWriteAuthority, pinned?: MailboxAdapter, leaving?: { gap: ProfileGap },
+  ): Promise<SettingsLeft> {
     const { deps } = this;
     const adapter = pinned ?? deps.adapter;
     if (!hasProfileIo(adapter)) return "saved";
@@ -1354,8 +1375,10 @@ export class OrganizerProfileSync {
     const settled = async (): Promise<boolean> => {
       const payload = await serializeOrganizerProfile(deps.db, deps.accountId, deps.mailboxId);
       if (this.lastWrittenFingerprint === null && isEmptyProfilePayload(payload)) return true;
-      return !newerHeld() && profileFingerprint(payload) === this.lastWrittenFingerprint;
+      return !newerHeld() && profileFingerprint(payload) === this.lastWrittenFingerprint
+        && gapKeyOf(this.leavingGap ?? undefined) === this.lastWrittenGap;
     };
+    this.leavingGap = leaving?.gap ?? null;
     try {
       for (let tick = 0; tick < 2; tick += 1) {
         if (this.seeded && await settled()) return "saved";
@@ -1372,6 +1395,8 @@ export class OrganizerProfileSync {
       return newerHeld() ? "kept_other" : "not_saved";
     } catch {
       return "not_saved";
+    } finally {
+      this.leavingGap = null;
     }
   }
 
@@ -1459,6 +1484,8 @@ export class OrganizerProfileSync {
         }
         // Our own copy says which window it published; a foreign one's never stands for ours.
         if (ours) this.lastWrittenScreening = screeningKeyOf(read.doc.screening);
+        // And which gap: a key our last release left is dropped by the next write.
+        if (ours) this.lastWrittenGap = gapKeyOf(read.doc.gap);
         if (ours || localSaysWhatTheDocumentSays(local, read.doc)) {
           // Our own previous write (stale or not), or a foreign one that says exactly what we
           // would say: seed the dirty check from it and let write-behind do its ordinary work.
@@ -1595,6 +1622,7 @@ export class OrganizerProfileSync {
     if (result.written) {
       this.lastWrittenFingerprint = profileFingerprint(doc);
       this.lastWrittenScreening = screeningKeyOf(screening);
+      this.lastWrittenGap = GAP_ABSENT;
       if (result.owed === true) this.tidyOwed = true;
     } else if (result.reason === "cleanup_owed") {
       this.tidyOwed = true;
@@ -1935,6 +1963,52 @@ export async function applyProfileRead(
 }
 
 export { PROFILE_VERSION };
+
+/** {@link gapKeyOf} for a document that carries no gap. */
+const GAP_ABSENT = "absent";
+
+/** One string per gap, `absent` for none — the release flush's dirty check. */
+export function gapKeyOf(g: ProfileGap | undefined): string {
+  return g === undefined ? GAP_ABSENT : JSON.stringify([g.since, g.by, g.at]);
+}
+
+/** What a reader's look takes from the newest settings document: its gap key, its writer, its write. */
+export interface NewestSettings {
+  gap: ProfileGap | null;
+  /** The writer's `X-Ohmail-Install-Id`, or null when it named none. */
+  by: string | null;
+  at: Date;
+}
+
+/**
+ * THE NEWEST SETTINGS DOCUMENT, for a reader's look (RULING-026 lane A): one read, no write, never
+ * throws. `null` for no document, an unreadable or newer one, or a read that failed: the look then
+ * opens its window as it always did. A refused key is no key; the writer still counts.
+ */
+export async function readNewestSettings(
+  io: ProfileIo, log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<NewestSettings | null> {
+  try {
+    const read = await readOrganizerProfile(io);
+    if (read.state !== "found") return null;
+    const at = new Date(read.doc.updatedAt);
+    if (!Number.isFinite(at.getTime())) return null;
+    if (read.gapRefused !== undefined) log("profile_gap_refused", { reason: read.gapRefused });
+    return { gap: read.gapRefused === undefined ? read.doc.gap ?? null : null, by: read.installId, at };
+  } catch (err) {
+    log("profile_gap_read_failed", {
+      err, reason: "the settings document could not be read, so this look opens the window as before",
+    });
+    return null;
+  }
+}
+
+/** The gap the newest settings document carries ({@link readNewestSettings}). */
+export async function readTravellingGap(
+  io: ProfileIo, log: (event: string, detail: Record<string, unknown>) => void,
+): Promise<ProfileGap | null> {
+  return (await readNewestSettings(io, log))?.gap ?? null;
+}
 
 /** One string per window, `absent` for a document that states none — the dirty check's key. */
 export function screeningKeyOf(s: ProfileScreening | undefined): string {

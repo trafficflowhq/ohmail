@@ -100,7 +100,8 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-hea
 import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
-import { gapCatchupPass, NO_FOLDER_READ } from "./gap-catchup.js";
+import { gapCatchupPass, gapOpenStart, NO_FOLDER_READ, type TravelledGap } from "./gap-catchup.js";
+import { dialect } from "@trafficflow/db/dialect";
 import { gateReleasePass } from "./gate-release.js";
 import { senderCheckRetirement } from "./sender-check-backfill.js";
 import { listAddressBackfillPass } from "./list-address-backfill.js";
@@ -133,7 +134,7 @@ import {
   markMailboxFailed, markMailboxReadLimited, markMailboxProviderUnavailable, markMailboxConnected,
   markMailboxStoodDown, stampSyncProgress,
   clearOrganizerStandDown,
-  markMailboxReleased, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
+  markMailboxReleased, readTravellingGapSince, refreshOrganizerHolder, resumeParkedMailbox, deleteParkedPushRows,
   markMailboxSyncBlocked, clearMailboxSyncBlock,
   classifyMailboxError, isProviderRefusal, mailboxErrorDetail,
   stampMailboxSyncNow, stampInitialImportComplete, stampImportProgress, makeSyncWriteFence, type LeaderFence,
@@ -141,7 +142,7 @@ import {
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
-import { OrganizerProfileSync, sweepHeld, syncProfileMirror, type SweepClearance } from "./profile.js";
+import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror, type SweepClearance } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
@@ -488,6 +489,8 @@ interface MailboxRuntime {
     installId: string | null;
     /** What this reader last wrote of the gap window (`gap_since`): open, closed, or unknown. */
     gapOpen?: boolean;
+    /** When this reader last looked (epoch ms): a look after a quiet stretch writes the window again. */
+    lastLookAt?: number;
   };
   /**
    * Mail 0083. What this process IS to this mailbox right now — and it is MUTABLE, unlike almost
@@ -1447,6 +1450,8 @@ export async function startWorkerWithLock(
         capabilities: string | null; installId: string | null;
         /** What this reader last wrote of the gap window (`gap_since`); undefined = not since attach. */
         gapOpen?: boolean;
+        /** When this reader last looked (epoch ms); see the re-check below. */
+        lastLookAt?: number;
       },
     ): Promise<void> {
       const peek = (adapter as Partial<LeasePeekCapableAdapter>).leasePeekIo;
@@ -1514,15 +1519,45 @@ export async function startWorkerWithLock(
         /* THE WINDOW IS THE GAP THIS READER IS LOOKING AT NOW: a look that finds no live holder
            opens it once, a look that finds one closes it with its offer. Asked apart from the
            compare below, which reads an empty folder as equal to a row saying nobody holds it. */
+        /* AFTER A QUIET STRETCH THE WINDOW IS WRITTEN AGAIN (RULING-026 lane A): a whole tenure can
+           pass between two looks of a reader in backoff, and only a fresh write reads the key that
+           tenure's release left. Idempotent when nothing changed. */
+        const lookedAt = Date.now();
+        const quiet = current.lastLookAt !== undefined && lookedAt - current.lastLookAt > 2 * config.pollIntervalMs;
+        current.lastLookAt = lookedAt;
         const gap = state === "held" ? (current.gapOpen === false ? undefined : "close" as const)
-          : (current.gapOpen === true ? undefined : "open" as const);
+          : (current.gapOpen === true && !quiet ? undefined : "open" as const);
+        /* WHERE IT OPENS: a stopped claim's last server stamp; otherwise the gap the last hand-back
+           left in the settings document, read here and never written (a reader appends nothing). */
+        let opensAt: ReturnType<typeof gapOpenStart> | undefined;
+        if (gap === "open") {
+          const beats = seen.holders.map((h) => h.heartbeat.getTime());
+          let travelled: TravelledGap | null = null;
+          let written: { by: string | null; at: Date } | null = null;
+          const mkIo = (adapter as Partial<{
+            profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
+          }>).profileIo;
+          if (state === null && typeof mkIo === "function") {
+            const left = await readNewestSettings(
+              mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.mailboxId }),
+              (event, detail) => { log.info(event, { ...detail, mailboxId: mb.mailboxId, accountId: mb.accountId }); },
+            );
+            if (left !== null) written = { by: left.by, at: left.at };
+            if (left?.gap) travelled = { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) };
+          }
+          opensAt = gapOpenStart(dialect(db as unknown as Tx), {
+            occupancy: state === "stopped" ? "stopped" : "none",
+            stoppedAt: beats.length === 0 ? null : new Date(Math.max(...beats)),
+            travelled, written, self: organizerInstallId,
+          });
+        }
         if (current.kind === kind && current.name === name && current.state === state
           && current.capabilities === capabilities && current.installId === installId
           && (current.since ? current.since.getTime() : null) === (since ? since.getTime() : null)) {
           if (gap !== undefined && await refreshOrganizerHolder(db, mb.mailboxId, {
             kind, installId, displayName: name, claimedAt: since, state,
             capabilities: top?.capabilities ?? null,
-          }, { fence, stateChanged: false, gap })) current.gapOpen = gap === "open";
+          }, { fence, stateChanged: false, gap, ...(opensAt === undefined ? {} : { opensAt }) })) current.gapOpen = gap === "open";
           return;
         }
         /* Only an occupancy flip is an event (0.14.1). This function writes whenever ANY of the four
@@ -1537,7 +1572,7 @@ export async function startWorkerWithLock(
         const landed = await refreshOrganizerHolder(db, mb.mailboxId, {
           kind, installId, displayName: name, claimedAt: since, state,
           capabilities: top?.capabilities ?? null,
-        }, { fence, stateChanged, ...(gap !== undefined ? { gap } : {}) });
+        }, { fence, stateChanged, ...(gap !== undefined ? { gap } : {}), ...(opensAt === undefined ? {} : { opensAt }) });
         if (gap !== undefined && landed) current.gapOpen = gap === "open";
         log.info("organizer_holder_refreshed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId,
@@ -1552,6 +1587,28 @@ export async function startWorkerWithLock(
         // reading mail.
         log.warn("organizer_holder_refresh_failed", {
           mailboxId: mb.mailboxId, accountId: mb.accountId, err,
+        });
+      }
+    }
+
+    /**
+     * THE LAST SETTINGS WRITE BEFORE A RELEASE (RULING-026 lane A, and a standing defect: Cloud never
+     * flushed before letting go). It carries where the gap began, read from the row before the release
+     * clears it, so the install that organizes next opens its window there. Never throws; a refused
+     * write leaves the next look to open the window as before.
+     */
+    async function leaveSettings(rt: MailboxRuntime): Promise<void> {
+      try {
+        const gap = await readTravellingGapSince(db, rt.mailboxId, organizerInstallId);
+        const left = await rt.profile.flushBeforeLeaving(rt.leasePermit, rt.adapter, gap === null ? undefined : { gap });
+        log.info("organizer_settings_left", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, outcome: left,
+          reason: "the settings and where the gap began were written into the mailbox before its claim leaves",
+        });
+      } catch (err) {
+        log.warn("organizer_settings_left", {
+          mailboxId: rt.mailboxId, accountId: rt.accountId, outcome: "not_saved", err,
+          reason: "the settings could not be written before the release; the release goes ahead",
         });
       }
     }
@@ -1622,6 +1679,11 @@ export async function startWorkerWithLock(
        * function runs in both phases — at attach the runtime does not exist yet.
        */
       requestKeyForGate: string | null,
+      /**
+       * THE SETTINGS FLUSH A RELEASE OWES, run first in the release arm while the claim is still ours
+       * ({@link leaveSettings}). Only a visit whose previous cycle organized passes it.
+       */
+      leaving?: () => Promise<void>,
     ): Promise<boolean> {
       /* The release is honoured FIRST, before the lease is read at all (0.14.1). "Stop organizing and
        * keep my mail" is not a question for the lease — the answer is nobody, the person withdrew the
@@ -1634,6 +1696,8 @@ export async function startWorkerWithLock(
        * reads); the APPOINTMENTS last (the other order closes nothing, silently). A failed release does NOT abort the ceasing — this install has stopped organizing whichever way the writes went.
        */
       if (lease.releaseRequestedAt !== null) {
+        // Document first, claim second: a decision since the debounced write, and where the gap began.
+        await leaving?.();
         const removed = await releaseOrganizerClaim(
           // The nonce this gate's carrier holds. On the ATTACH path no gate has run yet, so it is
           // `null` and the release refuses rather than deleting by id — the request stands and the
@@ -3946,6 +4010,8 @@ export async function startWorkerWithLock(
           const organize = await mayOrganize(
             { mailboxId: rt.mailboxId, accountId: rt.accountId }, rt.lease, rt, rt.adapter, "cycle",
             rt.requestKey,
+            // Once per release: only the visit after an organizing cycle flushes.
+            rt.role === "organizer" ? () => leaveSettings(rt) : undefined,
           );
           /* The role flip, in both directions, without a re-attach. `wasOrganizer` is what this process
            * was a moment ago; `organize` is what the lease just said. The two comparisons are the only
