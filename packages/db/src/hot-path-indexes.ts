@@ -139,12 +139,16 @@ export const DEFERRED_HOT_PATH_INDEXES: readonly { name: string; table: string; 
   HOT_PATH_INDEX_SPECS.filter((s) => s.minRows !== undefined)
     .map((s) => ({ name: s.name, table: s.table, minRows: s.minRows! }));
 
-/** Idempotent, and safe to run against a database at any migration position. */
+/**
+ * Idempotent, and safe to run against a database at any migration position. `concurrently: false`
+ * is for a database nothing else writes to while it builds (a test's); see `ensureSearchExtensions`.
+ */
 export async function ensureHotPathIndexes(
-  db: SqlExecutor, opts: { log?: (msg: string) => void } = {},
+  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {
   await ensureConcurrentIndexes(db, HOT_PATH_INDEX_SPECS, {
     label: "the hot-path index build",
     ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.concurrently === false ? { concurrently: false } : {}),
   });
 }

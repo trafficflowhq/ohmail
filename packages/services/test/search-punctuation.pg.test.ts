@@ -6,7 +6,7 @@ import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { brandDialect } from "@trafficflow/db/dialect";
@@ -90,7 +90,7 @@ async function seed(o: { key: string; mailboxId: string; subject: string; body: 
 describe("archive search over punctuation (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "a@tf.example" }).returning();
 
     await seed({ key: "duns", mailboxId: mb!.id, subject: DUNS_SUBJECT, body: "The certificate is attached." });
@@ -115,7 +115,7 @@ describe("archive search over punctuation (real Postgres)", () => {
       key: "loud", mailboxId: mb!.id, subject: "u n u n u n u n u n xD-U-N-Sx",
       body: "Nothing else.", date: SENT_OLDER,
     });
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => { await client.end({ timeout: 5 }); });
 

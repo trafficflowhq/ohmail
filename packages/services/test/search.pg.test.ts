@@ -9,7 +9,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
 /**
  * Phase 2c-1 golden-relevance — the search tests PGlite cannot host (pg_trgm lives
@@ -55,7 +55,7 @@ async function seedMsg(o: {
 describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
 
     const [mbA] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "a@tf.example" }).returning();
     const [mbB] = await db.insert(mailboxes).values({ accountId: B, provider: "imap", address: "b@tf.example" }).returning();
@@ -81,7 +81,7 @@ describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
       subject: "Invoice secret other account", from: "anna@acme-com.example",
       body: "Acme invoice for the other tenant.", folder: "INBOX",
       unread: true, hasAttachments: true });
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => { await client.end({ timeout: 5 }); });
 

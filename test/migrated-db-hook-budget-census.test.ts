@@ -41,9 +41,13 @@ const TEARDOWN_HOOKS = ["afterAll", "afterEach"] as const;
  * What puts a hook in the class. `runMigrations` alone is deliberately NOT here: replayed against
  * a database that is already this tree's schema it applies nothing, and 54 hooks do exactly that
  * against the lane or shared database. The cost is the BUILD — a database that did not exist a
- * moment ago, and therefore the whole of both journals.
+ * moment ago, and therefore the whole of both journals — or an index build over the rows earlier
+ * files left in a shared database.
  */
-const BUILDS = /\b(?:create\s+database|CREATE\s+DATABASE|prepareIsolatedDb\s*\(|setupProdDatabase\s*\()/;
+const BUILDS = /\b(?:create\s+database|CREATE\s+DATABASE|prepareIsolatedDb\s*\(|setupProdDatabase\s*\(|ensureSearchExtensions\s*\(|ensureHotPathIndexes\s*\(|ensureConcurrentIndexes\s*\(|ensureWithheldProvenanceIndex\s*\()/;
+
+/** The index builders that have a plain mode: a hook passes it, since a concurrent build waits on every older snapshot. */
+const PLAIN_BUILDERS = ["ensureSearchExtensions", "ensureHotPathIndexes", "ensureConcurrentIndexes"] as const;
 const REMOVES = /\b(?:drop\s+database|DROP\s+DATABASE)\b/;
 
 /**
@@ -265,9 +269,42 @@ describe("a hook that builds or removes a database names its budget", () => {
       .map((r) => `${r.file}:${r.line} ${r.hook}(…)`);
     expect(offenders,
       "these hooks take vitest's 10 s default while creating a database and replaying both " +
-      "journals into it. They will fail as \"Hook timed out in 10000ms\" under load and read as a " +
-      "defect in the code under test. Build the database through `throwawayDb` and pass " +
+      "journals into it, or building indexes over its rows. They will fail as \"Hook timed out in " +
+      "10000ms\" under load and read as a defect in the code under test. Build the database through " +
+      "`throwawayDb`, build indexes with `{ concurrently: false }`, and pass " +
       "`MIGRATED_DB_SETUP_BUDGET_MS` as the hook's last argument").toEqual([]);
+  });
+
+  /**
+   * A concurrent index build waits for every snapshot older than it in the whole database, so a
+   * setup hook that builds one waits on sessions it does not own. A test database has no live
+   * writer to protect: hooks build plain. Tests whose subject is the concurrent build call it in `it`.
+   */
+  it("every setup hook that builds an index passes { concurrently: false }", () => {
+    const offenders: string[] = [];
+    let seen = 0;
+    for (const f of tracked()) {
+      if (!f.includes(".test.")) continue;
+      const src = blankComments(readFileSync(join(REPO, f), "utf8"));
+      if (!PLAIN_BUILDERS.some((b) => src.includes(`${b}(`))) continue;
+      for (const hook of SETUP_HOOKS) {
+        for (const { start, open, close } of callSpans(src, hook)) {
+          const body = topLevelArgs(src, open, close)[0] ?? "";
+          for (const builder of PLAIN_BUILDERS) {
+            for (const call of callSpans(body, builder)) {
+              seen++;
+              const opts = topLevelArgs(body, call.open, call.close).slice(1).join(",");
+              if (!/\bconcurrently\s*:\s*false\b/.test(opts))
+                offenders.push(`${f}:${lineOf(src, start)} ${hook}(…) ${builder}(…)`);
+            }
+          }
+        }
+      }
+    }
+    expect(seen, "the scanner matched NO builder call in a setup hook — it is guarding nothing").toBeGreaterThan(15);
+    expect(offenders,
+      "these setup hooks build indexes CONCURRENTLY, which waits on every older snapshot in the " +
+      "database and times the hook out on a loaded runner. Pass `{ concurrently: false }`").toEqual([]);
   });
 
   it("every hook that drops a database declares a budget", () => {

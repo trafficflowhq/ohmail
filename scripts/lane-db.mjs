@@ -12,7 +12,7 @@
 /* A DROP MIGRATES NOTHING, so it does not need the tree it is about — everything else here does,
  * and the premise check below says so. Refusing a drop whose worktree is already gone is how a
  * database is orphaned on the box for ever. */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -399,12 +399,16 @@ async function up(root, worktree, say) {
   return 0;
 }
 
-/* The deadline keys `role` carries, every scope, read from pg_db_role_setting. */
+/* The settings rows `role` carries, every scope, from pg_db_role_setting: the one spelling of the query. */
+async function roleSettingRows(sql, role) {
+  return [...await sql`select r.rolname, rs.setdatabase::int as setdatabase, d.datname, rs.setconfig
+                         from pg_db_role_setting rs join pg_roles r on r.oid = rs.setrole
+                         left join pg_database d on d.oid = rs.setdatabase where r.rolname = ${role}`];
+}
+
+/* The deadline keys `role` carries, every scope. */
 async function roleDeadlineKeys(sql, role) {
-  const rows = await sql`select rs.setdatabase::int as setdatabase, d.datname, rs.setconfig
-                           from pg_db_role_setting rs join pg_roles r on r.oid = rs.setrole
-                           left join pg_database d on d.oid = rs.setdatabase where r.rolname = ${role}`;
-  return deadlineKeysOf(rows);
+  return deadlineKeysOf(await roleSettingRows(sql, role));
 }
 
 /* RESET every deadline key a LANE role carries; the keys it carried are returned. tf is refused. */
@@ -617,17 +621,41 @@ export function laneDbCheckVerdict({ envText, name, exists, anchor, total }) {
   return { rc: 0, verdict: "OK", say: `${name} is on this server (anchor ${anchor}, ${total} databases)` };
 }
 
-/** A box-role check whose reader is absent read no role: rc 2, the reading OWED, never a pass. */
-export function boxRoleReaderAbsent(reader) {
-  return {
-    rc: 2,
-    say: `UNREADABLE: BOX_ROLE NOT READ — ${reader} is absent (the role reader is the landing kit's, and OHMAIL_KIT_DIR names its root), so this check read no role`,
-  };
+/**
+ * THE ROLE'S DEADLINES, from its pg_roles anchor and its pg_db_role_setting rows: rc 0 CLEAN, rc 3
+ * REFUSED naming each `*_timeout` key with its scope, rc 2 UNREADABLE when the anchor is not one
+ * row (a server without the role says nothing about it). The lines are the retired kit reader's.
+ */
+export function roleDeadlinesVerdict({ role, anchor, rows }) {
+  if (anchor !== 1) return { rc: 2, line: `BOX_ROLE_DEADLINES UNREADABLE role=${role} — pg_roles reads ${anchor} row(s) for it; a server without the role is not the box, and its zero says nothing` };
+  const own = rows.filter((r) => r.rolname === role);
+  const d = [];
+  for (const r of own) for (const kv of r.setconfig ?? []) {
+    const eq = kv.indexOf("=");
+    const key = eq < 0 ? kv : kv.slice(0, eq);
+    if (/_timeout$/.test(key)) d.push(`${key}=${kv.slice(eq + 1)}@${r.setdatabase === 0 ? "role-wide" : `db:${r.datname ?? r.setdatabase}`}`);
+  }
+  if (d.length === 0) return { rc: 0, line: `BOX_ROLE_DEADLINES CLEAN role=${role} setting-rows=${own.length} deadline-keys=0 (anchor pg_roles ${role}=1)` };
+  return { rc: 3, line: `BOX_ROLE_DEADLINES REFUSED role=${role} ${d.join(" ")} — every later connection as ${role} inherits these; a rig booted setup-prod or the self-host server as the box role. Ask the dispatcher, who resets them (ALTER ROLE ${role} RESET <key>) and reads them back` };
 }
 
-/* THE BOX ROLE'S DEADLINES, read by box-role-deadlines.mjs --check (one reader, never a second
- * spelling of its query). rc 4 is its OWN answer: rc 3 means ABSENT and a driver rebuilds on it,
- * and a poisoned tf is not a missing database. Anything the reader did not classify is UNREADABLE. */
+/** Read `role`'s deadlines in one read-only transaction; a read that throws is UNREADABLE, rc 2. */
+export async function readRoleDeadlines(sql, role) {
+  try {
+    const { anchor, rows } = await sql.begin("read only", async (tx) => {
+      await tx`set local statement_timeout = 0`;
+      const n = Number((await tx`select count(*)::int as n from pg_roles where rolname = ${role}`)[0]?.n ?? 0);
+      return { anchor: n, rows: await roleSettingRows(tx, role) };
+    });
+    return roleDeadlinesVerdict({ role, anchor, rows });
+  } catch (e) {
+    return { rc: 2, line: `BOX_ROLE_DEADLINES UNREADABLE role=${role} — the catalog could not be read (${e?.code ?? e?.name ?? "error"}); that is no statement about the role` };
+  }
+}
+
+/* THE BOX ROLE'S DEADLINES, as `roleDeadlinesVerdict` reads them. rc 4 is its OWN answer: rc 3
+ * means ABSENT and a driver rebuilds on it, and a poisoned tf is not a missing database. Anything
+ * the reader did not classify is UNREADABLE. */
 export const BOX_ROLE_DEADLINES_RC = 4;
 export function boxRoleCheckVerdict(childRc, line, word = "BOX_ROLE_DEADLINES") {
   const said = (line ?? "").trim() || "(the reader printed nothing)";
@@ -830,26 +858,21 @@ async function check(root, worktree, say) {
     if (lr.rc === 3) say(`REMEDY: bash scripts/lane-db.sh ${worktree} reuses the database and re-keys the role`);
     return lr.rc;
   }
-  /* The role reader is the landing kit's, under OHMAIL_KIT_DIR (this checkout's kit by default). A
-     tree without it has not read the role, and a check that did not read is not a pass: said, rc 2. */
-  const kit = process.env.OHMAIL_KIT_DIR || join(root, "docs", "handoff");
-  const reader = join(kit, "2026-10-01", "kit", "ops", "box-role-deadlines.mjs");
-  if (!existsSync(reader)) {
-    const absent = boxRoleReaderAbsent(reader);
-    say(absent.say);
-    return absent.rc;
-  }
-  /* tf, then the lane's own role: a rig that booted setup-prod from this env set them on it. */
+  /* tf, then the lane's own role: a rig that booted setup-prod from this env set them on it. Read
+   * here, read only, on a fresh maintenance session. */
   const roles = [[BOX_ROLE, "BOX_ROLE_DEADLINES"], ...(lr.verdict === "ROLE" ? [[who.role, "LANE_ROLE_DEADLINES"]] : [])];
+  const roleSql = postgres(maint, { max: 1, onnotice: () => {}, connect_timeout: 10 });
   let rc = 0;
-  for (const [role, word] of roles) {
-    const r = spawnSync(process.execPath, [reader, "--check", "--url-env", "LANE_DB_BOX_ROLE_URL", "--role", role], {
-      encoding: "utf8", timeout: 60_000, env: { ...process.env, LANE_DB_BOX_ROLE_URL: maint },
-    });
-    const b = boxRoleCheckVerdict(r.status, String(r.stdout ?? "").trim().split("\n").pop(), word);
-    say(`${b.verdict}: ${b.say}`);
-    if (b.rc === 2) return 2;
-    if (b.rc !== 0) rc = b.rc;
+  try {
+    for (const [role, word] of roles) {
+      const v = await readRoleDeadlines(roleSql, role);
+      const b = boxRoleCheckVerdict(v.rc, v.line, word);
+      say(`${b.verdict}: ${b.say}`);
+      if (b.rc === 2) return 2;
+      if (b.rc !== 0) rc = b.rc;
+    }
+  } finally {
+    try { await roleSql.end({ timeout: 5 }); } catch { /* the verdict is above */ }
   }
   return rc;
 }

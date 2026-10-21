@@ -6,7 +6,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -66,7 +66,7 @@ async function planned(session: Wire[], reads: Wire[]): Promise<Array<{ jit: boo
 describe("a search read is planned serial and uncompiled on a stock Postgres", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [jit] = await client`select pg_jit_available() as ok`;
     expect(jit!.ok, "this server can JIT (the self-hosted image can): without it the JIT half measures nothing").toBe(true);
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: `${A.slice(0, 8)}@serial.example` }).returning();
@@ -87,7 +87,7 @@ describe("a search read is planned serial and uncompiled on a stock Postgres", (
     await db.insert(accountSettings).values({ accountId: A, searchIndexBuiltAt: NOW })
       .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
     await svc.search(ctx(), { q: "heron", parts: "page", limit: 4 });
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
   afterAll(async () => {
     await client.end();
   });

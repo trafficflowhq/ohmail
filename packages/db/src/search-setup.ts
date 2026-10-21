@@ -47,7 +47,11 @@ export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   },
 ];
 
-/** `concurrently: false` — a store nothing else writes to while it builds; see `plainIndexDdl`. */
+/**
+ * `concurrently: false` — a store nothing else writes to while it builds; see `plainIndexDdl`. The
+ * desktop's PGlite, and every test hook: a concurrent build waits on every snapshot older than it
+ * in the whole database, and a test database has no live writer to protect.
+ */
 export async function ensureSearchExtensions(
   db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
 ): Promise<void> {

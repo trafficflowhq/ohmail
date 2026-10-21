@@ -328,8 +328,8 @@ async function bestOfRounds(label: string, round: () => Promise<Record<string, n
 describe("the first page of a search is milliseconds (real Postgres, a large mailbox)", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
-    await ensureSearchExtensions(base);
-    await ensureHotPathIndexes(base);
+    await ensureSearchExtensions(base, { concurrently: false });
+    await ensureHotPathIndexes(base, { concurrently: false });
     await base.execute(sql`set max_parallel_workers_per_gather = 0`);
     // The seed's statements write tens of thousands of rows each; the box's 55 s statement ceiling is for tests.
     await base.execute(sql`set statement_timeout = '600s'`);

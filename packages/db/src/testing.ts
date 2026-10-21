@@ -439,7 +439,8 @@ export async function realPgAvailable(url: string = PG_TEST_URL, tokenPath: stri
  * grows with every migration added (3.1 s from empty at load 8 when mail had 104 entries — the
  * JOURNAL is the cost). vitest's default `hookTimeout` is 10 s, and a hook that crosses it fails
  * as `Hook timed out in 10000ms` with no test name attached, which reads as a defect in the code
- * under test and is not one. The margin must beat a BUSY machine.
+ * under test and is not one. The margin must beat a BUSY machine. Hooks that build indexes over
+ * the database's rows (`ensureSearchExtensions`, `ensureHotPathIndexes`) use it too.
  */
 export const MIGRATED_DB_SETUP_BUDGET_MS = 180_000;
 

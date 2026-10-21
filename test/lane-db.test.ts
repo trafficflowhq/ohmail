@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   LANE_DB_NAME_RE, assertLaneDbName, assertWorkerDbName, baseUrlFrom, databaseOf, decide, doorOfDb,
   isolatedLogicalsIn, laneDbName, parseLaneEnv, withDatabase, workerDbsOf,
-  BOX_ROLE_DEADLINES_RC, LANE_ROLE_RE, assertLaneRoleName, boxRoleCheckVerdict, boxRoleReaderAbsent, classifyEnv, deadlineKeysOf,
+  BOX_ROLE_DEADLINES_RC, LANE_ROLE_RE, assertLaneRoleName, boxRoleCheckVerdict, classifyEnv, deadlineKeysOf, roleDeadlinesVerdict,
   keptPassword, laneRoleDropPlan, laneRoleHostVerdict, laneRoleOf, laneRoleVerdict, laneUrl, maintenanceUrlFor,
 } from "../scripts/lane-db.mjs";
 import { pgTestUrlFrom } from "@trafficflow/db/testing";
@@ -454,11 +454,28 @@ describe("the lane role", () => {
     expect(() => laneRoleDropPlan({ dbName: DB, role: "tf", owned: [] })).toThrow(/refusing to drop role/);
   });
 
-  /* rc 3 means ABSENT and a driver rebuilds on it; a poisoned tf is its own answer, rc 4. */
-  it("a check with no role reader read no role: rc 2 by name, never a pass", () => {
-    const absent = boxRoleReaderAbsent("/nowhere/box-role-deadlines.mjs");
-    expect(absent.rc).toBe(2);
-    expect(absent.say).toMatch(/^UNREADABLE: BOX_ROLE NOT READ — \/nowhere\/box-role-deadlines\.mjs is absent/);
+  /* --check reads the role in this tree (the kit reader it once spawned left with the monorepo). */
+  it("reads a role's deadlines: each named with its scope rc 3, other settings CLEAN, no anchor rc 2", () => {
+    const wide = roleDeadlinesVerdict({ role: "tf", anchor: 1, rows: [
+      { rolname: "tf", setdatabase: 0, datname: null, setconfig: ["lock_timeout=30s", "statement_timeout=55s", "idle_in_transaction_session_timeout=60s"] },
+    ] });
+    expect(wide.rc).toBe(3);
+    expect(wide.line).toMatch(/^BOX_ROLE_DEADLINES REFUSED role=tf lock_timeout=30s@role-wide statement_timeout=55s@role-wide idle_in_transaction_session_timeout=60s@role-wide — /);
+    const scoped = roleDeadlinesVerdict({ role: "tf", anchor: 1, rows: [
+      { rolname: "tf", setdatabase: 16384, datname: "rig_db", setconfig: ["statement_timeout=55s"] },
+    ] });
+    expect([scoped.rc, scoped.line.split(" — ")[0]]).toEqual([3, "BOX_ROLE_DEADLINES REFUSED role=tf statement_timeout=55s@db:rig_db"]);
+    // A non-deadline setting on the role, and another role's deadlines, are not this role's.
+    const clean = roleDeadlinesVerdict({ role: "tf", anchor: 1, rows: [
+      { rolname: "tf", setdatabase: 0, datname: null, setconfig: ["search_path=public"] },
+      { rolname: "rig", setdatabase: 0, datname: null, setconfig: ["lock_timeout=30s"] },
+    ] });
+    expect(clean).toEqual({ rc: 0, line: "BOX_ROLE_DEADLINES CLEAN role=tf setting-rows=1 deadline-keys=0 (anchor pg_roles tf=1)" });
+    const none = roleDeadlinesVerdict({ role: "tf", anchor: 0, rows: [] });
+    expect(none.rc).toBe(2);
+    expect(none.line).toMatch(/^BOX_ROLE_DEADLINES UNREADABLE role=tf — /);
+    // Each verdict maps through the check's own table to rc 0, 4 and 2.
+    expect([clean, wide, none].map((v) => boxRoleCheckVerdict(v.rc, v.line).rc)).toEqual([0, 4, 2]);
   });
 
   it("maps the box role reading to rc 0, rc 4 BOX_ROLE_DEADLINES or rc 2 UNREADABLE, each by name", () => {

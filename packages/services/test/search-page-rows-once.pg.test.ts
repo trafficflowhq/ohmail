@@ -96,8 +96,8 @@ async function keyLookups(q: string): Promise<{ outside: number; probes: number;
 describe("the search page looks a message up by key only for the rows it returns (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(base);
-    await ensureHotPathIndexes(base);
+    await ensureSearchExtensions(base, { concurrently: false });
+    await ensureHotPathIndexes(base, { concurrently: false });
     const [mb] = await base.insert(mailboxes).values({ accountId: A, provider: "imap", address: "rowsonce@tf.example" }).returning();
     // Every message says "harbour"; one in 300 says "lighthouse" (the sparse part `lighth`).
     await base.execute(sql`

@@ -40,7 +40,7 @@ async function found(q: string): Promise<{ tier: string; keys: string[] }> {
 describe("the ß/ss fold on the server (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "eszett@tf.example" }).returning();
     for (const [i, [key, subject, body]] of CORPUS.entries()) {
       const [m] = await db.insert(messages).values({

@@ -68,7 +68,7 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
     await runMigrations(PG_TEST_URL);
     install();
     db = makePooledDb(PG_TEST_URL);
-    await ensureSearchExtensions(db as never);
+    await ensureSearchExtensions(db as never, { concurrently: false });
     const now = new Date();
     token = generateToken();
     const [acct] = await db.insert(accounts).values({ name: `rt-${randomUUID().slice(0, 8)}` }).returning();

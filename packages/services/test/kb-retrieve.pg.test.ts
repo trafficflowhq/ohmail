@@ -8,7 +8,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { KbService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
 /**
  * Phase 3a — KbService.retrieve on REAL Postgres, where pg_trgm lives (RC8; PGlite
@@ -35,7 +35,7 @@ function ctx(accountId: string): ServiceContext {
 describe("KbService.retrieve (lexical + pg_trgm fuzzy) on real Postgres", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
 
     async function seed(accountId: string, key: string, title: string, content: string) {
       const [r] = await db.insert(kbEntries).values({ accountId, title, content }).returning();
@@ -46,7 +46,7 @@ describe("KbService.retrieve (lexical + pg_trgm fuzzy) on real Postgres", () => 
     await seed(A, "warranty", "Warranty terms", "Hardware is covered for twelve months.");
     // Account B decoy that matches an A query but must stay invisible to A.
     await seed(B, "otherRefund", "Refund policy other tenant", "Different account refund text.");
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => { await client.end({ timeout: 5 }); });
 

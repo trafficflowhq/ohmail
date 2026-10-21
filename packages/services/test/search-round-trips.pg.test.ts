@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, folderState, mailboxes, messageBodies, messages, messageTags, tags } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService, materializeMessages } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -71,14 +71,14 @@ const isTx = (s: string): boolean => /^(begin|commit)\b/i.test(s);
 describe("a search answer is a bounded number of statements (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     for (const acct of [A, B]) {
       const [t] = await db.insert(tags).values({ accountId: acct, name: "birds", hue: "moss" }).returning();
       await seed(acct, acct === A ? 9 : 6, t!.id);
     }
     // Warm the per-handle extension probe, which is once per handle and not per answer.
     await svc.search(ctx(A), { q: "heron", parts: "page", limit: PAGE });
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
     for (const a of [A, B]) {

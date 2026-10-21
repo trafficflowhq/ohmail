@@ -39,7 +39,7 @@ const ctx = (): ServiceContext => ({ db, accountId: A, userId: null, now: () => 
 describe("what a search says about its reach (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     for (const t of OWN_TABLES) {
       await client.unsafe(`create temp table ${t} (like public.${t} including all)`);
       const triggers = await client.unsafe(

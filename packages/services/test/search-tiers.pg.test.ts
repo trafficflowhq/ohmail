@@ -9,7 +9,7 @@ import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
 /**
  * THE HOSTED RANKING TABLE — the same claims as the client engine's, against real Postgres.
@@ -82,7 +82,7 @@ async function seed(o: {
 describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [mb] = await db
       .insert(mailboxes)
       .values({ accountId: A, provider: "imap", address: "tiers@tf.example" })
@@ -131,7 +131,7 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
         daysAgo: i,
       });
     }
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
     // FK order: the children first. The :5433 database is shared and long-lived, so a file that

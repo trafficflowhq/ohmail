@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, attachments, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS } from "@trafficflow/db/testing";
 import { searchBodyOf, upsertMessageSearch, type EmailAddress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -27,6 +27,8 @@ const D = randomUUID();
 const P = randomUUID();
 const L = randomUUID();
 const ids: Record<string, string> = {};
+/** The setup hook's own settling, which the teardown awaits. */
+let setupDone: Promise<void> = Promise.resolve();
 
 function ctx(accountId: string, handle: unknown = db): ServiceContext {
   return { db: handle as never, accountId, userId: null, now: () => NOW, requestId: "search-document" };
@@ -116,49 +118,58 @@ async function planNodes(statement: SQL, session: SQL[] = []): Promise<Array<{ t
 
 describe("search reads the search document (real Postgres, pg_trgm)", () => {
   beforeAll(async () => {
-    await runMigrations(PG_URL);
-    await ensureSearchExtensions(db);
-    const [md] = await db.insert(mailboxes).values({ accountId: D, provider: "imap", address: "d@tf.example" }).returning();
-    const [mp] = await db.insert(mailboxes).values({ accountId: P, provider: "imap", address: "p@tf.example" }).returning();
-    const [ml] = await db.insert(mailboxes).values({ accountId: L, provider: "imap", address: "l@tf.example" }).returning();
+    // The teardown waits for this to settle: a hook that timed out keeps running, and its inserts
+    // would otherwise race the deletes below into a foreign-key violation.
+    let done!: () => void;
+    setupDone = new Promise((r) => { done = r; });
+    try {
+      await runMigrations(PG_URL);
+      await ensureSearchExtensions(db, { concurrently: false });
+      const [md] = await db.insert(mailboxes).values({ accountId: D, provider: "imap", address: "d@tf.example" }).returning();
+      const [mp] = await db.insert(mailboxes).values({ accountId: P, provider: "imap", address: "p@tf.example" }).returning();
+      const [ml] = await db.insert(mailboxes).values({ accountId: L, provider: "imap", address: "l@tf.example" }).returning();
 
-    await seed({ key: "myaxa", accountId: D, mailboxId: md!.id, subject: "myAXA Portal", from: person("Portal", "portal@insure.example"), text: "Your documents are ready.", daysAgo: 3 });
-    await seed({ key: "recipient", accountId: D, mailboxId: md!.id, subject: "Quarterly letter", from: person("Anna Weber", "anna@club.example"), to: [person("Claims desk", "claims@axa.example")], text: "Please find the letter.", daysAgo: 5 });
-    await seed({ key: "file", accountId: D, mailboxId: md!.id, subject: "Scan", from: person("Scanner", "scan@work.example"), text: "Attached.", daysAgo: 6, files: ["axa-policy-2026.pdf"] });
-    await seed({ key: "htmlOnly", accountId: D, mailboxId: md!.id, subject: "Newsletter", from: person("News", "news@shop.example"), text: "", html: "<html><head><style>.zorblatt{}</style></head><body><p>Our quintessence sale ends Friday</p></body></html>", daysAgo: 7 });
-    await seed({ key: "subjectHit", accountId: D, mailboxId: md!.id, subject: "Renewal notice", from: person("Office", "office@work.example"), text: "Status.", daysAgo: 20 });
-    await seed({ key: "bodyHit", accountId: D, mailboxId: md!.id, subject: "Meeting notes", from: person("Colleague", "colleague@work.example"), text: "renewal renewal renewal and the budget.", daysAgo: 2 });
-    await seed({ key: "phrase", accountId: D, mailboxId: md!.id, subject: "Portal access renewed", from: person("IT", "it@work.example"), text: "Nothing else.", daysAgo: 4 });
-    await seed({ key: "scattered", accountId: D, mailboxId: md!.id, subject: "Access to the portal", from: person("IT", "it@work.example"), text: "Nothing else.", daysAgo: 8 });
+      await seed({ key: "myaxa", accountId: D, mailboxId: md!.id, subject: "myAXA Portal", from: person("Portal", "portal@insure.example"), text: "Your documents are ready.", daysAgo: 3 });
+      await seed({ key: "recipient", accountId: D, mailboxId: md!.id, subject: "Quarterly letter", from: person("Anna Weber", "anna@club.example"), to: [person("Claims desk", "claims@axa.example")], text: "Please find the letter.", daysAgo: 5 });
+      await seed({ key: "file", accountId: D, mailboxId: md!.id, subject: "Scan", from: person("Scanner", "scan@work.example"), text: "Attached.", daysAgo: 6, files: ["axa-policy-2026.pdf"] });
+      await seed({ key: "htmlOnly", accountId: D, mailboxId: md!.id, subject: "Newsletter", from: person("News", "news@shop.example"), text: "", html: "<html><head><style>.zorblatt{}</style></head><body><p>Our quintessence sale ends Friday</p></body></html>", daysAgo: 7 });
+      await seed({ key: "subjectHit", accountId: D, mailboxId: md!.id, subject: "Renewal notice", from: person("Office", "office@work.example"), text: "Status.", daysAgo: 20 });
+      await seed({ key: "bodyHit", accountId: D, mailboxId: md!.id, subject: "Meeting notes", from: person("Colleague", "colleague@work.example"), text: "renewal renewal renewal and the budget.", daysAgo: 2 });
+      await seed({ key: "phrase", accountId: D, mailboxId: md!.id, subject: "Portal access renewed", from: person("IT", "it@work.example"), text: "Nothing else.", daysAgo: 4 });
+      await seed({ key: "scattered", accountId: D, mailboxId: md!.id, subject: "Access to the portal", from: person("IT", "it@work.example"), text: "Nothing else.", daysAgo: 8 });
 
-    for (let i = 0; i < 7; i++) {
-      await seed({ key: `p${i}`, accountId: P, mailboxId: mp!.id, subject: `Harvest report ${i}`, from: person("Farm", `farm${i}@farm.example`), text: `The harvest of week ${i}.`, daysAgo: i + 1 });
+      for (let i = 0; i < 7; i++) {
+        await seed({ key: `p${i}`, accountId: P, mailboxId: mp!.id, subject: `Harvest report ${i}`, from: person("Farm", `farm${i}@farm.example`), text: `The harvest of week ${i}.`, daysAgo: i + 1 });
+      }
+
+      // L: thousands of generated messages, two words at known frequencies (`common` in every third
+      // body, `rarest` in one), documents built by the same writer's SQL shape in one statement.
+      await db.execute(sql`
+        insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator)
+        select gen_random_uuid(), ${L}, ${ml!.id}, 'h', 'gen:' || g, 'generated subject ' || g,
+               'sender' || (g % 300) || '@gen.example', ${NOW.toISOString()}::timestamptz - (g || ' minutes')::interval,
+               '{"folder":"INBOX","ref":"1:1"}'::jsonb
+        from generate_series(1, 12000) g`);
+      await db.execute(sql`
+        insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
+        select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english',
+                 case when m.dedup_key = 'gen:6000' then 'the rarest word' when (substr(m.dedup_key, 5)::int % 3) = 0
+                      then 'a common word and filler text' else 'filler text only' end),
+               lower(m.subject || ' ' || m.from_address), 'text'
+        from messages m where m.account_id = ${L}`);
+      for (const a of [D, P, L]) {
+        await db.insert(accountSettings).values({ accountId: a, searchIndexBuiltAt: NOW })
+          .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+      }
+      await db.execute(sql`analyze messages`);
+      await db.execute(sql`analyze message_search`);
+    } finally {
+      done();
     }
-
-    // L: thousands of generated messages, two words at known frequencies (`common` in every third
-    // body, `rarest` in one), documents built by the same writer's SQL shape in one statement.
-    await db.execute(sql`
-      insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator)
-      select gen_random_uuid(), ${L}, ${ml!.id}, 'h', 'gen:' || g, 'generated subject ' || g,
-             'sender' || (g % 300) || '@gen.example', ${NOW.toISOString()}::timestamptz - (g || ' minutes')::interval,
-             '{"folder":"INBOX","ref":"1:1"}'::jsonb
-      from generate_series(1, 12000) g`);
-    await db.execute(sql`
-      insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
-      select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english',
-               case when m.dedup_key = 'gen:6000' then 'the rarest word' when (substr(m.dedup_key, 5)::int % 3) = 0
-                    then 'a common word and filler text' else 'filler text only' end),
-             lower(m.subject || ' ' || m.from_address), 'text'
-      from messages m where m.account_id = ${L}`);
-    for (const a of [D, P, L]) {
-      await db.insert(accountSettings).values({ accountId: a, searchIndexBuiltAt: NOW })
-        .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
-    }
-    await db.execute(sql`analyze messages`);
-    await db.execute(sql`analyze message_search`);
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
+    await setupDone;
     for (const a of [D, P, L]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from attachments where account_id = ${a}`);
@@ -169,7 +180,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       await db.execute(sql`delete from account_settings where account_id = ${a}`);
     }
     await client.end({ timeout: 5 });
-  });
+  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
   it("(1) `axa` inside a subject, a recipient's domain and a file name — 0 before, 3 now", async () => {
     // The pre-0125 lexical shape over the same rows: a lexeme match holds none of the three.

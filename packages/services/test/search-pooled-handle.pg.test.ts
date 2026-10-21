@@ -81,7 +81,7 @@ async function built(accountId: string): Promise<void> {
 describe("a search on the hosted handle factory (real Postgres, on the wire)", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
-    await ensureSearchExtensions(makePooledDb(PG_URL) as never);
+    await ensureSearchExtensions(makePooledDb(PG_URL) as never, { concurrently: false });
     await seed(BUILT, 9, true);
     await seed(UNBUILT, 6, false);
     // The first request on a handle probes pg_trgm and reads the marker; every later one does not.

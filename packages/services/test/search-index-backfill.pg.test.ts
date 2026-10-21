@@ -8,7 +8,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { accounts, accountSettings, attachments, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { inArray } from "drizzle-orm";
 import {
   SEARCH_BODY_MAX_CHARS, searchIndexBackfillPass, searchIndexBuilt, searchIndexOwedAccounts, searchIndexProgress,
@@ -38,7 +38,7 @@ const docs = async (): Promise<Array<{ id: string; source: string; terms: string
 describe("the search index backfill (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(PG_URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: "b@tf.example" }).returning();
     for (let i = 0; i < 9; i++) {
       const [m] = await db.insert(messages).values({
@@ -53,7 +53,7 @@ describe("the search index backfill (real Postgres)", () => {
       await db.insert(messageBodies).values({ messageId: m!.id, ...body });
       if (i === 5) await db.insert(attachments).values({ accountId: A, messageId: m!.id, filename: "quince-invoice.pdf", contentType: "application/pdf" });
     }
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
     await db.execute(sql`delete from message_search where account_id = ${A}`);

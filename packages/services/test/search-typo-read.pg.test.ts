@@ -43,7 +43,7 @@ async function planOf(q: string, filters?: TypoFilters): Promise<Record<string, 
 
 beforeAll(async () => {
   await runMigrations(URL);
-  await ensureSearchExtensions(db);
+  await ensureSearchExtensions(db, { concurrently: false });
   await seedTypoMailbox(db, A);
 }, 120_000);
 

@@ -54,7 +54,9 @@ export declare function boxRoleCheckVerdict(
   line: string | null,
   word?: "BOX_ROLE_DEADLINES" | "LANE_ROLE_DEADLINES",
 ): { rc: number; verdict: "OK" | "BOX_ROLE_DEADLINES" | "LANE_ROLE_DEADLINES" | "UNREADABLE"; say: string };
-export declare function boxRoleReaderAbsent(reader: string): { rc: 2; say: string };
+export interface RoleSettingRow { rolname: string; setdatabase: number; datname: string | null; setconfig: string[] | null }
+export declare function roleDeadlinesVerdict(state: { role: string; anchor: number; rows: RoleSettingRow[] }): { rc: 0 | 2 | 3; line: string };
+export declare function readRoleDeadlines(sql: import("postgres").Sql, role: string): Promise<{ rc: 0 | 2 | 3; line: string }>;
 export declare function maintenanceUrlFor(envUrl: string, baseUrl: string): string;
 export declare function laneRoleVerdict(state: { role: string | undefined; roleExists: boolean; login: string }): {
   rc: number;

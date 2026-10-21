@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
@@ -51,7 +51,7 @@ async function seed(o: {
 describe("the store finds a word inside another word (real Postgres, pg_trgm)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(db);
+    await ensureSearchExtensions(db, { concurrently: false });
     const [mx] = await db.insert(mailboxes).values({ accountId: X, provider: "imap", address: "x@tf.example" }).returning();
     const [my] = await db.insert(mailboxes).values({ accountId: Y, provider: "imap", address: "y@tf.example" }).returning();
 
@@ -65,7 +65,7 @@ describe("the store finds a word inside another word (real Postgres, pg_trgm)", 
     await seed({ key: "bodyHit", accountId: Y, mailboxId: my!.id, subject: "Meeting notes", from: "colleague@work.example", body: "axa axa axa and the renewal.", daysAgo: 2 });
     await seed({ key: "phrase", accountId: Y, mailboxId: my!.id, subject: "Portal access renewed", from: "it@work.example", body: "Nothing else.", daysAgo: 4 });
     await seed({ key: "scattered", accountId: Y, mailboxId: my!.id, subject: "Access to the portal", from: "it@work.example", body: "Nothing else.", daysAgo: 6 });
-  });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
     for (const acct of [X, Y]) {

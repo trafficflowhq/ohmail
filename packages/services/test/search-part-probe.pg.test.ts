@@ -77,8 +77,8 @@ async function deepestWalk(q: string): Promise<{ rows: number; items: number }> 
 describe("the part arm asks the newest page-cut before it walks (real Postgres)", () => {
   beforeAll(async () => {
     await runMigrations(URL);
-    await ensureSearchExtensions(base);
-    await ensureHotPathIndexes(base);
+    await ensureSearchExtensions(base, { concurrently: false });
+    await ensureHotPathIndexes(base, { concurrently: false });
     const [mb] = await base.insert(mailboxes).values({ accountId: A, provider: "imap", address: "probe@tf.example" }).returning();
     // Every message says "harbour"; one in 300 says "lighthouse" (the sparse part `lighth`).
     await base.execute(sql`

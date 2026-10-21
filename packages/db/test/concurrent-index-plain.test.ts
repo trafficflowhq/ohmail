@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { ensureConcurrentIndexes, plainIndexDdl } from "../src/concurrent-index.js";
-import { HOT_PATH_INDEX_SPECS } from "../src/hot-path-indexes.js";
+import { HOT_PATH_INDEX_SPECS, ensureHotPathIndexes } from "../src/hot-path-indexes.js";
 import { TRIGRAM_INDEX_SPECS } from "../src/search-setup.js";
 import { makeTestDb } from "../src/testing.js";
 
@@ -33,6 +33,32 @@ describe("the plain form of an index statement", () => {
     expect(() => plainIndexDdl(sql`create index if not exists "x" on public.messages ("id")`)).toThrow(/0 "create index concurrently"/);
     expect(() => plainIndexDdl(sql`create index concurrently "a" on t (x); create index concurrently "b" on t (y)`))
       .toThrow(/2 "create index concurrently"/);
+  });
+
+  /* A test hook builds the hot-path indexes plain: a concurrent build waits on every older snapshot. */
+  it("ensureHotPathIndexes passes `concurrently: false` through, rebuild arm included; the default stays concurrent", async () => {
+    const run = async (opts?: { concurrently: false }): Promise<string[]> => {
+      const sent: string[] = [];
+      const fake = {
+        execute: async (q: ReturnType<typeof sql>) => {
+          const text = render(q);
+          sent.push(text);
+          if (text.includes("information_schema.tables")) return [{ present: true }];
+          if (text.includes("indisvalid")) return [{ valid: false }];   // force the rebuild arm
+          return [];
+        },
+      };
+      await (opts ? ensureHotPathIndexes(fake, opts) : ensureHotPathIndexes(fake));
+      return sent;
+    };
+    const control = await run();
+    expect(control.filter((q) => /^\s*create index concurrently/i.test(q)).length, "the default builds concurrently").toBeGreaterThan(2);
+    expect(control.filter((q) => /^drop index concurrently/i.test(q)).length, "the default drops concurrently").toBeGreaterThan(2);
+    const plain = await run({ concurrently: false });
+    expect(plain.filter((q) => /^\s*create index/i.test(q)).length, "the plain run builds as many")
+      .toBe(control.filter((q) => /^\s*create index/i.test(q)).length);
+    expect(plain.filter((q) => /^drop index/i.test(q)).length).toBeGreaterThan(2);
+    expect(plain.filter((q) => /concurrently/i.test(q))).toEqual([]);
   });
 
   it("a plain build on PGlite leaves every index valid and never sends `concurrently`", async () => {
