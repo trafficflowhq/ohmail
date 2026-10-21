@@ -120,18 +120,19 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * shove both controls down by its own height. */
 .rail-sync-slot{margin-top:auto;padding-bottom:10px}
 .rail-sync-slot + .rail-dock{margin-top:0}
-/* THE ORGANIZER NOTICE'S PLACE — see `notice` in `RailNav.tsx`. One link more in the same chain:
- * present, it takes the slack and the sync slot gives it up, so the foot stays welded to the
- * bottom edge and the block grows upwards. No `display` here: the pair's swap lives in app.css
- * beside its one query, and this sheet loads after it.
+/* THE NOTICE SLOT'S PLACE — see `notice` in `RailNav.tsx`: under the piles, before Tags. Spaced
+ * as a `.rgroup` and out of the foot's auto-margin chain, so the sync slot keeps the slack and a
+ * notice never moves the foot. At the foot it fell below the window's edge under folders. No
+ * sticky or fixed positioning (see the dock's note). No `display` here: the pair's swap lives in
+ * app.css beside its one query, and this sheet loads after it.
  *
  * The block speaks the rail's own text register (`.rail-host`'s): no box, no fill, no tone. The
  * mark tells the two kinds apart — a hollow ring for a settled handover, a filled one for the
  * open condition — and stays bigger than the 4px mailbox bullets above so it never reads as a
  * mailbox. The count is the disclosure; its underline style is its state. */
-.rail-notice-slot{margin-top:auto;padding:0 0 8px}
-.rail-notice-slot:empty{padding:0}
-.rail-notice-slot + .rail-sync-slot{margin-top:0}
+.rail-notice-slot{margin:0 0 14px}
+/* Empty (every offer answered before the rows are read again): it gives back the rail's 1px gap. */
+.rail-notice-slot:empty{margin:0 0 -1px}
 .rail-notice{display:flex;flex-direction:column;gap:3px;padding:0 8px;
   font-size:calc(11.5px + var(--type-up));line-height:1.45;color:var(--ink2)}
 .rail-notice + .rail-notice{margin-top:8px}

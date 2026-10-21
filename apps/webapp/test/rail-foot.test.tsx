@@ -66,23 +66,61 @@ describe("the rail's footer box exists only when something is in it", () => {
   });
 });
 
-describe("the organizer notice's slot at the rail's foot", () => {
-  const base = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [] };
-  it("notice: undefined renders NO slot — the foot is exactly as without it", async () => {
-    const c = await mount(h(RailNav, { ...base, sync: h("span", null, "sync"), dock: h("span", null, "dock") }));
+describe("the notice slot stands under the piles, before the first list group", () => {
+  const base = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main" };
+  const places = { label: undefined, items: [{ id: "ohbox", label: "Ohbox" }] };
+  const piles = { items: [{ id: "triage-resurface", label: "Resurface" }] };
+  const tags = { items: [], tags: { label: "Tags", items: [] } };
+  const custom = { items: [], custom: h("div", { className: "folders-probe" }, "Folders") };
+  const notice = h("div", { className: "rail-notice" }, "n");
+  const foot = { sync: h("span", null, "sync"), dock: h("span", null, "dock") };
+  const rgroups = (c: HTMLElement): Element[] => [...c.querySelector("nav")!.children].filter((e) => e.classList.contains("rgroup"));
+
+  it("notice: undefined renders NO slot", async () => {
+    const c = await mount(h(RailNav, { ...base, groups: [places, piles, tags, custom], ...foot }));
     expect(c.querySelector(".rail-notice-slot")).toBeNull();
   });
 
-  it("a notice stands IMMEDIATELY ABOVE the sync slot, which stays above the dock", async () => {
-    const c = await mount(h(RailNav, {
-      ...base, notice: h("div", { className: "rail-notice" }, "n"),
-      sync: h("span", null, "sync"), dock: h("span", null, "dock"),
-    }));
+  it("places, piles, then the slot, then the Tags group, then the custom group; no tone class", async () => {
+    const c = await mount(h(RailNav, { ...base, groups: [places, piles, tags, custom], notice, ...foot }));
     const slot = c.querySelector(".rail-notice-slot");
     expect(slot, "the notice was not placed in the rail").not.toBeNull();
-    expect(slot!.nextElementSibling?.className).toBe("rail-sync-slot");
-    expect(slot!.nextElementSibling?.nextElementSibling?.className).toBe("rail-dock");
+    const [, pileGroup, tagGroup, customGroup] = rgroups(c);
+    expect(slot!.previousElementSibling).toBe(pileGroup);
+    expect(slot!.nextElementSibling).toBe(tagGroup);
+    expect(tagGroup!.querySelector(".rlabel-toggle")).not.toBeNull();
+    expect(tagGroup!.nextElementSibling).toBe(customGroup);
+    expect(customGroup!.querySelector(".folders-probe")).not.toBeNull();
     expect(slot!.className, "the slot wears a tone class").toBe("rail-notice-slot");
+  });
+
+  it("with no Tags group the slot comes before the first custom group", async () => {
+    const c = await mount(h(RailNav, { ...base, groups: [places, piles, custom], notice, ...foot }));
+    expect(c.querySelector(".rail-notice-slot")!.nextElementSibling!.querySelector(".folders-probe")).not.toBeNull();
+  });
+
+  it("with no list group the slot goes after the last group, before the mailboxes", async () => {
+    const c = await mount(h(RailNav, {
+      ...base, groups: [places, piles], notice, mailboxes: [{ name: "a@x.example", hint: "imap" }], ...foot,
+    }));
+    const slot = c.querySelector(".rail-notice-slot")!;
+    expect(slot.previousElementSibling).toBe(rgroups(c)[1]);
+    expect(slot.nextElementSibling!.querySelector(".mbx"), "the mailboxes group does not follow").not.toBeNull();
+  });
+
+  it("a notice arriving does not remount the Tags group", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const groups = [places, piles, tags, custom];
+    await act(async () => { root.render(h(RailNav, { ...base, groups, ...foot })); });
+    const before = rgroups(container)[2]!;
+    await act(async () => { root.render(h(RailNav, { ...base, groups, notice, ...foot })); });
+    expect(container.querySelector(".rail-notice-slot")).not.toBeNull();
+    expect(rgroups(container)[2], "the Tags group was remounted when the notice came").toBe(before);
+    await act(async () => { root.render(h(RailNav, { ...base, groups, ...foot })); });
+    expect(rgroups(container)[2], "the Tags group was remounted when the notice left").toBe(before);
   });
 });
 

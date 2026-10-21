@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Icon } from "../icons.js";
 import { Kbd } from "../primitives/Kbd.js";
 import { TagDot, type TagHueName } from "../primitives/Chip.js";
@@ -132,10 +132,12 @@ export interface RailNavProps {
    */
   sync?: ReactNode;
   /**
-   * A change about who organizes the mailboxes, immediately ABOVE the sync
-   * line — the host's notice block, said once and dismissed. `.rail-notice-slot`
-   * takes the rail's slack when present (`rail.css`); absent, the foot is
-   * exactly as without it. `undefined` when there is nothing to say.
+   * The host's notice block (who organizes the mailboxes, the gap offer),
+   * right under the piles: after the last group before the first list group
+   * (`tags` or `custom`), or after the last group when there is none. Nothing
+   * above it grows with the account, so it is on screen at scrollTop 0; at the
+   * foot, folders pushed it under the window's edge. `undefined` when there is
+   * nothing to say.
    */
   notice?: ReactNode;
   /** Bottom line — the account address. */
@@ -226,6 +228,11 @@ export function RailNav({
   };
   const unreveal = (item: RailItem): void =>
     setRevealId((cur) => (cur === item.id ? null : cur));
+  /* Placed by structure: before the first list group. The `null` placeholder keeps every group's
+     position, so a notice coming or going never remounts Tags (an open New-tag draft survives). */
+  const listAt = groups.findIndex((g) => g.tags != null || g.custom != null);
+  const noticeAt = listAt < 0 ? groups.length : listAt;
+  const noticeSlot = notice ? <div className="rail-notice-slot">{notice}</div> : null;
   return (
     <nav ref={setNav} id={id} className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
       <div className="wordmark">
@@ -253,70 +260,74 @@ export function RailNav({
       ) : null}
 
       {groups.map((group, gi) => (
-        <div className="rgroup" key={group.label ?? gi}>
-          {group.label ? <div className="rlabel">{group.label}</div> : null}
-          {group.items.map((item) => {
-            // The `?` sheet's key (`kbdHint`) is deliberate and always shown; the per-row
-            // reveal (`navKey`) only while this row is pointed at. Either takes the count's
-            // slot — a hovered row is one you are about to reach, so its key is what you want
-            // there — and at rest neither is present, which is what keeps the resting rail quiet.
-            const cap = item.kbdHint ?? (revealId === item.id ? item.navKey : undefined);
-            return (
-              <button
-                key={item.id}
-                type="button"
-                // A stable, presentation-free hook on each rail entry. Nothing in the app
-                // reads it; it lets an outside surface (the marketing page's embedded demo)
-                // anchor a pointer to a specific entry without depending on label text.
-                data-rail-id={item.id}
-                // The row's key as DATA, invisible everywhere by itself: the Zero layout's
-                // 52px ribbon paints it as the row's face via `content: attr(data-nav-key)`
-                // (zero-layout.css) — the digits ARE this rail's established identity for
-                // the places (the quick-nav grammar), so the ribbon needs no icon set the
-                // paper rail never had. The hover/focus REVEAL above stays JS-owned and
-                // untouched; this attribute renders nothing in any classic layout.
-                data-nav-key={item.navKey ?? item.kbdHint}
-                className={item.id === activeId ? "ritem on" : "ritem"}
-                title={item.title}
-                aria-current={item.id === activeId ? "page" : undefined}
-                onClick={() => {
-                  // Clear before navigating: a tap can both reveal (compatibility mouseenter /
-                  // focus-on-tap) and navigate, and without this the keycap would be left
-                  // standing in the count's place with no pointer-leave ever coming.
-                  unreveal(item);
-                  onNavigate?.(item.id);
-                }}
-                onMouseEnter={() => reveal(item)}
-                onMouseLeave={() => unreveal(item)}
-                onFocus={() => reveal(item)}
-                onBlur={() => unreveal(item)}
-              >
-                {item.label}
-                {cap ? (
-                  <span className="cnt">
-                    <Kbd shortcut={item.navKey ?? item.kbdHint}>{cap}</Kbd>
-                  </span>
-                ) : (
-                  <Count value={item.count} hot={item.hot} />
-                )}
-              </button>
-            );
-          })}
-          {group.tags ? (
-            <TagsGroup
-              label={group.tags.label}
-              items={group.tags.items}
-              defaultOpen={group.tags.defaultOpen ?? true}
-              open={group.tags.open}
-              onOpenChange={group.tags.onOpenChange}
-              create={group.tags.create}
-              activeTagId={activeTagId}
-              onNavigateTag={onNavigateTag}
-            />
-          ) : null}
-          {group.custom ?? null}
-        </div>
+        <Fragment key={group.label ?? gi}>
+          {gi === noticeAt ? noticeSlot : null}
+          <div className="rgroup">
+            {group.label ? <div className="rlabel">{group.label}</div> : null}
+            {group.items.map((item) => {
+              // The `?` sheet's key (`kbdHint`) is deliberate and always shown; the per-row
+              // reveal (`navKey`) only while this row is pointed at. Either takes the count's
+              // slot — a hovered row is one you are about to reach, so its key is what you want
+              // there — and at rest neither is present, which is what keeps the resting rail quiet.
+              const cap = item.kbdHint ?? (revealId === item.id ? item.navKey : undefined);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  // A stable, presentation-free hook on each rail entry. Nothing in the app
+                  // reads it; it lets an outside surface (the marketing page's embedded demo)
+                  // anchor a pointer to a specific entry without depending on label text.
+                  data-rail-id={item.id}
+                  // The row's key as DATA, invisible everywhere by itself: the Zero layout's
+                  // 52px ribbon paints it as the row's face via `content: attr(data-nav-key)`
+                  // (zero-layout.css) — the digits ARE this rail's established identity for
+                  // the places (the quick-nav grammar), so the ribbon needs no icon set the
+                  // paper rail never had. The hover/focus REVEAL above stays JS-owned and
+                  // untouched; this attribute renders nothing in any classic layout.
+                  data-nav-key={item.navKey ?? item.kbdHint}
+                  className={item.id === activeId ? "ritem on" : "ritem"}
+                  title={item.title}
+                  aria-current={item.id === activeId ? "page" : undefined}
+                  onClick={() => {
+                    // Clear before navigating: a tap can both reveal (compatibility mouseenter /
+                    // focus-on-tap) and navigate, and without this the keycap would be left
+                    // standing in the count's place with no pointer-leave ever coming.
+                    unreveal(item);
+                    onNavigate?.(item.id);
+                  }}
+                  onMouseEnter={() => reveal(item)}
+                  onMouseLeave={() => unreveal(item)}
+                  onFocus={() => reveal(item)}
+                  onBlur={() => unreveal(item)}
+                >
+                  {item.label}
+                  {cap ? (
+                    <span className="cnt">
+                      <Kbd shortcut={item.navKey ?? item.kbdHint}>{cap}</Kbd>
+                    </span>
+                  ) : (
+                    <Count value={item.count} hot={item.hot} />
+                  )}
+                </button>
+              );
+            })}
+            {group.tags ? (
+              <TagsGroup
+                label={group.tags.label}
+                items={group.tags.items}
+                defaultOpen={group.tags.defaultOpen ?? true}
+                open={group.tags.open}
+                onOpenChange={group.tags.onOpenChange}
+                create={group.tags.create}
+                activeTagId={activeTagId}
+                onNavigateTag={onNavigateTag}
+              />
+            ) : null}
+            {group.custom ?? null}
+          </div>
+        </Fragment>
       ))}
+      {noticeAt === groups.length ? noticeSlot : null}
 
       {mailboxes?.length ? (
         <div className="rgroup">
@@ -331,7 +342,6 @@ export function RailNav({
         </div>
       ) : null}
 
-      {notice ? <div className="rail-notice-slot">{notice}</div> : null}
       {sync ? <div className="rail-sync-slot">{sync}</div> : null}
       {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}

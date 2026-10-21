@@ -2291,7 +2291,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
 
         {/* WHO ORGANIZES THESE MAILBOXES CHANGED — the narrow-width copy, beside the other
             app-level strips and never over the Ohbox rows; hidden at 1024px and up, where the
-            rail's foot carries it. */}
+            rail carries it under the piles. */}
         {noticeOn ? (
           <OrganizerNotice notices={organizerChanges} onAcknowledge={acknowledgeOrganizerNotice} variant="shell" />
         ) : null}
@@ -2400,8 +2400,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               hint: (m as { railHint?: string }).railHint ?? m.provider,
             }))}
             dock={railDock}
-            /* The organizer notice's rail form — `undefined` when there is nothing to say, so the
-               foot keeps no empty band; the topbar twin above carries it under 1024px. */
+            /* The notices' rail form, drawn under the piles — `undefined` when there is nothing to
+               say, so the rail keeps no empty band; the topbar twin above carries it under 1024px. */
             notice={noticeOn || gapOn
               ? (
                 <>
@@ -2538,7 +2538,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   (() => {
                     /* The header slot's two tenants: the where-line (when mail was last checked and
                        where it went, `OhboxWhereLine`) and, under it, the Option B ohmarchy offer. The
-                       organizer notice moved to the rail's foot (`organizerNotice`), so nothing about
+                       organizer notice moved to the rail, under the piles (`notice`), so nothing about
                        who organizes a mailbox stands over the mail. The line renders nothing when it
                        has nothing to say, so the slot draws nothing then. */
                     /**
