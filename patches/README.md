@@ -253,19 +253,48 @@ pairs every reply off by one: the next transaction on it waits for ever, server 
 (`packages/db/test/phantom-rollback.pg.test.ts`). The close also kept the flush timer's handle and the
 unsent bytes, which `packages/db/src/pg-socket.ts` already works around for the handshake.
 
-The patch changes `connection.js` in both builds the package ships (`src/` and `cjs/src/`), four hunks:
+A connection that closes while it is still opening has a second defect. Every connect sends the driver's
+own array-types query (`fetch_types`, on in every pool here) or, with `target_session_attrs`, a state
+check, while the statement waiting for the connection is held aside. A close in that window took the
+reconnect branch with the dead socket's query still current. When the redial was refused, the driver
+rejected that query and nobody was listening: the worker's crash handler exited on the unhandled
+`ECONNREFUSED` (`driver-write-race.pg.test.ts` caught it twice on CI), and the server, which has no
+handler, would have exited on Node's default. When the database answered "starting up" (`57P03`), the
+stale query took the error, the waiting statement never failed, and the driver redialled hundreds of
+times a second until the database was back. An error a server sent just before closing also stayed
+behind and failed the next statement on a healthy connection. And that branch redialled at once, with
+no backoff: a database or pooler that closed every attempt while it opened (a bare close on the
+startup packet or on the types query) was dialled hundreds of times a second until it was back.
+
+The patch changes `connection.js` in both builds the package ships (`src/` and `cjs/src/`):
 
 1. a `socketClosed` flag beside `terminated`;
 2. `execute()` refuses a statement while it is set, rejecting it `CONNECTION_CLOSED` (the code the
    driver already uses for a close) and returning `true` so a caller holding the connection does not
    move it out of the pool's closed queue; the error's `reason` is the marker the artifact checks read;
 3. `connect()` clears the flag;
-4. `closed()` drops the flush timer and the unsent bytes, sets the flag, and, after the reconnect branch,
-   rejects whatever was in flight or queued whether or not the socket closed with an error, then forgets
-   the in-flight statement.
+4. `closed()` drops the flush timer, the unsent bytes and any error the server sent before the close
+   (read first, for 5), sets the flag, and, after the reconnect branch, rejects whatever was in flight
+   or queued whether or not the socket closed with an error, then forgets the in-flight statement;
+5. the reconnect branch of `closed()` (taken while the connection is opening) rejects the driver's own
+   types query or state check `CONNECTION_CLOSED` and forgets it. If the server sent an error before
+   the close (a FATAL `57P01` from a database shutting down, `08P01` from a pooler that lost it), the
+   statement waiting for the connection fails with that error and the connection closes as any other
+   does, with its backoff. If not, the waiting statement is retried on a redial that backs off as any
+   other reconnect does (`closedTime`, `retries`, `delay`; a completed connect resets `retries`), where
+   upstream redials at once. The reason `startup statement of a closed connection` is a second marker;
+6. `fetchArrayTypes()` and `fetchState()` catch their own query's rejection, so a startup cut short
+   leaves nothing unhandled (the next connect fetches the types again).
 
-It could not be worked around from our side: `query`, `sent`, `chunk` and the timer are private to the
-connection's closure, and the rollback is sent by the driver's own `begin`.
+5 and 6 ship together: 5 alone leaves its `CONNECTION_CLOSED` unhandled, 6 alone leaves the redial loop.
+Within 5, without the server's error a FATAL there leaves the statement waiting through redials that
+never fail it, and without the backoff every bare close redials at once.
+`apps/worker/test/driver-startup-outage.test.ts` holds each of them against a fake Postgres.
 
-**What would let us drop this:** an upstream release that refuses a statement on a closed connection
-and clears its write state on close.
+It could not be worked around from our side: `query`, `sent`, `chunk`, `errorResponse` and the timer are
+private to the connection's closure, the rollback is sent by the driver's own `begin`, and the types
+query and state check are the driver's own; turning `fetch_types` off would return array columns as
+strings.
+
+**What would let us drop this:** an upstream release that refuses a statement on a closed connection,
+clears its write state on close, and handles its own startup queries failing.

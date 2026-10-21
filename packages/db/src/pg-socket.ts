@@ -8,7 +8,8 @@ import net from "node:net";
  * release fixes it and a pnpm patch misses the self-host npm install, so long-lived pools dial
  * through this socket instead: it dials only when the driver writes, drops a first packet that is
  * not exactly one protocol opener (the stale bytes) without dialing, and closes a socket the driver
- * left silent for three loop turns. The driver re-dials at once with the same query either way.
+ * left silent for three loop turns. The driver re-dials with the same query either way: at once
+ * unpatched, after its reconnect backoff under patches/postgres@3.4.9.patch.
  */
 
 /** Protocol 3.0 startup, SSLRequest, GSSENCRequest, CancelRequest: all a connection may open with. */

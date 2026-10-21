@@ -11,6 +11,8 @@ import { prepareIsolatedDb } from "./_isolateddb.js";
  * refuses it; driver-write-race.ts stays as the belt for an unpatched install. The child mounts the contract
  * on a real process WITHOUT the exemption, so one driver throw exits it 1, and cuts the transport under six
  * transactional tasks on the worker's socket each round. Unpatched, it threw in the first round of all 160 local runs.
+ * A cut that lands on a reconnect's own array-types query used to escape as an unhandled ECONNREFUSED here
+ * (CI 39104368792, 39458242081); driver-startup-outage.test.ts holds that case without a database.
  */
 
 const CHILD = fileURLToPath(new URL("_writeracechild.ts", import.meta.url));
