@@ -19,6 +19,7 @@ import {
   WHY_STAYED_IDS_MAX,
 } from "@trafficflow/services/mail";
 import { FOLDER_PATH_MAX, MAX_WORKFLOW_STEPS } from "@trafficflow/core/mail";
+import { drillKinds } from "@trafficflow/db/cloud";
 import { IMAP_UINT32_MAX } from "@trafficflow/services/mail";
 /*
  * The remaining ceilings are imported from the modules that OWN them rather than through a
@@ -210,6 +211,8 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "POST /internal/alerts",
   "GET /internal/alerts/run",
   "GET /internal/alerts",
+  // The drill list (cloud 0051): the alert secret is the whole request, and it answers five runs.
+  "GET /internal/alerts/drill",
   // The fault probe (cloud 0033). Nothing on the wire chooses anything at all — no query, no
   // body, no path param: the secret IS the entire request, and the route's only act is to throw
   // a fixed error so the envelope's recording seam can be exercised on a real deployment. There
@@ -475,6 +478,13 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // account the door is asked about; anything but a canonical uuid is a 400. Neither is a count.
   "GET /internal/account-lifecycle/run": { scalarsOnly: true },
   "GET /internal/account-lifecycle/erase": { scalarsOnly: true },
+  // ── the alert drills (cloud 0051). A run's body is two optional lists, each refused unless every
+  // member is in its closed set (the alert kinds, the two drivers) and deduplicated, so a run asks
+  // for at most every kind; the ack's `?t=` is a 43-character token, refused on any other shape and
+  // matched by its sha256 in one indexed lookup.
+  "POST /internal/alerts/drill": { bounds: [drillKinds().length] },
+  "GET /internal/alerts/drill/ack": { scalarsOnly: true },
+  "POST /internal/alerts/drill/ack": { scalarsOnly: true },
   // ── the operator console's writes: a staff token, an account id, and an operator's note ──
   "POST /admin/staff/session": { scalarsOnly: true },
   "POST /admin/staff/totp/begin": { scalarsOnly: true },
@@ -1163,6 +1173,8 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   // Read twice in a ternary: once to test for presence, once to use.
   "routes/devices.ts#cursor": 2,
   "routes/oauth.ts#scope": 2,
+  // The drill ack's token: the page reads it and so does the press, one route each.
+  "routes/alert-drill.ts#t": 2,
 };
 
 const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
@@ -1181,6 +1193,9 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/consent.ts#counts": "closed-set",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.
   "routes/internal.ts#after": "identifier",
+  // A drill's ack token (cloud 0051): 43 base64url characters or the fixed 404, read by the page
+  // and by the press.
+  "routes/alert-drill.ts#t": "identifier",
   "routes/internal.ts#account": "identifier",
   "routes/contacts.ts#cursor": "identifier",
   "routes/contacts.ts#limit": "clamped",

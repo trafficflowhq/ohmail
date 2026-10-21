@@ -120,6 +120,14 @@ const UNAUTHENTICATED = [
   "GET /internal/account-lifecycle/erase",
   "GET /internal/account-lifecycle/run",
   "GET /internal/alerts",
+  /**
+   * THE ALERT DRILLS (cloud 0051). The list and the ack page are `unauthenticated` on `GET
+   * /internal/alerts`' terms: ANONYMOUS_PIPELINE, no session to judge. The list's authority is the
+   * alert secret; the ack page's is the token in its link, and it reads one indexed row set and
+   * writes nothing. Sorted `alerts` < `alerts/drill` < `alerts/drill/ack` < `alerts/run`.
+   */
+  "GET /internal/alerts/drill",
+  "GET /internal/alerts/drill/ack",
   "GET /internal/alerts/run",
   /**
    * THE AWAY RESPONDER'S CLOCK (mail 0087). `unauthenticated` on `GET /internal/sends/scheduled/run`'s
@@ -294,6 +302,14 @@ const UNAUTHENTICATED = [
   "POST /admin/staff/totp/reset",
   "POST /admin/staff/whoami",
   "POST /internal/alerts",
+  /**
+   * THE ALERT DRILLS' TWO WRITES (cloud 0051), on `POST /internal/alerts`' terms. A run is the alert
+   * secret alone, at most one an hour, and one call costs at most every alert kind times two drivers
+   * times the sinks in rows and one message per (driver, sink). The ack's authority is its token: one
+   * indexed UPDATE, once.
+   */
+  "POST /internal/alerts/drill",
+  "POST /internal/alerts/drill/ack",
   /**
    * THE FAULT PROBE (cloud 0033). `unauthenticated`, on the two alert entries' exact terms: the
    * caller is whoever holds the internal shared secret, there is no session for the verification
@@ -925,7 +941,9 @@ describe("the route table declares what every handler causes", () => {
     // 246 -> 247: the billing link, `unauthenticated` like the release; the remainder is unchanged.
     // 247 -> 248: `POST /auth/password`, a `ceremony`, so it joins `CEREMONY` and this total
     // together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(248);
+    // 248 -> 252: the alert drills' four routes (cloud 0051), each `unauthenticated`, so they join
+    // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(252);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1151,7 +1169,9 @@ describe("the route table declares what every handler causes", () => {
     // 246 -> 247 with the billing link, `unauthenticated`: the remainder does not move.
     // 247 -> 248 with the password change, a `ceremony`: the total and `CEREMONY` grow by one
     // each, the remainder does not move.
-    expect(gated.length).toBe(248 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 248 -> 252 with the alert drills' four routes, `unauthenticated`: the total and
+    // `UNAUTHENTICATED` grow by four each, the remainder does not move.
+    expect(gated.length).toBe(252 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

@@ -397,6 +397,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock (it rides the alert pass, which holds it)",
   },
   {
+    name: "alert_drill",
+    module: `${W}/alert-drill-pass.ts`, entry: "alertDrillPass",
+    triggers: ["interval"],
+    cadence: "on the alert pass's own cadence, as its last step; shard 0's leader only",
+    budget: "at most one queued drill run per pass: one claim UPDATE, one INSERT of its per-sink rows, one message per sink",
+    owns: "a drill the API queued for the worker driver is delivered once, through the worker's own arms, and recorded",
+    fence: "leader lock (it rides the alert pass, which holds it); the claim's `fired_at IS NULL` guard against a second worker",
+  },
+  {
     name: "retention_prune",
     module: `${W}/retention-prune.ts`, entry: "retentionPrunePass",
     triggers: ["interval"],

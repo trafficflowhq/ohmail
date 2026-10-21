@@ -217,6 +217,12 @@ export interface AlertsConfig {
   planeOps?: EvaluateOptions["planeOps"];
   repeatMs?: number;
   /**
+   * The base a drill message's ack link is built on (`POST /internal/alerts/drill`): this host's
+   * own API under its validated public origin, composed by the host and never read off a request's
+   * Host header. Absent: the drill route answers 503 `drill_ack_unarmed` and starts nothing.
+   */
+  drillAckBase?: string;
+  /**
    * The handle the pass and the reads run on where the host has NO content-blind role: set by
    * `apps/server` only, never by `apps/api-vercel`. {@link ApiDeps.adminDb} wins whenever it is
    * present, so a managed host that set this by mistake still runs on the blind role. A self-host

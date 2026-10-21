@@ -704,6 +704,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         planeOps: planeOpsReaderOf(UNMETERED),
         // The pass's handle: this host has no content-blind role (`AlertsConfig.db`).
         db: rt.alertDb ?? undefined,
+        // A drill's ack link: `OHMAIL_ORIGIN`, whose `/api/*` the proxy hands to this server.
+        drillAckBase: `${cfg.origin}/api`,
       }
       : undefined,
     // NO admin and NO adminDb: selfHostRoutes carries no admin group, so no route reads across

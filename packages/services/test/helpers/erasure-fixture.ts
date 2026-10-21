@@ -115,8 +115,9 @@ export const LATER = new Date("2026-08-30T09:00:00.000Z");
 /**
  * ── THE RELIABILITY BOARD (cloud 0030) — OUTSIDE THE GRAPH, and one honest footnote ────────
  *
- * `alert_pass_runs`, `alert_driver_gaps` (cloud 0048: per driver per day, counts and a timestamp)
- * and `platform_signals` are NOT in `RETAINED` and are not in the account graph at all, for one
+ * `alert_pass_runs`, `alert_driver_gaps` (cloud 0048: per driver per day, counts and a timestamp),
+ * `alert_drills` (cloud 0051: a drill run's kinds, driver, sink, outcome codes, timestamps and an ack
+ * token's hash) and `platform_signals` are NOT in `RETAINED` and are not in the account graph at all, for one
  * reason: none has an `account_id` and none can. One records that an alert DRIVER completed a pass — a fact about a process — and
  * the other holds what our hosting platform served for our projects, counted per five-minute
  * window with the path, the query string, the request id and the address all dropped at the

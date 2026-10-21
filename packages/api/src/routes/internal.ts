@@ -28,6 +28,7 @@ import type { AlertArmHealth, AlertSinkSummary, ApiDeps } from "../deps.js";
 import type {} from "../deps-cloud.js";
 import type { Route } from "../router.js";
 import { learnMissingSmtpSizes } from "../smtp-size.js";
+import { alertDrillRoutesWith } from "./alert-drill.js";
 
 /**
  * `POST /internal/alerts` — the outside-the-worker alert driver. A few rules are statements about
@@ -1198,4 +1199,6 @@ export const internalRoutes: Route[] = [
     options: { public: true, anonymous: true, raw: true },
     handler: async (req, deps) => platformSignalPass(req, deps),
   },
+  // The alert drills and their acknowledgement (`alert-drill.ts`), behind this file's own gate.
+  ...alertDrillRoutesWith(alertsArmed),
 ];

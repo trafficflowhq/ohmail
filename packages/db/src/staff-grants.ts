@@ -196,6 +196,14 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // day, counts and a timestamp, no `account_id`. Written too (INSERT/UPDATE in the harden
   // script): the API arm's pass stamps it in the same statement as `alert_pass_runs`.
   "public.alert_driver_gaps": ["driver", "day", "passes", "max_gap_s", "max_gap_at"],
+  // Alert drills (cloud 0051), granted whole: kinds, a driver word, a sink name, closed outcome
+  // codes, timestamps, the API's ack link base and the sha256 of an ack token; no `account_id`.
+  // Written too (the harden script's INSERT and UPDATE): the API starts, records and acknowledges
+  // drills over this role.
+  "public.alert_drills": [
+    "run_id", "kind", "driver", "sink", "ack_base", "requested_at", "fired_at", "outcome",
+    "ack_token_hash", "acked_at",
+  ],
   // What the platform served (cloud 0030). Granted whole for `platform_costs`'s reason one table
   // over: this is what a VENDOR did, not what a customer did. `project` is a deployment name this
   // repository chooses; `requests` and `errors_5xx` are counts of HTTP requests with no path, no

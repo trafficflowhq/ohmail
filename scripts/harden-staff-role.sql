@@ -796,6 +796,19 @@ GRANT INSERT (driver, day, passes, max_gap_s, max_gap_at)
 GRANT UPDATE (driver, day, passes, max_gap_s, max_gap_at)
   ON public.alert_driver_gaps TO ohmail_admin;
 
+-- `alert_drills` (cloud 0051) — one row per drill run, alert kind, driver and sink: closed outcome
+-- codes, timestamps and the sha256 of a message's ack token. WRITTEN by this role: the API starts a
+-- run (INSERT, every column but `acked_at`), records what each sink answered (UPDATE `outcome`) and
+-- takes an acknowledgement (UPDATE `acked_at`). No `account_id`. NO DELETE: the rows are the record.
+-- Cloud 0051 grants the same stanza where this role exists.
+REVOKE ALL ON public.alert_drills FROM ohmail_admin;
+GRANT SELECT (run_id, kind, driver, sink, ack_base, requested_at, fired_at, outcome, ack_token_hash, acked_at)
+  ON public.alert_drills TO ohmail_admin;
+GRANT INSERT (run_id, kind, driver, sink, ack_base, requested_at, fired_at, outcome, ack_token_hash)
+  ON public.alert_drills TO ohmail_admin;
+GRANT UPDATE (outcome, acked_at)
+  ON public.alert_drills TO ohmail_admin;
+
 -- `platform_signals` (cloud 0030) — request and error counts from the hosting platform's own log
 -- store, polled per project per five-minute window.
 --

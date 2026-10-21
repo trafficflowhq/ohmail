@@ -26,6 +26,10 @@ import {
   assertContentBlind,
   listOpenAlerts,
   runAlertPass,
+  startDrillRun,
+  recordDrillOutcomes,
+  ackDrill,
+  drillKinds,
   asCapabilities,
   staffCapabilityExcess,
   staffCapabilityShortfall,
@@ -688,6 +692,23 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
       "select passes, max_gap_s from alert_driver_gaps where driver = 'api' and day = '2026-10-17'");
     expect(gaps).toEqual([{ passes: 2, max_gap_s: 90 }]);
     await ownerClient.unsafe("delete from alert_driver_gaps; delete from alert_pass_runs");
+  });
+
+  it("the API's drill writes go through as the blind role, and its DELETE is refused (cloud 0051)", async () => {
+    const now = new Date(Date.UTC(2026, 9, 21, 12, 0, 0));
+    const run = await startDrillRun(staff as never, {
+      kinds: drillKinds(), drivers: ["api", "worker"], apiSinkNames: ["mail"], ackBase: "https://ohmail.example/api", now,
+    });
+    expect(run.state).toBe("started");
+    if (run.state !== "started") return;
+    await recordDrillOutcomes(staff as never, run.runId, "api", [{ sink: "mail", ok: true, outcome: "ok", error: null }]);
+    expect(await ackDrill(staff as never, run.tokens.get("mail")!, new Date(now.getTime() + 60_000))).toBe(drillKinds().length);
+    const rows = await ownerClient.unsafe<Array<{ n: number }>>(
+      "select count(*)::int as n from alert_drills where driver = 'api' and outcome = 'ok' and acked_at is not null");
+    expect(rows[0]!.n).toBe(drillKinds().length);
+    const refused = await staffClient.unsafe("delete from alert_drills").then(() => null, (e: unknown) => sqlstateOf(e));
+    expect(refused).toBe(DENIED_SQLSTATE);
+    await ownerClient.unsafe("delete from alert_drills");
   });
 
   /* ══ 3. The census — equality, so a grant nobody asserted still fails ════════════════ */

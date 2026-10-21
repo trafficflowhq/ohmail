@@ -824,6 +824,9 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         parkedAccounts: alertReadersFor(cfg).parkedAccounts,
         accountsAtCap: alertReadersFor(cfg).accountsAtCap,
         planeOps: alertReadersFor(cfg).planeOps,
+        // A drill's ack link: `TF_APP_URL` (through `assertAppUrl`) and the web app's `/api`
+        // rewrite. A refused value arms no drill rather than linking anywhere else.
+        drillAckBase: cfg.appOrigin ? `${cfg.appOrigin}/api` : undefined,
       }
       : undefined,
     // ABSENT ⇒ every `GET /admin/*` answers 404 — a deployment with no

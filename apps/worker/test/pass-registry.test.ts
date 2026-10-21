@@ -77,6 +77,7 @@ const IN_WORKER_PASSES: readonly string[] = [
      (`smtp-size.ts`) and the responder therefore had almost certainly never delivered a reply from
      here. A pass that cannot dial is not a pass this worker owns. */
   "alert-gap-prune.ts::alertGapPrunePass",
+  "alert-drill-pass.ts::alertDrillPass",
   "api-fault-prune.ts::apiFaultPrunePass",
   "refund-obligation-drain.ts::refundObligationDrainPass",
   "retention-prune.ts::retentionPrunePass",

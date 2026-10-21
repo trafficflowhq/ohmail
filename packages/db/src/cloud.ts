@@ -229,6 +229,16 @@ export {
   type TelegramAlertSinkConfig,
 } from "./alert-push.js";
 
+/* Alert drills (cloud 0051): every kind sent once through a driver's sinks, and the acknowledgement. */
+export {
+  drillKinds, drillEnvironment, drillAlerts, drillAckUrl, isDrillToken, usableAckBase,
+  startDrillRun, deliverDrill, recordDrillOutcomes, takeQueuedDrill, drillAckState, ackDrill, listDrillRuns,
+  DRILL_MIN_INTERVAL_MS, DRILL_REQUEST_TTL_MS, DRILL_ACK_TTL_MS, DRILL_OUTCOMES, DRILL_ACK_PATH,
+  ALERT_DRILL_LOCK_CLASS,
+  type DrillOutcome, type DrillStart, type DrillStartInput, type DrillDelivery, type QueuedDrill,
+  type DrillAckState, type DrillRunSummary, type DrillMessageSummary,
+} from "./alert-drill.js";
+
 
 
 

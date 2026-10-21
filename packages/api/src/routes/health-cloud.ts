@@ -149,6 +149,10 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // alert pass writes it in the run stamp's statement, so a host ahead of the migration loses its
   // stamp silently and the other arm reports it dark.
   ["alert_driver_gaps", "max_gap_at"],
+  // cloud 0051_alert_drills — `acked_at`, the table's last column; one migration runs in one
+  // transaction, so its presence implies the index and the grant block after it. Loud: a drill on a
+  // host ahead of the migration answers 503 and writes nothing.
+  ["alert_drills", "acked_at"],
   // cloud 0036_staff_step_up_and_pending_totp — THREE markers, one per table it touches, because
   // each is missing in a different way. `staff_users.totp_pending_started_at` is that table's LAST
   // added column, on `api_faults.arm`'s rule: absent, `totp/begin` 42703s and nobody can enrol,

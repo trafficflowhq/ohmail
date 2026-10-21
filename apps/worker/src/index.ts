@@ -106,6 +106,7 @@ import { senderCheckRetirement } from "./sender-check-backfill.js";
 import { listAddressBackfillPass } from "./list-address-backfill.js";
 import { apiFaultPrunePass } from "./api-fault-prune.js";
 import { alertGapPrunePass } from "./alert-gap-prune.js";
+import { alertDrillPass } from "./alert-drill-pass.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { newScreenerAutoWalk, screenerAutoApplyPass } from "./screener-auto.js";
@@ -6130,6 +6131,9 @@ export async function startWorkerWithLock(
               "(with RESEND_API_KEY + MAIL_FROM) or TF_ALERT_WEBHOOK_URL",
           });
         }
+        // A drill the API queued for this driver (`alert-drill-pass.ts`): last, after every line of
+        // the real pass, so it cannot delay a page. Shard 0 only; it never throws.
+        await alertDrillPass(db as unknown as Tx, { sinks: alertSinks, environment, now: new Date(), log, shardIndex });
       } catch (err) {
         log.error("alert_pass_failed", { err });
         // A database that is gone or unusable pages from memory, reading and writing nothing. Never throws.
