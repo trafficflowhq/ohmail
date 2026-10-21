@@ -1576,8 +1576,8 @@ describe("a pass resolves ONLY what it evaluated", () => {
     // A census rather than a behaviour test. A rule keyed by shard or by driver that is missing
     // from the set flaps, and the flap is invisible in any single-driver test.
     expect([...SCOPED_ALERT_KINDS].sort()).toEqual([
-      "ai_provider_down", "alert_driver_dark", "alert_driver_undeliverable", "alert_sink_degraded",
-      "api_cron_stale", "imap_admission_refused", "plane_ops_unreadable", "schema_behind",
+      "ai_provider_down", "alert_db_unreadable", "alert_driver_dark", "alert_driver_undeliverable",
+      "alert_sink_degraded", "api_cron_stale", "imap_admission_refused", "plane_ops_unreadable", "schema_behind",
       "worker_degraded", "worker_down",
     ]);
   });
@@ -1754,6 +1754,9 @@ describe("the rule census", () => {
     // The billing plane's own failures, rule 20, driven firing, clear and unread on real Postgres
     // in `alert-plane-ops.pg.test.ts`.
     "plane_pass_stale", "billing_alert", "plane_ops_unreadable",
+    // The pager's last resort when the database is gone: emitted by `dbUnreadableAlert`, sent from
+    // the drivers' failure paths (`alert-last-resort.ts`), driven in `alert-last-resort.test.ts`.
+    "alert_db_unreadable",
   ];
 
   it("every kind in the union is EMITTED by a branch of evaluateAlerts", async () => {

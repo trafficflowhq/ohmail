@@ -118,7 +118,7 @@ export {
   DEFAULT_ALERT_THRESHOLDS, DEFAULT_ALERT_REPEAT_MS, DEFAULT_ALERT_RENOTIFY_UNCHANGED_MS,
   DEFAULT_CRITICAL_HOURLY_PAGES, DEFAULT_ALERT_FLAP_FLOOR_MS,
   SCOPED_ALERT_KINDS, ALERT_KIND_ARMS, alertKindArms, DRIVER_NEVER_RAN, evaluateAlertsWithScope,
-  isSchemaBehind,
+  isSchemaBehind, dbUnreadableAlert, accountSinkDelivery,
   alertSchemaReadable,
   SIGNAL_BUCKET_MS,
   DEFAULT_CLAIM_TTL_MS,
@@ -157,9 +157,25 @@ export {
   type AlertMail, type AlertMailInput,
 } from "./alert-mail.js";
 
+/* The pager's last resort when the database is gone or unusable: the classifier, the paging state, the heartbeat. */
+export {
+  AlertDatabaseReadError, readAlertDatabase, evaluationUnderDeadline, isAlertDatabaseUnreadable,
+  ALERT_DB_FIRST_READ_MS, ALERT_DB_HANDLE_MS, ALERT_DB_EVALUATE_MS, ALERT_DB_DEADLINE_CODE,
+  type AlertDatabaseOp,
+} from "./alert-db-fault.js";
+export {
+  newLastResortState, lastResortFailed, lastResortSucceeded, lastResortLogLines,
+  LAST_RESORT_ENTRY_AFTER, LAST_RESORT_REPAGE_MS,
+  type LastResortState, type LastResortContext, type LastResortReport, type LastResortLogLine,
+} from "./alert-last-resort.js";
+export {
+  alertHeartbeatFor, heartbeatLogLine, nodeHeartbeatGet, ALERT_HEARTBEAT_TIMEOUT_MS, ALERT_HEARTBEAT_VAR,
+  type AlertHeartbeat, type HeartbeatGet, type HeartbeatOutcome, type HeartbeatLogMemory,
+} from "./alert-heartbeat.js";
+
 /* What the operator's mail carries: pages for what is down or at risk, a daily digest for the rest. */
 export {
-  MAIL_POLICY, PAGE_ROUTE_PREFIXES, mailVerdictOf, mailCooldownMs, policyKeyOf, DIGEST_MAX_LINES,
+  MAIL_POLICY, PAGE_ROUTE_PREFIXES, mailVerdictOf, mailCooldownMs, isLoneRowlessPage, policyKeyOf, DIGEST_MAX_LINES,
   SYNC_LAG_PAGE_ACCOUNTS, renderDigestInput, type AlertDigest, type DigestLine, type MailVerdict,
 } from "./alert-mail-policy.js";
 

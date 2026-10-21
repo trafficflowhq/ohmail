@@ -89,6 +89,31 @@ export function dbRecipientLimiter(db: Db): RecipientLimiter {
   };
 }
 
+/** Keys {@link memoryRecipientLimiter} keeps before it drops the oldest. */
+const MEMORY_LIMITER_KEYS = 64;
+
+/**
+ * {@link dbRecipientLimiter}'s rolling window, in process memory: for the one sender that must work
+ * while the database is gone (the last-resort alert mail). The key map is capped.
+ */
+export function memoryRecipientLimiter(maxKeys: number = MEMORY_LIMITER_KEYS): RecipientLimiter {
+  const windows = new Map<string, { startedAt: number; used: number }>();
+  return {
+    claim(key: string, now: Date, windowMs: number): Promise<number> {
+      const t = now.getTime();
+      const w = windows.get(key);
+      if (w && w.startedAt >= t - windowMs) {
+        w.used += 1;
+        return Promise.resolve(w.used);
+      }
+      windows.delete(key);
+      while (windows.size >= maxKeys) windows.delete(windows.keys().next().value as string);
+      windows.set(key, { startedAt: t, used: 1 });
+      return Promise.resolve(1);
+    },
+  };
+}
+
 /** The limiter a guarded send uses: the caller's own port, or one built from its `db`. */
 const limiterOf = (ctx: MailContext | OperatorAlertContext): RecipientLimiter =>
   "limiter" in ctx ? ctx.limiter : dbRecipientLimiter(ctx.db);

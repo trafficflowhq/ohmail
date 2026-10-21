@@ -20,6 +20,9 @@ import {
   policyKeyOf, renderDigestInput, severityRankOf, storedRankOf,
   type AlertDigest, type MailVerdict,
 } from "./alert-mail-policy.js";
+import {
+  ALERT_DB_EVALUATE_MS, ALERT_DB_FIRST_READ_MS, evaluationUnderDeadline, readAlertDatabase,
+} from "./alert-db-fault.js";
 
 /**
  * One evaluator, one delivery pass, two classes of finding. {@link AlertKind} is authoritative; a
@@ -564,6 +567,8 @@ export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   "alert_driver_undeliverable", "alert_sink_degraded", "api_cron_stale",
   // Keyed by the driver whose plane read failed: the other one may read the plane fine.
   "plane_ops_unreadable",
+  // Keyed by the driver whose pass could not use the database; never written to a row.
+  "alert_db_unreadable",
 ]);
 
 /**
@@ -688,6 +693,11 @@ export const ALERT_KIND_ARMS: { readonly [K in AlertKind]: AlertKindArms } = {
   plane_ops_unreadable: {
     evaluated: (key, s) => s.driver !== undefined && !s.unread.has("plane_ops_unreadable")
       && key === `plane_ops_unreadable:${s.driver}`,
+    unconfirmedAfterMs: UNCONFIRMED_AFTER,
+  },
+  // Inert: the last-resort page writes no row. Shaped like `schema_behind`'s should one ever exist.
+  alert_db_unreadable: {
+    evaluated: (key, s) => s.driver !== undefined && key === `alert_db_unreadable:${s.driver}`,
     unconfirmedAfterMs: UNCONFIRMED_AFTER,
   },
 };
@@ -821,6 +831,31 @@ export function isSchemaBehind(alerts: readonly Alert[]): boolean {
   return alerts.length === 1 && alerts[0]!.kind === "schema_behind";
 }
 
+/**
+ * The last-resort page (`alert-last-resort.ts`): this driver's pass could not use the database
+ * (gone, read-only, out of resources, too slow). Fixed text, no time, count, error, host or
+ * address, so every repeat is the same bytes and the mail arm's idempotency key holds for the page
+ * window.
+ */
+export function dbUnreadableAlert(driver: AlertDriver): Alert {
+  return {
+    key: `alert_db_unreadable:${driver}`,
+    kind: "alert_db_unreadable",
+    severity: "critical",
+    cls: "incident",
+    title: `The ${driver} alert pass cannot use the database`,
+    detail:
+      `The ${driver} alert pass failed on the database (unreachable, read-only, out of disk, memory ` +
+      `or connections, or too slow to answer), so nothing can be evaluated or sent by this driver ` +
+      `until it works again. Repeated hourly while it lasts (mail every 6 h).`,
+    count: 1,
+    oldestSeconds: null,
+    affectedAccounts: null,
+    fixHref: null,
+    signature: `db_unreadable|${driver}`,
+  };
+}
+
 const ARM_WORD: { readonly [A in ApiFaultArm]: string } = { api: "API host", worker: "worker" };
 
 type FaultRouteReading = Pick<ApiFaultRouteCount, "route" | "arm" | "faults" | "minutes" | "newest">;
@@ -892,6 +927,8 @@ function nothingRead(opts: EvaluateOptions): EvaluationScope {
 /** {@link evaluateAlerts} plus what it looked at — the scope every kind's resolve arm reads. */
 export async function evaluateAlertsWithScope(
   db: Tx, opts: EvaluateOptions = {},
+  /** `runAlertPass`'s deadline and tag around the first read; a direct evaluation has none. */
+  firstRead?: <T>(read: () => Promise<T>) => Promise<T>,
 ): Promise<{ alerts: Alert[]; scope: EvaluationScope }> {
   const now = opts.now ?? new Date();
   const t: AlertThresholds = { ...DEFAULT_ALERT_THRESHOLDS, ...opts.thresholds };
@@ -910,7 +947,9 @@ export async function evaluateAlertsWithScope(
   // If the database is older than this bundle, every rule below raises 42703 on a column that
   // does not exist yet, and the pass dies without saying why. Answer that one question first,
   // out of `information_schema`, and return it ALONE — there is nothing else worth reading.
-  const behind = await schemaBehindAlert(db, opts);
+  const behind = firstRead
+    ? await firstRead(() => schemaBehindAlert(db, opts))
+    : await schemaBehindAlert(db, opts);
   if (behind) return { alerts: [behind], scope: nothingRead(opts) };
 
   // Rule 20's one read of the plane, started here so its dial overlaps the reads below. A reader
@@ -2949,6 +2988,13 @@ export interface AlertPassOptions extends EvaluateOptions {
   criticalHourlyPages?: number;
   /** Default {@link DEFAULT_ALERT_FLAP_FLOOR_MS}. */
   flapFloorMs?: number;
+  /** The first read's deadline. Default `ALERT_DB_FIRST_READ_MS`; tests set it small. */
+  firstReadMs?: number;
+  /**
+   * The evaluation's deadline, every rule read included. Default `ALERT_DB_EVALUATE_MS`; the API
+   * route passes what is left of it after the staff handle, so it counts from the request's start.
+   */
+  evaluateMs?: number;
   source?: string;
   environment?: string;
 }
@@ -3216,6 +3262,9 @@ function accountDelivery(
 
   return { escalate, sinkDegraded };
 }
+
+/** The same accounting, for the last-resort page (`alert-last-resort.ts`), which writes no row. */
+export const accountSinkDelivery = accountDelivery;
 
 /* ════════════════════════════════════════════════════════════════════════════════════════
    THE ALERT-ROW FENCE — one rule, and every writer of `alert_state` goes through it
@@ -3557,9 +3606,15 @@ export async function runAlertPass(db: Tx, opts: AlertPassOptions = {}): Promise
       })),
     }
     : undefined);
-  const { alerts: firing, scope } = await evaluateAlertsWithScope(db, {
+  // The first read under a deadline and the `preflight` tag: a database that is gone fails the
+  // pass in bounded time with an error the last-resort page can classify. The whole evaluation
+  // under a deadline too: a database too slow for the rule reads fails the pass (`evaluate`, the
+  // deadline's code) instead of running it into the API platform's limit, where nothing is caught.
+  // Only the reads: what the pass writes and delivers afterwards is not under it.
+  const firstReadMs = opts.firstReadMs ?? ALERT_DB_FIRST_READ_MS;
+  const { alerts: firing, scope } = await evaluationUnderDeadline(() => evaluateAlertsWithScope(db, {
     ...opts, sinkStreaks, usableSinks: opts.usableSinks ?? usable.length,
-  });
+  }, (read) => readAlertDatabase("preflight", read, firstReadMs)), opts.evaluateMs ?? ALERT_DB_EVALUATE_MS);
 
   // The database is older than this bundle: deliver, do not persist. `alert_state` is one of the
   // tables the older schema lacks columns for — the preflight's marker IS a column this function

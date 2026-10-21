@@ -54,7 +54,7 @@ export {
 // lives beside the alert driver because it reads that driver's own delivery streak, which is
 // module-scoped memory and must not be handed out mutable. `runApiAlertPass` is that driver's
 // pass for a host that keeps its own clock (the self-host server), on the same streak.
-export { apiAlertSinkSummary, runApiAlertPass } from "./routes/internal.js";
+export { apiAlertSinkSummary, runApiAlertPass, resetApiLastResortForTests } from "./routes/internal.js";
 
 // On-demand attachment adapter factory (decrypt mailbox creds → connected ImapAdapter).
 export { makeOpenAdapter } from "./attachments-adapter.js";

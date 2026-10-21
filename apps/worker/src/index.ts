@@ -19,6 +19,8 @@ import {
   telegramAlertSink,
   sinkHealthOf, pagerVerdictOf, type PagerVerdict,
   newDeliveryStreak,
+  newLastResortState, lastResortFailed, lastResortSucceeded, lastResortLogLines,
+  alertHeartbeatFor, heartbeatLogLine, type LastResortReport, type HeartbeatLogMemory,
   writeHeartbeat,
   refreshHeartbeat,
   clearHeartbeat,
@@ -815,6 +817,14 @@ export async function startWorkerWithLock(
      * and `alert_driver_undeliverable` reads the streak `recordAlertPass` keeps in the database.
      */
     const alertDeliveryStreak = newDeliveryStreak();
+    /**
+     * The last-resort page when the pass cannot use the database (`alert-last-resort.ts`): memory
+     * only, for this leadership's life. These arms already avoid the database, so they are reused.
+     */
+    const alertLastResort = newLastResortState();
+    /** `TF_ALERT_HEARTBEAT_URL`: the dead-man GET after every completed pass. */
+    const alertHeartbeat = alertHeartbeatFor(config.alertHeartbeatUrl, config.alertHeartbeatGet);
+    const alertHeartbeatLogged: HeartbeatLogMemory = { last: null };
 
     let stopped = false;
     let lockLost = false;
@@ -5973,6 +5983,18 @@ export async function startWorkerWithLock(
     const alertFiringLogged = new Map<string, string>();
     /** The plane read this process last logged — see `planeOpsStateLine`. */
     const planeOpsLogged: { key: string | null } = { key: null };
+    /** The last-resort page's context and its lines (`alert-last-resort.ts`). */
+    const lastResortCtx = () => ({
+      sinks: alertSinks, driver: "worker" as const, environment, now: new Date(),
+      deliveryStreak: alertDeliveryStreak,
+    });
+    const logLastResort = (report: LastResortReport | null): void => {
+      if (!report) return;
+      for (const line of lastResortLogLines(report)) {
+        if (line.level === "error") log.error(line.event, line.fields);
+        else log.warn(line.event, line.fields);
+      }
+    };
     /**
      * One alert pass, from the WORKER side. It covers the DB-visible rules (stuck sends, sync lag and
      * their neighbours) and deliberately does NOT include itself: `shards: []` skips the leader-
@@ -5984,6 +6006,7 @@ export async function startWorkerWithLock(
     async function alertPass(): Promise<void> {
       try {
         const result = await runAlertPass(db as unknown as Tx, {
+          ...(config.alertFirstReadMs !== undefined ? { firstReadMs: config.alertFirstReadMs } : {}),
           sinks: alertSinks, shards: [], source: "worker", environment,
           deliveryStreak: alertDeliveryStreak,
           // The roster's parked set: an account it does not sync is never on duty for a page. The
@@ -6010,6 +6033,13 @@ export async function startWorkerWithLock(
           // The billing plane's own failures (`/v1/ops`), shard 0 only; `null` reads nothing.
           planeOps: shardIndex === 0 ? alertReaders.planeOps : null,
         });
+        // The pass completed: close a last-resort episode, then the bounded dead-man ping.
+        logLastResort(await lastResortSucceeded(alertLastResort, lastResortCtx()));
+        if (alertHeartbeat.state === "on") {
+          const line = heartbeatLogLine(alertHeartbeatLogged, await alertHeartbeat.ping());
+          if (line?.event === "alert_heartbeat_failed") log.warn("alert_heartbeat_failed", line.fields);
+          else if (line) log.info("alert_heartbeat_restored", line.fields);
+        }
         const planeLine = planeOpsStateLine(planeOpsLogged, result);
         if (planeLine?.level === "warn") log.warn("plane_ops_state", planeLine.fields);
         else if (planeLine) log.info("plane_ops_state", planeLine.fields);
@@ -6090,6 +6120,8 @@ export async function startWorkerWithLock(
         }
       } catch (err) {
         log.error("alert_pass_failed", { err });
+        // A database that is gone or unusable pages from memory, reading and writing nothing. Never throws.
+        logLastResort(await lastResortFailed(alertLastResort, err, lastResortCtx()));
       }
     }
 
@@ -6247,6 +6279,12 @@ export async function startWorkerWithLock(
         reason: "the pager has exactly one delivery arm; a single vendor outage silences it " +
           "entirely — arm a second by setting TF_ALERT_TELEGRAM_BOT_TOKEN + " +
           "TF_ALERT_TELEGRAM_CHAT_ID, or TF_ALERT_EMAIL (with RESEND_API_KEY + MAIL_FROM)",
+      });
+    }
+
+    if (alertHeartbeat.state === "unusable") {
+      log.error("alert_heartbeat_unusable", {
+        configVar: alertHeartbeat.configVar, reason: "set but not one plain http(s) URL; no heartbeat is sent",
       });
     }
 

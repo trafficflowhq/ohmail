@@ -19,14 +19,14 @@ export {
   type NewDeviceSignInData, type SecurityNoticeData, type EmailVerificationData, type OperatorAlertData,
   type OperatorDigestData,
 } from "./templates.js";
-export { mailAlertSink } from "./alert-sink.js";
+export { mailAlertSink, dbFreeMailAlertSink } from "./alert-sink.js";
 export {
   ResendMailer, nodeHttpPost, type HttpPost, type ResendMailerConfig,
 } from "./resend-mailer.js";
 export { SpyMailer, disabledMailer, type SpiedSend } from "./spy-mailer.js";
 export {
   MailService, makeMailService, formatUtc, EMAIL_VERIFY_PURPOSE, DEFAULT_LINK_ORIGINS,
-  dbRecipientLimiter,
+  dbRecipientLimiter, memoryRecipientLimiter,
   type MailContext, type MailServiceConfig, type MailServiceDeps,
   // The narrow port the operator-alert sink holds instead of a runtime `Db`.
   type RecipientLimiter, type OperatorAlertContext,

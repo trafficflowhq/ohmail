@@ -11,7 +11,9 @@ import {
 } from "@trafficflow/core/ai-provider-env";
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
 import { pgTransportReason } from "@trafficflow/db/cloud";
-import { DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type PostJson } from "@trafficflow/db/cloud";
+import {
+  DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type HeartbeatGet, type PostJson,
+} from "@trafficflow/db/cloud";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
@@ -474,6 +476,16 @@ export interface WorkerConfig {
   alertTelegramChatId?: string;
   /** How often the leader runs the alert pass. Default {@link DEFAULT_ALERT_INTERVAL_MS}. */
   alertIntervalMs?: number;
+  /**
+   * `TF_ALERT_HEARTBEAT_URL` — optional, the dead-man heartbeat: one plain GET (5 s timeout, no body)
+   * after every alert pass that completes, to a check at an outside service that alarms when the
+   * requests stop: a dead host or a dead database reaches a human that way. Unset: off. Never logged.
+   */
+  alertHeartbeatUrl?: string;
+  /** TEST SEAM: the heartbeat's transport. */
+  alertHeartbeatGet?: HeartbeatGet;
+  /** TEST SEAM: the alert pass's first-read deadline (`ALERT_DB_FIRST_READ_MS`). */
+  alertFirstReadMs?: number;
   /**
    * The API-cron arm (`TF_API_CRON_URL` + `TF_API_CRON_SECRET`) — this worker as the schedule for the
    * API host's internal passes (`api-cron.ts` has the whole argument: the platform cron layer those
@@ -1071,6 +1083,7 @@ export function loadConfig(
     adminUrl: env.TF_ADMIN_URL,
     resendApiKey: env.RESEND_API_KEY,
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
+    alertHeartbeatUrl: env.TF_ALERT_HEARTBEAT_URL,
     apiCron: apiCronFrom(env),
     healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),

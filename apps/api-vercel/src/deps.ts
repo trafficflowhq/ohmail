@@ -3,7 +3,8 @@ import {
   type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
-import type { AccountsAtCapReader, PlaneOpsReader } from "@trafficflow/db/cloud";
+import type { AccountsAtCapReader, AlertHeartbeat, PlaneOpsReader } from "@trafficflow/db/cloud";
+import { alertHeartbeatFor } from "@trafficflow/db/cloud";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
   ALERT_PARKED_READ_BOUND, planeOpsReaderOf,
@@ -35,7 +36,7 @@ import {
   SEND_ATTACHMENT_MAX_TOTAL_BYTES,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
-  MailService, ResendMailer, mailAlertSink, dbRecipientLimiter, makeWaitlistService,
+  MailService, ResendMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter, makeWaitlistService,
   type ServiceContext,
   makePlatformSignalPort, SSE_DISABLED_REFUSAL,
 } from "@trafficflow/services";
@@ -490,7 +491,7 @@ function customerMailerFor(cfg: HostConfig): MailService | null {
  * report — a sink that cannot be constructed stays as an arm that refuses (`refusingAlertSink`,
  * read dead on `/health`), and the product serves.
  */
-let sinksCache: { key: object; sinks: AlertSink[] } | null = null;
+let sinksCache: { key: object; sinks: AlertSink[]; lastResort: AlertSink[] } | null = null;
 
 /**
  * THIS HOST'S ONE ALERT READER BAG, over its memoised client and built once per config: the parked
@@ -535,33 +536,65 @@ function alertReadersFor(cfg: HostConfig): HostAlertReaders {
 }
 
 export function alertSinksFor(cfg: HostConfig): AlertSink[] {
-  if (sinksCache && sinksCache.key === cfg) return sinksCache.sinks;
+  return pagerArmsFor(cfg).sinks;
+}
+
+/**
+ * The last-resort page's arms (`alert-last-resort.ts`): the same objects as {@link alertSinksFor},
+ * names and order, except the mail arm, which is the same service with its recipient limiter in
+ * memory (`dbFreeMailAlertSink`): this page is sent because the database is gone.
+ */
+export function lastResortSinksFor(cfg: HostConfig): AlertSink[] {
+  return pagerArmsFor(cfg).lastResort;
+}
+
+let heartbeatCache: { key: object; heartbeat: AlertHeartbeat } | null = null;
+
+/** `TF_ALERT_HEARTBEAT_URL`, built once per instance. An unusable value is named, never printed. */
+function alertHeartbeatOf(cfg: HostConfig): AlertHeartbeat {
+  if (heartbeatCache && heartbeatCache.key === cfg) return heartbeatCache.heartbeat;
+  const heartbeat = alertHeartbeatFor(cfg.alerts?.heartbeatUrl);
+  if (heartbeat.state === "unusable") {
+    hostLogger(cfg).error("alert_heartbeat_unusable", {
+      configVar: heartbeat.configVar, reason: "set but not one plain http(s) URL; no heartbeat is sent",
+    });
+  }
+  heartbeatCache = { key: cfg, heartbeat };
+  return heartbeat;
+}
+
+function pagerArmsFor(cfg: HostConfig): { sinks: AlertSink[]; lastResort: AlertSink[] } {
+  if (sinksCache && sinksCache.key === cfg) return sinksCache;
   const sinks: AlertSink[] = [];
+  const lastResort: AlertSink[] = [];
   const alerts = cfg.alerts;
   if (alerts) {
     // PER ARM: a throw building one arm must not take the arms after it, and the broken arm stays
     // in the list as one that refuses, so `/health`, the pager verdict and the other driver see it.
-    const add = (name: string, build: () => AlertSink | null): void => {
+    const same = (sink: AlertSink | null) => (sink ? { sink, lastResort: sink } : null);
+    const add = (name: string, build: () => { sink: AlertSink; lastResort: AlertSink } | null): void => {
       try {
-        const sink = build();
-        if (sink) sinks.push(sink);
+        const built = build();
+        if (built) { sinks.push(built.sink); lastResort.push(built.lastResort); }
       } catch (err) {
         // Structured, and it names no value: the thing most likely to be malformed here is a
         // URL from an env var, and this line goes to a log drain.
         hostLogger(cfg).error("alert_sink_unavailable", {
           err, sink: name, reason: "an alert sink could not be constructed; it is published as refusing",
         });
-        sinks.push(refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`));
+        const refusing = refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`);
+        sinks.push(refusing);
+        lastResort.push(refusing);
       }
     };
-    add("webhook", () => webhookAlertSink(alerts.webhookUrl ?? undefined));
+    add("webhook", () => same(webhookAlertSink(alerts.webhookUrl ?? undefined)));
     // The PUSH arm — the pager's second vendor, and this host is the only observer of a dead
     // worker, so a single-vendor delivery path here is the version of the problem that can
     // coincide with the outage it is meant to report.
-    add("telegram", () => telegramAlertSink({
+    add("telegram", () => same(telegramAlertSink({
       botToken: alerts.telegram?.botToken ?? undefined,
       chatId: alerts.telegram?.chatId ?? undefined,
-    }));
+    })));
     const mail = alerts.mail;
     const operatorEmail = alerts.operatorEmail;
     if (mail && operatorEmail) {
@@ -586,15 +619,19 @@ export function alertSinksFor(cfg: HostConfig): AlertSink[] {
         // runtime handle stays here in the composition root, the shape the `/admin/*`
         // callbacks take. It cannot move onto the blind handle: `ohmail_admin` has no grant
         // on `auth_throttle`, and inventing one would widen the staff role to buy nothing.
-        return mailAlertSink(service, {
-          limiter: dbRecipientLimiter(makePooledDb(cfg.databaseUrlPooled)),
-          now: () => new Date(),
-        });
+        return {
+          sink: mailAlertSink(service, {
+            limiter: dbRecipientLimiter(makePooledDb(cfg.databaseUrlPooled)),
+            now: () => new Date(),
+          }),
+          // The same service; its limiter in memory, so it can mail while the database is gone.
+          lastResort: dbFreeMailAlertSink(service),
+        };
       });
     }
   }
-  sinksCache = { key: cfg, sinks };
-  return sinks;
+  sinksCache = { key: cfg, sinks, lastResort };
+  return sinksCache;
 }
 
 /** Build the request container. `req` is the ALREADY-NORMALIZED request (see `prefix.ts`). */
@@ -781,6 +818,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         // accepted secret whose value is the empty string.
         cronSecret: cfg.alerts.cronSecret ?? undefined,
         sinks: alertSinksFor(cfg),
+        lastResortSinks: lastResortSinksFor(cfg),
+        heartbeat: alertHeartbeatOf(cfg),
         environment: cfg.environment,
         parkedAccounts: alertReadersFor(cfg).parkedAccounts,
         accountsAtCap: alertReadersFor(cfg).accountsAtCap,
@@ -919,6 +958,7 @@ function hostLogger(cfg: HostConfig): Logger {
 export function resetServices(): void {
   servicesCache = null;
   sinksCache = null;
+  heartbeatCache = null;
   readersCache = null;
   loggerCache = null;
   // Cleared with the logger it was built from: a sink outliving its logger would keep a torn-down

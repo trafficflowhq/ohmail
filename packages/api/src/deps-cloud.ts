@@ -2,7 +2,7 @@ import type {
   AdminDb, AuthService, ProposalsService, WaitlistService, PlatformSignalPort,
 } from "@trafficflow/services";
 import type {
-  AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
+  AlertHeartbeat, AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
 } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
@@ -224,4 +224,17 @@ export interface AlertsConfig {
    * secret-guarded. Absent with no blind factory ⇒ the routes answer 503 `alerts_db_unarmed`.
    */
   db?: () => Promise<Tx>;
+  /**
+   * The arms the last-resort page goes through when the pass cannot use the database
+   * (`alert-last-resort.ts`): the same arms as {@link sinks}, names and order, except that the mail
+   * arm's limiter lives in memory (`dbFreeMailAlertSink`). Absent or empty: no page, as today.
+   */
+  lastResortSinks?: readonly AlertSink[];
+  /** `TF_ALERT_HEARTBEAT_URL`, built (`alertHeartbeatFor`): pinged after every completed pass. */
+  heartbeat?: AlertHeartbeat;
+  /**
+   * TEST SEAM: the staff handle's, the first read's and the evaluation's deadlines (the last counted
+   * from the request's start). Production leaves it unset.
+   */
+  readDeadlinesMs?: { handle?: number; firstRead?: number; evaluate?: number };
 }

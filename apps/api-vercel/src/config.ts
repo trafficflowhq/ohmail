@@ -360,6 +360,17 @@ export interface AlertsHostConfig {
    * (`alert-push.ts` rules the states; the same object arms the worker).
    */
   telegram: { botToken: string | null; chatId: string | null } | null;
+  /**
+   * `TF_ALERT_HEARTBEAT_URL` — optional, the DEAD-MAN HEARTBEAT: after every alert pass that
+   * completes, this host sends one plain GET (5 s timeout, no body, no added header) to the URL, a
+   * check at an outside service (Healthchecks.io, Better Stack, Cronitor) that alarms when the
+   * requests stop. It is how a dead database, a dead host or a pass that never completes reaches a
+   * human when nothing inside can page. Set the same URL on the worker; the check then alarms only
+   * when neither driver completes a pass (suggested: period 2 minutes, grace 5). Unset: off. A
+   * value that is not one plain http(s) URL logs `alert_heartbeat_unusable` and sends nothing. The
+   * URL is a credential at that service and appears in no log line and no `/health` field.
+   */
+  heartbeatUrl: string | null;
 }
 
 /**
@@ -1004,6 +1015,7 @@ export function loadAlertsConfig(env: NodeJS.ProcessEnv): AlertsHostConfig | nul
     // and is REPORTED as half-configured. Folding it to null here would make the commonest
     // misconfiguration — one of two variables set — indistinguishable from never arming it.
     telegram: (botToken || chatId) ? { botToken, chatId } : null,
+    heartbeatUrl: env.TF_ALERT_HEARTBEAT_URL?.trim() || null,
   };
 }
 

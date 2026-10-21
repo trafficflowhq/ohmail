@@ -4,7 +4,7 @@
  * reads them here, which keeps alert-mail-policy.ts and alerts.ts out of an import cycle.
  */
 
-/** The conditions, twenty-four of them. Stable strings — they are the alert identity in `alert_state`. */
+/** The conditions, twenty-five of them. Stable strings — they are the alert identity in `alert_state`. */
 export type AlertKind =
   /** No leader heartbeat for a shard within the threshold: nothing is syncing. */
   | "worker_down"
@@ -171,7 +171,14 @@ export type AlertKind =
    * reader refused whole. Keyed by the driver, like `schema_behind`: one host failing to reach the
    * plane is not the other's to clear. A signal until several reads in a row have failed.
    */
-  | "plane_ops_unreadable";
+  | "plane_ops_unreadable"
+  /**
+   * THIS DRIVER'S ALERT PASS COULD NOT USE THE DATABASE (gone, read-only, out of resources, too
+   * slow), sent from the pass's failure path out of process memory (`alert-last-resort.ts`): no row
+   * is ever written, so nothing reads or resolves it. Keyed by the driver. Emitted by
+   * `dbUnreadableAlert` in `alerts.ts`.
+   */
+  | "alert_db_unreadable";
 
 export type AlertSeverity = "critical" | "warning";
 

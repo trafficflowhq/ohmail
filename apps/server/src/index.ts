@@ -9,7 +9,9 @@ import {
   type AuthService,
 } from "@trafficflow/services";
 import { COLLAPSED_SENTENCE, PROXY_PEER_HEADER, loadServerConfig } from "./config.js";
-import { alertSinksFor, buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime } from "./deps.js";
+import {
+  alertArmsFor, alertHeartbeatForServer, buildDeps, buildServerServices, oauthProviderFor, type ServerRuntime,
+} from "./deps.js";
 import { alertClockFor } from "./alert-clock.js";
 import { handleServerRequest } from "./handler.js";
 import { makeHttpServer, makeTrustedProxies, systemLookup } from "./http.js";
@@ -87,6 +89,8 @@ async function main(): Promise<void> {
   }
 
   const hub = makeChangeWakeHub(cfg.databaseUrl, logger);
+  // The API alert arm's sinks and, beside them, the last-resort page's: one build, shared objects.
+  const pager = alertArmsFor(cfg, logger, owned.db);
   const rt: ServerRuntime = {
     cfg,
     db: owned.db,
@@ -101,7 +105,9 @@ async function main(): Promise<void> {
     },
     logger,
     // The API alert arm: its sinks, built once, and its handle — this pool, the one role there is.
-    alertSinks: alertSinksFor(cfg, logger, owned.db),
+    alertSinks: pager.sinks,
+    alertLastResortSinks: pager.lastResort,
+    alertHeartbeat: alertHeartbeatForServer(cfg, logger),
     alertDb: () => Promise.resolve(owned.db as unknown as Tx),
   };
 

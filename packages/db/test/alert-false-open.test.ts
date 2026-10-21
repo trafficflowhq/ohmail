@@ -150,6 +150,8 @@ const KIND_CASES: readonly KindCase[] = [
   { kind: "worker_degraded", key: "worker_degraded:0", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
   { kind: "ai_provider_down", key: "ai_provider_down:0", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
   { kind: "schema_behind", key: "schema_behind:api", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
+  // Never written by a pass (the last-resort page writes no row); a stray one clears like schema_behind's.
+  { kind: "alert_db_unreadable", key: "alert_db_unreadable:api", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
   { kind: "alert_driver_dark", key: "alert_driver_dark:worker", notEvaluated: { pass: W }, evaluatedClear: { pass: A } },
   { kind: "imap_admission_refused", key: "imap_admission_refused", notEvaluated: { pass: A }, evaluatedClear: { pass: W } },
   {

@@ -1,5 +1,5 @@
-import { isSchemaBehind, mailCooldownMs, type Alert, type AlertSink } from "@trafficflow/db/cloud";
-import type { OperatorAlertContext, MailService } from "./mail-service.js";
+import { isLoneRowlessPage, mailCooldownMs, type Alert, type AlertSink } from "@trafficflow/db/cloud";
+import { memoryRecipientLimiter, type OperatorAlertContext, type MailService } from "./mail-service.js";
 
 /**
  * The SECOND delivery path for an operator alert: mail. The first is `webhookAlertSink` in
@@ -25,8 +25,9 @@ export function mailAlertSink(
           alerts: alerts.map((a) => ({ title: a.title, detail: a.detail, severity: a.severity })),
           source: notifyCtx.source,
           environment: notifyCtx.environment,
-          // A page keeps today's minute; a lone `schema_behind` holds its key for the page window.
-          idempotencyBucketMs: isSchemaBehind(alerts) ? mailCooldownMs("schema_behind") : 60_000,
+          // A page keeps today's minute; a lone rowless page (`schema_behind`, `alert_db_unreadable`)
+          // holds its key for the page window.
+          idempotencyBucketMs: isLoneRowlessPage(alerts) ? mailCooldownMs(alerts[0]!.kind) : 60_000,
         });
         // `skipped` is NOT success. The two reasons it can happen here are "no operator
         // address is configured" and "the per-recipient limiter refused", and treating
@@ -47,4 +48,15 @@ export function mailAlertSink(
       }
     },
   };
+}
+
+/**
+ * The mail arm of the last-resort page (`alert-last-resort.ts` in `packages/db`): the same sink over
+ * the same service, with the recipient limiter kept in process memory. It takes no database and so
+ * cannot reach one: the page it carries is the one sent because the database is gone, and the
+ * ordinary arm's `auth_throttle` claim would refuse it. The operator-only recipient and the hourly
+ * quota stay; across processes, the provider's idempotency key over a constant body dedupes.
+ */
+export function dbFreeMailAlertSink(mail: MailService, now: () => Date = () => new Date()): AlertSink {
+  return mailAlertSink(mail, { limiter: memoryRecipientLimiter(), now });
 }

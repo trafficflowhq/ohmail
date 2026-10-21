@@ -1,5 +1,5 @@
 import { users, providerFamily, UNMETERED, UNMETERED_ACCESS, parkedAccountsOf, type Tx } from "@trafficflow/db";
-import { readDbTls } from "@trafficflow/db/cloud";
+import { readDbTls, alertHeartbeatFor, type AlertHeartbeat } from "@trafficflow/db/cloud";
 import {
   acquireImapSlot, releaseImapSlot, webhookAlertSink, telegramAlertSink, refusingAlertSink,
   recordApiFault, accountsAtCapOf, planeOpsReaderOf,
@@ -29,7 +29,7 @@ import {
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
   FolderOpsService, scheduleService,
   workflowsService, proposalsService, redeemInviteGrant,
-  makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbRecipientLimiter,
+  makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter,
 } from "@trafficflow/services";
 // The policy TYPE lives on the mail entry (the sidecar imports it there too); the full barrel
 // above is still loaded by this app — which is exactly why the explicit allowance below exists.
@@ -190,6 +190,10 @@ export interface ServerRuntime {
   logger: Logger;
   /** The API alert arm's sinks ({@link alertSinksFor}), built once: the routes and the clock share them. */
   alertSinks: AlertSink[];
+  /** The last-resort page's arms ({@link alertArmsFor}): the same arms, the mail one database-free. */
+  alertLastResortSinks?: AlertSink[];
+  /** `TF_ALERT_HEARTBEAT_URL`, built once ({@link alertHeartbeatForServer}). Absent: off. */
+  alertHeartbeat?: AlertHeartbeat;
   /**
    * The handle the API alert pass and its reads run on: this process's pool. This host has one
    * role and no content-blind one, so it is `AlertsConfig.db`. Null only where a test stubs it
@@ -416,34 +420,65 @@ export function serverAiPorts(
  * observability feature must never cause the outage it exists to report.
  */
 export function alertSinksFor(cfg: ServerConfig, logger: Logger, db: Db): AlertSink[] {
+  return alertArmsFor(cfg, logger, db).sinks;
+}
+
+/**
+ * {@link alertSinksFor}'s arms and, beside them, the last-resort page's (`alert-last-resort.ts`):
+ * the same objects, names and order, except the mail arm, the same SMTP service with its
+ * recipient limiter in memory (`dbFreeMailAlertSink`), since that page is sent because the
+ * database is gone. Cannot throw.
+ */
+export function alertArmsFor(
+  cfg: ServerConfig, logger: Logger, db: Db,
+): { sinks: AlertSink[]; lastResort: AlertSink[] } {
   const alerts = cfg.alerts;
-  if (!alerts) return [];
   const sinks: AlertSink[] = [];
-  const add = (name: string, build: () => AlertSink | null): void => {
+  const lastResort: AlertSink[] = [];
+  if (!alerts) return { sinks, lastResort };
+  const same = (sink: AlertSink | null) => (sink ? { sink, lastResort: sink } : null);
+  const add = (name: string, build: () => { sink: AlertSink; lastResort: AlertSink } | null): void => {
     try {
-      const sink = build();
-      if (sink) sinks.push(sink);
+      const built = build();
+      if (built) { sinks.push(built.sink); lastResort.push(built.lastResort); }
     } catch (err) {
       logger.error("alert_sink_unavailable", {
         err, sink: name, reason: "an alert sink could not be constructed; it is published as refusing",
       });
       // Kept as an arm that refuses, so `/health`, the pager verdict and the other driver see it.
-      sinks.push(refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`));
+      const refusing = refusingAlertSink(name, `the ${name} arm could not be built at boot (alert_sink_unavailable)`);
+      sinks.push(refusing);
+      lastResort.push(refusing);
     }
   };
-  add("webhook", () => webhookAlertSink(alerts.webhookUrl ?? undefined));
-  add("telegram", () => telegramAlertSink({
+  add("webhook", () => same(webhookAlertSink(alerts.webhookUrl ?? undefined)));
+  add("telegram", () => same(telegramAlertSink({
     botToken: alerts.telegram.botToken ?? undefined, chatId: alerts.telegram.chatId ?? undefined,
-  }));
+  })));
   // `config.ts` refused TF_ALERT_EMAIL without an SMTP block, so both are here or the arm is off.
   const { email } = alerts;
   const { smtp } = cfg;
   if (email && smtp) {
-    add("mail", () => mailAlertSink(smtpMailServiceFor(cfg, smtp, email), {
-      limiter: dbRecipientLimiter(db), now: () => new Date(),
-    }));
+    add("mail", () => {
+      const service = smtpMailServiceFor(cfg, smtp, email);
+      return {
+        sink: mailAlertSink(service, { limiter: dbRecipientLimiter(db), now: () => new Date() }),
+        lastResort: dbFreeMailAlertSink(service),
+      };
+    });
   }
-  return sinks;
+  return { sinks, lastResort };
+}
+
+/** `TF_ALERT_HEARTBEAT_URL`, built once at boot. An unusable value is named, never printed. */
+export function alertHeartbeatForServer(cfg: ServerConfig, logger: Logger): AlertHeartbeat {
+  const heartbeat = alertHeartbeatFor(cfg.alerts?.heartbeatUrl);
+  if (heartbeat.state === "unusable") {
+    logger.error("alert_heartbeat_unusable", {
+      configVar: heartbeat.configVar, reason: "set but not one plain http(s) URL; no heartbeat is sent",
+    });
+  }
+  return heartbeat;
 }
 
 /**
@@ -657,6 +692,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
       ? {
         secret: cfg.alerts.secret,
         sinks: rt.alertSinks,
+        lastResortSinks: rt.alertLastResortSinks ?? [],
+        ...(rt.alertHeartbeat ? { heartbeat: rt.alertHeartbeat } : {}),
         environment: cfg.environment,
         // `null`: the bag's port is UNMETERED, so this server parks nobody and every stale
         // mailbox is on duty — the page may say its owner is not receiving mail. For the same

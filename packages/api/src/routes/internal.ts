@@ -1,7 +1,9 @@
 import {
   runAlertPass, listOpenAlerts, alertDriverStatuses, newDeliveryStreak, firingToLog,
   sinkHealthOf, pagerVerdictOf, planeOpsStateLine,
-  type AlertSink,
+  newLastResortState, lastResortFailed, lastResortSucceeded, lastResortLogLines,
+  readAlertDatabase, heartbeatLogLine, ALERT_DB_EVALUATE_MS, ALERT_DB_HANDLE_MS,
+  type AlertSink, type LastResortReport, type LastResortState, type HeartbeatLogMemory,
 } from "@trafficflow/db/cloud";
 import { sql } from "drizzle-orm";
 import { silentLogger, type Logger } from "@trafficflow/core";
@@ -317,6 +319,25 @@ const apiDeliveryStreak = newDeliveryStreak();
 const apiFiringLogged = new Map<string, string>();
 /** The plane read this warm instance last logged — see {@link planeOpsStateLine}. */
 const apiPlaneOpsLogged: { key: string | null } = { key: null };
+/** This instance's last-resort paging memory (`alert-last-resort.ts`): memory only, by design. */
+const apiLastResort: LastResortState = newLastResortState();
+/** The heartbeat state this instance last logged — see `heartbeatLogLine`. */
+const apiHeartbeatLogged: HeartbeatLogMemory = { last: null };
+
+/** TEST SEAM: forget this instance's last-resort and heartbeat memory, as a cold start would. */
+export function resetApiLastResortForTests(): void {
+  Object.assign(apiLastResort, newLastResortState());
+  apiHeartbeatLogged.last = null;
+}
+
+/** The last-resort report's lines, by named calls (the route census refuses a computed one). */
+function logLastResort(log: Logger, report: LastResortReport | null): void {
+  if (!report) return;
+  for (const line of lastResortLogLines(report)) {
+    if (line.level === "error") log.error(line.event, line.fields);
+    else log.warn(line.event, line.fields);
+  }
+}
 
 /**
  * How many passes this instance has completed, and the only reason it is counted:
@@ -356,8 +377,18 @@ export function apiAlertSinkSummary(sinks: readonly AlertSink[]): AlertSinkSumma
 async function alertPass(
   cfg: AlertsConfig, log: Logger, now: () => Date, handle: () => Promise<Tx>,
 ): Promise<Response> {
+  const lastResort = {
+    sinks: cfg.lastResortSinks ?? [], driver: "api" as const,
+    environment: cfg.environment ?? "production", deliveryStreak: apiDeliveryStreak,
+  };
+  // The evaluation's deadline counts from here, the staff handle included: a pass too slow to
+  // finish then fails by `ALERT_DB_EVALUATE_MS` and leaves the last-resort page its three arms'
+  // timeouts inside the platform's 60 s, where a killed function catches nothing.
+  const startedAt = Date.now();
   try {
-    const staff = await handle();
+    // Under a deadline and the `handle` tag: a staff connection that cannot be made is the
+    // database being gone, and the last-resort page below must be able to say so.
+    const staff = await readAlertDatabase("handle", handle, cfg.readDeadlinesMs?.handle ?? ALERT_DB_HANDLE_MS);
     // Counted the instant the pass can touch the streak; the placement is the field's
     // correctness. Counting after `runAlertPass` returned was false in a supported state: the
     // streak is mutated by `deliver()` and only then are the claims settled, so a settle UPDATE
@@ -388,7 +419,17 @@ async function alertPass(
       // only observer of `worker_down`, and it is now also the only observer of the worker
       // driver's own silence; the worker's pass watches this one in return.
       driver: "api",
+      ...(cfg.readDeadlinesMs?.firstRead !== undefined ? { firstReadMs: cfg.readDeadlinesMs.firstRead } : {}),
+      evaluateMs: Math.max(0, (cfg.readDeadlinesMs?.evaluate ?? ALERT_DB_EVALUATE_MS) - (Date.now() - startedAt)),
     });
+    // The pass completed: close a last-resort episode, then the dead-man ping. Neither throws, and
+    // the ping is bounded; both before the 200, which is all a serverless instance is sure to run.
+    logLastResort(log, await lastResortSucceeded(apiLastResort, { ...lastResort, now: now() }));
+    if (cfg.heartbeat?.state === "on") {
+      const line = heartbeatLogLine(apiHeartbeatLogged, await cfg.heartbeat.ping());
+      if (line?.event === "alert_heartbeat_failed") log.warn("alert_heartbeat_failed", line.fields);
+      else if (line) log.info("alert_heartbeat_restored", line.fields);
+    }
 
     for (const alert of firingToLog(apiFiringLogged, result.firing)) {
       log.warn("alert_firing", {
@@ -479,6 +520,8 @@ async function alertPass(
   } catch (err) {
     // `raw` means there is no error envelope above this handler, so it must never throw.
     log.error("alert_pass_failed", { err });
+    // A database that is gone or unusable pages from memory, reading and writing nothing. Never throws.
+    logLastResort(log, await lastResortFailed(apiLastResort, err, { ...lastResort, now: now() }));
     return json(503, { error: { code: "alert_pass_failed" } });
   }
 }

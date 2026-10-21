@@ -141,6 +141,8 @@ export interface AlertsEnv {
   email: string | null;
   /** `TF_ALERT_TELEGRAM_BOT_TOKEN` + `TF_ALERT_TELEGRAM_CHAT_ID`; a half-set pair is the sink's to refuse. */
   telegram: { botToken: string | null; chatId: string | null };
+  /** `TF_ALERT_HEARTBEAT_URL`: the dead-man GET after every completed pass (`alert-heartbeat.ts`). */
+  heartbeatUrl: string | null;
 }
 
 /**
@@ -458,6 +460,7 @@ function loadAlertsEnv(env: NodeJS.ProcessEnv, smtp: SmtpConfig | null): AlertsE
       botToken: trimmed(env, "TF_ALERT_TELEGRAM_BOT_TOKEN") || null,
       chatId: trimmed(env, "TF_ALERT_TELEGRAM_CHAT_ID") || null,
     },
+    heartbeatUrl: trimmed(env, "TF_ALERT_HEARTBEAT_URL") || null,
   };
 }
 

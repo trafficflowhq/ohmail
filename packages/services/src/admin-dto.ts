@@ -34,7 +34,9 @@ export type AdminAlertKind =
   | "alert_driver_undeliverable" | "alert_sink_degraded" | "api_cron_stale" | "signal_source_dark"
   // The billing plane's own failures, read from its `/v1/ops`: a stalled pass, a billing alert, and
   // a driver that cannot read the plane.
-  | "plane_pass_stale" | "billing_alert" | "plane_ops_unreadable";
+  | "plane_pass_stale" | "billing_alert" | "plane_ops_unreadable"
+  // The last-resort page when the database is gone; sent from memory, never a row.
+  | "alert_db_unreadable";
 /**
  * INCIDENT or SIGNAL — the class that decided whether this row went to a sink.
  *

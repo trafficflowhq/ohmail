@@ -54,6 +54,8 @@ export const MAIL_POLICY: { readonly [K in AlertKind]: (a: Alert) => MailVerdict
   plane_pass_stale: page,
   billing_alert: page,
   plane_ops_unreadable: page,
+  // The pager's last resort when the database is gone or unusable (`alert-last-resort.ts`).
+  alert_db_unreadable: page,
   api_fault_rate: (a) => (isEntitlements(a) || onPageRoute(a) ? "page" : "digest"),
   sync_lag: (a) =>
     a.severity === "critical" && (a.affectedAccounts ?? 0) >= SYNC_LAG_PAGE_ACCOUNTS ? "page" : "digest",
@@ -82,6 +84,18 @@ const DAILY_MAIL_KINDS: ReadonlySet<string> = new Set<AlertKind>([
 
 export function mailCooldownMs(kind: string): number {
   return DAILY_MAIL_KINDS.has(kind) ? DAILY_COOLDOWN_MS : MAIL_COOLDOWN_MS;
+}
+
+/**
+ * Kinds paged with no `alert_state` row to hold a cooldown: a half-finished deploy, and a database
+ * the pass cannot use. Their text is constant per host, so a LONE one keeps its mail idempotency
+ * key for its page window and the provider replays the first result instead of mailing again.
+ */
+const ROWLESS_PAGE_KINDS: ReadonlySet<string> = new Set<AlertKind>(["schema_behind", "alert_db_unreadable"]);
+
+/** True for a page of exactly one rowless kind. See {@link ROWLESS_PAGE_KINDS}. */
+export function isLoneRowlessPage(alerts: readonly Pick<Alert, "kind">[]): boolean {
+  return alerts.length === 1 && ROWLESS_PAGE_KINDS.has(alerts[0]!.kind);
 }
 
 /**

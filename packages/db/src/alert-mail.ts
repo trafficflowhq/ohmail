@@ -3,7 +3,9 @@ import {
   classifyTransportError, nodePostJson,
   type Alert, type AlertDeliveryResult, type AlertSink, type PostJson,
 } from "./alerts.js";
-import { DIGEST_INTERVAL_MS, MAIL_COOLDOWN_MS, type AlertDigest } from "./alert-mail-policy.js";
+import {
+  DIGEST_INTERVAL_MS, MAIL_COOLDOWN_MS, isLoneRowlessPage, type AlertDigest,
+} from "./alert-mail-policy.js";
 
 /**
  * The mail arm of the worker's pager — one JSON POST to the product's own transactional mailer,
@@ -151,12 +153,12 @@ export function renderDigestMail(
 export const ALERT_IDEMPOTENCY_BUCKET_MS = 10 * 60 * 1000;
 
 /**
- * A lone `schema_behind` has no `alert_state` row to hold a cooldown, and its body is constant per
- * host, so its key holds for the page window instead: the provider replays the first result.
+ * A lone `schema_behind` or `alert_db_unreadable` has no `alert_state` row to hold a cooldown, and its
+ * body is constant per host, so its key holds for the page window instead: the provider replays the
+ * first result.
  */
 export function alertIdempotencyBucketMs(alerts: readonly Pick<Alert, "kind">[]): number {
-  return alerts.length === 1 && alerts[0]!.kind === "schema_behind"
-    ? MAIL_COOLDOWN_MS : ALERT_IDEMPOTENCY_BUCKET_MS;
+  return isLoneRowlessPage(alerts) ? MAIL_COOLDOWN_MS : ALERT_IDEMPOTENCY_BUCKET_MS;
 }
 
 const digest = (body: string): string => createHash("sha256").update(body).digest("hex").slice(0, 32);
@@ -240,7 +242,7 @@ export function resendAlertSink(
     return { name: "mail", channel: "mail", notify: refuse, notifyDigest: refuse };
   }
 
-  // The belt for a lone `schema_behind`: once one was accepted, its key stays put for the page
+  // The belt for a lone rowless page (`schema_behind`, `alert_db_unreadable`): once one was accepted, its key stays put for the page
   // window even across a clock bucket's edge. In-process; the bucket alone covers a restart.
   let behindAnchor: { bucket: number; acceptedAt: number } | null = null;
 

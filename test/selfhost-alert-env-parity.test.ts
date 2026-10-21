@@ -53,7 +53,9 @@ const API = envAssignments(COMPOSE, "api");
 const ORGANIZER = envAssignments(COMPOSE, "organizer");
 const passthrough = (name: string): string => `\${${name}:-}`;
 
-const BOTH = ["TF_ALERT_WEBHOOK_URL", "TF_ALERT_TELEGRAM_BOT_TOKEN", "TF_ALERT_TELEGRAM_CHAT_ID"] as const;
+const BOTH = [
+  "TF_ALERT_WEBHOOK_URL", "TF_ALERT_TELEGRAM_BOT_TOKEN", "TF_ALERT_TELEGRAM_CHAT_ID", "TF_ALERT_HEARTBEAT_URL",
+] as const;
 const API_ONLY = ["TF_ALERT_SECRET", "TF_ALERT_EMAIL"] as const;
 
 describe("the parser reads two distinct services", () => {
@@ -100,6 +102,38 @@ describe("the secret and the mail address reach the api alone", () => {
 describe("an operator can find every one of them", () => {
   it.each([...BOTH, ...API_ONLY])("%s is named in .env.example", (name) => {
     expect(ENV_EXAMPLE).toMatch(new RegExp(`^#?${name}=`, "m"));
+  });
+});
+
+/** The `.env.example` comment paragraph (split on `#`-only, blank or assignment lines) naming `needle`. */
+function envParagraph(needle: string): string {
+  const paras: string[][] = [[]];
+  for (const line of ENV_EXAMPLE.split("\n")) {
+    if (/^# \S|^#\s{2,}\S/.test(line)) paras[paras.length - 1]!.push(line.slice(1).trim());
+    else paras.push([]);
+  }
+  const hit = paras.map((p) => p.join(" ")).filter((p) => p.includes(needle));
+  expect(hit, `paragraphs naming ${needle}`).toHaveLength(1);
+  return hit[0]!;
+}
+
+describe("the env docs promise only the database-down page the code sends", () => {
+  // The organizer's leader lock shares the database: it exits with it and runs no pass until it is
+  // back, and the api runs no pass (and sends no heartbeat) without TF_ALERT_SECRET.
+  it("the alert_db_unreadable page is the api's, behind TF_ALERT_SECRET, not each service's", () => {
+    const p = envParagraph("alert_db_unreadable");
+    expect(p).not.toMatch(/each service|both services/i);
+    expect(p).toContain("TF_ALERT_SECRET");
+    expect(p).toMatch(/leader lock/);
+    expect(p).toContain("TF_ALERT_HEARTBEAT_URL");
+  });
+
+  it("the secret's paragraph says the organizer alone does not page a stopped database", () => {
+    expect(envParagraph("Absent means the alert endpoints answer 404")).toMatch(/database/);
+  });
+
+  it("the heartbeat paragraph says the api requests it only with the secret", () => {
+    expect(envParagraph("dead-man heartbeat")).toContain("TF_ALERT_SECRET");
   });
 });
 

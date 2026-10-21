@@ -78,15 +78,20 @@ export const CONTENT_BITE_TESTS: ReadonlyArray<readonly [string, string]> = [
   ["messages (row existence)", "select count(*) from messages"],
 ];
 
-/** Refusal to mint a staff handle. Carries no connection string and no driver message. */
+/**
+ * Refusal to mint a staff handle. Carries no connection string and no driver message. `cause` is
+ * set only where a statement failed to run, so the alert pass can tell an unreachable database
+ * (a code down the chain) from a verdict on the role (no cause).
+ */
 export class NotContentBlindError extends Error {
-  constructor(readonly reason: string) {
+  constructor(readonly reason: string, opts?: { cause?: unknown }) {
     super(
       `refusing to build the staff database handle: ${reason}. DATABASE_URL_ADMIN must name a ` +
       `role that cannot read message content — run scripts/harden-staff-role.sql and point it ` +
       `at ohmail_admin`,
     );
     this.name = "NotContentBlindError";
+    if (opts?.cause !== undefined) (this as { cause?: unknown }).cause = opts.cause;
   }
 }
 
@@ -124,6 +129,7 @@ async function bite(
       code === null
         ? `the ${label} bite test failed with no SQLSTATE (the database is unreachable, or the schema is not this application's)`
         : `the ${label} bite test failed with SQLSTATE ${code}, not ${DENIED_SQLSTATE}`,
+      { cause: err },
     );
   }
   // THE DANGEROUS CASE. A bite test that SUCCEEDS means this connection can read mail, which
@@ -158,6 +164,7 @@ export async function assertContentBlind(
     throw new NotContentBlindError(
       `the capability census could not be read${code === null ? "" : ` (SQLSTATE ${code})`}` +
       ` — nothing has attested that this connection is ${STAFF_ROLE}`,
+      { cause: err },
     );
   }
 
