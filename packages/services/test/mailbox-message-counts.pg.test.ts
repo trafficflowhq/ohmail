@@ -52,6 +52,8 @@ const AVAILABLE = await realPgAvailable();
 
 /** Every statement the driver actually sent, in order. See the census tests at the bottom. */
 const sent: string[] = [];
+/** The count's own shape: grouped over `messages` alone. The list's batched facts group too, over joins. */
+const COUNTS_SHAPE = /\bfrom "messages" where\b[\s\S]*\bgroup by\b/i;
 
 describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
   let db: ReturnType<typeof drizzle<typeof schema>>;
@@ -168,8 +170,10 @@ describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
 
     await service.list(ctxFor(acct.id), { counts: true });
 
-    const grouped = sent.filter((q) => /\bgroup by\b/i.test(q));
+    const grouped = sent.filter((q) => COUNTS_SHAPE.test(q));
     expect(grouped).toHaveLength(1);
+    // Every statement that groups, the count and the list's facts, filters by the account.
+    for (const q of sent.filter((x) => /\bgroup by\b/i.test(x))) expect(q).toMatch(/\baccount_id"? = \$\d+/);
     /* Both halves of the ruling, read off the statement itself: it groups by the mailbox and it
        filters by the account, and neither is a second round trip. */
     expect(grouped[0]!.toLowerCase()).toContain("account_id");
@@ -180,7 +184,7 @@ describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
      THE POLLED ROUTE PAYS NOTHING — the census, taken at the driver
      ══════════════════════════════════════════════════════════════════════════════════════ */
 
-  it("the countless default runs ZERO grouped statements, and counts=1 adds exactly ONE", async () => {
+  it("the countless default runs ZERO message counts, and counts=1 adds exactly ONE statement", async () => {
     const acct = await seedAccount("m5-d", ["a", "b", "c"]);
     await seedMessages(acct.id, acct.mailboxIds[0]!, 2);
     await seedMessages(acct.id, acct.mailboxIds[1]!, 3);
@@ -194,19 +198,21 @@ describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
     const counted = [...sent];
 
     /**
-     * `GROUP BY` IS THE DISCRIMINATOR, and it is chosen rather than `count(`.
+     * THE COUNT'S OWN SHAPE IS THE DISCRIMINATOR, and it is chosen rather than `count(`.
      *
-     * `toDTO` already issues one `count(*)` per mailbox for `pendingMoves` — an UNGROUPED
-     * filtered aggregate that predates this slice and is on the default path by design. A
-     * census that asserted "no `count(`" would therefore be red before this feature existed,
-     * and the only way to make it green would be to weaken it. The new query is the only
-     * statement in either path that GROUPS, so that is what is counted.
+     * The default path counts too: the set-aside and filing facts are aggregates on it by
+     * design, and since they are read for all mailboxes at once they GROUP as well, over joins
+     * with `mailboxes`. So what is counted is the shape only the message count has: a grouped
+     * statement over `messages` alone. And the one statement `counts=1` adds must be that one.
      */
     expect(
-      bare.filter((q) => /\bgroup by\b/i.test(q)),
+      bare.filter((q) => COUNTS_SHAPE.test(q)),
       "the 30-second poll paid for an aggregate nobody reads",
     ).toEqual([]);
-    expect(counted.filter((q) => /\bgroup by\b/i.test(q))).toHaveLength(1);
+    expect(counted.filter((q) => COUNTS_SHAPE.test(q))).toHaveLength(1);
+    const added = counted.filter((q) => !bare.includes(q));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatch(COUNTS_SHAPE);
 
     /* ONE query for the whole account, not one per mailbox: three mailboxes, one extra
        statement. This is the assertion that fails if the counts variant is ever rewritten as a

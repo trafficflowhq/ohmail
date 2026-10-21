@@ -17,7 +17,7 @@ import {
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
+import { ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
 import { fenceErasedAccount, fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { fenceSignedOutMailbox, signedOutTransportMeta, type CredentialOrigin } from "./signed-out-fence.js";
 import { erasureRemaining, stampMailboxErasure, type MailboxErasureStamp } from "./mailbox-erasure.js";
@@ -194,6 +194,36 @@ export interface OrganizeHereInput {
 export const canonicalAddress = (raw: string): string => raw.trim();
 
 type MailboxRow = typeof mailboxes.$inferSelect;
+
+/** The filing aggregate over a mailbox's `folder_state` rows; absent when it has none. */
+interface FilingFacts {
+  n: number;
+  due: number;
+  deferred: number;
+  oldestPendingAt: Date | null;
+  nextAttemptAt: Date | null;
+  attempts: number;
+  lastRefusalClass: string | null;
+  stuck: number;
+  stuckSince: Date | null;
+  stuckRefusalClass: string | null;
+}
+
+/** What `toDTO` reads beside a mailbox row (`factsFor`). */
+interface MailboxFacts {
+  readonly setAside: number;
+  /** Ordered by folder name. */
+  readonly folders: ReadonlyArray<Pick<typeof mailboxFolders.$inferSelect,
+    "folder" | "highestmodseq" | "updatedAt" | "serverExists" | "budgetStopUid">>;
+  /** The `imap` credential's meta; `undefined` when the mailbox has no such row. */
+  readonly imapMeta: unknown;
+  readonly pending: FilingFacts | undefined;
+}
+
+/** The facts of a mailbox with no failure, folder, credential or filing row. */
+const NO_FACTS: MailboxFacts = Object.freeze({
+  setAside: 0, folders: Object.freeze([]), imapMeta: undefined, pending: undefined,
+});
 
 /** A per-transport secret + its non-secret connection params (host/port/user/secure). */
 export interface TransportInput {
@@ -1014,9 +1044,9 @@ export class MailboxService {
     // tab, Settings every 10 s — and `messageCount` is an aggregate over the account's whole
     // message history, so it is computed only for `GET /mailboxes?counts=1` and ABSENT otherwise,
     // never sent as `0`. ONE statement for the whole account, taken BEFORE the per-mailbox loop:
-    // reading the count inside `toDTO` would be one aggregate per mailbox, the shape this method
-    // already pays twice for folders and pending moves and must not pay a third time over a table
-    // whose size is the product's whole point.
+    // reading the count inside `toDTO` would be one aggregate per mailbox. The other facts are
+    // read the same way, for all rows at once (`factsFor`), so a poll costs the same statements
+    // whatever the number of mailboxes.
 
     /* A FINISHED ERASURE IS NOT LISTED. Its row survives only as the fence a late writer is
        refused by; listed, it read as a disconnected mailbox ohmail still held mail for, beside the
@@ -1026,13 +1056,160 @@ export class MailboxService {
       .where(and(eq(mailboxes.accountId, ctx.accountId), isNull(mailboxes.erasureDoneAt)))
       .orderBy(asc(mailboxes.id));
     const counts = opts.counts ? await this.messageCounts(ctx) : null;
+    if (rows.length === 0) return [];
+    // ONE reading of the clock for the whole answer: the filing facts and every row's `asOf`.
+    const now = ctx.now();
+    const facts = await this.factsFor(ctx, now, rows.map((r) => r.id));
     const out: MailboxDTO[] = [];
     for (const m of rows) {
       /* `?? 0` and not `map.get(id)` bare: a mailbox holding no mail produces NO GROUP ROW, so
          the map has no entry for it — and forwarding that `undefined` would emit an ABSENT
          field, which on this wire means "nobody asked" about a mailbox somebody did ask
          about. An empty mailbox has an answer and it is zero. */
-      out.push(await this.toDTO(ctx, m, counts ? counts.get(m.id) ?? 0 : undefined));
+      out.push(await this.toDTO(ctx, m, counts ? counts.get(m.id) ?? 0 : undefined,
+        { now, facts: facts.get(m.id) ?? NO_FACTS }));
+    }
+    return out;
+  }
+
+  /**
+   * The facts `toDTO` reads beside each row, for many mailboxes at once: four statements per
+   * slice of at most ACCOUNT_MAILBOXES_MAX_READ ids (every real account fits in one), whatever
+   * the number of mailboxes. A mailbox with no row in any of the four tables has no entry, and
+   * `NO_FACTS` stands for it.
+   *
+   * Every statement joins `mailboxes` on the slice AND the caller's account (index-only on
+   * `mailboxes_id_account_uq`), so another account's facts cannot reach a row: account isolation.
+   * `now` is the caller's one clock reading, which `filing.asOf` reports: the counts that
+   * compare `next_attempt_at` with it must be taken at that same instant. Awaited one after
+   * another, on the handle the caller passed — the update door's is its transaction.
+   */
+  private async factsFor(
+    ctx: ServiceContext, now: Date, ids: readonly string[],
+  ): Promise<Map<string, MailboxFacts>> {
+    type Facts = {
+      setAside: number; folders: Array<MailboxFacts["folders"][number]>; imapMeta: unknown; pending: FilingFacts | undefined;
+    };
+    const out = new Map<string, Facts>();
+    const entry = (id: string): Facts => {
+      let f = out.get(id);
+      if (!f) {
+        f = { setAside: 0, folders: [], imapMeta: undefined, pending: undefined };
+        out.set(id, f);
+      }
+      return f;
+    };
+    const d = dialect(ctx.db);
+    for (let i = 0; i < ids.length; i += ACCOUNT_MAILBOXES_MAX_READ) {
+      const part = ids.slice(i, i + ACCOUNT_MAILBOXES_MAX_READ);
+      const scope = and(eq(mailboxes.accountId, ctx.accountId), inArray(mailboxes.id, part));
+
+      // Mail set aside: failures not yet resolved.
+      const aside = await ctx.db.select({
+        mailboxId: messageFailures.mailboxId,
+        n: d.castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
+      }).from(messageFailures)
+        .innerJoin(mailboxes, eq(mailboxes.id, messageFailures.mailboxId))
+        .where(and(scope, isNull(messageFailures.resolvedAt)))
+        .groupBy(messageFailures.mailboxId);
+      for (const a of aside) entry(a.mailboxId).setAside = a.n;
+
+      // The folders, each mailbox's by name: `firstSyncStopFolder` takes the first stop in that order.
+      const folders = await ctx.db.select({
+        mailboxId: mailboxFolders.mailboxId,
+        folder: mailboxFolders.folder,
+        highestmodseq: mailboxFolders.highestmodseq,
+        updatedAt: mailboxFolders.updatedAt,
+        serverExists: mailboxFolders.serverExists,
+        budgetStopUid: mailboxFolders.budgetStopUid,
+      }).from(mailboxFolders)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxFolders.mailboxId))
+        .where(scope)
+        .orderBy(asc(mailboxFolders.mailboxId), asc(mailboxFolders.folder));
+      for (const { mailboxId, ...f } of folders) entry(mailboxId).folders.push(f);
+
+      /**
+       * Is sending set up, and which host does ingest believe — off the INCOMING credential's
+       * meta, where the unsettled marker lives. An unproven submission credential is never
+       * stored, so there is no `smtp` row to ask; the marker rides the imap row beside `smtpHost`.
+       * Read from the credential rather than a column on `mailboxes`: the fact belongs to the
+       * credential and must be rewritten by the same patch that stores a proven `smtp` row, or
+       * the two could disagree. At most one `imap` row per mailbox (the primary key). The meta
+       * alone: never `secret_enc`.
+       */
+      const creds = await ctx.db.select({ mailboxId: mailboxCredentials.mailboxId, meta: mailboxCredentials.meta })
+        .from(mailboxCredentials)
+        .innerJoin(mailboxes, eq(mailboxes.id, mailboxCredentials.mailboxId))
+        .where(and(scope, eq(mailboxCredentials.transport, "imap")));
+      for (const c of creds) entry(c.mailboxId).imapMeta = c.meta;
+
+      // Our own filings the mail server has not applied yet (see `MailboxDTO.pendingMoves`). A
+      // COUNT, never the rows. Joined through `messages` because `folder_state` carries no mailbox
+      // column. `folder-state-pending.ts` owns every predicate: this counts `pending` ∧
+      // `last_set_by = 'us'` ∧ `desired <> observed`, which a DEFERRED row is in and the
+      // reconciler's due queue is not; {@link MailboxDTO.filing} splits the same rows by the
+      // operand that decides. The labels are built in TypeScript (`toISOString()`), not `to_char`,
+      // which the device store does not have.
+      //
+      // THE CLASS OF THE ROW `attempts` CAME FROM, so the two halves of one sentence are about
+      // one message: ordered by `attempts` (then by the widest schedule) rather than by
+      // `updated_at`, which the deferral does not stamp. An ordered pick, as a subquery rather
+      // than the first element of an ordered `array_agg` — a Postgres aggregate with no
+      // counterpart on the device store. Correlated on `mailboxes.id`, the outer row: a
+      // `messages` column there would bind to the subquery's own `messages`.
+      const pick = (which: SQL) => ctx.db
+        .select({ c: folderState.lastErrorClass })
+        .from(folderState)
+        .innerJoin(messages, eq(messages.id, folderState.messageId))
+        .where(and(
+          eq(messages.accountId, ctx.accountId),
+          eq(messages.mailboxId, mailboxes.id),
+          which,
+          isNotNull(folderState.lastErrorClass),
+        ))
+        .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
+        .limit(1);
+      const filings = await ctx.db.select({
+        mailboxId: mailboxes.id,
+        n: d.castInt(sql`count(*) filter (where ${ourOutstandingFiling()})`).mapWith(Number) as unknown as SQL<number>,
+        due: d.castInt(sql`count(*) filter (where ${filingDue(now)})`).mapWith(Number) as unknown as SQL<number>,
+        deferred: d.castInt(sql`count(*) filter (where ${filingDeferred(now)})`).mapWith(Number) as unknown as SQL<number>,
+        // MIN over `updated_at`, which is the reconciler's OWN queue order (`listPendingFolderStates`
+        // orders by it) and the honest "waiting since": the intent writers stamp it and
+        // `deferFolderReconcile` deliberately does not, because "a refusal is not a re-filing".
+        // A `created_at` would have been wrong here — `folder_state` is upserted per message, so a
+        // creation stamp dates the message's FIRST filing and would report weeks of waiting over a
+        // decision made a second ago.
+        oldestPendingAt: sql<Date | null>`
+          min(${folderState.updatedAt}) filter (where ${ourOutstandingFiling()})`
+          .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
+        // MIN, not max: the SOONEST is when something will next happen, which is what a sentence
+        // promising a retry has to name. Over the deferred rows alone — a due row's NULL means "now"
+        // and has no instant to quote.
+        nextAttemptAt: sql<Date | null>`
+          min(${folderState.nextAttemptAt}) filter (where ${filingDeferred(now)})`
+          .mapWith(folderState.nextAttemptAt) as unknown as SQL<Date | null>,
+        attempts: d.castInt(sql`
+          coalesce(max(${folderState.attempts}) filter (where ${ourOutstandingFiling()}), 0)`)
+          .mapWith(Number) as unknown as SQL<number>,
+        lastRefusalClass: sql<string | null>`(${pick(ourOutstandingFiling())})`,
+        // THE STUCK ROWS ALONE (`filingStuck`): how many, the oldest, and the class the worst of
+        // them carries. The stuck sentence reads these, so a seconds-old move is not counted under
+        // an old one's clock and a row nothing refused is not handed another row's reason.
+        stuck: d.castInt(sql`count(*) filter (where ${filingStuck(now)})`).mapWith(Number) as unknown as SQL<number>,
+        stuckSince: sql<Date | null>`
+          min(${folderState.updatedAt}) filter (where ${filingStuck(now)})`
+          .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
+        stuckRefusalClass: sql<string | null>`(${pick(filingStuck(now))})`,
+      })
+        .from(mailboxes)
+        .innerJoin(messages, eq(messages.mailboxId, mailboxes.id))
+        .innerJoin(folderState, eq(folderState.messageId, messages.id))
+        // The account on `messages` too: joined to the listed mailboxes alone, the planner sizes
+        // them from the whole table and, beside a larger account, reads every account's filings.
+        .where(and(scope, eq(messages.accountId, ctx.accountId)))
+        .groupBy(mailboxes.id);
+      for (const { mailboxId, ...p } of filings) entry(mailboxId).pending = p;
     }
     return out;
   }
@@ -2737,6 +2914,7 @@ export class MailboxService {
 
   private async toDTO(
     ctx: ServiceContext, m: MailboxRow, messageCount?: number,
+    given?: { now: Date; facts: MailboxFacts },
   ): Promise<MailboxDTO> {
     // MailboxDTO — identity + lifecycle + a per-folder sync summary. NEVER credentials.
     //
@@ -2745,31 +2923,17 @@ export class MailboxService {
     // projection would be one full scan per row; `list` takes it once and hands each row its
     // share. Every other caller (`get`, `create`, `update`) omits the argument and the field is
     // absent from their DTOs — a single mailbox read is not a surface that asks "how many".
+    //
+    // `given` is `list`'s clock reading and this row's share of the facts it read for all rows
+    // at once. A single-row door passes nothing, and the same read runs here for its one row.
     const lastCycleAt = await this.lastCycleAtFor(ctx);
-    const [aside] = await ctx.db.select({
-      n: dialect(ctx.db).castInt(sql`count(*)`).mapWith(Number) as unknown as SQL<number>,
-    }).from(messageFailures)
-      .where(and(eq(messageFailures.mailboxId, m.id), isNull(messageFailures.resolvedAt)));
-    const fRows = await ctx.db.select().from(mailboxFolders)
-      .where(eq(mailboxFolders.mailboxId, m.id)).orderBy(asc(mailboxFolders.folder));
-    /**
-     * Is sending set up — off the INCOMING credential's meta, where the unsettled marker lives.
-     * An unproven submission credential is never stored, so there is no `smtp` row to ask; the
-     * marker rides the imap row beside `smtpHost`. One indexed point-read per mailbox rather than
-     * a column on `mailboxes`: the fact belongs to the credential and must be rewritten by the
-     * same patch that stores a proven `smtp` row, or the two could disagree. A mailbox with no
-     * credential reports `null` — the same answer as "settled", and the right one: nothing is
-     * unsettled about a mailbox that has not been given a password yet.
-     */
-    const [imapCred] = await ctx.db.select({ meta: mailboxCredentials.meta })
-      .from(mailboxCredentials)
-      .where(and(
-        eq(mailboxCredentials.mailboxId, m.id),
-        eq(mailboxCredentials.transport, "imap"),
-      ))
-      .limit(1);
-    const unsettledRaw = (imapCred?.meta as { smtpUnsettled?: unknown } | null | undefined)
-      ?.smtpUnsettled;
+    const now = given?.now ?? ctx.now();
+    const facts = given?.facts ?? (await this.factsFor(ctx, now, [m.id])).get(m.id) ?? NO_FACTS;
+    const fRows = facts.folders;
+    /* A mailbox with no credential reports `null` — the same answer as "settled", and the right
+       one: nothing is unsettled about a mailbox that has not been given a password yet. */
+    const imapMeta = facts.imapMeta as { smtpUnsettled?: unknown; host?: unknown } | null | undefined;
+    const unsettledRaw = imapMeta?.smtpUnsettled;
     /* `""` IS SETTLED, not unsettled-with-no-reason. That spelling is what a repair writes, and
        reading it as a truthy marker would leave a fixed mailbox reporting a problem for ever. */
     const sendingUnsettled = typeof unsettledRaw === "string" && unsettledRaw !== ""
@@ -2777,7 +2941,7 @@ export class MailboxService {
       : null;
     /* The host the credential records, off the same read: whose `Authentication-Results` ingest and
        the unsubscribe believe for this mailbox (`providerAuthservIds`). No host, no answer. */
-    const imapHost = (imapCred?.meta as { host?: unknown } | null | undefined)?.host;
+    const imapHost = imapMeta?.host;
     const providerConfirms = typeof imapHost === "string" && imapHost.trim() !== ""
       ? providerAuthservIds(imapHost).size > 0
       : undefined;
@@ -2809,77 +2973,10 @@ export class MailboxService {
         serverExistsSeen = true;
       }
     }
-    // Our own filings this mailbox has not applied yet (see `MailboxDTO.pendingMoves`). A COUNT,
-    // never the rows. Joined through `messages` because `folder_state` carries no mailbox column.
-    // The predicates are NOT `listPendingFolderStates`' — this comment used to claim they were,
-    // and both halves were false: this counts `pending` ∧ `last_set_by = 'us'` ∧ `desired <>
-    // observed`; the queue filters `pending` ∧ `dueNow(next_attempt_at)`. So a DEFERRED row is IN
-    // this number and ABSENT from that queue — the reported defect: the strip said "Filing 1
-    // message…" about a row nothing was touching. `folder-state-pending.ts` owns every predicate.
-    // The COUNT is unchanged, byte for byte; {@link MailboxDTO.filing} sits beside it, the same
-    // rows split by the operand that decides. ONE statement; the label is built in TypeScript
-    // (`toISOString()`), not `to_char`, which the device store does not have.
-    const now = ctx.now();
-    const d = dialect(ctx.db);
-    const [pending] = await ctx.db.select({
-      n: d.castInt(sql`count(*) filter (where ${ourOutstandingFiling()})`).mapWith(Number) as unknown as SQL<number>,
-      due: d.castInt(sql`count(*) filter (where ${filingDue(now)})`).mapWith(Number) as unknown as SQL<number>,
-      deferred: d.castInt(sql`count(*) filter (where ${filingDeferred(now)})`).mapWith(Number) as unknown as SQL<number>,
-      // MIN over `updated_at`, which is the reconciler's OWN queue order (`listPendingFolderStates`
-      // orders by it) and the honest "waiting since": the intent writers stamp it and
-      // `deferFolderReconcile` deliberately does not, because "a refusal is not a re-filing".
-      // A `created_at` would have been wrong here — `folder_state` is upserted per message, so a
-      // creation stamp dates the message's FIRST filing and would report weeks of waiting over a
-      // decision made a second ago.
-      oldestPendingAt: sql<Date | null>`
-        min(${folderState.updatedAt}) filter (where ${ourOutstandingFiling()})`
-        .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
-      // MIN, not max: the SOONEST is when something will next happen, which is what a sentence
-      // promising a retry has to name. Over the deferred rows alone — a due row's NULL means "now"
-      // and has no instant to quote.
-      nextAttemptAt: sql<Date | null>`
-        min(${folderState.nextAttemptAt}) filter (where ${filingDeferred(now)})`
-        .mapWith(folderState.nextAttemptAt) as unknown as SQL<Date | null>,
-      attempts: d.castInt(sql`
-        coalesce(max(${folderState.attempts}) filter (where ${ourOutstandingFiling()}), 0)`)
-        .mapWith(Number) as unknown as SQL<number>,
-      // THE CLASS OF THE ROW `attempts` CAME FROM, so the two halves of one sentence are about
-      // one message. Ordered by `attempts` (then by the widest schedule) rather than by
-      // `updated_at`: the deferral does not stamp `updated_at`, so ordering by it would pair the
-      // reported attempt count with a different row's reason.
-      // THE ORDERED PICK, as a subquery rather than as the first element of an ordered
-      // `array_agg` — which is a Postgres aggregate with no counterpart on the device store, and
-      // which sorted EVERY outstanding row to read one of them. Same predicate, same order, same
-      // value, and uncorrelated, so it is one round trip and one evaluation on both stores.
-      lastRefusalClass: sql<string | null>`(${ctx.db
-        .select({ c: folderState.lastErrorClass })
-        .from(folderState)
-        .innerJoin(messages, eq(messages.id, folderState.messageId))
-        .where(and(
-          eq(messages.mailboxId, m.id),
-          ourOutstandingFiling(),
-          isNotNull(folderState.lastErrorClass),
-        ))
-        .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
-        .limit(1)})`,
-      // THE STUCK ROWS ALONE (`filingStuck`): how many, the oldest, and the class the worst of
-      // them carries. The stuck sentence reads these, so a seconds-old move is not counted under
-      // an old one's clock and a row nothing refused is not handed another row's reason.
-      stuck: d.castInt(sql`count(*) filter (where ${filingStuck(now)})`).mapWith(Number) as unknown as SQL<number>,
-      stuckSince: sql<Date | null>`
-        min(${folderState.updatedAt}) filter (where ${filingStuck(now)})`
-        .mapWith(folderState.updatedAt) as unknown as SQL<Date | null>,
-      stuckRefusalClass: sql<string | null>`(${ctx.db
-        .select({ c: folderState.lastErrorClass })
-        .from(folderState)
-        .innerJoin(messages, eq(messages.id, folderState.messageId))
-        .where(and(eq(messages.mailboxId, m.id), filingStuck(now), isNotNull(folderState.lastErrorClass)))
-        .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
-        .limit(1)})`,
-    })
-      .from(folderState)
-      .innerJoin(messages, eq(messages.id, folderState.messageId))
-      .where(eq(messages.mailboxId, m.id));
+    // Our own filings this mailbox has not applied yet, split by the operand that decides
+    // (`factsFor`). A mailbox with no `folder_state` row has no aggregate row, which reads as the
+    // zeros and nulls an empty aggregate gives.
+    const pending = facts.pending;
     return {
       id: m.id,
       provider: m.provider,
@@ -2934,9 +3031,9 @@ export class MailboxService {
       inboundQuietSince: m.inboundQuietSince ? m.inboundQuietSince.toISOString() : null,
       inboundQuietDismissedAt: m.inboundQuietDismissedAt ? m.inboundQuietDismissedAt.toISOString() : null,
       // UNCONDITIONAL, for the reason the sync-block pair above is: every state this number
-      // describes happens while the row says `connected`. `?? 0` because `count(*)` cannot
-      // return no row here, but a driver that answered `undefined` must degrade to "nothing
-      // outstanding" rather than to `NaN` on somebody's strip.
+      // describes happens while the row says `connected`. `?? 0` because a mailbox with no
+      // `folder_state` row has no group in `factsFor`'s aggregate, and that is "nothing
+      // outstanding", never `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
       // ── THE SAME ROWS, SPLIT BY THE OPERAND THAT DECIDES (mail 0097) ───────────────────
       //
@@ -2998,7 +3095,7 @@ export class MailboxService {
         && m.organizedByInstallId !== null
         && m.organizedByInstallId === this.deps.installId,
       // UNCONDITIONAL, `pendingMoves`' rule: a set-aside message sits in a `connected` mailbox.
-      setAside: Number(aside?.n ?? 0),
+      setAside: facts.setAside,
       // THE CONSENT STAMP, beside the role rather than derived from it — the two are independent
       // and the DTO's own doc carries the argument. Projected UNCONDITIONALLY like its three
       // neighbours, and as a plain instant: no coercion is possible or needed, since the only

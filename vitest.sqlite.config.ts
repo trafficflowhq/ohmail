@@ -488,6 +488,8 @@ export default defineConfig({
       // …and WHO it acts for (UD-R4-03): the person-decided rule predicate reaches both stores.
       "packages/services/test/unsubscribe-acts-only-for-a-person.test.ts",
       "packages/services/test/mailbox-filing-report.test.ts",
+      // The mailbox list's facts, read for all of an account's mailboxes at once, on this store too.
+      "packages/services/test/mailbox-facts-batched.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
       "packages/services/test/organize-rerun-window.test.ts",
       "packages/db/test/json-merge-dialect.test.ts",
