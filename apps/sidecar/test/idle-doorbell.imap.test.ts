@@ -12,14 +12,18 @@ import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 
-vi.setConfig({ testTimeout: 2 * PGLITE_STANDUP_BUDGET_MS });
+/** What a case stands on (the launch and the first arrival after it) has its own bound. */
+const PREMISE_BOUND_MS = 30_000;
+
+vi.setConfig({ testTimeout: 2 * PGLITE_STANDUP_BUDGET_MS + PREMISE_BOUND_MS });
 
 /**
  * THE DOORBELL AFTER A POLL, on real servers. A poll drain ends with the request channel and the
  * profile publish, both on `ohmail/_meta`; the INBOX re-arm ran before them, so IDLE rested on
  * `_meta` and an arrival waited for the ladder (56-120 s on 0.26.1). The poll here is an hour, so
  * only the doorbell can bring the mail in time. The same after a pass whose mail read failed, and
- * after a hand-back and resume. Control: with IDLE not advertised the poll does.
+ * after a hand-back and resume. Control: with IDLE not advertised the poll does. The first arrival after
+ * the launch is the premise (it pays the process's first ingest); every arrival a case proves keeps 5 s.
  */
 
 const GREENMAIL = { host: process.env.IMAP_HOST ?? "127.0.0.1", port: Number(process.env.IMAP_PORT ?? 3143) };
@@ -115,6 +119,11 @@ async function standUp(
   return { sidecar, raw, lines, address, adapters, failNextRead: () => { failRead = true; } };
 }
 
+/** The start, which reports a failed mailbox rather than throwing: a case stands on a launch that served. */
+async function launch(w: World): Promise<void> {
+  expect((await w.sidecar.start()).failures, "the premise: the launch").toEqual([]);
+}
+
 async function deliver(w: World, tag: string): Promise<string> {
   const mid = `doorbell-${tag}-${randomUUID()}@rig.test`;
   await w.raw.append("INBOX", Buffer.from([
@@ -157,8 +166,8 @@ for (const server of SERVERS) {
   describe.skipIf(!server.up)(`the INBOX doorbell after a poll drain (${server.name})`, () => {
     it("an arrival after a poll drain reaches the store within seconds, on the IDLE", async () => {
       const w = await standUp(server, { pollIntervalMs: HOUR, idle: true });
-      await w.sidecar.start();
-      expect(await arrivalMs(w, await deliver(w, "launch"), DOORBELL_BOUND_MS), "the premise: after the launch")
+      await launch(w);
+      expect(await arrivalMs(w, await deliver(w, "launch"), PREMISE_BOUND_MS), "the premise: after the launch")
         .not.toBeNull();
       // Two poll drains, each through the request channel and the profile publish.
       for (const round of [1, 2]) {
@@ -173,7 +182,7 @@ for (const server of SERVERS) {
 
     it("an arrival after a FAILED poll pass still rings: the failure is not a dead doorbell", async () => {
       const w = await standUp(server, { pollIntervalMs: HOUR, idle: true });
-      await w.sidecar.start();
+      await launch(w);
       w.failNextRead();
       await w.sidecar.syncUntilQuiet().catch(() => undefined);
       expect(w.lines.some((l) => l.event === "local_wake_rearm_failed")).toBe(false);
@@ -185,7 +194,7 @@ for (const server of SERVERS) {
 
     it("after a hand-back and a resume the doorbell rings again", async () => {
       const w = await standUp(server, { pollIntervalMs: HOUR, idle: true });
-      await w.sidecar.start();
+      await launch(w);
       await w.sidecar.syncUntilQuiet();
       await w.sidecar.handBack();
       await w.sidecar.resume();
@@ -197,7 +206,7 @@ for (const server of SERVERS) {
 
     it("with IDLE not advertised the poll carries the arrival, at the base interval", async () => {
       const w = await standUp(server, { pollIntervalMs: 1_500, idle: false });
-      await w.sidecar.start();
+      await launch(w);
       expect(w.lines.filter((l) => l.event === "local_wake_unarmed").length).toBe(1);
       await w.sidecar.syncUntilQuiet();
       expect(await arrivalMs(w, await deliver(w, "poll"), DOORBELL_BOUND_MS), "the poll fallback").not.toBeNull();
