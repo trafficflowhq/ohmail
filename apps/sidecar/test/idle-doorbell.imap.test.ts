@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { messages } from "@trafficflow/db";
 import { createSidecar, type AdapterDialContext, type Sidecar } from "../src/engine.js";
+import { noteFirstPageServed } from "../src/first-page-gate.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -72,6 +73,9 @@ afterEach(async () => {
 async function standUp(
   server: (typeof SERVERS)[number], opts: { pollIntervalMs: number; idle: boolean },
 ): Promise<World> {
+  // The window's first page is served, as the desktop's is at boot (`host.ts`): the gate's once-per-process
+  // grace then sits in no case's doorbell bound, whichever case runs first.
+  noteFirstPageServed();
   const address = `idle-${randomUUID()}@trafficflow.test`;
   const imap = { host: server.host, port: server.port, secure: false, auth: { user: address, pass: server.pass } };
   const dataDir = await freshDataDir("ohmail-idle-doorbell-");
@@ -138,6 +142,17 @@ function restingOn(w: World): { path: string | null; idling: boolean } {
   return { path: mb && typeof mb === "object" ? mb.path : null, idling: client?.idling === true };
 }
 
+/** Where the connection rests once it rests on INBOX with IDLE running, or where it is past the bound. */
+async function restsOnInbox(w: World): Promise<{ path: string | null; idling: boolean }> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < DOORBELL_BOUND_MS) {
+    const now = restingOn(w);
+    if (now.path === "INBOX" && now.idling) return now;
+    await new Promise((r) => { setTimeout(r, 25); });
+  }
+  return restingOn(w);
+}
+
 for (const server of SERVERS) {
   describe.skipIf(!server.up)(`the INBOX doorbell after a poll drain (${server.name})`, () => {
     it("an arrival after a poll drain reaches the store within seconds, on the IDLE", async () => {
@@ -148,8 +163,7 @@ for (const server of SERVERS) {
       // Two poll drains, each through the request channel and the profile publish.
       for (const round of [1, 2]) {
         await w.sidecar.syncUntilQuiet();
-        await new Promise((r) => { setTimeout(r, 300); });
-        expect(restingOn(w), `after poll drain ${round} the connection does not rest on INBOX`)
+        expect(await restsOnInbox(w), `after poll drain ${round} the connection does not rest on INBOX`)
           .toEqual({ path: "INBOX", idling: true });
         const took = await arrivalMs(w, await deliver(w, `poll-${round}`), DOORBELL_BOUND_MS);
         expect(took, `arrival after poll drain ${round} waited for the poll`).not.toBeNull();
@@ -163,8 +177,7 @@ for (const server of SERVERS) {
       w.failNextRead();
       await w.sidecar.syncUntilQuiet().catch(() => undefined);
       expect(w.lines.some((l) => l.event === "local_wake_rearm_failed")).toBe(false);
-      await new Promise((r) => { setTimeout(r, 300); });
-      expect(restingOn(w), "after the failed pass the connection does not rest on INBOX")
+      expect(await restsOnInbox(w), "after the failed pass the connection does not rest on INBOX")
         .toEqual({ path: "INBOX", idling: true });
       expect(await arrivalMs(w, await deliver(w, "after-failure"), DOORBELL_BOUND_MS),
         "arrival after the failed pass waited for the poll").not.toBeNull();
@@ -176,8 +189,7 @@ for (const server of SERVERS) {
       await w.sidecar.syncUntilQuiet();
       await w.sidecar.handBack();
       await w.sidecar.resume();
-      await new Promise((r) => { setTimeout(r, 300); });
-      expect(restingOn(w), "after the resume the connection does not rest on INBOX")
+      expect(await restsOnInbox(w), "after the resume the connection does not rest on INBOX")
         .toEqual({ path: "INBOX", idling: true });
       expect(await arrivalMs(w, await deliver(w, "after-resume"), DOORBELL_BOUND_MS),
         "arrival after the resume waited for the poll").not.toBeNull();

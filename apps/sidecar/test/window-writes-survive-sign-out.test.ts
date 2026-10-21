@@ -195,7 +195,8 @@ describe("a write the window made outlives a sign-out", () => {
     expect(await until(10_000, () => s.writes.length === 2), "the next sign-in did not send the kept write").toBe(true);
     expect(s.writes[1], "delivered under another key, or not delivered").toEqual({ key, host: "host.test", answered: 200 });
     expect(await drive(w2)).toBeNull();
-    expect(kept(dataDir, A, BASE1), "a delivered write stayed on disk").toHaveLength(0);
+    // The drain that proves the echo deletes the row on the store's write lane, unawaited: wait for the disk.
+    expect(await until(10_000, () => kept(dataDir, A, BASE1).length === 0), "a delivered write stayed on disk").toBe(true);
     expect(s.writes, "delivered twice").toHaveLength(2);
   });
 
@@ -321,7 +322,7 @@ describe("a kept write is its own account's, on its own server", () => {
     expect(await until(10_000, () => s.writes.length === 2)).toBe(true);
     expect(s.writes[1], "A's write, under its key, on A's server").toEqual({ key, host: "host.test", answered: 200 });
     expect(await drive(w2)).toBeNull();
-    expect(kept(dataDir, A, BASE1)).toHaveLength(0);
+    expect(await until(10_000, () => kept(dataDir, A, BASE1).length === 0), "a delivered write stayed on disk").toBe(true);
     expect(s.writes).toHaveLength(2);
   });
 

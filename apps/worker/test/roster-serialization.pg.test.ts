@@ -676,6 +676,8 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     expect(seeds.every((s) => fleet.indicesOf(s.mailboxId, "watch").length > 0), "a mailbox is not IDLE-armed").toBe(true);
 
     const at = await boundary.park(seeds, [a!, b!]);
+    // The held pass's lines start here: no lane is open at a tail slice, so every earlier turn has logged.
+    const held = visits.length;
     await waitFor(() => fleet.syncInFlight === 2, 20_000,
       `both batches parked inside their own turns of the next pass — trace: ${fleet.describeTrace(names)}`);
     // Stamped when a pass ENDS: the parks pin it from here until their release.
@@ -683,7 +685,7 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     expect(passStamp, "no pass had ended before the parks, so the pin below is vacuous").not.toBeNull();
 
     const TURNS = 3;
-    const dueTurns = (id: string): number => visits.filter((v) => v.mailboxId === id && v.due === true).length;
+    const dueTurns = (id: string): number => visits.slice(held).filter((v) => v.mailboxId === id && v.due === true).length;
     await waitFor(() => six.every((s) => dueTurns(s.mailboxId) >= TURNS), 20_000,
       `${TURNS} due turns for each of the six while two batches hold the pass — they waited for the pass ` +
       `to end — trace: ${fleet.describeTrace(names)}`);
@@ -694,8 +696,13 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     six.forEach((s, i) => {
       expect(fleet.indicesOf(s.mailboxId, "sync_end").length, `${names.get(s.mailboxId)} turns`).toBeGreaterThanOrEqual(at[i + 2]! + 1 + TURNS);
     });
-    // The parked mailboxes are on their own turns, never on a due one.
-    expect(visits.filter((v) => (v.mailboxId === a!.mailboxId || v.mailboxId === b!.mailboxId) && v.due === true)).toHaveLength(0);
+    // The parked mailboxes are on their own turns, never on a due one: a parked turn logs when it is let
+    // go, and it is that mailbox's first line of the held pass.
+    for (const r of releases.splice(0)) r();
+    const parkedTurn = (id: string): Record<string, unknown> | undefined => visits.slice(held).find((v) => v.mailboxId === id);
+    await waitFor(() => parkedTurn(a!.mailboxId) !== undefined && parkedTurn(b!.mailboxId) !== undefined, 20_000,
+      "the parked turns to end once let go");
+    expect([parkedTurn(a!.mailboxId)!.due, parkedTurn(b!.mailboxId)!.due], "a parked batch was a due turn").toEqual([false, false]);
     for (const s of seeds) {
       expect(oneTurnAtATime(fleet, s.mailboxId), `two turns of ${names.get(s.mailboxId)} at once — trace: ${fleet.describeTrace(names)}`).toBe(true);
     }
@@ -757,13 +764,16 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     await waitFor(() => six.every((s, i) => fleet.indicesOf(s.mailboxId, "sync_end").length >= at[i + 2]! + 2), 20_000,
       `a due turn for each of the six — trace: ${fleet.describeTrace(names)}`);
 
+    const wokenTurns = (): number => visits.filter((v) => v.mailboxId === w.mailboxId && v.woken === true).length;
+    const wokenBefore = wokenTurns();
     fleet.behave(w.mailboxId, { deliver: [{ from: "anna@x.example", subject: "hi", messageId: "due-w@x" }] });
     fleet.signal.get(w.mailboxId)!();
-    await waitFor(() => landed(db, w.mailboxId, "due-w@x"), 10_000,
-      `W's woken mail while two batches hold the pass — due turns went ahead of its doorbell — trace tail: ` +
+    // A turn's line is written when its lane returns, after its mail is in: wait for W's woken turn.
+    await waitFor(() => wokenTurns() > wokenBefore, 10_000,
+      `W's woken turn while two batches hold the pass — due turns went ahead of its doorbell — trace tail: ` +
       `${fleet.describeTrace(names).slice(-2_000)}`);
+    expect(await landed(db, w.mailboxId, "due-w@x"), "W's mail was not in when its woken turn ended").toBe(true);
     expect(fleet.syncInFlight, "a parked batch returned, so the mail proves nothing").toBe(2);
-    expect(visits.some((v) => v.mailboxId === w.mailboxId && v.woken === true), "W's visit was not logged as woken").toBe(true);
     expect(worker.stats().mailboxes).toBe(8);
   }, 120_000);
 
@@ -784,6 +794,8 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, maxSyncFailures: 1, logger, tailSliceHook: boundary.tailSliceHook });
 
     const at = await boundary.park(seeds, [a!, b!]);
+    // The held pass's lines start here: no lane is open at a tail slice, so every earlier turn has logged.
+    const held = visits.length;
     // Q's own turn of the held pass fails, which at a bound of one queues it for quarantine.
     fleet.behave(m!.mailboxId, { failSync: true });
     await waitFor(() => fleet.syncInFlight === 2, 20_000,
@@ -793,12 +805,12 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     // From here a turn would succeed: only the exclusion keeps Q out.
     fleet.behave(m!.mailboxId, { failSync: false });
     const qStarts = fleet.indicesOf(m!.mailboxId, "sync_start").length;
-    await waitFor(() => five.every((s, i) => visits.filter((v) => v.mailboxId === s.mailboxId && v.due === true).length >= 3), 20_000,
+    await waitFor(() => five.every((s) => visits.slice(held).filter((v) => v.mailboxId === s.mailboxId && v.due === true).length >= 3), 20_000,
       `three due turns for each of the other five — trace: ${fleet.describeTrace(names)}`);
     expect(fleet.syncInFlight, "a parked batch returned, so the claim proves nothing").toBe(2);
     expect(fleet.indicesOf(m!.mailboxId, "sync_start").length,
       `Q, queued for quarantine, took a turn inside the pass — trace: ${fleet.describeTrace(names)}`).toBe(qStarts);
-    expect(visits.filter((v) => v.mailboxId === m!.mailboxId && v.due === true)).toHaveLength(0);
+    expect(visits.slice(held).filter((v) => v.mailboxId === m!.mailboxId && v.due === true)).toHaveLength(0);
     expect(worker.stats().mailboxes).toBe(8);
   }, 120_000);
 
