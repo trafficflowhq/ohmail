@@ -1184,6 +1184,29 @@ function sliceRowStreams(client: ImapFlow): void {
 }
 
 /**
+ * A plain VANISHED lowers the open mailbox's count, one per UID, as an EXPUNGE does (RFC 7162
+ * §3.2.10). imapflow 1.7.8 lowers it only for EXPUNGE, so on a QRESYNC server the next arrival's
+ * EXISTS equalled the stale count and was dropped: no `exists`, no doorbell. VANISHED (EARLIER) is
+ * not counted. imapflow 2.2.8 counts it itself; drop this with that upgrade (the canary in
+ * imap-vanished-count.test.ts goes red on it).
+ */
+export function countPlainVanished(client: unknown): boolean {
+  const c = client as {
+    on?: (event: string, fn: (payload: unknown) => void) => unknown;
+    mailbox?: { path?: unknown; exists?: unknown } | false | null;
+  };
+  if (typeof c.on !== "function") return false;
+  c.on("expunge", (payload: unknown) => {
+    const p = payload as { path?: unknown; vanished?: unknown; earlier?: unknown } | null;
+    const mb = c.mailbox;
+    if (!p || p.vanished !== true || p.earlier === true) return;
+    if (!mb || p.path !== mb.path || typeof mb.exists !== "number" || mb.exists <= 0) return;
+    mb.exists -= 1;
+  });
+  return true;
+}
+
+/**
  * `fetchOne` ANSWERS FOR THE MESSAGE IT ASKED ABOUT, NEVER WITH WHATEVER ARRIVED FIRST.
  *
  * imapflow's FETCH command collects every untagged FETCH that arrives while it runs, and its
@@ -1685,11 +1708,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         this.client = this.opts.client as ImapFlow;
         sliceRowStreams(this.client);
         answerForTheAskedMessage(this.client);
+        countPlainVanished(this.client);
         this.guardAsyncErrors();
       } else {
         this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
         sliceRowStreams(this.client);
         answerForTheAskedMessage(this.client);
+        countPlainVanished(this.client);
         // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
         // `emitError` routes to `initialReject` only while the connect promise is pending; the
         // moment it resolves, every later failure is a plain `emit("error")`. `connect()` is
@@ -1820,6 +1845,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   async noop(): Promise<void> {
     this.assertUsable();
     await this.client.noop();
+    // The NOOP ended IDLE, and imapflow restarts it only after its 15 s auto-IDLE delay.
+    if (this.watchArmed && this.client.mailbox && this.client.mailbox.path === this.toServerPath("INBOX")) this.startIdle();
   }
 
   /**

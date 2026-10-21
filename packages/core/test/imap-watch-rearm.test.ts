@@ -229,3 +229,80 @@ describe("rearmWatch — the blind-window catch-up", () => {
     expect(wakes).toBe(0);
   });
 });
+
+describe("noop — the heartbeat puts IDLE back at once", () => {
+  /**
+   * The heartbeat's NOOP ends IDLE, and imapflow starts it again only after its 15 s auto-IDLE
+   * delay: an arrival in that gap waited up to 15 s. After the NOOP the adapter asks for IDLE a
+   * turn later, behind the same busy guard as the re-arm, and only while the watch rests on INBOX.
+   */
+  const withNoop = (extra: Record<string, unknown> = {}) => {
+    const f = fakeClient();
+    const client = {
+      ...f.client,
+      mailbox: { path: "INBOX" } as { path: string } | false,
+      async noop(): Promise<void> { f.calls.push("noop"); },
+      ...extra,
+    };
+    return { ...f, client };
+  };
+
+  it("after watch(), a NOOP is followed by IDLE a turn later", async () => {
+    const { client, calls } = withNoop();
+    const adapter = adapterWith(client);
+    await adapter.watch(() => undefined);
+    await aTurn();
+    calls.length = 0;
+    await adapter.noop();
+    expect(calls).toEqual(["noop"]);
+    await aTurn();
+    expect(calls).toEqual(["noop", "idle"]);
+  });
+
+  it("asks no IDLE before watch(), after unwatch, when busy, or when INBOX is not selected", async () => {
+    const before = withNoop();
+    await adapterWith(before.client).noop();
+    await aTurn();
+    expect(before.calls).toEqual(["noop"]);
+
+    const after = withNoop();
+    const a = adapterWith(after.client);
+    const unwatch = await a.watch(() => undefined);
+    await unwatch();
+    await aTurn();
+    after.calls.length = 0;
+    await a.noop();
+    await aTurn();
+    expect(after.calls).toEqual(["noop"]);
+
+    let busy = false;
+    const loaded = withNoop({ connectionBusy: () => busy });
+    const b = adapterWith(loaded.client);
+    await b.watch(() => undefined);
+    await aTurn();
+    loaded.calls.length = 0;
+    await b.noop();
+    busy = true;
+    await aTurn();
+    expect(loaded.calls).toEqual(["noop"]);
+
+    const elsewhere = withNoop();
+    const c = adapterWith(elsewhere.client);
+    await c.watch(() => undefined);
+    await aTurn();
+    elsewhere.client.mailbox = { path: "ohmail/_meta" };
+    elsewhere.calls.length = 0;
+    await c.noop();
+    await aTurn();
+    expect(elsewhere.calls).toEqual(["noop"]);
+  });
+
+  it("a vanished expunge event is not a wake", async () => {
+    const { client, emit } = withNoop();
+    const adapter = adapterWith(client);
+    let wakes = 0;
+    await adapter.watch(() => { wakes += 1; });
+    emit("expunge", { path: "INBOX", vanished: true } as { path: string });
+    expect(wakes).toBe(0);
+  });
+});
