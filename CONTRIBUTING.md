@@ -68,6 +68,8 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 - Keep the existing invariants: colours and shadows come from `packages/tokens`,
   never hand-written in a view; no message is ever replaced by a "N more"
   placeholder. The test suite enforces both, and it is meant to.
+  [docs/INVARIANTS.md](docs/INVARIANTS.md) lists every invariant with the
+  tests that hold it.
 - Add or extend a test for behaviour you change.
 - Put the release note for a change people will notice in
   `changelog.d/<slug>.md`, one file per pull request, and leave `CHANGELOG.md`
