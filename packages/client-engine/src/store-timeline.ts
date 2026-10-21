@@ -637,11 +637,18 @@ export function facetsInPlace(prev: ServerSearchFacets | null, next: ServerSearc
 export const STORE_SEARCH_DEBOUNCE_MS = 250;
 
 /**
- * How long a TYPED question must stand before its count and facets are asked. The desktop's store
- * has one connection and cannot cancel: a typed prefix's summary, the slowest of the three asks,
- * would hold the next question's page behind it. A settled question (Enter) passes 0.
+ * How long a TYPED question must stand before its count and facets are asked. The desktop's engine
+ * drops a replaced question's count while it still queues (the walker's lane), but its store has
+ * one connection and cannot stop a statement already running: a typed prefix's summary, the
+ * slowest of the three asks, would hold the next question's page behind it. A settled question
+ * (Enter) passes 0.
  */
 export const STORE_SEARCH_FOLLOWUP_HOLD_MS = 600;
+
+/** Walkers made in this window: with a random part, a lane id that no other walker or reload repeats. */
+let walkersMade = 0;
+const newLaneId = (): string =>
+  `${Math.random().toString(36).slice(2, 12).padEnd(10, "0")}${(walkersMade++).toString(36)}`.slice(0, 32);
 
 /**
  * SEARCH: one question's matches, a page at a time by the store's own cursor, on the same walk as
@@ -654,7 +661,10 @@ export class StoreSearchWalker {
   private order: string[] | null = null;
   private deviceIds: (tier: "exact" | "similar") => readonly string[] = () => [];
   private cause: string | null = null;
+  /** The question counter: only grows, and is this walker's lane generation. */
   private epoch = 0;
+  /** This walker's lane (`ServerSearchOpts.lane`): the desktop's engine drops its older questions' requests. */
+  private readonly laneId = newLaneId();
   /** This question's count and facets, waiting for its hold to end; `null` once asked or free. */
   private heldFollowUp: (() => void) | null = null;
   /** Has this question stood its hold (always true for a settled one)? */
@@ -677,7 +687,7 @@ export class StoreSearchWalker {
       const first = a === null && !o.transient;
       const m = first && this.marks?.epoch === epoch && this.marks.sent === null ? this.marks : null;
       if (m) { m.sent = performance.now(); m.sentAt = Date.now(); }
-      return engine.pageSearch(key, { cursor: a, at: o.at, transient: o.transient })
+      return engine.pageSearch(key, { cursor: a, at: o.at, transient: o.transient, lane: { id: this.laneId, generation: epoch } })
         .then((out: ServerSearchOutcome): PageAnswer<string> => {
           const mine = first && epoch === this.epoch;
           if (m) {
@@ -817,7 +827,8 @@ export class StoreSearchWalker {
     key: StoreSearchKey, filters: { filters?: StoreSearchKey["filters"] }, sameStore: (o: { fromMirror?: true }) => boolean,
   ): void {
     const epoch = this.epoch;
-    void this.engine.searchServer(key.query, { parts: "estimate", limit: HISTORY_PAGE_ROWS, ...filters }).then((est) => {
+    const lane = { id: this.laneId, generation: epoch };
+    void this.engine.searchServer(key.query, { parts: "estimate", limit: HISTORY_PAGE_ROWS, ...filters, lane }).then((est) => {
       if (epoch !== this.epoch || this.meta === null) return;
       if (est.state === "ready" && sameStore(est)) {
         this.meta = {
@@ -830,7 +841,7 @@ export class StoreSearchWalker {
         this.signal.bump();
         if (est.totalExact) return;
       }
-      void this.engine.searchServer(key.query, { parts: "summary", ...filters }).then((sum) => {
+      void this.engine.searchServer(key.query, { parts: "summary", ...filters, lane }).then((sum) => {
         if (epoch !== this.epoch || sum.state !== "ready" || this.meta === null || !sameStore(sum)) return;
         this.meta = {
           ...this.meta,

@@ -64,7 +64,7 @@ import {
   nodeOneClickPost, nodeRemoteFetch, notifyRulesService, resolveSession,
   rulesService, sendService, snippetsService, syncService, threadService,
   triageService, workflowsService, ServiceError, type UnsubscribeService,
-  type AuthConfig, type MailboxAllowancePolicy, type OneClickPost,
+  type AuthConfig, type MailboxAllowancePolicy, type OneClickPost, type SearchSupersede,
   type PushService, type RemoteFetch,
   // The sign-out fence's durable half — one module for both doors, so the engine and the shared
   // mailbox service cannot hold two versions of the same rule (`signed-out-fence.ts`).
@@ -272,6 +272,7 @@ import { localRetentionDue, runLocalRetention } from "./local-retention.js";
 import { cadenceDue, stampNow, type CadenceClocks, type CadenceStamp } from "./pass-cadence.js";
 import { loopTurn } from "./loop-hold.js";
 import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.js";
+import { createSearchLanes } from "./search-lanes.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
 import { startEngineVitals } from "./vitals.js";
@@ -8715,6 +8716,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const searchIndexDoor = createSearchIndexDoor({
       authorized: launchBearerAuthorized, db: db as unknown as Tx, accountId: world.accountId,
     });
+    /* THE WINDOW'S SEARCH LANES (`search-lanes.ts`), admitted before the request waits on anything,
+       so a newer question marks the older ones while they still queue. This door only. */
+    const searchLanes = createSearchLanes();
+    const laned = (door: (req: Request, supersede: SearchSupersede | undefined) => Promise<Response>) =>
+      async (req: Request): Promise<Response> => {
+        attention.note(req.method, new URL(req.url).pathname);
+        const lane = searchLanes.admit(req);
+        try {
+          return await door(req, lane?.supersede);
+        } finally {
+          lane?.done();
+        }
+      };
 
     /* A SEARCH IS A PERSON WAITING, on every door: its statements go ahead of a drain's and the
        drain waits for it (`forPerson`). Only the search — a poll that jumped the queue would starve
@@ -8770,8 +8784,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
       world,
       sessionToken: session.token,
-      handle: async (req) => {
-        attention.note(req.method, new URL(req.url).pathname);
+      handle: laned(async (req, supersede) => {
         /* THE WINDOW'S BEARER IS RENEWED BEFORE ANY DOOR READS THE STORE (`launch-bearer.ts`), so
            a window left open does not expire under the person. Ended — its row revoked, or past
            its expiry with the store refusing the renewal — it is refused BY NAME on every route,
@@ -10056,7 +10069,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           );
         }
         /* THE APP'S DOOR READS COMMITTED ROWS ONLY where a drain page can be open (PERF-026). */
-        const answered = await asPerson(req, () => app.handle(req, opened.routeDb ? { ...depsFor(), db: opened.routeDb } : depsFor()));
+        const deps = { ...depsFor(), ...(supersede ? { searchSupersede: supersede } : {}) };
+        const answered = await asPerson(req, () => app.handle(req, opened.routeDb ? { ...deps, db: opened.routeDb } : deps));
         noteDoorWrite(req, answered);
         // The mailbox list carries this install's own settled sync verdicts — on `handle`
         // ALONE, like the local routes above: a paired device renders its own indicator and
@@ -10066,7 +10080,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await discloseLocalSyncFailures(answered, runtimes.all(), now()), runtimes.all());
         }
         return answered;
-      },
+      }),
       // The desktop-host door, present IFF armed — see {@link Sidecar.handleHost}. Spread so a
       // disarmed sidecar genuinely lacks the member rather than carrying one that refuses.
       //

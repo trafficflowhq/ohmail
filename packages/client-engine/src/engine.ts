@@ -992,6 +992,11 @@ export interface ServerSearchOpts {
   /** The `nextCursor` of the previous page for the same query and sort. */
   cursor?: string;
   filters?: ServerSearchFilters;
+  /**
+   * The asking walker and its question ({@link EngineOptions.searchSupersede}): the desktop engine
+   * drops a lane's older requests when a newer generation arrives. Never sent with the option off.
+   */
+  lane?: { id: string; generation: number };
 }
 
 /**
@@ -1951,6 +1956,12 @@ export interface EngineOptions {
    * off (a browser keeps its connection for minutes).
    */
   warmSearch?: boolean;
+  /**
+   * Each search names its walker and question (`ServerSearchOpts.lane`), so the desktop's engine
+   * can drop an older question's queued count when the question changes. Omitted: off, and the
+   * request is what it always was (the web, the phone, Cloud).
+   */
+  searchSupersede?: boolean;
   /**
    * THE OUTBOX'S OWNERSHIP between tabs over one shared mirror — see {@link OhmailEngine.adoptOrphanedOutbox}. Omitted:
    * the browser's `navigator.locks`. `null`: no ownership, today's shape, and a store that no other engine shares
@@ -3038,6 +3049,7 @@ export class OhmailEngine {
     // ONCE, here, so `serverSearchAvailable()` cannot answer differently from what
     // `searchServer` will do a moment later.
     this.searchWarms = opts.warmSearch === true;
+    this.searchSupersede = opts.searchSupersede === true;
     this.serverSearchFn =
       opts.serverSearch ??
       (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
@@ -9791,6 +9803,8 @@ export class OhmailEngine {
   private lastSearchSentAt = Number.NEGATIVE_INFINITY;
   /** {@link EngineOptions.warmSearch}. */
   private readonly searchWarms: boolean;
+  /** {@link EngineOptions.searchSupersede}. */
+  private readonly searchSupersede: boolean;
 
   /**
    * THE FIRST KEY OF A SEARCH WARMS THE WAY TO THE STORE. A paired desktop's hop to the account
@@ -9823,7 +9837,11 @@ export class OhmailEngine {
    */
   searchServer(query: string, opts: ServerSearchOpts & { parts: "estimate" }): Promise<ServerEstimateOutcome>;
   searchServer(query: string, opts?: ServerSearchOpts & { parts?: Exclude<ServerSearchPart, "estimate"> }): Promise<ServerSearchOutcome>;
-  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchOutcome | ServerEstimateOutcome> {
+  async searchServer(query: string, asked: ServerSearchOpts = {}): Promise<ServerSearchOutcome | ServerEstimateOutcome> {
+    // The lane only where the option is on: elsewhere the request stays byte for byte what it was.
+    const { lane: askedLane, ...unlaned } = asked;
+    const lane = this.searchSupersede ? askedLane : undefined;
+    const opts: ServerSearchOpts = lane ? { ...unlaned, lane } : unlaned;
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
@@ -9847,6 +9865,8 @@ export class OhmailEngine {
     const key = JSON.stringify([
       opts.limit ?? null, opts.sort ?? null, opts.parts ?? null, opts.cursor ?? null,
       f ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null] : null, q,
+      // A retyped question never joins an older one's request, which a newer one may have dropped.
+      ...(lane ? [`${lane.id}.${lane.generation}`] : []),
     ]);
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
@@ -10281,7 +10301,8 @@ export class OhmailEngine {
    * A cached page answers without a request; a `transient` step is answered, never cached.
    */
   async pageSearch(
-    key: StoreSearchKey, opts: { cursor?: string | null; at?: number; transient?: boolean } = {},
+    key: StoreSearchKey,
+    opts: { cursor?: string | null; at?: number; transient?: boolean; lane?: ServerSearchOpts["lane"] } = {},
   ): Promise<ServerSearchOutcome> {
     const cursor = opts.cursor ?? null;
     const pageKey = storeSearchPageKey(key, cursor, HISTORY_PAGE_ROWS);
@@ -10297,6 +10318,7 @@ export class OhmailEngine {
       ...(key.sort ? { sort: key.sort as ServerSearchSort } : {}),
       ...(cursor !== null ? { cursor } : {}),
       ...(key.filters ? { filters: key.filters } : {}),
+      ...(opts.lane ? { lane: opts.lane } : {}),
     });
     if (out.state === "ready" && !opts.transient) {
       this.storePages.put(pageKey, { items: out.items, nextCursor: out.nextCursor }, opts.at, storeSearchList(key));

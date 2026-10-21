@@ -9,7 +9,7 @@ export {
   ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes,
   type ReadBoundKind,
 } from "./read-bounds.js";
-export type { ServiceContext, Db, IdempotencyClaim } from "./context.js";
+export type { ServiceContext, Db, IdempotencyClaim, SearchSupersede } from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.
 export { withAccountTx, claimOrLose } from "./context.js";

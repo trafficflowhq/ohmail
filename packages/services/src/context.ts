@@ -138,6 +138,17 @@ export interface ServiceContext {
   pressFloor?: Date | null;
   /** The press is at least `PRESS_AGED_MS` old: only then is its field compared. Absent = fresh. */
   pressAged?: boolean;
+  /**
+   * A search a newer one from the same window has replaced stops at its next check point
+   * (`search-service.ts`). Set by the desktop engine's own door only; absent everywhere else.
+   */
+  searchSupersede?: SearchSupersede;
+}
+
+/** A search's supersede checks: `check` throws once replaced; `turn` lets the loop read the next request first, then checks. */
+export interface SearchSupersede {
+  check(): void;
+  turn(): Promise<void>;
 }
 
 /**

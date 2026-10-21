@@ -5,7 +5,7 @@
  * billing, the funnel and the operator connection are declared in `deps-cloud.ts`, which augments
  * the two interfaces below and which only a hosted build loads. */
 import type {
-  AuthConfig, Db, KeyProvider, ServiceContext, SessionScope,
+  AuthConfig, Db, KeyProvider, SearchSupersede, ServiceContext, SessionScope,
   SyncService, PushService, MailboxService, RulesService,
   MessageService, ThreadService,
   ScreenerService, ApprovalService, TriageService, SearchService, PrivacyService,
@@ -752,6 +752,8 @@ export interface ApiDeps {
   idempotency?: IdempotencyContext | null;
   /** Set by `withPressAge`; threaded onto the service context as `pressFloor`. */
   press?: PressContext | null;
+  /** The desktop engine's own door only: a search a newer one replaced stops (`ServiceContext.searchSupersede`). */
+  searchSupersede?: SearchSupersede;
   /**
    * The platform scheduler's own credential (`CRON_SECRET`), independent of the alerting block.
    * Absent or `null` ⇒ this host has no cron credential; a scheduled route then falls back to

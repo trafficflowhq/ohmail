@@ -18,7 +18,7 @@ export { PRESS_AGE_MAX_MS, pressIsAged } from "@trafficflow/db";
 export {
   parseReaderZone, parseReaderLocale, forwardedDate, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
 } from "./reader-clock.js";
-export type { ServiceContext, Db } from "./context.js";
+export type { ServiceContext, Db, SearchSupersede } from "./context.js";
 // The fenced transaction door — see `context.ts`. On the mail leaf because the API's own
 // account-owned writers (the Junk window's rescue) reach it without the AI half.
 export { withAccountTx } from "./context.js";
