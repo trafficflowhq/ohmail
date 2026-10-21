@@ -22,6 +22,7 @@
  *                        [--expect-messages <n>] [--fixture-messages <n>] [--runner-s <build step s>]
  *                        [--engine-dir <dir>] [--budget-table <file>]   (both derived when absent)
  *   perf-smoke-check.mjs --boot --platform <linux_x64|macos|windows> --engine-log <log> [--runner-s <n>]
+ *                        [--engine-dir <dir>]   (macOS: the store's open is read as the runner only with it)
  *   perf-smoke-check.mjs --sample --pid <pid> --out <tsv> --seconds <n> [--interval <s>]
  *   perf-smoke-check.mjs --perf-smoke-only   the selftest: every arm watched failing and admitting
  * verdict: PERF_SMOKE: GREEN rc 0 - RED rc 1 - REFUSED rc 3 - CLASSIFY-ASK RUNNER rc 5.
@@ -94,6 +95,7 @@ export const TIMING_READINGS = {
       [241, 1, 3268, 1964, 1034, 110, 81, 492],
       [242, 1, 3578, 2278, 977, 137, 87, 502],
     ],
+    store: { pglite: "0.2.17", extensions: ["btree_gin", "pg_trgm"] },
   },
   windows: {
     // 33 job logs of runs 216-242 carry no boot line: the job printed none until this change.
@@ -181,12 +183,18 @@ export function timingVerdict({ readingMs, ceilingMs, runnerS, runnerReferenceS,
     : { status: "FAIL", bandMs, factor, why: "over the runner band as well" };
 }
 
-/* ── THE STORE'S OPEN TIME IS THE RUNNER'S READING ON LINUX ─────────────────────────────────
+/* ── THE STORE'S OPEN TIME IS THE RUNNER'S READING ──────────────────────────────────────────
  * pglite's open runs pinned bytes and none of our code, and over the 18 recorded runs it tracks
  * engine_ready at r=0.92 and start_to_list at 0.91, where the build step's seconds read 0.57 and
  * 0.70. So its ratio to its median widens the Linux ceilings; it has its own ceiling, never
  * widened, so a slower open in our code is not divided out; and a different pglite or extension
  * set refuses the comparison by name until the readings are retaken.
+ *
+ * macOS too, from 2026-10-21: over 184 packaged-engine boots (build runs 2026-10-17 to 10-21) the
+ * store's open tracks engine_ready at r=0.91 and the build step at 0.57, and all 26 macOS reds
+ * of those runs were the build step's reading (9 of them "not slower than its median" with the
+ * store open at x1.05-x1.71). There the store's open is RECORDED and decides nothing: it is the
+ * runner's reading, so a ceiling on it would be a ceiling on the runner. Linux judges it.
  */
 export function readStoreIdentity(engineDir) {
   const pkg = join(engineDir, "node_modules", "@electric-sql", "pglite", "package.json");
@@ -815,9 +823,11 @@ export function collect({ samples, log, uiInBundle, uiFields, expectMessages, fi
 /**
  * The boot alone, for the jobs that start the engine without the app: macOS's packaged engine and
  * Windows' healthy verify boot. The platform's own distribution decides; a platform without
- * enough readings has no ceiling, so its reading is RECORDED and reddens nothing.
+ * enough readings has no ceiling, so its reading is RECORDED and reddens nothing. A platform with
+ * a recorded store (macOS) is banded by the store's open, as Linux is; an unread or different
+ * store widens nothing and says why.
  */
-export function collectBoot({ log, platform, runnerS = null }) {
+export function collectBoot({ log, platform, runnerS = null, storeIdentity = null }) {
   const timing = PLATFORM_TIMING[platform];
   if (!timing) return { refused: `no platform "${platform}"; this check knows ${Object.keys(PLATFORM_TIMING).join(", ")}`, prefix: "PERF_SMOKE_BOOT" };
   const boot = bootPhases(log);
@@ -827,13 +837,20 @@ export function collectBoot({ log, platform, runnerS = null }) {
   const arms = [];
   const add = (id, kind, status, reading, note) => arms.push({ id, kind, status, reading, note });
   const c = timing.engine_ready;
+  const pgliteMs = boot.phases.find(([k]) => k === "pgliteOpenMs")?.[1] ?? null;
+  const allowance = timing.store ? storeAllowance(pgliteMs, storeIdentity, timing) : null;
   if (c.ceilingMs === null) {
     add("engine_ready", "RECORDED", "READ", `${boot.total} ms on ${platform}, no ceiling yet: ${c.why}`, phaseNote(boot, timing, false));
   } else {
     timingArm(add, "engine_ready", boot.total, c.ceilingMs, runnerS, timing, ` on ${platform}`,
-      (judged) => phaseNote(boot, timing, judged));
+      (judged) => phaseNote(boot, timing, judged), allowance);
   }
-  return { arms, runnerLine: runnerLine(runnerS, timing), prefix: "PERF_SMOKE_BOOT" };
+  if (!allowance) return { arms, runnerLine: runnerLine(runnerS, timing), prefix: "PERF_SMOKE_BOOT" };
+  if (pgliteMs !== null) add("pglite_open", "RECORDED", "READ", `${pgliteMs} ms against its median ${timing.pgliteReferenceMs} ms`, "the runner's reading here; judged on Linux");
+  const store = allowance.factor === null
+    ? `pglite open unread (${allowance.why})`
+    : `pglite open ${pgliteMs} ms against its median ${timing.pgliteReferenceMs} ms (x${allowance.factor.toFixed(2)})`;
+  return { arms, runnerLine: `runner: ${store} · ${runnerLine(runnerS, timing).replace(/^runner: /, "")}, recorded`, prefix: "PERF_SMOKE_BOOT" };
 }
 
 export function render(result) {
@@ -1053,8 +1070,10 @@ export function selftest(write) {
   const mac = PLATFORM_TIMING.macos;
   judge("macOS boot inside its ceiling", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs - 100), platform: "macos", runnerS: mac.runnerReferenceS })), 0, "PERF_SMOKE_BOOT");
   judge("macOS boot regression", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs * 2), platform: "macos", runnerS: mac.runnerReferenceS })), 1, "PERF_SMOKE_BOOT");
+  judge("macOS slow store open", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs + 100, Math.round(mac.pgliteReferenceMs * 1.3)), platform: "macos", runnerS: mac.runnerReferenceS, storeIdentity: mac.store })), 5, "PERF_SMOKE_BOOT");
+  judge("macOS regression, median store open", render(collectBoot({ log: bootLog(mac.engine_ready.ceilingMs * 2, mac.pgliteReferenceMs), platform: "macos", runnerS: Math.round(mac.runnerReferenceS * 1.3), storeIdentity: mac.store })), 1, "PERF_SMOKE_BOOT");
   judge("Windows boot, no distribution yet", render(collectBoot({ log: bootLog(9000), platform: "windows", runnerS: null })), 0, "PERF_SMOKE_BOOT");
-  const total = cases.length + bands.length + recorded.length + 3;
+  const total = cases.length + bands.length + recorded.length + 5;
   write(bad === 0
     ? "\nPERF_SMOKE_SELFTEST: GREEN -- every arm refuses the shape it exists for and admits the other\n"
     : `\nPERF_SMOKE_SELFTEST: RED -- ${bad} of ${total} cases answered wrongly\n`);
@@ -1085,14 +1104,16 @@ if (RUN_AS_SCRIPT) {
     const logPath = opt("engine-log", null);
     const platform = opt("platform", null);
     if (!logPath || !platform) {
-      process.stderr.write("usage: perf-smoke-check.mjs --boot --platform <id> --engine-log <log> [--runner-s <n>]\n");
+      process.stderr.write("usage: perf-smoke-check.mjs --boot --platform <id> --engine-log <log> [--runner-s <n>] [--engine-dir <dir>]\n");
       process.exit(2);
     }
     if (!existsSync(logPath)) {
       process.stdout.write(`PERF_SMOKE_BOOT: REFUSED -- the engine wrote no log at ${logPath}\n`);
       process.exit(3);
     }
-    const { text, code } = render(collectBoot({ log: readFileSync(logPath, "utf8"), platform, runnerS }));
+    const engineDir = opt("engine-dir", null);
+    const storeIdentity = engineDir === null ? null : readStoreIdentity(engineDir);
+    const { text, code } = render(collectBoot({ log: readFileSync(logPath, "utf8"), platform, runnerS, storeIdentity }));
     process.stdout.write(`${text}\n`);
     process.exit(code);
   }

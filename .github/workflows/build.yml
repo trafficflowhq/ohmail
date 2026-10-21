@@ -728,12 +728,16 @@ jobs:
           fi
           echo "the packaged engine served, using only the runtime inside the app"
           # THE BOOT'S TIMING against macOS's own distribution of this reading
-          # (TIMING_READINGS in scripts/perf-smoke-check.mjs), the build step's
-          # seconds beside it: over the ceiling on a slower runner is rc 5, a
-          # question and a warning; over the runner band too is red.
+          # (TIMING_READINGS in scripts/perf-smoke-check.mjs). The store's open
+          # in this boot is the runner's reading, as on Linux, and the build
+          # step's seconds are recorded beside it: over the ceiling on a slower
+          # runner is rc 5, a question and a warning; over the runner band too
+          # is red. The shipped store is read first, so the band is never blind.
+          RES="$RES" node --input-type=module -e 'import { readStoreIdentity } from "./scripts/perf-smoke-check.mjs"; const s = readStoreIdentity(process.env.RES + "/engine/bin"); console.log("engine boot: the shipped store reads " + JSON.stringify(s)); if (s.unread) process.exit(1);'
           set +e
           node scripts/perf-smoke-check.mjs --boot --platform macos \
-            --engine-log "$D/err" --runner-s "${OHMAIL_BUILD_STEP_S:-}"
+            --engine-log "$D/err" --runner-s "${OHMAIL_BUILD_STEP_S:-}" \
+            --engine-dir "$RES/engine/bin"
           RC=$?
           set -e
           case "$RC" in

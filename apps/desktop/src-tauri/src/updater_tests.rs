@@ -2004,14 +2004,15 @@ fn a_quit_during_an_install_exits_only_once_the_install_has_returned() {
 }
 
 /// THE POSITIVE ARM: nothing installing, and the quit is what it always was — the exit, at once, on
-/// the thread that asked, with nothing said.
+/// the thread that asked, with nothing said. Proved by order, not by a clock: the exit has run when
+/// `quit_with` returns, on this thread, and the window was told nothing. Watched fail by taking out
+/// `quit_with`'s `if !fence.must_wait() { return exit(); }`.
 #[test]
 fn a_quit_with_no_install_in_flight_exits_at_once_on_the_thread_that_asked() {
     let fence = fence_for_tests(Duration::from_secs(30));
     let told_window = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&told_window);
     let (ran, on) = mpsc::channel();
-    let began = Instant::now();
 
     quit_with(fence, move || { counted.fetch_add(1, Ordering::SeqCst); }, move || {
         let _ = ran.send(thread::current().id());
@@ -2019,7 +2020,6 @@ fn a_quit_with_no_install_in_flight_exits_at_once_on_the_thread_that_asked() {
 
     let exited_on = on.try_recv().expect("the exit had not run when the quit returned");
     assert_eq!(exited_on, thread::current().id(), "a quit with nothing to wait for went through a thread");
-    assert!(began.elapsed() < Duration::from_millis(100), "the quit took {:?}", began.elapsed());
     assert_eq!(told_window.load(Ordering::SeqCst), 0, "the window was told about an install that is not there");
 }
 

@@ -1255,9 +1255,11 @@ fn a_child_that_leaves_is_noticed_without_waiting_for_a_timer() {
 /// The freeze this repairs, measured on Omarchy: the press reached `Destroyed`'s `stop()` in
 /// 11 ms and that call returned 3 004 ms later, with the window on screen the whole time. Both
 /// halves are here, against an engine that ignores the ask and therefore takes the WHOLE grace
-/// period — `begin_stop` comes back in a fraction of it, `finish_stop` waits it out and finds the
-/// engine gone. Watched fail by putting `shell.stop()` back in place of `begin_stop`: the first
-/// assertion then reads the whole grace period.
+/// period. Proved by order, not by a clock: the test holds the shell's engine slot, which the stop
+/// thread takes first, so nothing can reach the engine until the press has come back; a press that
+/// waited for the stop could only come back once the stop had ended. Watched fail by making
+/// `begin_stop` wait on its own stop (`finish_stop(SHUTDOWN_BOUND)` after `start_stop`): the press
+/// then comes back after the bound with no stop under way.
 #[test]
 fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
     let _live = live_process();
@@ -1269,19 +1271,28 @@ fn the_close_press_hands_the_engine_off_and_the_exit_waits_for_it() {
         "the engine to announce itself",
     );
     let pid = shell.engine().pid().expect("a running engine has a pid");
+    let engine = shell.engine();
 
-    let began = Instant::now();
-    shell.begin_stop(Leaving::Quit);
-    let pressed = began.elapsed();
-    assert!(
-        pressed < quick().stop_grace / 4,
-        "the press took {pressed:?} of the {:?} grace period, which is the freeze",
-        quick().stop_grace
-    );
+    // Never `shell.engine()` while this is held: that would wait on this thread's own lock.
+    let held = shell.engine.lock().expect("shell engine");
+    let (came_back_tx, came_back) = mpsc::channel();
+    {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || { let _ = came_back_tx.send(shell.begin_stop(Leaving::Quit)); });
+    }
+    let came_back = came_back.recv_timeout(Duration::from_secs(20));
+    let under_way = a_stop_is_under_way(&shell);
+    let state = engine.state();
+    let released = Instant::now();
+    drop(held);
+
+    assert_eq!(came_back, Ok(true), "the press did not come back, having started the stop, before the engine was reached");
+    assert!(under_way, "the press came back with no stop under way: it waited for the stop");
+    assert!(matches!(state, EngineState::Serving { .. }), "the engine was stopped before the press came back: {state:?}");
 
     // The exit is where the waiting belongs, and by then there is no window to freeze.
     assert!(shell.finish_stop(Duration::from_secs(20)), "the shutdown did not finish inside the bound");
-    assert!(began.elapsed() >= quick().stop_grace, "a deaf engine was not held to the grace period");
+    assert!(released.elapsed() >= quick().stop_grace, "a deaf engine was not held to the grace period");
     assert_eq!(shell.engine().state(), EngineState::Stopped);
     #[cfg(unix)]
     assert!(!alive(pid), "process {pid} is gone");
@@ -1476,7 +1487,10 @@ fn a_stop_is_under_way(shell: &Shell) -> bool {
 /// the shutdown lock, so the press (and the window's own Destroyed and Exit) blocked the thread
 /// that draws for the whole stop, and the close was then dropped. Now the window goes at the press,
 /// the close adds no exit of its own because the restart is the exit, and the new copy still
-/// starts only after the engine has left.
+/// starts only after the engine has left. Proved by order, not by a clock: the test holds the
+/// shell's engine slot, so the restart's stop cannot reach the engine, and the press must come back
+/// while that stop is still under way. Watched fail by making `stop_for_restart` wait inside the
+/// shutdown lock: the press then comes back only after the restart's bound, with the restart done.
 #[cfg(unix)]
 #[test]
 fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_waits_for_the_engine() {
@@ -1490,6 +1504,9 @@ fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_wait
     );
     let pid = shell.engine().pid().expect("a running engine has a pid");
     let idle = fence_for_tests(Duration::from_secs(30));
+
+    // Never `shell.engine()` while this is held: that would wait on this thread's own lock.
+    let held = shell.engine.lock().expect("shell engine");
     let (restarted_tx, restarted) = mpsc::channel();
     let restarting = {
         let shell = Arc::clone(&shell);
@@ -1497,18 +1514,27 @@ fn a_close_during_a_restarts_stop_is_answered_at_once_and_the_restart_still_wait
     };
     wait_for(|| a_stop_is_under_way(&shell), Duration::from_secs(10), "the restart to begin its stop");
 
-    let began = Instant::now();
-    assert!(!shell.begin_stop(Leaving::Quit), "a second stop was started beside the restart's");
     let (hid_tx, hid) = mpsc::channel();
     let (exit_tx, exited) = mpsc::channel();
-    shell.leave_with(idle, SHUTDOWN_BOUND, || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(()); });
-    let pressed = began.elapsed();
-    assert!(
-        pressed < quick().stop_grace / 4,
-        "the press waited {pressed:?} of the {:?} grace behind the restart's stop",
-        quick().stop_grace
-    );
-    hid.try_recv().expect("the press did not take the window away itself");
+    let (came_back_tx, came_back) = mpsc::channel();
+    {
+        let shell = Arc::clone(&shell);
+        thread::spawn(move || {
+            let started = shell.begin_stop(Leaving::Quit);
+            shell.leave_with(idle, SHUTDOWN_BOUND, || {}, move || { let _ = hid_tx.send(()); }, move || { let _ = exit_tx.send(()); });
+            let _ = came_back_tx.send(started);
+        });
+    }
+    let came_back = came_back.recv_timeout(Duration::from_secs(20));
+    let under_way = a_stop_is_under_way(&shell);
+    let restart_done = restarted.try_recv().is_ok();
+    let hidden = hid.try_recv().is_ok();
+    drop(held);
+
+    assert_eq!(came_back, Ok(false), "the press did not come back, starting no second stop, while the restart's stop was under way");
+    assert!(under_way, "the press came back only after the restart's stop had ended");
+    assert!(!restart_done, "the restart went before the engine could be reached");
+    assert!(hidden, "the press did not take the window away itself");
 
     let engine_alive = restarted.recv_timeout(Duration::from_secs(20)).expect("the restart never went");
     assert!(!engine_alive, "the new copy started beside engine {pid}");
