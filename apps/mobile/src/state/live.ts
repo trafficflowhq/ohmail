@@ -3232,7 +3232,8 @@ export interface LiveWorldActions {
   /** DONE with a resurface: clear a standing booking, then the deliberate read that spends the pin. */
   resurfaceDone(messageId: string, members?: readonly string[]): Promise<boolean>;
   /** Mark read / Mark unread — the DELIBERATE `mark_seen` (no `via`), so a read spends a pin. */
-  markSeen(messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean>;
+  /** `openRow`: the reader's open message; its read is an open read (owner 2026-10-21). */
+  markSeen(messageId: string, unread: boolean, members?: readonly string[], openRow?: string): Promise<boolean>;
   /**
    * The reader's scroll-to-read over a conversation's members (`ui/reader-seen.ts`): a GLANCE
    * (`via: "glance"`), so a pin survives it, with no sentence — the panel's own ink is the answer.
@@ -4364,7 +4365,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const resurfaceNow = (messageId: string): Promise<boolean> =>
     triage(messageId, "resurfaced", refuse("toastResurfaceNow"));
 
-  const markSeen = async (messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean> => {
+  const markSeen = async (messageId: string, unread: boolean, members?: readonly string[], openRow?: string): Promise<boolean> => {
+    // The reader's Mark as read on the open message is a read in ohmail: hold its row first, so
+    // the engine sends it as an open read and leaving files it at the top of Earlier.
+    if (!unread && openRow !== undefined) engine.holdOpenRow(openRow);
     // No `via`: this is the deliberate read, the one that spends a resurface pin on both sides
     // of the wire — the opposite of the open's glance and the streams' sweep. The sentence is
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
@@ -5736,7 +5740,7 @@ export interface WorldActions {
   resurfaceAt(messageId: string, iso: string): void;
   resurfaceNow(messageId: string): void;
   resurfaceDone(messageId: string, members?: readonly string[]): void;
-  markSeen(messageId: string, unread: boolean, members?: readonly string[]): void;
+  markSeen(messageId: string, unread: boolean, members?: readonly string[], openRow?: string): void;
   /** Scroll-to-read's glance — see {@link LiveWorldActions.markGlanced}. */
   markGlanced(ids: readonly string[]): void;
   /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
@@ -5862,7 +5866,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceAt: (id, iso) => void current().resurfaceAt(id, iso),
     resurfaceNow: (id) => void current().resurfaceNow(id),
     resurfaceDone: (id, members) => void current().resurfaceDone(id, members),
-    markSeen: (id, unread, members) => void current().markSeen(id, unread, members),
+    markSeen: (id, unread, members, openRow) => void current().markSeen(id, unread, members, openRow),
     markGlanced: (ids) => void current().markGlanced(ids),
     markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
     markOhboxVisit: () => current().markOhboxVisit(),

@@ -1547,7 +1547,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           resurfaceAt: (id, iso) => void acts.resurfaceAt(id, iso),
           resurfaceNow: (id) => void acts.resurfaceNow(id),
           resurfaceDone: (id, members) => void acts.resurfaceDone(id, members),
-          markSeen: (id, unread, members) => void acts.markSeen(id, unread, members),
+          markSeen: (id, unread, members, openRow) => void acts.markSeen(id, unread, members, openRow),
           markGlanced: (ids) => void acts.markGlanced(ids),
           markAllSeen: (ids, feed) => void acts.markAllSeen(ids, feed),
           markOhboxVisit: () => void engine.markOhboxVisit().catch(() => undefined),

@@ -287,7 +287,7 @@ export function MessageActions({
     m.pile === "resurfaced"
       ? { icon: "check" as IconName, label: Copy.actionDone, press: () => a.resurfaceDone(m.id) }
       : unreadIds.length > 0
-        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds), a11y: Copy.actionMarkReadCount(unreadIds.length) }
+        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds, m.id), a11y: Copy.actionMarkReadCount(unreadIds.length) }
         : { icon: "x" as IconName, label: Copy.actionMarkUnread, press: () => a.markSeen(m.id, true) };
 
   /* THE RAIL CLAIM (unfolded-landscape Duo): the reader's verbs ride the ONE right-edge rail —
@@ -581,7 +581,7 @@ export function MessageActions({
         {!moreHas("read") ? null : m.pile === "resurfaced" ? (
           <SheetRow icon="check" label={Copy.actionDone} onPress={() => { close(); a.resurfaceDone(m.id); }} />
         ) : unreadIds.length > 0 ? (
-          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds); }} />
+          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds, m.id); }} />
         ) : (
           <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
         )}

@@ -951,16 +951,19 @@ export function OhboxView({
    * A GLANCE, and it says so: nobody pressed a read verb, so the server marks read WITHOUT spending a resurface
    * pin (owner ruling 2026-08-26: reading a resurfaced message sticks; the pin is answered by dealing with the
    * row). Reads only refs, so it is stable for the dwell's dependency array and callable from anywhere.
+   * `pressed`: an explicit Mark read on the shown message (owner 2026-10-21) arms the same way, as a
+   * deliberate read. Answers whether it armed.
    */
-  const armRead = useCallback((id: string) => {
-    if (heldRead.current === id) return;
+  const armRead = useCallback((id: string, pressed = false): boolean => {
+    if (heldRead.current === id) return false;
     leaveRead();
-    if (pinnedUnread.current === id) return;
-    if (!allRef.current.find((m) => m.id === id)?.unread) return;
+    if (pinnedUnread.current === id) return false;
+    if (!allRef.current.find((m) => m.id === id)?.unread) return false;
     hold(id);
-    void Promise.resolve(markSeenRef.current([id], false, "glance")).then((ok) => {
+    void Promise.resolve(markSeenRef.current([id], false, pressed ? undefined : "glance")).then((ok) => {
       if (ok === false && heldRead.current === id) hold(null);
     });
+    return true;
   }, [hold, leaveRead]);
 
   /**
@@ -1171,8 +1174,11 @@ export function OhboxView({
     // Reading it is consent for the dwell to have been right, so the pin is released. A hold, if
     // any, is left alone: the write here and the one at the arm say the same thing.
     pinnedUnread.current = null;
+    // An explicit read of the shown message is a read in ohmail: armed like an open, so it keeps
+    // its place while shown and files at the top of Earlier when left. A resurfaced one keeps arrival.
+    if (m.unread && !isResurfaced(m) && armRead(m.id, true)) return;
     onMarkSeen([m.id], false);
-  }, [onMarkSeen]);
+  }, [onMarkSeen, armRead]);
 
   /**
    * ⇧I AND THE READER'S MARK AS READ — the conversation on screen, read. The set is the one the
@@ -1191,8 +1197,14 @@ export function OhboxView({
       return;
     }
     if (set.includes(m.id)) pinnedUnread.current = null;
+    // Hold the shown message first (painted read before the press builds its Undo), so the whole
+    // set is an open read and the row files at the top of Earlier when left.
+    if (heldRead.current !== m.id) {
+      if (m.unread) armRead(m.id, true);
+      else { leaveRead(); hold(m.id); }
+    }
     bulk.run("read", set);
-  }, [markRead, bulk]);
+  }, [markRead, bulk, armRead, leaveRead, hold]);
 
   /**
    * The 2 s dwell, and why j/k alone must commit nothing: the split pane's reading column shows

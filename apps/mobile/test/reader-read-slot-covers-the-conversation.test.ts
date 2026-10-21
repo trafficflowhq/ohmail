@@ -106,10 +106,10 @@ describe("the phone reader's read slot covers the conversation", () => {
   it("the compact bar, the rail and the sheet read the one set, and the rail re-publishes on its key", () => {
     const src = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8"));
     expect(src).toContain("const unreadIds = conversationUnreadIds(m);");
-    expect(src, "the compact bar's and the rail's face").toContain("unreadIds.length > 0\n        ? { icon: \"check\" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds), a11y: Copy.actionMarkReadCount(unreadIds.length) }");
+    expect(src, "the compact bar's and the rail's face").toContain("unreadIds.length > 0\n        ? { icon: \"check\" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds, m.id), a11y: Copy.actionMarkReadCount(unreadIds.length) }");
     expect(src, "the compact bar's accessible name carries the count").toContain('a11yLabel: "a11y" in readFace ? readFace.a11y : undefined');
     expect(src, "the rail entry is the face").toContain('return { id, icon: readFace.icon, label: readFace.label, onPress: readFace.press };');
-    expect(src, "the sheet switches on the same set").toContain("unreadIds.length > 0 ? (\n          <SheetRow icon=\"check\" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds); }} />");
+    expect(src, "the sheet switches on the same set").toContain("unreadIds.length > 0 ? (\n          <SheetRow icon=\"check\" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds, m.id); }} />");
     const deps = /publishReaderRail\(null\);[\s\S]*?\}, \[([^\]]*)\]\);/.exec(src)?.[1] ?? "";
     expect(deps.split(",").map((d) => d.trim()), "the rail effect's dependencies carry the face key").toContain("unreadKey");
   });

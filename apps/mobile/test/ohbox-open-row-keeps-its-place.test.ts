@@ -89,6 +89,26 @@ describe("the phone's Ohbox holds the open row", () => {
       s.fake.server.close();
     }
   });
+
+  // Owner 2026-10-21: the reader's Mark as read on the open message is a read in ohmail.
+  it("opened while read, Mark unread, then the reader's Mark as read: left, it files at the top of Earlier", async () => {
+    const s = await session();
+    try {
+      await s.actions.markSeen("m1", false);
+      expect(s.box().seen.map((m) => m.id), "the premise: m1 arrived after m4").toEqual(["m1", "m4"]);
+      expect(await s.actions.openMessage("m4")).toBe(true);
+      await s.actions.markSeen("m4", true);
+      expect(s.box().fresh.map((m) => m.id)).toContain("m4");
+      await s.actions.markSeen("m4", false, ["m4"], "m4");
+      expect(s.box().fresh.map((m) => m.id), "held while it is open").toContain("m4");
+      s.actions.leaveMessage("m4");
+      expect(s.box().seen.map((m) => m.id)).toEqual(["m4", "m1"]);
+      expect(s.fake.message("m4")?.openReadAt, "the server stamped the open read").toEqual(expect.any(String));
+      s.boot.store.close();
+    } finally {
+      s.fake.server.close();
+    }
+  });
 });
 
 describe("an answer files the open row on the phone (owner defect 2026-09-28)", () => {
