@@ -16,9 +16,9 @@ import { pagingNumber } from "../query-bounds.js";
  * `?types=`), and the one caller that names its types (the desktop's Cloud mirror) drained a feed
  * with no vocabulary for a tag and rendered an empty rail over an account that had several. A
  * literal set rather than derived from `EntityType`: a union is erased at runtime, and the point
- * is to reject a token the reader has no materializer for.
+ * is to reject a token the reader has no materializer for. Exported for the tests that walk every type.
  */
-const VALID_TYPE_LIST = ([
+export const VALID_TYPE_LIST = ([
   "message", "thread", "routing_decision", "approval",
   "draft", "rule", "message_state", "folder", "tag",
   // The account's settings row — the consent doorbell (`change-log.ts`). `?types=` is a REQUEST
@@ -70,8 +70,8 @@ function parseTypes(raw: string | null): EntityType[] | undefined {
 /**
  * How long a device-sync stamp is considered fresh enough not to rewrite. The throttle lives
  * in the UPDATE's own predicate, so however many horizon-reaching polls a device makes, the
- * row is written at most once per window — one guarded UPDATE per five minutes per device,
- * not one per 20-second poll.
+ * row is written at most once per window. The session row `withSession` read carries the stamp,
+ * so a poll inside the window sends neither UPDATE (see {@link stampDeviceSynced}).
  */
 export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
 
@@ -84,10 +84,20 @@ export const DEVICE_SYNC_STAMP_MIN_GAP_MS = 5 * 60_000;
  * deviceless on purpose (mail 0061), and the incident this exists for was such a desktop, wedged
  * for days while the device alert watched a population it was never in. Swallowed on failure,
  * fail-loud for the alert: a stamp that stops landing makes the alert fire, never sleep.
+ *
+ * NOT DUE ⇒ NOTHING SENT. The stamp only moves forward, so the value the session read returned is
+ * never newer than the row's: when it is inside the window the session UPDATE's predicate refuses
+ * anyway, and an unchanged poll costs the session read and the bounds read alone. The device stamp
+ * rides the same gate, so it can land up to one window late for a device linked to the session
+ * mid-window or after a failed device UPDATE; the stale alerts read days. A session never stamped
+ * (`null`), or read without the field, stamps as before, and the predicates still decide
+ * concurrent polls.
  */
 async function stampDeviceSynced(deps: ApiDeps): Promise<void> {
   const sessionId = deps.session?.sessionId;
   if (!sessionId) return;
+  const last = deps.session?.lastSyncedAt;
+  if (last instanceof Date && deps.now().getTime() - last.getTime() <= DEVICE_SYNC_STAMP_MIN_GAP_MS) return;
   try {
     const cutoff = new Date(deps.now().getTime() - DEVICE_SYNC_STAMP_MIN_GAP_MS);
     await deps.db.update(sessions)

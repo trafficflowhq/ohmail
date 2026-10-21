@@ -36,6 +36,12 @@ export interface ResolvedSessionCore {
    * so this costs nothing measurable and no additional query.
    */
   emailVerifiedAt: Date | null;
+  /**
+   * When this session's `/sync` last reached the horizon (`sessions.last_synced_at`, mail 0070),
+   * read from the same row. Bookkeeping only: `GET /sync` skips a stamp that is not due yet. Never
+   * a privilege input, never in a DTO. Absent means unknown, and the stamp then runs as before.
+   */
+  lastSyncedAt?: Date | null;
 }
 
 /**
@@ -56,6 +62,7 @@ export async function resolveSession(db: Db, token: string, now: Date): Promise<
       lastTwofaAt: sessions.lastTwofaAt,
       scope: sessions.scope,
       emailVerifiedAt: users.emailVerifiedAt,
+      lastSyncedAt: sessions.lastSyncedAt,
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
@@ -77,5 +84,6 @@ export async function resolveSession(db: Db, token: string, now: Date): Promise<
     // this narrowing is exhaustive rather than a silent fallback.
     scope: row.scope === "enrollment" ? "enrollment" : "full",
     emailVerifiedAt: row.emailVerifiedAt,
+    lastSyncedAt: row.lastSyncedAt,
   };
 }

@@ -247,6 +247,8 @@ export default defineConfig({
       "packages/api/test/search-date-bounds.test.ts",
       /* Mark all read's statements per set, counted on the device store's own prepare. */
       "packages/api/test/mark-seen-statements.test.ts",
+      /* An unchanged `/sync` poll's two statements, and the sync stamp's gate, on the device store. */
+      "packages/api/test/sync-unchanged-poll-writes-nothing.test.ts",
       // The open read on the device store: the stamp, its scope and its clears run the
       // same statements over the twin, and `applyExternalFlag`'s clear is the phone's \Seen adoption.
       "packages/services/test/mark-seen-open-read.test.ts",
