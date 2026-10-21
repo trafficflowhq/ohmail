@@ -276,7 +276,9 @@ describe("the baseline cutoff is frozen", () => {
     // role-guarded grant on 0048's table, adopting nothing.
     // `- 29` → `- 30`: cloud 0050_billing_link_notices — ONE entry above the cutoff, a CHECK
     // redefined on an existing table, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 30);
+    // `- 30` → `- 31`: cloud 0051_alert_drills — ONE entry above the cutoff, a NEW table, its index
+    // and a role-guarded grant on it, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 31);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -853,6 +855,8 @@ describe("the baseline cutoff is frozen", () => {
       // The fact that capped a stored suggestion: one nullable ADD COLUMN IF NOT EXISTS on
       // routing_decisions, no default, no data. Safe over any history.
       "0156_routing_decisions_sender_reason",
+      // The Screener cutline probe's index: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
+      "0157_messages_sender_date",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting
@@ -965,6 +969,9 @@ describe("the baseline cutoff is frozen", () => {
       // The notice kind CHECK redefined to admit `billing_link`. Safe over any history: every
       // stored kind is one of the four it keeps.
       "0050_billing_link_notices",
+      // Alert drills: a new table and its index, IF NOT EXISTS, empty, and the staff role's grant
+      // on it only where `ohmail_admin` exists. Safe over any history.
+      "0051_alert_drills",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

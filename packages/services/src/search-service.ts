@@ -879,14 +879,16 @@ export class SearchService {
     return this.session(ctx, d, async (db, built) => {
       let tier: SearchTier = "exact";
       let counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "exact", built)));
+      await ctx.searchSupersede?.turn();
       if (showSimilar(counted.total)) {
         tier = "similar";
         counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "similar", built)));
+        await ctx.searchSupersede?.turn();
       }
       const { total, facets } = counted;
       const indexed = await this.indexing(ctx, db, built);
       return { total, facets, tier, ...(indexed ? { indexed } : {}) };
-    });
+    }, true);
   }
 
   /**
@@ -911,13 +913,16 @@ export class SearchService {
       };
       let t: SearchTier = "exact";
       let counted = await ofTier(t);
+      await ctx.searchSupersede?.turn();
       if (showSimilar(counted.total)) {
         t = "similar";
         counted = await ofTier(t);
+        await ctx.searchSupersede?.turn();
       }
       return { tier: t, got: counted, indexed: await this.indexing(ctx, db, built) };
-    });
+    }, true);
     // The planner's estimate reads statistics, outside the session and only for a cut arm.
+    if (got.estimateOf !== null) await ctx.searchSupersede?.turn();
     const estimate = got.estimateOf === null ? null : await got.estimateOf();
     return {
       total: got.total, facets: got.facets, tier, exact: !got.cut, estimate,
@@ -941,6 +946,7 @@ export class SearchService {
   async search(ctx: ServiceContext, opts: SearchOptions & { parts?: "both" }): Promise<SearchResult & { facets: Facets }>;
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult>;
   async search(ctx: ServiceContext, opts: SearchOptions): Promise<SearchResult> {
+    ctx.searchSupersede?.check();
     const t0 = performance.now();
     const parts: SearchParts = opts.parts ?? "both";
     const ms = (): number => Math.round(performance.now() - t0);
@@ -1076,13 +1082,19 @@ export class SearchService {
    * the import on its own handle, no round trip away.
    */
   private async session<T extends object>(
-    ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>,
+    ctx: ServiceContext, d: Dialect, fn: (db: unknown, store: StoreFacts) => Promise<T>, followUp = false,
   ): Promise<T & Coverage> {
     const covered = (out: T, open: boolean): T & Coverage => (open ? { ...out, importing: true as const } : out);
+    /* A SUPERSEDED SEARCH STOPS BEFORE ITS FIRST STATEMENT. A queued transaction is reached by
+       microtasks right after the holder's statement, before the engine reads the next request: a
+       count or a summary takes one loop turn first; a page only checks, its path unchanged. */
+    const sup = ctx.searchSupersede;
+    const gate = sup === undefined ? null : followUp ? () => sup.turn() : async () => sup.check();
     // Before the transaction: the probe runs on the handle, and memoized, once per handle.
     const trigram = await hasTrgm(ctx.db);
     const setup = d.search.searchSession({ typoThreshold: FUZZY_THRESHOLD, preferIndexes: true });
     if (setup === null) {
+      if (gate) await gate();
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
       return covered(await fn(ctx.db, { built, trigram }), open);
     }
@@ -1094,6 +1106,7 @@ export class SearchService {
       // The warm settings carry no parameter, so the import rides them with the account inlined.
       const warm = sql`select ${importOpen(d, ctx.accountId, ctx.now(), { inline: true })} as importing, s.* from (${setup}) s`;
       return tx.transaction(async (t) => {
+        if (gate) await gate();
         const { out, settings } = await afterSettingsRead(t, d, warm, () => fn(t, { built: true, trigram }));
         return covered(out, truthy(settings[0]?.[0]));
       });
@@ -1102,6 +1115,7 @@ export class SearchService {
     const marker = sql`exists (select 1 from ${accountSettings}
       where ${accountSettings.accountId} = ${ctx.accountId} and ${accountSettings.searchIndexBuiltAt} is not null)`;
     return tx.transaction(async (t) => {
+      if (gate) await gate();
       const [row] = await d.exec(t, sql`select ${marker} as built, ${importOpen(d, ctx.accountId, ctx.now())} as importing, s.* from (${setup}) s`);
       const built = truthy(row?.[0]);
       if (built) {

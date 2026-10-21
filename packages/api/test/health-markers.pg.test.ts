@@ -62,6 +62,16 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
     expect(wrong.kind === "probed" && wrong.schemaOk).toBe(false);
   });
 
+  it("a database without mail 0157's sender-date index is one short", async () => {
+    const healthy = found(await hosted(owned.db));
+    const missing = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`drop index "messages_account_sender_date_idx"`));
+      return hosted(db);
+    });
+    expect(found(missing)).toBe(healthy - 1);
+    expect(missing.kind === "probed" && missing.schemaOk).toBe(false);
+  });
+
   it("an int4 uid column is one short — the type probe on this server", async () => {
     const healthy = found(await hosted(owned.db));
     const narrowed = await rolledBack(async (db) => {

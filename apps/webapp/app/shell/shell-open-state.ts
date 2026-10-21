@@ -655,13 +655,16 @@ export function useShellOpenState({
    * reader's behalf labels itself `"glance"` and the engine alone acts on it (a pin survives
    * being looked at); absent means deliberate. The forward is easy to lose and impossible to
    * typecheck, so `test/resurface-now-shell.test.ts` asserts the label reaches the adapter.
+   * `readRow`: the row read by its own verb where no view holds it; the engine judges it.
    */
-  const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance"): Promise<boolean> => {
+  const markSeen = useStableCallback((ids: string[], unread: boolean, via?: "glance", readRow?: string): Promise<boolean> => {
     if (ids.length === 0) return Promise.resolve(false);
     /* Through the shell's one dispatch seam, with NO sentence of its own: the read state is its
        own confirmation on the row, and the callers that DO say something (the bulk verbs, the
        resurface release) say it from the verdict this answers with. */
-    return mutateAndReport({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) }, null);
+    return mutateAndReport({
+      kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}), ...(!unread && readRow !== undefined ? { readRow } : {}),
+    }, null);
   });
 
   /**

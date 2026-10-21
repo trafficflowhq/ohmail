@@ -80,7 +80,8 @@ export function MailRow({
       return;
     }
     if (face === "done") { void w.actions.resurfaceDone(m.id, members); return; }
-    w.actions.markSeen(m.id, face === "markUnread", members);
+    // The row's own read is a read in ohmail: the engine files it at the top of Earlier.
+    w.actions.markRowSeen(m.id, face === "markUnread", members);
   };
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;

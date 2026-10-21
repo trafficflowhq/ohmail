@@ -870,6 +870,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     resurfaceNow: () => calls.push(`${tag}:resurfaceNow`),
     resurfaceDone: () => calls.push(`${tag}:resurfaceDone`),
     markSeen: () => calls.push(`${tag}:markSeen`),
+    markRowSeen: () => calls.push(`${tag}:markRowSeen`),
     markGlanced: () => calls.push(`${tag}:markGlanced`),
     markAllSeen: () => calls.push(`${tag}:markAllSeen`),
     markOhboxVisit: () => calls.push(`${tag}:markOhboxVisit`),

@@ -253,6 +253,13 @@
       "when": 1792287004502,
       "tag": "0050_billing_link_notices",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792587192601,
+      "tag": "0051_alert_drills",
+      "breakpoints": true
     }
   ]
 }

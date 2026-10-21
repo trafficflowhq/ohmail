@@ -92,7 +92,7 @@ function pressOf(src: string): (verb: string, opts?: { face?: string; projected?
       actions: {
         pileToggle: (id: string, kind: string) => void ran.calls.push(["pileToggle", id, kind]),
         resurfaceDone: (id: string) => void ran.calls.push(["resurfaceDone", id]),
-        markSeen: (id: string, unread: boolean) => void ran.calls.push(["markSeen", id, unread]),
+        markRowSeen: (id: string, unread: boolean) => void ran.calls.push(["markRowSeen", id, unread]),
         move: (row: unknown, dest: string) => void ran.calls.push(["move", row, dest]),
       },
     };
@@ -115,8 +115,9 @@ describe("§2 each verb presses the world's own act", () => {
 
   it("the read slot presses Done on a resurfaced row and the read switch otherwise", () => {
     expect(press("read", { face: "done" }).calls).toEqual([["resurfaceDone", "m1"]]);
-    expect(press("read", { face: "markRead" }).calls).toEqual([["markSeen", "m1", false]]);
-    expect(press("read", { face: "markUnread" }).calls).toEqual([["markSeen", "m1", true]]);
+    // The row's own read names the row, so the engine files it at the top of Earlier (2026-10-21).
+    expect(press("read", { face: "markRead" }).calls).toEqual([["markRowSeen", "m1", false]]);
+    expect(press("read", { face: "markUnread" }).calls).toEqual([["markRowSeen", "m1", true]]);
   });
 
   it("Junk moves the PROJECTED row to spam — the row the world hands back, not the list's", () => {

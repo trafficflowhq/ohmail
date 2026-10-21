@@ -3235,6 +3235,11 @@ export interface LiveWorldActions {
   /** `openRow`: the reader's open message; its read is an open read (owner 2026-10-21). */
   markSeen(messageId: string, unread: boolean, members?: readonly string[], openRow?: string): Promise<boolean>;
   /**
+   * A row's own Mark read or Mark unread (its swipe, its row action), folded or not: {@link markSeen}
+   * with the row named, so the engine sends a read of it as an open read (owner 2026-10-21). No hold.
+   */
+  markRowSeen(messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean>;
+  /**
    * The reader's scroll-to-read over a conversation's members (`ui/reader-seen.ts`): a GLANCE
    * (`via: "glance"`), so a pin survives it, with no sentence — the panel's own ink is the answer.
    */
@@ -4365,7 +4370,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const resurfaceNow = (messageId: string): Promise<boolean> =>
     triage(messageId, "resurfaced", refuse("toastResurfaceNow"));
 
-  const markSeen = async (messageId: string, unread: boolean, members?: readonly string[], openRow?: string): Promise<boolean> => {
+  const markSeenAs = async (
+    messageId: string, unread: boolean, members: readonly string[] | undefined, openRow: string | undefined, readRow: string | undefined,
+  ): Promise<boolean> => {
     // The reader's Mark as read on the open message is a read in ohmail: hold its row first, so
     // the engine sends it as an open read and leaving files it at the top of Earlier.
     if (!unread && openRow !== undefined) engine.holdOpenRow(openRow);
@@ -4375,7 +4382,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // lives, and a verb whose undo has no surface is a verb with no undo.
     // Chunked at the route's cap both ways, the press and its Undo (a conversation's set can be wide).
     const ids = membersOf(messageId, members, { own: true });
-    const m: EngineMutation = { kind: "mark_seen", messageIds: ids, unread };
+    // `readRow` is the engine's to judge and drop; it never reaches the wire.
+    const row = !unread && readRow !== undefined ? { readRow } : {};
+    const m: EngineMutation = { kind: "mark_seen", messageIds: ids, unread, ...row };
     const inv = chunkMarkSeen(inverseMutations(engine.verbRead(), m));
     if (ids.length <= MARK_SEEN_CHUNK) {
       return said(
@@ -4390,7 +4399,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const chunks: string[][] = [];
     for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) chunks.push(ids.slice(i, i + MARK_SEEN_CHUNK));
     const invs = chunks.map((c) => chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread })));
-    const vs = await Promise.all(chunks.map((c) => dispatch({ kind: "mark_seen", messageIds: c, unread })));
+    const vs = await Promise.all(chunks.map((c) => dispatch({ kind: "mark_seen", messageIds: c, unread, ...row })));
     const landed = vs.map((v) => v.kind !== "refused");
     const done = chunks.filter((_, i) => landed[i]).reduce((n, c) => n + c.length, 0);
     if (done > 0 && done < ids.length && !unread) {
@@ -4399,6 +4408,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     return saidAll(vs, refuse(unread ? "toastUnread" : "toastRead"), refuse("liveSaveFailed"), undoable(inv));
   };
+  const markSeen = (messageId: string, unread: boolean, members?: readonly string[], openRow?: string): Promise<boolean> =>
+    markSeenAs(messageId, unread, members, openRow, undefined);
+  const markRowSeen = (messageId: string, unread: boolean, members?: readonly string[]): Promise<boolean> =>
+    markSeenAs(messageId, unread, members, undefined, unread ? undefined : messageId);
 
   const markGlanced = async (ids: readonly string[]): Promise<boolean> => {
     if (ids.length === 0) return true;
@@ -5674,7 +5687,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
-    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markGlanced, markAllSeen, move,
+    pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
@@ -5741,6 +5754,8 @@ export interface WorldActions {
   resurfaceNow(messageId: string): void;
   resurfaceDone(messageId: string, members?: readonly string[]): void;
   markSeen(messageId: string, unread: boolean, members?: readonly string[], openRow?: string): void;
+  /** A row's own read verb — see {@link LiveWorldActions.markRowSeen}. */
+  markRowSeen(messageId: string, unread: boolean, members?: readonly string[]): void;
   /** Scroll-to-read's glance — see {@link LiveWorldActions.markGlanced}. */
   markGlanced(ids: readonly string[]): void;
   /** Mark all read — see {@link LiveWorldActions.markAllSeen}. */
@@ -5867,6 +5882,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     resurfaceNow: (id) => void current().resurfaceNow(id),
     resurfaceDone: (id, members) => void current().resurfaceDone(id, members),
     markSeen: (id, unread, members, openRow) => void current().markSeen(id, unread, members, openRow),
+    markRowSeen: (id, unread, members) => void current().markRowSeen(id, unread, members),
     markGlanced: (ids) => void current().markGlanced(ids),
     markAllSeen: (ids, feed) => void current().markAllSeen(ids, feed),
     markOhboxVisit: () => current().markOhboxVisit(),

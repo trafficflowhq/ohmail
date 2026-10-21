@@ -494,5 +494,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"routing_decisions\" ADD COLUMN \"sender_reason\" text;"
     ]
+  },
+  {
+    "name": "0157_messages_sender_date.sql",
+    "statements": [
+      "CREATE INDEX IF NOT EXISTS \"messages_account_sender_date_idx\" ON \"messages\" (\"account_id\", lower(\"from_address\"), coalesce(\"date\", \"created_at\"));"
+    ]
   }
 ] as const;

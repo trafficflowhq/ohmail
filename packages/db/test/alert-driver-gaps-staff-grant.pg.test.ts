@@ -14,6 +14,7 @@ import { recordAlertPass } from "../src/alerts.js";
 import { STAFF_ROLE, STAFF_SELECT_GRANTS } from "../src/staff-grants.js";
 import { MIGRATED_DB_TEARDOWN_BUDGET_MS, PG_TEST_URL, makeTestDb, realPgAvailable } from "../src/testing.js";
 import type { Tx } from "../src/change-log.js";
+import { hardenScriptWithout } from "./_harden-script.js";
 
 /**
  * CLOUD 0049 — THE STAFF ROLE'S GRANT ON THE GAP HISTORY, for a database migrated but not re-hardened.
@@ -183,9 +184,10 @@ describe.skipIf(!PG_UP)("cloud 0049 on real Postgres: the role's gap writes, ref
     before0049 = journalThrough0048();
     await migrate(owner(), { migrationsFolder: MAIL_DIR, migrationsSchema: "drizzle_mail" });
     await migrate(owner(), { migrationsFolder: before0049, migrationsSchema: "drizzle_cloud" });
-    // The shipped script, verbatim — it creates the role when absent — then the stanza 0048 added
-    // to it taken back: the role as production holds it, hardened before 0048 and not since.
-    await ownerClient.unsafe(readFileSync(SCRIPT, "utf8")).simple();
+    // The shipped script — it creates the role when absent — without the stanzas of tables newer
+    // than this database (cloud 0051's `alert_drills`), then the stanza 0048 added to it taken back:
+    // the role as production holds it, hardened before 0048 and not since.
+    await ownerClient.unsafe(hardenScriptWithout("alert_drills")).simple();
     await ownerClient.unsafe(`revoke all on public.${TABLE} from ${STAFF_ROLE}`);
 
     roleClient = postgres(urlFor(DB_NAME), { max: 1, onnotice: () => {} });

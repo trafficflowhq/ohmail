@@ -285,6 +285,9 @@ const CLOUD_TABLES = [
   "alert_pass_runs", "platform_signals",
   // Cloud 0048 — the alert drivers' per-day gap history, CLOUD for `alert_pass_runs`' reason.
   "alert_driver_gaps",
+  // Cloud 0051 — alert drills and their acknowledgements, CLOUD for the same reason: the two alert
+  // drivers' pager is the hosted and the self-hosted server's, and a desktop install runs neither.
+  "alert_drills",
   // the funnel
   "waitlist", "invites",
   // always-on push — named in §7 as part of the moat
@@ -3041,6 +3044,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0156_routing_decisions_sender_reason": [
     "62b940f43f03a210",   // ADD COLUMN IF NOT EXISTS routing_decisions.sender_reason text
   ],
+  // THE SCREENER CUTLINE PROBE'S INDEX — one btree on messages over the cutline's own key, prebuilt
+  // CONCURRENTLY by setup (SENDER_DATE_PREBUILD_SPEC), so this no-ops on a live server. No DML.
+  "0157_messages_sender_date": [
+    "4075edd93e0d71f6",   // create index if not exists messages_account_sender_date_idx (account_id, lower(from_address), coalesce(date, created_at))
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -3122,6 +3130,13 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0050_billing_link_notices": [
     "fadf3cda18b3d0cd",   // ALTER TABLE account_lifecycle_notices DROP CONSTRAINT IF EXISTS …_kind_closed
     "90bd859867744d8f",   // ADD CONSTRAINT account_lifecycle_notices_kind_closed … 'billing_link' … NOT VALID
+  ],
+  // CLOUD 0051 — alert drills: one new table, its partial ack index, and the staff role's grant on it
+  // in a DO block guarded on `ohmail_admin` existing. No DML.
+  "0051_alert_drills": [
+    "43f81f1cca91246f",   // CREATE TABLE alert_drills (run, kind, driver, sink PK; nine CHECKs)
+    "d7b14e32c7b508fd",   // CREATE INDEX alert_drills_ack_idx ON alert_drills (ack_token_hash) WHERE … IS NOT NULL
+    "d4a74f3bdce89ea2",   // DO … REVOKE ALL, then GRANT SELECT (ten) / INSERT (nine) / UPDATE (two) TO ohmail_admin
   ],
 };
 
@@ -4017,11 +4032,14 @@ describe("the two journals are well-formed", () => {
   // 0154_messages_recipient_keys's.
   // 156 → 157 for `0156_routing_decisions_sender_reason`: its `when` (1791602600060) is strictly
   // above 0155_outbound_sends_rearm's.
+  // 157 → 158 for `0157_messages_sender_date`: its `when` (1791602600061) is strictly above
+  // 0156_routing_decisions_sender_reason's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
-  it.each([["mail", MAIL_DIR, 157], ["cloud", CLOUD_DIR, 36]] as const)(
+  // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
+  it.each([["mail", MAIL_DIR, 158], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);
@@ -4162,7 +4180,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 100 → 102 for `staff_role_grants` and `staff_audit_events` (cloud 0047), both CLOUD.
     // 102 → 103 for `list_addresses` (mail 0150) — the addresses lists post as, MAIL.
     // 103 → 104 for `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, CLOUD.
-    expect(SIDE.size).toBe(104);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 104 → 105 for `alert_drills` (cloud 0051) — alert drills and their acknowledgements, CLOUD.
+    expect(SIDE.size).toBe(105);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
     expect(MAIL_TABLES).toHaveLength(57);   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
@@ -4177,7 +4196,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 43 → 44: erased_bearers (cloud 0043)
     // 44 → 46: staff_role_grants + staff_audit_events (cloud 0047)
     // 46 → 47: alert_driver_gaps (cloud 0048)
-    expect(CLOUD_TABLES).toHaveLength(47);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    // 47 → 48: alert_drills (cloud 0051)
+    expect(CLOUD_TABLES).toHaveLength(48);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {

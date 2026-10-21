@@ -174,6 +174,8 @@ export interface ShellVerbsInput {
    * it so the sheet's slot writes what its face shows; every other view keeps the per-message flip.
    */
   readSetFor?: ShellOpenState["readSetFor"];
+  /** The route is not the Ohbox: no view there holds the row, so a read names it to the engine. */
+  offOhbox?: boolean;
   /** Drains the scroll-to-read glance batch before a read press (its Undo never carries a glance). */
   flushSiblingSeen: ShellOpenState["flushSiblingSeen"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
@@ -205,7 +207,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -1100,7 +1102,7 @@ export function useShellVerbs({
            * THE READ TOGGLE'S FALLBACK ARM, and it is deliberately not the normal path.
            *
            * In the product the bar's switch presses `u` itself, so this is reached only
-           * where that binding does not exist — the desktop shell, or a pane mounted with no
+           * where that binding does not exist — off the Ohbox, or a pane mounted with no
            * keymap provider. It goes through the same `markSeen` every other read-state path
            * in this file goes through, which is what keeps "one call site for one mutation"
            * true; what it CANNOT do from here is set `OhboxView`'s `pinnedUnread`, which is
@@ -1115,7 +1117,9 @@ export function useShellVerbs({
               flushSiblingSeen();
               onBulkAction("read", set);
             } else {
-              markSeen([m.id], !m.unread);
+              // Off the Ohbox a read here is a read in ohmail (owner 2026-10-21): the engine
+              // sends it as an open read when the row stands in New. No hold: nothing keeps it.
+              markSeen([m.id], !m.unread, undefined, offOhbox && m.unread ? m.id : undefined);
             }
           }
           break;

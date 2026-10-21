@@ -469,7 +469,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async request(
     method: string, path: string,
-    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean } = {},
+    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string } = {},
   ): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
@@ -485,6 +485,8 @@ export class HttpAdapter implements EngineAdapter {
     if (init.idempotencyKey) headers["idempotency-key"] = init.idempotencyKey;
     // The press's age, whole ms, never negative: the server's floor is its own clock minus this.
     if (init.pressAgeMs !== undefined) headers["x-ohmail-press-age"] = String(Math.max(0, Math.floor(init.pressAgeMs)));
+    // The walker and its question, `<lane>.<generation>` (`ServerSearchOpts.lane`): no query text.
+    if (init.searchLane !== undefined) headers["x-ohmail-search-lane"] = init.searchLane;
     if (method !== "GET") {
       const csrf = this.getCookie(this.csrfCookieName);
       if (csrf) headers["x-csrf-token"] = csrf;
@@ -834,7 +836,8 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.filters?.folder) q.set("folder", opts.filters.folder);
     if (opts.filters?.sender) q.set("sender", opts.filters.sender);
     if (opts.filters?.hasAttachments !== undefined) q.set("hasAttachments", String(opts.filters.hasAttachments));
-    const res = await this.request("GET", `/search?${q.toString()}`, { urgent: true });
+    const res = await this.request("GET", `/search?${q.toString()}`,
+      opts.lane ? { urgent: true, searchLane: `${opts.lane.id}.${opts.lane.generation}` } : { urgent: true });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
       items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; totalEstimate?: unknown; ms?: unknown;

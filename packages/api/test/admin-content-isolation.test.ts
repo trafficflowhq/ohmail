@@ -856,6 +856,10 @@ const UNSEEDED_TABLES: readonly string[] = [
   // Cloud 0048, on `alert_pass_runs`' terms: per driver per day, a driver word from a two-value
   // CHECK, a date, two counts and a timestamp. No `account_id`, no FK into the account graph.
   "alert_driver_gaps",
+  // Cloud 0051, on the same terms: a drill run's kinds, a driver word, a sink name, closed outcome
+  // codes, timestamps and an ack token's sha256, every text column held to a shape by a CHECK. No
+  // `account_id`, no FK into the account graph; no staff console read selects it.
+  "alert_drills",
 ];
 
 /**

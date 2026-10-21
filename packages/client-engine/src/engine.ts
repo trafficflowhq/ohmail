@@ -992,6 +992,11 @@ export interface ServerSearchOpts {
   /** The `nextCursor` of the previous page for the same query and sort. */
   cursor?: string;
   filters?: ServerSearchFilters;
+  /**
+   * The asking walker and its question ({@link EngineOptions.searchSupersede}): the desktop engine
+   * drops a lane's older requests when a newer generation arrives. Never sent with the option off.
+   */
+  lane?: { id: string; generation: number };
 }
 
 /**
@@ -1951,6 +1956,12 @@ export interface EngineOptions {
    * off (a browser keeps its connection for minutes).
    */
   warmSearch?: boolean;
+  /**
+   * Each search names its walker and question (`ServerSearchOpts.lane`), so the desktop's engine
+   * can drop an older question's queued count when the question changes. Omitted: off, and the
+   * request is what it always was (the web, the phone, Cloud).
+   */
+  searchSupersede?: boolean;
   /**
    * THE OUTBOX'S OWNERSHIP between tabs over one shared mirror — see {@link OhmailEngine.adoptOrphanedOutbox}. Omitted:
    * the browser's `navigator.locks`. `null`: no ownership, today's shape, and a store that no other engine shares
@@ -3038,6 +3049,7 @@ export class OhmailEngine {
     // ONCE, here, so `serverSearchAvailable()` cannot answer differently from what
     // `searchServer` will do a moment later.
     this.searchWarms = opts.warmSearch === true;
+    this.searchSupersede = opts.searchSupersede === true;
     this.serverSearchFn =
       opts.serverSearch ??
       (opts.adapter as ServerSearchCapableAdapter).searchServer?.bind(opts.adapter) ??
@@ -6902,11 +6914,16 @@ export class OhmailEngine {
        * reader holds open ({@link holdOpenRow}) carries `openRead`, and the server stamps the rows
        * that were unread — the top of "Earlier" once the reader moves on. `via` does not matter: a
        * glance counts. A flag a surface passed is dropped: no surface decides placement.
+       * `readRow` (a row read by its own verb, nothing holding it) is judged the same way when it
+       * stands in New, takes no hold, and is dropped here too.
        */
-      const { openRead: _surfaceFlag, ...given } = m;
-      if (given.unread || this.openRow === null) return given;
+      const { openRead: _surfaceFlag, readRow, ...given } = m;
+      if (given.unread) return given;
       const reader = this.read();
-      const held = reader.get<EngineMessage>("message", this.openRow);
+      const named = readRow !== undefined && readRow !== this.openRow
+        && ohboxView(reader).newForYou.some((x) => x.id === readRow) ? readRow : this.openRow;
+      if (named === null) return given;
+      const held = reader.get<EngineMessage>("message", named);
       if (!held) return given;
       const key = conversationKeyOf(held);
       const all = given.messageIds.every((id) => {
@@ -9791,6 +9808,8 @@ export class OhmailEngine {
   private lastSearchSentAt = Number.NEGATIVE_INFINITY;
   /** {@link EngineOptions.warmSearch}. */
   private readonly searchWarms: boolean;
+  /** {@link EngineOptions.searchSupersede}. */
+  private readonly searchSupersede: boolean;
 
   /**
    * THE FIRST KEY OF A SEARCH WARMS THE WAY TO THE STORE. A paired desktop's hop to the account
@@ -9823,7 +9842,11 @@ export class OhmailEngine {
    */
   searchServer(query: string, opts: ServerSearchOpts & { parts: "estimate" }): Promise<ServerEstimateOutcome>;
   searchServer(query: string, opts?: ServerSearchOpts & { parts?: Exclude<ServerSearchPart, "estimate"> }): Promise<ServerSearchOutcome>;
-  async searchServer(query: string, opts: ServerSearchOpts = {}): Promise<ServerSearchOutcome | ServerEstimateOutcome> {
+  async searchServer(query: string, asked: ServerSearchOpts = {}): Promise<ServerSearchOutcome | ServerEstimateOutcome> {
+    // The lane only where the option is on: elsewhere the request stays byte for byte what it was.
+    const { lane: askedLane, ...unlaned } = asked;
+    const lane = this.searchSupersede ? askedLane : undefined;
+    const opts: ServerSearchOpts = lane ? { ...unlaned, lane } : unlaned;
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
@@ -9847,6 +9870,8 @@ export class OhmailEngine {
     const key = JSON.stringify([
       opts.limit ?? null, opts.sort ?? null, opts.parts ?? null, opts.cursor ?? null,
       f ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null] : null, q,
+      // A retyped question never joins an older one's request, which a newer one may have dropped.
+      ...(lane ? [`${lane.id}.${lane.generation}`] : []),
     ]);
     const inFlight = this.serverSearches.get(key);
     if (inFlight) return inFlight;
@@ -10281,7 +10306,8 @@ export class OhmailEngine {
    * A cached page answers without a request; a `transient` step is answered, never cached.
    */
   async pageSearch(
-    key: StoreSearchKey, opts: { cursor?: string | null; at?: number; transient?: boolean } = {},
+    key: StoreSearchKey,
+    opts: { cursor?: string | null; at?: number; transient?: boolean; lane?: ServerSearchOpts["lane"] } = {},
   ): Promise<ServerSearchOutcome> {
     const cursor = opts.cursor ?? null;
     const pageKey = storeSearchPageKey(key, cursor, HISTORY_PAGE_ROWS);
@@ -10297,6 +10323,7 @@ export class OhmailEngine {
       ...(key.sort ? { sort: key.sort as ServerSearchSort } : {}),
       ...(cursor !== null ? { cursor } : {}),
       ...(key.filters ? { filters: key.filters } : {}),
+      ...(opts.lane ? { lane: opts.lane } : {}),
     });
     if (out.state === "ready" && !opts.transient) {
       this.storePages.put(pageKey, { items: out.items, nextCursor: out.nextCursor }, opts.at, storeSearchList(key));

@@ -182,11 +182,15 @@ export function senderIsActiveSql(
   });
   const split = cutlineArms(set);
   const active = "one" in split ? activeAt(split.one) : perMailboxSql(d, split.arms, sql`mc.mailbox_id`, activeAt);
+  // With a baseline both arms need the window, so it is also a top-level conjunct: a range of mail
+  // 0157's index under a generic plan and on the device store, where the planner never merges it.
+  const window = "one" in split && split.one.baselined && !split.one.allTime
+    ? sql` and ${at} >= ${d.ts(split.one.cutoff)}` : sql``;
   return sql`exists (
     select 1 from messages mc
       join folder_state fsc on fsc.message_id = mc.id
      where mc.account_id = ${d.castUuid(accountId)}
-       and lower(mc.from_address) = ${senderExpr}
+       and lower(mc.from_address) = ${senderExpr}${window}
        and ${active}
        and fsc.desired_folder in ${folders}
   )`;

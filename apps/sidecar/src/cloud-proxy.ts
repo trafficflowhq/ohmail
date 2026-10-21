@@ -59,8 +59,11 @@ export interface WriteThroughProxy {
   settled(by: number): Promise<void>;
 }
 
-/** Hop-by-hop / re-authored headers that must not be relayed to Cloud. */
-const STRIP_HEADERS = ["authorization", "host", "content-length", "connection"];
+/**
+ * Hop-by-hop / re-authored headers that must not be relayed to Cloud. The search lane is this
+ * engine's own (`search-lanes.ts`, spelled out here so this module stays off the services graph).
+ */
+const STRIP_HEADERS = ["authorization", "host", "content-length", "connection", "x-ohmail-search-lane"];
 
 /**
  * THE ANSWER SPEAKS THIS INSTALL'S SEQUENCE. The hosted `X-Sync-Seq` counts the hosted change log;

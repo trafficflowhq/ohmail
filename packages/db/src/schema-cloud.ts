@@ -406,6 +406,31 @@ export const alertDriverGaps = pgTable("alert_driver_gaps", {
 }));
 
 /**
+ * Alert drills (cloud 0051): one row per (run, kind, driver, sink), written by `alert-drill.ts`
+ * alone. `sink = '*'` is a worker request still queued (`fired_at` NULL) or a driver with no usable
+ * sink; any other row is one message's evidence, its ack token held as a sha256 only. No
+ * `account_id`: a fact about the pager. The migration's CHECKs are the full set.
+ */
+export const alertDrills = pgTable("alert_drills", {
+  runId: uuid("run_id").notNull(),
+  kind: text("kind").notNull(),
+  driver: text("driver").notNull(),
+  sink: text("sink").notNull(),
+  /** Where the message's ack link points, written by the API that started the run. */
+  ackBase: text("ack_base"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull(),
+  firedAt: timestamp("fired_at", { withTimezone: true }),
+  /** A closed code (`DRILL_OUTCOMES`), never a sink's error text. */
+  outcome: text("outcome"),
+  ackTokenHash: text("ack_token_hash"),
+  ackedAt: timestamp("acked_at", { withTimezone: true }),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.runId, t.kind, t.driver, t.sink], name: "alert_drills_pk" }),
+  ckDriver: check("alert_drills_driver_check", sql`${t.driver} in ('worker', 'api')`),
+  ackIdx: index("alert_drills_ack_idx").on(t.ackTokenHash).where(sql`"ack_token_hash" is not null`),
+}));
+
+/**
  * What the hosting platform served (cloud 0030) — request and error counts per project per
  * window. The API host's 5xx rate is invisible from inside the host: an invocation that returns a
  * 502 and dies writes nothing here; only the platform's own request-log store knows. A
@@ -972,7 +997,7 @@ export const erasedBearers = pgTable("erased_bearers", {
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
-  workerHeartbeats, alertState, alertPassRuns, alertDriverGaps, platformSignals, apiFaults,
+  workerHeartbeats, alertState, alertPassRuns, alertDriverGaps, alertDrills, platformSignals, apiFaults,
   waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,

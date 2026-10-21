@@ -992,6 +992,8 @@ export function createLocalEngine(scope: string, options: EngineAdapterOptions =
     // Paired to an account, the sidecar's hop to it drops an idle connection after 4 s: the first
     // key of a search warms it while the debounce runs.
     warmSearch: true,
+    // A changed question's queued count is dropped by the engine (`search-lanes.ts`), not waited out.
+    searchSupersede: true,
     // A server without the Cancel route (the hosted one, in Cloud mode), said once per send.
     onWithdrawUnsupported: () => console.warn("ohmail: send_withdraw_unsupported — this server has no Cancel route"),
     // Embedded pictures by their object URL: the mail frame loads them by reference, where a

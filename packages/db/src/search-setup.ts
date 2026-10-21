@@ -153,8 +153,23 @@ export const RECIPIENT_KEYS_PREBUILD_SPEC: ConcurrentIndexSpec = {
   ddl: RECIPIENT_KEYS_INDEX_DDL,
 };
 
+/**
+ * Mail 0157's sender-date index: the Screener cutline probe's own key, a held sender's mail dated by
+ * `cutlineInstant` (`screener-cutline.ts`). Written out rather than imported, which would pull
+ * `screener-apply.ts` into this module; `sender-date-index.test.ts` pins it to that rendering.
+ */
+export const SENDER_DATE_INDEX_DDL = sql`create index concurrently if not exists "messages_account_sender_date_idx" on public.messages using btree ("account_id",lower("from_address"),(coalesce("date", "created_at")))`;
+
+/** Mail 0157's index, built CONCURRENTLY ahead of the migrator. Every column exists since the baseline. */
+export const SENDER_DATE_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "messages_account_sender_date_idx",
+  table: "messages",
+  ddl: SENDER_DATE_INDEX_DDL,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
+  SENDER_DATE_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(
