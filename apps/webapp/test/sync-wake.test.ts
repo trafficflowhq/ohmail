@@ -787,3 +787,32 @@ describe("every reachable state of the machine leaves a drain armed", () => {
     }
   });
 });
+
+// ── WEB-RESUME-BURST · a return's stream and drain, with and without the resume lane ────────
+
+describe("a return dials its stream before the drain without a lane, after the delta's lead with one", () => {
+  for (const withLane of [false, true]) {
+    it(withLane ? "with the lane: the drain first, then the stream once its lead is over" : "no lane (the desktop): the stream first, then the drain, as before", async () => {
+      const { createResumeLane } = await import("../app/shell/resume-lane.js");
+      const order: string[] = [];
+      const adapter = new ScriptedAdapter((_p, n) => { order.push("drain"); return page(`c${n + 1}`, []); });
+      const { streams, factory } = wakeFactory();
+      const doc = fakeVisibility("visible");
+      const stop = startSyncScheduler(engineWith(adapter), {
+        ...quiet, visibility: doc, online: fakeOnline(),
+        wake: () => { order.push("dial"); return factory(); },
+        ...(withLane ? { lane: createResumeLane() } : {}),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      streams[0]!.open();
+      await vi.advanceTimersByTimeAsync(0);
+      doc.set("hidden");
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      order.length = 0;
+      doc.set("visible");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(withLane ? ["drain", "dial"] : ["dial", "drain"]);
+      stop();
+    });
+  }
+});

@@ -27,6 +27,7 @@ import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
 } from "./shell/account-erased";
 import { activeTranslator } from "./shell/locale";
+import { webLane, type LaneTicket } from "./shell/resume-lane";
 
 /**
  * A SENTENCE THIS CLIENT WRITES ITSELF, in the reader's language: the `session` catalogue's
@@ -140,6 +141,8 @@ interface RequestOptions {
    * another tab signed in to while the door waited is not that sign-out's to present.
    */
   mayProceed?: () => boolean;
+  /** A read the person is waiting for (a search, an export): the resume lane's cap does not hold it. */
+  asked?: boolean;
 }
 
 /**
@@ -482,6 +485,13 @@ function checkAnswerOwner(path: string, seen: string | null | undefined, ceremon
   }
 }
 
+/** No server was reached: the network, an abort. */
+function offlineError(): ApiError {
+  return new ApiError(
+    0, OFFLINE_CODE, said("refusedOffline", "We could not reach ohmail. Check your connection and try again."),
+  );
+}
+
 /** Writes this client has sent, for the access door's join rule (`accessRead`). */
 let writesSent = 0;
 
@@ -492,6 +502,33 @@ let writesSent = 0;
  * and `res.json()` on an empty body throws.
  */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  // THE RESUME LANE (`shell/resume-lane.ts`), before every wait and question below: a read it held
+  // asks them all after its wait. Its slot is given back at the first answer, not after a retry.
+  const entry = webLane.enter({
+    path,
+    free: (opts.method ?? "GET") !== "GET" || writesSessionCookies(path) || path === SIGN_OUT_PATH,
+    urgent: opts.ceremony === true,
+    asked: opts.asked === true,
+    signal: opts.signal ?? null,
+  });
+  let ticket: LaneTicket;
+  if (entry instanceof Promise) {
+    try {
+      ticket = await entry;
+    } catch {
+      throw offlineError();   // aborted while held: as its fetch would have failed
+    }
+  } else {
+    ticket = entry;
+  }
+  try {
+    return await admitted<T>(path, opts, ticket);
+  } finally {
+    ticket.done(false);
+  }
+}
+
+async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicket): Promise<T> {
   // A renewal of this tab in flight is waited for first (bounded, never throws), else one another tab
   // is making (`otherTabRenewalSettled`): a request beside it carries the access token the rotation
   // replaces. Not on any `ceremony` request (the session read, the OAuth authorize calls; one overtaken
@@ -561,7 +598,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
       // The caller's own question, asked once the wait is over: the jar may have changed hands in it.
       if (opts.mayProceed !== undefined && !opts.mayProceed()) throw ownerRefusal("mismatch");
       const seen: { account?: string | null } = {};
-      const answer = await hearing<T>(path, opts, seen);
+      const answer = await hearing<T>(path, opts, seen, ticket);
       answerHolds();
       checkAnswerOwner(path, seen.account, ceremony);
       return answer;
@@ -571,7 +608,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   const mintsAtSend = sessionMints();
   try {
     const seen: { account?: string | null } = {};
-    const answer = await hearing<T>(path, opts, seen);
+    const answer = await hearing<T>(path, opts, seen, ticket);
     mustHold();
     checkAnswerOwner(path, seen.account, ceremony);
     return answer;
@@ -691,17 +728,35 @@ function refusedForAnotherAccount(first: Response, path: string, press: boolean)
  */
 async function sessionTransport(url: string, init?: RequestInit): Promise<Response> {
   const path = apiPathOf(url);
-  const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
   const press = isPress(init);
+  // The resume lane, as `api()` enters it; off the API base nothing enters. A read it held is
+  // a request that waited: the identity questions below are asked again. The retry after a
+  // renewal is not admitted again.
+  // The engine marks the reads the person waits for (an open, an attachment, a search) `priority: "high"`.
+  const entry = path === null ? null : webLane.enter({
+    path, free: press || writesSessionCookies(path), asked: init?.priority === "high", signal: init?.signal ?? null,
+  });
+  const ticket = entry instanceof Promise ? await entry : entry;
+  try {
+    return await transported(url, init, path, press, ticket);
+  } finally {
+    ticket?.done(false);
+  }
+}
+
+async function transported(
+  url: string, init: RequestInit | undefined, path: string | null, press: boolean, ticket: LaneTicket | null,
+): Promise<Response> {
+  const renews = path !== null && mayRefreshFor(path) && !writesSessionCookies(path);
   // `api()`'s wait for a renewal in flight, this tab's or another's; a request that waited carries
   // the renewed jar's token. Another tab's wait that ended on a jar naming no account (a sign-out
   // elsewhere) changes nothing: the request goes as it would have without it, refused as it came.
-  let waited = false;
+  let waited = ticket?.waited === true;
   if (renews && refreshInFlight()) {
     await refreshSettled();
     waited = true;
   } else if (renews && path !== null) {
-    waited = await otherTabRenewalSettled() && namesAnAccount(path);
+    waited = (await otherTabRenewalSettled() && namesAnAccount(path)) || waited;
   }
   if (waited && path !== null) {
     // A WAIT NEVER CHANGES WHICH ACCOUNT A REQUEST REACHES. Asked again after it, as `api()` asks
@@ -716,7 +771,14 @@ async function sessionTransport(url: string, init?: RequestInit): Promise<Respon
     }
   }
   const mintsAtSend = sessionMints();
-  const first = await fetch(url, waited ? withFreshCsrf(init) : init);
+  let first: Response;
+  try {
+    first = await fetch(url, waited ? withFreshCsrf(init) : init);
+  } catch (err) {
+    ticket?.done(false);
+    throw err;
+  }
+  ticket?.done(true);
   if (!renews || path === null) return first;
   if (!isRecoverable(first.status, await refusalCodeOf(first))) return first;
   // `api()`'s two questions around its refresh: never renew, nor re-send, on another account's jar.
@@ -871,10 +933,12 @@ export function ownerRefusalCodes(): readonly string[] {
  * a `410 account_erased` then goes to the erased door with the account the server named. A 410
  * naming another account than the jar's is somebody else's answer. Never recoverable: no refresh.
  */
-async function hearing<T>(path: string, opts: RequestOptions, seen: { account?: string | null }): Promise<T> {
+async function hearing<T>(
+  path: string, opts: RequestOptions, seen: { account?: string | null }, ticket?: LaneTicket,
+): Promise<T> {
   const before = erasedCapture();
   try {
-    return await attempt<T>(path, opts, seen);
+    return await attempt<T>(path, opts, seen, ticket);
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 410 || err.code !== ACCOUNT_ERASED) throw err;
     if (hearAccountErased(seen.account ?? null, before) === "not-ours") {
@@ -891,6 +955,8 @@ async function attempt<T>(
   /** Set to the account the server named, or `null` when it named none. Left
       `undefined` when the request never reached a server. */
   seen?: { account?: string | null },
+  /** Given back to the resume lane at the first answer, or the failure. */
+  ticket?: LaneTicket,
 ): Promise<T> {
   if (!API_BASE) {
     throw new ApiError(0, "api_unconfigured", said("refusedUnconfigured", "This build is not connected to an ohmail server."));
@@ -914,10 +980,10 @@ async function attempt<T>(
       cache: "no-store",
     });
   } catch {
-    throw new ApiError(
-      0, OFFLINE_CODE, said("refusedOffline", "We could not reach ohmail. Check your connection and try again."),
-    );
+    ticket?.done(false);
+    throw offlineError();
   }
+  ticket?.done(true);
 
   // BEFORE the 204 shortcut: the sign-out door and the refresh's cookie branch both answer
   // empty, and an early return would skip the one thing this function is here to read.
@@ -3108,7 +3174,7 @@ export const account = {
    * install that reads it, and narrowing it here would be a second spelling of a document this
    * app never inspects.
    */
-  exportSettings: () => api<unknown>("/account/export"),
+  exportSettings: () => api<unknown>("/account/export", { asked: true }),
   /**
    * `POST /account/checkout/confirm` — the person is back from a Checkout; the service asks its
    * program to apply the payment now. NEVER THROWS: any answer but the two states is `null`, and
@@ -3369,7 +3435,7 @@ export const screener = {
    * stated `unreachable` — "Junk could not be searched" — never an empty answer pretending.
    */
   junkSearch: (q: string) =>
-    api<JunkSearchWire>(`/screener/junk/search?q=${encodeURIComponent(q)}`),
+    api<JunkSearchWire>(`/screener/junk/search?q=${encodeURIComponent(q)}`, { asked: true }),
 
   /** The one-time sweep offer's DRY RUN (§16.1): what still sits in ohmail/Quarantine. */
   junkSweepPreview: () => api<JunkSweepWire>("/screener/junk/sweep"),

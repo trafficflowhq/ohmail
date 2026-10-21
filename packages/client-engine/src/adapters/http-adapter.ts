@@ -33,7 +33,7 @@ import type {
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  MutationAnswer, MutationOutcome, MutationQueued, SyncParams, WithdrawSendAnswer,
+  MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import { OUTBOX_WITHDRAWN_CODE } from "./refusal-shape.js";
@@ -469,7 +469,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async request(
     method: string, path: string,
-    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number } = {},
+    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean } = {},
   ): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
@@ -498,6 +498,8 @@ export class HttpAdapter implements EngineAdapter {
         headers,
         ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
         ...(init.signal ? { signal: init.signal } : {}),
+        // A read the person waits for: the browser and the web client's resume lane send it first.
+        ...(init.urgent === true ? { priority: "high" as const } : {}),
       });
     } catch (err) {
       // Network failure — safe to retry with the SAME Idempotency-Key (§1.6). An abort raised by
@@ -698,15 +700,15 @@ export class HttpAdapter implements EngineAdapter {
    * like. A non-2xx THROWS through the same `rejectionOf` every mutation uses, so a 402 arrives with the server's own
    * sentence; the engine turns the throw into a `failed` record and the surface says the body could not be loaded.
    */
-  async fetchBody(messageId: string): Promise<MessageBodyWire> {
+  async fetchBody(messageId: string, opts: ReadIntent = {}): Promise<MessageBodyWire> {
     // UNDER A DEADLINE — see {@link BODY_FETCH_TIMEOUT_MS} for why this route earns one and what
     // a hang costs without it. The read itself is split out so the wrapper stays one line and
     // the parse below is unchanged; `withDeadline` covers the whole thing, `res.json()` included.
-    return this.withDeadline(BODY_FETCH_TIMEOUT_MS, (signal) => this.readBody(messageId, signal));
+    return this.withDeadline(BODY_FETCH_TIMEOUT_MS, (signal) => this.readBody(messageId, signal, opts.urgent === true));
   }
 
-  private async readBody(messageId: string, signal: AbortSignal | undefined): Promise<MessageBodyWire> {
-    const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/body`, { signal });
+  private async readBody(messageId: string, signal: AbortSignal | undefined, urgent: boolean): Promise<MessageBodyWire> {
+    const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/body`, { signal, urgent });
     if (!res.ok) throw await this.rejectionOf(res, "read");
     return narrowBody((await res.json()) as Partial<MessageBodyWire>);
   }
@@ -755,10 +757,10 @@ export class HttpAdapter implements EngineAdapter {
    * so the engine's per-id fallback covers a server that does not understand the parameter — the old behaviour, not
    * an empty thread.
    */
-  async fetchBodies(messageIds: string[]): Promise<MessageBodyBatchWire[]> {
+  async fetchBodies(messageIds: string[], opts: ReadIntent = {}): Promise<MessageBodyBatchWire[]> {
     const ids = messageIds.map((id) => encodeURIComponent(id)).join(",");
     return this.withDeadline(BODY_FETCH_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("GET", `/messages/bodies?ids=${ids}`, { signal });
+      const res = await this.request("GET", `/messages/bodies?ids=${ids}`, { signal, urgent: opts.urgent === true });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const page = (await res.json()) as { items?: unknown };
       if (!Array.isArray(page.items)) return [];
@@ -832,7 +834,7 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.filters?.folder) q.set("folder", opts.filters.folder);
     if (opts.filters?.sender) q.set("sender", opts.filters.sender);
     if (opts.filters?.hasAttachments !== undefined) q.set("hasAttachments", String(opts.filters.hasAttachments));
-    const res = await this.request("GET", `/search?${q.toString()}`);
+    const res = await this.request("GET", `/search?${q.toString()}`, { urgent: true });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as {
       items?: EngineMessage[]; total?: number; tier?: string; totalExact?: unknown; totalEstimate?: unknown; ms?: unknown;
@@ -873,7 +875,7 @@ export class HttpAdapter implements EngineAdapter {
   ): Promise<ServerAddressWire> {
     const q = new URLSearchParams({ address, direction: opts.direction ?? "from" });
     if (opts.limit !== undefined) q.set("limit", String(opts.limit));
-    const res = await this.request("GET", `/search?${q.toString()}`);
+    const res = await this.request("GET", `/search?${q.toString()}`, { urgent: true });
     if (!res.ok) throw await this.rejectionOf(res);
     const wire = (await res.json()) as { items?: EngineMessage[]; total?: number; direction?: string; importing?: unknown };
     return {
@@ -1256,7 +1258,7 @@ export class HttpAdapter implements EngineAdapter {
 
   async listAttachments(messageId: string): Promise<AttachmentWire[]> {
     return this.withDeadline(ATTACHMENT_LIST_TIMEOUT_MS, async (signal) => {
-      const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/attachments`, { signal });
+      const res = await this.request("GET", `/messages/${encodeURIComponent(messageId)}/attachments`, { signal, urgent: true });
       if (!res.ok) throw await this.rejectionOf(res, "read");
       const wire = (await res.json()) as { items?: unknown };
       if (!Array.isArray(wire.items)) return [];
@@ -1285,7 +1287,7 @@ export class HttpAdapter implements EngineAdapter {
    * apart from a mail server that is simply down (`upstream_unavailable` → `failed`, a retry is reasonable).
    */
   async fetchAttachment(attachmentId: string): Promise<Blob> {
-    const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`);
+    const res = await this.request("GET", `/attachments/${encodeURIComponent(attachmentId)}`, { urgent: true });
     if (!res.ok) throw await this.rejectionOf(res, "read");
     return await responseBlob(res);
   }

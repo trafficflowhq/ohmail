@@ -26,6 +26,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
 import messages from "../../messages/en.json";
+import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -223,6 +224,8 @@ let originalFetch: typeof globalThis.fetch;
 /** Install the jsdom gaps, pin the clock, and arm the scripted wire. Call from `beforeEach`. */
 export function installConfirmEnv(): void {
   vi.useFakeTimers();
+  // The resume lane is tab state: each case starts cold, on its own clock.
+  resetResumeLaneForTests();
   vi.setSystemTime(new Date(ISO));
   window.location.hash = "";
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
@@ -318,6 +321,7 @@ export async function teardownConfirmEnv(): Promise<void> {
   globalThis.fetch = originalFetch;
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  resetResumeLaneForTests();
   vi.useRealTimers();
   vi.restoreAllMocks();
 }

@@ -210,6 +210,8 @@ describe("a request issued while this tab's renewal is in flight waits for it", 
   it("CONTROL — nothing in flight: a request leaves at once, and no renewal is started for it", async () => {
     window.localStorage.setItem("ohmail.session.mintedAt", String(Date.now()));
     const { truth, client } = await load();
+    // A warm API: a cold one lets its first read lead alone (`shell/resume-lane.ts`).
+    (await import("../app/shell/resume-lane")).webLane.noteAnswer();
     truth.markSessionAlive();
     const read = client.api("/consent");
     const snap = truth.sessionFetch("/api/sync/snapshot");

@@ -568,7 +568,7 @@ export {
 
 // Adapters.
 export type {
-  CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, SyncParams,
+  CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
   ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire,
   WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";

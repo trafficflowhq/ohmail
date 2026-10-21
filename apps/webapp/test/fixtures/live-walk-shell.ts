@@ -37,6 +37,7 @@ import messagesDe from "../../messages/de.json";
 import type { MailboxFacts } from "../../app/shell/mail-state";
 import type { ConsentTransport } from "../../app/shell/consent-state";
 import { settleFirstPaint } from "../_first-paint.js";
+import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -193,6 +194,8 @@ let consentOver: Record<string, unknown> = {};
 /** Install the jsdom gaps and pin the clock. Call from `beforeEach`. */
 export function installShellEnv(): void {
   vi.useFakeTimers();
+  // The resume lane is tab state: each case starts cold, on its own clock (older-store's too).
+  resetResumeLaneForTests();
   vi.setSystemTime(new Date(ISO));
   window.location.hash = "";
   originalFetch = globalThis.fetch;
@@ -275,6 +278,7 @@ export async function teardownShellEnv(): Promise<void> {
   globalThis.fetch = originalFetch;
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  resetResumeLaneForTests();
   vi.useRealTimers();
   vi.restoreAllMocks();
 }

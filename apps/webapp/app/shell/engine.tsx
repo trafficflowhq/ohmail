@@ -25,7 +25,7 @@ import { useTranslations } from "next-intl";
 import { NOT_DERIVED_FROM, OhmailEngine, type AbandonedMutation, type EntityReader, type MirrorFreshness } from "@ohmail/client-engine";
 import { isDemoRequested } from "../demo-mode";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./confirm-schedule";
-import { cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
+import { cloudLane, cloudWakeStream, createEngine, EngineUnarmedError, syncsWhileHidden } from "./engine-config";
 import { useLoadingGrace } from "./loading-grace";
 import { useModalGate } from "./modal-gate";
 import { readOwner } from "./owner-cookie";
@@ -646,6 +646,8 @@ export function EngineProvider({
       onDraining: markDrain,
       ...(syncsWhileHidden() ? { visibility: null } : {}),
       wake: cloudWakeStream(),
+      // A return reads its delta first, then the rest a few at a time (web live only).
+      lane: cloudLane(),
     });
   }, [engine, live, onSyncStatus]);
 
