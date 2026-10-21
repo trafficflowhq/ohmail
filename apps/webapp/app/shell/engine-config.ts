@@ -10,6 +10,7 @@ import {
 import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 import { sessionFetch, sessionMayAsk } from "./session-truth";
+import { webLane, type ResumeLane } from "./resume-lane";
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -87,6 +88,16 @@ export function cloudWakeStream(
   // Same-origin (`/api/events` through the rewrite), so the session cookie rides along without
   // `withCredentials` — the same reason every other engine request needs no auth wiring here.
   return () => new EventSource(`${base}/events`);
+}
+
+/**
+ * The resume lane decision, beside the stream's: the live web build orders its returns through
+ * `webLane` (`resume-lane.ts`); the desktop (its API is the local engine) and a build with no API
+ * base get `null`, and their scheduler returns as before.
+ */
+export function cloudLane(env: EngineEnv = BUILD_ENV): ResumeLane | null {
+  if (syncsWhileHidden(env)) return null;
+  return env.NEXT_PUBLIC_API_BASE ? webLane : null;
 }
 
 /**

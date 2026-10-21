@@ -12,6 +12,11 @@ import type {
  * Stage-2 live sync in is a construction-time config change, not a rewrite.
  */
 
+/** `urgent`: the person is waiting for this read (an open); an HTTP adapter marks it `priority: "high"`. */
+export interface ReadIntent {
+  urgent?: boolean;
+}
+
 export interface SyncParams {
   /** The cursor of record ("0" ⇒ bootstrap). */
   since: string;
@@ -360,7 +365,7 @@ export interface EngineAdapter {
    * than resolve empty — the engine turns a throw into a `failed` record;
    * resolving `{text: ""}` on a 500 would render an empty message as mail.
    */
-  fetchBody(messageId: string): Promise<MessageBodyWire | null>;
+  fetchBody(messageId: string, opts?: ReadIntent): Promise<MessageBodyWire | null>;
 
   /**
    * CANCEL ASKS THE SERVER the send under `key` went to — {@link WithdrawSendAnswer}. REQUIRED, not
@@ -390,7 +395,7 @@ export interface EngineAdapter {
    * the engine turns a throw into a `failed` record; `{text: ""}` on a 500
    * would render an empty message as though that were the mail.
    */
-  fetchBodies?(messageIds: string[]): Promise<MessageBodyBatchWire[] | null>;
+  fetchBodies?(messageIds: string[], opts?: ReadIntent): Promise<MessageBodyBatchWire[] | null>;
 
   /**
    * `GET /search` — the full-corpus archive, or absent when this client has no archive

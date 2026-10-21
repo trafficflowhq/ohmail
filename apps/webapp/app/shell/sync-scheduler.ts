@@ -17,6 +17,7 @@ import {
 import { readOwnerMarker, type OwnerMarker } from "./owner-cookie";
 import { refusalIsStale } from "./access-window";
 import { subscribeSessionRevival } from "./session-truth";
+import type { ResumeLane } from "./resume-lane";
 
 /**
  * The wake signal this app did not have — `engine.start()` once was every
@@ -679,7 +680,8 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
          * suite stayed green — exactly the class of wiring bug the `transport` field below exists to keep visible.
          */
         fetchBody: gatedRead(
-          (messageId: string): Promise<MessageBodyWire | null> => adapter.fetchBody(messageId),
+          // Every argument forwarded: an open's `{ urgent }` is its read's priority on the wire.
+          (...args: Parameters<GatedAdapter["fetchBody"]>): Promise<MessageBodyWire | null> => adapter.fetchBody(...args),
           "a message body",
         ),
 
@@ -1163,6 +1165,12 @@ export interface SyncSchedulerOptions {
    * revivals, which only the Cloud build publishes; `null` hears none.
    */
   renewals?: ((cb: () => void) => () => void) | null;
+  /**
+   * The web's resume lane (`resume-lane.ts`, `engine-config.ts` `cloudLane`): on a return the
+   * delta's drain reserves its lead and the stream is dialled after it. `null` (the default, the
+   * desktop) keeps every return as it was: the stream first, then the drain.
+   */
+  lane?: ResumeLane | null;
 }
 
 /**
@@ -1372,6 +1380,12 @@ export function startSyncScheduler(
   // No `document` at all (SSR, a non-browser host) is treated as visible: the hidden cadence
   // exists for hidden TABS, and something with no visibility model has none to hide.
   const visible = (): boolean => visibility === null || visibility.visibilityState === "visible";
+  /** Would a wake drain now? `wake()` and the lane's reservation ask the same question. */
+  const drainsOnWake = (): boolean => {
+    if (stopped || standingDown || running) return false;
+    if (terminal) return visible() && Date.now() - lastProbeAt >= BACKOFF_CAP_MS;
+    return refusedAt === null && visible();
+  };
 
   /**
    * "May a request be issued right now?" — the ONE predicate, read at every await boundary:
@@ -1434,6 +1448,28 @@ export function startSyncScheduler(
    * otherwise wait out the whole safety cadence. One, not N: the follow-up reads everything.
    */
   let pendingWake = false;
+  const lane = options.lane ?? null;
+  /** A return's hold on the lane's lead for its delta; released when that drain settles. */
+  let reserved: (() => void) | null = null;
+  const reserve = (): void => {
+    if (lane !== null && reserved === null && drainsOnWake()) reserved = lane.resume();
+  };
+  const unreserve = (): void => {
+    const release = reserved;
+    reserved = null;
+    release?.();
+  };
+  /** A return's stream: dialled before the drain without a lane, after the delta's lead with one. */
+  const wakeAndDial = (drain: () => void): void => {
+    if (lane === null) {
+      connectStream();
+      drain();
+      return;
+    }
+    reserve();
+    drain();
+    lane.afterLead(connectStream);
+  };
 
   /**
    * MAY THIS WINDOW HOLD A SESSION-AUTHENTICATED STREAM RIGHT NOW? One spelling, read at four
@@ -1857,6 +1893,7 @@ export function startSyncScheduler(
       arm(pacedBackoff());
     } finally {
       running = false;
+      unreserve();
       // The mark goes down wherever the tick ends — an early return, a refusal, a teardown
       // racing the drain — because the strip may not keep moving over a loop that let go.
       options.onDraining?.(false);
@@ -1890,12 +1927,10 @@ export function startSyncScheduler(
       return;
     }
     if (terminal) {
-      if (!visible()) return;                 // probes are for tabs somebody is looking at
-      // One bounded probe per wake. A transient refusal must not outlive the
-      // transient, and a genuine one must not buy invocations (#10) — hence the floor.
-      const at = Date.now();
-      if (at - lastProbeAt < BACKOFF_CAP_MS) return;
-      lastProbeAt = at;
+      // Probes are for tabs somebody is looking at, one bounded probe per wake. A transient refusal
+      // must not outlive the transient, and a genuine one must not buy invocations (#10): the floor.
+      if (!drainsOnWake()) return;
+      lastProbeAt = Date.now();
       revalidating = true;
       void tick().finally(() => { revalidating = false; });
       return;
@@ -1914,7 +1949,7 @@ export function startSyncScheduler(
       arm(Math.max(0, confirmDueAt - Date.now()));
       return;
     }
-    if (!visible()) {
+    if (!drainsOnWake()) {
       // A hidden tab advances on its own cadence and nothing accelerates it: `online` firing
       // behind a hidden tab (a laptop rejoining wifi in a bag) must not buy a drain nobody is
       // there for. The timer is normally already armed; this only repairs the edge where a
@@ -1934,8 +1969,7 @@ export function startSyncScheduler(
   const onVisibility = (): void => {
     watchdogRedials = 0;
     if (visible()) {
-      connectStream();
-      wake();
+      wakeAndDial(wake);
     } else {
       closeStream();
       // The hidden cadence is the one re-arm that legitimately pushes a drain OUT (8 s → 60 s),
@@ -1952,18 +1986,23 @@ export function startSyncScheduler(
     if (stopped || !standingDown) return;
     standingDown = false;
     publish();
-    connectStream();
-    void tick();
+    wakeAndDial(() => { void tick(); });
   };
   REVIVERS.add(revive);
 
   /** Back online: the network changed, so a stream that was silent before may not be now. */
   const onOnline = (): void => {
     watchdogRedials = 0;
-    connectStream();
-    wake();
+    wakeAndDial(wake);
   };
 
+  /**
+   * Heard on `window` in the capture phase, so before any `document` listener whatever the mount
+   * order: the return's delta holds the lead before another surface's read reaches the lane.
+   */
+  const reserveOnReturn = (): void => { if (visible()) reserve(); };
+  const firstHearer = lane !== null && visibility !== null && typeof window !== "undefined" ? window : null;
+  firstHearer?.addEventListener("visibilitychange", reserveOnReturn, true);
   visibility?.addEventListener("visibilitychange", onVisibility);
   online?.addEventListener("online", onOnline);
   /*
@@ -2013,5 +2052,7 @@ export function startSyncScheduler(
     engine.stopEagerBodies();
     visibility?.removeEventListener("visibilitychange", onVisibility);
     online?.removeEventListener("online", onOnline);
+    firstHearer?.removeEventListener("visibilitychange", reserveOnReturn, true);
+    unreserve();
   };
 }

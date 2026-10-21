@@ -4,7 +4,8 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
-  accounts, accountSettings, folderState, mailboxes, messageBodies, messages, rules, sessions, users,
+  accounts, accountSettings, accountSyncState, changeLog, folderState, mailboxes, messageBodies, messages,
+  recordChange, rules, sessions, users,
 } from "@trafficflow/db";
 import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { brandDialect } from "@trafficflow/db/dialect";
@@ -19,17 +20,18 @@ import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 
 /**
  * A HOT ROUTE PAYS ONE ROUND TRIP TO THE POOLER PER STATEMENT: the list, a body, the search page,
- * the rules and `/health`, through the deployed host over its pooled client, counted off the
- * protocol bytes on the wire. Statements are pinned as ceilings; round trips equal statements —
- * a parameter's describe before its bind is the second trip this pins out. The recorder is
- * installed before the first connection; the host's own warm-up request precedes each count.
+ * the rules, `/health` and an unchanged `/sync` poll, through the deployed host over its pooled
+ * client, counted off the protocol bytes on the wire. Statements are pinned as ceilings; round
+ * trips equal statements — a parameter's describe before its bind is the second trip this pins
+ * out. The recorder is installed before the first connection; the host's own warm-up request
+ * precedes each count (for `/sync`, the first empty tail, which takes the due sync stamp).
  */
 const wire = recordPgWire();
 const PG_UP = await realPgAvailable();
 const KEK = "ab".repeat(32);
 
 /** The statements each route issues today, begin and commit included: a ceiling, not a target. */
-const STATEMENTS = { list: 9, body: 3, bodies: 6, search: 14, rules: 3, health: 1 } as const;
+const STATEMENTS = { list: 9, body: 3, bodies: 6, search: 14, rules: 3, health: 1, syncHorizon: 2 } as const;
 /**
  * The waits a search page costs on the host's own handle factory: the session, begin, the search
  * settings in the page's flush, commit. A probe the service keeps per handle is not one of them.
@@ -62,6 +64,7 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
   let db: Db;
   let token = "";
   let accountId = "";
+  let horizon = "";
   const ids: string[] = [];
 
   beforeAll(async () => {
@@ -97,9 +100,16 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
         attachmentNames: [], bodyText: `a heron by the lake, note ${i}`, source: "text",
       });
     }
-    await db.insert(rules).values({ accountId, kind: "sender", match: "watcher0@rt.example", destination: "ohmail/News" });
+    const [rule] = await db.insert(rules)
+      .values({ accountId, kind: "sender", match: "watcher0@rt.example", destination: "ohmail/News" }).returning();
     await db.insert(accountSettings).values({ accountId, searchIndexBuiltAt: now })
       .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: now } });
+    // One change row, so `/sync` has a horizon to be polled at.
+    await db.transaction((tx) => recordChange(tx as never, { accountId, entityType: "rule", entityId: rule!.id, op: "create" }));
+    const boot = await handleApiRequest(new Request("https://api.ohmail.app/sync?since=0", {
+      headers: { authorization: `Bearer ${token}` },
+    }));
+    horizon = (await boot.json() as { cursor: string }).cursor;
   }, 120_000);
 
   afterAll(async () => {
@@ -111,6 +121,8 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
       await db.delete(rules).where(eq(rules.accountId, accountId));
       await db.delete(mailboxes).where(eq(mailboxes.accountId, accountId));
       await db.delete(accountSettings).where(eq(accountSettings.accountId, accountId));
+      await db.delete(changeLog).where(eq(changeLog.accountId, accountId));
+      await db.delete(accountSyncState).where(eq(accountSyncState.accountId, accountId));
       await db.delete(sessions).where(eq(sessions.accountId, accountId));
       await db.delete(users).where(eq(users.accountId, accountId));
       await db.delete(accounts).where(eq(accounts.id, accountId));
@@ -143,6 +155,8 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
     ["search", () => "/search?q=heron&parts=page", true],
     ["rules", () => "/rules", true],
     ["health", () => "/health", false],
+    // At the horizon, inside the stamp's window: the session read and the bounds read, no write.
+    ["syncHorizon", () => `/sync?since=${encodeURIComponent(horizon)}`, true],
   ];
 
   for (const [name, path, bearer] of routes) {

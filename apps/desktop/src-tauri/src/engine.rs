@@ -1068,6 +1068,9 @@ struct Inner {
     /// and `the_supervisor_sleeps_through_an_idle_engine` is what reads it. Per ENGINE rather
     /// than per process: the test suite runs several supervisors at once.
     turns: AtomicU64,
+    /// The turns of [`wait_for_exit`] that ended on their timeout rather than on a notify. A child
+    /// that leaves wakes the supervisor through its pipes; this is how a test sees that no timer did.
+    timer_wakes: AtomicU64,
 }
 
 fn new_shared(state: EngineState, finished: bool) -> Shared {
@@ -1110,6 +1113,7 @@ impl Engine {
                 cv: Condvar::new(),
                 timings: Timings::default(),
                 turns: AtomicU64::new(0),
+                timer_wakes: AtomicU64::new(0),
             }),
             thread: Mutex::new(None),
         }
@@ -1126,6 +1130,7 @@ impl Engine {
             cv: Condvar::new(),
             timings,
             turns: AtomicU64::new(0),
+            timer_wakes: AtomicU64::new(0),
         });
         let worker = Arc::clone(&inner);
         let thread = thread::Builder::new()
@@ -1167,6 +1172,12 @@ impl Engine {
     #[cfg(test)]
     pub fn supervisor_turns(&self) -> u64 {
         self.inner.turns.load(Ordering::Relaxed)
+    }
+
+    /// How many of those turns ended on their timeout. See [`Inner::timer_wakes`].
+    #[cfg(test)]
+    pub fn supervisor_timer_wakes(&self) -> u64 {
+        self.inner.timer_wakes.load(Ordering::Relaxed)
     }
 
     pub fn last_exit(&self) -> Option<Exit> {
@@ -3384,7 +3395,11 @@ fn wait_for_exit(inner: &Arc<Inner>, child: &mut Child) -> ExitStatus {
             Some(deadline) => deadline.saturating_duration_since(Instant::now()),
             None => LIVENESS_BACKSTOP,
         };
-        let _ = inner.cv.wait_timeout(s, wait).expect("engine state");
+        let (s, woke) = inner.cv.wait_timeout(s, wait).expect("engine state");
+        drop(s);
+        if woke.timed_out() {
+            inner.timer_wakes.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

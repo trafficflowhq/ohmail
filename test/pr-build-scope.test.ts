@@ -175,6 +175,7 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
     ["the lockfile", ["package-lock.json"], "true", "true"],
     ["the root tsconfig", ["tsconfig.base.json"], "true", "true"],
     ["this script", [".github/scripts/pr-build-scope.sh"], "true", "true"],
+    ["the CI retry wrapper", [".github/scripts/retry-infra.sh"], "true", "true"],
     ["nothing", [], "false", "false"],
     ["a changelog fragment", ["changelog.d/x.md"], "false", "false"],
   ])("%s", (_label, paths, desktop, android) => {

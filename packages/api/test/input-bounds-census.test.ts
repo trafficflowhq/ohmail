@@ -1680,6 +1680,8 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // the number is set the way `IMAP_LIST_MAX_FOLDERS` is — far above any honest account, so it
   // catches a runaway without pretending to be a product limit, and each element here costs a
   // stored credential and a mail server that answered.
+  // The mailbox list's facts read for all rows at once: `factsFor` slices the ids the list read.
+  "mailbox-service.ts :: part": { origin: { bounded: "a slice of at most ACCOUNT_MAILBOXES_MAX_READ ids of the caller's own mailboxes — the rows `list` read under the account predicate, or the one row of a single-row door — and every statement also binds the account through `mailboxes_id_account_uq`" }, count: 1 },
   "mailbox-service.ts :: mine.map((m) => m.id)": { origin: { bounded: "at most ACCOUNT_MAILBOXES_MAX_READ connected mailboxes — the `for update` read takes the ceiling plus a probe row and refuses by name when the probe arrives, so the parameter list is bounded while the locking semantic is kept; a declared sanity ceiling whose reading is owed (MANUAL-STEPS 33)" }, count: 1 },
   "message-service.ts :: ids": {
     origin: { caller: "BODIES_IDS_MAX / MARK_SEEN_MAX_IDS, each with a uuid shape test before the query" },

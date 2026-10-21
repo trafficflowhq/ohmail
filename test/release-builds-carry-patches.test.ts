@@ -226,7 +226,7 @@ describe("no published build runs a dependency's install script", () => {
 
   it("refuses a copy with one flag removed, in a workflow, a recipe and the Flatpak manifest", () => {
     const wf = read(`${WF}/build.yml`).replace("npm ci --ignore-scripts --no-audit --no-fund", "npm ci --no-audit --no-fund");
-    expect(unscriptedInstalls("build.yml", wf)).toEqual(["build.yml: run: npm ci --no-audit --no-fund"]);
+    expect(unscriptedInstalls("build.yml", wf)).toEqual(['build.yml: run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --no-audit --no-fund']);
     const web = read("apps/webapp/Dockerfile").replace("npm install --no-save --ignore-scripts", "npm install --no-save");
     expect(unscriptedInstalls("webapp", web)).toHaveLength(1);
     const fp = read(FLATPAK).replace("--offline --ignore-scripts --no-audit --no-fund --prefix", "--offline --no-audit --no-fund --prefix");

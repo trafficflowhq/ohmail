@@ -249,6 +249,8 @@ export default defineConfig({
       "packages/api/test/search-date-bounds.test.ts",
       /* Mark all read's statements per set, counted on the device store's own prepare. */
       "packages/api/test/mark-seen-statements.test.ts",
+      /* An unchanged `/sync` poll's two statements, and the sync stamp's gate, on the device store. */
+      "packages/api/test/sync-unchanged-poll-writes-nothing.test.ts",
       // The open read on the device store: the stamp, its scope and its clears run the
       // same statements over the twin, and `applyExternalFlag`'s clear is the phone's \Seen adoption.
       "packages/services/test/mark-seen-open-read.test.ts",
@@ -490,6 +492,8 @@ export default defineConfig({
       // …and WHO it acts for (UD-R4-03): the person-decided rule predicate reaches both stores.
       "packages/services/test/unsubscribe-acts-only-for-a-person.test.ts",
       "packages/services/test/mailbox-filing-report.test.ts",
+      // The mailbox list's facts, read for all of an account's mailboxes at once, on this store too.
+      "packages/services/test/mailbox-facts-batched.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
       "packages/services/test/organize-rerun-window.test.ts",
       "packages/db/test/json-merge-dialect.test.ts",

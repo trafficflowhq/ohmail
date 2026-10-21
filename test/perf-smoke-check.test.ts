@@ -1044,23 +1044,58 @@ describe("the shipped store is read from the engine beside the app", () => {
 
 describe("the boot alone, on the jobs that start the engine without the app", () => {
   const P = check.PLATFORM_TIMING as Record<string, any>;
-  const boot = (platform: string, ms: number, runnerS: number | null = null) =>
-    check.render(check.collectBoot({ log: check.bootLog(ms), platform, runnerS }));
+  const M = P.macos;
+  const boot = (platform: string, ms: number, runnerS: number | null = null, pgliteMs = 120, storeIdentity: unknown = null) =>
+    check.render(check.collectBoot({ log: check.bootLog(ms, pgliteMs), platform, runnerS, storeIdentity }));
   const last = (out: { text: string }) => out.text.split("\n").filter((l) => l.startsWith("PERF_SMOKE_BOOT:")).pop();
 
-  it("holds macOS to its own distribution both ways", () => {
-    const c = P.macos.engine_ready.ceilingMs;
-    expect(boot("macos", c, P.macos.runnerReferenceS).code).toBe(0);
-    const red = boot("macos", c * 2, P.macos.runnerReferenceS);
+  /* Rewritten 2026-10-21, not deleted: the macOS band read the build step's seconds, and the 26
+   * reds of 200 build runs were that reading. The store's open time is the runner's reading here
+   * as on Linux, so a slow store open asks and a slow build step at the median store open is red. */
+  it("holds macOS to its own distribution both ways, the store's open judging the runner", () => {
+    const c = M.engine_ready.ceilingMs;
+    const pg = M.pgliteReferenceMs;
+    expect(boot("macos", c, M.runnerReferenceS, pg, M.store).code).toBe(0);
+    const red = boot("macos", c * 2, M.runnerReferenceS, pg, M.store);
     expect(red.code).toBe(1);
     expect(last(red)).toMatch(/^PERF_SMOKE_BOOT: RED -- engine_ready/);
-    expect(boot("macos", c + 100, Math.round(P.macos.runnerReferenceS * 1.3)).code).toBe(5);
+    const ask = boot("macos", c + 100, M.runnerReferenceS, Math.round(pg * 1.3), M.store);
+    expect(ask.code, ask.text).toBe(5);
+    expect(last(ask)).toContain("(pglite open x1.30)");
+    const step = boot("macos", c + 100, Math.round(M.runnerReferenceS * 1.3), pg, M.store);
+    expect(step.code, step.text).toBe(1);
+    expect(step.text).toContain("the runner was not slower than its median");
+    expect(last(step)).toContain(`runner: pglite open ${pg} ms against its median ${pg} ms (x1.00) · build step`);
+    expect(last(step)).toMatch(/, recorded$/);
   });
 
-  it("records Windows, which has no distribution yet, and says so", () => {
-    const out = boot("windows", 9000);
-    expect(out.code).toBe(0);
-    expect(last(out)).toContain("PERF_SMOKE_BOOT: RECORDED -- engine_ready 9000 ms on windows, no ceiling yet");
+  it("widens nothing on macOS for a store it did not read, and says why", () => {
+    const out = boot("macos", M.engine_ready.ceilingMs + 100, Math.round(M.runnerReferenceS * 1.3), Math.round(M.pgliteReferenceMs * 1.3));
+    expect(out.code, out.text).toBe(1);
+    expect(last(out)).toContain("runner: pglite open unread (the shipped store was not read");
+  });
+
+  it("refuses the macOS comparison by name for another pglite or another extension set", () => {
+    for (const store of [{ ...M.store, pglite: "0.3.0" }, { ...M.store, extensions: ["btree_gin", "pg_trgm", "vector"] }]) {
+      const out = boot("macos", M.engine_ready.ceilingMs + 100, M.runnerReferenceS, Math.round(M.pgliteReferenceMs * 1.3), store);
+      expect(out.code, out.text).toBe(1);
+      expect(out.text).toContain("the readings were taken on pglite 0.2.17 with btree_gin, pg_trgm; retake TIMING_READINGS");
+    }
+  });
+
+  it("prints the macOS store open and lets it decide nothing: it is the runner's reading here", () => {
+    const out = boot("macos", M.engine_ready.ceilingMs - 100, M.runnerReferenceS, M.engine_ready.ceilingMs - 200, M.store);
+    expect(out.code, out.text).toBe(0);
+    expect(out.text).toMatch(/pglite_open +RECORDED +READ +3700 ms against its median 1483 ms/);
+  });
+
+  it("records Windows, which has no distribution yet, and says so, a store or none", () => {
+    for (const store of [null, M.store]) {
+      const out = boot("windows", 9000, null, 4000, store);
+      expect(out.code).toBe(0);
+      expect(last(out)).toContain("PERF_SMOKE_BOOT: RECORDED -- engine_ready 9000 ms on windows, no ceiling yet");
+      expect(out.text).not.toContain("pglite_open");
+    }
   });
 
   it("refuses a log with no boot line, and a platform it does not know", () => {
@@ -1069,19 +1104,86 @@ describe("the boot alone, on the jobs that start the engine without the app", ()
     expect(check.render(check.collectBoot({ log: OK_LOG, platform: "plan9" })).code).toBe(3);
   });
 
-  it("runs from the command line, and an empty --runner-s is an unread runner", () => {
+  /* Rewritten 2026-10-21, not deleted: a slow --runner-s gave 5; now the store read from
+   * --engine-dir does, and with no --engine-dir nothing widens the ceiling. */
+  it("runs from the command line, reading the store from --engine-dir, and an empty --runner-s is an unread build step", () => {
     const dir = mkdtempSync(join(tmpdir(), "perf-boot-"));
-    const f = join(dir, "err");
-    writeFileSync(f, check.bootLog(P.macos.engine_ready.ceilingMs + 100));
+    const bin = join(dir, "engine", "bin");
+    mkdirSync(join(bin, "node_modules", "@electric-sql", "pglite"), { recursive: true });
+    writeFileSync(join(bin, "node_modules", "@electric-sql", "pglite", "package.json"), JSON.stringify({ version: "0.2.17" }));
+    writeFileSync(join(bin, "ohmail-engine.mjs"), 'import "@electric-sql/pglite/contrib/btree_gin";\nimport "@electric-sql/pglite/contrib/pg_trgm";\n');
+    const slowStore = join(dir, "slow-store");
+    const medianStore = join(dir, "median-store");
+    writeFileSync(slowStore, check.bootLog(M.engine_ready.ceilingMs + 100, Math.round(M.pgliteReferenceMs * 1.3)));
+    writeFileSync(medianStore, check.bootLog(M.engine_ready.ceilingMs + 100, M.pgliteReferenceMs));
     const script = resolve(HERE, "..", "scripts/perf-smoke-check.mjs");
-    const cli = (runner: string) =>
-      spawnSync(process.execPath, [script, "--boot", "--platform", "macos", "--engine-log", f, "--runner-s", runner], { encoding: "utf8" });
-    const empty = cli("");
-    const slow = cli(String(Math.round(P.macos.runnerReferenceS * 1.3)));
+    const cli = (log: string, runner: string, engineDir: string | null) =>
+      spawnSync(process.execPath, [script, "--boot", "--platform", "macos", "--engine-log", log, "--runner-s", runner,
+        ...(engineDir === null ? [] : ["--engine-dir", engineDir])], { encoding: "utf8" });
+    const slow = cli(slowStore, "", bin);
+    const slowStep = cli(medianStore, String(Math.round(M.runnerReferenceS * 1.3)), bin);
+    const unread = cli(slowStore, String(M.runnerReferenceS), null);
     rmSync(dir, { recursive: true, force: true });
-    expect(empty.status, empty.stdout).toBe(1);
-    expect(empty.stdout).toContain("runner: build step unread");
     expect(slow.status, slow.stdout).toBe(5);
+    expect(slow.stdout).toContain("build step unread, recorded");
+    expect(slowStep.status, slowStep.stdout).toBe(1);
+    expect(unread.status, unread.stdout).toBe(1);
+    expect(unread.stdout).toContain("pglite open unread");
+  });
+});
+
+/**
+ * THE RECORDED macOS REDS, read back. Three boot lines from "The packaged engine starts with no
+ * node on PATH" (build jobs 118962781555, 118034658662, 118118542919), with their build steps.
+ * The first two read the runner as not slower than its median by its build step, while their
+ * store opens read x1.65 and x1.31; the third is past the capped band on either reading.
+ */
+describe("the store's open time is the macOS runner's reading too", () => {
+  const M = (check.PLATFORM_TIMING as Record<string, any>).macos;
+  const REDS: Array<[string, string, number]> = [
+    ["118962781555", '{"level":"info","service":"sidecar","event":"boot_phases","pgliteOpenMs":2448,"adoptBaselineMs":188,"migrateMs":1568,"treeSyncMs":329,"compactMs":11,"searchSetupMs":90,"migrationsPending":156,"migrationsApplied":156,"slowestMigration":null,"slowestMs":null,"worldMs":38,"totalReadyMs":4825}', 449],
+    ["118034658662", '{"level":"info","service":"sidecar","event":"boot_phases","pgliteOpenMs":1942,"adoptBaselineMs":95,"migrateMs":2054,"compactMs":4,"searchSetupMs":86,"migrationsPending":155,"migrationsApplied":155,"slowestMigration":null,"slowestMs":null,"worldMs":29,"totalReadyMs":4310}', 432],
+    ["118118542919", '{"level":"info","service":"sidecar","event":"boot_phases","pgliteOpenMs":3415,"adoptBaselineMs":206,"migrateMs":2676,"compactMs":4,"searchSetupMs":81,"migrationsPending":155,"migrationsApplied":155,"slowestMigration":null,"slowestMs":null,"worldMs":36,"totalReadyMs":6524}', 615],
+  ];
+  const read = (job: string, storeIdentity: unknown = M.store) => {
+    const [, line, runnerS] = REDS.find(([j]) => j === job)!;
+    return check.render(check.collectBoot({ log: line, platform: "macos", runnerS, storeIdentity }));
+  };
+  const last = (out: { text: string }) => out.text.split("\n").filter((l) => l.startsWith("PERF_SMOKE_BOOT:")).pop();
+
+  it("pins the store the readings opened and its median", () => {
+    expect(M.store).toEqual({ pglite: "0.2.17", extensions: ["btree_gin", "pg_trgm"] });
+    expect(M.pgliteReferenceMs).toBe(1483);
+    expect(M.engine_ready.ceilingMs).toBe(3900);
+  });
+
+  it("asks about job 118962781555 at a store open of x1.65, where the build step called it red", () => {
+    const out = read("118962781555");
+    expect(out.code, out.text).toBe(5);
+    expect(last(out)).toContain("engine_ready 4825 ms against 3900 ms on macos, inside the runner band of 5850 ms (pglite open x1.65)");
+  });
+
+  it("asks about job 118034658662 at x1.31", () => {
+    const out = read("118034658662");
+    expect(out.code, out.text).toBe(5);
+    expect(last(out)).toContain("(pglite open x1.31)");
+  });
+
+  it("keeps job 118118542919 red: past the capped band", () => {
+    const out = read("118118542919");
+    expect(out.code, out.text).toBe(1);
+    expect(out.text).toContain("over the runner band as well (band 5850 ms)");
+  });
+
+  it("keeps all three red with the store unread", () => {
+    for (const [job] of REDS) expect(read(job, null).code, job).toBe(1);
+  });
+
+  it("reads a doubled boot at the median store open red", () => {
+    const line = REDS[0]![1].replace('"pgliteOpenMs":2448', `"pgliteOpenMs":${M.pgliteReferenceMs}`)
+      .replace('"totalReadyMs":4825', `"totalReadyMs":${M.engine_ready.ceilingMs * 2}`);
+    const out = check.render(check.collectBoot({ log: line, platform: "macos", runnerS: 449, storeIdentity: M.store }));
+    expect(out.code, out.text).toBe(1);
   });
 });
 
@@ -1098,6 +1200,18 @@ describe("the workflow takes the runner's reading where the ceilings were measur
       expect(wf.indexOf("OHMAIL_BUILD_STEP_S=", at) - at, `no end noted after ${bundles}`).toBeLessThan(400);
     }
     expect(wf).toContain('--runner-s "${OHMAIL_BUILD_STEP_S:-}" \\\n            --fixture-messages');
+  });
+
+  it("hands the macOS boot check the shipped engine, and reads its store first", () => {
+    const step = wf.slice(wf.indexOf("name: The packaged engine starts with no node on PATH"));
+    const call = step.indexOf("node scripts/perf-smoke-check.mjs --boot --platform macos");
+    expect(call).toBeGreaterThan(0);
+    expect(step.slice(call, step.indexOf("RC=$?", call))).toContain('--engine-dir "$RES/engine/bin"');
+    /* The control: an unread store fails the step by name before the band could be asked. */
+    const before = step.slice(0, call);
+    expect(before).toContain('readStoreIdentity(process.env.RES + "/engine/bin")');
+    expect(before).toContain("if (s.unread) process.exit(1)");
+    expect(before.lastIndexOf("readStoreIdentity")).toBeGreaterThan(before.indexOf('"event":"serving"'));
   });
 
   it("writes Windows' boot line where its check reads it", () => {

@@ -158,10 +158,14 @@ describe("HttpAdapter ⇄ real backend (PGlite, in-process)", () => {
     expect(store.maxSeq()).toBeGreaterThanOrEqual(3);
     expect(decodeSeqCursor(store.getCursor())).toBe(store.maxSeq());
 
-    // Idle tail: same cursor, nothing new.
+    // Idle tail: same cursor, nothing new — and the mirror's rows and version untouched.
     const before = store.getCursor();
+    const rows = JSON.stringify([...store.snapshot().entries()].sort());
+    const version = store.version();
     await engine.syncOnce();
     expect(store.getCursor()).toBe(before);
+    expect(JSON.stringify([...store.snapshot().entries()].sort()), "an unchanged answer moved the mirror's rows").toBe(rows);
+    expect(store.version(), "an unchanged answer re-derived the mirror").toBe(version);
   });
 
   it("a move round-trips: optimistic → X-Sync-Seq echo → /sync converged; seq advances across mutations", async () => {

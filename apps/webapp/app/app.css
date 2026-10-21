@@ -1338,7 +1338,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    `OhboxView`'s `standingNotice` slot INSIDE the scroller rather than in this header slot. */
 
 /* ============ the organizer notice, under 1024px: the topbar's twin ====================
-   The rail's foot carries the notice at width (`.rail-notice`, rail.css); where the rail is a
+   The rail carries the notice at width, under the piles (`.rail-notice`, rail.css); where the rail is a
    closed drawer this is the one copy — one quiet line in the strip register of the host line,
    never over the Ohbox rows. Its `display` is declared beside `.host-strip`, above the single
    1024px query that swaps the pair. The inner marks, rows and verbs are rail.css's `.rn-*`. */

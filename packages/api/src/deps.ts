@@ -686,6 +686,11 @@ export interface ResolvedSession {
    * was handled.
    */
   emailVerifiedAt: Date | null;
+  /**
+   * The row's `last_synced_at` as `resolveSession` read it. Bookkeeping only: `GET /sync` reads it
+   * to skip a stamp that is not due. Absent means unknown, and the stamp runs as before.
+   */
+  lastSyncedAt?: Date | null;
 }
 
 /**

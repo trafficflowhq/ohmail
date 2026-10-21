@@ -83,7 +83,7 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   if (typecheckRuns.some((r) => drops(r).length)) problems.push("TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests");
   /* The desktop job runs the desktop's own files on the desktop's own install, and reads its report back. */
   const desktopRuns = (wf.jobs.desktop?.steps ?? []).map((st) => st.run ?? "");
-  const installAt = desktopRuns.findIndex((r) => r.includes("cd apps/desktop && npm ci"));
+  const installAt = desktopRuns.findIndex((r) => /cd apps\/desktop && (bash "\$GITHUB_WORKSPACE\/\.github\/scripts\/retry-infra\.sh" npm-network -- )?npm ci/.test(r));
   const deskVitestAt = desktopRuns.findIndex((r) => /\bvitest run\b/.test(r));
   if (installAt < 0 || deskVitestAt < 0 || installAt > deskVitestAt) problems.push("DESKTOP the desktop job runs vitest before it installs apps/desktop's own tree");
   if (!desktopRuns.some((r) => r.includes("node test/support/ci-shards.mjs --desktop"))) problems.push("DESKTOP the desktop job does not take its files from the shard map");
@@ -203,7 +203,7 @@ describe("the suite workflow", () => {
     expect(workflowProblems(dropping, composeText)).toEqual(["TYPECHECK the typecheck job drops test directories, and the web app's program reads its tests"]);
     const noWeb = workflowText.replace("        run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json", "        run: echo skipped");
     expect(workflowProblems(noWeb, composeText)).toEqual(["TYPECHECK the typecheck job does not compile the web app's program"]);
-    const rootOnly = workflowText.replace("        run: cd apps/desktop && npm ci --ignore-scripts --no-audit --no-fund", "        run: echo root tree only");
+    const rootOnly = workflowText.replace('        run: cd apps/desktop && bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund', "        run: echo root tree only");
     expect(rootOnly).not.toBe(workflowText);
     expect(workflowProblems(rootOnly, composeText)).toEqual(["DESKTOP the desktop job runs vitest before it installs apps/desktop's own tree"]);
   });

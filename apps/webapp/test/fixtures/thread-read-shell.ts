@@ -7,6 +7,7 @@
  */
 import { expect, vi } from "vitest";
 import { ISO, act, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
+import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
 export const ME = "walker@example.invalid";
 export const LENA = { name: "Lena", address: "lena@example.invalid" };
@@ -51,6 +52,7 @@ export const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) a
 
 /** Serve `messages` (thread T, consented sender) once, record the read wire, mount the shell. */
 export async function mountThread(messages: unknown[]): Promise<HTMLElement> {
+  resetResumeLaneForTests();
   seq = 0;
   patches = [];
   staleId = null;

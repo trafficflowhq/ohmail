@@ -13,8 +13,8 @@
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
 import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
 import type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy,
-  WithdrawSendAnswer, WithdrawSendOutcome,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
+  StayedWhy, WithdrawSendAnswer, WithdrawSendOutcome,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -1154,7 +1154,30 @@ export type FetchMessageOutcome =
   | { state: "failed"; errorClass: string };
 
 /** The batch body read, as {@link OhmailEngine.hydrateThread} calls it. */
-export type FetchBodiesFn = (messageIds: string[]) => Promise<MessageBodyBatchWire[] | null>;
+export type FetchBodiesFn = (messageIds: string[], opts?: ReadIntent) => Promise<MessageBodyBatchWire[] | null>;
+
+/**
+ * ONE BODY'S READS IN THE AIR, beside its single-flight entry: what lets an open's own read go beside a
+ * background read of the same body and the record still be written once ({@link OhmailEngine.hydrateBody}).
+ */
+interface BodyAsk {
+  /** Its read is the person's (sent `{ urgent: true }`): an open's, a thread's on screen, a promoted one. */
+  asked: boolean;
+  /** Its read left the engine's queue: on the wire, or held where the engine cannot see it. */
+  left: boolean;
+  /** An open arrived before it left: it leaves as the person's, past the four slots. */
+  urged: boolean;
+  /** Reads of this body still running; the entry goes with the last. */
+  reads: number;
+  /** Answers still to come, one per read out: a failure waits for them, an omission is left to them. */
+  pending: number;
+  /** An answer was taken for the record (a body, or a failure no other read can still answer). */
+  landed: boolean;
+  /** A failure heard while another answer was still to come: written only if none brings the body. */
+  failure: { err: unknown } | null;
+  /** For an open that raced a background read: settles once the record is decided. */
+  decided: { promise: Promise<void>; resolve: () => void } | null;
+}
 
 /**
  * The adapter capability a thread open reaches for.
@@ -2769,6 +2792,8 @@ export class OhmailEngine {
   private eagerGen = 0;
   /** In-flight body fetches by message id — see {@link OhmailEngine.hydrateBody}. */
   private readonly bodyRequests = new Map<string, Promise<void>>();
+  /** What each of those reads is, with the same lifetime — see {@link BodyAsk} and {@link hurryBody}. */
+  private readonly bodyAsks = new Map<string, BodyAsk>();
   /**
    * The messages a surface has most recently asked to render, oldest first, capped at
    * {@link RENDERED_PINS}. Read by {@link OhmailEngine.pinnedMessageIds}; written by
@@ -2799,7 +2824,7 @@ export class OhmailEngine {
    * See {@link promoteBodyRequest}.
    */
   private bodyActive = 0;
-  private readonly bodyQueue: Array<{ ids: readonly string[]; start: () => void }> = [];
+  private readonly bodyQueue: Array<{ ids: readonly string[]; start: (promoted?: boolean) => void }> = [];
   /**
    * WHEN THIS ENGINE STARTED, epoch ms — the line a `failed` body record is compared against.
    *
@@ -5494,15 +5519,12 @@ export class OhmailEngine {
      * the message a reader is looking at; see there for why this call is the signal.
      */
     this.noteRendered(messageId);
-    const inFlight = this.bodyRequests.get(messageId);
-    if (inFlight) {
-      // JOINED, and then re-prioritised: the request may have been created by the background pass
-      // (or by a thread open) and be sitting in the non-urgent queue. See
-      // {@link promoteBodyRequest} — without this the claim "an open always jumps" is false for
-      // precisely the messages the prefetch has queued.
-      if (opts.urgent === true || opts.retry === true) this.promoteBodyRequest(messageId);
-      return inFlight;
-    }
+    // JOINED, and then re-prioritised: the request may have been created by the background pass
+    // (or by a thread open) and be waiting in the non-urgent queue, or already out as a background
+    // read. See {@link hurryBody} — without this the claim "an open always jumps" is false for
+    // precisely the messages the prefetch has asked for.
+    const joined = this.joinBody(messageId, opts.urgent === true || opts.retry === true ? "urgent" : null);
+    if (joined !== null) return joined;
 
     const plan = this.bodyPlan(messageId, opts.retry === true, true);
     if (plan.kind === "skip") return;
@@ -5517,8 +5539,9 @@ export class OhmailEngine {
      * decision, and the first thing that may suspend is the marker write inside `startBody`,
      * which happens AFTER the promise is already registered here.
      */
-    const request = this.startBody(messageId, plan.held, opts.urgent === true || opts.retry === true);
-    this.bodyRequests.set(messageId, request);
+    const urgent = opts.urgent === true || opts.retry === true;
+    const request = this.startBody(messageId, plan.held, urgent);
+    this.trackBodies([messageId], request, urgent);
     return request;
   }
 
@@ -5637,8 +5660,9 @@ export class OhmailEngine {
   /**
    * The surfaces' snippet branch becomes unreachable for a message being hydrated, which is why they may now treat a
    * resting `snippet` as the defect it is. The `.finally` clears the single-flight entry on both arms, rejection
-   * included — a leaked entry would make every later call join a promise that is never coming back, which is the
-   * failure {@link BODY_FETCH_TIMEOUT_MS} exists for, reached from the other side.
+   * included (once no other read of the body is out, {@link settleBodies}) — a leaked entry would make every later
+   * call join a promise that is never coming back, which is the failure {@link BODY_FETCH_TIMEOUT_MS} exists for,
+   * reached from the other side.
    */
   private startBody(
     messageId: string,
@@ -5646,10 +5670,8 @@ export class OhmailEngine {
     urgent: boolean,
   ): Promise<void> {
     return this.markLoading(messageId, held)
-      .then(() => this.bodySlot(urgent, () => this.fetchBodyInto(messageId), [messageId]))
-      .finally(() => {
-        this.bodyRequests.delete(messageId);
-      });
+      .then(() => this.bodySlot(urgent || this.bodiesUrged([messageId]), (asked) => this.fetchBodyInto(messageId, asked), [messageId]))
+      .finally(() => this.settleBodies([messageId]));
   }
 
   /**
@@ -5780,7 +5802,12 @@ export class OhmailEngine {
     if (!fetchBodies) {
       if (opts.rendered) {
         const from = urgent ? ids.length - MAX_CONCURRENT_BODIES : ids.length;
-        return Promise.all(ids.map((id, i) => this.hydrateBody(id, i >= from ? { urgent: true } : {}))).then(() => undefined);
+        return Promise.all(ids.map((id, i) => {
+          if (i >= from) return this.hydrateBody(id, { urgent: true });
+          // On screen: a read already out as a background one is hurried as an open's is.
+          if (this.bodyRequests.has(id)) { this.noteRendered(id); return this.joinBody(id, "shown")!; }
+          return this.hydrateBody(id);
+        })).then(() => undefined);
       }
       // The per-id fallback WITHOUT the pin write `hydrateBody` opens with — same admission,
       // same single-flight registration, no claim that a surface is rendering anything. A caller
@@ -5794,24 +5821,28 @@ export class OhmailEngine {
         if (plan.kind === "purge") return this.putBody(id, null);
         if (plan.kind === "skip") return Promise.resolve();
         const request = this.startBody(id, plan.held, false);
-        this.bodyRequests.set(id, request);
+        this.trackBodies([id], request, false);
         return request;
       });
       return Promise.all(runs).then(() => undefined);
     }
 
     const take: Array<{ id: string; held: MessageBodyRecord | undefined }> = [];
+    /** On screen, and already out as a background read: the person's own read goes beside it. */
+    const race: string[] = [];
     const writes: Array<Promise<void>> = [];
     for (const id of ids) {
       if (opts.rendered) this.noteRendered(id);
-      // Already in the air, alone or in another batch — join it rather than ask twice; an urgent
-      // ask lets a queued one go now, as an open does (`promoteBodyRequest`).
-      if (this.bodyRequests.has(id)) { if (urgent) this.promoteBodyRequest(id); continue; }
+      // Already in the air, alone or in another batch — join it rather than ask twice. On screen it
+      // is hurried as an open's is: a queued one an urgent ask lets go now (`promoteBodyRequest`),
+      // one out as a background read gets the person's own beside it (`hurryBody`).
+      if (this.bodyRequests.has(id)) { if (opts.rendered && this.hurryBody(id, urgent)) race.push(id); continue; }
       const plan = this.bodyPlan(id, false, opts.rendered);
       if (plan.kind === "purge") { writes.push(this.putBody(id, null)); continue; }
       if (plan.kind === "skip") continue;
       take.push({ id, held: plan.held });
     }
+    for (let i = 0; i < race.length; i += BODIES_IDS_MAX) writes.push(this.raceBodies(race.slice(i, i + BODIES_IDS_MAX), true));
 
     // Split rather than refuse: the server caps an id list at {@link BODIES_IDS_MAX} because a
     // truncated answer is indistinguishable from "those messages have no body", so a conversation
@@ -5820,11 +5851,13 @@ export class OhmailEngine {
       const chunk = take.slice(i, i + BODIES_IDS_MAX);
       const chunkIds = chunk.map((c) => c.id);
       const run = this.markLoadingBatch(chunk)
-        .then(() => this.bodySlot(urgent, () => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped), chunkIds))
-        .finally(() => {
-          for (const id of chunkIds) this.bodyRequests.delete(id);
-        });
-      for (const id of chunkIds) this.bodyRequests.set(id, run);
+        .then(() => this.bodySlot(
+          urgent || this.bodiesUrged(chunkIds),
+          (asked) => this.fetchBodiesInto(chunkIds, fetchBodies, opts.stopped, asked || opts.rendered),
+          chunkIds,
+        ))
+        .finally(() => this.settleBodies(chunkIds));
+      this.trackBodies(chunkIds, run, urgent || opts.rendered);
       writes.push(run);
     }
     return Promise.all(writes).then(() => undefined);
@@ -5844,19 +5877,27 @@ export class OhmailEngine {
     ids: string[],
     fetchBodies: FetchBodiesFn,
     stopped?: () => boolean,
+    /** On screen: the person is waiting (`ReadIntent`). */
+    urgent = false,
   ): Promise<void> {
+    this.bodiesLeft(ids, urgent);
     let rows: MessageBodyBatchWire[] | null;
     try {
-      rows = await fetchBodies(ids);
+      rows = await (urgent ? fetchBodies(ids, { urgent: true }) : fetchBodies(ids));
     } catch (err) {
-      await this.failBodies(ids, err);
+      // Not for a body another read of it may still answer (`bodyFailed`).
+      const failing = ids.filter((id) => this.bodyFailed(id, err));
+      await this.failBodies(failing, err);
+      this.bodiesDecided(failing);
       return;
     }
     // `null` ⇒ this adapter serves no bodies. Same meaning and same handling as `fetchBody`'s
     // `null`: tombstone the markers rather than leave a surface saying "loading…" for ever.
     if (rows === null) {
+      const mine = ids.filter((id) => this.bodyAnswered(id));
       // One bump for the whole batch — see `putBodies`. Swallowed as the per-id write was.
-      try { await this.putBodies(ids.map((id) => ({ id, record: null }))); } catch { /* the mirror refused; nothing to report */ }
+      try { await this.putBodies(mine.map((id) => ({ id, record: null }))); } catch { /* the mirror refused; nothing to report */ }
+      this.bodiesDecided(mine);
       return;
     }
     const byId = new Map(rows.map((r) => [r.messageId, r]));
@@ -5867,6 +5908,8 @@ export class OhmailEngine {
     for (const id of ids) {
       const wire = byId.get(id);
       if (wire === undefined) { missing.push(id); continue; }
+      // Another read of this body landed first (an open's, beside this one): its record stands.
+      if (!this.bodyAnswered(id)) continue;
       // The same record `fetchBodyInto` writes, field for field — including the `?? null`
       // normalisations, which are about the KEY existing rather than about the value. See
       // there: a record that could leave `html` absent lands back in the re-read branch and
@@ -5896,17 +5939,29 @@ export class OhmailEngine {
       // batch answered gets the `failed` record it would have got asking alone.
       await this.failBodies(answered.map((a) => a.id), err);
     }
+    this.bodiesDecided(answered.map((a) => a.id));
     /*
      * THE PER-ID TAIL, AND IT IS INTERRUPTIBLE. "Shorter than asked" is a normal answer — the
      * server omits ids the account does not own and stops early on its byte budget — so this loop
      * can be as long as the batch was, one request at a time. A background pass that has been
      * torn down must not walk it: the generation was checked before the batch left, and the answer
      * arrives arbitrarily later. Bodies already in the air still land in the store; nothing new
-     * leaves.
+     * leaves. A body another read of it may still answer is left to that one, and one another read
+     * failed gets that failure rather than a second ask of a refusing route (`bodyOmitted`).
      */
+    const alone: string[] = [];
     for (const id of missing) {
+      const next = this.bodyOmitted(id);
+      if (next === "ask") { alone.push(id); continue; }
+      if (next === "wait") continue;
+      await this.failBody(id, next.err);
+      this.bodiesDecided([id]);
+    }
+    for (const id of alone) {
       if (stopped?.() === true) return;
-      await this.fetchBodyInto(id);
+      const a = this.bodyAsks.get(id);
+      if (a?.landed === true) continue;   // an open's read answered it meanwhile
+      await this.fetchBodyInto(id, urgent || a?.asked === true);
     }
   }
 
@@ -5925,10 +5980,10 @@ export class OhmailEngine {
    * site because only one may also re-ask a server that refused (`hydrateBody`). The slot is released in `finally`,
    * including on rejection — a leaked slot starves every later hydration, silently.
    */
-  private bodySlot<T>(urgent: boolean, run: () => Promise<T>, ids: readonly string[] = []): Promise<T> {
+  private bodySlot<T>(urgent: boolean, run: (urgent: boolean) => Promise<T>, ids: readonly string[] = []): Promise<T> {
     if (urgent || this.bodyActive < MAX_CONCURRENT_BODIES) {
       this.bodyActive++;
-      return run().finally(() => {
+      return run(urgent).finally(() => {
         this.bodyActive--;
         this.bodyQueue.shift()?.start();
       });
@@ -5936,9 +5991,10 @@ export class OhmailEngine {
     return new Promise<T>((resolve, reject) => {
       this.bodyQueue.push({
         ids,
-        start: () => {
+        // `promoted`: an open let it go now, so its read is the person's.
+        start: (promoted = false) => {
           this.bodyActive++;
-          run().then(resolve, reject).finally(() => {
+          run(promoted).then(resolve, reject).finally(() => {
             this.bodyActive--;
             this.bodyQueue.shift()?.start();
           });
@@ -5961,7 +6017,169 @@ export class OhmailEngine {
     const at = this.bodyQueue.findIndex((e) => e.ids.includes(messageId));
     if (at < 0) return;
     const [entry] = this.bodyQueue.splice(at, 1);
-    entry!.start();
+    entry!.start(true);
+  }
+
+  /** Register a read of `ids` in the single-flight map and in {@link bodyAsks}; `asked`: it is the person's. */
+  private trackBodies(ids: readonly string[], request: Promise<void>, asked: boolean): void {
+    for (const id of ids) {
+      this.bodyRequests.set(id, request);
+      this.bodyAsks.set(id, {
+        asked, left: false, urged: false, reads: 1, pending: 1, landed: false, failure: null, decided: null,
+      });
+    }
+  }
+
+  /** Did an open arrive for any of `ids` before its read left? Then it leaves as the person's. */
+  private bodiesUrged(ids: readonly string[]): boolean {
+    return ids.some((id) => this.bodyAsks.get(id)?.urged === true);
+  }
+
+  /** The reads of `ids` left the engine's queue; `urgent`: as the person's. */
+  private bodiesLeft(ids: readonly string[], urgent: boolean): void {
+    for (const id of ids) {
+      const a = this.bodyAsks.get(id);
+      if (a === undefined) continue;
+      a.left = true;
+      if (urgent) a.asked = true;
+    }
+  }
+
+  /**
+   * An in-flight read of this body, JOINED — and hurried first when the person waits for it (`urgent`:
+   * an open or a retry; `shown`: a sibling on screen), see {@link hurryBody}. `null` when none is out.
+   * An open that raced a background read waits for the record, not for that read.
+   */
+  private joinBody(id: string, hurry: "urgent" | "shown" | null): Promise<void> | null {
+    const inFlight = this.bodyRequests.get(id);
+    if (inFlight === undefined) return null;
+    if (hurry !== null && this.hurryBody(id, hurry === "urgent")) return this.raceBodies([id], false);
+    return this.bodyAsks.get(id)?.decided?.promise ?? inFlight;
+  }
+
+  /**
+   * MAKE THE READ OF A BODY SOMEBODY IS WAITING FOR THE PERSON'S, wherever it is. Still in the engine's
+   * queue: an urgent ask lets it go now ({@link promoteBodyRequest}); a thread sibling keeps its turn, as it
+   * always has. Not left yet (its marker is being written): it leaves as the person's. Already out as a
+   * background read: `true`, and the caller sends the person's own read beside it ({@link raceBodies}).
+   * The engine cannot tell a read on the wire from one held where it cannot see: the web's resume lane
+   * holds background reads behind its cap after a return, so joining one made an open wait for a slot or
+   * the lane's three-second bound. Nothing when the read already is the person's, when an answer has
+   * landed, or when the body on screen is already whole (a re-read).
+   */
+  private hurryBody(id: string, urgent: boolean): boolean {
+    if (this.bodyQueue.some((e) => e.ids.includes(id))) {
+      if (urgent) this.promoteBodyRequest(id);
+      return false;
+    }
+    const a = this.bodyAsks.get(id);
+    if (a === undefined || a.asked || a.landed) return false;
+    if (this.read().get<MessageBodyRecord>("message_body", id)?.state === "ready") return false;
+    if (!a.left) { a.urged = true; return false; }
+    a.asked = true;
+    return true;
+  }
+
+  /**
+   * THE PERSON'S OWN READ, beside a background read of the same bodies already out ({@link hurryBody}):
+   * sent at once and marked (`{ urgent: true }`, `priority: "high"` on the web's wire), one request for a
+   * thread's siblings (`batch`). Whichever answer lands first writes each record and the other is dropped
+   * ({@link bodyAnswered}): one write, no flicker. Resolves once every record is decided.
+   */
+  private raceBodies(ids: string[], batch: boolean): Promise<void> {
+    const decided: Array<Promise<void>> = [];
+    for (const id of ids) {
+      const a = this.bodyAsks.get(id)!;
+      a.reads += 1;
+      a.pending += 1;
+      if (a.decided === null) {
+        let resolve: () => void = () => {};
+        const promise = new Promise<void>((r) => { resolve = r; });
+        a.decided = { promise, resolve };
+      }
+      decided.push(a.decided.promise);
+    }
+    const fetchBodies = this.fetchBodiesFn;
+    const read = batch && fetchBodies !== null
+      ? this.bodySlot(true, () => this.fetchBodiesInto(ids, fetchBodies, undefined, true))
+      : Promise.all(ids.map((id) => this.bodySlot(true, () => this.fetchBodyInto(id, true)))).then(() => undefined);
+    void read.finally(() => this.settleBodies(ids));
+    return Promise.all(decided).then(() => undefined);
+  }
+
+  /** A body answered `id`: write it (`true`), unless another read's answer landed first. */
+  private bodyAnswered(id: string): boolean {
+    const a = this.bodyAsks.get(id);
+    if (a === undefined) return true;
+    a.pending -= 1;
+    if (a.landed) return false;
+    a.landed = true;
+    return true;
+  }
+
+  /**
+   * A read of `id` failed: write the failure (`true`) only when no other answer can still bring the body.
+   * One still to come keeps the marker, and the failure waits for it ({@link settleBodies}): a failed open
+   * beside a background read must not read "couldn't load" over a body that is on its way.
+   */
+  private bodyFailed(id: string, err: unknown): boolean {
+    const a = this.bodyAsks.get(id);
+    if (a === undefined) return true;
+    a.pending -= 1;
+    if (a.landed) return false;
+    if (a.pending > 0) {
+      a.failure = { err };
+      return false;
+    }
+    a.landed = true;
+    return true;
+  }
+
+  /**
+   * A batch answer left `id` out: `"ask"` it alone (the per-id tail), `"wait"` for the other read of it
+   * still out or already answered, or the failure another read of it heard — written rather than asking a
+   * refusing route again.
+   */
+  private bodyOmitted(id: string): "ask" | "wait" | { err: unknown } {
+    const a = this.bodyAsks.get(id);
+    if (a === undefined) return "ask";
+    a.pending -= 1;
+    if (a.landed || a.pending > 0) return "wait";
+    if (a.failure !== null) {
+      a.landed = true;
+      return a.failure;
+    }
+    a.pending += 1;   // the read about to leave
+    return "ask";
+  }
+
+  /** The records of `ids` an answer wrote: an open that raced for them waits no longer. */
+  private bodiesDecided(ids: readonly string[]): void {
+    for (const id of ids) {
+      const a = this.bodyAsks.get(id);
+      if (a?.landed === true) a.decided?.resolve();
+    }
+  }
+
+  /**
+   * A read of `ids` settled. With the last read of a body its entries go: a failure that waited for another
+   * answer and got none is written first, then the single-flight entry is cleared and a raced open settles.
+   */
+  private async settleBodies(ids: readonly string[]): Promise<void> {
+    for (const id of ids) {
+      const a = this.bodyAsks.get(id);
+      if (a !== undefined) {
+        a.reads -= 1;
+        if (a.reads > 0) continue;
+        if (!a.landed && a.failure !== null) {
+          a.landed = true;
+          await this.failBody(id, a.failure.err);
+        }
+        this.bodyAsks.delete(id);
+        a.decided?.resolve();
+      }
+      this.bodyRequests.delete(id);
+    }
   }
 
   /**
@@ -5987,9 +6205,23 @@ export class OhmailEngine {
    * The `loading` marker is NO LONGER WRITTEN HERE. It moved up to {@link markLoading}, which runs at enqueue rather
    * than at departure — see there for the window that closed.
    */
-  private async fetchBodyInto(messageId: string): Promise<void> {
+  private async fetchBodyInto(messageId: string, urgent = false): Promise<void> {
+    this.bodiesLeft([messageId], urgent);
+    let wire: Awaited<ReturnType<EngineAdapter["fetchBody"]>>;
     try {
-      const wire = await this.adapter.fetchBody(messageId);
+      wire = await (urgent ? this.adapter.fetchBody(messageId, { urgent: true }) : this.adapter.fetchBody(messageId));
+    } catch (err) {
+      // Not while another read of this body may still answer it (`bodyFailed`).
+      if (this.bodyFailed(messageId, err)) {
+        await this.failBody(messageId, err);
+        this.bodiesDecided([messageId]);
+      }
+      return;
+    }
+    // Another read of this body landed first (an open's, beside a background one): its record stands,
+    // and this answer is dropped — never a second write.
+    if (!this.bodyAnswered(messageId)) return;
+    try {
       // `null` ⇒ this adapter serves no bodies (the fixtures world): tombstone the loading marker rather than leaving
       // a surface saying "loading…" for ever — `bodyOf` falls back to the snippet, the honest answer for an adapter
       // with no endpoint. `html` rides along UNTOUCHED: this is the one hop between the wire and the renderer and it
@@ -6031,6 +6263,7 @@ export class OhmailEngine {
     } catch (err) {
       await this.failBody(messageId, err);
     }
+    this.bodiesDecided([messageId]);
   }
 
   /**
@@ -9996,7 +10229,7 @@ export class OhmailEngine {
     { state: "ready"; text: string; html: string | null } | { state: "unavailable" } | { state: "failed"; errorClass: string }
   > {
     try {
-      const wire = await this.adapter.fetchBody(messageId);
+      const wire = await this.adapter.fetchBody(messageId, { urgent: true });
       if (wire === null) return { state: "unavailable" };
       return { state: "ready", text: typeof wire.text === "string" ? wire.text : "", html: typeof wire.html === "string" ? wire.html : null };
     } catch (err) {

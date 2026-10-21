@@ -14,6 +14,7 @@ import { csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
 import { readOwner, readOwnerMarker } from "./shell/owner-cookie";
+import { webLane } from "./shell/resume-lane";
 import { isDemoOwned, storageOwner } from "./shell/storage-owner";
 import {
   ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
@@ -591,6 +592,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         keepalive: true,
         signal: request.signal,
       });
+      // Any answer warms the API: the resume lane's lead is over.
+      webLane.noteAnswer();
       if (request.signal.aborted) return superseded(null);
       // 204 with fresh Set-Cookie is success; a 401 means the family is
       // gone and the server has already cleared the whole jar, so the next navigation is an honest
