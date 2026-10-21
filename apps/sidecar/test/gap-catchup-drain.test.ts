@@ -6,6 +6,7 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
+import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/organizer-profile";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { folderState, mailboxes, messages, rules } from "@trafficflow/db";
 import { grantOrganizeConsent } from "./_consent.js";
@@ -21,9 +22,19 @@ import { requestOrganizerTakeover } from "../src/organize-here.js";
  * File press, through the real route, files that set. Letters arrive through the reader's own intake.
  */
 
-class MemoryMetaFolder implements LeaseIo {
+/* The settings folder is a real, empty one: an install that cannot read it withholds the offer. */
+class MemoryMetaFolder implements LeaseIo, ProfileIo {
   private nextUid = 1;
   private readonly claims: RawClaimMessage[] = [];
+  private readonly profiles: Array<{ ref: number; raw: string }> = [];
+  async listProfileMessages(): Promise<RawProfileMessage[]> {
+    return this.profiles.map((p) => ({ ref: p.ref, raw: p.raw, generation: 4_100 }));
+  }
+  async appendProfile(raw: string): Promise<void> { this.profiles.push({ ref: this.nextUid++, raw }); }
+  async removeProfiles(refs: readonly unknown[]): Promise<void> {
+    const gone = new Set(refs);
+    for (let i = this.profiles.length - 1; i >= 0; i--) if (gone.has(this.profiles[i]!.ref)) this.profiles.splice(i, 1);
+  }
   async ensureMetaFolder(): Promise<void> {}
   async listClaims(): Promise<RawClaimMessage[]> { return this.claims.map((c) => ({ ...c })); }
   async appendClaim(raw: string): Promise<void> { this.claims.push({ ref: this.nextUid++, raw }); }
@@ -55,12 +66,16 @@ function letter(internalDate: Date): ChangeBatch["creates"][number] {
   return { type: "create", locator: { folder: "INBOX", ref: `1:${uid}` } as NativeLocator, raw, internalDate, seen: false };
 }
 
-function server(meta: MemoryMetaFolder, pending: Array<ChangeBatch["creates"][number]>, moves: Array<{ from: string; to: string }>) {
+function server(
+  meta: MemoryMetaFolder, pending: Array<ChangeBatch["creates"][number]>, moves: Array<{ from: string; to: string }>,
+  settings = true,
+) {
   return (_cfg: ImapConfig): MailboxAdapter & {
     leaseIo(): LeaseIo; leasePeekIo(): { listClaims(): Promise<RawClaimMessage[]> };
   } => ({
     leaseIo: () => meta,
     leasePeekIo: () => ({ listClaims: () => meta.listClaims() }),
+    ...(settings ? { profileIo: () => meta } : {}),
     async connect(): Promise<void> {},
     async close(): Promise<void> {},
     async capabilities(): Promise<ImapCapabilities> {
@@ -86,14 +101,17 @@ describe("letters from a gap are counted for the person and filed only on their 
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(meta: MemoryMetaFolder, pending: Array<ChangeBatch["creates"][number]>, moves: Array<{ from: string; to: string }>): Promise<Sidecar> {
+  async function boot(
+    meta: MemoryMetaFolder, pending: Array<ChangeBatch["creates"][number]>, moves: Array<{ from: string; to: string }>,
+    settings = true,
+  ): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-gap-offer-");
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
     const s = await createSidecar({
       dataDir,
       imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
       address: "owner@trafficflow.test", machineName: "the phone", pollIntervalMs: 60 * 60 * 1000,
-      leaseStaleAfterMs: 60_000, adapterFactory: server(meta, pending, moves), log: () => {},
+      leaseStaleAfterMs: 60_000, adapterFactory: server(meta, pending, moves, settings), log: () => {},
     });
     cleanups.push(() => s.stop().catch(() => undefined));
     await grantOrganizeConsent(s);
@@ -252,5 +270,23 @@ describe("letters from a gap are counted for the person and filed only on their 
     for (let i = 0; i < 3; i++) await s.syncUntilQuiet();
     expect(moves, "Leave moved mail").toEqual([]);
     expect(await rowOf(s)).toEqual({ since: null, letters: null, pressed: null });
+  }, 90_000);
+
+  it("an install that cannot read the settings folder withholds the offer, and the window stays open", async () => {
+    const meta = new MemoryMetaFolder();
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    await meta.laptopHolds();
+    const s = await boot(meta, pending, moves, false);
+    meta.clear();
+    await s.syncUntilQuiet();
+    await newsRule(s, (await sinceOf(s))!);
+    pending.push(letter(new Date()));
+    await s.syncUntilQuiet();
+    await promote(s);
+    const row = await rowOf(s);
+    expect(row.since, "a no_folder clearance closed the window").not.toBeNull();
+    expect(row.letters, "a no_folder clearance offered").toBeNull();
+    expect(moves).toEqual([]);
   }, 90_000);
 });

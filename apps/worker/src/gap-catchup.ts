@@ -6,7 +6,7 @@ import {
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, canonicalDestination, dsnVerdict, evaluateRules,
-  identityOfRow, silentLogger, type Logger,
+  identityOfRow, silentLogger, type Logger, type SweepClearance,
   /* The mail leaf, never the barrel: the local engines bundle this pass (rule-retro.ts says why). */
 } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -15,7 +15,8 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow 
 
 /* MAIL FROM A GAP, FILED ONLY ON A PERSON'S PRESS. The window is the gap the reader is looking at
    now (`gap_since`; a look that finds a live holder clears it), and a letter is in it only when it
-   ARRIVED and was TAKEN IN at or after its start. Once this install organizes, this pass COUNTS
+   ARRIVED and was TAKEN IN at or after its start. Once this install organizes and its rules are
+   settled (`clearanceFor`: no import question open, the settings read), this pass COUNTS
    what the person's rules would file (`gap_letters`) and moves nothing; the person is shown the
    count. On their press (`gap_pressed_at`) it decides again with the same function, in one
    transaction, and files that set only while its size is the count they were shown. */
@@ -26,6 +27,12 @@ export const GAP_CATCHUP_BATCH = 100;
 /** Pages one window may span. Past it the window ENDS unoffered: no drain walks it again. */
 export const GAP_CATCHUP_MAX_PAGES = 20;
 
+/** The clearance of a mailbox nobody evaluated here: its settings folder was not read. */
+export const NO_FOLDER_READ: SweepClearance = { kind: "unread", why: "no_folder" };
+
+/** The withheld state last logged per mailbox, so a standing one is said once. */
+const withheldSaid = new Map<string, string>();
+
 export interface GapCatchupDeps {
   accountId: string;
   /** Only these mailboxes — the sidecar's organizing set after a quiet drain. Absent ⇒ every one. */
@@ -35,6 +42,12 @@ export interface GapCatchupDeps {
   maxPages?: number;
   /** Per-mailbox authserv trust, REQUIRED for rule-retro's reason (absent ⇒ trust nothing is a choice). */
   trustedAuthservIdsFor: (db: Tx, mailboxId: string) => Promise<ReadonlySet<string>>;
+  /**
+   * Whether this mailbox's rules are settled — the last read of its settings folder, handed in as
+   * data (this pass opens no IMAP). Only `clear` is counted, filed or closed: under `held` (an
+   * import question open) or `unread` the window waits. REQUIRED, so no caller forgets the gate.
+   */
+  clearanceFor: (mailboxId: string) => SweepClearance;
 }
 
 export interface GapCatchupResult {
@@ -69,14 +82,32 @@ export async function gapCatchupPass(
     or(isNull(mailboxes.gapLetters), isNotNull(mailboxes.gapPressedAt)),
     ...(deps.mailboxIds !== undefined ? [inArray(mailboxes.id, [...deps.mailboxIds])] : []),
   )).orderBy(asc(mailboxes.id));
-  if (owed.length === 0) return result;
+  /* ONLY SETTLED RULES DECIDE: a mailbox whose import question is open, or whose settings were not
+     read, has rules that may be about to change, so nothing is counted, filed or closed. No lock, no
+     write; the window and any press stay for a later pass. */
+  const settled = owed.filter((mb) => {
+    const c = deps.clearanceFor(mb.id);
+    if (c.kind === "clear") { withheldSaid.delete(mb.id); return true; }
+    const why = c.kind === "unread" ? c.why : null;
+    const state = `${c.kind}:${why ?? ""}`;
+    if (withheldSaid.get(mb.id) !== state) {
+      withheldSaid.set(mb.id, state);
+      (deps.log ?? silentLogger).info("gap_catchup_withheld", {
+        mailboxId: mb.id, accountId: deps.accountId, outcome: c.kind, why,
+        reason: "the mailbox's rules are not settled (an import question is open, or its settings were not read), "
+          + "so the letters that arrived while nothing organized it wait in their window",
+      });
+    }
+    return false;
+  });
+  if (settled.length === 0) return result;
 
   const trustFor = perMailboxAuthservTrust(db, deps.trustedAuthservIdsFor);
   const own = (await db.select({ address: mailboxes.address }).from(mailboxes)
     .where(eq(mailboxes.accountId, deps.accountId))).map((r) => r.address.toLowerCase());
   const ownSet = await new OwnAddressesPerPass().ownAddresses(db, deps.accountId);
 
-  for (const mb of owed) {
+  for (const mb of settled) {
     await db.transaction(async (txRaw) => {
       const tx = carryDialect(db, txRaw as object) as typeof txRaw;
       const close = { gapSince: null, gapLetters: null, gapPressedAt: null };
@@ -145,8 +176,12 @@ async function gapSet(
   const repo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
   const rules = await repo.listRules(deps.accountId);
   const known = await repo.knownSenders(deps.accountId);
-  const ruleAge = new Map((await tx.select({ id: rulesTbl.id, updatedAt: rulesTbl.updatedAt })
-    .from(rulesTbl).where(eq(rulesTbl.accountId, deps.accountId))).map((r) => [r.id, r.updatedAt]));
+  /* A RULE'S AGE: the person's decision when stamped, its last change otherwise. Typed columns,
+     computed here, so both stores read it alike. */
+  const ruleAge = new Map((await tx.select({
+    id: rulesTbl.id, personDecidedAt: rulesTbl.personDecidedAt, updatedAt: rulesTbl.updatedAt,
+  }).from(rulesTbl).where(eq(rulesTbl.accountId, deps.accountId)))
+    .map((r) => [r.id, r.personDecidedAt ?? r.updatedAt]));
   const batch = deps.batch ?? GAP_CATCHUP_BATCH;
   const out: Array<{ c: GapRow; to: string; ruleId: string | null }> = [];
   let afterId: string | null = null;

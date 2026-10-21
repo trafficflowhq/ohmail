@@ -637,6 +637,16 @@ export type ImportHold =
   | { kind: "unreadable" };
 
 /**
+ * Whether a mailbox's rules are settled, read off the shared settings folder: `clear` only when it
+ * read cleanly with no import question open. The agree's sweep and the gap pass run only on `clear`.
+ * Here beside {@link ImportHold} so the gap pass can name it without the profile module.
+ */
+export type SweepClearance =
+  | { kind: "clear" }
+  | { kind: "held" }
+  | { kind: "unread"; why: "no_folder" | "read_fault" | "garbled" };
+
+/**
  * Whether the held document would keep this message where the server put it: {@link evaluateRules}
  * over its view, never a second matcher. It keeps mail it lets PAST the gate, and mail its own
  * decision files to the folder it already sits in (the previous organizer's screen-outs). A gate

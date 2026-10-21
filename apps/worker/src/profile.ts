@@ -14,7 +14,7 @@ import { dialect } from "@trafficflow/db/dialect";
    `packages/core/dist/ai/*`, from this one line. `/mail` re-exports `./log.js`, which is where
    `describeError` lives, and the sidecar's own logger already imports from there — so this adds
    nothing to the engine's closure. `lease.ts` carries the same warning for the same reason. */
-import { describeError, type ImportHold } from "@trafficflow/core/mail";
+import { describeError, type ImportHold, type SweepClearance } from "@trafficflow/core/mail";
 import { epochOf, sameEpoch, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 /* The one post-pass fact — see `flushBeforeLeaving`. `lease.ts` imports nothing from here. */
 import { leaseStoodDown, type OrganizerWriteAuthority } from "./lease.js";
@@ -107,10 +107,7 @@ export function hasProfileIo(adapter: MailboxAdapter): adapter is MailboxAdapter
 }
 
 /** What {@link OrganizerProfileSync.sweepClearance} read: only `clear` lets the agree's sweep run. */
-export type SweepClearance =
-  | { kind: "clear" }
-  | { kind: "held" }
-  | { kind: "unread"; why: "no_folder" | "read_fault" | "garbled" };
+export type { SweepClearance };
 
 /** The sweep's `held` input for a clearance: anything but a clean read moves nothing. */
 export function sweepHeld(c: SweepClearance): boolean | "unread" {
@@ -435,6 +432,8 @@ export class OrganizerProfileSync {
     this.lastPreflightAt = 0;
     this.lastHoldAnswer = undefined;
     this.everEvaluated = false;
+    this.lastEvalFaulted = false;
+    this.lastEvalGarbled = false;
     /* THE LATCH GOES WITH THE LIFE. A demotion ends the role this failure was reported under,
        and a re-promotion is a new organizing life that has said nothing yet — carrying the latch
        across would let a standing fault go unannounced for the whole of it. */
@@ -464,6 +463,9 @@ export class OrganizerProfileSync {
   private lastHoldAnswer: ImportHold | undefined = undefined;
   /** Whether {@link importHoldNow} has ever completed an evaluation — see its catch. */
   private everEvaluated = false;
+  /** Whether the last evaluation threw, and whether the last one that did not read a garbled document. */
+  private lastEvalFaulted = false;
+  private lastEvalGarbled = false;
   /**
    * The folder verdict the evaluator last read, and when — see the cost note on the evaluator. A
    * found document keeps its gate view beside the fingerprint (`null`: too large to import, so no
@@ -491,6 +493,7 @@ export class OrganizerProfileSync {
     try {
       return (await this.evaluateHold(false)).hold;
     } catch {
+      this.lastEvalFaulted = true;
       // Before the FIRST successful evaluation, a KNOWN armed hold outranks the (never
       // computed) answer (round 17): the preflight may have armed the write-side hold before
       // this evaluation's own reads ever succeeded, and answering "closed" from a blank
@@ -517,8 +520,26 @@ export class OrganizerProfileSync {
       if (r.garbled) return { kind: "unread", why: "garbled" };
       return r.hold === undefined ? { kind: "clear" } : { kind: "held" };
     } catch {
+      this.lastEvalFaulted = true;
       return { kind: "unread", why: "read_fault" };
     }
+  }
+
+  /**
+   * THE GAP PASS'S CLEARANCE: what the last evaluation found, with no IO, so a pass that may not
+   * open IMAP can be handed it as data. `clear` only after an evaluation that read cleanly with no
+   * question open; before any evaluation, after a fault or over a garbled document it is not.
+   * Never throws.
+   */
+  gapClearance(): SweepClearance {
+    if (!hasProfileIo(this.deps.adapter)) return { kind: "unread", why: "no_folder" };
+    const armed = this.holdFingerprint !== null || this.holdNewerV !== null;
+    if (!this.everEvaluated) return armed ? { kind: "held" } : { kind: "unread", why: "read_fault" };
+    if (this.lastEvalFaulted) return { kind: "unread", why: "read_fault" };
+    // evaluateHold's own staleness rule: a closed verdict cached before a hold was armed is stale.
+    if (armed && this.evalCache?.verdict.kind === "closed") return { kind: "held" };
+    if (this.lastEvalGarbled) return { kind: "unread", why: "garbled" };
+    return this.lastHoldAnswer === undefined ? { kind: "clear" } : { kind: "held" };
   }
 
   /**
@@ -593,7 +614,10 @@ export class OrganizerProfileSync {
       }
       this.lastHoldAnswer = hold;
       this.everEvaluated = true;
-      return { hold, garbled: v.kind === "closed" && v.garbled === true };
+      const garbled = v.kind === "closed" && v.garbled === true;
+      this.lastEvalFaulted = false;
+      this.lastEvalGarbled = garbled;
+      return { hold, garbled };
     }
   }
 

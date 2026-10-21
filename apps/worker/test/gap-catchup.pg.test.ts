@@ -1,16 +1,22 @@
 /** The explicit empty trust set - an unlisted provider's mailbox; the auth demotion never fires. */
 const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
+/** Settled rules: the settings folder read cleanly with no import question open. */
+const CLEAR = () => ({ kind: "clear" }) as const;
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, changeLog, folderState, mailboxes, messages, routingDecisions, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
+import {
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+} from "@trafficflow/core/adapters/organizer-profile";
+import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { gapCatchupPass } from "../src/gap-catchup.js";
 
 /**
@@ -77,7 +83,7 @@ describe.skipIf(!AVAILABLE)("the gap catch-up on real Postgres", () => {
 
   it("counts the gap, files it only on the press and closes the window, on Postgres's own parameters", async () => {
     const w = await world(3);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
     expect(await gapCatchupPass(db as unknown as Tx, opts)).toEqual({ offered: 1, moved: 0, completed: 0 });
     const [offer] = await db.select({ n: mailboxes.gapLetters }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(offer!.n, "intake and arrival bounds read the timestamptz columns wrong").toBe(3);
@@ -94,7 +100,7 @@ describe.skipIf(!AVAILABLE)("the gap catch-up on real Postgres", () => {
 
   it("two drivers racing on one window write ONE offer, then ONE decision and ONE change row per letter", async () => {
     const w = await world(24);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, batch: 4 };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR, batch: 4 };
     const [c1, c2] = await Promise.all([
       gapCatchupPass(db as unknown as Tx, opts),
       gapCatchupPass(db2 as unknown as Tx, opts),
@@ -118,5 +124,70 @@ describe.skipIf(!AVAILABLE)("the gap catch-up on real Postgres", () => {
     expect(moves).toHaveLength(24);
     const [mb] = await db.select({ g: mailboxes.gapSince }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(mb!.g).toBeNull();
+  }, 60_000);
+
+  const HELD = () => ({ kind: "held" }) as const;
+
+  /** A fresh install's window with one letter in it and no rules of its own. */
+  async function freshWorld(): Promise<{ accountId: string; mailboxId: string; letter: string }> {
+    const w = await world(1);
+    await db.delete(rules).where(eq(rules.accountId, w.accountId));
+    return { accountId: w.accountId, mailboxId: w.mailboxId, letter: w.ids[0]! };
+  }
+
+  it("the cross-install case on Postgres: held withholds, then the imported rule's age offers the letter and File files it", async () => {
+    const w = await freshWorld();
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    expect(await gapCatchupPass(db as unknown as Tx, { ...opts, clearanceFor: HELD })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    const [open] = await db.select({ g: mailboxes.gapSince }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
+    expect(open!.g, "the open import question closed the window").not.toBeNull();
+
+    const written = makeProfileDoc({
+      screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+      rules: [{
+        kind: "sender", match: "letters@news.test", destination: NEWS, priority: 0, enabled: true,
+        provenance: "manual", updatedAt: RULE_MADE.toISOString(),
+      }],
+    }, { updatedAt: GAP, producer: { kind: "local", version: "dev" } });
+    const parsed = parseProfileMessage(formatProfileMessage(written, { installId: "the-desktop" }));
+    if (parsed === null || isMalformedProfile(parsed) || !parsed.doc) throw new Error("expected a readable copy");
+    const doc = parsed.doc;
+    await db.transaction((tx) => applyOrganizerProfile(carryDialect(db, tx) as never, {
+      accountId: w.accountId, mailboxId: w.mailboxId, doc, fingerprint: profileFingerprint(doc), now: new Date(),
+    }));
+    expect(await gapCatchupPass(db as unknown as Tx, { ...opts, clearanceFor: CLEAR })).toEqual({ offered: 1, moved: 0, completed: 0 });
+    await press(w.mailboxId);
+    expect(await gapCatchupPass(db as unknown as Tx, { ...opts, clearanceFor: CLEAR })).toEqual({ offered: 0, moved: 1, completed: 1 });
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, w.letter));
+    expect(fs).toMatchObject({ desiredFolder: NEWS, lastSetBy: "us" });
+  }, 60_000);
+
+  it("a withheld window takes no lock: it returns while another connection holds the mailbox row", async () => {
+    const w = await world(1);
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const within = <T>(p: Promise<T>, ms: number): Promise<T | "blocked"> =>
+      Promise.race([p, new Promise<"blocked">((r) => setTimeout(() => r("blocked"), ms))]);
+    let release!: () => void;
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    const holder = other.begin(async (t) => {
+      await t`select id from mailboxes where id = ${w.mailboxId} for update`;
+      locked();
+      await new Promise<void>((r) => { release = r; });
+    });
+    await isLocked;
+    try {
+      expect(await within(gapCatchupPass(db as unknown as Tx, { ...opts, clearanceFor: HELD }), 5_000),
+        "a withheld window waited on the mailbox row").toEqual({ offered: 0, moved: 0, completed: 0 });
+      /* CONTROL: cleared, the same pass waits on that row — the lock this test says is not taken. */
+      const cleared = gapCatchupPass(db as unknown as Tx, { ...opts, clearanceFor: CLEAR });
+      expect(await within(cleared, 1_000), "premise: a cleared pass locks the mailbox row").toBe("blocked");
+      release();
+      await holder;
+      expect(await cleared).toEqual({ offered: 1, moved: 0, completed: 0 });
+    } finally {
+      release?.();
+      await holder.catch(() => undefined);
+    }
   }, 60_000);
 });

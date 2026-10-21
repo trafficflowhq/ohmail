@@ -135,6 +135,13 @@ export interface ProfileRuleEntry {
    * it receives and never clears one it holds. `PROFILE_VERSION` does not move (field-level both ways).
    */
   personDecidedAt?: string;
+  /**
+   * WHEN THE RULE LAST CHANGED — `rules.updated_at`, an ISO 8601 instant. It describes the write, not
+   * the configuration, so it sits outside the canonical form and the fingerprint (as the envelope's
+   * `updatedAt` does): an import keeps the age the rule had where it was made, and the gap pass reads
+   * it. OPTIONAL: a document written before the key carries none.
+   */
+  updatedAt?: string;
 }
 
 /** One notification opt-in. */
@@ -268,6 +275,8 @@ export interface ApplicableProfileRule {
   bodyContains: string | null;
   /** The person's stamp the document carries; `null` when it carries none or an unreadable one. */
   personDecidedAt: Date | null;
+  /** The rule's age the document carries; `null` when it carries none or an unreadable one. */
+  updatedAt: Date | null;
 }
 
 const PROFILE_RULE_KINDS = new Set(["sender", "domain", "header"]);
@@ -309,10 +318,12 @@ export function applicableProfileRule(r: ProfileRuleEntry): ApplicableProfileRul
   if (hasNul(provenance)) return null;
   // A stamp that is not an instant is not a decision anybody can be held to: absent, not refused.
   const stamp = typeof r.personDecidedAt === "string" ? new Date(r.personDecidedAt) : null;
+  const age = typeof r.updatedAt === "string" ? new Date(r.updatedAt) : null;
   return {
     kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
     enabled: r.enabled === true, provenance, subjectContains, bodyContains,
     personDecidedAt: stamp !== null && Number.isFinite(stamp.getTime()) ? stamp : null,
+    updatedAt: age !== null && Number.isFinite(age.getTime()) ? age : null,
   };
 }
 
@@ -689,7 +700,7 @@ export function makeProfileDoc(
       screening: { baselineAt: meta.screening.baselineAt, dormancyDays: meta.screening.dormancyDays, scope: meta.screening.scope },
     }),
     screener: canonical.screener,
-    rules: canonical.rules,
+    rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
     awayResponder: canonical.awayResponder,
     tagNames: canonical.tagNames,
@@ -700,6 +711,25 @@ export function makeProfileDoc(
        carrying what the canonicaliser answered, and nothing else. */
     ...(canonical.signatureHtml === undefined ? {} : { signatureHtml: canonical.signatureHtml }),
   };
+}
+
+/**
+ * EACH CANONICAL RULE WITH THE AGE ITS PAYLOAD ENTRY CARRIES, added back after canonicalising: the
+ * age is no part of the content. An entry is matched by its canonical form; only a written instant
+ * is carried, and where two entries cannot be told apart the earliest age wins.
+ */
+function withRuleAges(canonical: readonly ProfileRuleEntry[], entries: readonly ProfileRuleEntry[]): ProfileRuleEntry[] {
+  const ages = new Map<string, string>();
+  for (const e of entries) {
+    if (typeof e.updatedAt !== "string" || !isWrittenInstant(e.updatedAt)) continue;
+    const key = canonicalJson(normalizeRule(e));
+    const held = ages.get(key);
+    if (held === undefined || Date.parse(e.updatedAt) < Date.parse(held)) ages.set(key, e.updatedAt);
+  }
+  return canonical.map((r) => {
+    const age = ages.get(canonicalJson(r));
+    return age === undefined ? r : { ...r, updatedAt: age };
+  });
 }
 
 /** Strip CR/LF so no value can inject a header. The lease's `headerSafe`, unchanged. */
@@ -742,6 +772,8 @@ const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
   "updatedAt", "producer.kind", "producer.version", "screener[].source", "rules[].kind", "rules[].provenance", "rules[].personDecidedAt",
   "notifyRules[].kind", "awayResponder.audience", "awayResponder.throttle",
   "awayResponder.startsAt", "awayResponder.endsAt", "awayResponder.piles[]",
+  // A rule's age: an instant, outside the fingerprint.
+  "rules[].updatedAt",
   /* An instant and an enum, written plain: an older holder then reads its copy as not-as-written and
      rewrites it once without the key, so a stale window never outlives the organizer that wrote it. */
   "screening.baselineAt", "screening.scope",
@@ -923,6 +955,8 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
       const bodyContains = asString(o.bodyContains);
       // Only the instant `toISOString` writes; anything else reads as no stamp.
       const personDecidedAt = asString(o.personDecidedAt);
+      // The same for the rule's age: anything else reads as absent, never refused.
+      const updatedAt = asString(o.updatedAt);
       rules.push({
         kind, match, destination,
         // Clamped into the one bound, so an imported rule is one every other door accepts.
@@ -933,6 +967,7 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
         ...(subjectContains === null ? {} : { subjectContains }),
         ...(bodyContains === null ? {} : { bodyContains }),
         ...(personDecidedAt !== null && isWrittenInstant(personDecidedAt) ? { personDecidedAt } : {}),
+        ...(updatedAt !== null && isWrittenInstant(updatedAt) ? { updatedAt } : {}),
       });
     }
   }

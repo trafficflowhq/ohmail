@@ -5,6 +5,11 @@ import { accounts, folderState, mailboxCredentials, mailboxes, messages, rules }
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
+import {
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+} from "@trafficflow/core/adapters/organizer-profile";
+import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import { carryDialect } from "@trafficflow/db/dialect";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
@@ -124,5 +129,70 @@ describe("the hosted worker rules the mail that arrived while nothing organized"
       "the window stayed open after its mail was filed").toBe(true);
     await new Promise((r) => setTimeout(r, 1_000));
     expect(fleet.movesFor(mb.mailboxId), "the letter was filed more than once").toEqual(["ohmail/News"]);
+  }, 60_000);
+
+  it("the cross-install case: promoted with the desktop's settings unanswered and no rules, it waits; the import offers the letter", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedConsentedMailbox(db);
+    fleet.seedClaim(mb.mailboxId, formatClaim({
+      authorizedAt: null, capabilities: ["profile"], installId: "a-desktop-install", kind: "local",
+      displayName: "the laptop", heartbeat: new Date(), claimedAt: new Date(), nonce: "n1",
+    }));
+    // THE DESKTOP'S SETTINGS, its News rule an hour old; Cloud has no rules of its own.
+    const written = makeProfileDoc({
+      screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+      rules: [{
+        kind: "domain", match: "feed.example", destination: "ohmail/News", priority: 5, enabled: true,
+        provenance: "manual", updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      }],
+    }, { updatedAt: new Date(Date.now() - 60 * 60 * 1000), producer: { kind: "local", version: "dev" } });
+    await fleet.metaFor(mb.mailboxId).appendProfile(formatProfileMessage(written, { installId: "a-desktop-install" }));
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, sentDomain: "trafficflow.test", rosterIntervalMs: 200,
+      adapterFactory: fleet.factory,
+      organizer: { installId: "cloud-test", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).organizerState === "held"),
+      "the premise is a reader beside a live desktop").toBe(true);
+
+    // THE DESKTOP LETS GO; a letter arrives while nothing organizes, adopted at the inbox.
+    const meta = fleet.metaFor(mb.mailboxId);
+    // The claim only: the folder keeps the desktop's settings.
+    await meta.removeClaims(meta.messages.filter((m) => !m.raw.includes("X-Ohmail-Profile: 1")).map((m) => m.ref));
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).gapSince !== null),
+      "the reader never noted the gap").toBe(true);
+    fleet.behave(mb.mailboxId, {
+      deliver: [{ from: "digest@feed.example", subject: "a newsletter", messageId: `gap-${randomUUID()}@feed.example`, internalDate: new Date() }],
+    });
+    expect(await waitFor(async () => (await db.select({ by: folderState.lastSetBy }).from(folderState)
+      .innerJoin(messages, eq(messages.id, folderState.messageId))
+      .where(and(eq(messages.mailboxId, mb.mailboxId), eq(messages.fromAddress, "digest@feed.example"))))[0]?.by === "peer"),
+    "the reader did not adopt the letter").toBe(true);
+
+    // THE PRESS: Cloud organizes next with the desktop's settings unanswered.
+    await db.update(mailboxes).set({ takeoverAuthorizedAt: new Date(), takeoverIntent: "takeover" })
+      .where(eq(mailboxes.id, mb.mailboxId));
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).organizerRole === "organizer"),
+      "the press did not promote the worker").toBe(true);
+    await new Promise((r) => setTimeout(r, 1_500));
+    const waiting = await rowOf(db, mb.mailboxId);
+    expect(waiting.gapSince, "the open import question closed the window").not.toBeNull();
+    expect(waiting.gapLetters, "the gap was counted by rules about to change").toBeNull();
+
+    // THE IMPORT, recorded as the person's answer.
+    const parsed = parseProfileMessage(formatProfileMessage(written, { installId: "a-desktop-install" }));
+    if (parsed === null || isMalformedProfile(parsed) || !parsed.doc) throw new Error("expected a readable copy");
+    const doc = parsed.doc;
+    await db.transaction((tx) => applyOrganizerProfile(carryDialect(db, tx) as never, {
+      accountId: mb.accountId, mailboxId: mb.mailboxId, doc, fingerprint: profileFingerprint(doc), now: new Date(),
+    }));
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).gapLetters === 1),
+      "the imported rule's letter was never offered").toBe(true);
+    expect(fleet.movesFor(mb.mailboxId), "an offer moved mail").toEqual([]);
+    await db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, mb.mailboxId));
+    expect(await waitFor(async () => fleet.movesFor(mb.mailboxId).includes("ohmail/News")),
+      "the gap letter was never filed").toBe(true);
   }, 60_000);
 });

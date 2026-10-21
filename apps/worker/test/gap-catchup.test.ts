@@ -6,6 +6,13 @@ import {
   accounts, auditLog, changeLog, drafts, folderState, mailboxes, messageStates, messages, routingDecisions, rules,
   type Tx,
 } from "@trafficflow/db";
+import { carryDialect } from "@trafficflow/db/dialect";
+import {
+  formatProfileMessage, isMalformedProfile, makeProfileDoc, parseProfileMessage, profileFingerprint,
+  type OrganizerProfileDoc, type ProfileRuleEntry,
+} from "@trafficflow/core/adapters/organizer-profile";
+import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import type { Logger, SweepClearance } from "@trafficflow/core/mail";
 import { gapCatchupPass } from "../src/gap-catchup.js";
 import { markMailboxStoodDown } from "../src/mailboxes.js";
 
@@ -40,11 +47,11 @@ async function newWorld(o: { role?: "organizer" | "reader"; gapSince?: Date | nu
   return { db, accountId, mailboxId: mb!.id };
 }
 
-async function seedRule(w: World, match: string, o: { kind?: string; updatedAt?: Date } = {}): Promise<string> {
+async function seedRule(w: World, match: string, o: { kind?: string; updatedAt?: Date; personDecidedAt?: Date } = {}): Promise<string> {
   const at = o.updatedAt ?? RULE_MADE;
   const [r] = await w.db.insert(rules).values({
     accountId: w.accountId, kind: o.kind ?? "sender", match, destination: NEWS,
-    provenance: "manual", enabled: true, createdAt: at, updatedAt: at,
+    provenance: "manual", enabled: true, createdAt: at, updatedAt: at, personDecidedAt: o.personDecidedAt ?? null,
   }).returning();
   return r!.id;
 }
@@ -77,8 +84,25 @@ const offerOf = async (w: World) =>
   (await w.db.select({ since: mailboxes.gapSince, letters: mailboxes.gapLetters, pressed: mailboxes.gapPressedAt })
     .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!;
 const press = (w: World) => w.db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, w.mailboxId));
-const run = (w: World, o: { mailboxIds?: readonly string[]; batch?: number; maxPages?: number } = {}) =>
-  gapCatchupPass(w.db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE, ...o });
+const CLEAR: SweepClearance = { kind: "clear" };
+const HELD: SweepClearance = { kind: "held" };
+const run = (w: World, o: {
+  mailboxIds?: readonly string[]; batch?: number; maxPages?: number; clearance?: SweepClearance; log?: Logger;
+} = {}) => {
+  const { clearance = CLEAR, ...rest } = o;
+  return gapCatchupPass(w.db as unknown as Tx, {
+    accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: () => clearance, ...rest,
+  });
+};
+
+/** A logger that keeps what the pass says. */
+function captured(): { log: Logger; lines: Array<{ event: string; fields: Record<string, unknown> }> } {
+  const lines: Array<{ event: string; fields: Record<string, unknown> }> = [];
+  const keep = (event: string, fields: Record<string, unknown> = {}): void => { lines.push({ event, fields }); };
+  const log: Logger = { level: "debug", child: () => log, debug: keep, info: keep, warn: keep, error: keep };
+  return { log, lines };
+}
+const withheld = (lines: ReturnType<typeof captured>["lines"]) => lines.filter((l) => l.event === "gap_catchup_withheld");
 
 describe("letters from a gap are counted for the person and filed only on their press", () => {
   it("counts a true gap's letter, moves nothing unasked, and files exactly it on the press", async () => {
@@ -227,5 +251,107 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await run(w, { mailboxIds: [] })).toEqual({ offered: 0, moved: 0, completed: 0 });
     expect(await run(w, { mailboxIds: [randomUUID()] })).toEqual({ offered: 0, moved: 0, completed: 0 });
     expect(await run(w, { mailboxIds: [w.mailboxId] })).toMatchObject({ offered: 1 });
+  });
+});
+
+/** A settings copy as the mailbox carries it: written by another install, formatted, parsed back. */
+function copyOf(entries: ProfileRuleEntry[]): OrganizerProfileDoc {
+  const doc = makeProfileDoc({ screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null, rules: entries },
+    { updatedAt: new Date("2026-10-09T09:30:00.000Z"), producer: { kind: "local", version: "dev" } });
+  const parsed = parseProfileMessage(formatProfileMessage(doc, { installId: "the-desktop" }));
+  if (parsed === null || isMalformedProfile(parsed) || !parsed.doc) throw new Error("expected a readable copy");
+  return parsed.doc;
+}
+const newsEntry = (more: Partial<ProfileRuleEntry> = {}): ProfileRuleEntry =>
+  ({ kind: "sender", match: "letters@news.test", destination: NEWS, priority: 0, enabled: true, provenance: "manual", ...more });
+async function importCopy(w: World, doc: OrganizerProfileDoc): Promise<void> {
+  await w.db.transaction((tx) => applyOrganizerProfile(carryDialect(w.db, tx) as never, {
+    accountId: w.accountId, mailboxId: w.mailboxId, doc, fingerprint: profileFingerprint(doc), now: new Date(),
+  }));
+}
+
+describe("the gap pass waits for settled rules", () => {
+  it("(a) held, no rules, a letter in the window: nothing is counted or closed, and the withheld line is logged once", async () => {
+    const w = await newWorld();
+    const letter = await seedArrival(w, { from: "letters@news.test" });
+    const { log, lines } = captured();
+    expect(await run(w, { clearance: HELD, log })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(await offerOf(w), "a held mailbox closed its window").toEqual({ since: GAP, letters: null, pressed: null });
+    expect(await placement(w, letter)).toEqual({ d: INBOX, by: "peer" });
+    expect(withheld(lines)).toEqual([{ event: "gap_catchup_withheld", fields: expect.objectContaining({
+      mailboxId: w.mailboxId, accountId: w.accountId, outcome: "held", why: null,
+    }) }]);
+    expect(await run(w, { clearance: HELD, log })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(withheld(lines), "the withheld line repeats every pass").toHaveLength(1);
+
+    /* CONTROL: the same world, cleared, closes the window — what the pass did before the gate. */
+    expect(await run(w, { log })).toEqual({ offered: 0, moved: 0, completed: 1 });
+    expect(await offerOf(w)).toEqual({ since: null, letters: null, pressed: null });
+  });
+
+  it.each(["read_fault", "garbled", "no_folder"] as const)("(b) unread (%s) withholds by name", async (why) => {
+    const w = await newWorld();
+    await seedArrival(w, { from: "letters@news.test" });
+    const { log, lines } = captured();
+    expect(await run(w, { clearance: { kind: "unread", why }, log })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect((await offerOf(w)).since, "an unread clearance closed the window").toEqual(GAP);
+    expect(withheld(lines).map((l) => l.fields)).toEqual([expect.objectContaining({ outcome: "unread", why })]);
+  });
+
+  it("(c) a press under held files nothing; the press stays and files once cleared", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    const letter = await seedArrival(w, { from: "letters@news.test" });
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    await press(w);
+    expect(await run(w, { clearance: HELD })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(await placement(w, letter), "a press under held filed mail").toEqual({ d: INBOX, by: "peer" });
+    const row = await offerOf(w);
+    expect(row.letters).toBe(1);
+    expect(row.pressed, "the press was dropped").not.toBeNull();
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, letter)).toEqual({ d: NEWS, by: "us" });
+  });
+
+  it("(d) the cross-install case: a fresh install with no rules waits for the import, then offers by the imported rules", async () => {
+    const w = await newWorld();
+    const letter = await seedArrival(w, { from: "letters@news.test" });
+    expect(await run(w, { clearance: HELD })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect((await offerOf(w)).since, "the open import question closed the window").toEqual(GAP);
+
+    const copy = copyOf([newsEntry({ updatedAt: RULE_MADE.toISOString() })]);
+    expect(copy.rules[0]!.updatedAt, "premise: the copy carries the rule's age").toBe(RULE_MADE.toISOString());
+    await importCopy(w, copy);
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, letter)).toEqual({ d: NEWS, by: "us" });
+  });
+
+  it("(d) CONTROL: the same copy without the age counts nothing and closes", async () => {
+    const w = await newWorld();
+    await seedArrival(w, { from: "letters@news.test" });
+    await importCopy(w, copyOf([newsEntry()]));
+    expect(await run(w)).toEqual({ offered: 0, moved: 0, completed: 1 });
+  });
+
+  it("(d) CONTROL: a copy that carries the person's stamp only is counted by it", async () => {
+    const w = await newWorld();
+    await seedArrival(w, { from: "letters@news.test" });
+    await importCopy(w, copyOf([newsEntry({ personDecidedAt: RULE_MADE.toISOString() })]));
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+  });
+
+  it("(e) the person's stamp is the rule's age: an old stamp on a young row is counted, beside a control that is not", async () => {
+    const young = new Date("2026-10-09T11:00:00Z");
+    const stamped = await newWorld();
+    await seedRule(stamped, "letters@news.test", { updatedAt: young, personDecidedAt: RULE_MADE });
+    await seedArrival(stamped, { from: "letters@news.test" });
+    expect(await run(stamped)).toEqual({ offered: 1, moved: 0, completed: 0 });
+
+    const unstamped = await newWorld();
+    await seedRule(unstamped, "letters@news.test", { updatedAt: young });
+    await seedArrival(unstamped, { from: "letters@news.test" });
+    expect(await run(unstamped)).toEqual({ offered: 0, moved: 0, completed: 1 });
   });
 });

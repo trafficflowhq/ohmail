@@ -204,6 +204,8 @@ export default defineConfig({
       "packages/services/test/migration-0144-shipped-allows.test.ts",
       // An older ohmail's settings copy, imported: the arrival stamp, through the device store too.
       "packages/services/test/profile-import-legacy-copy.test.ts",
+      // An imported rule keeps the age it had where it was made: both arms, this store too.
+      "packages/services/test/profile-import-keeps-rule-ages.test.ts",
       /* A domain decision's statements per batch, counted on the device store's own prepare. */
       "packages/services/test/screener-decide-statements.test.ts",
       // A decided placement on the wire and out of the count, and a rule group's offer: this store too.

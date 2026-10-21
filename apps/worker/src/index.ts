@@ -98,7 +98,7 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "./thread-join-hea
 import { inboundQuietPass } from "./inbound-quiet.js";
 import { makeAwayReplySweep } from "./away-reply-sweep.js";
 import { ruleRetroPass } from "./rule-retro.js";
-import { gapCatchupPass } from "./gap-catchup.js";
+import { gapCatchupPass, NO_FOLDER_READ } from "./gap-catchup.js";
 import { gateReleasePass } from "./gate-release.js";
 import { senderCheckRetirement } from "./sender-check-backfill.js";
 import { listAddressBackfillPass } from "./list-address-backfill.js";
@@ -138,7 +138,7 @@ import {
   type EnabledMailbox, type MailboxDisabledReason, type MailboxErrorPhase,
   type MailboxSyncBlockReason, type ParkedAccountsReader,
 } from "./mailboxes.js";
-import { OrganizerProfileSync, sweepHeld, syncProfileMirror } from "./profile.js";
+import { OrganizerProfileSync, sweepHeld, syncProfileMirror, type SweepClearance } from "./profile.js";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, cloudInstallId, CLOUD_DISPLAY_NAME,
@@ -583,6 +583,8 @@ export async function startWorkerWithLock(
   // closes the IMAP connections it already opened — a leaked login is exactly what gets a
   // provider to throttle the user's mailbox.
   const runtimes = new Map<string, MailboxRuntime>();
+  /** Each organized mailbox's last settings clearance, as data for the gap pass (which opens no IMAP). */
+  const gapClearances = new Map<string, SweepClearance>();
   /** The attaches in flight, for the same reason: the startup catch must stop and await them. */
   let attachPoolRef: AttachPool | null = null;
   /** The same, for the timers: the startup catch must be able to disarm them (see below). */
@@ -2385,7 +2387,7 @@ export async function startWorkerWithLock(
     /** Unwatch + CLOSE a mailbox's connection and drop it from the rotation. */
     async function detach(rt: MailboxRuntime, reason: string): Promise<void> {
       // Only THIS runtime: a re-attach may already have put a new one in its place.
-      if (runtimes.get(rt.mailboxId) === rt) runtimes.delete(rt.mailboxId);
+      if (runtimes.get(rt.mailboxId) === rt) { runtimes.delete(rt.mailboxId); gapClearances.delete(rt.mailboxId); }
       // THE KNOWN-SET MEMO DIES WITH THE ATTACHMENT. Dropping the runtime already makes it
       // unreachable, so this is belt AND braces — but it is the braces that state the invariant:
       // an in-memory copy of a mailbox's known UIDs may never outlive this process's claim on that
@@ -3919,6 +3921,8 @@ export async function startWorkerWithLock(
        * dishonestly late. One UPDATE per woken visit, i.e. per doorbell ring or real arrival, never per rotation.
        */
       async function visitMailbox(rt: MailboxRuntime, woken = false): Promise<void> {
+        // A visit that does not reach the evaluation below leaves the gap pass withheld.
+        gapClearances.delete(rt.mailboxId);
         try {
           // ── THE LEASE IS RE-VERIFIED EVERY CYCLE, BEFORE THE PIPELINE RUNS ──────────────
           //
@@ -4046,6 +4050,10 @@ export async function startWorkerWithLock(
           let cycleError: unknown = null;
           let syncOutcome: { hasBacklog: boolean; owesFiling: boolean } | null = null;
           try {
+            /* The routing hold, evaluated once per cycle (see `importHold` below); its outcome is
+               also the gap pass's clearance, handed to the tail as data. */
+            const importHold = rt.role === "organizer" ? await rt.profile.importHoldNow() : undefined;
+            if (rt.role === "organizer") gapClearances.set(rt.mailboxId, rt.profile.gapClearance());
             syncOutcome = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
             // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
@@ -4084,7 +4092,7 @@ export async function startWorkerWithLock(
              * `ohmail/_meta` every 30 s for the life of the attachment instead of settling into the
              * five-minute cadence. A reader that polls a mailbox it does not organize is the model; a
              * reader that FETCHES a document it may not act on is not. */
-              importHold: rt.role === "organizer" ? await rt.profile.importHoldNow() : undefined,
+              importHold,
             });
           } catch (err) {
             // Held for the split below — a fence is not a fault.
@@ -5153,7 +5161,11 @@ export async function startWorkerWithLock(
           await runTailStage("cycle.gapCatchupPass", "database", async () => {
             const { offered, moved, completed } = await gapCatchupPass(
               db as unknown as Tx,
-              { accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds },
+              {
+                accountId, log, trustedAuthservIdsFor: mailboxProviderAuthservIds,
+                // Data from the visit, never a runtime: an unvisited or unread mailbox waits.
+                clearanceFor: (id) => gapClearances.get(id) ?? NO_FOLDER_READ,
+              },
               new Date(),
             );
             if (offered + moved + completed > 0) {

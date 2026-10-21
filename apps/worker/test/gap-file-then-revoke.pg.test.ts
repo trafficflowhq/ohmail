@@ -20,6 +20,8 @@ import { gapCatchupPass } from "../src/gap-catchup.js";
 
 const AVAILABLE = await realPgAvailable();
 const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
+/** Settled rules: the settings folder read cleanly with no import question open. */
+const CLEAR = () => ({ kind: "clear" }) as const;
 const NEWS = "ohmail/News";
 const SCREENER = "ohmail/Screener";
 const DECIDED = new Date("2026-10-02T09:00:00Z");
@@ -74,7 +76,7 @@ describe.skipIf(!AVAILABLE)("the revoke of a rule that filed a gap batch, on rea
     const ids: string[] = [];
     for (let i = 1; i <= letters; i++) ids.push(await put("INBOX", i, IN_GAP, "peer"));
     if (letters > 0) {
-      const opts = { accountId, trustedAuthservIdsFor: NONE };
+      const opts = { accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
       expect(await gapCatchupPass(db as unknown as Tx, opts)).toMatchObject({ offered: 1 });
       await db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, mb!.id));
       expect(await gapCatchupPass(db as unknown as Tx, opts), "the File press filed nothing").toMatchObject({ moved: letters });

@@ -126,9 +126,12 @@ describe("the sidecar writes this mailbox's settings into ohmail/_meta", () => {
     expect(doc.producer.kind).toBe("local");
     // A screener yes is a person's contact (mail 0148), and the document says so.
     expect(doc.screener).toEqual([{ address: "anna@x.example", name: "Anna", source: "person" }]);
+    // A rule's age travels with the document (outside its fingerprint), so a phone that imports
+    // these rules does not read them as younger than the letters they would file.
     expect(doc.rules).toEqual([{
       kind: "sender", match: "anna@x.example", destination: "INBOX",
       priority: 0, enabled: true, provenance: "promoted",
+      updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/),
     }]);
     expect(doc.notifyRules).toEqual([{ kind: "sender", target: "boss@x.example" }]);
     /* NO `subject`, AND THAT IS THE ASSERTION. The away responder became reply-only in 0087 and

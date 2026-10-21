@@ -22,6 +22,8 @@ import { clearOrganizerStandDown, markMailboxReleased, refreshOrganizerHolder } 
 
 const AVAILABLE = await realPgAvailable();
 const NONE = async (): Promise<ReadonlySet<string>> => new Set<string>();
+/** Settled rules: the settings folder read cleanly with no import question open. */
+const CLEAR = () => ({ kind: "clear" }) as const;
 const NEWS = "ohmail/News";
 const RULE_MADE = new Date("2026-10-01T00:00:00Z");
 const SENDER = "letters@news.test";
@@ -123,7 +125,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     const looked = await rowOf(w.mailboxId);
 
     await organizeHere(w.mailboxId);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
     // At the base this read { offered: 0, moved: 0, completed: 1 }: a window that opened after the letter, closed empty.
     expect(await gapCatchupPass(db as unknown as Tx, opts)).toEqual({ offered: 1, moved: 0, completed: 0 });
     expect((await rowOf(w.mailboxId)).letters, "the offer missed the letter the hand-back let through").toBe(1);
@@ -153,7 +155,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     expect(await refreshOrganizerHolder(db as never, w.mailboxId, NOBODY, { gap: "open", stateChanged: false })).toBe(true);
     const letter = await readerTakesIn(w, arrived);
     await organizeHere(w.mailboxId);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
     expect(await gapCatchupPass(db as unknown as Tx, opts), "a letter that arrived after the press was left out")
       .toEqual({ offered: 1, moved: 0, completed: 0 });
     const [held] = await db.select().from(folderState).where(eq(folderState.messageId, letter));
@@ -178,7 +180,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
       expect(m!.a!.getTime()).toBeGreaterThanOrEqual(since.getTime());
     }
     await organizeHere(w.mailboxId);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
     expect(await gapCatchupPass(db as unknown as Tx, opts)).toEqual({ offered: 1, moved: 0, completed: 0 });
     expect((await rowOf(w.mailboxId)).letters, "a letter the organizer decided was counted").toBe(1);
     await db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, w.mailboxId));
@@ -200,7 +202,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     await db.update(mailboxes).set({ releaseRequestedAt: await storeNow() }).where(eq(mailboxes.id, w.mailboxId));
     expect(await markMailboxReleased(db as never, w.mailboxId)).toBe(true);
     await organizeHere(w.mailboxId);
-    const ran = await gapCatchupPass(db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
+    const ran = await gapCatchupPass(db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR });
     expect({ offered: ran.offered, moved: ran.moved }).toEqual({ offered: 0, moved: 0 });
     expect((await rowOf(w.mailboxId)).letters).toBeNull();
     const [kept] = await db.select().from(folderState).where(eq(folderState.messageId, before));
@@ -241,7 +243,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     const trueGap = await readerTakesIn(w, await storeNow());
 
     await organizeHere(w.mailboxId);
-    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE };
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR };
     expect(await gapCatchupPass(db as unknown as Tx, opts), "a letter the laptop kept was counted")
       .toEqual({ offered: 1, moved: 0, completed: 0 });
     await db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, w.mailboxId));

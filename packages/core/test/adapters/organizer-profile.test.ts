@@ -816,3 +816,54 @@ describe("names and addresses are written as JSON escapes, and every shipped rea
     expect(body.slice(0, body.indexOf("{"))).not.toMatch(/[{}]/);
   });
 });
+
+describe("a rule's age travels beside it, outside the canonical form and the fingerprint", () => {
+  const OLD = "2026-09-01T08:00:00.000Z";
+  const LATER = "2026-09-02T08:00:00.000Z";
+  const aged = (): OrganizerProfilePayload => {
+    const p = richPayload();
+    p.rules = p.rules.map((r, i) => ({ ...r, updatedAt: i === 0 ? OLD : LATER }));
+    return p;
+  };
+  const read = (raw: string) => {
+    const parsed = parseProfileMessage(raw);
+    if (parsed === null || isMalformedProfile(parsed) || parsed.status !== "ok") throw new Error("expected a readable document");
+    return parsed;
+  };
+
+  it("ages survive the round trip, written plain, and the copy reads as written", () => {
+    const raw = formatProfileMessage(makeProfileDoc(aged(), { updatedAt: AT, producer: PRODUCER }), { installId: "a" });
+    expect(raw, "the age was escaped or dropped").toContain(`"updatedAt": "${OLD}"`);
+    const parsed = read(raw);
+    expect(parsed.encoded).toBe(true);
+    expect(new Map(parsed.doc!.rules.map((r) => [r.match, r.updatedAt]))).toEqual(new Map([
+      ["news@letters.example", OLD], ["shop.example", LATER], ["alerts@host.example", LATER],
+    ]));
+  });
+
+  it("an unreadable age reads as absent, and the document stays readable", () => {
+    const raw = formatProfileMessage(makeProfileDoc(aged(), { updatedAt: AT, producer: PRODUCER }), { installId: "a" })
+      .replace(`"updatedAt": "${OLD}"`, "\"updatedAt\": \"last tuesday\"");
+    const rule = read(raw).doc!.rules.find((r) => r.match === "news@letters.example")!;
+    expect(rule).toBeDefined();
+    expect(rule.updatedAt).toBeUndefined();
+  });
+
+  it("the fingerprint is the same with and without ages at v1 and v2, so an upgrade asks nothing", () => {
+    for (const v of [1, 2]) {
+      const before = profileFingerprint(richPayload(), v);
+      expect(profileFingerprint(aged(), v), `v${v}: an age moved the fingerprint`).toBe(before);
+      expect(profileFingerprint(makeProfileDoc(aged(), { updatedAt: AT, producer: PRODUCER }, v), v)).toBe(before);
+      expect(localSaysWhatAFingerprintSays(aged(), before), `v${v}: an older document became a question`).toBe(true);
+    }
+  });
+
+  it("two entries that cannot be told apart carry the earliest age, and an unwritten one carries none", () => {
+    const p = richPayload();
+    const twin = p.rules[0]!;
+    p.rules = [{ ...twin, updatedAt: LATER }, { ...twin, updatedAt: OLD }, { ...p.rules[1]!, updatedAt: "yesterday" }];
+    const doc = makeProfileDoc(p, { updatedAt: AT, producer: PRODUCER });
+    expect(doc.rules.filter((r) => r.match === twin.match).map((r) => r.updatedAt)).toEqual([OLD, OLD]);
+    expect(doc.rules.find((r) => r.match === "shop.example")!.updatedAt).toBeUndefined();
+  });
+});

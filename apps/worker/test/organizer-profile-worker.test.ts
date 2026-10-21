@@ -175,9 +175,10 @@ describe("the worker's portable profile write-behind", () => {
     expect(doc.v).toBe(PROFILE_VERSION);
     // A contact with no stated source is a person's (mail 0148), and the document says so.
     expect(doc.screener).toEqual([{ address: "anna@x.example", name: "Anna", source: "person" }]);
+    // The rule carries its age beside it, outside the fingerprint.
     expect(doc.rules).toEqual([{
       kind: "sender", match: "anna@x.example", destination: "INBOX",
-      priority: 0, enabled: true, provenance: "promoted",
+      priority: 0, enabled: true, provenance: "promoted", updatedAt: expect.any(String),
     }]);
     expect(doc.tagNames).toEqual(["Invoices"]);
     expect(docs[0]!.installId).toBe(INSTALL);
@@ -2580,6 +2581,10 @@ describe("the serialized document carries configuration and NOTHING else", () =>
        the fingerprint it had. It is what keeps another organizer's learning off a sender the
        person decided; the fixture below stamps its rule, so a dropped key is red here too. */
     "rules[].personDecidedAt",
+    /* The rule's age (`rules.updated_at`), outside the canonical form and the fingerprint: the gap
+       pass reads it after an import, so a rule keeps the age it had where it was made. Every rule
+       carries it, so a dropped key is red here too. */
+    "rules[].updatedAt",
     /* The producer's statement that its rules carry every stamp (mail 0146), in the ENVELOPE and
        out of the fingerprint: it describes the write. Every build that writes it writes it, so the
        document below carries it and a dropped key is red here as well. */

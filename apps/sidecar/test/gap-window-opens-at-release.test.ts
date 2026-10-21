@@ -3,7 +3,9 @@
  * engine composed over SQLite, an in-memory `ohmail/_meta` and a mail server double: the stop, a
  * letter arriving while it is honoured, the reader taking it in before its first look, then
  * "Organize here". Nothing moves until File; Leave moves nothing; and what the still-active
- * organizer decided between the press and the honouring is never offered (RULING Q1).
+ * organizer decided between the press and the honouring is never offered (RULING Q1). A fresh phone
+ * that organizes next with another install's settings unanswered offers only after the answer
+ * (the cross-install case); the settings folder is a real one, since an install that cannot read it withholds.
  */
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,7 +14,9 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
+import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/organizer-profile";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
+import { formatProfileMessage, makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
@@ -69,9 +73,19 @@ function nodeExecutor(): PhoneSqlExecutor & { direct: (sql: string, params?: unk
   };
 }
 
-class MemoryMetaFolder implements LeaseIo {
+/* The settings folder is a real, empty one: an install that cannot read it withholds the offer. */
+class MemoryMetaFolder implements LeaseIo, ProfileIo {
   private nextUid = 1;
   private readonly claims: RawClaimMessage[] = [];
+  private readonly profiles: Array<{ ref: number; raw: string }> = [];
+  async listProfileMessages(): Promise<RawProfileMessage[]> {
+    return this.profiles.map((p) => ({ ref: p.ref, raw: p.raw, generation: 4_100 }));
+  }
+  async appendProfile(raw: string): Promise<void> { this.profiles.push({ ref: this.nextUid++, raw }); }
+  async removeProfiles(refs: readonly unknown[]): Promise<void> {
+    const gone = new Set(refs);
+    for (let i = this.profiles.length - 1; i >= 0; i--) if (gone.has(this.profiles[i]!.ref)) this.profiles.splice(i, 1);
+  }
   /** Runs when the folder empties: the stop honoured, never a renewal's expunge of an older record. */
   onRemove: (() => void) | null = null;
   async ensureMetaFolder(): Promise<void> {}
@@ -115,6 +129,7 @@ function mailServer(meta: MemoryMetaFolder): Server {
     factory: (_cfg: ImapConfig) => ({
       leaseIo: () => meta,
       leasePeekIo: () => ({ listClaims: () => meta.listClaims() }),
+      profileIo: () => meta,
       async connect(): Promise<void> {},
       async close(): Promise<void> {},
       async capabilities(): Promise<ImapCapabilities> {
@@ -189,7 +204,7 @@ async function organizingPhone() {
     body: JSON.stringify(body),
   }));
   return {
-    engine, meta, server, id, route,
+    engine, meta, server, id, route, exec,
     gap, until,
     pressedAt: (): number | null => (exec.direct("select release_requested_at as p from mailboxes where id = ?", [id]) as { p: number | null }[])[0]!.p,
     refusal: (): string | null => (exec.direct("select release_refusal as r from mailboxes where id = ?", [id]) as { r: string | null }[])[0]!.r,
@@ -319,5 +334,61 @@ describe.runIf(ON_DEVICE_STORE)("the gap window a hand-back opens, on the device
     for (let i = 0; i < 3; i++) await p.engine.resume();
     expect(p.gapFiled(), "the gap pass filed a letter the organizer had decided").toEqual([gapLetter!.id]);
     expect(p.gap()).toEqual({ since: null, letters: null, pressed: null });
+  }, 60_000);
+
+  it("the cross-install case: a fresh phone with the other install's settings unanswered waits; the import offers the letter", async () => {
+    // THE LAPTOP ORGANIZED and left its settings: a News rule a month old, written by this version.
+    const laptop = makeProfileDoc({
+      screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
+      rules: [{
+        kind: "sender", match: "letters@news.test", destination: "ohmail/News", priority: 0, enabled: true,
+        provenance: "manual", updatedAt: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      }],
+    }, { updatedAt: new Date(Date.now() - 86_400_000), producer: { kind: "local", version: "dev" } });
+    const exec = nodeExecutor();
+    const meta = new MemoryMetaFolder();
+    const server = mailServer(meta);
+    await meta.appendClaim(formatClaim({
+      installId: "the-laptop", kind: "local", displayName: "a laptop", heartbeat: new Date(), claimedAt: new Date(),
+      nonce: "laptop-1", authorizedAt: null, capabilities: ["profile"],
+    }));
+    await meta.appendProfile(formatProfileMessage(laptop, { installId: "the-laptop" }));
+    /* A key ring and a refused port: the password is sealed, the import's own dial fails, and the
+       press is handed to the organizer, which reads the settings on this rig's connection. */
+    const engine = await startPhoneEngine({
+      exec, imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+      machineName: "ohmail on a phone", installId: "install-fresh-phone", adapterFactory: server.factory, log: () => {},
+      keks: { 1: "c".repeat(64) },
+    } as Parameters<typeof startPhoneEngine>[0]);
+    open.push(engine);
+    const id = Object.keys(engine.runtimes().organizer)[0]!;
+    exec.direct("update mailboxes set organize_consented_at = 1, status = 'connected' where id = ?", [id]);
+    const gap = (): Gap => (exec.direct(`select gap_since as since, gap_letters as letters, gap_pressed_at as pressed
+      from mailboxes where id = ?`, [id]) as Gap[])[0]!;
+    await engine.resume();
+    expect(engine.runtimes().organizer[id]?.organizing, "premise: a reader beside the laptop").toBe(false);
+    // THE LAPTOP LETS GO; the look opens the window and a News letter arrives, adopted at the inbox.
+    await meta.removeClaims((await meta.listClaims()).map((c) => c.ref));
+    await engine.resume();
+    expect(gap().since, "premise: the gap was noted").not.toBeNull();
+    server.pending.push(letter(new Date()));
+    await engine.resume();
+    expect(exec.direct("select f.last_set_by as by from folder_state f")).toEqual([{ by: "peer" }]);
+
+    // ORGANIZE HERE, with no rules of its own and the laptop's settings unanswered.
+    expect(await engine.claimHere({ by: "press" })).toBe("claimed");
+    // Ordinary drains, rung as an arrival rings them, for as long as a cleared pass takes to close it.
+    for (let i = 0; i < 80 && gap().since !== null; i++) { server.ring?.(); await new Promise((r) => setTimeout(r, 50)); }
+    expect(gap().since, "the open import question closed the window").not.toBeNull();
+    expect(gap().letters, "the gap was counted by rules about to change").toBeNull();
+
+    const imported = await engine.handle(new Request(`http://engine.invalid/mailboxes/${id}/profile-import`, {
+      method: "POST", headers: { authorization: `Bearer ${engine.sessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ fingerprint: profileFingerprint(laptop) }),
+    }));
+    expect([200, 202], await imported.clone().text()).toContain(imported.status);
+    for (let i = 0; i < 80 && gap().letters === null; i++) { server.ring?.(); await new Promise((r) => setTimeout(r, 50)); }
+    expect(gap(), "the imported rule's letter was never offered").toMatchObject({ letters: 1, pressed: null });
+    expect(server.moves, "an offer moved mail").toEqual([]);
   }, 60_000);
 });

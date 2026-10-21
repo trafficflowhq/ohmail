@@ -71,7 +71,7 @@ export async function serializeOrganizerProfileCounted(
         kind: rulesTbl.kind, match: rulesTbl.match, destination: rulesTbl.destination,
         priority: rulesTbl.priority, enabled: rulesTbl.enabled, provenance: rulesTbl.provenance,
         subjectContains: rulesTbl.subjectContains, bodyContains: rulesTbl.bodyContains,
-        personDecidedAt: rulesTbl.personDecidedAt,
+        personDecidedAt: rulesTbl.personDecidedAt, updatedAt: rulesTbl.updatedAt,
       }).from(rulesTbl).where(eq(rulesTbl.accountId, accountId))
         .orderBy(sql`${rulesTbl.provenance} = 'promoted'`, desc(rulesTbl.createdAt), desc(rulesTbl.id))
         .limit(PROFILE_LIST_MAX.rules + 1),
@@ -132,6 +132,8 @@ export async function serializeOrganizerProfileCounted(
       ...(r.subjectContains === null ? {} : { subjectContains: r.subjectContains }),
       ...(r.bodyContains === null ? {} : { bodyContains: r.bodyContains }),
       ...(r.personDecidedAt === null ? {} : { personDecidedAt: r.personDecidedAt.toISOString() }),
+      // The rule's age travels outside the fingerprint, so the import on another install keeps it.
+      updatedAt: r.updatedAt.toISOString(),
     })),
     notifyRules: notifyRows.map((n) => ({ kind: n.kind, target: n.target })),
     awayResponder: away === undefined ? null : {
@@ -328,6 +330,10 @@ export async function applyOrganizerProfile(
     else localByKey.set(k, [row]);
   }
   const screenOuts: ApplicableProfileRule[] = [];
+  /* THE AGE THE RULE HAD WHERE IT WAS MADE, so the gap pass counts what it would have filed; an
+     age the copy does not carry, or one later than now, is the import's own instant. */
+  const ageOf = (w: ApplicableProfileRule): Date =>
+    w.updatedAt !== null && w.updatedAt.getTime() <= now.getTime() ? w.updatedAt : now;
   for (const [key, docRows] of docByKey) {
     const localRows = localByKey.get(key) ?? [];
     const n = Math.max(docRows.length, localRows.length);
@@ -344,7 +350,7 @@ export async function applyOrganizerProfile(
         if (screensOut(want)) screenOuts.push(want);
         await tx.update(rulesTbl).set({
           destination: want.destination, priority: want.priority,
-          enabled: want.enabled, provenance: want.provenance, personDecidedAt: stamp, updatedAt: now,
+          enabled: want.enabled, provenance: want.provenance, personDecidedAt: stamp, updatedAt: ageOf(want),
           // Deliberately NOT re-requesting the retroactive pass: an import restores
           // configuration; the travelling mailbox's mail was filed by its previous
           // organizer, and a confirm click must not become a bulk re-filing.
@@ -361,6 +367,7 @@ export async function applyOrganizerProfile(
           priority: want.priority, enabled: want.enabled, provenance: want.provenance,
           subjectContains: want.subjectContains, bodyContains: want.bodyContains,
           personDecidedAt: decided ? o.now : want.personDecidedAt,
+          updatedAt: ageOf(want),
           retroRequestedAt: null,
         }).returning({ id: rulesTbl.id });
         changes.push(ruleDelta(o.accountId, row!.id, "create"));

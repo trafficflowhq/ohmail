@@ -4,6 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   StaticKeyProvider, kekRingFingerprint, UNMETERED_STORAGE_CAP,
   type BlankRepairMode, type KekEnvIdentity, type KeyProvider, type Logger, type OpenSendAdapter, type SendAdapter,
+  type SweepClearance,
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
@@ -192,7 +193,7 @@ import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
 import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
 /* MAIL FROM A GAP, the worker's pass for the same reason: on this door no worker rules the mail
    that arrived while nothing organized the mailbox. */
-import { gapCatchupPass } from "@trafficflow/worker/gap-catchup";
+import { gapCatchupPass, NO_FOLDER_READ } from "@trafficflow/worker/gap-catchup";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import {
   screenerActConsentFrom, screenerAutoActPass, type ScreenerAutoActSettings,
@@ -2738,21 +2739,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * A failure leaves the window standing, so the next drain resumes.
      */
     const gapCatchupDue = async (): Promise<void> => {
-      const ready = runtimes.all()
-        .filter((rt) => rt.organizer.organizing && gapCatchupReady.has(rt.mailboxId) && gapOwed.has(rt.mailboxId))
-        .map((rt) => rt.mailboxId);
+      const readyRts = runtimes.all()
+        .filter((rt) => rt.organizer.organizing && gapCatchupReady.has(rt.mailboxId) && gapOwed.has(rt.mailboxId));
+      const ready = readyRts.map((rt) => rt.mailboxId);
       if (ready.length === 0) return;
       try {
         /* THE TRUST IS READ BEFORE THE WALK, for `retroDue`'s reason: one connection on this door. */
         const trust = new Map<string, ReadonlySet<string>>();
         for (const id of ready) trust.set(id, await mailboxProviderAuthservIds(db, id));
+        /* AND WHETHER EACH MAILBOX'S RULES ARE SETTLED: the last evaluation of its settings folder,
+           no IO. A withheld window stays owed: an import answer does not ring this pass. */
+        const settled = new Map<string, SweepClearance>(readyRts.map((rt) => [rt.mailboxId, rt.profileSync.gapClearance()]));
+        const asked = new Map<string, SweepClearance>();
         const { offered, moved, completed } = await gapCatchupPass(db as unknown as Tx, {
           accountId: world.accountId,
           mailboxIds: ready,
           trustedAuthservIdsFor: async (_tx, mailboxId) => trust.get(mailboxId) ?? new Set<string>(),
+          clearanceFor: (mailboxId) => {
+            const c = settled.get(mailboxId) ?? NO_FOLDER_READ;
+            asked.set(mailboxId, c);
+            return c;
+          },
           ...(config.logger === undefined ? {} : { log: config.logger }),
         }, now());
-        for (const id of ready) gapOwed.delete(id);
+        for (const id of ready) {
+          const c = asked.get(id);
+          if (c === undefined || c.kind === "clear") gapOwed.delete(id);
+        }
         if (offered + moved + completed > 0) log("gap_catchup_pass", { offered, moved, applied: completed });
       } catch (err) {
         log("gap_catchup_failed", { err, reason: "the gap offer was not counted or filed; the next drain resumes it" });
