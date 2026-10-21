@@ -330,7 +330,24 @@ jobs:
       # have — an install loop, and a feed that says a fix is available when it is
       # not. Pinning the ref makes the artifacts and the version come from one
       # commit; the assertion below refuses the run if they still disagree.
+      #
+      # EVERY CHECKOUT HERE IS BOUNDED AND RUNS ONCE MORE. At 0.27.4 the publish job's fetch hung
+      # without a byte until the job's 20-minute timeout, and the re-run queued behind pull requests.
+      # A healthy checkout takes under 15 s; a second failure fails the job as before. The retry
+      # reads `outcome`: under continue-on-error a failed step's conclusion reads success.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        id: tag-tree
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+      - name: Say the tag checkout runs once more
+        if: steps.tag-tree.outcome != 'success'
+        run: echo "::warning title=Retried once%3A checkout::the tag checkout failed or did not finish in 3 minutes; running it once more"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.tag-tree.outcome != 'success'
+        timeout-minutes: 3
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
           persist-credentials: false
@@ -341,6 +358,19 @@ jobs:
       # pinning once read a `pnpm-lock.yaml` the published repository does not carry, and died
       # on a tag that could not be moved). A dispatch runs ON the tag, so its tools are named here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        id: tools-tree
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          path: .tools
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tools == 'main' && 'main' || github.ref }}
+          persist-credentials: false
+      - name: Say the tools checkout runs once more
+        if: steps.tools-tree.outcome != 'success'
+        run: echo "::warning title=Retried once%3A checkout::the tools checkout failed or did not finish in 3 minutes; running it once more"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.tools-tree.outcome != 'success'
+        timeout-minutes: 3
         with:
           path: .tools
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tools == 'main' && 'main' || github.ref }}
@@ -1194,8 +1224,20 @@ jobs:
     steps:
       # The tag's own tree. `verify-feeds.mjs` checks both feeds against the
       # public keys THIS release's clients carry, so it reads them out of the
-      # commit the binaries were built from.
+      # commit the binaries were built from. Bounded and run once more, as in prepare.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        id: tag-tree
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+      - name: Say the tag checkout runs once more
+        if: steps.tag-tree.outcome != 'success'
+        run: echo "::warning title=Retried once%3A checkout::the tag checkout failed or did not finish in 3 minutes; running it once more"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.tag-tree.outcome != 'success'
+        timeout-minutes: 3
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
           persist-credentials: false

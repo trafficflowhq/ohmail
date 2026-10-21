@@ -79,13 +79,14 @@ describe("the release signing job is isolated", () => {
     // fence: one step, and it is the whole job. It holds the write scope, so anything else
     // running beside it runs beside a token that can rewrite a release.
     expect(byName("fence").steps.length).toBe(1);
-    // prepare: two checkouts, setup-node, the one long step, two uploads.
-    expect(byName("prepare").steps.length).toBe(6);
+    // prepare: two checkouts (each an attempt, a warning and a retry), setup-node, the one long
+    // step, two uploads.
+    expect(byName("prepare").steps.length).toBe(10);
     // sign: setup-node, download, check, sign, upload. No checkout — asserted below.
     expect(byName("sign").steps.length).toBe(5);
-    // publish: checkout, setup-node, two downloads, the feeds step, the read-back, the
-    // promotion, the summary.
-    expect(byName("publish").steps.length).toBe(8);
+    // publish: the checkout (attempt, warning, retry), setup-node, two downloads, the feeds step,
+    // the read-back, the promotion, the summary.
+    expect(byName("publish").steps.length).toBe(10);
     expect(byName("prepare").body).toMatch(/^ {4}needs: fence$/m);
     expect(byName("sign").body).toMatch(/^ {4}needs: prepare$/m);
     expect(byName("publish").body).toMatch(/^ {4}needs: \[fence, prepare, sign\]$/m);

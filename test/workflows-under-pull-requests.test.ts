@@ -199,8 +199,8 @@ describe("the workflows of a main that takes pull requests", () => {
     expect(keysOutsideRelease(android.replace("    environment: release\n", ""))).toEqual(["sign"]);
     expect(keysOutsideRelease(feeds.replace("    environment: release\n", ""))).toEqual(["sign"]);
     expect(keysOutsideRelease(build.replace(/^ {4}environment: .+\n/m, ""))).toEqual(["macos"]);
-    /* The tools checkout as it was (no ref: the launching ref, which is the tag on a recovery). */
-    expect(toolsRefOf(feeds.replace(/\n {10}ref: \$\{\{ github\.event_name == 'workflow_dispatch'[^\n]*\n/, "\n"))).toBeNull();
+    /* The tools checkout as it was, attempt and retry (no ref: the launching ref, which is the tag on a recovery). */
+    expect(toolsRefOf(feeds.replace(/\n {10}ref: \$\{\{ github\.event_name == 'workflow_dispatch'[^\n]*\n/g, "\n"))).toBeNull();
     expect(() => evaluate("github.ref || runner.os", { "github.ref": "x" })).toThrow(/unknown context runner\.os/);
     /* A key named only in a comment is not read: the census reads executed lines. */
     expect(keysOutsideRelease("jobs:\n  x:\n    steps:\n      # ${{ secrets.ANDROID_KEYSTORE_B64 }}\n")).toEqual([]);
