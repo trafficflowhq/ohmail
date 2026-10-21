@@ -705,6 +705,9 @@ export function OhboxView({
     if (next != null) {
       verbAdvance.current = next;
       onSelect(next);
+      // The landing is a cursor stop like j: two seconds on it read it. Not `selectByUser`, which
+      // would let go of the acted row's hold and spend its Undo.
+      setDwellOn(next);
     }
   });
 
@@ -876,6 +879,9 @@ export function OhboxView({
    */
   const allRef = useRef(all);
   allRef.current = all;
+  /** The cursor as rendered, so the dwell's timer reads only the row it is still on. */
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   /**
    * THE WRITER, held the same way, so the dwell's deps are ONE value.
@@ -1115,12 +1121,14 @@ export function OhboxView({
         const s = suspended.current;
         if (!s || !ids.includes(s.id)) return null;
         if (s.held && !onRestoreHoldRef.current?.(s.id)) { spendSuspended(); return null; }
+        // The advance's dwell must not read while the row comes back.
+        setDwellOn(null);
         return s.id;
       },
       settle: (id, applied) => {
         const s = suspended.current;
         if (!s || s.id !== id) return;
-        if (!applied) { spendSuspended(); return; }
+        if (!applied) { if (s.sel !== null) setDwellOn(s.sel); spendSuspended(); return; }
         suspended.current = null;
         if (s.held) hold(s.id);
         onSelectRef.current(s.id);
@@ -1224,6 +1232,7 @@ export function OhboxView({
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (readColumnHidden()) return;
     const timer = window.setTimeout(() => {
+      if (selectedIdRef.current !== id) return;
       // Through `armRead`, so the row's ink, the verb and the write move together (see `armedRead`).
       // Placement is held by the slide's skip and does not move. `armRead` reads only refs, so the
       // dependency array below still re-runs this effect on `dwellOn` and on nothing else.

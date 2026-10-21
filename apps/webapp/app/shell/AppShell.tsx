@@ -1922,7 +1922,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
-    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, flushSiblingSeen,
+    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", flushSiblingSeen,
     readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,

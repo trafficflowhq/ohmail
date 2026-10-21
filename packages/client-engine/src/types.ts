@@ -1324,6 +1324,12 @@ export type EngineMutation =
        * were unread, which places them at the top of "Earlier".
        */
       openRead?: true;
+      /**
+       * The row a person read with its own verb while no reader holds it (a phone row's swipe, the
+       * web reader off the Ohbox). Engine-local: `Engine.enrich` judges it as it judges the held row
+       * and drops it, so it never reaches the wire, the outbox or the overlay.
+       */
+      readRow?: string;
     }
   /**
    * Send mail — the one mutation whose effect leaves the building. One verb, two entry points

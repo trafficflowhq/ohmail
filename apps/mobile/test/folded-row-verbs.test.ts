@@ -203,7 +203,7 @@ describe("a folded row that holds the person's own reply", () => {
 describe("MailRow's press", () => {
   const src = withoutCommentsAndLiterals(readFileSync(fileURLToPath(new URL("../src/ui/MailRow.tsx", import.meta.url)), "utf8"));
   it("hands memberIds to every verb it presses", () => {
-    const calls = [...src.matchAll(/w\.actions\.(pileToggle|move|resurfaceDone|markSeen)\(/g)];
+    const calls = [...src.matchAll(/w\.actions\.(pileToggle|move|resurfaceDone|markSeen|markRowSeen)\(/g)];
     expect(calls.length, "the row's verbs moved; this census reads nothing").toBe(4);
     for (const c of calls) {
       const span = bracketSpan(src, c.index! + c[0].length - 1);

@@ -2,7 +2,8 @@
  * THE ROW BEING READ KEEPS ITS PLACE IN "NEW" ON THE PHONE TOO (owner ruling 2026-09-18, narrowed
  * 2026-10-07). `openMessage` holds the row in the engine before it saves the read, the world
  * derives the Ohbox with that hold, and the reader's leaving lets it go — to the top of Earlier,
- * because the read was an open read; a read of a row nobody opened keeps arrival. On a two-pane
+ * because the read was an open read; a read of another row with no row named keeps arrival (a
+ * row's own Mark read names it: `row-read-is-an-open-read.test.ts`). On a two-pane
  * posture the list stands beside the reader, so a row that moved at the read moved under them.
  * MUTATIONS WATCHED (mutation-control.sh): the hold in `openMessage` removed, and the `openHeld`
  * argument dropped from `liveOhbox`'s `ohboxView` call — the held arms below go red.

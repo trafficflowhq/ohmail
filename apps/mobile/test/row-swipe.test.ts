@@ -115,7 +115,7 @@ describe("a swipe is a shortcut, never the only door", () => {
   it("dispatches the world's own verbs, so the undo pill is the verb's own", () => {
     expect(row).toContain('w.actions.pileToggle(m.id, "replyLater", members)');
     expect(row).toContain("w.actions.resurfaceDone(m.id, members)");
-    expect(row).toContain('w.actions.markSeen(m.id, face === "markUnread", members)');
+    expect(row).toContain('w.actions.markRowSeen(m.id, face === "markUnread", members)');
     // No second undo: nothing on this row schedules, holds or reverses anything itself.
     expect(/setTimeout|UNDO_MS|inverseMutations/.test(row),
       "the row must not grow an undo of its own — the verb's toast already carries one").toBe(false);

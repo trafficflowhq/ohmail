@@ -7,8 +7,8 @@ import { click, key, mountThread, msg, patches, readSlot, toastText } from "./fi
  * AN EXPLICIT MARK READ ON THE MESSAGE ON SCREEN IS A READ IN OHMAIL (owner 2026-10-21, after
  * 2026-10-07): the Mark read button or ⇧I on the shown message files it at the top of Earlier
  * once the reader moves on, exactly like opening it. Before, only an armed read (dwell, open, →)
- * took the engine's hold, so a message shown without one (after a verb's advance, a URL landing,
- * a press inside the dwell, after `u`) left New at the press and filed at its arrival slot.
+ * took the engine's hold, so a message shown without one (a URL landing, a press inside the dwell,
+ * after `u`) left New at the press and filed at its arrival slot.
  * Through the shipped shell and the real engine. Mark all read and multi-select keep arrival.
  */
 
@@ -37,16 +37,16 @@ beforeEach(() => {
 afterEach(async () => { await teardownShellEnv(); });
 
 describe("an explicit Mark read on the shown message files it at the top of Earlier", () => {
-  it("after a verb's advance, no dwell, then ⇧I: held while shown, top of Earlier once left", async () => {
+  it("after a verb's advance, ⇧I inside its dwell: held while shown, top of Earlier once left", async () => {
     await mountThread([msg("first", 20, { threadId: "t-first" }), ...two()]);
     await key("j");
     expect(selected()).toBe("first");
     await key("Backspace");
     expect(selected(), "the verb advanced to the next row").toBe("old");
-    await idle();
-    expect(patches, "the advance arms no read").toEqual([]);
     await key("I", { shiftKey: true });
     expect(deliberate()).toEqual([OPEN_READ]);
+    await idle();
+    expect(patches, "the advance's dwell adds nothing").toEqual([OPEN_READ]);
     expect(ids("New"), "it keeps its place while on screen").toEqual(["old"]);
     await click(rowOf("newer"), "move on");
     expect(ids("Earlier"), "left, it takes the top of Earlier").toEqual(["old", "newer"]);

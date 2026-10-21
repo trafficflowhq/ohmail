@@ -6669,11 +6669,16 @@ export class OhmailEngine {
        * reader holds open ({@link holdOpenRow}) carries `openRead`, and the server stamps the rows
        * that were unread — the top of "Earlier" once the reader moves on. `via` does not matter: a
        * glance counts. A flag a surface passed is dropped: no surface decides placement.
+       * `readRow` (a row read by its own verb, nothing holding it) is judged the same way when it
+       * stands in New, takes no hold, and is dropped here too.
        */
-      const { openRead: _surfaceFlag, ...given } = m;
-      if (given.unread || this.openRow === null) return given;
+      const { openRead: _surfaceFlag, readRow, ...given } = m;
+      if (given.unread) return given;
       const reader = this.read();
-      const held = reader.get<EngineMessage>("message", this.openRow);
+      const named = readRow !== undefined && readRow !== this.openRow
+        && ohboxView(reader).newForYou.some((x) => x.id === readRow) ? readRow : this.openRow;
+      if (named === null) return given;
+      const held = reader.get<EngineMessage>("message", named);
       if (!held) return given;
       const key = conversationKeyOf(held);
       const all = given.messageIds.every((id) => {
