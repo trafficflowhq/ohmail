@@ -37,6 +37,10 @@ const CENSUS: Record<string, string[]> = {
     "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7",
     "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7",
   ],
+  "contributor.yml": [
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
+    "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7",
+  ],
   "dco.yml": ["actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4"],
   "ghcr-images.yml": [
     "actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4",

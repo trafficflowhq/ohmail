@@ -65,6 +65,7 @@ const HOUR = 60 * 60 * 1000;
 interface Line { event: string; detail: Record<string, unknown> }
 interface World {
   sidecar: Sidecar; raw: ImapFlow; lines: Line[]; address: string; adapters: ImapAdapter[];
+  imap: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } };
   /** The next mail read throws once, as a store or pipeline fault would: the login stands. */
   failNextRead: () => void;
 }
@@ -75,7 +76,8 @@ afterEach(async () => {
 });
 
 async function standUp(
-  server: (typeof SERVERS)[number], opts: { pollIntervalMs: number; idle: boolean },
+  server: (typeof SERVERS)[number],
+  opts: { pollIntervalMs: number; idle: boolean; organize?: boolean; heartbeatTimeoutMs?: number },
 ): Promise<World> {
   // The window's first page is served, as the desktop's is at boot (`host.ts`): the gate's once-per-process
   // grace then sits in no case's doorbell bound, whichever case runs first.
@@ -110,13 +112,14 @@ async function standUp(
     pollIntervalMs: opts.pollIntervalMs, leaseStaleAfterMs: 60_000,
     adapterFactory: factory,
     log: (event, detail) => { lines.push({ event, detail: (detail ?? {}) as Record<string, unknown> }); },
+    ...(opts.heartbeatTimeoutMs === undefined ? {} : { heartbeatTimeoutMs: opts.heartbeatTimeoutMs }),
   });
   cleanups.push(async () => { await sidecar.stop().catch(() => undefined); });
-  await grantOrganizeConsent(sidecar);
+  if (opts.organize !== false) await grantOrganizeConsent(sidecar);
   const raw = new ImapFlow({ ...imap, logger: false });
   await raw.connect();
   cleanups.push(async () => { await raw.logout().catch(() => undefined); });
-  return { sidecar, raw, lines, address, adapters, failNextRead: () => { failRead = true; } };
+  return { sidecar, raw, imap, lines, address, adapters, failNextRead: () => { failRead = true; } };
 }
 
 /** The start, which reports a failed mailbox rather than throwing: a case stands on a launch that served. */
@@ -131,6 +134,30 @@ async function deliver(w: World, tag: string): Promise<string> {
     `Date: ${new Date().toUTCString()}`, "Content-Type: text/plain; charset=utf-8", "", "ring", "",
   ].join("\r\n"), "utf8"));
   return mid;
+}
+
+/** The same letter on a fresh connection: GreenMail drops a session left quiet past its idle timeout. */
+async function deliverFresh(w: World, tag: string): Promise<string> {
+  const mid = `doorbell-${tag}-${randomUUID()}@rig.test`;
+  const c = new ImapFlow({ ...w.imap, logger: false });
+  await c.connect();
+  try {
+    await c.append("INBOX", Buffer.from([
+      `Message-ID: <${mid}>`, "From: Mara <mara@rig.test>", `To: <${w.address}>`, `Subject: doorbell ${tag}`,
+      `Date: ${new Date().toUTCString()}`, "Content-Type: text/plain; charset=utf-8", "", "ring", "",
+    ].join("\r\n"), "utf8"));
+  } finally {
+    await c.logout().catch(() => undefined);
+  }
+  return mid;
+}
+
+/** The engine connection's INBOX count against the server's. */
+async function counts(w: World): Promise<{ client: number; server: number }> {
+  const client = (w.adapters.at(-1) as unknown as { client?: ImapFlow }).client;
+  const mb = client?.mailbox;
+  const status = await w.raw.status("INBOX", { messages: true });
+  return { client: mb && typeof mb === "object" ? mb.exists : -1, server: status.messages ?? -1 };
 }
 
 /** Milliseconds from now until the message is in the store, or null past `boundMs`. */
@@ -211,6 +238,64 @@ for (const server of SERVERS) {
       await w.sidecar.syncUntilQuiet();
       expect(await arrivalMs(w, await deliver(w, "poll"), DOORBELL_BOUND_MS), "the poll fallback").not.toBeNull();
       expect(w.lines.filter((l) => l.event === "sync_idle_backoff"), "rested without a doorbell").toEqual([]);
+    });
+  });
+
+  /**
+   * THE DOORBELL AFTER A DELETE, and after the heartbeat. On a QRESYNC server (Dovecot) an INBOX
+   * expunge arrives as VANISHED, which imapflow 1.7.8 never counted: the next arrival's EXISTS
+   * equalled the stale count and was dropped. And the heartbeat's NOOP ended IDLE, which came back
+   * only after imapflow's 15 s auto-IDLE delay.
+   */
+  describe.skipIf(!server.up)(`the INBOX doorbell after a delete and after the heartbeat (${server.name})`, () => {
+    it("after a mail filed at launch, the next arrival rings", async () => {
+      const w = await standUp(server, { pollIntervalMs: HOUR, idle: true });
+      await deliverFresh(w, "seed");
+      await w.sidecar.start();
+      expect(await restsOnInbox(w), "after the launch the connection does not rest on INBOX")
+        .toEqual({ path: "INBOX", idling: true });
+      const before = await counts(w);
+      expect(before.client, "the client's INBOX count after the launch filing").toBe(before.server);
+      expect(await arrivalMs(w, await deliverFresh(w, "after-seed"), DOORBELL_BOUND_MS),
+        "the arrival after the launch filing waited for the poll").not.toBeNull();
+    });
+
+    it("after another client deletes the one INBOX mail, the next arrival rings", async () => {
+      const w = await standUp(server, { pollIntervalMs: HOUR, idle: true, organize: false });
+      await w.sidecar.start();
+      expect(await arrivalMs(w, await deliverFresh(w, "first"), DOORBELL_BOUND_MS), "the premise").not.toBeNull();
+      await w.sidecar.syncUntilQuiet();
+      expect(await restsOnInbox(w)).toEqual({ path: "INBOX", idling: true });
+      const other = new ImapFlow({ ...w.imap, logger: false });
+      await other.connect();
+      await other.mailboxOpen("INBOX");
+      await other.messageDelete("1:*");
+      await other.logout().catch(() => undefined);
+      const t0 = Date.now();
+      while (Date.now() - t0 < DOORBELL_BOUND_MS && (await counts(w)).client !== 0) {
+        await new Promise((r) => { setTimeout(r, 50); });
+      }
+      expect(await arrivalMs(w, await deliverFresh(w, "after-delete"), DOORBELL_BOUND_MS),
+        "the arrival after the other client's delete waited for the poll").not.toBeNull();
+    });
+
+    it("the heartbeat's NOOP puts IDLE back within a second, and an arrival just after it rings", async () => {
+      const w = await standUp(server, { pollIntervalMs: HOUR, idle: true, organize: false, heartbeatTimeoutMs: 6_000 });
+      await w.sidecar.start();
+      expect(await restsOnInbox(w)).toEqual({ path: "INBOX", idling: true });
+      const t0 = Date.now();
+      while (Date.now() - t0 < 15_000 && restingOn(w).idling) await new Promise((r) => { setTimeout(r, 5); });
+      expect(restingOn(w).idling, "the heartbeat never ended IDLE").toBe(false);
+      const s0 = Date.now();
+      let backMs: number | null = null;
+      while (Date.now() - s0 < 1_000) {
+        if (restingOn(w).idling) { backMs = Date.now() - s0; break; }
+        await new Promise((r) => { setTimeout(r, 5); });
+      }
+      expect(backMs, "IDLE was not back within 1 s of the heartbeat NOOP").not.toBeNull();
+      await new Promise((r) => { setTimeout(r, Math.max(0, 1_500 - (Date.now() - s0))); });
+      expect(await arrivalMs(w, await deliverFresh(w, "after-noop"), 3_000),
+        "the arrival after the heartbeat waited for the next NOOP").not.toBeNull();
     });
   });
 }

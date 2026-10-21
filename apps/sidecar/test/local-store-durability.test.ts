@@ -319,9 +319,10 @@ const ROOTS = ["apps", "packages", "scripts"];
  * was missed: `apps/mobile/generated/phone-engine.js` is the sidecar engine BUNDLED for the phone,
  * so the walk read `engine.ts`'s own call a second time and the census reported a caller that does
  * not exist. It is git-ignored, so the reading depended on whether the tree had been built — green
- * in a clean checkout, red after `pnpm -r build`.
+ * in a clean checkout, red after `pnpm -r build`. `target` is the same kind: Cargo's output, where the
+ * README's desktop build leaves the bundled engine (a clone that built the app, then ran the suite).
  */
-const SKIP = new Set(["node_modules", "dist", "build", ".next", "drizzle", "test", "__tests__", ".git", "generated"]);
+const SKIP = new Set(["node_modules", "dist", "build", ".next", "drizzle", "test", "__tests__", ".git", "generated", "target"]);
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
   let entries: string[];

@@ -13,11 +13,13 @@ the phone app and the shared packages live in `apps/` and `packages/`; self-host
 ## Setting it up
 
 The root is an npm workspace with one committed lockfile; `apps/desktop` carries its own and is installed
-beside it. From the repository root, the steps CI runs:
+beside it. From the repository root, in bash (Git Bash on Windows), CONTRIBUTING.md's install block, which
+`.github/workflows/contributor.yml` runs weekly on a fresh clone (`test/contributor-route.test.ts` holds the marked
+blocks and the workflow equal, and this block equal to that one):
 
 ```bash
-npm ci
-(cd apps/desktop && npm ci)
+npm ci --ignore-scripts                # no dependency's install script, as in every CI install
+(cd apps/desktop && npm ci --ignore-scripts)
 node scripts/apply-patches.mjs apply   # after both installs: it patches every installed copy
 npm run build                          # tsc -b; tests read the compiled packages
 node scripts/engine-bundle.mjs
@@ -44,17 +46,21 @@ packages and the whole build.
 Run the suites from the repository root:
 
 ```bash
-docker compose up -d             # Postgres, GreenMail, RustFS, Dovecot for the *.pg.test.ts and mail tests
+npm test                         # the root suite, apps/desktop/test included; without services it skips what needs them
+docker compose --profile condstore up -d --wait   # Postgres, GreenMail, RustFS, and Dovecot (only under the profile)
 bash scripts/lane-db.sh "$PWD"   # this checkout's own database (.lane-db.env)
-TF_REQUIRE_PG=1 npm test         # the root suite, apps/desktop/test included; without services it skips what needs them
+TF_REQUIRE_PG=1 npx vitest run <files>   # the files you changed, on it
 npm run test:sqlite              # the files that also run on SQLite
 npx vitest run $(node test/support/ci-shards.mjs --desktop)   # the desktop job: needs apps/desktop installed (npm test leaves its config importers out without it)
 (cd apps/desktop/src-tauri && cargo test --locked && cargo test --locked --features local-engine)
 ```
 
 One database across the whole suite leaves residue that the `@postpush: alone` files (`ci-shards.mjs --alone`)
-fail over; CI runs the rest in 16 shards (`node test/support/ci-shards.mjs --shard N`), each on a fresh
-database (`lane-db.sh --drop "$PWD"`, then create), and each alone file on a database made from empty.
+fail over, so `TF_REQUIRE_PG=1 npm test` is red; CI runs the rest in 16 shards (`node test/support/ci-shards.mjs
+--shard N`), each on a fresh database (`lane-db.sh --drop "$PWD"`, then create), and each alone file on a database
+made from empty. CONTRIBUTING.md's `suite-services` block is that route in one loop; contributor.yml's Linux suite
+jobs run it in two parts (`PART`/`PARTS`, every second shard each), its macOS and Windows ones run `npm test --
+--shard` in two and four. The serial suite outruns one job's timeout on Windows.
 
 The root suite resolves one copy of every dependency, the root's, whether `apps/desktop` is installed or not
 (`vitest.config.ts`, held by `apps/desktop/test/one-react.test.tsx`). A test that fails on "Invalid hook call" means
@@ -66,7 +72,8 @@ and on `main`: on macOS, Windows and Linux it typechecks the window, builds the 
 packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
 phone app. On a pull request the platform jobs and the phone build run only when it changes what they build
 (`.github/scripts/pr-build-scope.sh`); the engine jobs always run. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
-their tools or the push gate's baseline. A fork's pull request runs every job on GitHub's runners. Tests sit beside the code they cover: `apps/desktop/test`, and the
+their tools or the push gate's baseline. `contributor.yml` (weekly, and by dispatch; no pull request) runs the marked
+blocks of the READMEs and CONTRIBUTING.md on a fresh clone on Linux, macOS and Windows. A fork's pull request runs every job on GitHub's runners. Tests sit beside the code they cover: `apps/desktop/test`, and the
 `*_tests.rs` files in `apps/desktop/src-tauri/src`. Add or extend a test for behaviour you change.
 
 The phone app (`apps/mobile`) has two root commands: `npm run typecheck:mobile` and `npm run test:mobile`
