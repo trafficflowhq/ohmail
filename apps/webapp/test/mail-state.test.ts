@@ -1875,12 +1875,23 @@ describe("the gap offers on the shell (mail 0151)", async () => {
       { id: "c", address: "c@x.test", organizerRole: "organizer", status: "disabled", gapLetters: 2 },
       { id: "d", address: "d@x.test", organizerRole: "organizer", status: "connected", gapLetters: 0 },
       { id: "e", address: "e@x.test", organizerRole: "organizer", status: "connected" },
-    ] as never)).toEqual([{ id: "a", address: "a@x.test", count: 2 }]);
+    ] as never)).toEqual([{ id: "a", address: "a@x.test", count: 2, strangers: 0 }]);
     expect(gapOffers(null)).toEqual([]);
+  });
+  it("a window of strangers only is an offer, with both counts (mail 0158)", () => {
+    expect(gapOffers([
+      { id: "a", address: "a@x.test", organizerRole: "organizer", status: "connected", gapLetters: 0, gapStrangers: 3 },
+      { id: "b", address: "b@x.test", organizerRole: "organizer", status: "connected", gapLetters: 1, gapStrangers: 2 },
+      { id: "c", address: "c@x.test", organizerRole: "organizer", status: "connected", gapLetters: 0, gapStrangers: 0 },
+      { id: "d", address: "d@x.test", organizerRole: "organizer", status: "connected", gapLetters: null, gapStrangers: 2 },
+    ] as never)).toEqual([
+      { id: "a", address: "a@x.test", count: 0, strangers: 3 },
+      { id: "b", address: "b@x.test", count: 1, strangers: 2 },
+    ]);
   });
   it("the sentence and both verbs exist in both catalogues", () => {
     for (const deck of [messages, deMessages] as Array<{ mailboxes: Record<string, string> }>) {
-      for (const k of ["gapLetters", "gapFile", "gapLeave", "gapChanged", "gapOffline", "gapFailed"]) {
+      for (const k of ["gapLetters", "gapStrangers", "gapBoth", "gapFile", "gapScreen", "gapLeave", "gapChanged", "gapOffline", "gapFailed"]) {
         expect(typeof deck.mailboxes[k], k).toBe("string");
       }
     }

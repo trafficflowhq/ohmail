@@ -7,7 +7,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
-import { realPgAvailable } from "@trafficflow/db/testing";
+import { realPgAvailable, serviceUp } from "@trafficflow/db/testing";
 import { accounts, contacts, mailboxes, messages, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -50,12 +50,9 @@ async function uidOf(c: ImapFlow, path: string, messageId: string): Promise<numb
   } finally { l.release(); }
 }
 
-async function serverUp(): Promise<boolean> {
-  const p = greenmailPorts();
-  const c = new ImapFlow({ host: p.imapHost, port: p.imapPort, secure: false, auth: { user: `probe-${randomUUID()}@trafficflow.test`, pass: "test" }, logger: false });
-  try { await c.connect(); await c.logout(); return true; } catch { return false; }
-}
-const GM_UP = await serverUp();
+const GM = greenmailPorts();
+/* The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const GM_UP = serviceUp("greenmail", `${GM.imapHost}:${GM.imapPort}`).up;
 
 describe.skipIf(!PG_UP || !GM_UP)("Answer Later forgets a letter the server deleted (worker cycle, Postgres, /sync)", () => {
   it("one sync cycle after an expunge and a filing, the pile lists the two letters that exist", async () => {

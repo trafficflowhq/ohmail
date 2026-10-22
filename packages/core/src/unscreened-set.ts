@@ -105,24 +105,45 @@ function asRuleInput(row: UnscreenedRow, scope: UnscreenedScope): NormalizedMess
 
 /**
  * THE PREDICATE: the arrival gate would hold this sender's mail (`auth` unavailable and no
- * identity fact — a question about a SENDER, not one delivery). For the agree scope also: the
- * letter has a recorded arrival inside the window (`screenerAdmits` admits a missing one for a new
- * delivery, never for stored history), and the gate's reply arm, asked through the gate's own
- * {@link correspondentAtGate}, does not admit it as an answer to the person's own writing.
+ * identity fact — a question about a SENDER, not one delivery). For the agree scope also
+ * {@link gateHoldsSender}'s window and reply arm.
  */
 async function member(
   row: UnscreenedRow, rules: readonly Rule[], known: KnownSenders, own: ReadonlySet<string>,
   scope: UnscreenedScope, ask: Pick<RepoPort, "isCorrespondent">, accountId: string,
 ): Promise<boolean> {
-  const msg = asRuleInput(row, scope);
+  if (scope.kind === "agree") {
+    return gateHoldsSender(row, { rules, known, own, cutoff: scope.cutoff, ask, accountId });
+  }
+  const decision = evaluateRules({
+    msg: asRuleInput(row, scope), rules: rules as Rule[], knownSenders: known, ownAddresses: own,
+    auth: "unavailable", ohboxPolicy: DEFAULT_OHBOX_POLICY, identity: null,
+  });
+  return decision.source === "screener";
+}
+
+/**
+ * WHETHER THE GATE HOLDS THIS STORED LETTER'S SENDER — the one definition of a stranger, read by
+ * the organize decision and the gap pass. The gate's own answer with `auth` unavailable and no
+ * identity fact must be the Screener; the letter needs a recorded arrival inside the window
+ * (`screenerAdmits` admits a missing one for a new delivery, never for stored history); and the
+ * gate's reply arm ({@link correspondentAtGate}) must not admit it as an answer to the person.
+ */
+export async function gateHoldsSender(
+  row: UnscreenedRow,
+  { rules, known, own, cutoff, ask, accountId }: {
+    rules: readonly Rule[]; known: KnownSenders; own: ReadonlySet<string>; cutoff: Date | undefined;
+    ask: Pick<RepoPort, "isCorrespondent">; accountId: string;
+  },
+): Promise<boolean> {
+  const msg = asRuleInput(row, { kind: "agree", mailboxId: "", cutoff });
   const decision = evaluateRules({
     msg, rules: rules as Rule[], knownSenders: known, ownAddresses: own,
     auth: "unavailable", ohboxPolicy: DEFAULT_OHBOX_POLICY, identity: null,
   });
   if (decision.source !== "screener") return false;
-  if (scope.kind === "offer") return true;
   if (row.arrivedAt === null) return false;
-  if (!screenerAdmits({ arrivedAt: row.arrivedAt, cutoff: scope.cutoff, source: decision.source, authFailed: false })) {
+  if (!screenerAdmits({ arrivedAt: row.arrivedAt, cutoff, source: decision.source, authFailed: false })) {
     return false;
   }
   return (await correspondentAtGate(ask, accountId, msg, decision, "unavailable", known)) === null;
@@ -306,7 +327,7 @@ export function unscreenedGroups(rows: readonly UnscreenedRow[]): UnscreenedSend
  */
 export async function writeScreenerIntents(
   t: Tx, ledger: LedgerTx,
-  input: { accountId: string; rows: readonly UnscreenedRow[]; now: Date; via: "offer" | "agree" },
+  input: { accountId: string; rows: readonly UnscreenedRow[]; now: Date; via: "offer" | "agree" | "gap" },
 ): Promise<{ screened: UnscreenedSenderGroup[]; total: number }> {
   const screened = unscreenedGroups(input.rows);
   const moving = new Set(screened.map((g) => g.address));

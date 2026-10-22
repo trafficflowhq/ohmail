@@ -25,7 +25,7 @@ import { readRunnerMailbox } from "../src/run-cli.js";
  * refusal that keyed on the wrong nullness would be invisible against a hand-built row.
  */
 
-const RUN = realPgAvailable();
+const RUN = await realPgAvailable();
 
 describe.runIf(RUN)("readRunnerMailbox — the release request is a refusal for the CLI too", () => {
   let sql: ReturnType<typeof postgres>;

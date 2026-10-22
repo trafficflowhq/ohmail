@@ -43,7 +43,7 @@ const SHEETS = [
 
 const noop = async (): Promise<void> => {};
 const TAGS = ["Family", "Invoices", "Travel", "Garden", "Kiln", "Tax 2026", "School", "Club", "Health", "House", "Car", "Bank"];
-const OFFER = [{ id: "mb1", address: "a@x.example", count: 2 }];
+const OFFER = [{ id: "mb1", address: "a@x.example", count: 2, strangers: 0 }];
 
 interface Shape { tags: number; folders: number; gap: boolean; stopped?: boolean; empty?: boolean }
 

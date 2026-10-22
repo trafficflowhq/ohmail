@@ -1,3 +1,4 @@
+// @services: none — lane-db.sh against a closed port; the box is never contacted
 import { describe, it, expect } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

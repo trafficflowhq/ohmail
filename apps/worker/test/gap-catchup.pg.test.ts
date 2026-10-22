@@ -10,7 +10,7 @@ import { brandDialect, carryDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, changeLog, folderState, mailboxes, messages, routingDecisions, rules } from "@trafficflow/db";
+import { accounts, auditLog, changeLog, folderState, mailboxes, messages, routingDecisions, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import {
@@ -124,6 +124,56 @@ describe.skipIf(!AVAILABLE)("the gap catch-up on real Postgres", () => {
     expect(moves).toHaveLength(24);
     const [mb] = await db.select({ g: mailboxes.gapSince }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
     expect(mb!.g).toBeNull();
+  }, 60_000);
+
+  it("two drivers racing on a window of strangers write ONE offer, then exactly K Screener intents and K change rows", async () => {
+    const NOW = new Date("2026-10-09T12:00:00Z");
+    const w = await world(0);
+    await db.delete(rules).where(eq(rules.accountId, w.accountId));
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const dedup = `mid:${randomUUID()}`;
+      const [m] = await db.insert(messages).values({
+        accountId: w.accountId, mailboxId: w.mailboxId, messageIdHeader: dedup, bodyHash: randomUUID(), dedupKey: dedup,
+        subject: `stranger ${i}`, fromAddress: `s${i % 5}@stranger.test`, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
+        arrivedAt: IN_GAP,
+      }).returning();
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        lastSetBy: "peer", reconcileStatus: "reconciled", conflict: false,
+      });
+      ids.push(m!.id);
+    }
+    const opts = { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR, batch: 4 };
+    const [c1, c2] = await Promise.all([
+      gapCatchupPass(db as unknown as Tx, opts, NOW),
+      gapCatchupPass(db2 as unknown as Tx, opts, NOW),
+    ]);
+    expect(c1.offered + c2.offered, "two offers were written").toBe(1);
+    expect(c1.moved + c2.moved, "a count moved mail").toBe(0);
+    const [offer] = await db.select({ l: mailboxes.gapLetters, s: mailboxes.gapStrangers }).from(mailboxes)
+      .where(eq(mailboxes.id, w.mailboxId));
+    expect(offer).toEqual({ l: 0, s: 12 });
+    await press(w.mailboxId);
+    const [a, b] = await Promise.all([
+      gapCatchupPass(db as unknown as Tx, opts, NOW),
+      gapCatchupPass(db2 as unknown as Tx, opts, NOW),
+    ]);
+    expect(a.moved + b.moved, "a letter was screened twice, or not at all").toBe(12);
+    expect(a.completed + b.completed, "the window closed twice").toBe(1);
+    for (const id of ids) {
+      const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, id));
+      expect(fs).toMatchObject({ desiredFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "pending" });
+    }
+    const moves = await db.select({ e: changeLog.entityId }).from(changeLog)
+      .where(and(eq(changeLog.accountId, w.accountId), eq(changeLog.op, "move")));
+    expect(moves).toHaveLength(12);
+    expect(new Set(moves.map((m) => m.e)).size).toBe(12);
+    const sweeps = await db.select({ p: auditLog.payload }).from(auditLog)
+      .where(and(eq(auditLog.accountId, w.accountId), eq(auditLog.action, "screener.unscreened_sweep")));
+    expect(sweeps, "one audit row per sender group").toHaveLength(5);
+    const [mb] = await db.select({ g: mailboxes.gapSince, s: mailboxes.gapStrangers }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
+    expect(mb).toEqual({ g: null, s: null });
   }, 60_000);
 
   const HELD = () => ({ kind: "held" }) as const;

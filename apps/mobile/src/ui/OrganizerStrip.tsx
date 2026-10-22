@@ -97,10 +97,11 @@ function OnThisPhone() {
 }
 
 /**
- * THE GAP OFFER (mail 0151) — letters that arrived while no device was organizing a mailbox this
- * phone, or the server it is paired with, now organizes, counted by the person's rules. File files
- * exactly that count's set on the next drain; Leave closes the offer. A press answered is hidden
- * until the next mailbox read.
+ * THE GAP OFFER (mail 0151, 0158) — letters that arrived while no device was organizing a mailbox
+ * this phone, or the server it is paired with, now organizes: counted by the person's rules, and
+ * apart from senders they have not decided about. File files the first set and puts the second in
+ * the Screener on the next drain; Leave closes the offer. A press answered is hidden until the next
+ * mailbox read.
  */
 function GapLetters() {
   const w = useWorld();
@@ -109,11 +110,12 @@ function GapLetters() {
   const [answered, setAnswered] = useState<ReadonlySet<string>>(() => new Set());
   /* The refusal's KIND, worded at render, so a language switch rewords it. */
   const [said, setSaid] = useState<"changed" | "failed" | null>(null);
-  const offers = gapOffersOf(w.mailboxes.rows).filter((o) => !answered.has(`${o.id}@${o.count}`));
+  const key = (o: { id: string; count: number; strangers: number }): string => `${o.id}@${o.count}+${o.strangers}`;
+  const offers = gapOffersOf(w.mailboxes.rows).filter((o) => !answered.has(key(o)));
   if (session === null || offers.length === 0) return null;
-  const press = (o: { id: string; count: number }, file: boolean): void => {
-    void answerGapLetters(session, o.id, { file, count: o.count }).then((r) => {
-      if (r === "pressed" || r === "left") { setSaid(null); setAnswered((s) => new Set([...s, `${o.id}@${o.count}`])); }
+  const press = (o: { id: string; count: number; strangers: number }, file: boolean): void => {
+    void answerGapLetters(session, o.id, { file, count: o.count, strangers: o.strangers }).then((r) => {
+      if (r === "pressed" || r === "left") { setSaid(null); setAnswered((s) => new Set([...s, key(o)])); }
       else setSaid(r === "changed" ? "changed" : "failed");
     });
   };
@@ -121,11 +123,12 @@ function GapLetters() {
     <>
       {offers.map((o) => (
         <Panel key={o.id} style={{ marginHorizontal: 6, marginBottom: 12, padding: 14, gap: 6 }}>
-          <Txt variant="body" accessibilityRole="summary">{Copy.gapLetters(o.count, o.address)}</Txt>
+          <Txt variant="body" accessibilityRole="summary">{o.strangers === 0 ? Copy.gapLetters(o.count, o.address)
+            : o.count === 0 ? Copy.gapStrangers(o.strangers, o.address) : Copy.gapBoth(o.count, o.strangers, o.address)}</Txt>
           {said === null ? null : (
             <Txt variant="note" tone="ink2" accessibilityRole="alert">{said === "changed" ? Copy.gapChanged : Copy.gapFailed}</Txt>
           )}
-          <Button label={Copy.gapFile} variant="quiet" style={{ alignSelf: "flex-start" }} onPress={() => press(o, true)} />
+          <Button label={o.count === 0 ? Copy.gapScreen : Copy.gapFile} variant="quiet" style={{ alignSelf: "flex-start" }} onPress={() => press(o, true)} />
           <Button label={Copy.gapLeave} variant="quiet" style={{ alignSelf: "flex-start" }} onPress={() => press(o, false)} />
         </Panel>
       ))}

@@ -41,26 +41,6 @@ export const OUTAGE_MS = Number(process.env.OHMAIL_OFFLINE_OUTAGE_MS ?? 25_000);
 export const EXPECTED_DIALECT = process.env.OHMAIL_EXPECT_DIALECT;
 export const ON_DEVICE_STORE = EXPECTED_DIALECT === "sqlite";
 
-export function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
-export const SERVER_UP = ON_DEVICE_STORE ? await imapAnswers(HOST, PORT) : false;
-
 /** `node:sqlite` behind the phone's statement-runner contract, with a real yield in every call. */
 export function nodeExecutor(file: string): PhoneSqlExecutor {
   const raw = new sqlite.DatabaseSync(file);

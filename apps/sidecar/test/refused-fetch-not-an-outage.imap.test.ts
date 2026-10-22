@@ -41,31 +41,13 @@ import { ImapConnectionClosedError } from "@trafficflow/core/adapters/imap";
 import { createSidecar, fetchRefusal, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 /** The compose fixture, by `phone-first-sync-unreadable.imap.test.ts`'s variables and reasoning. */
 const HOST = process.env.OHMAIL_PHONE_IMAP_HOST ?? process.env.IMAP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.OHMAIL_PHONE_IMAP_PORT ?? process.env.IMAP_PORT ?? 3143);
 
-/** Does something answer IMAP there? Asked, never assumed — `_imapenv.ts`'s own probe. */
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = net.connect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
-const SERVER_UP = await imapAnswers(HOST, PORT);
+const SERVER_UP = serviceUp("greenmail", `${HOST}:${PORT}`).up;
 
 /** What the relay does with one client command. */
 type Verdict = "pass" | "refuse" | "kill";

@@ -23,7 +23,7 @@ import { tearDown, tracked } from "./_teardown.js";
 
 const A = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const OWN = "me@ohmail.test";
-type Gap = number | null | "absent" | "junk";
+type Gap = number | null | "absent" | "junk" | { letters: number; strangers: number };
 
 const mirrors: ReturnType<typeof makeCloudMirror>[] = [];
 const createCloudMirror = tracked(makeCloudMirror, mirrors);
@@ -43,6 +43,7 @@ const send = (v: unknown): Response =>
 function box(gap: Gap): MailboxDTO {
   const row = hostedMailbox(A, OWN, { organizerRole: "organizer" });
   if (gap === "absent") return row;
+  if (gap !== null && typeof gap === "object") return { ...row, gapLetters: gap.letters, gapStrangers: gap.strangers };
   return { ...row, gapLetters: (gap === "junk" ? "3" : gap) as number | null };
 }
 
@@ -72,7 +73,7 @@ describe("the mirror keeps the account's gap offer per refresh", () => {
     const mirror = createCloudMirror({ db: opened.db, world, cursorPath: join(dataDir, "cloud-cursor.json"), now: () => new Date(), auth });
 
     await mirror.pullOnce();
-    expect(mirror.hostedGaps().get(A), "the account's count never reached the mirror").toBe(2);
+    expect(mirror.hostedGaps().get(A), "the account's count never reached the mirror").toEqual({ letters: 2 });
     const [row] = await opened.db.select({ since: mailboxes.gapSince, letters: mailboxes.gapLetters })
       .from(mailboxes).where(eq(mailboxes.id, A));
     expect(row, "the hosted mailbox was not mirrored").toBeDefined();
@@ -87,6 +88,12 @@ describe("the mirror keeps the account's gap offer per refresh", () => {
     gap = "junk";
     await mirror.pullOnce();
     expect(mirror.hostedGaps().has(A), "a malformed count was kept").toBe(false);
+    gap = { letters: 0, strangers: 2 };
+    await mirror.pullOnce();
+    expect(mirror.hostedGaps().get(A), "a strangers-only offer was dropped").toEqual({ letters: 0, strangers: 2 });
+    const [after] = await opened.db.select({ since: mailboxes.gapSince, strangers: mailboxes.gapStrangers })
+      .from(mailboxes).where(eq(mailboxes.id, A));
+    expect(after, "the account's strangers were copied into this store").toEqual({ since: null, strangers: null });
   });
 });
 
@@ -114,6 +121,12 @@ describe("the Cloud door's mailbox list carries it", () => {
 
   it("the account's count reaches the window", { timeout: 30_000 }, async () => {
     expect((await door(2)).gapLetters, "the offer the account counted reached no Cloud-paired window").toBe(2);
+  });
+
+  it("a strangers-only offer arrives with both counts", { timeout: 30_000 }, async () => {
+    const row = await door({ letters: 0, strangers: 2 });
+    expect({ letters: row.gapLetters, strangers: row.gapStrangers }, "the strangers reached no Cloud-paired window")
+      .toEqual({ letters: 0, strangers: 2 });
   });
 
   it("CONTROL: with nothing from the account the row says what the mirror's own read says", { timeout: 30_000 }, async () => {

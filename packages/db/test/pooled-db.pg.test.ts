@@ -16,7 +16,7 @@ const AVAILABLE = await realPgAvailable();
  */
 const URL = PG_TEST_URL;
 
-describe("makePooledDb — serverless pooled Db", () => {
+describe.skipIf(!AVAILABLE)("makePooledDb — serverless pooled Db", () => {
   afterAll(async () => { await closePooledDbs(); });
 
   it("returns a working Db with prepare:false and executes queries", async () => {

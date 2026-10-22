@@ -1322,6 +1322,8 @@ export interface MailboxDTO {
    * the shell, and the offer the server counted was drawn on no web surface.
    */
   gapLetters?: number | null;
+  /** Mail 0158 — the same window's letters from senders the gate does not know; absent on an older server. */
+  gapStrangers?: number | null;
   /**
    * WOULD A DECISION MADE HERE BE ACCEPTED BY WHOEVER ORGANIZES THIS MAILBOX?
    *
@@ -2079,8 +2081,8 @@ export const mailboxes = {
   dismissOrganizerNotice: (id: string) =>
     api<MailboxDTO>(`/mailboxes/${id}/organizer-notice/dismiss`, { method: "POST", body: {} }),
 
-  /** The person's answer to the gap offer (mail 0151): file the counted letters, or leave them. */
-  answerGapLetters: (id: string, answer: { file: boolean; count: number }) =>
+  /** The person's answer to the gap offer (mail 0151, 0158): file and screen the counted letters, or leave them. */
+  answerGapLetters: (id: string, answer: { file: boolean; count: number; strangers: number }) =>
     api<{ outcome: string; mailbox: MailboxDTO }>(`/mailboxes/${id}/gap-letters`, { method: "POST", body: answer }),
 
   /**

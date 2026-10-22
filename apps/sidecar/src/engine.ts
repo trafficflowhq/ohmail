@@ -5017,7 +5017,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           }
           const beats = seen.holders.map((h) => h.heartbeat.getTime());
           const gapWrite = state === "held"
-            ? (gapOpen === false ? null : { gapSince: null, gapLetters: null, gapPressedAt: null })
+            ? (gapOpen === false ? null : { gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null })
             : (!opening ? null : {
               gapSince: gapOpenStart(dialect(db), {
                 occupancy: state === "stopped" ? "stopped" : "none",
@@ -5932,10 +5932,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 and ${mailboxes.organizedByName} is not distinct from ${sdName}
                 and ${mailboxes.organizerState} is not distinct from ${outcome.state ?? null}
                 then ${mailboxes.organizerEventAt} else ${dialect(db).ts(now())} end`,
-              gapSince: null, gapLetters: null, gapPressedAt: null,
+              gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null,
             })
             .where(eq(mailboxes.id, mb.id));
-            // The three gap columns: another install's claim won, a held look, so the window closes.
+            // The gap columns: another install's claim won, a held look, so the window closes.
             // A reader now: a surface presents this mailbox by the organizer's cached document.
             await recordMailboxProfileChange(tx as unknown as LedgerTx, world.accountId, mb.id);
             return exported;

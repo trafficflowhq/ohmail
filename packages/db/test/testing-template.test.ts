@@ -1,3 +1,4 @@
+// @services: none — PGlite only; its one Postgres URL is a closed port
 import { cpSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

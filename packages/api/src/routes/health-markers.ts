@@ -838,6 +838,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // suggestion writers (the pressed purchase and the worker's pass) insert it and the act reads it,
   // so an API or worker ahead of the migration 42703s. Deploy order migration → API → worker.
   ["routing_decisions", "sender_reason"],
+  // mail 0158_mailboxes_gap_strangers — the gap offer's stranger count. LOUD: every mailbox read
+  // names the column. Deploy order migration → API → worker.
+  ["mailboxes", "gap_strangers"],
 ] as const;
 
 /**
@@ -1244,7 +1247,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0157_messages_sender_date";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0158_mailboxes_gap_strangers";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

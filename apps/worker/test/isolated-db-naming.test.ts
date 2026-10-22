@@ -1,3 +1,4 @@
+// @services: none — reads the source of the database helpers, dials nothing
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";

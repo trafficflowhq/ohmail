@@ -1,15 +1,17 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
-  approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies, messageStates, messages,
-  OwnAddressesPerPass, recordChange, routingDecisions, rules as rulesTbl, weAnsweredThisSenderWhere,
-  type Tx,
+  approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies, messageStates, messageTags,
+  messages, OwnAddressesPerPass, recordChange, routingDecisions, rules as rulesTbl, weAnsweredThisSenderWhere,
+  type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, canonicalDestination, dsnVerdict, evaluateRules,
   identityOfRow, silentLogger, type Logger, type SweepClearance,
   /* The mail leaf, never the barrel: the local engines bundle this pass (rule-retro.ts says why). */
 } from "@trafficflow/core/mail";
-import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import {
+  agreeWindowCutoff, gateHoldsSender, makeDrizzleRepo, unscreenedGroups, writeScreenerIntents, type UnscreenedRow,
+} from "@trafficflow/core/adapters/drizzle-repo";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
 import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow } from "./rule-pass.js";
 
@@ -17,12 +19,14 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow 
    now (`gap_since`; a look that finds a live holder clears it), and a letter is in it only when it
    ARRIVED and was TAKEN IN at or after its start. Once this install organizes and its rules are
    settled (`clearanceFor`: no import question open, the settings read), this pass COUNTS
-   what the person's rules would file (`gap_letters`) and moves nothing; the person is shown the
-   count. On their press (`gap_pressed_at`) it decides again with the same function, in one
-   transaction, and files that set only while its size is the count they were shown. */
+   what the person's rules would file (`gap_letters`) and the letters from senders the gate does not
+   know (`gap_strangers`), and moves nothing; the person is shown both counts. On their press
+   (`gap_pressed_at`) it decides again with the same function, in one transaction, and files the
+   first set and screens the second only while both sizes are the counts they were shown. */
 
 /* Where a look opens the window: a leaf, so both engines read one arbitration. */
-export { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap } from "./gap-window.js";
+import { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap } from "./gap-window.js";
+export { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap };
 
 /** Rows read per page of the walk. */
 export const GAP_CATCHUP_BATCH = 100;
@@ -56,7 +60,7 @@ export interface GapCatchupDeps {
 export interface GapCatchupResult {
   /** Offers written: a first count, or a new count after a press whose set had changed. */
   offered: number;
-  /** Letters given a desired folder, all of them on a press. */
+  /** Letters given a desired folder, all of them on a press: filed by a rule or screened. */
   moved: number;
   /** Windows closed: filed, nothing to offer, or past the page bound. */
   completed: number;
@@ -68,6 +72,19 @@ interface GapRow extends RuleInputRow {
   arrivedAt: Date;
   observedFolder: string;
   desiredFolder: string;
+  messageIdHeader: string | null;
+  /** `folder_state.decided_at`: a placement somebody decided is never screened. */
+  decidedAt: unknown;
+  /** 1 when the letter carries a tag. */
+  tagged: unknown;
+  /** `coalesce(date, created_at)`, as the store answers it. */
+  at: unknown;
+}
+
+/** What one walk of the window found: what the rules file, and the letters from strangers. */
+interface GapSet {
+  file: Array<{ c: GapRow; to: string; ruleId: string | null }>;
+  screen: GapRow[];
 }
 
 export async function gapCatchupPass(
@@ -113,35 +130,38 @@ export async function gapCatchupPass(
   for (const mb of settled) {
     await db.transaction(async (txRaw) => {
       const tx = carryDialect(db, txRaw as object) as typeof txRaw;
-      const close = { gapSince: null, gapLetters: null, gapPressedAt: null };
+      const close = { gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null };
       const here = and(eq(mailboxes.id, mb.id), eq(mailboxes.organizerRole, "organizer"));
       /* THE MAILBOX ROW FIRST, in the writers' lock order (the mailbox row, then folder_state). The
          press door takes the same lock, so a press and this pass serialize. */
       const [row] = await dialect(tx).forUpdate(tx.select({
         since: mailboxes.gapSince, letters: mailboxes.gapLetters, pressedAt: mailboxes.gapPressedAt,
+        strangers: mailboxes.gapStrangers,
       }).from(mailboxes).where(here));
       if (row === undefined || row.since === null) return;
       const pressed = row.pressedAt !== null && row.letters !== null;
       if (row.letters !== null && !pressed) return;
-      const set = await gapSet(tx, deps, mb.id, own, ownSet, trustFor);
+      const set = await gapSet(tx, deps, mb.id, own, ownSet, trustFor, now);
       if (set === null) {
         (deps.log ?? silentLogger).warn("gap_catchup_truncated", {
           mailboxId: mb.id, accountId: deps.accountId, maxPages: deps.maxPages ?? GAP_CATCHUP_MAX_PAGES,
           reason: "the window outgrew its page bound and ended unoffered",
         });
       }
-      if (set === null || set.length === 0) {
+      if (set === null || (set.file.length === 0 && set.screen.length === 0)) {
         await tx.update(mailboxes).set(close).where(here);
         result.completed++;
         return;
       }
-      /* NOT PRESSED, OR THE SET MOVED SINCE THE PERSON SAW IT: offer this count and file nothing. */
-      if (!pressed || set.length !== row.letters) {
-        await tx.update(mailboxes).set({ gapLetters: set.length, gapPressedAt: null }).where(here);
+      /* NOT PRESSED, OR EITHER SET MOVED SINCE THE PERSON SAW IT: offer these counts and move
+         nothing. A press on an offer an older build counted (no stranger count) never screens. */
+      if (!pressed || set.file.length !== row.letters || set.screen.length !== (row.strangers ?? 0)) {
+        await tx.update(mailboxes)
+          .set({ gapLetters: set.file.length, gapStrangers: set.screen.length, gapPressedAt: null }).where(here);
         result.offered++;
         return;
       }
-      for (const { c, to, ruleId } of set) {
+      for (const { c, to, ruleId } of set.file) {
         await upsertDesired(tx, c, to, now);
         await tx.insert(routingDecisions).values({
           accountId: deps.accountId, messageId: c.messageId, inputProvenance: "rule",
@@ -158,27 +178,51 @@ export async function gapCatchupPass(
           inverse: { messageId: c.messageId, from: to, to: c.desiredFolder },
         });
       }
+      if (set.screen.length > 0) {
+        const res = await writeScreenerIntents(tx, tx as unknown as LedgerTx, {
+          accountId: deps.accountId, rows: set.screen.map(unscreenedRowOf), now, via: "gap",
+        });
+        // The groups were bounded when counted, so all of them move; anything else rolls back.
+        if (res.total !== set.screen.length) {
+          throw new Error(`gap strangers: screened ${res.total} of ${set.screen.length} counted`);
+        }
+      }
       await tx.update(mailboxes).set(close).where(here);
-      result.moved += set.length;
+      result.moved += set.file.length + set.screen.length;
       result.completed++;
     });
   }
   return result;
 }
 
+/** A gap row in the shape the Screener's writes and groups read. */
+function unscreenedRowOf(c: GapRow): UnscreenedRow {
+  return {
+    messageId: c.messageId, fromAddress: c.fromAddress, subject: c.subject, bodyText: c.bodyText,
+    headers: c.headers, observedFolder: c.observedFolder, messageIdHeader: c.messageIdHeader,
+    at: instantOf(c.at) ?? c.arrivedAt, arrivedAt: c.arrivedAt,
+  };
+}
+
 /**
- * THE ONE DECISION: every letter in the window the person's rules file elsewhere, the count shown
- * and the set filed alike, or `null` past the page bound. A rule younger than the letter is not
- * one an organizer live at its arrival could have applied; a delivery report keeps its place.
+ * THE ONE DECISION: every letter in the window the person's rules file elsewhere (`file`), and
+ * every letter from a sender the gate does not know (`screen`), the counts shown and the sets
+ * moved alike, or `null` past the page bound. A rule younger than the letter is not one an
+ * organizer live at its arrival could have applied; a delivery report keeps its place. A stranger
+ * is the organize decision's own ({@link gateHoldsSender}), past a decided placement and a tag,
+ * within the Screener's group bound so the count shown is the set moved.
  */
 async function gapSet(
   tx: Tx, deps: GapCatchupDeps, mailboxId: string, own: readonly string[],
   ownSet: Awaited<ReturnType<OwnAddressesPerPass["ownAddresses"]>>,
   trustFor: (mailboxId: string) => Promise<ReadonlySet<string>>,
-): Promise<Array<{ c: GapRow; to: string; ruleId: string | null }> | null> {
+  now: Date,
+): Promise<GapSet | null> {
   const repo = makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]);
   const rules = await repo.listRules(deps.accountId);
   const known = await repo.knownSenders(deps.accountId);
+  const cutoff = await agreeWindowCutoff(tx, deps.accountId, now);
+  const screen: GapRow[] = [];
   /* A RULE'S AGE: the person's decision when stamped, its last change otherwise. Typed columns,
      computed here, so both stores read it alike. */
   const ruleAge = new Map((await tx.select({
@@ -194,19 +238,28 @@ async function gapSet(
     for (const c of page) {
       const msg = ruleInputOf(c);
       if (dsnVerdict(msg) !== null) continue;
-      // LENIENT, rule-retro's argument: only a `rule` answer is acted on, never `policy`.
+      // LENIENT, rule-retro's argument: a `rule` answer files, a stranger's `screener` answer screens, `policy` never acts.
       const d = evaluateRules({
         msg, rules, knownSenders: known, ownAddresses: ownSet, identity: identityOfRow(c),
         auth: authVerdictFromHeaders(c.headers, c.fromAddress, await trustFor(c.mailboxId)),
         ohboxPolicy: DEFAULT_OHBOX_POLICY,
       });
+      if (d.source === "screener") {
+        if (c.decidedAt === null && Number(c.tagged) === 0 && await gateHoldsSender(unscreenedRowOf(c), {
+          rules, known, own: ownSet, cutoff, ask: repo, accountId: deps.accountId,
+        })) screen.push(c);
+        continue;
+      }
       const age = d.matchedRuleId === null ? undefined : ruleAge.get(d.matchedRuleId);
       if (d.source !== "rule" || d.destination === null || age === undefined
         || age.getTime() > c.arrivedAt.getTime()
         || canonicalDestination(d.destination) === canonicalDestination(c.desiredFolder)) continue;
       out.push({ c, to: d.destination, ruleId: d.matchedRuleId });
     }
-    if (page.length < batch) return out;
+    if (page.length < batch) {
+      const shown = new Set(unscreenedGroups(screen.map(unscreenedRowOf)).map((g) => g.address));
+      return { file: out, screen: screen.filter((c) => shown.has(c.fromAddress.toLowerCase())) };
+    }
     afterId = page[page.length - 1]!.messageId;
   }
 }
@@ -274,6 +327,10 @@ async function selectGapCandidates(
     desiredFolder: folderState.desiredFolder,
     headers: messageBodies.headers,
     bodyText: messageBodies.text,
+    messageIdHeader: messages.messageIdHeader,
+    decidedAt: folderState.decidedAt,
+    tagged: sql<number>`case when exists (select 1 from ${messageTags} mt where mt.message_id = ${messages.id}) then 1 else 0 end`,
+    at: sql<unknown>`coalesce(${messages.date}, ${messages.createdAt})`,
   }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))

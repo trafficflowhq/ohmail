@@ -968,7 +968,16 @@ export const DE: Deck = {
   gapLetters: (count: number, address: string) => count === 1
     ? `1 Mail ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`
     : `${count} Mails sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. Nach deinen Regeln ablegen?`,
+  gapStrangers: (count: number, address: string) => count === 1
+    ? `1 Mail von einem Absender, über den du nie entschieden hast, ist in ${address} angekommen, während kein Gerät das Postfach organisiert hat. In den Screener legen?`
+    : `${count} Mails von Absendern, über die du nie entschieden hast, sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. In den Screener legen?`,
+  gapBoth: (letters: number, strangers: number, address: string) =>
+    `${letters === 1 ? "1 Mail" : `${letters} Mails`} für deine Regeln und `
+    + `${strangers === 1 ? "1 von einem Absender, über den" : `${strangers} von Absendern, über die`} du nie entschieden hast, `
+    + `sind in ${address} angekommen, während kein Gerät das Postfach organisiert hat. `
+    + "Nach deinen Regeln ablegen und die neuen Absender in den Screener legen?",
   gapFile: "Ablegen",
+  gapScreen: "In den Screener",
   gapLeave: "Liegen lassen",
   gapChanged: "Die Mails haben sich seit dem Zählen geändert. Die neue Zahl steht oben.",
   gapFailed: "Keine Antwort möglich — versuch es nochmal.",

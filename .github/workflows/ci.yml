@@ -5,7 +5,9 @@ name: ci
 # The suite runs serially in measured shards (test/support/ci-shards.json). Each shard gets its own
 # Postgres, GreenMail and RustFS and makes its own database with scripts/lane-db.sh, so the
 # *.pg.test.ts files run against a real server. TF_REQUIRE_PG=1 turns a missing database into a failure
-# instead of a skip. A file marked `@postpush: alone` runs in a job of its own on a database made from
+# instead of a skip, and TF_REQUIRE_GREENMAIL, TF_REQUIRE_RUSTFS and TF_REQUIRE_DOVECOT do the same for
+# every other service a job starts; --verify-report refuses a report that skipped a file for a missing
+# service (test/setup/service-gate.runner.ts). A file marked `@postpush: alone` runs in a job of its own on a database made from
 # empty, because it reads state its own seeding does not own. A new test file needs no edit here: a
 # file the shard map does not name runs in the shard its path hashes to.
 #
@@ -106,6 +108,7 @@ jobs:
       IMAP_HOST: 127.0.0.1
       IMAP_PORT: "3143"
       TF_REQUIRE_PG: "1"
+      TF_REQUIRE_GREENMAIL: "1"
       TF_REQUIRE_RUSTFS: "1"
       SHARD: ${{ matrix.shard }}
     steps:
@@ -194,6 +197,9 @@ jobs:
         run: bash scripts/lane-db.sh "$GITHUB_WORKSPACE"
 
       - name: Test shard ${{ matrix.shard }} (real Postgres required)
+        env:
+          # Dovecot, where this shard started it: required like every other service the job starts.
+          TF_REQUIRE_DOVECOT: ${{ steps.dovecot.outputs.needed == 'yes' && '1' || '' }}
         run: |
           set -euo pipefail
           list=$(node test/support/ci-shards.mjs --shard "$SHARD")
@@ -251,6 +257,7 @@ jobs:
       IMAP_HOST: 127.0.0.1
       IMAP_PORT: "3143"
       TF_REQUIRE_PG: "1"
+      TF_REQUIRE_GREENMAIL: "1"
       FILE: ${{ matrix.file }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -325,6 +332,7 @@ jobs:
       IMAP_HOST: 127.0.0.1
       IMAP_PORT: "3143"
       TF_REQUIRE_PG: "1"
+      TF_REQUIRE_GREENMAIL: "1"
       SHARD: ${{ matrix.shard }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

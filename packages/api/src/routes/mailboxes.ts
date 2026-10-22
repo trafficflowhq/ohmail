@@ -267,7 +267,7 @@ export const mailboxRoutes: Route[] = [
     handler: async (req, deps, params) => {
       const body = await readBody<Record<string, unknown>>(req);
       const r = await mailbox(deps).answerGapLetters(serviceContext(deps, req), params.id!,
-        { file: body.file === true, count: body.count });
+        { file: body.file === true, count: body.count, strangers: body.strangers });
       return jsonResponse(r, { status: r.outcome === "pressed" ? 202 : r.outcome === "changed" ? 409 : 200 });
     },
   },

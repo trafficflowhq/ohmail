@@ -25,7 +25,7 @@ const ROW: MailboxFacts = {
 } as MailboxFacts;
 
 let gap = 2;
-const answers: Array<{ id: string; answer: { file: boolean; count: number } }> = [];
+const answers: Array<{ id: string; answer: { file: boolean; count: number; strangers: number } }> = [];
 
 async function launch(): Promise<HTMLElement> {
   const { AppShell } = await import("../app/shell/AppShell.js");
@@ -45,7 +45,7 @@ async function launch(): Promise<HTMLElement> {
         children: h(AppShell as never, {
           demo: false, engine, consentTransport,
           mailboxFacts: async () => [{ ...ROW, gapLetters: gap > 0 ? gap : null }],
-          gapLettersTransport: async (id: string, answer: { file: boolean; count: number }) => {
+          gapLettersTransport: async (id: string, answer: { file: boolean; count: number; strangers: number }) => {
             answers.push({ id, answer });
             gap = 0;
             return {};
@@ -76,7 +76,7 @@ describe("the gap offer in the whole shell", () => {
     expect(copy.compareDocumentPosition(topbar) & Node.DOCUMENT_POSITION_FOLLOWING, "the shell copy is not before the topbar").toBeTruthy();
   });
 
-  it("File sends {file:true,count:2} once, and the offer leaving does not remount the Tags group", async () => {
+  it("File sends {file:true,count:2,strangers:0} once, and the offer leaving does not remount the Tags group", async () => {
     const c = await launch();
     await waitFor(() => c.querySelector('nav.rail [data-state="gap"]') !== null, "the rail's gap offer");
     const tags = c.querySelector("nav.rail .rgroup.rsub")!.parentElement!;
@@ -84,7 +84,7 @@ describe("the gap offer in the whole shell", () => {
     expect(file.textContent).toMatch(/File/);
     await click(file, "File");
     await waitFor(() => c.querySelector('nav.rail [data-state="gap"]') === null, "the offer to leave");
-    expect(answers).toEqual([{ id: "mb1", answer: { file: true, count: 2 } }]);
+    expect(answers).toEqual([{ id: "mb1", answer: { file: true, count: 2, strangers: 0 } }]);
     expect(c.querySelector("nav.rail .rgroup.rsub")!.parentElement, "the Tags group was remounted").toBe(tags);
     expect(tags.isConnected).toBe(true);
   });

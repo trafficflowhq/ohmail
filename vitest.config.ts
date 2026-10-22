@@ -293,7 +293,12 @@ export default defineConfig({
     // whichever test asks first, against the 5 s default, and fails a correct test on the clock.
     // It never throws: a run that selects no sidecar file pays one `existsSync`, and a warm-up that
     // could not run leaves the fixture's own lazy path as the guarantee. See the file.
-    globalSetup: ["./test/setup/pgdata-template.global.ts"],
+    //
+    // FIRST, the one probe of the test services (Postgres, GreenMail, Dovecot, RustFS): its result
+    // reaches every worker, and the runner below skips, by name, a file that needs one found absent
+    // (or fails it under the service's TF_REQUIRE_* variable, as CI sets). See both files.
+    globalSetup: ["./test/setup/services.global.ts", "./test/setup/pgdata-template.global.ts"],
+    runner: "./test/setup/service-gate.runner.ts",
     // The worker's single-active guarantee uses ONE global pg advisory-lock key; the leader-lock,
     // main-loop, and cron tests would contend across parallel files against the shared Postgres.
     // Run files serially (each still isolated in its own worker) so the lock semantics hold.

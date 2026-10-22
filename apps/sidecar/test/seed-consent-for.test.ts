@@ -1,3 +1,4 @@
+// @services: none — the box's port is a value under test, never dialed
 import { describe, expect, it } from "vitest";
 import { seedConsentFor } from "../src/credential-host.js";
 import { seedDial } from "../src/engine.js";

@@ -1502,7 +1502,16 @@ const TABLE = {
   gapLetters: (count: number, address: string) => count === 1
     ? `1 letter arrived in ${address} while no device was organizing it. File it by your rules?`
     : `${count} letters arrived in ${address} while no device was organizing it. File them by your rules?`,
+  /* Letters from senders the person has not decided about (mail 0158): the Screener, never the rules. */
+  gapStrangers: (count: number, address: string) => count === 1
+    ? `1 letter from a sender you have not decided about arrived in ${address} while no device was organizing it. Put it in the Screener?`
+    : `${count} letters from senders you have not decided about arrived in ${address} while no device was organizing it. Put them in the Screener?`,
+  gapBoth: (letters: number, strangers: number, address: string) =>
+    `${letters === 1 ? "1 letter" : `${letters} letters`} for your rules and `
+    + `${strangers === 1 ? "1 from a sender" : `${strangers} from senders`} you have not decided about arrived in ${address} `
+    + "while no device was organizing it. File them by your rules, and put the new senders in the Screener?",
   gapFile: "File",
+  gapScreen: "Screen",
   gapLeave: "Leave",
   gapChanged: "The letters changed since they were counted. The new count is shown.",
   gapFailed: "Couldn't answer — try again.",

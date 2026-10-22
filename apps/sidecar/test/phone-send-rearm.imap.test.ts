@@ -15,14 +15,18 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
 import {
-  Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SERVER_UP, SmtpSink,
+  Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SmtpSink,
   bootPhone, cables, dirs, eventsSince, open, post, seedMailboxId, type Phone,
 } from "./_phone-offline-rig.js";
+import { serviceUp } from "@trafficflow/db/testing";
 import { bootEngine, LOCAL_ENGINE_ORIGIN } from "../../mobile/src/engine/boot.js";
 import { installNetworkReader, networkNow } from "../../mobile/src/net/network-door.js";
 import { flushQueued, liveActions } from "../../mobile/src/state/live.js";
 import { sayArg } from "../../mobile/src/refusal.js";
 import { Copy } from "../../mobile/src/copy.js";
+
+/** The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 

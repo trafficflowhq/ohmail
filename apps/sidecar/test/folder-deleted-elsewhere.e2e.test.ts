@@ -4,6 +4,7 @@ import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq, isNull } from "drizzle-orm";
 import { mailboxes, messages } from "@trafficflow/db";
+import { serviceUp } from "@trafficflow/db/testing";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
@@ -27,11 +28,9 @@ function eml(o: { messageId: string; from: string; to: string; subject: string }
   ].join("\r\n");
 }
 
-async function up(): Promise<boolean> {
-  const c = new ImapFlow({ host: HOST, port: PORT, secure: false, auth: { user: `probe-${randomUUID()}@trafficflow.test`, pass: PASS }, logger: false });
-  try { await c.connect(); await c.logout(); return true; } catch { return false; }
-}
-const absent = (await up()) ? "" : ` (SKIPPED: no dovecot answers at ${HOST}:${PORT})`;
+/* The run's one probe (test/setup/services.global.ts); self-gated, as the SQLite run starts no Dovecot. */
+const dovecot = serviceUp("dovecot", `${HOST}:${PORT}`);
+const absent = dovecot.up ? "" : ` (SKIPPED: ${dovecot.why})`;
 
 const open: Sidecar[] = [];
 const dirs: string[] = [];

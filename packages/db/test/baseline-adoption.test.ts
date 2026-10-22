@@ -857,6 +857,9 @@ describe("the baseline cutoff is frozen", () => {
       "0156_routing_decisions_sender_reason",
       // The Screener cutline probe's index: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
       "0157_messages_sender_date",
+      // The gap offer's stranger count: one nullable ADD COLUMN IF NOT EXISTS on mailboxes, no
+      // default, no data. Safe over any history.
+      "0158_mailboxes_gap_strangers",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
-import { connect as netConnect } from "node:net";
 import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -11,6 +10,7 @@ import { noteFirstPageServed } from "../src/first-page-gate.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 /** What a case stands on (the launch and the first arrival after it) has its own bound. */
 const PREMISE_BOUND_MS = 30_000;
@@ -35,28 +35,9 @@ const DOVECOT = {
   pass: process.env.IMAP_CONDSTORE_PASS ?? dovecotPass(),
 };
 
-/** Does something answer IMAP there? Asked, never assumed. */
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
 const SERVERS = [
-  { name: "GreenMail", up: await imapAnswers(GREENMAIL.host, GREENMAIL.port), host: GREENMAIL.host, port: GREENMAIL.port, pass: "test" },
-  { name: "Dovecot", up: await imapAnswers(DOVECOT.host, DOVECOT.port), host: DOVECOT.host, port: DOVECOT.port, pass: DOVECOT.pass },
+  { name: "GreenMail", up: serviceUp("greenmail", `${GREENMAIL.host}:${GREENMAIL.port}`).up, host: GREENMAIL.host, port: GREENMAIL.port, pass: "test" },
+  { name: "Dovecot", up: serviceUp("dovecot", `${DOVECOT.host}:${DOVECOT.port}`).up, host: DOVECOT.host, port: DOVECOT.port, pass: DOVECOT.pass },
 ];
 
 const DOORBELL_BOUND_MS = 5_000;

@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { brandDialect, dialect, SQL_TRIM_BLANK } from "../src/dialect/index.js";
 import { folderState } from "../src/schema-mail.js";
-import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
+import { PG_TEST_URL, realPgAvailable, serviceAddressOf, serviceUp } from "../src/testing.js";
 import { ELEMENT_CASES, FOLD_CASES, IS_ARRAY_CASES, MERGE_CASES } from "./_dialect-json-cases.js";
 
 /**
@@ -43,7 +43,11 @@ async function one(expr: ReturnType<typeof sql>): Promise<unknown> {
   return rows[0]![0];
 }
 
-describe("the ported JSON expressions, on the server this ships against", () => {
+/* The run's one probe (test/setup/services.global.ts): no Postgres skips the file by name; one that
+ * is there must answer the first case below. */
+const PG = serviceUp("pg", serviceAddressOf(URL, 5432));
+
+describe.skipIf(!PG.up)(`the ported JSON expressions, on the server this ships against${PG.up ? "" : ` (SKIPPED: ${PG.why})`}`, () => {
   it("is talking to a real Postgres and not to the wasm build", async () => {
     // FIRST, and outside any condition derived from it: everything below is vacuous if this file
     // silently ran against nothing, and "no database" and "every case passed" look identical.

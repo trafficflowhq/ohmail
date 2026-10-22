@@ -56,7 +56,7 @@ export { checkUncheckedById, writeSenderChecks, type UncheckedRow } from "../sen
 // The undecided-sender set, on the same leaf: the Screener's offer, the organize decision, the organizer.
 export {
   AGREE_SCREENS_BACKLOG_ACTION, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
-  OHBOX_UNSCREENED_MESSAGES_MAX, agreeRecordedAt, agreeSweepPass, agreeWindowCutoff, placementUndecided,
+  OHBOX_UNSCREENED_MESSAGES_MAX, agreeRecordedAt, agreeSweepPass, agreeWindowCutoff, gateHoldsSender, placementUndecided,
   unscreenedGroups, unscreenedWalk, writeScreenerIntents, type AgreeSweepOutcome, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedRow,
   type UnscreenedScope, type UnscreenedSenderGroup, type UnscreenedWalk,
 } from "../unscreened-set.js";

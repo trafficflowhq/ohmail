@@ -10,7 +10,7 @@ import { formatClaim, type LeaseIo, type RawClaimMessage } from "@trafficflow/co
 import {
   formatProfileMessage, makeProfileDoc, profileFingerprint, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { folderState, mailboxes, messages } from "@trafficflow/db";
+import { contacts, folderState, mailboxes, messages } from "@trafficflow/db";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -22,7 +22,8 @@ import { requestOrganizerTakeover } from "../src/organize-here.js";
  * look opens the window and a News letter arrives, adopted at the inbox. The phone, with no rules of
  * its own, organizes next with the import question open: its gap pass must not close the window on
  * its empty rules. After the import the offer counts the letter by the imported rule, with no other
- * trigger, and File files it. Declined, the window closes by the phone's own rules. The device
+ * trigger, and File files it. Declined, the phone offers the letter by its own knowledge: a sender
+ * it does not know goes to the Screener on File, and one it knows closes the window. The device
  * store's twin, on the phone's own engine, is in gap-window-opens-at-release.test.ts.
  */
 
@@ -184,8 +185,29 @@ describe("the phone that organizes next waits for its settings answer before it 
     expect(await rowOf(s)).toEqual({ since: null, letters: null, pressed: null });
   }, 120_000);
 
-  it("declined, the window closes by the phone's own rules", async () => {
+  const strangersOf = async (s: Sidecar) => (await s.db.select({
+    letters: mailboxes.gapLetters, strangers: mailboxes.gapStrangers,
+  }).from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId)))[0]!;
+
+  it("declined, the phone offers the letter of a sender it does not know for the Screener, and Leave closes it", async () => {
     const { s, moves } = await organizesNext();
+    for (let i = 0; i < 2; i++) await s.syncUntilQuiet();
+    expect((await rowOf(s)).since, "the open import question closed the window").not.toBeNull();
+    const declined = await call(s, `/mailboxes/${s.world.mailboxId}/profile-import/decline`, { fingerprint: LAPTOP_FP });
+    expect(declined.status, await declined.clone().text()).toBe(200);
+    for (let i = 0; i < 2 && (await rowOf(s)).letters === null; i++) await s.syncUntilQuiet();
+    expect(await strangersOf(s), "the phone's own knowledge did not offer the stranger").toEqual({ letters: 0, strangers: 1 });
+    expect(moves).toEqual([]);
+    const left = await call(s, `/mailboxes/${s.world.mailboxId}/gap-letters`, { file: false });
+    expect(left.status, await left.clone().text()).toBe(200);
+    for (let i = 0; i < 2; i++) await s.syncUntilQuiet();
+    expect(await rowOf(s)).toEqual({ since: null, letters: null, pressed: null });
+    expect(moves, "Leave moved mail").toEqual([]);
+  }, 120_000);
+
+  it("declined, a sender the phone knows: the window closes by the phone's own rules", async () => {
+    const { s, moves } = await organizesNext();
+    await s.db.insert(contacts).values({ accountId: s.world.accountId, address: "letters@news.test" });
     for (let i = 0; i < 2; i++) await s.syncUntilQuiet();
     expect((await rowOf(s)).since, "the open import question closed the window").not.toBeNull();
     const declined = await call(s, `/mailboxes/${s.world.mailboxId}/profile-import/decline`, { fingerprint: LAPTOP_FP });

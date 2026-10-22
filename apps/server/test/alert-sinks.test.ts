@@ -1,3 +1,4 @@
+// @services: none — its Postgres URL is never dialed
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { sql } from "drizzle-orm";
 import { createLogger, silentLogger, type Logger } from "@trafficflow/core";

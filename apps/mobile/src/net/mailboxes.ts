@@ -59,9 +59,12 @@ export interface PhoneMailbox {
   /**
    * THE GAP OFFER (mail 0151) — `MailboxDTO.gapLetters`: letters that arrived while no device was
    * organizing this mailbox and that the person's rules would file. A positive count only while it
-   * waits for their answer; absent or `null` otherwise. Nothing moves without the press.
+   * waits for their answer, 0 beside strangers; absent or `null` otherwise. Nothing moves without
+   * the press.
    */
   gapLetters?: number | null;
+  /** Its stranger count (mail 0158): letters from senders the gate does not know, for the Screener. */
+  gapStrangers?: number | null;
   /**
    * WHEN THE CLOSED ACCOUNT'S PARK RELEASED IT (mail 0135) — `MailboxDTO.organizerParkedAt`. While
    * set, the mailbox is paused, not free and not stopped: the paired server resumes it on its own.
@@ -228,7 +231,9 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
             : null,
         organizerParkedAt:
           typeof r.organizerParkedAt === "string" && r.organizerParkedAt !== "" ? r.organizerParkedAt : null,
-        ...(Number.isInteger(r.gapLetters) && (r.gapLetters as number) > 0 ? { gapLetters: r.gapLetters as number } : {}),
+        /* Whole counts of 0 or more: a strangers-only offer carries `gapLetters: 0`. */
+        ...(Number.isInteger(r.gapLetters) && (r.gapLetters as number) >= 0 ? { gapLetters: r.gapLetters as number } : {}),
+        ...(Number.isInteger(r.gapStrangers) && (r.gapStrangers as number) >= 0 ? { gapStrangers: r.gapStrangers as number } : {}),
         organizedBy: holderOf(r.organizedBy),
         /* The server's own comparison, taken only as `true` — anything else, including a server
            that predates the field, is "not the answering install's", the safe direction. */
@@ -295,14 +300,15 @@ export async function releaseMailbox(
 }
 
 /**
- * THE ANSWER TO A GAP OFFER (mail 0151) — `POST /mailboxes/:id/gap-letters`, `{ file, count }`.
- * 202 is the filing asked for (the organizer's next drain files that set); 200 is the offer left;
- * 409 is a count that moved since it was shown, and the next mailbox read carries the new one.
+ * THE ANSWER TO A GAP OFFER (mail 0151, 0158) — `POST /mailboxes/:id/gap-letters`, `{ file, count,
+ * strangers }`. 202 is the filing asked for (the organizer's next drain files and screens that set);
+ * 200 is the offer left; 409 is a pair of counts that moved since it was shown, and the next mailbox
+ * read carries the new one.
  */
 export async function answerGapLetters(
   session: ConnectedSession,
   mailboxId: string,
-  answer: { file: boolean; count: number },
+  answer: { file: boolean; count: number; strangers: number },
 ): Promise<"pressed" | "left" | "changed" | "refused"> {
   try {
     const res = await session.fetch(

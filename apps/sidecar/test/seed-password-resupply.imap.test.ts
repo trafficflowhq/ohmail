@@ -1,10 +1,11 @@
 import { rmSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
-import net, { connect as netConnect } from "node:net";
+import net from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS });
 
@@ -33,26 +34,7 @@ const HOST = process.env.OHMAIL_FIX020_IMAP_HOST ?? process.env.IMAP_HOST ?? "12
 const PORT = Number(process.env.OHMAIL_FIX020_IMAP_PORT ?? process.env.IMAP_PORT ?? 3143);
 const SMTP_PORT = Number(process.env.OHMAIL_FIX020_SMTP_PORT ?? process.env.SMTP_PORT ?? 3025);
 
-/** Does something answer IMAP there? Asked, never assumed. */
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
-const SERVER_UP = await imapAnswers(HOST, PORT);
+const SERVER_UP = serviceUp("greenmail", `${HOST}:${PORT}`).up;
 
 interface PasswordGate {
   port: number;

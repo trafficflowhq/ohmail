@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { imapAdmissionKey, makeOwnedDb, acquireImapSlot, releaseImapSlot, type OwnedDb } from "@trafficflow/db/cloud";
 import { authThrottle } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
+import { PG_TEST_URL, realPgAvailable, serviceUp } from "@trafficflow/db/testing";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { ServiceError } from "@trafficflow/services";
 import {
@@ -44,19 +44,8 @@ const IMAP_HOST = process.env.PROBE_IMAP_HOST ?? "127.0.0.1";
 const IMAP_PORT = Number(process.env.PROBE_IMAP_PORT ?? 3144);
 const IMAP_PASS = "testpass-password";
 
-/** Is the dovecot harness actually up? Skipped rather than failed on a machine without it. */
-async function imapUp(): Promise<boolean> {
-  const net = await import("node:net");
-  return new Promise<boolean>((resolve) => {
-    const s = net.connect({ host: IMAP_HOST, port: IMAP_PORT });
-    const done = (v: boolean): void => { s.destroy(); resolve(v); };
-    s.setTimeout(2_000);
-    s.once("connect", () => done(true));
-    s.once("error", () => done(false));
-    s.once("timeout", () => done(false));
-  });
-}
-const HAVE_IMAP = await imapUp();
+/** Is the dovecot harness up? The run's one probe (test/setup/services.global.ts); skipped, not failed, without it. */
+const HAVE_IMAP = serviceUp("dovecot", `${IMAP_HOST}:${IMAP_PORT}`).up;
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
 

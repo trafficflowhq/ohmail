@@ -614,7 +614,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /mailboxes/:id/profile-import": {
     bounds: [PROFILE_IMPORT_MAX.screener, PROFILE_IMPORT_MAX.rules, PROFILE_IMPORT_MAX.notifyRules, PROFILE_IMPORT_MAX.tagNames],
   },
-  // The gap offer's answer: a boolean and a count compared with the row's own integer, no more.
+  // The gap offer's answer: a boolean and two counts compared with the row's own integers, no more.
   "POST /mailboxes/:id/gap-letters": { scalarsOnly: true },
   "POST /mailboxes/:id/profile-import/decline": { scalarsOnly: true },
   "POST /mailboxes/:id/profile-import/replace": { scalarsOnly: true },

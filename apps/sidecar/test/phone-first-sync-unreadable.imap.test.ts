@@ -57,10 +57,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import net, { connect as netConnect } from "node:net";
+import net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {
@@ -82,26 +83,7 @@ const SMTP_PORT = Number(process.env.OHMAIL_PHONE_SMTP_PORT ?? process.env.SMTP_
 const EXPECTED_DIALECT = process.env.OHMAIL_EXPECT_DIALECT;
 const ON_DEVICE_STORE = EXPECTED_DIALECT === "sqlite";
 
-/** Does something answer IMAP there? Asked, never assumed — see `_imapenv.ts`'s own probe. */
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
-const SERVER_UP = ON_DEVICE_STORE ? await imapAnswers(HOST, PORT) : false;
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 /**
  * A SERVER THAT SIGNS YOU IN AND THEN WILL NOT HAND OVER THE MAIL — a relay in front of the real

@@ -394,6 +394,9 @@ interface CursorState {
   overflow: QuarantineOverflow;
 }
 
+/** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
+export interface HostedGap { letters: number; strangers?: number }
+
 export interface CloudMirrorConfig {
   db: LocalDb;
   world: LocalWorld;
@@ -541,13 +544,13 @@ export interface CloudMirror {
    */
   hostedImports(): ReadonlyMap<string, string | null>;
   /**
-   * THE GAP OFFER EACH HOSTED MAILBOX CARRIES (mail 0151), per hosted mailbox id: the count while it
-   * waits for the person's answer, `null` when none does. Rebuilt at every mailbox refresh; absent
-   * for an answer that carried no field (an older server). Never copied onto the mirror's row
-   * ({@link mailboxRow}): a window the account opened must not become this store's own when the
-   * door later switches to standalone.
+   * THE GAP OFFER EACH HOSTED MAILBOX CARRIES (mail 0151, 0158), per hosted mailbox id: its two
+   * counts while it waits for the person's answer (`strangers` absent from an older server), `null`
+   * when none does. Rebuilt at every mailbox refresh; absent for an answer that carried no field (an
+   * older server). Never copied onto the mirror's row ({@link mailboxRow}): a window the account
+   * opened must not become this store's own when the door later switches to standalone.
    */
-  hostedGaps(): ReadonlyMap<string, number | null>;
+  hostedGaps(): ReadonlyMap<string, HostedGap | null>;
   /**
    * WHEN THE HOSTED ACCOUNT LAST SCANNED EACH MAILBOX (`lastSyncAt` of the hosted answer), per hosted
    * mailbox id, `null` where it has not. Rebuilt at every mailbox refresh, empty until one lands.
@@ -2626,7 +2629,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /** The hosted first-import stamps — see {@link CloudMirror.hostedImports}. Empty until a refresh lands. */
   let hostedImports = new Map<string, string | null>();
   /** The hosted gap offers — see {@link CloudMirror.hostedGaps}. Empty until a refresh lands. */
-  let hostedGaps = new Map<string, number | null>();
+  let hostedGaps = new Map<string, HostedGap | null>();
   /** The hosted scan stamps — see {@link CloudMirror.hostedSyncs}. Empty until a refresh lands. */
   let hostedSyncs = new Map<string, string | null>();
   /** When counts were last ASKED for (not when they last changed). `-Infinity` ⇒ never. */
@@ -2737,11 +2740,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (typeof v === "string" || v === null) imports.set(m.id, v);
     }
     hostedImports = imports;
-    // The gap offers, rebuilt whole on the same rule: a positive whole count or `null`, nothing else.
-    const gaps = new Map<string, number | null>();
+    // The gap offers, rebuilt whole on the same rule: whole counts of 0 or more, or `null`, nothing else.
+    const count = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+    const gaps = new Map<string, HostedGap | null>();
     for (const m of hosted) {
       const v: unknown = m.gapLetters;
-      if (v === null || (typeof v === "number" && Number.isInteger(v) && v > 0)) gaps.set(m.id, v);
+      const k: unknown = m.gapStrangers;
+      if (v === null) gaps.set(m.id, null);
+      else if (count(v)) gaps.set(m.id, count(k) ? { letters: v, strangers: k } : { letters: v });
     }
     hostedGaps = gaps;
     // The hosted scan stamps, rebuilt whole on the same rule: a string or null, nothing else.

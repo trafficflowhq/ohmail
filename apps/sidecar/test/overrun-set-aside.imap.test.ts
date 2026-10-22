@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import net from "node:net";
 import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it } from "vitest";
 import { messages } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 /**
  * A REAL SERVER THAT UNDER-DECLARES ONE MESSAGE (the set-aside walk's shape, on GreenMail).
@@ -18,19 +18,7 @@ import { freshDataDir } from "./_datadir.js";
 const HOST = process.env.IMAP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.IMAP_PORT ?? 3143);
 
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const sock = net.connect({ host, port });
-    const finish = (v: boolean): void => { if (settled) return; settled = true; sock.destroy(); resolve(v); };
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-const SERVER_UP = await imapAnswers(HOST, PORT);
+const SERVER_UP = serviceUp("greenmail", `${HOST}:${PORT}`).up;
 
 const message = (user: string, subject: string, headerPad = 0): Buffer => Buffer.from([
   "From: Anna <anna@sender.test>", `To: <${user}>`, `Subject: ${subject}`,

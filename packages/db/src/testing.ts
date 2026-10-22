@@ -12,6 +12,7 @@ import { JOURNALS, runMigrations } from "./migrate.js";
 import { schema } from "./schema.js";
 import { assertDistinct, brandDialect, deliverLocalNotifyAtCommit } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
+import { probedService, serviceAddressOf, serviceUp } from "./test-services.js";
 import { isProtocolOpener } from "./pg-socket.js";
 import {
   declaredMigrations, journalMismatch, keyInputs, migrateFresh, templateDisabled, templatedPglite, templateKey,
@@ -19,6 +20,10 @@ import {
 } from "./testing-template.js";
 
 export { declaredMigrations } from "./testing-template.js";
+export {
+  SERVICE_VERDICT_ENV, TEST_SERVICES, probedService, readServiceVerdict, serviceAddressOf, serviceUp,
+  type ServiceName, type ServiceProbe, type ServiceVerdict,
+} from "./test-services.js";
 
 /**
  * Create an in-process PGlite-backed Drizzle client with all migrations applied. Tests only — no
@@ -303,6 +308,8 @@ function boxDoorRefusal(why: string): string {
 export function pgTestUrl(
   file: string, url: string = PG_TEST_URL, env: NodeJS.ProcessEnv = process.env, tokenPath: string = BOX_TOKEN_PATH,
 ): string {
+  /* Nothing listens there (the run's probe, read from the environment handed in): no box to protect. */
+  if (probedService("pg", serviceAddressOf(url, 5432), env)?.up === false) return url;
   const root = workspaceRoot();
   const refusal = sharedBoxRefusal(url, env, root ?? undefined, tokenPath);
   if (refusal === null) return url;
@@ -384,20 +391,31 @@ export async function journalDrift(url: string): Promise<string | null> {
  * this answers false. The repair is resetting the database to this tree's journals.
  */
 export async function realPgAvailable(url: string = PG_TEST_URL, tokenPath: string = BOX_TOKEN_PATH): Promise<boolean> {
+  /* The run's probe first: absent answers false without dialing (and throws under TF_REQUIRE_PG). */
+  const at = serviceAddressOf(url, 5432);
+  const probed = probedService("pg", at, process.env);
+  if (!serviceUp("pg", at).up) return false;
   /* Asked BEFORE anything dials: a refusal that arrived after the connection would already have
    * taken the shared box's advisory namespace for the length of the probe. */
   const refusal = sharedBoxRefusal(url, process.env, workspaceRoot() ?? undefined, tokenPath);
   if (refusal !== null) throw new Error(`[pg] ${refusal}`);
   const c = postgres(url, { max: 1, connect_timeout: 3, onnotice: () => {} });
   let up = false;
+  let error = "";
   try {
     await c`select 1`;
     up = true;
-  } catch {
+  } catch (e) {
     // The probe's answer — REQUIRE_PG_ENV below decides whether "down" is fatal.
     up = false;
+    error = e instanceof Error ? e.message : String(e);
   } finally {
     await c.end({ timeout: 2 }).catch(() => {});
+  }
+  /* The run's probe found it listening, so it is there and broken: red, never a skip. */
+  if (!up && probed?.up === true) {
+    throw new Error(`[pg] something listens at ${at} but it does not answer as Postgres for ${databaseOf(url)} (${error}) — `
+      + "is the database there? bash scripts/lane-db.sh \"$PWD\" makes this checkout's own");
   }
   if (!up && process.env[REQUIRE_PG_ENV] === "1") {
     throw new Error(

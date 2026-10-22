@@ -6,6 +6,8 @@ import {
   makeS3StagingStorage, reconcileStagingOrphans, sweepExpiredStaging, stagingObjectPath,
   type S3StagingStorageConfig, type StagedObjectListing,
 } from "../src/attachment-staging.js";
+import { serviceAddressOf, serviceUp } from "../src/testing.js";
+import { RUSTFS_URL } from "../../../test/support/services.js";
 
 /**
  * ═══ THE LIVE RustFS ROUND TRIP — the wire the unit suite cannot decide ══════════════════════
@@ -18,11 +20,10 @@ import {
  * key derivation, so a drifted canonical form is invisible until a server refuses it — that is
  * why this suite exists and why the compose carries RustFS (`docker compose up -d rustfs`, :3902).
  *
- * Same gating pattern as `realPgAvailable`: skipped when RustFS is not listening, and
- * `TF_REQUIRE_RUSTFS=1` turns absence into a hard failure so CI can never green by skipping.
+ * Gated on the run's one probe (test/setup/services.global.ts): skipped when RustFS is not
+ * listening, and `TF_REQUIRE_RUSTFS=1` turns absence into a hard failure so CI can never green by
+ * skipping. Listening but not ready is red, never a skip.
  */
-
-const RUSTFS_URL = process.env.TF_RUSTFS_URL || "http://127.0.0.1:3902";
 
 const CFG: S3StagingStorageConfig = {
   endpoint: RUSTFS_URL,
@@ -33,25 +34,7 @@ const CFG: S3StagingStorageConfig = {
   bucket: "staging-live",
 };
 
-async function rustfsAvailable(): Promise<boolean> {
-  let up = false;
-  try {
-    // Ready, not merely listening: RustFS answers /health before its storage and IAM are up.
-    const res = await fetch(`${RUSTFS_URL}/health/ready`, { signal: AbortSignal.timeout(3000) });
-    up = res.ok;
-  } catch {
-    up = false;
-  }
-  if (!up && process.env.TF_REQUIRE_RUSTFS === "1") {
-    throw new Error(
-      `TF_REQUIRE_RUSTFS=1 but no RustFS answers at ${new URL(RUSTFS_URL).host} — ` +
-        "start it (docker compose up -d rustfs) or unset the variable. Not optional in CI.",
-    );
-  }
-  return up;
-}
-
-const RUSTFS_UP = await rustfsAvailable();
+const RUSTFS_UP = serviceUp("rustfs", serviceAddressOf(RUSTFS_URL, 80)).up;
 
 const storage = makeS3StagingStorage(CFG);
 /** The test's own signer, for the one call the port deliberately lacks: CreateBucket. */
@@ -62,6 +45,12 @@ const admin = new AwsClient({
 
 beforeAll(async () => {
   if (!RUSTFS_UP) return;
+  // Ready, not merely listening: RustFS answers /health before its storage and IAM are up. Here it
+  // listens, so not ready is a failure, never a skip.
+  const ready = await fetch(`${RUSTFS_URL}/health/ready`, { signal: AbortSignal.timeout(3000) }).catch((e: unknown) => e as Error);
+  if (ready instanceof Error || !ready.ok) {
+    throw new Error(`RustFS listens at ${new URL(RUSTFS_URL).host} but is not ready (${ready instanceof Error ? ready.message : ready.status})`);
+  }
   const res = await fetch(await admin.sign(`${RUSTFS_URL}/${CFG.bucket}`, { method: "PUT" }));
   // 200 created; 409 it already exists from an earlier run. Anything else fails loudly here
   // rather than as forty confusing 404s below.

@@ -1,0 +1,3 @@
+### Letters from new senders that arrived while nothing organized a mailbox go to the Screener when you file them
+
+When a device starts organizing a mailbox again, the offer for the letters that arrived in the gap now also counts the ones from senders you have not decided about, and names both numbers. Pressing File files the first by your rules and puts the others in the Screener, where their senders wait for your answer; Leave moves nothing. Before, those letters stayed in the Ohbox and the Screener never asked about them. This applies on the desktop, the web, the phone, ohmail Cloud and your own server.

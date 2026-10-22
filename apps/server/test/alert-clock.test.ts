@@ -1,3 +1,4 @@
+// @services: none — its Postgres URL is never dialed
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { apiAlertSinkSummary } from "@trafficflow/api";
 import { createLogger, type Logger } from "@trafficflow/core";

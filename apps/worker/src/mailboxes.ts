@@ -1235,7 +1235,7 @@ export async function markMailboxStoodDown(
       and ${mailboxes.organizerState} is not distinct from ${state}
       then ${mailboxes.organizerEventAt} else ${dialect(db as unknown as Tx).ts(opts.now ?? new Date())} end`,
     // Another install's claim won: a held look, so the gap window and its offer close (mail 0151).
-    gapSince: null, gapLetters: null, gapPressedAt: null,
+    gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null,
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
   // The handover, then the arrangement's doorbell: a reader serves the organizer's document for
   // this mailbox from here on, and a surface learns it from the delta, not at its next boot.
@@ -1630,7 +1630,7 @@ export async function refreshOrganizerHolder(
       /* THE GAP THIS READER IS LOOKING AT NOW: `coalesce`, so the earliest instant nothing organized
          stands; a held look closes it with the offer made from it. */
       ...(opts.gap === "open" ? { gapSince: opts.opensAt ?? sql`coalesce(${mailboxes.gapSince}, now())` } : {}),
-      ...(opts.gap === "close" ? { gapSince: null, gapLetters: null, gapPressedAt: null } : {}),
+      ...(opts.gap === "close" ? { gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null } : {}),
     })
     .where(lifecycleWhere(mailboxId, opts.fence))
     .returning({ id: mailboxes.id }));

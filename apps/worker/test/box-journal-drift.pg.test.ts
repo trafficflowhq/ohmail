@@ -6,7 +6,7 @@ import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { runMigrations } from "@trafficflow/db/admin";
 import { MAIL_JOURNAL } from "@trafficflow/db/journal";
-import { REQUIRE_PG_ENV, journalDrift, realPgAvailable } from "@trafficflow/db/testing";
+import { REQUIRE_PG_ENV, journalDrift, realPgAvailable, serviceAddressOf, serviceUp } from "@trafficflow/db/testing";
 import { DB_URL, refuseDriftedSharedDb } from "./_workerdb.js";
 
 /**
@@ -48,22 +48,11 @@ const ADMIN_URL = withDatabase(DB_URL, "postgres");
 const PRIVATE_URL = withDatabase(DB_URL, PRIVATE_DB);
 
 /**
- * Is the server up? DELIBERATELY not `realPgAvailable`, which is the function under test: asking
- * it would make this file skip on exactly the condition it exists to measure.
+ * Is the server up? The run's one probe (test/setup/services.global.ts), DELIBERATELY not
+ * `realPgAvailable`, which is the function under test: asking it would make this file skip on
+ * exactly the condition it exists to measure.
  */
-async function serverUp(): Promise<boolean> {
-  const c = postgres(ADMIN_URL, { max: 1, connect_timeout: 3, onnotice: () => {} });
-  try {
-    await c`select 1`;
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await c.end({ timeout: 2 }).catch(() => {});
-  }
-}
-
-const UP = await serverUp();
+const UP = serviceUp("pg", serviceAddressOf(ADMIN_URL, 5432)).up;
 
 /** This tree's own latest mail migration, and the sha256 the migrator stores for one of them. */
 function mailJournalEntries(): Array<{ when: number; tag: string }> {

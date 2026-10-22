@@ -439,6 +439,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   gapSince: integer("gap_since", { mode: "timestamp_ms" }),
   gapLetters: integer("gap_letters"),
   gapPressedAt: integer("gap_pressed_at", { mode: "timestamp_ms" }),
+  /** Mail 0158 — the gap offer's stranger count; see the pg twin. LAST for 0111's reason. */
+  gapStrangers: integer("gap_strangers"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
