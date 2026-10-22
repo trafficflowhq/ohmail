@@ -28,8 +28,10 @@ import { STAFF_ROLE_LIVE_IN_PRODUCTION } from "../src/staff-grants.js";
  * itself is gated on the flag; this test gates the flag on the copy. Together the copy edit is a
  * precondition of provisioning, enforced by the build rather than remembered.
  *
- * The privacy policy's half (docs/legal, which a published tree does not carry) and the live branch's
- * positive control, which reads both sites, are in the private staff-role-copy-gate-legal.test.ts.
+ * The privacy policy is the hosted service's document and is not in this repository, so its half of
+ * the coupling is not checked here; the FAQ answer is, and the live branch's positive control reads
+ * it alone. {@link copyBreaches} is the whole rule as one function, driven below over planted copy in
+ * both states of the flag.
  *
  * German is DELIBERATELY NOT CHECKED: the i18n slice owns `en.json`'s catalog translations, and
  * coupling the gate to `de.json` would make this test the thing that blocks a translation. The
@@ -53,6 +55,23 @@ const DISCLAIMERS: ReadonlyArray<readonly [string, string]> = [
 function corpusFor(_label: string): string {
   const en = JSON.parse(readFileSync(EN_JSON, "utf8")) as { faq: { a5: string } };
   return en.faq.a5;
+}
+
+/** Does the copy name the database as what enforces the restriction? The wording is the author's. */
+const claimsDb = (copy: string): boolean => {
+  const s = copy.toLowerCase();
+  return /database[^.]*\b(enforc|refus|reject)/.test(s) || /\b(enforc|refus|reject)[^.]*database/.test(s);
+};
+
+/** What the FAQ answer gets wrong for a flag value; empty when copy and flag agree. */
+function copyBreaches(live: boolean, a5: string): string[] {
+  const out: string[] = [];
+  for (const [label, phrase] of DISCLAIMERS) {
+    if (!live && !a5.includes(phrase)) out.push(`not live, but ${label} is gone`);
+    if (live && a5.includes(phrase)) out.push(`live, but ${label} still says it`);
+  }
+  if (live && !claimsDb(a5)) out.push("live, but the copy does not name the database as the enforcer");
+  return out;
 }
 
 describe("staff-role provisioning is coupled to the customer-facing copy", () => {
@@ -87,5 +106,28 @@ describe("staff-role provisioning is coupled to the customer-facing copy", () =>
         ).toBe(false);
       },
     );
+
+    it("and the copy now asserts DATABASE enforcement", () => {
+      // A positive control so 'live' cannot be satisfied by simply DELETING the disclaimer and
+      // saying nothing. The exact wording is the copy author's; this only requires that the
+      // database is named as the enforcer.
+      expect(
+        claimsDb(corpusFor("en.json a5")),
+        "the role is live but the FAQ answer does not name the database as the enforcer — a live " +
+          "protection the copy is silent about is the same contract gap in the other direction.",
+      ).toBe(true);
+    });
   }
+
+  it("one rule for both states of the flag, on planted copy, and the live copy passes it", () => {
+    const disclaims = `It is ${DISCLAIMERS[0]![1]}, and it ${DISCLAIMERS[1]![1]}.`;
+    const enforced = "The database refuses them: the console reads through a column-restricted role.";
+    const silent = "Our tools do not display message content.";
+    expect(copyBreaches(false, disclaims)).toEqual([]);
+    expect(copyBreaches(false, enforced)).toHaveLength(DISCLAIMERS.length);
+    expect(copyBreaches(true, enforced)).toEqual([]);
+    expect(copyBreaches(true, `${enforced} ${disclaims}`)).toHaveLength(DISCLAIMERS.length);
+    expect(copyBreaches(true, silent)).toEqual(["live, but the copy does not name the database as the enforcer"]);
+    expect(copyBreaches(STAFF_ROLE_LIVE_IN_PRODUCTION, corpusFor("en.json a5"))).toEqual([]);
+  });
 });

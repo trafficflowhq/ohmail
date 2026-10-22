@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -21,9 +23,10 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * reworded inside 34 already-applied migrations, and mail 0037 had gained an idempotency wrapper
  * after it ran. The verifier hashed raw bytes and could tell neither from a real edit.
  *
- * The admitted arms use the REAL repository's history and the hashes production recorded, in the
- * private setup-prod-verify-history.pg.test.ts; the refusal arms here use a synthetic history, which is
- * the only place a real drift can exist.
+ * The admitted arms that read the hashes production recorded need a version of 0006 that the
+ * history of this repository does not hold, so they left this file; the refusal arms here use a
+ * synthetic history, which is the only place a real drift can exist, and the GIT_DIR arm reads a
+ * repository it plants itself.
  */
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const MAIL_DIR = join(HERE, "..", "..", "db-mail", "drizzle");
@@ -45,9 +48,9 @@ const entryFor = (tag: string): JournalEntry => {
 const ALLOWANCE = MIGRATION_ALLOWANCES[0]!;
 
 /**
- * A tag whose earlier versions differ from today's in comments only. The arms that derive the hash
- * production recorded for it from this repository's git history live in the private
- * setup-prod-verify-history.pg.test.ts; the arms here never read history beyond a hash no version carries.
+ * A tag whose earlier versions differ from today's in comments only. The arms that derived the hash
+ * production recorded for it read a version of it this repository's history does not hold, so they
+ * left this file; the arms here never read history beyond a hash no version carries.
  */
 const COMMENT_ONLY_TAG = "0006_idempotency_keys";
 
@@ -87,6 +90,54 @@ describe("the allowance is keyed on the pair of texts, not on the tag", () => {
   /** The shipped side of an allowance must still be what this tree ships, or it is stale. */
   it("the 0037 allowance names the hash this tree actually ships", () => {
     expect(migrationSqlHash(SPEC, ALLOWANCE.tag)).toBe(ALLOWANCE.shipped);
+  });
+});
+
+describe("the history read itself", () => {
+  /**
+   * git exports `GIT_DIR` to every hook and it OVERRIDES `git -C <path>` in any child — three
+   * arms, because a reader that silently answers about another repository is worse than one that
+   * refuses: unset, set the way a hook sets it, and set-then-cleared. The repository is planted with
+   * two versions of one migration, so the read has something to find; the plant's own git calls
+   * strip the same variables, so a GIT_DIR this test runs under cannot redirect the plant either.
+   */
+  it("an exported GIT_DIR does not redirect the history read", () => {
+    const scratch = mkdtempSync(join(tmpdir(), "ohmail-provenance-"));
+    try {
+      const repo = join(scratch, "repo");
+      const foreign = join(scratch, "foreign");
+      const dir = join(repo, "drizzle");
+      mkdirSync(dir, { recursive: true });
+      mkdirSync(foreign);
+      const env = { ...process.env };
+      for (const k of Object.keys(env)) if (k.startsWith("GIT_")) delete env[k];
+      const git = (cwd: string, ...args: string[]): void => {
+        execFileSync("git", ["-C", cwd, "-c", "user.name=rig", "-c", "user.email=rig@rig.test",
+          "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", ...args], { stdio: "pipe", env });
+      };
+      git(foreign, "init", "-q");
+      git(repo, "init", "-q");
+      for (const sql of ["-- first\nSELECT 1;\n", "-- second\nSELECT 1;\n"]) {
+        writeFileSync(join(dir, "0001_planted.sql"), sql);
+        git(repo, "add", "-A");
+        git(repo, "commit", "-q", "-m", "a version");
+      }
+      const read = (): number => gitProvenanceReader().history(dir, "0001_planted").length;
+
+      const unset = read();
+      expect(unset, "the planted history did not read as two versions").toBe(2);
+      const before = process.env["GIT_DIR"];
+      try {
+        process.env["GIT_DIR"] = join(foreign, ".git");
+        expect(read(), "an exported GIT_DIR redirected the read to another repository").toBe(unset);
+      } finally {
+        if (before === undefined) delete process.env["GIT_DIR"];
+        else process.env["GIT_DIR"] = before;
+      }
+      expect(read()).toBe(unset);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 

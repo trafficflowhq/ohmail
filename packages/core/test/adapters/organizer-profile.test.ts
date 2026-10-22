@@ -751,8 +751,9 @@ describe("the current document chosen from one Date second is the one every body
  * (FIX-026 commit 2): THE BODY SPELLS PEOPLE'S WORDS AS JSON ESCAPES. Every string value outside
  * a closed list of format fields is `\uXXXX`, so a mail client's search index finds no name or
  * address in the message, and every shipped reader — `JSON.parse` of the body from its first `{`
- * to its last `}` — decodes it to the same values. The 0.25.3 release's own parser reading this body is
- * case (b), in the private organizer-profile-shipped-reader.test.ts: it archives that release from git.
+ * to its last `}` — decodes it to the same values. Case (b), the 0.25.3 release's own parser reading
+ * this body, archives that release out of git history, which a shallow checkout does not hold, so it
+ * left this file.
  */
 describe("names and addresses are written as JSON escapes, and every shipped reader reads them", () => {
   const FIXTURE: OrganizerProfilePayload = {

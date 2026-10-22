@@ -29,8 +29,8 @@ describe("imapflow outside the phone bundle is the published 1.7.8", () => {
     expect(seen, "the census read no consumer at all").toHaveLength(CONSUMERS.length);
   });
 
-  /* pnpm-workspace.yaml's half of this (no patchedDependencies entry) is in the private
-     imapflow-upstream-pnpm.test.ts: a published tree installs with npm and carries no pnpm workspace. */
+  /* This repository installs with npm and applies patches/ itself, so patches/ is the one place an
+     imapflow patch could come from; the pnpm workspace file this once also read is not here. */
   it("carries no workspace patch for imapflow, so no install can change it", () => {
     expect(readdirSync(join(ROOT, "patches")).filter((f) => f.startsWith("imapflow"))).toEqual([]);
   });
