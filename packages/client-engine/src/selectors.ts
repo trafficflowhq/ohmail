@@ -522,8 +522,8 @@ export function isResurfaced(m: Pick<EngineMessage, "triage">): boolean {
 }
 
 /**
- * Read state as every surface draws it — a resurfaced message presents UNREAD until done or
- * replied (owner ruling 2026-08-31). A DERIVATION, not a stamp: the stamp was tried
+ * Read state as every surface draws it — a resurfaced message presents UNREAD until done
+ * (owner ruling 2026-08-31; a plain reply does not release it, owner 2026-10-22). A DERIVATION, not a stamp: the stamp was tried
  * (`bubbleUpPass` forced `unread`, queued `\Seen` removals, fought the reader; removed
  * 2026-08-26). Reading the row's placement instead means no pass fights the user, no `\Seen`
  * intent touches other clients (the mailbox stays the master), and a glance still lands its

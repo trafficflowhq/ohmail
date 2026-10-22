@@ -1350,9 +1350,9 @@ export function OhboxView({
   }, []);
 
   /**
-   * A settled reply marks the message it answered read. Answering is being done with it, and
-   * the write also clears any resurfaced pin server-side (`MessageService.markSeen`), so a
-   * reply closes a resurface. The shell hands the settled reply down as {@link replyDone},
+   * A settled reply marks the message it answered read. Answering is being done with it. A
+   * pinned row is never in the New order, so a plain reply leaves a resurface standing: only
+   * Done, Send + Done or a deliberate read release it (owner 2026-10-22). The shell hands the settled reply down as {@link replyDone},
    * keyed on the settle instant so a value already acted on is ignored. The move is NOT written
    * here any more: reads move rows now, and a second copy of the gesture would be two
    * mechanisms racing over one row — the write is the whole of this effect, the slide follows
@@ -2654,7 +2654,7 @@ export function OhboxView({
                read" whatever its stored flag says, because that is what the row beside it is
                drawing and a pane that disagreed with its own list is the inconsistency this
                whole seam exists to close. Pressing it is a deliberate read, which spends the
-               pin and releases the row — one of the three ways out, beside Done and a reply.
+               pin and releases the row — one of the three ways out, beside Done and Send + Done.
                See `armedRead`; the shell does the same for the reader sheet via `onReadArmed`. */
             message={effUnread(selected) === selected.unread ? selected : { ...selected, unread: effUnread(selected) }}
             tags={tags}

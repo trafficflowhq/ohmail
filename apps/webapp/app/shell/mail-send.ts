@@ -1219,16 +1219,13 @@ export function firstSendStatusOf(details: unknown): "sent" | "unverified" | "pe
 }
 
 /**
- * Which triage states a delivered reply discharges WITH `triage_set: none`. `reply_later` (Answer Later) and
- * `bubbled_up` (a Resurface that came due) are both "come back to this", and replying IS coming back to it.
- * `set_aside` (Parked) and `muted` are statements about the message rather than an owed answer, and a reply is not an
- * obvious argument to undo either. `resurfaced` — the PIN — is deliberately NOT here, and it is not un-discharged:
- * the settle answers it with a deliberate `mark_seen` instead (see the branch in `settle`), because the pin's own
- * release mechanism is "reading spends the resurface" and a bare state-clear would put the answered row back in "New
- * for you" unread.
+ * Which triage states a delivered reply discharges WITH `triage_set: none`: only `reply_later` (Answer Later), whose
+ * whole meaning is "a reply is owed". A pin (`resurfaced`) and a booking (`bubbled_up`) are released only by Done,
+ * Send + Done or a deliberate read; a plain Send leaves them where they were (owner 2026-10-22). `set_aside` (Parked)
+ * and `muted` are statements about the message, which a reply does not undo.
  */
 export function clearsTriage(state: string | undefined): boolean {
-  return state === "reply_later" || state === "bubbled_up";
+  return state === "reply_later";
 }
 
 /**
@@ -1392,9 +1389,9 @@ export function useMailSend(
       const aboutThisCompose = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
       clearLaneScratch(key, m, owner.current, aboutThisCompose);
       /* SEND + DONE IS ASKED FIRST, before the debt below moves anything: its release is read from
-         the mirror NOW, and a resurfaced source the discharge had already read would release
-         nothing. `true` is a release made — it clears the bookings and reads the row, so the
-         discharge stands down, and its sentence replaces "Reply sent.". */
+         the mirror NOW. `true` is a release made — it clears the bookings and reads the row, so the
+         discharge stands down, and its sentence replaces "Reply sent.". A plain Send releases no
+         pin and no booking: only Answer Later is discharged below. */
       const released = outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true;
       if (m.inReplyTo !== null && !released) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
@@ -1406,25 +1403,6 @@ export function useMailSend(
         const state = msg?.triage?.state as string | undefined;
         if (clearsTriage(state)) {
           void engine.mutate({ kind: "triage_set", messageId: m.inReplyTo, state: "none" });
-        } else if (state === "resurfaced") {
-          /**
-           * A REPLY TO A PINNED ROW IS THE ANSWER THE PIN WAS WAITING FOR — so it clears the resurface,
-           * automatically, through the ONE mechanism that already exists: a deliberate `mark_seen` (no `via`) spends
-           * the pin in the same transaction on both sides of the wire (`spendResurface` server-side, `spentResurface`
-           * in the overlay) — the release the explicit "Done" verb (`resurface_done`) performs; the conversation
-           * then files under "Earlier" at the reply's instant.
-           */
-
-          /**
-           * `mark_seen`'s own doc has named "the settled reply that marks its parent read" a deliberate caller all
-           * along; this makes that sentence true for the pinned case, which nothing dispatched for: `OhboxView`'s
-           * replyDone effect acts only on rows in the NEW session order, and a pinned row is never there — so
-           * answering a resurfaced message left its pin standing, saying "deal with this" about mail the reader had
-           * just dealt with. Not `triage_set: none` like the branch above: that clears the STATE but leaves the row
-           * unread (the pin forces unread), so the answered message would come back bold in "New for you" — a claim
-           * of new attention the reader just spent. Answered = read.
-           */
-          void engine.mutate({ kind: "mark_seen", messageIds: [m.inReplyTo], unread: false });
         }
       }
 
@@ -1660,8 +1638,8 @@ export function useMailSend(
        * `settledRef.current(key, m)` on the beat, reasoning the server holds a committed
        * reservation so the editor has nothing left to hold. Both halves wrong, caught by review.
        * First, that callback is not "close the surface": `AppShell.onSendSettled` fires on a
-       * CONFIRMATION and on nothing else — it marks the answered message READ, spends its
-       * resurfaced pin, steps the Reply Run past the item, drops a drafted alternative, and
+       * CONFIRMATION and on nothing else — it marks the answered message READ, steps the
+       * Reply Run past the item, drops a drafted alternative, and
        * discards the stranded row a recovery compose was seeded from; every one of those states
        * "this was answered" about a message that may never have left.
        */

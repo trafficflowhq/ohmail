@@ -42,9 +42,9 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
    + "unwatched on purpose — the decision has landed and only a seen flag can be lost; and the "
    + "card's INBOX letters, moved by id only once its decide stands, whose sentence is the decide's "
    + "own: a refused or skipped move leaves its letter and is not the decision's status"],
-  ["shell/mail-send.ts", 2,
-   "a settled reply's two after-effects — clearing the answered message's triage and spending its "
-   + "pin. Nothing is claimed about either: the sentence the person reads is the send's own"],
+  ["shell/mail-send.ts", 1,
+   "a settled reply's one after-effect — clearing the answered message's Answer Later. Nothing is "
+   + "claimed about it: the sentence the person reads is the send's own"],
   ["shell/AppShell.tsx", 0,
    "none left: the last one, the subject rule's move half, went with the verbs (ARCH-022). The "
    + "row is KEPT at zero so a dispatch written back beside the JSX is refused by this count"],
@@ -69,10 +69,11 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
 /**
  * THE TOTAL, PINNED APART FROM THE ROWS. A shell module split hands a count from one row to
  * another, and both rows move together while the sum quietly grows — which is a new bare dispatch
- * arriving under cover of a refactor. Nineteen is the reading; a row that falls hands its share
+ * arriving under cover of a refactor. Eighteen is the reading (the plain reply's pin spend went,
+ * SEND-IS-NOT-DONE); a row that falls hands its share
  * to a named row, never to nobody.
  */
-const REMAINDER_TOTAL = 19;
+const REMAINDER_TOTAL = 18;
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];

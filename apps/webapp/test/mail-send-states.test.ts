@@ -688,7 +688,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
   }
 
   it("an accepted-pending send NEVER runs onSettled — the shell reads that as a delivery", async () => {
-    // `AppShell.onSendSettled` marks the answered message read and spends its pin, steps the
+    // `AppShell.onSendSettled` marks the answered message read, steps the
     // Reply Run past the item, drops a drafted alternative and discards a recovery row. Its own
     // docblock says three times that it fires on a confirmation and on nothing else. Calling it
     // for a send whose fate is unknown states "this was answered" about a message that may never
@@ -820,21 +820,26 @@ describe("useMailSend refuses on its own, not only via the button", () => {
     expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send"]);
   });
 
-  it("a confirmed reply to a RESURFACED (pinned) message clears the pin — by a deliberate read", async () => {
-    // §16 UI wave item 6: answering a pinned row is the answer the pin was waiting for. The
-    // discharge is a deliberate `mark_seen` (no `via`), never `triage_set: none` — the pin's
-    // own release mechanism is "reading spends the resurface" (both sides of the wire), and a
-    // bare state-clear would put the answered row back in "New for you" unread. Before this
-    // branch existed NOTHING dispatched for the pinned case: OhboxView's replyDone marks read
-    // only rows in the New session order, and a pinned row is never there.
+  /**
+   * SEND IS NOT DONE (owner 2026-10-22: "I had a resurfaced message and clicked only send on it
+   * and not send and done and it marked as done!"). A plain reply leaves a pin and a booking
+   * where they were; only Done, Send + Done or a deliberate read releases them. Supersedes the
+   * 2026-08-24 rule ("§16 UI wave item 6") that a reply spends the pin.
+   */
+  it("a confirmed plain reply to a RESURFACED (pinned) message leaves the pin alone", async () => {
     const rec = recorder("resurfaced");
     const send = await probe(rec);
     await act(async () => { send(reply("Hier ist die Antwort.")); });
     await drain();
-    expect(rec.mutations.map((m) => m.kind)).toEqual(["mail_send", "mark_seen"]);
-    expect(rec.mutations[1]).toMatchObject({ messageIds: ["m1"], unread: false });
-    // Deliberate: the glance marker must be ABSENT, or the server would not spend the pin.
-    expect(rec.mutations[1]).not.toHaveProperty("via");
+    expect(rec.mutations.map((m) => m.kind), "a plain Send spent the pin").toEqual(["mail_send"]);
+  });
+
+  it("a confirmed plain reply to a BOOKED (bubbled_up) message keeps the booking", async () => {
+    const rec = recorder("bubbled_up");
+    const send = await probe(rec);
+    await act(async () => { send(reply("Danke!")); });
+    await drain();
+    expect(rec.mutations.map((m) => m.kind), "a plain Send cancelled the booking").toEqual(["mail_send"]);
   });
 
   it("a FAILED reply to a resurfaced message spends nothing", async () => {
@@ -934,14 +939,15 @@ describe("useMailSend refuses on its own, not only via the button", () => {
 });
 
 describe("clearsTriage", () => {
-  it("a delivered reply discharges Answer Later and a due Resurface", async () => {
+  it("a delivered reply discharges Answer Later", async () => {
     const { clearsTriage } = await import("../app/shell/mail-send.js");
     expect(clearsTriage("reply_later")).toBe(true);
-    expect(clearsTriage("bubbled_up")).toBe(true);
   });
 
-  it("…and leaves Parked, Muted and no-state alone", async () => {
+  it("…and leaves a booking, a pin, Parked, Muted and no-state alone", async () => {
     const { clearsTriage } = await import("../app/shell/mail-send.js");
+    expect(clearsTriage("bubbled_up")).toBe(false);
+    expect(clearsTriage("resurfaced")).toBe(false);
     expect(clearsTriage("set_aside")).toBe(false);
     expect(clearsTriage("muted")).toBe(false);
     expect(clearsTriage(undefined)).toBe(false);

@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import type { EngineMessage, EntityReader, MutationResult, SendAndDonePlan } from "@ohmail/client-engine";
+import { resurfacedThreads, type EngineMessage, type EntityReader, type MutationResult, type SendAndDonePlan } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { flushQueued, liveActions, type LiveWorldActions } from "../src/state/live";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
@@ -34,10 +34,12 @@ const uuid = (() => {
 })();
 const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world.drop, uuid };
 
-async function scene(extra: (fake: ReturnType<typeof mailServer>) => void = () => undefined) {
+async function scene(extra: (fake: ReturnType<typeof mailServer>) => void = () => undefined, triage?: string) {
   const fake = mailServer();
   const origin = await listen(fake.server);
-  fake.addMessage(dto("m-1", { subject: "Invoice 12", from: { name: "Ada", address: "ada@fake.test" } }));
+  fake.addMessage(dto("m-1", {
+    subject: "Invoice 12", from: { name: "Ada", address: "ada@fake.test" }, ...(triage ? { triage: { state: triage } } : {}),
+  }));
   extra(fake);
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
   if (boot.kind !== "ready") throw new Error("boot refused");
@@ -45,6 +47,7 @@ async function scene(extra: (fake: ReturnType<typeof mailServer>) => void = () =
   await boot.engine.start();
   const toasts: string[] = [];
   const mutations: Record<string, unknown>[] = [];
+  const undos: Array<() => void> = [];
   const engine = new Proxy(boot.engine, {
     get(target, prop) {
       if (prop === "mutate") {
@@ -59,11 +62,11 @@ async function scene(extra: (fake: ReturnType<typeof mailServer>) => void = () =
   });
   const actions: LiveWorldActions = liveActions({
     engine,
-    toast: (m) => toasts.push(sayArg(m)),
+    toast: (m, opts) => { toasts.push(sayArg(m)); if (opts?.undo) undos.push(opts.undo); },
     uuid,
     zone: "UTC",
   });
-  return { fake, origin, ...boot, actions, toasts, mutations };
+  return { fake, origin, ...boot, actions, toasts, mutations, undos };
 }
 
 /** `mark_seen` requests the SERVER received — the release as the wire saw it, whatever engine sent it. */
@@ -210,6 +213,54 @@ describe("the release runs only after the engine accepted the send", () => {
     await live.actions.sendReply("m-1", "later please", false, null, at, [], true);
     expect(reads(live.mutations)).toEqual([]);
     expect(unreadOf(live, "m-1")).toBe(true);
+    live.store.close();
+    live.fake.server.close();
+  });
+});
+
+/**
+ * SEND IS NOT DONE (owner 2026-10-22: "I had a resurfaced message and clicked only send on it and
+ * not send and done and it marked as done!"). The phone never had the web's settle arm; these hold
+ * it that way: a plain reply leaves a pin and a booking where they were, Send + Done files the row
+ * and its Undo re-pins it.
+ */
+describe("a plain reply leaves a resurfaced or booked message where it was", () => {
+  type Live = Awaited<ReturnType<typeof scene>>;
+  const stateOf = (live: Live, id: string): string | null =>
+    (live.engine.read().get<EngineMessage>("message", id)?.triage?.state as string | undefined) ?? null;
+  const resurfacedIds = (live: Live): string[] =>
+    resurfacedThreads(live.engine.read()).flatMap((r) => r.members.map((m) => m.id));
+  const filing = (live: Live) => live.mutations.filter((m) => m.kind === "mark_seen" || m.kind === "triage_set");
+
+  it.each(["resurfaced", "bubbled_up"])("a plain reply to a %s message files nothing", async (state) => {
+    const live = await scene(undefined, state);
+    /* A pin is a Resurfaced row; a booking waits in the Resurface pile and is no row yet. */
+    const row = state === "resurfaced";
+    expect(resurfacedIds(live).includes("m-1")).toBe(row);
+    if (row) expect(live.actions.sendAndDoneOffered("m-1"), "Send + Done sits beside Send").toBe(true);
+    const res = await live.actions.sendReply("m-1", "Donnerstag passt.", false);
+    expect(res.outcome).toBe("sent");
+    expect(filing(live), "a plain Send filed the row").toEqual([]);
+    expect(stateOf(live, "m-1")).toBe(state);
+    expect(resurfacedIds(live).includes("m-1")).toBe(row);
+    expect(live.toasts).toEqual([Copy.replySent]);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL: Send + Done files the resurfaced row, and its Undo re-pins it", async () => {
+    const live = await scene(undefined, "resurfaced");
+    const res = await live.actions.sendReply("m-1", "Donnerstag passt.", false, null, null, [], true);
+    expect(res.outcome).toBe("sent");
+    expect(reads(live.mutations)).toHaveLength(1);
+    expect(reads(live.mutations)[0]!.via).toBeUndefined();
+    expect(live.toasts).toEqual([Copy.toastSentAndDone]);
+    expect(resurfacedIds(live)).not.toContain("m-1");
+    expect(live.undos).toHaveLength(1);
+    live.undos[0]!();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(stateOf(live, "m-1")).toBe("resurfaced");
+    expect(resurfacedIds(live)).toContain("m-1");
     live.store.close();
     live.fake.server.close();
   });
