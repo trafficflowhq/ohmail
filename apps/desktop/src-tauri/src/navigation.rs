@@ -67,31 +67,20 @@ pub fn dev_origin(configured: Option<&Url>, debug_build: bool) -> Option<Url> {
     configured.filter(|_| debug_build).cloned()
 }
 
-/// WKWebView asks the navigation handler about a new-window request before it raises one (wry 0.55
-/// passes every `decidePolicyForNavigationAction` through), so on macOS a refusal alone would eat
-/// every link in a message. WebKitGTK and WebView2 raise the request without asking. The door
-/// opens only what `open_external` would: a link the window's renderers reported on screen, or
-/// one of the shell's own constant links (`rendered_links.rs`).
-pub const ASKED_ABOUT_NEW_WINDOWS: bool = cfg!(target_os = "macos");
-
-/// A window's link door: offered an address the guard refused, `true` when it took it.
-pub type Door = dyn Fn(&str) -> bool + Send + Sync;
-
+/// A refused navigation goes nowhere, on every platform. A link leaves only as the webview's own
+/// new-window request on the person's click (`link_gate.rs`); WKWebView asks this guard about
+/// that request too, and the gate answers it before the guard is asked.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Verdict {
     Admitted,
-    /// Refused here and handed to the window's link door, which says its own line.
-    Handed,
     /// Refused, with the one line that says so.
     Refused(String),
 }
 
 /// One navigation, decided. Pure, so every arm is driven by test on any platform.
-pub fn decide(url: &Url, own: Own, dev: Option<&Url>, door: Option<&dyn Fn(&str) -> bool>) -> Verdict {
+pub fn decide(url: &Url, own: Own, dev: Option<&Url>) -> Verdict {
     if admits(url, own, dev) {
         Verdict::Admitted
-    } else if door.is_some_and(|door| door(url.as_str())) {
-        Verdict::Handed
     } else {
         Verdict::Refused(refusal_line(url))
     }
@@ -161,12 +150,11 @@ pub fn uses_https_scheme(config: &Config) -> bool {
 }
 
 /// The handler a window is built with. [`lock`] passes `cfg!(debug_assertions)`.
-pub fn guard(config: &Config, debug_build: bool, door: Option<Box<Door>>) -> impl Fn(&Url) -> bool + Send + 'static {
+pub fn guard(config: &Config, debug_build: bool) -> impl Fn(&Url) -> bool + Send + 'static {
     let own = Own::this_build(uses_https_scheme(config));
     let dev = dev_origin(config.build.dev_url.as_ref(), debug_build);
-    move |url| match decide(url, own, dev.as_ref(), door.as_deref().map(|door| door as &dyn Fn(&str) -> bool)) {
+    move |url| match decide(url, own, dev.as_ref()) {
         Verdict::Admitted => true,
-        Verdict::Handed => false,
         Verdict::Refused(line) => {
             write(&line);
             false
@@ -199,11 +187,10 @@ pub fn confine_non_documents(_request: Request<Vec<u8>>, response: &mut Response
 pub fn lock<'a, R: Runtime, M: Manager<R>>(
     builder: WebviewWindowBuilder<'a, R, M>,
     config: &Config,
-    door: Option<Box<Door>>,
 ) -> WebviewWindowBuilder<'a, R, M> {
     builder
         .use_https_scheme(uses_https_scheme(config))
-        .on_navigation(guard(config, cfg!(debug_assertions), door))
+        .on_navigation(guard(config, cfg!(debug_assertions)))
         .on_web_resource_request(confine_non_documents)
 }
 

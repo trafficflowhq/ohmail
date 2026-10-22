@@ -2088,12 +2088,11 @@ fn record<R: Runtime>(app: &AppHandle<R>, result: CheckResult, offered: Option<&
 /// `focused(false)` on purpose: it is a report, not a place to type, and a window that takes the
 /// keyboard away mid-sentence is the interruption this whole flow is built to avoid.
 fn show_progress_window<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::WebviewWindow<R>> {
-    // Born locked to the app's own pages like every window (`navigation.rs`). No link door: the
-    // page has no link and no new-window handler.
+    // Born locked to the app's own pages like every window (`navigation.rs`). The page has no link
+    // and no new-window handler.
     crate::navigation::lock(
         WebviewWindowBuilder::new(app, PROGRESS_WINDOW_LABEL, WebviewUrl::App("updater.html".into())),
         app.config(),
-        None,
     )
     .title("Updating ohmail")
     .inner_size(420.0, 210.0)

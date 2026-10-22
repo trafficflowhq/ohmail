@@ -20,36 +20,39 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *
  * ── WHAT THIS FILE HOLDS DOWN ───────────────────────────────────────────────────────────────
  *
- *  1. a clicked http/https link reaches the shell's opener with the EXACT address, and the
- *     click is cancelled so the webview cannot navigate;
- *  2. no other scheme ever reaches the opener — `cid:` above all, which names a part of the
+ *  1. a clicked http/https link becomes the webview's own new-window request for the EXACT
+ *     address, made inside the click (the shell opens it only on the person's own click,
+ *     `link_gate.rs`), and the click is cancelled so the webview cannot navigate;
+ *  2. no other scheme ever becomes that request — `cid:` above all, which names a part of the
  *     message being read and must not leave the machine;
  *  3. in a document where nothing is the app's own navigation (`trustSameOrigin: false`),
  *     nothing but an http/https address leaves; a MESSAGE FRAME carries no listener at all —
  *     its links are the shell's new-window door (`popup_route` in `engine.rs`);
  *  4. the WEB app is untouched: nothing is installed, no listener exists, and an anchor keeps
  *     the semantics the browser gives it;
- *  5. the shell's grant names the command. This is the silent shape the whole slice is about —
- *     a command registered and not granted fails at the ACL with no window and no log, which is
- *     indistinguishable from a link that was never wired up.
+ *  5. the window names no address to the shell: `open_external` is registered, declared and
+ *     granted nowhere, so a script in the window cannot report a link and open it with no click.
  *
  * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
  *
  *  · drop the `ev.preventDefault()` in the http arm            → the "does not navigate" case
  *    goes red (the webview would have been left to open the address itself);
+ *  · open after an `await`, or hand the address to a command   → the "inside the click" case
+ *                                                                goes red;
  *  · let an unrecognised scheme fall through instead of        → the `cid:`/`mailto:` case goes
  *    refusing it                                                 red;
  *  · make `interceptLinkClicks` install regardless of          → the web-app case goes red;
  *    `enableExternalLinks`
  *  · pass `trustSameOrigin: true` for the untrusted document  → that case goes red;
- *  · register `open_external` and leave it out of the          → the grant case goes red;
- *    capability
+ *  · register `open_external` again                            → the absence case goes red;
  *  · install the listener on the frame again in `MessageBody`  → the wiring case goes red.
  */
 
 type Invoked = { command: string; payload?: Record<string, unknown> };
 
 let invoked: Invoked[] = [];
+/** Every new-window request the window made, as `window.open`'s three arguments. */
+let opened: unknown[][] = [];
 
 interface Host {
   __TAURI_INTERNALS__?: { invoke: (c: string, p?: Record<string, unknown>) => Promise<unknown> };
@@ -68,12 +71,18 @@ let disposers: Array<() => void> = [];
 
 beforeEach(() => {
   invoked = [];
+  opened = [];
   host.__TAURI_INTERNALS__ = {
     invoke: (command, payload) => {
       invoked.push({ command, payload });
       return Promise.resolve(null);
     },
   };
+  // The webview's new-window request: recorded, and answered with no window, as the shell does.
+  vi.spyOn(window, "open").mockImplementation((...args: unknown[]) => {
+    opened.push(args);
+    return null;
+  });
   document.body.innerHTML = "";
   vi.resetModules();
 });
@@ -82,6 +91,7 @@ afterEach(() => {
   for (const off of disposers) off();
   disposers = [];
   delete host.__TAURI_INTERNALS__;
+  vi.restoreAllMocks();
 });
 
 /** A fresh copy of the module — its "armed" flag and its installed-document set are per-module. */
@@ -153,7 +163,7 @@ describe("what counts as an address to hand to the browser", () => {
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
 describe("the desktop window, armed", () => {
-  it("a clicked link reaches the opener with the exact address, and does NOT navigate", async () => {
+  it("a clicked link is ONE new-window request for the exact address, and does NOT navigate", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();
     install(mod, document, true);
@@ -161,15 +171,24 @@ describe("the desktop window, armed", () => {
     const notPrevented = clickAnchor(document, "https://example.test/story?id=7#top");
 
     expect(notPrevented, "the click was left to the webview, which would have navigated").toBe(false);
-    expect(invoked).toEqual([
-      {
-        command: mod.OPEN_EXTERNAL_COMMAND,
-        payload: { url: "https://example.test/story?id=7#top" },
-      },
-    ]);
+    expect(opened).toEqual([["https://example.test/story?id=7#top", "_blank", "noopener,noreferrer"]]);
+    expect(invoked, "the window handed the shell an address").toEqual([]);
   });
 
-  it("a scheme that is not http(s) is stopped and never reaches the opener", async () => {
+  /* INSIDE THE CLICK, OR NOT AT ALL. WebKit counts the person's gesture only while their event is
+     handled (and its own short chain after it), so the request is made before the listener
+     returns: no await, no promise, no command first. Read with no turn of the event loop between
+     the dispatch and the assertion. */
+  it("the request is made inside the click, before the listener returns", async () => {
+    const mod = await freshModule();
+    mod.enableExternalLinks();
+    install(mod, document, true);
+
+    clickAnchor(document, "https://example.test/now");
+    expect(opened, "the open waited for a later turn").toHaveLength(1);
+  });
+
+  it("a scheme that is not http(s) is stopped and never becomes a request", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();
     install(mod, document, true);
@@ -177,7 +196,8 @@ describe("the desktop window, armed", () => {
     for (const href of ["cid:part1@example.test", "mailto:a@b.test", "tel:+41000000000"]) {
       clickAnchor(document, href);
     }
-    expect(invoked, "a non-http scheme was handed to the platform opener").toEqual([]);
+    expect(opened, "a non-http scheme was asked for as a window").toEqual([]);
+    expect(invoked, "a non-http scheme was handed to the shell").toEqual([]);
   });
 
   it("the app's own navigation is left alone — a hash route is not an outing", async () => {
@@ -186,6 +206,7 @@ describe("the desktop window, armed", () => {
     install(mod, document, true);
 
     expect(clickAnchor(document, "#/settings"), "an in-page route was cancelled").toBe(true);
+    expect(opened).toEqual([]);
     expect(invoked).toEqual([]);
   });
 
@@ -211,7 +232,7 @@ describe("the desktop window, armed", () => {
     for (const own of ["/mailbox#/settings", "/login", "./drafts", location.origin + "/mailbox"]) {
       expect(clickAnchor(document, own), `${own} was cancelled`).toBe(true);
     }
-    expect(invoked, "the app's own routes were posted to the platform's browser").toEqual([]);
+    expect(opened, "the app's own routes were sent to the platform's browser").toEqual([]);
   });
 
   it("installing twice does not answer one click twice", async () => {
@@ -221,7 +242,7 @@ describe("the desktop window, armed", () => {
     install(mod, document, true);
 
     clickAnchor(document, "https://example.test/");
-    expect(invoked).toHaveLength(1);
+    expect(opened).toHaveLength(1);
   });
 });
 
@@ -239,17 +260,13 @@ describe("in a document that is not the app's own", () => {
     install(mod, frame, false);
 
     expect(clickAnchor(frame, "https://newsletter.test/unsubscribe?u=9")).toBe(false);
-    expect(invoked).toEqual([
-      {
-        command: mod.OPEN_EXTERNAL_COMMAND,
-        payload: { url: "https://newsletter.test/unsubscribe?u=9" },
-      },
-    ]);
+    expect(opened).toEqual([["https://newsletter.test/unsubscribe?u=9", "_blank", "noopener,noreferrer"]]);
 
-    invoked = [];
+    opened = [];
     // `cid:` in a frame is the sharp one: it names a part of THIS message.
     expect(clickAnchor(frame, "cid:part1@example.test"), "a cid: link was left to the frame")
       .toBe(false);
+    expect(opened).toEqual([]);
     expect(invoked).toEqual([]);
   });
 });
@@ -268,15 +285,18 @@ describe("the web app is not touched", () => {
 
     expect(clickAnchor(document, "https://example.test/"), "the web app cancelled a link click")
       .toBe(true);
+    expect(opened, "the web app replaced the browser's own link with a script's open").toEqual([]);
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
   });
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
-   THE SHELL'S HALF, FROM SOURCE — the config guard, in `desktop-attach-cap.test.ts`'s method.
-   A command registered and not GRANTED is refused by the ACL with no window and no log, which
-   is the silent shape this whole slice is about. Read from source because what regresses in
-   this family is a name missing from a literal.
+   THE SHELL'S HALF, FROM SOURCE, in `desktop-attach-cap.test.ts`'s method. The window used to
+   hand the shell an address over `open_external`, and a script already in the window could
+   report a link and open it with no click. The command is gone from all three places a command
+   lives — the handler, the declaration and the grant — and the module that called it names no
+   shell command at all. Read from source because what regresses in this family is a name in a
+   literal.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
 function sourceOf(rel: string): string {
@@ -287,24 +307,40 @@ function sourceOf(rel: string): string {
   }
 }
 
-describe("the window is granted the command it calls", () => {
+describe("the window hands the shell no address", () => {
   const engine = sourceOf("src-tauri/src/engine.rs");
 
-  it("`open_external` is registered AND named in the capability", () => {
-    expect(engine, "open_external is not in the invoke handler")
-      .toMatch(/generate_handler!\[[^\]]*\bopen_external\b/s);
+  it("`open_external` is not registered, not declared and not granted", () => {
+    const handler = /generate_handler!\[([^\]]*)\]/s.exec(engine)?.[1] ?? "";
+    expect(handler, "the invoke handler could not be read").toMatch(/\bopen_link\b/);
+    expect(handler.replace(/\/\/[^\n]*/g, ""), "open_external is still in the invoke handler")
+      .not.toMatch(/\bopen_external\b/);
+
+    const build = sourceOf("src-tauri/build.rs");
+    const declared = /const WINDOW_COMMANDS: &\[&str\] = &\[([^\]]*)\]/s.exec(build)?.[1] ?? "";
+    expect(declared, "WINDOW_COMMANDS could not be read").toMatch(/"open_link"/);
+    expect(declared, "build.rs still declares open_external").not.toMatch(/"open_external"/);
 
     const cap = engine.match(/const LOCAL_ENGINE_CAPABILITY: &str = r#"([\s\S]*?)"#;/);
     expect(cap, "LOCAL_ENGINE_CAPABILITY could not be read out of engine.rs").not.toBeNull();
     const grant = JSON.parse(cap![1]!) as { windows: string[]; permissions: string[] };
 
-    expect(grant.permissions, "the window may not call open_external")
-      .toContain("allow-open-external");
+    expect(grant.permissions, "the window may still call open_external").not.toContain("allow-open-external");
+    expect(grant.permissions).toContain("allow-open-link");
     // The grant stays the main window's and stays one-directional: it may hear the shell and
-    // never make the shell hear it. Asserted beside the addition so a widening fails here too.
+    // never make the shell hear it.
     expect(grant.windows).toEqual(["main"]);
     expect(grant.permissions).toContain("core:event:allow-listen");
     expect(grant.permissions).not.toContain("core:event:allow-emit");
+  });
+
+  it("the interceptor names no shell command and keeps no second refusal path", async () => {
+    const mod = await freshModule();
+    const code = sourceOf("../webapp/app/shell/open-external.ts").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+    expect(code).not.toMatch(/__TAURI_INTERNALS__|\binvoke\(|open_external/);
+    // A refusal is the shell's `link:refused`, said by the gate (`desktop-link-refused.test.tsx`).
+    expect("setOpenFailureSink" in mod, "the module still keeps a failure sink of its own").toBe(false);
+    expect("OPEN_EXTERNAL_COMMAND" in mod).toBe(false);
   });
 
   it("only http and https can be spawned, and no shell parses the address on Windows", () => {
@@ -316,7 +352,7 @@ describe("the window is granted the command it calls", () => {
     // query) arrives unquoted and cmd reads it as a command separator.
     expect(engine, "the Windows opener is a shell again").not.toMatch(/Command::new\("cmd"\)/);
     expect(engine).toMatch(/Command::new\("rundll32\.exe"\)/);
-    expect(engine).toMatch(/fn open_external/);
+    expect(engine).toMatch(/pub\(crate\) fn spawn_opener\(url: &str\)/);
   });
 });
 
@@ -340,47 +376,20 @@ describe("the message frame is left to the shell's new-window door", () => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────
-   A REFUSAL THE PERSON CAN SEE. The anchor path was the last silent edge of this feature:
-   a `console.error` in a window whose devtools nobody opens. The two `openWeb` buttons have
-   shown a sentence since they were written; this is that sentence for the other path.
+   A WEBVIEW THAT ANSWERS THE REQUEST WITH NOTHING. The shell never raises a second window, so
+   `window.open` answers null; a refusal reaches the person as the shell's `link:refused`
+   (`desktop-link-refused.test.tsx`), not as anything this listener waits for.
    ───────────────────────────────────────────────────────────────────────────────────────── */
 
-describe("a link the shell will not open says so", () => {
-  it("the rejection reaches the surface that can speak, with the address", async () => {
-    host.__TAURI_INTERNALS__ = {
-      invoke: (command, payload) => {
-        invoked.push({ command, payload });
-        return Promise.reject(new Error("ohmail: this computer would not open a browser (exit 3)"));
-      },
-    };
+describe("the request is answered by the shell, not awaited here", () => {
+  it("a null answer still leaves the click cancelled, and nothing throws", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();
     install(mod, document, true);
-
-    const said: string[] = [];
-    mod.setOpenFailureSink((url) => said.push(url));
-    disposers.push(() => mod.setOpenFailureSink(null));
-
-    clickAnchor(document, "https://example.test/story?id=7");
-    // The invoke is fired without being awaited by the handler; the rejection lands a turn later.
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(said, "a refused link said nothing anywhere a person could see")
-      .toEqual(["https://example.test/story?id=7"]);
-  });
-
-  it("with no sink registered the click is still cancelled and nothing throws", async () => {
-    host.__TAURI_INTERNALS__ = {
-      invoke: () => Promise.reject(new Error("no")),
-    };
-    const mod = await freshModule();
-    mod.enableExternalLinks();
-    install(mod, document, true);
-    // The web app's permanent state, and the desktop's before the gate mounts: the rejection goes
-    // to the log alone. An unhandled rejection here would be a worse failure than the silence.
     expect(clickAnchor(document, "https://example.test/"), "the click was left to the webview")
       .toBe(false);
-    await new Promise((r) => setTimeout(r, 0));
+    expect(opened).toHaveLength(1);
+    expect(invoked).toEqual([]);
   });
 });
 
@@ -486,13 +495,14 @@ describe("the window is granted the two sibling commands as well", () => {
 
   it("`open_link` is registered AND named; `open_attachment` is neither", () => {
     // 0.9.7's shape, which is what makes this family fail silently: a command registered and not
-    // granted is refused at the ACL with no window and no log. `open_external` has had this pair
-    // of assertions since that release; `open_link` spawns the same opener. `open_attachment`, the
-    // third that did, is gone: it launched bytes the window chose.
+    // granted is refused at the ACL with no window and no log. `open_link` spawns the shell's one
+    // opener. `open_attachment` is gone (it launched bytes the window chose), and so is
+    // `open_external` (it opened an address the window named, with no click).
     expect(engine, "open_link is not in the invoke handler").toMatch(/generate_handler!\[[^\]]*\bopen_link\b/s);
     expect(grant.permissions, "the window may not call open_link").toContain("allow-open-link");
     expect(engine).not.toMatch(/generate_handler!\[[^\]]*\bopen_attachment\b/s);
     expect(grant.permissions).not.toContain("allow-open-attachment");
+    expect(grant.permissions).not.toContain("allow-open-external");
   });
 
   it("a permission this binary cannot resolve is DROPPED AND NAMED, never dropped quietly", () => {

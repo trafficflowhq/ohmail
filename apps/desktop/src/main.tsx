@@ -104,9 +104,10 @@ function BootFailure({ error }: { error: unknown }) {
    In a tab, `target="_blank"` opens a tab. In this window there is no tab: a `_blank` click is
    a new-window REQUEST, and a webview whose host registered no handler for one answers it with
    no window — silently, correctly, and with no error anywhere. Every link in the app did
-   nothing, in a mail body and out of it. `open-external.ts` carries the mechanism; this is the
-   one call that arms it, on this document. A message frame's links reach the shell as the
-   new-window request itself (`popup_route` in `engine.rs`). */
+   nothing, in a mail body and out of it. `open-external.ts` carries the mechanism — the click
+   becomes the webview's own new-window request, which the shell opens only on the person's own
+   click — and this is the one call that arms it, on this document. A message frame's links
+   reach the shell as the new-window request itself (`popup_route` in `engine.rs`). */
 /* AND AN ATTACHMENT SAVES THROUGH THE SHELL, SWITCHED ON HERE FOR THE SAME REASONS. In a tab, a
    hidden `<a download>` saves the file. In this window the webview asks its host to perform the
    download and, finding no handler registered, cancels it — so every attachment press did
@@ -116,10 +117,10 @@ function BootFailure({ error }: { error: unknown }) {
    both arms find no shell and refuse per their own contracts. */
 enableExternalLinks();
 interceptLinkClicks(document, { trustSameOrigin: true });
-/* …AND THE LINKS ON SCREEN GO TO THE SHELL AS THEY ARE DRAWN. The shell's opener and its
-   new-window door open only a link a renderer reported, or one of the shell's own
-   (`rendered-links.ts`). Armed here, before the first render, so a message's links are on the
-   shell's list before anybody can press one. */
+/* …AND THE LINKS ON SCREEN GO TO THE SHELL AS THEY ARE DRAWN. The shell's new-window door opens
+   only a link a renderer reported, or one of the shell's own (`rendered-links.ts`). Armed here,
+   before the first render, so a message's links are on the shell's list before anybody can
+   press one. */
 setRenderedLinksSink(reportRenderedLinksToShell);
 enableDesktopAttachments();
 

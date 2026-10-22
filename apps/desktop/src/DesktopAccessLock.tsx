@@ -5,8 +5,9 @@
  * `app/sign-out.ts`, aliased here to the refusing api-client stub): the same `accessLock` sentences,
  * this window's chrome and door. Two doors stay open, because a lock with no way out is a trap:
  * signing out, and the way back, which MINTS AT THE PRESS — the 402's `manageUrl` only says a page
- * exists. It lifts on the account's fresh `access: "open"` read (`useWallLift`) and on nothing
- * else, and deletes and wipes nothing itself.
+ * exists — and draws the minted page as a link the person's own click opens (`useMintedPage`). It
+ * lifts on the account's fresh `access: "open"` read (`useWallLift`) and on nothing else, and
+ * deletes and wipes nothing itself.
  */
 
 import { useCallback, useState } from "react";
@@ -19,7 +20,7 @@ import {
 } from "./bridge-fetch.js";
 import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
 import { linksOutToBilling } from "./distribution.js";
-import { MANAGE_LINK_PATH, leaveForAccountPage } from "./DesktopSubscription.js";
+import { AccountPageLink, MANAGE_LINK_PATH, useMintedPage } from "./DesktopSubscription.js";
 import { dayStamp } from "../../webapp/app/shell/format.js";
 import { DOOR_COPY } from "./door-copy.js";
 
@@ -70,6 +71,8 @@ export function DesktopAccessLock(
   const lang = useLocale() === "de" ? "de" : "en";
   const [minting, setMinting] = useState(false);
   const [mintRefusal, setMintRefusal] = useState<"failed" | "unverified" | null>(null);
+  const page = useMintedPage();
+  const showPage = page.show;
 
   const doMint = useCallback(async () => {
     if (minting) return;
@@ -84,8 +87,9 @@ export function DesktopAccessLock(
       const body = (await res.json().catch(() => null)) as
         { url?: unknown; error?: { code?: unknown } } | null;
       if (res.ok && typeof body?.url === "string" && body.url.length > 0) {
-        armPoll();
-        leaveForAccountPage(body.url);
+        // Drawn, not opened: the person's own click on the drawn page is the open.
+        if (showPage(body.url)) armPoll();
+        else setMintRefusal("failed");
         return;
       }
       setMintRefusal(res.status === 403 && body?.error?.code === "email_unverified" ? "unverified" : "failed");
@@ -94,7 +98,7 @@ export function DesktopAccessLock(
     } finally {
       setMinting(false);
     }
-  }, [armPoll, lang, minting]);
+  }, [armPoll, lang, minting, showPage]);
 
   const doSignOut = useCallback(async () => {
     if (signingOut) return;
@@ -166,19 +170,22 @@ export function DesktopAccessLock(
         <div className="gate-actions">
           {check === "pending" ? <Button onClick={checkAgain}>{t("checkAgain")}</Button> : null}
           {/* Rendered ONLY where the service operates a page — this app holds no plan, no balance
-              and no page of its own. The minted address leaves by an anchor click, so the window's
-              link interceptor hands it to the browser where the person is already signed in. */}
+              and no page of its own. The press mints; the minted address is drawn as a link in
+              its place, and the person's own click on it is what the window's link interceptor
+              hands to the browser where they are already signed in. */}
           {facts.manageUrl && mayLinkOut && check !== "checking"
-            ? (
-              <Button
-                variant="primary"
-                data-run={minting ? "working" : undefined}
-                aria-busy={minting || undefined}
-                onClick={() => { void doMint(); }}
-              >
-                {lifecycle !== undefined ? t("openAccount") : t("manage")}
-              </Button>
-            )
+            ? (page.href !== null
+              ? <AccountPageLink href={page.href} label={t("openPage")} onFollow={page.followed} />
+              : (
+                <Button
+                  variant="primary"
+                  data-run={minting ? "working" : undefined}
+                  aria-busy={minting || undefined}
+                  onClick={() => { void doMint(); }}
+                >
+                  {lifecycle !== undefined ? t("openAccount") : t("manage")}
+                </Button>
+              ))
             : null}
           <Button onClick={() => { void doSignOut(); }} disabled={signingOut}>
             {t("signOut")}

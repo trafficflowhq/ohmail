@@ -1,18 +1,20 @@
-//! THE LINKS ON SCREEN. `open_external` and the message frame's new-window door used to open any
-//! http(s) address [`external_url`] admitted by shape, so whatever got a string to either door —
-//! app code holding a value out of a message, a sanitizer miss that raised a frame navigation into
-//! the macOS link door — could hand it to the person's browser. Both doors now open an address only
-//! when it is a link the window's renderers reported as they drew it (a message frame's anchors,
-//! the prose path's, the editor's in a draft or a signature, the Screener's unsubscribe link, the
-//! minted account page), kept here per surface in a bounded set, or one of the shell's own constant
-//! links ([`OWN_LINKS`]).
+//! THE LINKS ON SCREEN. The new-window door (`engine::popup_route`) used to open any http(s)
+//! address [`external_url`] admitted by shape, and a command beside it did the same for any address
+//! the window named. It now opens an address only when it is a link the window's renderers reported
+//! as they drew it (a message frame's anchors, the prose path's, the editor's in a draft or a
+//! signature, the Screener's unsubscribe link, the minted account page), kept here per surface in a
+//! bounded set, or one of the shell's own constant links ([`OWN_LINKS`]).
 //!
 //! The set is what the RENDERER reports, so a script already running in the window can report an
-//! address and then open it; what this closes is a door handed an address no renderer drew.
-//! Addresses are compared in the URL parser's own serialisation, so the webview's navigation URL
-//! and the browser's `URL.href` agree; the opener is always handed the caller's own bytes. A
-//! refusal is one log line naming the door, the reason and the host's class, never the address:
-//! the log travels in diagnostic files.
+//! address. It cannot open one: the command is gone, and the door opens a link only on a click or a
+//! key press the webview itself counted as the person's (`link_gate.rs`, `engine::Activation`).
+//! What a script can still do is ride the person's own action — inside that event's handling on
+//! macOS and Linux (under about a second, and more than one open per click), within Chromium's
+//! activation on Windows (about 5 s, one open) — and only to a link on screen. Addresses are
+//! compared in the URL parser's own serialisation, so the webview's navigation URL and the
+//! browser's `URL.href` agree; the opener is always handed the caller's own bytes. A refusal is one
+//! log line naming the door, the reason and the host's class, never the address: the log travels
+//! in diagnostic files.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Mutex;
@@ -158,7 +160,7 @@ impl RenderedLinks {
     }
 }
 
-/// The doors' read at the moment they decide: the managed set, or `None` — which refuses — before
+/// The door's read at the moment it decides: the managed set, or `None` — which refuses — before
 /// `engine::manage` has put it in.
 pub fn read_managed<R: tauri::Runtime, T>(app: &tauri::AppHandle<R>, f: impl FnOnce(Option<&Rendered>) -> T) -> T {
     use tauri::Manager;
@@ -175,6 +177,9 @@ pub enum Why {
     Shape,
     /// Not a link on screen and not one of [`OWN_LINKS`].
     Unrendered,
+    /// A link on screen that a script asked for: the webview counted no click or key of the
+    /// person's behind the request (`engine::Activation`).
+    Gesture,
     /// Admitted, and the platform's opener failed.
     Opener,
 }
@@ -184,6 +189,7 @@ impl Why {
         match self {
             Why::Shape => "shape",
             Why::Unrendered => "unrendered",
+            Why::Gesture => "gesture",
             Why::Opener => "opener",
         }
     }
@@ -196,7 +202,7 @@ pub struct Refusal {
     pub sentence: String,
 }
 
-/// THE PREDICATE BOTH DOORS ASK. [`external_url`]'s shape first, then the address must be one of
+/// THE PREDICATE THE DOOR ASKS. [`external_url`]'s shape first, then the address must be one of
 /// [`OWN_LINKS`] or a link some surface reported, compared in [`key_of`]'s form. No set (the state
 /// is not managed yet) refuses everything. Answers the caller's own bytes, never the comparison
 /// form: what was judged is what is spawned.
@@ -212,19 +218,16 @@ pub fn admitted<'a>(url: &'a str, set: Option<&Rendered>) -> Result<&'a str, Ref
     }
 }
 
-/// Which door refused.
+/// Which door refused. One is left: no command opens an address any more.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Door {
-    /// `open_external`, the app document's opener.
-    Command,
-    /// The new-window door: `on_new_window`, and `link_door` on macOS.
+    /// The new-window door every engine's hook opens through (`engine::route_and_deliver`).
     Popup,
 }
 
 impl Door {
     fn word(self) -> &'static str {
         match self {
-            Door::Command => "command",
             Door::Popup => "popup",
         }
     }
@@ -256,8 +259,8 @@ pub fn trimmed_line(trimmed: Trimmed) -> String {
 }
 
 /// The window's renderers report the http(s) links one surface draws; an empty list removes the
-/// surface. SYNC, so a report is applied in IPC order, before a later `open_external`, which is
-/// async. Opens nothing.
+/// surface. SYNC, so a report is applied in IPC order, on the thread that answers the new-window
+/// request a later click makes. Opens nothing.
 #[tauri::command]
 pub fn rendered_links(set: tauri::State<'_, RenderedLinks>, surface: String, urls: Vec<String>) -> Result<(), String> {
     let trimmed = {

@@ -6120,7 +6120,7 @@ pub fn open_target(key: &str, challenge: Option<&str>, request: Option<&str>) ->
 /// ── WINDOWS IS NOT `cmd /c start` ANY MORE, AND THE REASON IS THE NEW CALLER ─────────────────
 ///
 /// `cmd /c start "" <url>` was correct while the only addresses reaching here were constants of
-/// [`LINKS`]. It is NOT correct for [`open_external`], whose argument comes out of a mail body:
+/// [`LINKS`]. It is NOT correct for a link in a message ([`popup_route`]), which a sender wrote:
 /// `cmd.exe` re-parses its own command line, and Rust's argument escaping is written for
 /// `CommandLineToArgvW` rather than for cmd's grammar — so a URL containing `&` (which is to say
 /// most URLs with a query) is passed WITHOUT quotes, and cmd then reads the `&` as a command
@@ -6143,7 +6143,7 @@ pub fn open_target(key: &str, challenge: Option<&str>, request: Option<&str>) ->
 ///
 /// `rundll32.exe url.dll,FileProtocolHandler` answers both kinds on Windows: it is the documented
 /// "open this the way this user's own settings say to", and it takes a local path as readily as a
-/// URL. It is executed DIRECTLY, so no shell parses anything — see [`open_external`] for the
+/// URL. It is executed DIRECTLY, so no shell parses anything — see [`spawn_opener`] for the
 /// injection this replaced.
 /// The sentence for a machine that has no `xdg-open` at all.
 ///
@@ -6464,26 +6464,6 @@ fn strip_scheme<'a>(url: &'a str, scheme: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(scheme).then(|| &url[scheme.len()..])
 }
 
-/// Open an address a message carried, in the user's own browser.
-///
-/// The judgement is [`crate::rendered_links::admitted`]: [`external_url`]'s shape, then a link on
-/// screen or one of the shell's own; this is what spawns, and it spawns the caller's bytes. A
-/// refusal comes back to the window as a rejected promise rather than as a silent no-op, because
-/// "the link did nothing" is precisely the failure this pair exists to end, and it writes one log
-/// line that names no part of the address.
-#[cfg(feature = "local-engine")]
-#[tauri::command(async)]
-fn open_external(set: tauri::State<'_, crate::rendered_links::RenderedLinks>, url: String) -> Result<(), String> {
-    use crate::rendered_links::{admitted, log_refusal, Door, Why};
-    match set.read(|held| admitted(&url, held)) {
-        Ok(target) => spawn_opener(target).inspect_err(|_| log_refusal(Door::Command, Why::Opener, &url)),
-        Err(refusal) => {
-            log_refusal(Door::Command, refusal.why, &url);
-            Err(refusal.sentence)
-        }
-    }
-}
-
 // ═══ AN ATTACHMENT OPENS IN THE VIEWER THIS COMPUTER ALREADY HAS ═════════════════════════════
 //
 // ── THE DEFECT, WHICH IS THE SAME CLASS AS THE LINK ONE AND NOT THE SAME BUG ────────────────
@@ -6494,7 +6474,7 @@ fn open_external(set: tauri::State<'_, crate::rendered_links::RenderedLinks>, ur
 // host whether the navigation should become a download, and a host that registered no download
 // handler answers by CANCELLING the navigation. So the click was answered correctly, by a
 // component whose correct answer is "no", and there was no error to find anywhere — exactly the
-// shape that made every link in the app do nothing before [`open_external`] existed.
+// shape that made every link in the app do nothing before the shell answered new-window requests.
 //
 // The PDF viewer was a second, independent reason then: the window's policy said `worker-src
 // 'none'` and the in-page PDF renderer was aliased out, so a reader who pressed a PDF got a panel
@@ -7104,9 +7084,8 @@ pub fn code_from_link(raw: &str) -> Option<String> {
 #[cfg(feature = "local-engine")]
 pub const MAILTO_EVENT: &str = "link:mailto";
 
-/// The event the shell emits when a link clicked in a message will not open, carrying the
-/// address: the window says so in the same sentence its own open refusal uses. The payload is
-/// never written to a log.
+/// The event the shell emits when a link will not open, carrying the address: the window says so
+/// in one sentence, wherever the link was drawn. The payload is never written to a log.
 #[cfg(feature = "local-engine")]
 pub const LINK_REFUSED_EVENT: &str = "link:refused";
 
@@ -7196,9 +7175,10 @@ fn announce_link<R: tauri::Runtime>(app: &tauri::AppHandle<R>, raw: &str) {
     }
 }
 
-/// Where a new-window request from the window goes. Every link in a message frame is forced to
-/// `target="_blank"`, so its click reaches the shell as this request on all three engines; WebKit
-/// calls no listener in a frame sandboxed without scripts, so this is the frame's only door.
+/// Where a new-window request from the window goes. It is the one way a link leaves: a message
+/// frame's links are forced to `target="_blank"` and reach the shell as this request on all three
+/// engines, and the app document's are turned into one inside the click (`open-external.ts`).
+/// Each engine's hook is armed in `link_gate.rs`.
 #[cfg(feature = "local-engine")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PopupRoute {
@@ -7210,6 +7190,28 @@ pub enum PopupRoute {
     Refused { url: String, why: crate::rendered_links::Why },
     /// The app's own origin, or a scheme this app never opens (`cid:` above all).
     Ignored,
+}
+
+/// WHO ASKED FOR A NEW WINDOW: the person, by a click or a key press the webview itself counted
+/// as theirs (an assistive press included), or a script. Each engine says it per request
+/// (`link_gate.rs`); the shell mints nothing the page could read.
+#[cfg(feature = "local-engine")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Activation {
+    Person,
+    Script,
+}
+
+#[cfg(feature = "local-engine")]
+impl Activation {
+    /// `Person` for a request the webview marked as the person's, `Script` for anything else.
+    pub fn of(by_person: bool) -> Activation {
+        if by_person {
+            Activation::Person
+        } else {
+            Activation::Script
+        }
+    }
 }
 
 /// Tauri's http(s) spellings of the window's own origin. Its `tauri:`, `ipc:` and `asset:` schemes
@@ -7228,11 +7230,12 @@ fn http_host(url: &str) -> Option<String> {
 }
 
 /// Classify one new-window request against the links on screen (`set`, `None` before it is
-/// managed). Pure: `mailto:` to compose; http(s) on the app's own host ignored (a middle-click on
-/// an in-app link must not send the browser to `tauri.localhost`), any other http(s) through
-/// [`crate::rendered_links::admitted`]; everything else ignored.
+/// managed) and who asked. Pure: `mailto:` to compose; http(s) on the app's own host ignored (a
+/// middle-click on an in-app link must not send the browser to `tauri.localhost`); any other
+/// http(s) through [`crate::rendered_links::admitted`], then the activation, so a refusal names
+/// the first rule it broke: shape, on screen, gesture. Everything else ignored.
 #[cfg(feature = "local-engine")]
-pub fn popup_route(url: &str, set: Option<&crate::rendered_links::Rendered>) -> PopupRoute {
+pub fn popup_route(url: &str, set: Option<&crate::rendered_links::Rendered>, activation: Activation) -> PopupRoute {
     let Some((scheme, _)) = url.split_once(':') else { return PopupRoute::Ignored };
     let scheme = scheme.to_ascii_lowercase();
     if scheme == "mailto" {
@@ -7245,7 +7248,8 @@ pub fn popup_route(url: &str, set: Option<&crate::rendered_links::Rendered>) -> 
         return PopupRoute::Ignored;
     }
     match crate::rendered_links::admitted(url, set) {
-        Ok(admitted) => PopupRoute::Browser(admitted.to_string()),
+        Ok(admitted) if activation == Activation::Person => PopupRoute::Browser(admitted.to_string()),
+        Ok(_) => PopupRoute::Refused { url: url.to_string(), why: crate::rendered_links::Why::Gesture },
         Err(refusal) => PopupRoute::Refused { url: url.to_string(), why: refusal.why },
     }
 }
@@ -7256,44 +7260,44 @@ pub fn popup_route(url: &str, set: Option<&crate::rendered_links::Rendered>) -> 
 pub fn answer<R: tauri::Runtime>(
     url: &str,
     set: Option<&crate::rendered_links::Rendered>,
+    activation: Activation,
     spawn: impl Fn(PopupRoute),
 ) -> tauri::webview::NewWindowResponse<R> {
-    let route = popup_route(url, set);
+    let route = popup_route(url, set, activation);
     if route != PopupRoute::Ignored {
         spawn(route);
     }
     tauri::webview::NewWindowResponse::Deny
 }
 
-/// The main window's new-window handler (`menu.rs` builds the window with it). The links on
-/// screen are read at the click.
+/// THE ONE DOOR every engine's new-window hook opens through (`link_gate.rs`, and
+/// [`on_new_window`] on macOS): the links on screen are read at the request, and a routed link is
+/// carried out off the UI thread. `false` for an ignored request.
 #[cfg(feature = "local-engine")]
+pub(crate) fn route_and_deliver<R: tauri::Runtime>(app: &tauri::AppHandle<R>, url: &str, activation: Activation) -> bool {
+    let routed = std::cell::Cell::new(false);
+    let _ = crate::rendered_links::read_managed(app, |set| {
+        answer::<R>(url, set, activation, |route| {
+            routed.set(true);
+            let app = app.clone();
+            thread::spawn(move || deliver_popup(&app, route));
+        })
+    });
+    routed.get()
+}
+
+/// THE `window.open` DOOR ON macOS: WKWebView raises a new window from script through its UI
+/// delegate, which tauri hands here. `menu.rs` attaches it on macOS alone; WebKitGTK's and
+/// WebView2's requests reach `link_gate.rs`, and a second handler there would route each one
+/// twice. With the main window's `javaScriptCanOpenWindowsAutomatically` off, WebKit asks only
+/// during a gesture, so that preference, read live, is the activation.
+#[cfg(all(feature = "local-engine", target_os = "macos"))]
 pub fn on_new_window<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> impl Fn(tauri::Url, tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<R> + Send + 'static {
-    move |url, _features| {
-        crate::rendered_links::read_managed(&app, |set| {
-            answer::<R>(url.as_str(), set, |route| {
-                let app = app.clone();
-                thread::spawn(move || deliver_popup(&app, route));
-            })
-        })
-    }
-}
-
-/// The same door for an address the navigation guard refused (`navigation.rs`), where WKWebView
-/// asks the guard about a new-window request before raising one: on macOS a message link arrives
-/// here instead of at [`on_new_window`]. The same route and delivery; `false` for an ignored one.
-#[cfg(feature = "local-engine")]
-pub fn link_door<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> impl Fn(&str) -> bool + Send + Sync + 'static {
-    move |url| {
-        let route = crate::rendered_links::read_managed(&app, |set| popup_route(url, set));
-        if route == PopupRoute::Ignored {
-            return false;
-        }
-        let app = app.clone();
-        thread::spawn(move || deliver_popup(&app, route));
-        true
+    move |url, features| {
+        route_and_deliver(&app, url.as_str(), crate::link_gate::opener_activation(&features));
+        tauri::webview::NewWindowResponse::Deny
     }
 }
 
@@ -7321,9 +7325,9 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
     };
     match route {
         PopupRoute::Browser(url) => match spawn_opener(&url) {
-            Ok(()) => log_line(format_args!("a link in a message went to the browser through the new-window door")),
+            Ok(()) => log_line(format_args!("a link went to the browser on the person's own click")),
             Err(sentence) => {
-                log_line(format_args!("a link in a message was not opened: {sentence}"));
+                log_line(format_args!("a link was not opened: {sentence}"));
                 refused(url, Why::Opener);
             }
         },
@@ -7361,9 +7365,9 @@ fn deliver_popup<R: tauri::Runtime>(app: &tauri::AppHandle<R>, route: PopupRoute
 #[cfg(feature = "local-engine")]
 const LOCAL_ENGINE_CAPABILITY: &str = r#"{
   "identifier": "local-engine",
-  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for, hand the shell ONE http/https address for that same browser to open, which the shell refuses unless it is one of those links or one of the shell's own constant links, name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
+  "description": "The window may ask the shell about the local engine, send it one request at a time, choose which mailbox this install is for (a pairing's choice provisionally, then kept or undone by one of two commands that name nothing — the shell's own record says which door was replaced), sign out of it, press the failure card's one recovery (the shell removes the engine's own data-directory lock — a path the shell resolves and the window never names — and starts the engine again, refused outright unless the shell has already given up on the engine), press its Try again (the shell starts an engine it has given up on again and removes nothing, refused unless it has given up), ask the engine whether the computer at a pasted pairing link's address is the one that link came from (the window hands over the ORIGIN and the PIN the link carried and no token; on an install that has no door the shell starts an engine for that CANDIDATE in a directory of its own, asks it, and removes that directory afterwards, configuring nothing), post one notification, set the icon's badge, report its own startup and interaction timings as numbers the shell turns into a log line, read the platform's name and the newest lines of the log (no argument), hand back one diagnostic file of the app's own JSON shape for the shell to write beside that log under a name the shell chooses (the shell refuses any other text, and nothing is sent), open one of a fixed list of ohmail.app pages in the user's own browser (naming the page and, for the sign-in page alone, a 43-character commitment the shell validates and appends itself), report the http/https links a surface it draws shows (a message's links, a draft's or a signature's, the account page an answer named), which the shell keeps in a bounded list and opens nothing for (no command takes an address to open: a link reaches that same browser only as the webview's own new-window request on the person's own click, and only when it is one of those links or one of the shell's own constant links), name one attachment by its id for the shell to have the engine stream into this computer's Downloads folder (the shell picks the folder and the staging file and composes every part of the name; a name already taken is numbered, never overwritten), name one attachment by its id and declared type for the shell to stage for the in-app preview (an image is answered as a token on the shell's own preview scheme, which serves only files the shell staged in its own folder; text comes back inline only under a 2 MiB cap; the window names no path) and release that token when the preview closes, and listen for the shell's own events — including the handoff code an ohmail:// activation carried. It may also drive HOST MODE, entirely through this shell's own commands: read its state, probe the user's own tailnet (tailscale status), arm or disarm publishing the engine's loopback door to that tailnet (tailscale serve — never funnel, pinned by test), read and set this install's start-at-login registration, and open Tailscale's download page — one more constant address the shell owns, the window still naming no URL. It may also CLAIM a mailto: activation the shell is holding (take-once, so a link seeds one compose form and never two), and ask about the OS's DEFAULT MAIL APP through two commands that name nothing: a read of the current handler's state, and a request that takes each platform's own sanctioned path — macOS's consent dialog, the Windows Settings page (one more constant address), xdg-settings on Linux — never a registry write. It may read the app's UPDATE state, press the same button the menu item is, and ask for the check the app makes at launch — a read of the installed version and of what the last check found, a press that checks or restarts into an already-verified payload, and a scheduled check that is silent unless it finds something (a press is a person asking and is answered out loud, which is right for a button and wrong once a day for ever); it may not name a feed, see a payload or install anything, and the request, the signature check and the version guard stay in the shell. It may ask for the DESKTOP'S OWN THEME through one read-only command: on an Omarchy system the shell answers the active theme's raw material (the theme's colors.toml, the system's font and gap facts — paths the SHELL names, never the window), and everywhere else it answers nothing. It may REPORT that its first frame is composed, with that frame's background colour as one #rrggbb string the shell parses strictly: the shell paints the still-hidden window that colour, keeps it for the next launch in one file it names itself, and shows the window. It may set its own TEXT SIZE as one of five percentages, which the shell makes the main window's zoom and keeps for the next launch in one more file it names itself; any other number is refused. Nothing else: no filesystem path the window may name, no arbitrary shell command, no network, and no other Tauri core API.",
   "windows": ["main"],
-  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links", "allow-open-external", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-window-ready", "allow-set-text-size", "core:event:allow-listen"]
+  "permissions": ["allow-engine-status", "allow-engine-request", "allow-engine-configure", "allow-engine-switch-commit", "allow-engine-switch-restore", "allow-engine-logout", "allow-engine-unlock-retry", "allow-engine-start-over", "allow-engine-retry", "allow-host-candidate-probe", "allow-notify", "allow-set-badge", "allow-ui-vitals", "allow-diagnostic-facts", "allow-diagnostic-save", "allow-open-link", "allow-rendered-links", "allow-save-attachment", "allow-stage-attachment-preview", "allow-release-attachment-preview", "allow-host-state", "allow-tailscale-status", "allow-tailscale-serve-arm", "allow-tailscale-serve-disarm", "allow-autostart-get", "allow-autostart-set", "allow-open-tailscale-download", "allow-mailto-claim", "allow-default-mail-status", "allow-default-mail-request", "allow-omarchy-theme", "allow-update-state", "allow-update-press", "allow-update-poll", "allow-window-ready", "allow-set-text-size", "core:event:allow-listen"]
 }"#;
 
 /// The commands `build.rs` declared to the ACL manifest, baked in at compile time.
@@ -7510,10 +7514,9 @@ pub fn attach<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R
             diagnostic_save,
             open_link,
             // The links a surface draws, reported as it draws them: the only addresses the
-            // opener below takes besides the shell's own (`rendered_links.rs`). Sync, so a report
-            // lands before a later open.
+            // new-window door opens besides the shell's own (`rendered_links.rs`). No command here
+            // takes an address to open; a link leaves on the person's click (`link_gate.rs`).
             crate::rendered_links::rendered_links,
-            open_external,
             // The DOWNLOAD: one attachment by id into the person's own Downloads folder, which is
             // what the web client's `<a download>` does and what a Tauri webview cancels.
             // `save_attachment` owns the collision numbering and the path discipline.
@@ -7573,8 +7576,8 @@ pub fn manage(app: &tauri::App, shell: Arc<Shell>) {
     // The mailto slot goes in FIRST, before any path that could announce a link, so an
     // activation can never race a slot that does not exist yet.
     app.manage(MailtoPending(std::sync::Mutex::new(None)));
-    // The links on screen, before the grant that lets the window report one: until it is here both
-    // doors refuse every address.
+    // The links on screen, before the grant that lets the window report one: until it is here the
+    // new-window door refuses every address.
     app.manage(crate::rendered_links::RenderedLinks::default());
 
     // EVERY url the activation carried, each judged on its own. The platform may deliver more than

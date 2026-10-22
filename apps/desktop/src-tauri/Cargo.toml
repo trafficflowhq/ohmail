@@ -319,6 +319,27 @@ gtk = "0.18"
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "=0.38.2"
 
+# WKWEBVIEW, NAMED FOR THE GESTURE GATE (`src/link_gate_macos.rs`): a navigation delegate that
+# answers a new window in front of wry's own and forwards every other selector to it, and the main
+# window's configuration with `javaScriptCanOpenWindowsAutomatically` off. Every crate here is
+# already in this binary's graph at these versions, with these features among those wry turns on,
+# so naming them adds no third-party code to audit; MIT OR Apache-2.0, like everything else here.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSURL", "NSURLRequest"] }
+block2 = "0.6"
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "objc2-app-kit",
+    "block2",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKPreferences",
+    "WKNavigationDelegate",
+    "WKNavigationAction",
+    "WKFrameInfo",
+] }
+
 [dev-dependencies]
 # The signature-verification biting test signs nothing at test time — it verifies
 # a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the

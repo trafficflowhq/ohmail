@@ -106,10 +106,14 @@ mod vitals;
 // out of the one budget table rather than spelled here. Gated with `vitals`, its only reader.
 #[cfg(feature = "local-engine")]
 mod perf_budgets;
-// The links on screen: what `open_external` and the new-window door may open besides the shell's
-// own links. Gated with the engine: the plain build opens nothing.
+// The links on screen: what the new-window door may open besides the shell's own links. Gated with
+// the engine: the plain build opens nothing.
 #[cfg(feature = "local-engine")]
 mod rendered_links;
+// The gesture gate: each engine's new-window hook, which opens a link only on the person's own
+// click or key press. Gated with the engine, like the door it feeds.
+#[cfg(feature = "local-engine")]
+mod link_gate;
 
 // What WebKitGTK keeps for a window that shows one document. Always compiled: the published
 // preview opens the same window and asks for the same budget.

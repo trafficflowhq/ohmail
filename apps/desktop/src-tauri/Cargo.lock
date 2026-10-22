@@ -2565,10 +2565,14 @@ name = "ohmail"
 version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
+ "block2",
  "getrandom 0.3.4",
  "gtk",
  "keyring",
  "minisign-verify",
+ "objc2",
+ "objc2-foundation",
+ "objc2-web-kit",
  "semver",
  "serde_json",
  "sha2",

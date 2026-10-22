@@ -1,8 +1,9 @@
 /**
  * THE LINKS ON SCREEN, TO THE SHELL. The desktop shell opens an http(s) address in the person's
- * browser only when it is a link something in this window drew — a message's anchors (the frame's
- * and the prose path's), the editor's (a draft's, a signature's), the Screener's unsubscribe link,
- * the account page an answer named — or one of the shell's own constant links (`rendered_links.rs`).
+ * browser only on their own click, and only when it is a link something in this window drew — a
+ * message's anchors (the frame's and the prose path's), the editor's (a draft's, a signature's),
+ * the Screener's unsubscribe link, the account page an answer named — or one of the shell's own
+ * constant links (`rendered_links.rs`).
  * Each renderer reports what it draws, per mount, through {@link useRenderedLinks}, and the shell
  * keeps a bounded list per surface.
  *
