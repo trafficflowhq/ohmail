@@ -29,7 +29,7 @@ type Workflow = { on?: Record<string, unknown>; jobs?: Record<string, Job> };
 const SCRIPT = publicPath("github/scripts/pr-build-scope.sh");
 const text = (n: string) => readFileSync(publicPath(`github/workflows/${n}.yml`), "utf8");
 const load = (t: string) => yaml.load(t) as Workflow;
-const BUILD = text("build"), ANDROID = text("android");
+const BUILD = text("build"), ANDROID = text("android"), SELFHOST = text("selfhost-smoke");
 
 /** The contexts main's ruleset requires from build.yml, as the jobs' names spell them. */
 const REQUIRED = { engine: "engine · typecheck · build", "engine-ui-smoke": "engine-bearing UI · scan · smoke" };
@@ -58,14 +58,15 @@ const ifOf = (j: Job | undefined) => String(j?.if ?? "true");
 const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
 
 /** The script's answer for a list of paths, and a CHANGELOG.md diff when given. */
-function scope(paths: string[], changelog?: string): { desktop: string; android: string; out: string } {
+function scope(paths: string[], changelog?: string): { desktop: string; android: string; selfhost: string; out: string } {
   const dir = mkdtempSync(join(tmpdir(), "pr-scope-"));
   writeFileSync(join(dir, "files"), paths.join("\n") + (paths.length ? "\n" : ""));
   const args = [SCRIPT, "--files", join(dir, "files")];
   if (changelog !== undefined) { writeFileSync(join(dir, "changelog"), changelog); args.push("--changelog", join(dir, "changelog")); }
   const r = spawnSync("bash", args, { encoding: "utf8", env: ENV });
   expect(r.status, r.stderr).toBe(0);
-  return { desktop: /^desktop=(\w+)$/m.exec(r.stdout)?.[1] ?? "?", android: /^android=(\w+)$/m.exec(r.stdout)?.[1] ?? "?", out: r.stdout };
+  const read = (k: string) => new RegExp(`^${k}=(\\w+)$`, "m").exec(r.stdout)?.[1] ?? "?";
+  return { desktop: read("desktop"), android: read("android"), selfhost: read("selfhost"), out: r.stdout };
 }
 
 describe("the required contexts report on every pull request", () => {
@@ -92,7 +93,7 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
   const build = load(BUILD).jobs ?? {}, android = load(ANDROID).jobs ?? {};
 
   it("each workflow's `changes` runs on a pull request only and hands on the script's answer", () => {
-    for (const [jobs, key] of [[build, "desktop"], [android, "android"]] as const) {
+    for (const [jobs, key] of [[build, "desktop"], [android, "android"], [load(SELFHOST).jobs ?? {}, "selfhost"]] as const) {
       const c = jobs.changes;
       expect(c, "there is no changes job").toBeDefined();
       expect(c!.outputs?.[key]).toBe(`\${{ steps.scope.outputs.${key} }}`);
@@ -192,10 +193,10 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
   });
 
   it("every script a workflow runs is in that workflow's scope", () => {
-    for (const [t, key] of [[BUILD, "desktop"], [ANDROID, "android"]] as const) {
+    for (const [t, key, least] of [[BUILD, "desktop", 3], [ANDROID, "android", 3], [SELFHOST, "selfhost", 2]] as const) {
       const exec = t.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
       const named = [...new Set([...exec.matchAll(/(?:^|[\s"'])((?:\.github\/)?scripts\/[\w./-]+\.(?:sh|mjs|js))/gm)].map((m) => m[1]!))];
-      expect(named.length, "the reader found no script").toBeGreaterThan(2);
+      expect(named.length, "the reader found no script").toBeGreaterThanOrEqual(least);
       for (const p of named) expect(scope([p])[key], p).toBe("true");
     }
   });
@@ -203,7 +204,7 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
   it("a list it cannot read needs every build", () => {
     const r = spawnSync("bash", [SCRIPT, "--files", join(tmpdir(), "pr-scope-no-such-list")], { encoding: "utf8", env: ENV });
     expect(r.status).toBe(0);
-    expect(r.stdout).toBe("desktop=true\nandroid=true\n");
+    expect(r.stdout).toBe("desktop=true\nandroid=true\nselfhost=true\n");
   });
 
   it("reads a real diff between two commits, a moved file counting at both paths", () => {
@@ -223,8 +224,47 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
     git("commit", "-q", "-m", "move");
     const r = spawnSync("bash", [SCRIPT, "--base", "HEAD^1", "--head", "HEAD"], { cwd: dir, encoding: "utf8", env: ENV });
     expect(r.status, r.stderr).toBe(0);
-    expect(r.stdout).toBe("desktop=false\nandroid=true\n");
+    expect(r.stdout).toBe("desktop=false\nandroid=true\nselfhost=false\n");
     const bad = spawnSync("bash", [SCRIPT, "--base", "no-such-rev", "--head", "HEAD"], { cwd: dir, encoding: "utf8", env: ENV });
-    expect(bad.stdout, "a diff it could not read").toBe("desktop=true\nandroid=true\n");
+    expect(bad.stdout, "a diff it could not read").toBe("desktop=true\nandroid=true\nselfhost=true\n");
+  });
+});
+
+describe("pr-build-scope.sh answers selfhost= for what the three self-host images build from", () => {
+  /** The paths a recipe's context admits: each `!` line of its dockerignore, a directory as a file inside it. */
+  const RECIPES = ["apps/server/Dockerfile", "apps/worker/Dockerfile.selfhost", "apps/webapp/Dockerfile"];
+  const admitted = (ignore: string) => ignore.split("\n").map((l) => /^!(\S+)$/.exec(l.trim())?.[1]).filter((p): p is string => p !== undefined)
+    .map((p) => p.replace(/\*/g, "x")).map((p) => (/\.[a-z]+$/.test(p.split("/").pop()!) ? p : `${p}/src/sample.ts`));
+  const ignoreOf = (recipe: string) => readFileSync(publicPath(`${recipe}.dockerignore`), "utf8");
+
+  it("every path a recipe's dockerignore admits reads selfhost=true", () => {
+    for (const recipe of RECIPES) {
+      const paths = admitted(ignoreOf(recipe));
+      expect(paths.length, `${recipe}: the reader found no admitted path`).toBeGreaterThan(5);
+      for (const p of paths) expect(scope([p]).selfhost, `${recipe}: ${p}`).toBe("true");
+    }
+  });
+
+  it("is watched failing on a package a recipe admits and the scope does not", () => {
+    const planted = admitted(`${ignoreOf("apps/server/Dockerfile")}\n!packages/x\n`);
+    expect(planted.map((p) => scope([p]).selfhost)).toContain("false");
+  });
+
+  it.each([
+    ["the boot smoke", ["deploy/selfhost/boot-smoke.mjs"], "true"],
+    ["the operator compose", ["deploy/selfhost/docker-compose.yml"], "true"],
+    ["the workflow", [".github/workflows/selfhost-smoke.yml"], "true"],
+    ["its script", [".github/scripts/selfhost-smoke.sh"], "true"],
+    ["this script", [".github/scripts/pr-build-scope.sh"], "true"],
+    ["the lockfile", ["package-lock.json"], "true"],
+    ["docs", ["docs/x.md", "README.md"], "false"],
+    ["the desktop window", ["apps/desktop/src/App.tsx"], "false"],
+    ["the phone app", ["apps/mobile/src/x.ts"], "false"],
+    ["the engine host", ["apps/sidecar/src/main.ts"], "false"],
+    ["the root suite", ["test/a.test.ts"], "false"],
+    ["a package's tests", ["packages/core/test/c.test.ts", "apps/server/test/d.test.ts"], "false"],
+    ["another workflow", [".github/workflows/ci.yml"], "false"],
+  ])("%s", (_label, paths, selfhost) => {
+    expect(scope(paths).selfhost).toBe(selfhost);
   });
 });

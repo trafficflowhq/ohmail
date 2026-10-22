@@ -56,6 +56,10 @@ const CENSUS: Record<string, string[]> = {
     "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7",
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4",
   ],
+  "selfhost-smoke.yml": [
+    "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7",
+    "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7",
+  ],
 };
 
 /** A `uses:` KEY, whatever its value. A comment that mentions `uses:` is not one. */

@@ -5,15 +5,15 @@
 #                  --env-file <env file> up -d --build
 #
 # The env file holds the stack's variables (.env.example names them); throwaway values do for a smoke run.
+# `up` without `--build` boots the PUBLISHED image of the same name, pulled if it is not local, and the
+# smoke then passes on whatever release that is.
 #
-# ── STANDING LIMIT since the image-publish pivot ─────────────────────────────────────────
-# The published image recipes (apps/server/Dockerfile, apps/worker/Dockerfile.selfhost,
-# apps/webapp/Dockerfile) build from the PUBLISHED tree's npm shape — generated manifests,
-# committed package-lock.json — which this workspace does not carry. So the `build:` stanzas
-# below no longer build from THIS checkout: point their contexts at a publish preview
-# (a `publish-desktop.mjs --dry-run` clone, or a clone of the public repository) to run the
-# smoke. That is also the plan of record for the smoke itself — it moves to the public lane
-# with the image workflow rather than being revived here.
+# `.github/scripts/selfhost-smoke.sh` is the run CI makes: it mints the env file, builds the three images
+# from this checkout under a tag no release carries, starts with `--no-build --pull never`, checks that
+# the running containers are those images, and runs ./boot-smoke.mjs. selfhost-smoke.yml runs it on pull
+# requests; ghcr-images.yml's gate-boot runs it over a release's staged images before any tag moves. The
+# recipes build from this tree's npm workspace and its committed package-lock.json, each from the
+# context its own `<Dockerfile>.dockerignore` admits.
 #
 # What it changes, and why each change exists:
 #   · the three ohmail services BUILD FROM A CHECKOUT instead of pulling the published
@@ -50,11 +50,16 @@ services:
     build:
       context: ../..
       dockerfile: apps/webapp/Dockerfile
+      # The commit /health and the About pane name; selfhost-smoke.sh sets it to the commit it builds.
+      args:
+        TF_BUILD_VERSION: ${OHMAIL_BUILD_VERSION:-}
 
   api:
     build:
       context: ../..
       dockerfile: apps/server/Dockerfile
+      args:
+        TF_BUILD_VERSION: ${OHMAIL_BUILD_VERSION:-}
     environment:
       # GreenMail lives on a private network address, which the add-time probe's SSRF gate
       # rightly refuses by default. Relaxing it is exactly the documented LAN-mail-server
@@ -71,6 +76,8 @@ services:
       # The SELF-HOST recipe — the image this smoke is about. The sibling plain Dockerfile
       # is the managed deployment's and is not what ghcr.io/trafficflowhq/ohmail-worker runs.
       dockerfile: apps/worker/Dockerfile.selfhost
+      args:
+        TF_BUILD_VERSION: ${OHMAIL_BUILD_VERSION:-}
     environment:
       POLL_INTERVAL_MS: "5000"
       TF_ROSTER_INTERVAL_MS: "5000"
@@ -82,7 +89,8 @@ services:
       - "127.0.0.1:3903:9000"
 
   greenmail:
-    image: greenmail/standalone:2.1.3
+    # The multi-arch index (linux/amd64 and linux/arm64), the digest the root docker-compose.yml names.
+    image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
     environment:
       # IMAP on 143: the api and the organizer dial IMAP only on 143 and 993 (MAIL_DIAL_PORTS),
       # so GreenMail's test port 3143 is refused. SMTP keeps the test port; only the smoke dials it.

@@ -1,0 +1,77 @@
+# The self-host stack from images built from THIS pull request's tree, through the whole first-run ceremony.
+#
+# `.github/scripts/selfhost-smoke.sh --build` builds web, api and organizer from the checkout under a
+# run-scoped tag, boots deploy/selfhost with the CI overlay (docker-compose.ci.yml: GreenMail, loopback
+# ports, a fast organizer), checks that the running containers are those images, and runs
+# deploy/selfhost/boot-smoke.mjs: setup token, register, TOTP, two IMAP mailboxes, seeded mail through
+# the organizer into /sync, a staged upload through the proxy, sign-out. /health must then name this
+# commit. The release's own check is ghcr-images.yml's gate-boot, which runs the same script over the
+# images it staged, before anything is promoted.
+#
+# PULL REQUESTS AND DISPATCH ONLY, on GitHub's hosted runners: the recipes refuse the legacy builder, and
+# the stack needs the compose plugin and buildx. One job, no matrix, no cache, no secret, no registry
+# login; a newer push cancels the older run. It is not a required check. `changes` skips it on a pull
+# request that touches nothing the three images build from (.github/scripts/pr-build-scope.sh, the
+# recipes' dockerignores); a dispatch runs it whatever changed, e.g. `gh workflow run selfhost-smoke.yml --ref main`.
+
+name: selfhost-smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selfhost-smoke-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+
+jobs:
+  changes:
+    name: changes · does this pull request change what the self-host images build from
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selfhost: ${{ steps.scope.outputs.selfhost }}
+    steps:
+      # The pull request's merge commit and its first parent, the base it merges
+      # into: the diff between the two is exactly what the pull request changes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Read the paths it changes
+        id: scope
+        run: bash .github/scripts/pr-build-scope.sh --base HEAD^1 --head HEAD
+
+  boot-smoke:
+    name: self-host · images from this tree · boot smoke
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.selfhost == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # boot-smoke.mjs runs on the runner, against the stack's proxy.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      # The tag exists only in this run, so nothing published can stand in for the build.
+      - name: Build the three images, boot the stack, run the first-run ceremony
+        env:
+          TAG: smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          SHA: ${{ github.sha }}
+        run: bash .github/scripts/selfhost-smoke.sh --build --dir deploy/selfhost --tag "$TAG" --commit "$SHA"
+
+      - name: Runner disk after the run
+        if: always()
+        run: |
+          df -h /
+          docker system df
