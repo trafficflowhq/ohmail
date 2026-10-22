@@ -116,14 +116,19 @@ const HOSTED_SUGGEST_MARKER = "SuggestRefused";
  * THE SHELL COMMANDS THIS BUNDLE CAN NAME. Each is armed from the window entry
  * (`src/main.tsx`); the served client's entry never arms them, and a phone page that could name
  * a shell command would be a page claiming a channel it does not have. `rendered_links` is how
- * the window's renderers report the links they draw — the only addresses `open_external` takes
- * besides the shell's own — so a window bundle without it has links that will not open.
- *
- * `open_attachment` is NOT in this list: it wrote bytes the window chose and launched them, had
- * no caller, and the shell no longer carries it. The window SAVES by id and
- * stages a PREVIEW by id; neither sends an attachment's bytes.
+ * the window's renderers report the links they draw — the only addresses the shell's new-window
+ * door opens besides its own — so a window bundle without it has links that will not open.
  */
-const SHELL_COMMAND_MARKERS = ["open_external", "rendered_links", "save_attachment", "stage_attachment_preview"];
+const SHELL_COMMAND_MARKERS = ["rendered_links", "save_attachment", "stage_attachment_preview"];
+
+/**
+ * THE COMMANDS THE SHELL NO LONGER CARRIES, which no bundle may name. `open_external` handed the
+ * shell an address to open with no click behind it: a link now leaves only as the webview's own
+ * new-window request on the person's click. `open_attachment` wrote bytes the window chose and
+ * launched them; the window SAVES by id and stages a PREVIEW by id. A bundle naming either is a
+ * window calling a door that is not there, or a shell that grew one back.
+ */
+const RETIRED_COMMANDS = ["open_external", "open_attachment"];
 
 /**
  * WHICH SYNC CLIENT IS IN THIS BUNDLE — the check that would have caught the blank window.
@@ -212,6 +217,7 @@ const pdfjsGlobalsInBoot = PDFJS_GLOBALS.filter((g) => bootText.includes(g));
 const pdfjsStubPresent = text.includes(PDFJS_STUB_REFUSAL);
 
 const hostedSuggestPresent = text.includes(HOSTED_SUGGEST_MARKER);
+const retiredPresent = RETIRED_COMMANDS.filter((m) => text.includes(m));
 const commandsPresent = SHELL_COMMAND_MARKERS.filter((m) => text.includes(m));
 const commandsMissing = SHELL_COMMAND_MARKERS.filter((m) => !commandsPresent.includes(m));
 const stubPresent = text.includes(STUB_REFUSAL);
@@ -252,6 +258,13 @@ if (realMissing.length > 0) {
   failures.push(
     `this bundle has no real sync client in it — absent: ${realMissing.join(", ")}. ` +
       "Nothing but the protocol client itself puts those strings in a bundle.",
+  );
+}
+if (retiredPresent.length > 0) {
+  failures.push(
+    `this bundle names a command the shell no longer carries: ${retiredPresent.join(", ")}. ` +
+      "A link leaves as the webview's own new-window request on the person's click, and an " +
+      "attachment is saved or previewed by id (src/main.tsx arms both).",
   );
 }
 

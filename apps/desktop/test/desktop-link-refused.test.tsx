@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,11 +15,12 @@ import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell
 import messages from "../../webapp/messages/en.json";
 
 /**
- * A LINK THE SHELL WILL NOT OPEN IS SAID IN ONE SENTENCE, WHICHEVER DOOR IT CAME THROUGH. A link
- * in the app's own document is refused by the opener command; a link in a message frame reaches
- * the shell as a new-window request and is refused there (`link:refused`). The real gate is
- * mounted over a fake shell and both routes must print the same words. Mutations watched red:
- * the gate's `onLinkRefused(say)` removed; the event registered with a second wording.
+ * A LINK THE SHELL WILL NOT OPEN IS SAID IN ONE SENTENCE, WHEREVER IT WAS DRAWN. Every link leaves
+ * as a new-window request — the app document's turned into one inside the click, a message
+ * frame's raised by the webview itself — and the shell refuses either with one event,
+ * `link:refused`. The real gate is mounted over a fake shell whose new-window door refuses, and
+ * every link must print the same words, once. Mutations watched red: the gate's
+ * `onLinkRefused(say)` removed; a second refusal path put back beside the event.
  */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
@@ -45,7 +48,6 @@ host.__TAURI_INTERNALS__ = {
   invoke: async (command, payload) => {
     if (command === "engine_status") return { state: "no_key", mode: null, reason: "x" } as unknown as EngineStatus;
     if (command === "plugin:event|listen") listeners.set(String(payload?.event), Number(payload?.handler));
-    if (command === "open_external") throw new Error("ohmail: this computer would not open a browser (exit 3)");
     return null;
   },
 };
@@ -57,6 +59,12 @@ function emit(event: string, payload: unknown): void {
   if (id === undefined) throw new Error(`nothing is listening for ${event}`);
   callbacks.get(id)!({ event, id: 1, payload });
 }
+
+/* THE SHELL'S NEW-WINDOW DOOR, REFUSING: no window, and its one event carrying the address. */
+window.open = ((url?: string | URL) => {
+  emit(LINK_REFUSED_EVENT, String(url));
+  return null;
+}) as typeof window.open;
 
 type Loose = (props: Record<string, unknown>, ...children: unknown[]) => React.ReactElement;
 const looseH = h as unknown as (c: Loose, p: Record<string, unknown> | null, ...k: unknown[]) => React.ReactElement;
@@ -85,7 +93,7 @@ async function render(): Promise<void> {
   await turns();
 }
 
-/** Click an anchor in the app's own document; the opener command refuses it. */
+/** Click an anchor in the app's own document; the shell's new-window door refuses it. */
 async function clickInApp(href: string): Promise<void> {
   const a = document.createElement("a");
   a.setAttribute("href", href);
@@ -107,11 +115,18 @@ afterEach(async () => {
   mountPoint = null;
 });
 
-describe("a refused link says one sentence on both doors", () => {
-  it("the app document's refusal is said (the positive control)", async () => {
+describe("a refused link says one sentence, wherever it was drawn", () => {
+  it("a link in the app's own document the shell refused is said, once", async () => {
     await render();
     await clickInApp("https://example.test/app-doc");
     expect(said()).toContain(sentence("https://example.test/app-doc"));
+    expect(said().split(sentence("https://example.test/app-doc")).length - 1, "the refusal was said twice").toBe(1);
+  });
+
+  it("the shell's event is the one refusal path the window keeps", () => {
+    const gate = readFileSync(resolve(__dirname, "../src/DesktopGate.tsx"), "utf8");
+    expect(gate, "the gate still registers a refusal sink of the window's own").not.toMatch(/setOpenFailureSink/);
+    expect(gate).toMatch(/void onLinkRefused\(say\);/);
   });
 
   it("a message frame's link the shell refused is said in the same words", async () => {

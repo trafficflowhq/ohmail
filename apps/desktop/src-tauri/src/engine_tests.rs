@@ -4131,11 +4131,11 @@ fn the_approval_page_takes_one_request_id_and_nothing_else() {
     assert!(!link_for("approve").unwrap().contains('#'), "the approve row grew a fragment");
 }
 
-/// THE GATE ON THE ONE COMMAND THAT TAKES AN ADDRESS FROM A MESSAGE.
+/// THE GATE ON THE ONE DOOR THAT TAKES AN ADDRESS FROM A MESSAGE.
 ///
 /// `open_link` takes a key because a URL argument would let anything that got a string into the
-/// page open an arbitrary address. `open_external` takes the URL — that is what a link in a mail
-/// body IS — so the whole of the argument moves here, and it has to be a gate rather than a
+/// page open an arbitrary address. The new-window door takes the URL — that is what a link in a
+/// mail body IS — so the whole of the argument moves here, and it has to be a gate rather than a
 /// sanitiser: nothing below repairs a value, every case is a yes or a no.
 ///
 /// ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
@@ -4173,7 +4173,7 @@ fn only_an_http_address_with_a_host_is_ever_opened() {
     // ── NOTHING IS TRIMMED, AND THE MUTATION IS WHY ─────────────────────────────────────────
     //
     // This gate used to judge `raw.trim()` and return the trimmed value, which is safe only while
-    // every caller spawns the RETURNED value. Rewriting `open_external` to validate its argument
+    // every caller spawns the RETURNED value. Rewriting the opener's caller to validate its argument
     // and then spawn that argument left every case in this file green while putting a trailing
     // newline back on a string bound for a command line. A convention no case can see is not an
     // invariant, so the divergence was removed instead of guarded: the approved value and the
@@ -4275,7 +4275,7 @@ fn only_an_http_address_with_a_host_is_ever_opened() {
 /// failure shape this whole family of commands is prone to. So the grant is asserted from the
 /// constant rather than read once by a person.
 ///
-/// Drop `allow-open-external` from the permission list and this goes red.
+/// Drop `allow-open-link` from the permission list and this goes red.
 #[test]
 fn every_command_the_window_calls_is_granted_to_it() {
     let cap: serde_json::Value =
@@ -4289,7 +4289,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
 
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
-        "notify", "set-badge", "open-link", "rendered-links", "open-external", "save-attachment",
+        "notify", "set-badge", "open-link", "rendered-links", "save-attachment",
         "stage-attachment-preview", "release-attachment-preview", "mailto-claim", "default-mail-status", "default-mail-request", "window-ready",
     ] {
         let permission = format!("allow-{command}");
@@ -4305,6 +4305,36 @@ fn every_command_the_window_calls_is_granted_to_it() {
     assert_eq!(cap["windows"], serde_json::json!(["main"]));
 }
 
+/// THE WINDOW CANNOT HAND THE SHELL AN ADDRESS ANY MORE: `open_external` is in no handler list, no
+/// declaration and no grant. A script in the window could report a link and open it with no click;
+/// a link now leaves only as the webview's own new-window request on the person's click
+/// (`link_gate.rs`). Read from the handler's source, the list `build.rs` baked in and the grant, so
+/// where the command still exists this fails on an assertion. `open_link`, which takes a key and
+/// stays, is the positive control.
+#[test]
+fn open_external_is_no_command_the_window_can_call() {
+    let engine = include_str!("engine.rs");
+    let at = engine.find("tauri::generate_handler![").expect("the handler list");
+    let handler: String = engine[at..at + engine[at..].find("])").expect("the handler list closes")]
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("//"))
+        .collect();
+    assert!(!handler.contains("open_external"), "open_external is still registered");
+    assert!(handler.contains("open_link"), "the handler list was not read");
+
+    let declared: Vec<&str> = DECLARED_WINDOW_COMMANDS.split(',').collect();
+    assert!(!declared.contains(&"open_external"), "build.rs still declares open_external");
+    assert!(declared.contains(&"open_link"), "the declared list was not read");
+    let build = include_str!("../build.rs");
+    let at = build.find("const WINDOW_COMMANDS").expect("the declared list");
+    assert!(!build[at..at + build[at..].find("];").expect("the list closes")].contains("\"open_external\""));
+
+    let cap: serde_json::Value = serde_json::from_str(LOCAL_ENGINE_CAPABILITY).expect("the capability");
+    let granted: Vec<&str> = cap["permissions"].as_array().expect("permissions").iter().filter_map(|p| p.as_str()).collect();
+    assert!(!granted.contains(&"allow-open-external"), "the window is still granted open_external");
+    assert!(granted.contains(&"allow-open-link"));
+}
+
 /// THE GRANT NAMES NOTHING THE BINARY NEVER DECLARED — the other direction of the test above,
 /// and the one 0.9.7 shipped without.
 ///
@@ -4317,7 +4347,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
 /// defence, holding the grant and `build.rs`'s `WINDOW_COMMANDS` together where a mismatch is a
 /// red suite instead of a dead fleet.
 ///
-/// Remove `open_external` from `WINDOW_COMMANDS` in `build.rs` and this goes red.
+/// Remove `open_link` from `WINDOW_COMMANDS` in `build.rs` and this goes red.
 #[test]
 fn every_granted_permission_is_declared_by_the_build() {
     let (grant, missing) = resolvable_grant(LOCAL_ENGINE_CAPABILITY, DECLARED_WINDOW_COMMANDS)
@@ -4362,14 +4392,14 @@ fn an_undeclared_permission_is_dropped_and_named_not_fatal() {
     assert_eq!(grant["identifier"], "local-engine");
     assert_eq!(grant["windows"], serde_json::json!(["main"]));
 
-    // The hyphen/underscore seam works the way tauri-build made it: command `open_external`
-    // generates permission `allow-open-external`, so that permission must resolve.
+    // The hyphen/underscore seam works the way tauri-build made it: command `save_attachment`
+    // generates permission `allow-save-attachment`, so that permission must resolve.
     let (_, missing) = resolvable_grant(
-        r#"{"identifier":"x","windows":["main"],"permissions":["allow-open-external"]}"#,
-        "open_external",
+        r#"{"identifier":"x","windows":["main"],"permissions":["allow-save-attachment"]}"#,
+        "save_attachment",
     )
     .expect("did not parse");
-    assert!(missing.is_empty(), "allow-open-external must resolve to command open_external");
+    assert!(missing.is_empty(), "allow-save-attachment must resolve to command save_attachment");
 }
 
 /// EVERY `ohmail://` LINK ON THE MACHINE ARRIVES HERE, so this is a grammar and not an extraction.
@@ -6577,11 +6607,13 @@ fn the_diagnostic_save_writes_the_builders_file_and_nothing_else() {
     assert_eq!(fs::read_to_string(&path).expect("read back"), second, "a refusal touched the last good file");
 }
 
-/// THE ROUTE TABLE for a new-window request, the one door a message frame's links have. Each row is
-/// the address, whether a renderer reported it, and its route. Mutations watched: route `mailto:`
-/// to the browser → the Compose rows go red; drop the own-host arm → the `tauri.localhost` rows go
-/// red (they are reported, so the set alone would open them); skip the set → the unreported rows go
-/// red. The first rows are the positive control.
+/// THE ROUTE TABLE for a new-window request, the one door a link has. Each row is the address,
+/// whether a renderer reported it, and its route on the person's own click; [`by_script`] is the
+/// same row asked for by a script. Mutations: route `mailto:` to the browser → the Compose rows go
+/// red; drop the own-host arm → the `tauri.localhost` rows go red (they are reported, so the set
+/// alone would open them); skip the set → the unreported rows go red; drop the activation check →
+/// every reported row goes red under a script; check the activation before the set or the shape →
+/// the unreported and shape rows go red under a script. The first rows are the positive control.
 fn popup_rows() -> Vec<(String, bool, PopupRoute)> {
     use crate::rendered_links::Why;
     let browser = |u: &str| (u.to_string(), true, PopupRoute::Browser(u.to_string()));
@@ -6639,32 +6671,70 @@ fn reported_rows(rows: &[(String, bool, PopupRoute)]) -> crate::rendered_links::
     set
 }
 
+/// A row's route when a script asked: a link that would open is refused for its gesture, and
+/// every other route stays as it is (a refusal names the first rule broken; compose and ignore
+/// never open a browser).
+fn by_script(person: &PopupRoute) -> PopupRoute {
+    match person {
+        PopupRoute::Browser(url) => PopupRoute::Refused { url: url.clone(), why: crate::rendered_links::Why::Gesture },
+        other => other.clone(),
+    }
+}
+
 #[test]
 fn a_new_window_request_is_routed_by_the_one_table() {
     let rows = popup_rows();
     assert!(rows.len() >= 18, "the table lost rows: {}", rows.len());
     let set = reported_rows(&rows);
-    for (url, _, want) in rows {
-        assert_eq!(popup_route(&url, Some(&set)), want, "popup_route({url:?})");
+    let mut opened = 0;
+    for (url, _, person) in rows {
+        assert_eq!(popup_route(&url, Some(&set), Activation::Person), person, "popup_route({url:?}, Person)");
+        assert_eq!(popup_route(&url, Some(&set), Activation::Script), by_script(&person), "popup_route({url:?}, Script)");
+        opened += usize::from(matches!(person, PopupRoute::Browser(_)));
     }
+    assert!(opened >= 6, "the table lost the rows a click opens: {opened}");
+}
+
+/// THE ROW'S PROBE: a reported link, asked for with no click, is refused; the person's click on
+/// the same link opens it. Mutation: open on the set alone → red.
+#[test]
+fn a_reported_link_opens_on_the_persons_click_and_never_on_a_scripts() {
+    let probe = "https://example.invalid/?data=walk-1";
+    let mut set = crate::rendered_links::Rendered::default();
+    set.report("s1", &[probe.to_string()]).expect("report");
+    assert_eq!(
+        popup_route(probe, Some(&set), Activation::Script),
+        PopupRoute::Refused { url: probe.to_string(), why: crate::rendered_links::Why::Gesture }
+    );
+    assert_eq!(popup_route(probe, Some(&set), Activation::Person), PopupRoute::Browser(probe.to_string()));
+    // The shell's own constant links need no report, and no script opens them either.
+    let own = crate::rendered_links::OWN_LINKS[0];
+    assert_eq!(popup_route(own, Some(&set), Activation::Person), PopupRoute::Browser(own.to_string()));
+    assert_eq!(
+        popup_route(own, Some(&set), Activation::Script),
+        PopupRoute::Refused { url: own.to_string(), why: crate::rendered_links::Why::Gesture }
+    );
 }
 
 /// EVERY route answers Deny, and only a routed link is handed off the UI thread, exactly
-/// once. Mutations watched: answer `Allow` → red on every row; hand Ignored off → red on those.
+/// once, whoever asked: a script's request leaves as its refusal. Mutations watched: answer
+/// `Allow` → red on every row; hand Ignored off → red on those.
 #[test]
 fn every_new_window_request_is_denied_and_routed_links_leave_once() {
     use std::cell::RefCell;
     let rows = popup_rows();
     let set = reported_rows(&rows);
-    for (url, _, want) in rows {
-        let jobs = RefCell::new(Vec::new());
-        let response = answer::<tauri::Wry>(&url, Some(&set), |route| jobs.borrow_mut().push(route));
-        assert!(matches!(response, tauri::webview::NewWindowResponse::Deny), "{url:?} was not denied");
-        let jobs = jobs.into_inner();
-        if want == PopupRoute::Ignored {
-            assert!(jobs.is_empty(), "{url:?} is ignored and still left the UI thread: {jobs:?}");
-        } else {
-            assert_eq!(jobs, vec![want], "{url:?} did not leave exactly once");
+    for (url, _, person) in rows {
+        for (activation, want) in [(Activation::Person, person.clone()), (Activation::Script, by_script(&person))] {
+            let jobs = RefCell::new(Vec::new());
+            let response = answer::<tauri::Wry>(&url, Some(&set), activation, |route| jobs.borrow_mut().push(route));
+            assert!(matches!(response, tauri::webview::NewWindowResponse::Deny), "{url:?} was not denied");
+            let jobs = jobs.into_inner();
+            if want == PopupRoute::Ignored {
+                assert!(jobs.is_empty(), "{url:?} is ignored and still left the UI thread: {jobs:?}");
+            } else {
+                assert_eq!(jobs, vec![want], "{url:?} did not leave exactly once under {activation:?}");
+            }
         }
     }
 }

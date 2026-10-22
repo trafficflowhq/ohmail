@@ -7,6 +7,7 @@ import {
   markFenced, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { createLogger } from "@trafficflow/core/mail";
 import {
   credentials,
   webauthnCredentials,
@@ -59,6 +60,9 @@ import {
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
 import { SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential } from "./session-lifecycle.js";
+
+/** Where a swallowed auth fault is named: `err` is class and code, never its message. */
+const authLog = createLogger({ service: "auth" });
 
 type Method = "webauthn" | "totp" | "recovery_code";
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
@@ -3329,7 +3333,10 @@ export class AuthService extends SessionLifecycle {
       try {
         await this.pruneWakeRegistrations(asTx(ctx), out.familyIds);
       } catch (err) {
-        console.error("[auth] the sign-out stands; its wake-registration prune failed:", err);
+        authLog.error("auth_logout_wake_prune_failed", {
+          requestId: ctx.requestId, count: out.familyIds.length, err,
+          reason: "the sign-out committed; the signed-out device's wake registration was left in place",
+        });
       }
       return out;
     }

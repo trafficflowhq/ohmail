@@ -275,7 +275,7 @@ export function offLinkCode(run: (code: string) => void): void {
 }
 
 /**
- * The event the shell emits when a link clicked in a message will not open, and the longest
+ * The event the shell emits when a link will not open, wherever it was drawn, and the longest
  * address it carries (the shell's gate bound). One listener for the life of the window and the
  * latest handler wins, {@link onLinkCode}'s shape, because the gate re-registers with its toast.
  */
@@ -295,7 +295,7 @@ export function urlOfRefusalPayload(payload: unknown): string | null {
   return raw !== null && raw.length > 0 && raw.length <= REFUSED_URL_MAX ? raw : null;
 }
 
-/** Run `run` when the shell refuses a link a person clicked in a message. */
+/** Run `run` when the shell refuses a link a person clicked. */
 export async function onLinkRefused(run: (url: string) => void): Promise<void> {
   linkRefusedHandler = run;
   if (linkRefusedListening) return;
@@ -523,7 +523,7 @@ export function reportWindowReady(canvas: string | null = frameCanvas()): void {
 
 /**
  * THE LINKS A SURFACE DRAWS, TO THE SHELL (`rendered_links.rs`): besides the shell's own, the only
- * addresses its opener and its new-window door will open. `main.tsx` arms this as the shared
+ * addresses its new-window door will open, on the person's click. `main.tsx` arms this as the shared
  * renderers' sink (`rendered-links.ts`); an empty list takes the surface away. Not awaited — the
  * shell applies a report in order, before a later open — and a refused one is said in the log,
  * because it shows up later as a link that will not open.

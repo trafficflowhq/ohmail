@@ -81,7 +81,7 @@ type GateRefusal = { refusal: AiRefusalClass; verdict: string; reason?: AiRefusa
  */
 const doorbellLog = createLogger({ service: "filing" });
 
-/** Where a purchase's refund that has no obligation store to remember it is named. */
+/** Where the suggest path names what it swallowed: `err` is class and code, never its message. */
 const suggestLog = createLogger({ service: "screener" });
 
 /** A purchase's refund facts, as lines naming the account and the attempt — never an address. */
@@ -2347,7 +2347,9 @@ export class ScreenerService extends ScreenerReadService {
             declined = true;
             return;
           }
-          console.error(`[screener] AI suggestion failed for message ${r.messageId}:`, err);
+          suggestLog.warn("screener_suggest_model_failed", {
+            accountId: ctx.accountId, messageId: r.messageId, requestId: ctx.requestId, err,
+          });
           refused[index] = { sender, reason: "model_unavailable" };
           // The claim goes back at the door and the CHARGE STANDS: the source is stable, so the
           // next attempt over this message answers `duplicate` and is free.
@@ -2382,7 +2384,9 @@ export class ScreenerService extends ScreenerReadService {
         try {
           await releaseClaim();
         } catch (err) {
-          console.error(`[screener] claim release failed for message ${r.messageId}:`, err);
+          suggestLog.warn("screener_suggest_release_failed", {
+            accountId: ctx.accountId, messageId: r.messageId, requestId: ctx.requestId, err,
+          });
         }
       }
     };
@@ -2500,7 +2504,9 @@ export class ScreenerService extends ScreenerReadService {
         try {
           remainingCredits = await this.remaining(asTx(ctx), ctx.accountId);
         } catch (err) {
-          console.error(`[screener] balance read failed for account ${ctx.accountId}:`, err);
+          suggestLog.warn("screener_suggest_balance_read_failed", {
+            accountId: ctx.accountId, requestId: ctx.requestId, err,
+          });
         }
       }
 
@@ -2530,7 +2536,9 @@ export class ScreenerService extends ScreenerReadService {
       try {
         await releaseKey();
       } catch (err) {
-        console.error(`[screener] idempotency key release failed for account ${ctx.accountId}:`, err);
+        suggestLog.warn("screener_suggest_key_release_failed", {
+          accountId: ctx.accountId, requestId: ctx.requestId, err,
+        });
       }
     }
   }

@@ -40,7 +40,7 @@ import { MAILTO_SURFACE_CASES } from "./mailto-cases";
  * ── THE MUTATIONS THESE CASES WERE WATCHED AGAINST ──────────────────────────────────────────
  *
  *  · delete the `mailto:` arm from the handler            → "the app answers it" cases go red;
- *  · hand the mailto to `askShellToOpen` instead of the   → "never the platform opener" goes
+ *  · send the mailto out as a new window instead of to the → "never the platform opener" goes
  *    sink                                                    red;
  *  · fire the sink without `ev.preventDefault()`          → "does not navigate" goes red;
  *  · let `cid:`/`tel:`/`javascript:` reach the sink       → "only mailto is answered" goes red;
@@ -50,6 +50,8 @@ import { MAILTO_SURFACE_CASES } from "./mailto-cases";
 type Invoked = { command: string; payload?: Record<string, unknown> };
 
 let invoked: Invoked[] = [];
+/** Every address the window asked the webview to open as a new window: the browser's door. */
+let opened: string[] = [];
 /** Every raw href the window's own mailto sink was handed, in order. */
 let composed: string[] = [];
 
@@ -62,6 +64,7 @@ let disposers: Array<() => void> = [];
 
 beforeEach(() => {
   invoked = [];
+  opened = [];
   composed = [];
   host.__TAURI_INTERNALS__ = {
     invoke: (command, payload) => {
@@ -69,6 +72,10 @@ beforeEach(() => {
       return Promise.resolve(null);
     },
   };
+  vi.spyOn(window, "open").mockImplementation((url?: string | URL) => {
+    opened.push(String(url));
+    return null;
+  });
   document.body.innerHTML = "";
   vi.resetModules();
 });
@@ -77,6 +84,7 @@ afterEach(() => {
   for (const off of disposers) off();
   disposers = [];
   delete host.__TAURI_INTERNALS__;
+  vi.restoreAllMocks();
 });
 
 async function freshModule() {
@@ -281,7 +289,8 @@ describe("the desktop window, armed, with a compose sink", () => {
 
     clickAnchor(document, "mailto:someone@example.test");
 
-    expect(invoked, "a mailto was posted to the platform's browser").toEqual([]);
+    expect(opened, "a mailto was sent to the platform's browser").toEqual([]);
+    expect(invoked, "a mailto was posted to the shell").toEqual([]);
     expect(composed).toHaveLength(1);
   });
 
@@ -299,7 +308,8 @@ describe("the desktop window, armed, with a compose sink", () => {
       expect(clickAnchor(document, href), `${href} was left to the webview`).toBe(false);
     }
     expect(composed, "a scheme that is not mailto opened a compose").toEqual([]);
-    expect(invoked, "a scheme that is not http(s) reached the opener").toEqual([]);
+    expect(opened, "a scheme that is not http(s) reached the browser").toEqual([]);
+    expect(invoked, "a scheme that is not http(s) reached the shell").toEqual([]);
   });
 
   it("http still goes to the browser, and never to the compose form", async () => {
@@ -308,9 +318,8 @@ describe("the desktop window, armed, with a compose sink", () => {
 
     clickAnchor(document, "https://example.test/story");
 
-    expect(invoked).toEqual([
-      { command: mod.OPEN_EXTERNAL_COMMAND, payload: { url: "https://example.test/story" } },
-    ]);
+    expect(opened).toEqual(["https://example.test/story"]);
+    expect(invoked, "an http address was handed to the shell as a command").toEqual([]);
     expect(composed, "an http address opened a compose form").toEqual([]);
   });
 
@@ -320,6 +329,7 @@ describe("the desktop window, armed, with a compose sink", () => {
     install(mod, document, true);
 
     expect(clickAnchor(document, "mailto:a@b.test")).toBe(false);
+    expect(opened).toEqual([]);
     expect(invoked).toEqual([]);
   });
 });
@@ -340,12 +350,14 @@ describe("in a document that is not the app's own", () => {
 
     expect(clickAnchor(frame, "mailto:sales@newsletter.test?subject=Unsubscribe%20me")).toBe(false);
     expect(composed).toEqual(["mailto:sales@newsletter.test?subject=Unsubscribe%20me"]);
-    expect(invoked, "a mailto from a message reached the platform opener").toEqual([]);
+    expect(opened, "a mailto from a message reached the platform's browser").toEqual([]);
+    expect(invoked, "a mailto from a message reached the shell").toEqual([]);
 
     composed = [];
     // `cid:` in a frame is the sharp one: it names a part of THIS message.
     expect(clickAnchor(frame, "cid:part1@example.test")).toBe(false);
     expect(composed).toEqual([]);
+    expect(opened).toEqual([]);
     expect(invoked).toEqual([]);
   });
 });
@@ -395,7 +407,7 @@ describe("the sink is wired to the compose form", () => {
   it("the shell's own gate still refuses a mailto, whatever the window does", () => {
     const engine = sourceOf("src-tauri/src/engine.rs");
     // `external_url` admits http:// and https:// and nothing else. A mailto that somehow
-    // reached the command must still be refused by the process that spawns the opener.
+    // reached the browser's door must still be refused by the process that spawns the opener.
     expect(engine).toMatch(/only http and https are opened/);
     expect(engine).toMatch(/fn external_url/);
   });

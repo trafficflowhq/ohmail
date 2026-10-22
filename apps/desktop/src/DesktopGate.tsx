@@ -29,7 +29,7 @@ import { setStorageOwner } from "../../webapp/app/shell/storage-owner";
 import { setComposerScope } from "../../webapp/app/shell/compose";
 import { BootSkeleton } from "../../webapp/app/shell/BootSkeleton";
 import { go, goFirstRun, goSettings, useHashRoute } from "../../webapp/app/shell/routing";
-import { setMailtoSink, setOpenFailureSink } from "../../webapp/app/shell/open-external";
+import { setMailtoSink } from "../../webapp/app/shell/open-external";
 import { agoStamp } from "../../webapp/app/shell/format";
 import {
   unknownSpeaks, type HostConnection,
@@ -350,14 +350,13 @@ export function DesktopGate() {
     return () => setMailtoSink(null);
   }, []);
 
-  /* AND WHO SAYS SO WHEN A LINK WILL NOT OPEN. Registered here for `setMailtoSink`'s reason —
-     the interceptor is armed at the entry point, before React exists, and the only surface that
-     can say anything is under a toast host that does not exist yet. The buttons that open a web
-     page have shown this sentence since they were written; the anchor path had a console line
-     and nothing on screen, which is the defect this feature exists to end arriving through the
-     one door left open. A long address is cut: the host is at the front and a toast is one line.
-     One `say` serves both refusal routes — the app document's opener and the shell's door for a
-     message frame's links — so the two cannot word it differently. */
+  /* AND WHO SAYS SO WHEN A LINK WILL NOT OPEN. Registered here because the only surface that can
+     say anything is under a toast host that does not exist before the gate mounts. The buttons
+     that open a web page have shown this sentence since they were written; an anchor once had a
+     console line and nothing on screen, which is the defect this feature exists to end. A long
+     address is cut: the host is at the front and a toast is one line. Every link leaves as a
+     new-window request and the shell refuses any of them with one event, `link:refused`, so a
+     link in the app's document and one in a message frame cannot be worded differently. */
   const toast = useOptionalToast();
   useEffect(() => {
     if (!toast) return;
@@ -365,10 +364,8 @@ export function DesktopGate() {
       const shown = url.length > ADDRESS_SHOWN ? `${url.slice(0, ADDRESS_SHOWN)}…` : url;
       toast(DOOR_COPY.linkNoBrowser(machineWord(), shown));
     };
-    setOpenFailureSink(say);
     void onLinkRefused(say);
     return () => {
-      setOpenFailureSink(null);
       offLinkRefused(say);
     };
   }, [toast]);

@@ -12,7 +12,6 @@ import { enableExternalLinks, interceptLinkClicks } from "../../app/shell/open-e
 declare global {
   interface Window {
     __links: { raw: string[]; invoked: string[]; loaded: boolean; sandbox: string };
-    __TAURI_INTERNALS__?: { invoke(command: string, payload?: Record<string, unknown>): Promise<unknown> };
   }
 }
 
@@ -34,13 +33,12 @@ const sandbox = params.get("scripts") === "1" ? `${FRAME_SANDBOX} allow-scripts`
 window.__links = { raw: [], invoked: [], loaded: false, sandbox };
 
 if (mode === "listener") {
-  // The shell's command, recorded: the listener's http arm ends here when it runs at all.
-  window.__TAURI_INTERNALS__ = {
-    invoke: async (_command, payload) => {
-      window.__links.invoked.push(String(payload?.url ?? ""));
-      return null;
-    },
-  };
+  // The new-window request, recorded and answered with no window: the listener's http arm ends
+  // here when it runs at all.
+  window.open = ((url?: string | URL) => {
+    window.__links.invoked.push(String(url ?? ""));
+    return null;
+  }) as typeof window.open;
   enableExternalLinks();
 }
 

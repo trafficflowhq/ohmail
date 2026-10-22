@@ -7,14 +7,17 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
+import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 
 /**
  * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ═══ out of the shared `accessLock` catalogue, so
  * a date never differs from the browser tab's. The DIRECT-DOWNLOAD face has one button, whose press
- * mints the service's page and hands it to the browser — no billing logic here, one route and one
- * anchor. The STORE face has none (App Review 3.1.1): a sentence says where to go instead, and every
- * other sentence and the sign-out stay. The distribution is a BUILD-TIME literal, so each face is
- * driven by setting it and re-importing the module graph, never by a runtime switch.
+ * mints the service's page and draws it as a focused link; the person's click on that link is what
+ * hands it to the browser (the shell opens a link only on the person's own click) — no billing
+ * logic here, one route and one anchor. The STORE face has none (App Review 3.1.1): a sentence
+ * says where to go instead, and every other sentence and the sign-out stay. The distribution is a
+ * BUILD-TIME literal, so each face is driven by setting it and re-importing the module graph,
+ * never by a runtime switch.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -125,14 +128,22 @@ describe("the distribution decides the button, and nothing else", () => {
     expect(linksOutToBilling("mas")).toBe(false);
   });
 
-  it("DIRECT: one button, and its press mints the page and hands THAT to the browser", async () => {
+  it("DIRECT: one button; its press mints the page and draws THAT as a focused link, which only a click opens", async () => {
     const FRESH = "https://plane.ohmail.app/manage?token=FRESH";
     const carried = fakeBridge(() => ({ status: 200, body: JSON.stringify({ url: FRESH }) }));
-    const opened: Array<{ href: string; target: string; rel: string }> = [];
+    // A link clicked FOR the person, by script, is what the shell refuses: none may happen here.
+    const scripted: string[] = [];
     const realClick = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement) {
-      opened.push({ href: this.href, target: this.target, rel: this.rel });
+      scripted.push(this.href);
     };
+    const opened: unknown[][] = [];
+    vi.spyOn(window, "open").mockImplementation((...args: unknown[]) => {
+      opened.push(args);
+      return null;
+    });
+    enableExternalLinks();
+    const offInterceptor = interceptLinkClicks(document, { trustSameOrigin: true });
     try {
       await paint("direct", CLOSED);
       expect(links()).toHaveLength(0);
@@ -141,12 +152,23 @@ describe("the distribution decides the button, and nothing else", () => {
       await act(async () => { primary()!.click(); });
       for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
       expect(carried).toEqual([{ method: "POST", url: "/account/manage-link", body: JSON.stringify({ lang: "en" }) }]);
-      // `_blank` with `noopener`: the window's interceptor hands it to the browser the person is
-      // already signed in to, which is the whole of this app's billing behaviour.
-      expect(opened).toEqual([{ href: FRESH, target: "_blank", rel: "noopener noreferrer" }]);
+      // `_blank` with `noopener`, focused so Enter opens it too, and nothing opened by the press.
+      expect(links().map((a) => ({ href: a.href, target: a.target, rel: a.rel, text: a.textContent })))
+        .toEqual([{ href: FRESH, target: "_blank", rel: "noopener noreferrer", text: LOCK.openPage }]);
+      expect(document.activeElement, "the minted link does not have the focus").toBe(links()[0]);
+      expect(scripted, "the press clicked the link for the person").toEqual([]);
+      expect(opened, "the press opened the page with no click of the person's").toEqual([]);
+      // The person's click is the open: the browser they are already signed in to, which is the
+      // whole of this app's billing behaviour.
+      await act(async () => {
+        links()[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+      });
+      expect(opened).toEqual([[FRESH, "_blank", "noopener,noreferrer"]]);
       expect(text()).not.toContain(LOCK.openInBrowser);
     } finally {
+      offInterceptor();
       HTMLAnchorElement.prototype.click = realClick;
+      vi.restoreAllMocks();
       delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     }
   });

@@ -217,7 +217,8 @@ describe("a settle that throws after a settled refund is named, not a failed rel
     expect(named).toHaveLength(1);
     expect(named[0]).toMatchObject({ accountId: w.accountId, attempt: firstAttempt(w.gate) });
     expect(JSON.stringify(named[0]), "the line carried the sender's address").not.toContain("alice@ex.example");
-    expect(errors.filter((e) => e.includes("claim release failed")), "a settled release was reported failed").toEqual([]);
+    expect(lines.filter((l) => l.event === "screener_suggest_release_failed"), "a settled release was reported failed").toEqual([]);
+    expect(errors, "a raw print on the suggest path").toEqual([]);
   });
 });
 

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -7,16 +7,12 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import { ACCOUNT_ACCESS_PATH, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
-import {
-  enableExternalLinks,
-  interceptLinkClicks,
-  OPEN_EXTERNAL_COMMAND,
-} from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import messages from "../../webapp/messages/en.json";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
 /**
- * ═══ THE SUBSCRIPTION LINK IS MINTED BY THE PRESS ═══════════════════════════════════════════
+ * ═══ THE SUBSCRIPTION LINK IS MINTED BY THE PRESS, AND OPENED BY A CLICK ═══════════════════
  *
  * The hook behind this pane asked `POST /account/manage-link` in a MOUNT effect, called from
  * `DesktopGate` above every early return — so every launch, and every change of the account
@@ -26,9 +22,11 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
  * The two questions are apart now, and this file drives them through the real gate over a fake
  * bridge, because a hook test cannot see the thing that was actually wrong: WHICH PATHS THE
  * MOUNT PUT ON THE WIRE. The offer (`GET /account/access`) mints nothing; the address is asked
- * for by the press and the window leaves the way it always has — the document's link
- * interceptor, armed here exactly as `main.tsx` arms it, handing the address to the platform's
- * opener.
+ * for by the press. The shell opens a link only on the person's own click, and the mint answers
+ * after a round trip to the engine, past any gesture WebKit still counts, so the press draws the
+ * address as a focused link and the person's click (or Enter) on it is the open — the document's
+ * link interceptor, armed here exactly as `main.tsx` arms it, turning it into the webview's
+ * new-window request.
  *
  * The nav entry belongs to the GATE (`SettingsView` grows it from the prop's presence), so the
  * withdrawal case reads the NAV and not just the pane: a node that rendered nothing would leave
@@ -99,12 +97,8 @@ let mint: { status: number; body: string } = { status: 200, body: JSON.stringify
 
 /** Every `engine_request` path the window put on the bridge, in order. */
 const enginePaths: string[] = [];
-/**
- * Every address this window asked the platform to open. ONLY `open_external`: the window invokes
- * a handful of shell commands of its own on every mount (the badge, the default-mail probe), and
- * a recorder that took them all would be measuring the window rather than the press.
- */
-const opened: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+/** Every address this window asked the webview to open as a new window, in order. */
+const opened: string[] = [];
 
 function fakeShell(status: EngineStatus): void {
   host.__TAURI_INTERNALS__ = {
@@ -126,11 +120,18 @@ function fakeShell(status: EngineStatus): void {
         if (url === MANAGE_LINK_PATH) return encode(mint.status, mint.body);
         return encode(200, EMPTY_PAGE);
       }
-      if (command === OPEN_EXTERNAL_COMMAND) opened.push({ command, payload });
       return null;
     },
   };
 }
+
+beforeEach(() => {
+  // The webview's new-window request; the shell answers it with no window.
+  vi.spyOn(window, "open").mockImplementation((url?: string | URL) => {
+    opened.push(String(url));
+    return null;
+  });
+});
 
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
@@ -211,6 +212,7 @@ afterEach(async () => {
   mountPoint = null;
   delete host.__TAURI_INTERNALS__;
   window.location.hash = "";
+  vi.restoreAllMocks();
 });
 
 describe("the mount", () => {
@@ -279,8 +281,20 @@ describe("the mount", () => {
   });
 });
 
+/** The minted address, drawn as the link the person presses, or null. */
+const mintedLink = (): HTMLAnchorElement | null =>
+  mountPoint!.querySelector<HTMLAnchorElement>(`a[href="${MANAGE_URL}"]`);
+
+/** The person's click on a drawn link, through the window's own interceptor. */
+async function follow(a: HTMLAnchorElement): Promise<void> {
+  await act(async () => {
+    a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+  });
+  await settle(10);
+}
+
 describe("the press", () => {
-  it("mints ONCE and hands the address to the platform's opener", async () => {
+  it("mints ONCE, draws the address as a focused link, and opens nothing until it is clicked", async () => {
     await open(CLOUD_SERVING);
     const btn = await manageControl();
     await press(btn);
@@ -289,19 +303,31 @@ describe("the press", () => {
       enginePaths.filter((p) => p === MANAGE_LINK_PATH).length,
       "one press is one mint",
     ).toBe(1);
+    const link = mintedLink();
+    expect(link, "the press drew no link to the minted address").not.toBeNull();
+    expect(link!.target).toBe("_blank");
+    expect(link!.rel).toBe("noopener noreferrer");
+    expect(document.activeElement, "the drawn link does not have the focus, so Enter does not open it")
+      .toBe(link);
+    expect(opened, "the press opened the page itself, with no click of its own behind it").toEqual([]);
+    expect(nav(), "the pane went away on a good answer").toContain(SETTINGS.billing);
+
+    await follow(link!);
     expect(
       opened,
-      "the address did not reach the opener — the press opened nothing, which is the defect this "
-        + "pane is about",
-    ).toEqual([{ command: OPEN_EXTERNAL_COMMAND, payload: { url: MANAGE_URL } }]);
-    expect(nav(), "the pane went away on a good answer").toContain(SETTINGS.billing);
+      "the click on the minted link opened nothing — the defect this pane is about",
+    ).toEqual([MANAGE_URL]);
   });
 
-  it("a second press mints a second address — a link is minted for the going, not cached", async () => {
+  it("a second going mints a second address — a link is minted for the going, not cached", async () => {
     await open(CLOUD_SERVING);
-    const btn = await manageControl();
-    await press(btn);
-    await press(btn);
+    await press(await manageControl());
+    await follow(mintedLink()!);
+    // Followed, the link gives the control back.
+    const again = byText("button.btn", SETTINGS.subscriptionManage) as HTMLButtonElement | null;
+    expect(again, "the Manage control did not come back after the link was followed").not.toBeNull();
+    await press(again!);
+    await follow(mintedLink()!);
 
     expect(enginePaths.filter((p) => p === MANAGE_LINK_PATH).length).toBe(2);
     expect(opened).toHaveLength(2);

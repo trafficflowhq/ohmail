@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -8,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 
 import { MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
 import { setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
-import { enableExternalLinks, interceptLinkClicks, OPEN_EXTERNAL_COMMAND } from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
 import type { RichValue } from "../../webapp/app/shell/rich-text";
@@ -16,20 +16,22 @@ import { SignatureBlock } from "../../webapp/app/shell/SignatureBlock";
 import { SIG_FOLLOWING } from "../../webapp/app/shell/signature";
 import { HeldUnsubscribe } from "../../webapp/app/views/ScreenerView";
 import messages from "../../webapp/messages/en.json";
-import { ACCOUNT_PAGE_SURFACE, leaveForAccountPage } from "../src/DesktopSubscription.js";
+import { DesktopSubscription, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";
 import { reportRenderedLinksToShell } from "../src/native.js";
 
 /**
- * THE LINKS ON SCREEN REACH THE SHELL BEFORE ANYBODY CAN PRESS ONE. The shell's `open_external`
- * and its new-window door open an address only when a renderer reported it (`rendered_links.rs`),
- * so the half that can be built, tested and unreachable is this one: a sink nobody armed, a
- * renderer that draws a link and never reports it, a report in a spelling the open does not use.
- * The renderers are mounted over a fake shell with the window armed exactly as `main.tsx` arms it,
- * and every command the window sends is recorded in order. Mutations watched red: the renderer's
- * report removed (each mount row); the unmount's empty report removed (the unmount rows); the
- * frame reporting while the prose is on screen (the letter row's one surface); the press reporting
- * after its click (the account row); the editor reading its links only when it arrives or only on
- * `update`, reporting the mark's raw href, or reporting only when it is read-only (the draft row).
+ * THE LINKS ON SCREEN REACH THE SHELL BEFORE ANYBODY CAN PRESS ONE. The shell's new-window door
+ * opens an address only when a renderer reported it (`rendered_links.rs`), and only on the
+ * person's own click, so the half that can be built, tested and unreachable is this one: a sink
+ * nobody armed, a renderer that draws a link and never reports it, a report in a spelling the
+ * open does not use. The renderers are mounted over a fake shell with the window armed exactly as
+ * `main.tsx` arms it, and every command the window sends and every new-window request it makes
+ * is recorded in one order. Mutations watched red: the renderer's report removed (each mount
+ * row); the unmount's empty report removed (the unmount rows); the frame reporting while the
+ * prose is on screen (the letter row's one surface); the account page opened by the press itself,
+ * or drawn without its report (the account row); the editor reading its links only when it
+ * arrives or only on `update`, reporting the mark's raw href, or reporting only when it is
+ * read-only (the draft row).
  */
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = React.createElement;
@@ -43,12 +45,29 @@ interface Host {
 }
 const host = globalThis as unknown as Host;
 
-/** Every command the window sent the shell, in order. */
+/** The webview's new-window request, as this log names it beside the shell's commands. */
+const OPEN = "window.open";
+
+/** Every command the window sent the shell and every new-window request it made, in order. */
 const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
 const reports = (): Array<{ surface: string; urls: string[] }> =>
   sent.filter((s) => s.command === "rendered_links").map((s) => s.payload as { surface: string; urls: string[] });
-const opens = (): string[] => sent.filter((s) => s.command === OPEN_EXTERNAL_COMMAND).map((s) => String(s.payload?.url));
+const opens = (): string[] => sent.filter((s) => s.command === OPEN).map((s) => String(s.payload?.url));
 const firstOf = (command: string): number => sent.findIndex((s) => s.command === command);
+
+/** A minted address the fake bridge answers the subscription press with. */
+let minted = "https://account.example.test/manage?t=abc";
+
+/** One answer, framed as the shell frames one for the bridge. */
+function encode(status: number, body: string): Uint8Array {
+  const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "OK", h: [] }));
+  const payload = new TextEncoder().encode(body);
+  const out = new Uint8Array(4 + meta.byteLength + payload.byteLength);
+  new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+  out.set(meta, 4);
+  out.set(payload, 4 + meta.byteLength);
+  return out;
+}
 
 let root: Root | null = null;
 let mountPoint: HTMLElement | null = null;
@@ -85,9 +104,17 @@ beforeEach(() => {
     transformCallback: () => 1,
     invoke: async (command, payload) => {
       sent.push({ command, payload });
+      if (command === "engine_request" && payload?.url === MANAGE_LINK_PATH) {
+        return encode(200, JSON.stringify({ url: minted }));
+      }
       return null;
     },
   };
+  // The new-window request, in the same log as the commands; the shell answers it with no window.
+  vi.spyOn(window, "open").mockImplementation((url?: string | URL) => {
+    sent.push({ command: OPEN, payload: { url: String(url) } });
+    return null;
+  });
   // What `main.tsx` arms before the first render: the interceptor, and the sink to the shell.
   enableExternalLinks();
   dispose = interceptLinkClicks(document, { trustSameOrigin: true });
@@ -100,6 +127,7 @@ afterEach(async () => {
   dispose = null;
   setRenderedLinksSink(null);
   delete host.__TAURI_INTERNALS__;
+  vi.restoreAllMocks();
 });
 
 /** A designed mail: the 600px canvas keeps it in its frame. */
@@ -133,7 +161,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(report?.urls).toEqual(["https://example.test/a?b=1&c=2", "https://xn--bcher-kva.example/%C3%BC"]);
     for (const a of el.querySelectorAll<HTMLAnchorElement>("a.msg-link")) await press(a);
     expect(opens()).toEqual(report!.urls);
-    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN_EXTERNAL_COMMAND));
+    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
   });
 
   it("an html letter set in the app's own type reports its anchors the same way", async () => {
@@ -165,13 +193,35 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(reports().at(-1)?.urls).toEqual([]);
   });
 
-  it("the account page a press minted is reported before the click that opens it", async () => {
-    const minted = "https://account.example.test/manage?t=abc";
-    leaveForAccountPage(minted);
-    await turns(2);
-    expect(sent.map((s) => s.command)).toEqual(["rendered_links", OPEN_EXTERNAL_COMMAND]);
-    expect(reports()).toEqual([{ surface: ACCOUNT_PAGE_SURFACE, urls: [minted] }]);
+  /* THE MINTED ACCOUNT PAGE IS A LINK THE PERSON PRESSES. The mint answers after a round trip to
+     the engine, outside any gesture WebKit still counts, so the press draws the address and
+     opens nothing; the person's own click on it is the open, and the report came first. */
+  it("the account page a press minted is reported and drawn, and opens only on its own click", async () => {
+    minted = "https://account.example.test/manage?t=abc";
+    const el = await mount(
+      h(NextIntlClientProvider, {
+        locale: "en",
+        messages: messages as never,
+        timeZone: "UTC",
+        children: h(DesktopSubscription, { onNowhere: () => {} }),
+      }),
+    );
+    const manage = [...el.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent?.trim() === messages.settings.subscriptionManage,
+    );
+    expect(manage, "the pane drew no Manage control").toBeDefined();
+    await act(async () => { manage!.click(); });
+    await turns();
+    const link = el.querySelector<HTMLAnchorElement>(`a[href="${minted}"]`);
+    expect(link, "the minted address was not drawn as a link").not.toBeNull();
+    expect(reports().map((r) => r.urls)).toEqual([[minted]]);
+    expect(opens(), "the press opened the page itself").toEqual([]);
+    // Followed, the link gives the press back; the click is its state change, so inside `act`.
+    await act(async () => {
+      link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    });
     expect(opens()).toEqual([minted]);
+    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
   });
 
   it("with no sink armed — the web app's state — nothing is reported", async () => {
@@ -219,7 +269,7 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
     expect(report, "the signature's link never reached the shell").toBeDefined();
     await press(a!);
     expect(opens()).toEqual([OUR_SITE]);
-    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN_EXTERNAL_COMMAND));
+    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
     await unmount();
     expect(reports().at(-1), "the unmount left the signature's link on the list").toEqual({ surface: report!.surface, urls: [] });
   });
@@ -349,15 +399,18 @@ describe("the wiring, from source", () => {
     for (const u of own) expect(new URL(u).href, u).toBe(u);
   });
 
-  it("both doors ask the one predicate, and the state is in before the grant", () => {
+  it("every door asks the one predicate, with the activation, and the state is in before the grant", () => {
     const engine = source("apps/desktop/src-tauri/src/engine.rs");
-    const open = bodyOf(engine, "fn open_external(");
-    expect(open).toMatch(/admitted\(&url, held\)/);
-    expect(open).toMatch(/spawn_opener\(target\)/);
-    expect(open, "a refusal at the command door is not logged").toMatch(/log_refusal\(Door::Command/);
-    expect(bodyOf(engine, "pub fn popup_route(")).toMatch(/rendered_links::admitted\(url, set\)/);
-    expect(bodyOf(engine, "pub fn on_new_window<")).toMatch(/read_managed\(&app/);
-    expect(bodyOf(engine, "pub fn link_door<")).toMatch(/read_managed\(&app/);
+    const route = bodyOf(engine, "pub fn popup_route(");
+    expect(route).toMatch(/rendered_links::admitted\(url, set\)/);
+    expect(route, "the activation decides nothing").toMatch(/activation == Activation::Person/);
+    expect(bodyOf(engine, "pub(crate) fn route_and_deliver<")).toMatch(/read_managed\(app/);
+    // tauri's `window.open` door on macOS and each engine's gate end at the same door.
+    expect(bodyOf(engine, "pub fn on_new_window<")).toMatch(/route_and_deliver\(&app/);
+    const gate = source("apps/desktop/src-tauri/src/link_gate.rs") + source("apps/desktop/src-tauri/src/link_gate_macos.rs");
+    expect(gate.match(/route_and_deliver\(&app/g)?.length, "an engine's hook does not reach the door").toBe(3);
+    // No second door: the command and the macOS link door are gone.
+    expect(engine).not.toMatch(/fn open_external\(|fn link_door</);
     const manage = bodyOf(engine, "pub fn manage(");
     expect(manage.indexOf("RenderedLinks::default()"), "the links are never managed").toBeGreaterThan(-1);
     expect(manage.indexOf("RenderedLinks::default()")).toBeLessThan(manage.indexOf("add_capability("));

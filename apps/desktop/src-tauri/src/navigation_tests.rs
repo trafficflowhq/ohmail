@@ -1,12 +1,11 @@
 //! The navigation lock (`navigation.rs`): the predicate in each platform's spelling, the guard as
-//! `lock` builds it, the refusal's line, the link door, and two censuses: every webview this crate
-//! constructs is born inside `navigation::lock(`, and no config window is left for Tauri to create.
+//! `lock` builds it, the refusal's line on every platform, and two censuses: every webview this
+//! crate constructs is born inside `navigation::lock(`, and no config window is left for Tauri to
+//! create.
 
 use super::*;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use tauri::utils::config::{parse, Csp};
 use tauri::utils::platform::Target;
 
@@ -101,14 +100,14 @@ fn base_with_dev(dev: &str) -> Config {
 fn the_guard_reads_dev_url_through_the_debug_flag_and_lock_passes_the_builds_own() {
     let config = base_with_dev("http://localhost:1420/");
     let page = url("http://localhost:1420/index.html");
-    assert!(guard(&config, true, None)(&page), "a debug build refused its devUrl");
-    assert!(!guard(&config, false, None)(&page), "a release build admitted a devUrl");
+    assert!(guard(&config, true)(&page), "a debug build refused its devUrl");
+    assert!(!guard(&config, false)(&page), "a release build admitted a devUrl");
     let (_, home) = EVERY.into_iter().find(|(own, _)| *own == Own::this_build(false)).expect("this build's spelling");
-    assert!(guard(&config, false, None)(&url(&format!("{home}/index.html"))));
-    assert!(!guard(&config, true, None)(&url("https://example.com/")));
+    assert!(guard(&config, false)(&url(&format!("{home}/index.html"))));
+    assert!(!guard(&config, true)(&url("https://example.com/")));
     let source = code_of(include_str!("navigation.rs"));
     assert!(
-        source.contains(".on_navigation(guard(config, cfg!(debug_assertions), door))"),
+        source.contains(".on_navigation(guard(config, cfg!(debug_assertions)))"),
         "lock no longer hands the guard this build's own debug flag"
     );
 }
@@ -228,40 +227,34 @@ fn a_refusal_is_one_line_of_two_closed_classes_and_nothing_of_the_address() {
     }
 }
 
+/// A REFUSED ADDRESS IS REFUSED WITH ITS LINE, AND GOES NOWHERE, ON EVERY PLATFORM. On macOS it used
+/// to be handed to a link door that opened it in the browser, so `location.href` set by a script
+/// reached the opener with no click; a link now leaves only as a new-window request on the
+/// person's click (`link_gate.rs`). The pages the lock admits are the positive control.
 #[test]
-fn a_refused_address_goes_to_the_link_door_only_when_the_door_takes_it() {
+fn a_refused_address_is_refused_with_its_line_on_every_platform() {
     let link = url("https://example.com/a-link-in-a-message");
-    let offered = Mutex::new(Vec::<String>::new());
-    let takes = |u: &str| {
-        offered.lock().unwrap().push(u.to_string());
-        true
-    };
-    let declines = |_: &str| false;
     for (own, home) in EVERY {
-        let asked = AtomicBool::new(false);
-        let watching = |_: &str| {
-            asked.store(true, Ordering::SeqCst);
-            true
-        };
-        assert_eq!(decide(&url(&format!("{home}/")), own, None, Some(&watching)), Verdict::Admitted);
-        assert_eq!(decide(&url(MESSAGE_FRAME), own, None, Some(&watching)), Verdict::Admitted);
-        assert!(!asked.load(Ordering::SeqCst), "an admitted page was offered to the link door");
-        assert_eq!(decide(&link, own, None, Some(&takes)), Verdict::Handed);
-        assert_eq!(decide(&link, own, None, Some(&declines)), Verdict::Refused(refusal_line(&link)));
-        assert_eq!(decide(&link, own, None, None), Verdict::Refused(refusal_line(&link)));
+        assert_eq!(decide(&url(&format!("{home}/")), own, None), Verdict::Admitted);
+        assert_eq!(decide(&url(MESSAGE_FRAME), own, None), Verdict::Admitted);
+        assert_eq!(decide(&link, own, None), Verdict::Refused(refusal_line(&link)));
     }
-    assert_eq!(offered.into_inner().unwrap(), vec![link.as_str().to_string(); 3]);
+    let config: Config = serde_json::from_str(include_str!("../tauri.conf.json")).expect("the base parses");
+    assert!(!guard(&config, false)(&link), "the guard let a refused address through");
 }
 
+/// NO WINDOW HANDS A REFUSED NAVIGATION ANYWHERE: no door in the lock, none passed by the main
+/// window's builder, and none left in the engine. Mutation: put `link_door` back in `menu.rs` → red.
 #[test]
-fn only_the_webview_that_asks_the_guard_about_new_windows_gets_a_link_door() {
-    #[cfg(target_os = "macos")]
-    assert!(ASKED_ABOUT_NEW_WINDOWS);
-    #[cfg(not(target_os = "macos"))]
-    assert!(!ASKED_ABOUT_NEW_WINDOWS);
+fn no_window_hands_a_refused_navigation_to_a_door() {
+    let navigation = code_of(include_str!("navigation.rs"));
+    for gone in ["ASKED_ABOUT_NEW_WINDOWS", "Handed", "pub type Door"] {
+        assert!(!navigation.contains(gone), "navigation.rs still carries {gone}");
+    }
     let menu = code_of(include_str!("menu.rs"));
-    assert!(menu.contains("if !crate::navigation::ASKED_ABOUT_NEW_WINDOWS {"), "menu.rs no longer asks first");
-    assert!(menu.contains("crate::engine::link_door(app.clone())"), "the main window lost its link door");
+    assert!(!menu.contains("link_door"), "the main window is built with a link door");
+    assert!(menu.contains("crate::navigation::lock("), "the main window is not built through the lock");
+    assert!(!code_of(include_str!("engine.rs")).contains("fn link_door"), "the engine still carries a link door");
 }
 
 /* ── THE CENSUSES ─────────────────────────────────────────────────────────────────────────── */
@@ -460,7 +453,7 @@ fn the_census_names_a_webview_built_without_the_lock_in_every_spelling() {
         "let v = WebviewBuilder::from_config(&c);",
         "let v = tauri::Webview::builder(\"x\", url);",
         "let w = WebviewWindowBuilder::<R, _>::new(app, \"x\", url);",
-        "let w = lock(WebviewWindowBuilder::new(app, \"x\", url), c, None);",
+        "let w = lock(WebviewWindowBuilder::new(app, \"x\", url), c);",
         "let glob = \"src/**/*.rs\"; let w = WebviewWindowBuilder::new(app, \"x\", url);",
         "let q = '\"'; let w = WebviewWindowBuilder::new(app, \"x\", url);",
     ] {
@@ -470,7 +463,7 @@ fn the_census_names_a_webview_built_without_the_lock_in_every_spelling() {
 
 #[test]
 fn the_census_admits_a_locked_webview_and_reads_no_comment_or_string() {
-    let locked = "let w = crate::navigation::lock(\n    tauri::WebviewWindowBuilder::new(app, \"x\", url),\n    c,\n    None,\n);";
+    let locked = "let w = crate::navigation::lock(\n    tauri::WebviewWindowBuilder::new(app, \"x\", url),\n    c,\n);";
     assert_eq!(builder_sites(&code_of(locked)), vec![(2, true)]);
     let prose = "// WebviewWindowBuilder::new(app)\n/* WebviewBuilder::new(\"x\") /* nested */ */\n\
                  let s = \"WebviewWindow::builder(\";\nlet r = r#\"Webview::builder(\"#;\n\

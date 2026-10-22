@@ -1,23 +1,28 @@
 /**
  * Links in the APP'S OWN document, on a desktop that has no second window. A `_blank` click is a
- * new-window request the webview hands to its host; this listener answers it first in the app's
- * document — prose mail and the app's own link-outs — so those reach the shell's opener. A message
- * frame's clicks never reach it: WebKit calls no listener in a frame sandboxed without scripts, so
- * they arrive at the shell as the new-window request itself (`popup_route` in `engine.rs`). Both
- * doors end at the same gate (`external_url`) and the same opener.
+ * new-window request the webview hands to its host; this listener decides it first in the app's
+ * document — prose mail and the app's own link-outs — and makes an http(s) link exactly that
+ * request, for the exact address, INSIDE the click. The shell opens a link only on a request the
+ * webview itself counted as the person's click or key press (`link_gate.rs`), and WebKit counts a
+ * gesture only while its event is handled: an `await` before the open would lose it. A message
+ * frame's clicks never reach this listener: WebKit calls none in a frame sandboxed without
+ * scripts, so they arrive at the shell as the new-window request itself. Both end at the same door
+ * (`popup_route` in `engine.rs`), the same gate (`external_url`) and the same opener; the window
+ * names no address to the shell over any command.
  */
 
 import { isMailto } from "@trafficflow/core/mailto";
 
 /**
- * The scheme table, in one place. `http:`/`https:` — the shell's opener → the user's own browser,
- * never this window ({@link externalTargetOf} decides; `external_url` in `engine.rs` decides again,
- * because the argument comes out of a message). `mailto:` — THIS window → the compose form through
- * the one RFC 6068 parser ({@link mailtoTargetOf} decides, {@link setMailtoSink} is where it
- * lands); never the opener, never a process. Everything else is cancelled with nothing — `cid:`
- * above all: it names a part of the message being read and must not leave this machine. The
- * `mailto:` row was "everything else" for two releases — the fix was reasoned about as a browser,
- * and the one scheme a MAIL CLIENT answers itself was swept into refuse.
+ * The scheme table, in one place. `http:`/`https:` — a new-window request → the shell → the user's
+ * own browser, never this window ({@link externalTargetOf} decides; `external_url` in `engine.rs`
+ * decides again, because the address comes out of a message). `mailto:` — THIS window → the
+ * compose form through the one RFC 6068 parser ({@link mailtoTargetOf} decides,
+ * {@link setMailtoSink} is where it lands); never the browser, never a process. Everything else is
+ * cancelled with nothing — `cid:` above all: it names a part of the message being read and must
+ * not leave this machine. The `mailto:` row was "everything else" for two releases — the fix was
+ * reasoned about as a browser, and the one scheme a MAIL CLIENT answers itself was swept into
+ * refuse.
  */
 
 /**
@@ -28,9 +33,6 @@ import { isMailto } from "@trafficflow/core/mailto";
  * by construction, not by a branch).
  */
 
-/** The shell command that hands one address to the platform's opener. `engine.rs` owns the gate. */
-export const OPEN_EXTERNAL_COMMAND = "open_external";
-
 /**
  * The classifier — pure, and the whole of the decision. Answers the address to open in the user's
  * own browser, or `null` for "this is not one"; split from the handler so the rule is driven
@@ -39,7 +41,7 @@ export const OPEN_EXTERNAL_COMMAND = "open_external";
  * `trustSameOrigin: false` — see {@link interceptLinkClicks}). Only `http:` and `https:` are ever
  * an address; everything else answers `null`, and `cid:` is why the default for an unrecognised
  * scheme is refuse — it names a part of the message being read. `mailto:` answering `null` here is
- * not the end of its story ({@link mailtoTargetOf}), but this function feeds a process spawn.
+ * not the end of its story ({@link mailtoTargetOf}), but this function feeds the browser.
  */
 export function externalTargetOf(href: string, base: string): string | null {
   const raw = href.trim();
@@ -74,8 +76,8 @@ export function externalTargetOf(href: string, base: string): string | null {
  * function would then approve one string and return another whose scheme `parseMailto`'s own
  * `/^mailto:/i` does not match; that divergence happened to fail closed, which is the kind of luck
  * that stops being luck when a caller changes. So the test is the parser's own, on the string that
- * travels. The string stays untrusted: it becomes text in a compose form and never reaches
- * {@link OPEN_EXTERNAL_COMMAND} or a process spawn.
+ * travels. The string stays untrusted: it becomes text in a compose form and never reaches the
+ * browser or a process spawn.
  */
 export function mailtoTargetOf(href: string, base: string): string | null {
   void base; // deliberately unused — a mailto is absolute or it is not a mailto. See the header.
@@ -144,44 +146,13 @@ export function setMailtoSink(sink: ((raw: string) => void) | null): void {
 }
 
 /**
- * Who says so when the shell will not open an address — `setMailtoSink`'s twin, registered the
- * same way and for the same reason: a document-level listener has no UI context of its own, and
- * the surface that HAS one does not exist until the gate has mounted. `null` — the web app's
- * permanent state — leaves the rejection in the window's log, which is where it went before this
- * seam existed. This is the one edge of the feature that was still silent: a link that did
- * nothing is the defect, and a repair whose own failure is invisible is that defect wearing it.
+ * Ask the webview for a new window on this address, synchronously, inside the person's click. The
+ * shell answers every such request with no window; a link it opens goes to the person's browser,
+ * and one it refuses comes back as its `link:refused` event, which the gate says on screen. So
+ * nothing here waits for an answer, and `noopener` leaves the page no handle on anything.
  */
-let openFailureSink: ((url: string) => void) | null = null;
-
-/** Point the refusal at a surface that can say it, or pass `null` to take it away. */
-export function setOpenFailureSink(sink: ((url: string) => void) | null): void {
-  openFailureSink = sink;
-}
-
-interface TauriInternals {
-  invoke(command: string, payload?: Record<string, unknown>): Promise<unknown>;
-}
-
-/**
- * Ask the shell to open one address, and say so if it will not.
- *
- * The rejection arm is a `console.error` and not a swallow: this whole slice exists because a
- * link failed without a trace, and a second silent failure mode in the fix would be the same
- * defect wearing the repair. The log is where a report can quote it from; {@link
- * setOpenFailureSink} is where a person hears about it, registered by the surface that has one
- * because a document-level listener has no UI context of its own. Both, not either: the log
- * outlives the toast.
- */
-async function askShellToOpen(url: string): Promise<void> {
-  const host = globalThis as { __TAURI_INTERNALS__?: Partial<TauriInternals> };
-  const internals = host.__TAURI_INTERNALS__;
-  if (typeof internals?.invoke !== "function") return;
-  try {
-    await (internals as TauriInternals).invoke(OPEN_EXTERNAL_COMMAND, { url });
-  } catch (err) {
-    console.error(`ohmail: the shell would not open ${url}`, err);
-    openFailureSink?.(url);
-  }
+function openInBrowser(url: string): void {
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /** Documents already carrying the listener, so a second install is not a second handler. */
@@ -255,7 +226,7 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
     const target = externalTargetOf(href, base);
     if (target !== null) {
       ev.preventDefault();
-      void askShellToOpen(target);
+      openInBrowser(target);
       return;
     }
 
