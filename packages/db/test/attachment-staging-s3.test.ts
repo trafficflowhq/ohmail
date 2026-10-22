@@ -1,3 +1,4 @@
+// @services: none — signs URLs for the RustFS port, dials nothing
 import { describe, it, expect } from "vitest";
 import { createHash, createHmac } from "node:crypto";
 import {

@@ -1,4 +1,5 @@
-import { execFileSync } from "node:child_process";
+// @services: none — reads the workflow's service ports as text
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -6,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, dovecotPinned, hashShard, readMap, readSqliteMap,
+  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, dovecotPinned, hashShard, readMap, readSqliteMap,
   shardFiles, sqliteShardFiles, testFiles, verifyReport, verifySqliteReport,
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
@@ -373,10 +374,37 @@ describe("the map's two rules, on a planted tree", () => {
   it("reads a shard's report back: a file that did not run and a file nobody asked for both refuse", () => {
     const want = shardFiles(2, scratch, map);
     const row = (f: string) => ({ name: join(scratch, f), startTime: 0, endTime: 1 });
-    expect(verifyReport(2, { testResults: want.map(row) }, scratch, map)).toEqual({ missing: [], extra: [] });
+    expect(verifyReport(2, { testResults: want.map(row) }, scratch, map)).toEqual({ missing: [], extra: [], gated: [] });
     expect(verifyReport(2, { testResults: [] }, scratch, map).missing).toEqual(want);
     expect(verifyReport(2, { testResults: [...want, "packages/p/test/f0.test.ts"].map(row) }, scratch, map).extra)
       .toEqual(want.includes("packages/p/test/f0.test.ts") ? [] : ["packages/p/test/f0.test.ts"]);
+  });
+
+  /* A shard that ran a file as the service gate's stand-in measured nothing in it: every service a CI
+   * job starts is required there, so a gate title in its report means one was missing. */
+  it("refuses a report in which the service gate skipped a file, and passes one in which a file gated itself", () => {
+    const want = shardFiles(2, scratch, map);
+    const gate = `${SERVICE_GATE_PREFIX}GreenMail is not running at 127.0.0.1:3143 (ECONNREFUSED)`;
+    const row = (f: string, titles: string[] = []) => ({
+      name: join(scratch, f), startTime: 0, endTime: 1,
+      assertionResults: [{ ancestorTitles: titles, title: "not run here", fullName: [...titles, "not run here"].join(" "), status: "skipped" }],
+    });
+    const gated = { testResults: want.map((f, i) => row(f, i === 0 ? [gate] : [])) };
+    expect(verifyReport(2, gated, scratch, map)).toEqual({ missing: [], extra: [], gated: [`${want[0]}: ${gate}`] });
+    const self = { testResults: want.map((f, i) => row(f, i === 0 ? ["a describe (SKIPPED: GreenMail is not running at 127.0.0.1:3143 (ECONNREFUSED))"] : [])) };
+    expect(verifyReport(2, self, scratch, map).gated).toEqual([]);
+    const dir = mkdtempSync(join(tmpdir(), "ci-shards-gated-"));
+    try {
+      const shard0 = shardFiles(0);
+      const report = (titles: string[]) => ({ testResults: shard0.map((f, i) => ({ ...row(f, i === 0 ? titles : []), name: join(ROOT, f) })) });
+      writeFileSync(join(dir, "clean.json"), JSON.stringify(report([])));
+      writeFileSync(join(dir, "gated.json"), JSON.stringify(report([gate])));
+      const cli = (file: string) => spawnSync(process.execPath, [join(ROOT, "test/support/ci-shards.mjs"), "--verify-report", "0", join(dir, file)], { encoding: "utf8" });
+      expect(cli("clean.json").status).toBe(0);
+      const refused = cli("gated.json");
+      expect(refused.status).toBe(1);
+      expect(refused.stderr).toContain(`ci-shards: GATED ${shard0[0]}: ${gate}`);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 
@@ -420,7 +448,10 @@ describe("the SQLite map's rules, on a planted list", () => {
   it("reads a shard's report back: a file that did not run and a file nobody asked for both refuse", () => {
     const want = sqliteShardFiles(1, listed, map);
     const row = (f: string) => ({ name: join(ROOT, f), startTime: 0, endTime: 1 });
-    expect(verifySqliteReport(1, listed, { testResults: want.map(row) }, ROOT, map)).toEqual({ missing: [], extra: [] });
+    expect(verifySqliteReport(1, listed, { testResults: want.map(row) }, ROOT, map)).toEqual({ missing: [], extra: [], gated: [] });
+    const gate = `${SERVICE_GATE_PREFIX}Postgres is not running at localhost:5433 (ECONNREFUSED)`;
+    const gated = { testResults: want.map((f, i) => ({ ...row(f), assertionResults: i === 0 ? [{ ancestorTitles: [gate], title: "not run here", status: "skipped" }] : [] })) };
+    expect(verifySqliteReport(1, listed, gated, ROOT, map).gated).toEqual([`${want[0]}: ${gate}`]);
     expect(verifySqliteReport(1, listed, { testResults: [] }, ROOT, map).missing).toEqual(want);
     expect(verifySqliteReport(1, listed, { testResults: [...want, "packages/p/test/s0.test.ts"].map(row) }, ROOT, map).extra)
       .toEqual(["packages/p/test/s0.test.ts"]);

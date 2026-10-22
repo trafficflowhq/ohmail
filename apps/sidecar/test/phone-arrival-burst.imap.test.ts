@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import net, { connect as netConnect } from "node:net";
+import net from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { ImapAdapter, IMAP_CYCLE_DEADLINE_MS } from "@trafficflow/core/adapters/imap";
@@ -21,6 +21,7 @@ import {
   PHONE_DATE_READ_COMMAND_SIZE, startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows,
 } from "../src/mobile.js";
 import { DEFAULT_POLL_INTERVAL_MS } from "../src/engine.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 type Row = Record<string, unknown>;
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
@@ -49,19 +50,7 @@ const BURST = 4_000;
 /** The adapter's default page. A pass that completes brings exactly this many in. */
 const PAGE = 200;
 
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => { if (!settled) { settled = true; sock.destroy(); resolve(v); } };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-const SERVER_UP = ON_DEVICE_STORE ? await imapAnswers(HOST, PORT) : false;
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 /** UIDs named by an IMAP sequence set — `1,2,5:9` is seven. */
 function setSize(set: string): number {

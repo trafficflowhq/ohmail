@@ -167,12 +167,12 @@ jobs:
           failed=
           for n in $(seq $((PART - 1)) "$PARTS" 15); do
             bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-            TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+            TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
           done
           if [ "$PART" = "$PARTS" ]; then
             for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
               bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-              TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+              TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run "$f" || failed=1
             done
           fi
           test -z "$failed"
@@ -216,12 +216,12 @@ jobs:
           failed=
           for n in $(seq $((PART - 1)) "$PARTS" 15); do
             bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-            TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+            TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
           done
           if [ "$PART" = "$PARTS" ]; then
             for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
               bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-              TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+              TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run "$f" || failed=1
             done
           fi
           test -z "$failed"

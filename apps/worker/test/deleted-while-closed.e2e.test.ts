@@ -6,7 +6,7 @@ import { ImapFlow } from "imapflow";
 import {
   accounts, changeLog, contacts, mailboxFolders, mailboxes, messageInstances, messages, type Tx,
 } from "@trafficflow/db";
-import { makeTestDb } from "@trafficflow/db/testing";
+import { makeTestDb, serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
@@ -70,11 +70,6 @@ async function moveTo(c: ImapFlow, from: string, to: string, messageId: string):
   expect(uid, `${messageId} is in ${from} before the move`).toBeGreaterThan(0);
   const l = await c.getMailboxLock(from);
   try { await c.messageMove([uid], to, { uid: true }); } finally { l.release(); }
-}
-
-async function serverUp(cfg: ImapConfig): Promise<boolean> {
-  const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: false, auth: cfg.auth, logger: false });
-  try { await c.connect(); await c.logout(); return true; } catch { return false; }
 }
 
 const closers: Array<() => Promise<unknown>> = [];
@@ -146,11 +141,11 @@ async function world(server: Server, role: Role) {
   return { cfg, c, db, accountId, mailboxId, ctx, launch, drain, rowOf, listed, found, mirror, pull };
 }
 
-/** Asked once, before collection; a server that does not answer skips its cases BY NAME. */
+/** The run's one probe (test/setup/services.global.ts); a server that does not answer skips its cases BY NAME. */
 const absent: Record<Server, string> = { greenmail: "", dovecot: "" };
-for (const server of ["greenmail", "dovecot"] as const) {
-  const cfg = configFor(server);
-  if (!(await serverUp(cfg))) absent[server] = ` (SKIPPED: no ${server} answers at ${cfg.host}:${cfg.port})`;
+const at = (server: Server): string => `${configFor(server).host}:${configFor(server).port}`;
+for (const [server, s] of [["greenmail", serviceUp("greenmail", at("greenmail"))], ["dovecot", serviceUp("dovecot", at("dovecot"))]] as const) {
+  if (!s.up) absent[server] = ` (SKIPPED: ${s.why})`;
 }
 
 describe("a letter deleted while the app was closed", () => {

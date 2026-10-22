@@ -8,9 +8,15 @@ export const DOVECOT_TEXT: RegExp;
 export const DOVECOT_PATH: RegExp;
 export const DESKTOP_CONFIG_IMPORT: RegExp;
 export const DESKTOP_INSTALL_MARKER: string;
+export const SERVICE_GATE_PREFIX: string;
 
 export interface ShardMap { measuredAt: string; shards: string[][]; pins: { dovecot: string[] } }
-export interface VitestReport { testResults: { name: string; startTime: number; endTime: number; status?: string }[] }
+export interface VitestReport {
+  testResults: {
+    name: string; startTime: number; endTime: number; status?: string;
+    assertionResults?: { ancestorTitles?: string[]; title?: string; fullName?: string; status?: string }[];
+  }[];
+}
 
 export function testFiles(root?: string): string[];
 export function aloneFiles(root?: string, files?: string[]): string[];
@@ -22,7 +28,8 @@ export function shardFiles(n: number, root?: string, map?: ShardMap): string[];
 export function checkMap(root?: string, map?: ShardMap): string[];
 export function measuredCosts(root: string, reports: VitestReport[]): Map<string, number>;
 export function pack(root: string, cost: Map<string, number>, measuredAt: string): { map: ShardMap; seconds: number[] };
-export function verifyReport(n: number | "desktop", report: VitestReport, root?: string, map?: ShardMap): { missing: string[]; extra: string[] };
+export function verifyReport(n: number | "desktop", report: VitestReport, root?: string, map?: ShardMap): { missing: string[]; extra: string[]; gated: string[] };
+export function gatedFiles(report: VitestReport, root?: string): string[];
 
 export const SQLITE_MAP: string;
 export const SQLITE_SHARDS: number;
@@ -32,5 +39,5 @@ export function readSqliteMap(root?: string): SqliteShardMap;
 export function listedFiles(root: string, list: VitestListRow[]): string[];
 export function sqliteShardFiles(n: number, listed: string[], map: SqliteShardMap): string[];
 export function checkSqliteMap(root?: string, map?: SqliteShardMap): string[];
-export function verifySqliteReport(n: number, listed: string[], report: VitestReport, root?: string, map?: SqliteShardMap): { missing: string[]; extra: string[] };
+export function verifySqliteReport(n: number, listed: string[], report: VitestReport, root?: string, map?: SqliteShardMap): { missing: string[]; extra: string[]; gated: string[] };
 export function packSqlite(cost: Map<string, number>, measuredAt: string): { map: SqliteShardMap; seconds: number[] };

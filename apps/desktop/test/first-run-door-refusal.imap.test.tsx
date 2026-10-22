@@ -11,7 +11,6 @@
 import { cpSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import dns from "node:dns";
-import { connect as netConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +27,7 @@ import { DOOR_COPY } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
 import { createSidecar, type Sidecar } from "../../sidecar/src/engine.js";
 import { openLocalDb, PGDATA_SUBDIR } from "../../sidecar/src/db.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 /* The name the TLS floor does not exempt, answered `address` by the operating system until the
  * returned restore runs: `dns.lookup` and `dns.promises.lookup` for that name, "no record" from the
@@ -90,19 +90,7 @@ const host = globalThis as unknown as Host;
 const GM = "127.0.0.1";
 const IMAP_PORT = Number(process.env.IMAP_PORT ?? 3143);
 const SMTP_PORT = Number(process.env.SMTP_PORT ?? 3025);
-function imapAnswers(hostName: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => { if (settled) return; settled = true; sock.destroy(); resolve(v); };
-    const sock = netConnect({ host: hostName, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-const SERVER_UP = await imapAnswers(GM, IMAP_PORT);
+const SERVER_UP = serviceUp("greenmail", `${GM}:${IMAP_PORT}`).up;
 
 function encode(res: { status: number; statusText: string; headers: Headers }, body: Uint8Array): Uint8Array {
   const pairs: [string, string][] = [];

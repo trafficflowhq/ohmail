@@ -12,10 +12,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { connect as netConnect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapFlow } from "imapflow";
 import type { PhoneEngine, PhoneSqlExecutor, PhoneSqlRows } from "../src/mobile.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {
@@ -40,25 +40,7 @@ const PASS = "test";
 const EXPECTED_DIALECT = process.env.OHMAIL_EXPECT_DIALECT;
 const ON_DEVICE_STORE = EXPECTED_DIALECT === "sqlite";
 
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (v: boolean): void => {
-      if (settled) return;
-      settled = true;
-      sock.destroy();
-      resolve(v);
-    };
-    const sock = netConnect({ host, port });
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.on("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-    sock.once("close", () => finish(false));
-  });
-}
-
-const SERVER_UP = ON_DEVICE_STORE ? await imapAnswers(HOST, PORT) : false;
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 /** `node:sqlite` behind the phone's statement-runner contract, with a real yield in every call. */
 function nodeExecutor(file: string): PhoneSqlExecutor {

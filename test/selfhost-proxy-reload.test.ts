@@ -1,3 +1,4 @@
+// @services: none — reads the selfhost files as text
 import { afterAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";

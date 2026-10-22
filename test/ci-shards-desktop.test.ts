@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { DESKTOP_INSTALL_MARKER, SHARDS, checkMap, desktopFiles, readMap, shardFiles, testFiles, verifyReport, type ShardMap } from "./support/ci-shards.mjs";
+import { DESKTOP_INSTALL_MARKER, SERVICE_GATE_PREFIX, SHARDS, checkMap, desktopFiles, readMap, shardFiles, testFiles, verifyReport, type ShardMap } from "./support/ci-shards.mjs";
 
 /**
  * THE DESKTOP JOB'S FILES. apps/desktop installs from its own lock, and its vite config imports
@@ -73,8 +73,12 @@ describe("the desktop class, on a planted tree", () => {
 
   it("reads the desktop job's report back by the same class", () => {
     const row = (f: string) => ({ name: join(scratch, f), startTime: 0, endTime: 1 });
-    expect(verifyReport("desktop", { testResults: desktop.map(row) }, scratch, map)).toEqual({ missing: [], extra: [] });
+    expect(verifyReport("desktop", { testResults: desktop.map(row) }, scratch, map)).toEqual({ missing: [], extra: [], gated: [] });
     expect(verifyReport("desktop", { testResults: [row(desktop[0]!), row("packages/p/test/f0.test.ts")] }, scratch, map))
-      .toEqual({ missing: desktop.slice(1), extra: ["packages/p/test/f0.test.ts"] });
+      .toEqual({ missing: desktop.slice(1), extra: ["packages/p/test/f0.test.ts"], gated: [] });
+    /* The desktop job starts no service: a file the gate skipped there needed one, and is refused. */
+    const gate = `${SERVICE_GATE_PREFIX}Postgres is not running at localhost:5433 (ECONNREFUSED)`;
+    const gated = { testResults: desktop.map((f, i) => ({ ...row(f), assertionResults: i === 0 ? [{ ancestorTitles: [gate], title: "not run here" }] : [] })) };
+    expect(verifyReport("desktop", gated, scratch, map).gated).toEqual([`${desktop[0]}: ${gate}`]);
   });
 });

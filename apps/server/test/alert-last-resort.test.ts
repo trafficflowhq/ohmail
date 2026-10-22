@@ -1,3 +1,4 @@
+// @services: none — its Postgres URL is never dialed
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";

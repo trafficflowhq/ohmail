@@ -7,7 +7,8 @@
  * re-pack. The `@postpush: alone` files run in their own job on a database made from empty; the files
  * that dial Dovecot travel together, and only the shard holding them starts it. A desktop test that
  * imports the desktop's own vite config, or carries the desktop-install marker, runs in the desktop job
- * (--desktop), on the desktop's own install.
+ * (--desktop), on the desktop's own install. Both verify verbs also refuse a report in which the service
+ * gate skipped a file for a missing test service (SERVICE_GATE_PREFIX).
  * The SQLite run has its own map, ci-shards-sqlite.json (--pack-sqlite, --sqlite-indexes, --sqlite-shard N
  * <list>, --verify-sqlite-report N <list> <json>; see SQLITE_MAP below).
  */
@@ -37,6 +38,9 @@ export const DESKTOP_CONFIG_IMPORT = /\bfrom\s+["']\.\.\/vite\.config(?:\.js|\.t
 /** …and the marker a desktop test writes when what it checks is the two trees installed side by side
  *  (apps/desktop/test/one-react.test.tsx): in a shard, where the root is installed alone, it proves nothing. */
 export const DESKTOP_INSTALL_MARKER = "@ci: desktop install";
+/** The start of the describe the service gate (test/setup/service-gate.runner.ts) puts in place of a file
+ *  that needs a test service the run found absent; a CI report holding one skipped a file, and is refused. */
+export const SERVICE_GATE_PREFIX = "needs a test service: ";
 
 /** Every test file the default vitest project selects, as the include globs in vitest.config.ts. */
 export function testFiles(root = ROOT) {
@@ -125,11 +129,22 @@ export function checkMap(root = ROOT, map = readMap(root)) {
 }
 
 /** A shard's report (or the desktop job's, n = "desktop") against the files it was handed: the ones that
- *  did not run, and the ones that ran unasked. */
+ *  did not run, the ones that ran unasked, and the ones the service gate skipped for a missing service. */
 export function verifyReport(n, report, root = ROOT, map = readMap(root)) {
   const want = new Set(n === "desktop" ? desktopFiles(root) : shardFiles(n, root, map));
   const ran = new Set(report.testResults.map((r) => relative(root, r.name).split("\\").join("/")));
-  return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)) };
+  return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)), gated: gatedFiles(report, root) };
+}
+
+/** `<file>: <title>` for every result the service gate put in place of a file. */
+export function gatedFiles(report, root = ROOT) {
+  const out = [];
+  for (const r of report.testResults) {
+    const titles = (r.assertionResults ?? []).flatMap((a) => [...(a.ancestorTitles ?? []), a.title ?? "", a.fullName ?? ""]);
+    const hit = titles.find((t) => t.startsWith(SERVICE_GATE_PREFIX));
+    if (hit !== undefined) out.push(`${relative(root, r.name).split("\\").join("/")}: ${hit}`);
+  }
+  return out;
 }
 
 /* ── THE SQLITE RUN'S SHARDS ─────────────────────────────────────────────────────────────────────
@@ -182,7 +197,7 @@ export function checkSqliteMap(root = ROOT, map = readSqliteMap(root)) {
 export function verifySqliteReport(n, listed, report, root = ROOT, map = readSqliteMap(root)) {
   const want = new Set(sqliteShardFiles(n, listed, map));
   const ran = new Set(report.testResults.map((r) => relative(root, r.name).split("\\").join("/")));
-  return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)) };
+  return { missing: [...want].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !want.has(f)), gated: gatedFiles(report, root) };
 }
 
 /** Longest-first greedy of a SQLite run's measured files into SQLITE_SHARDS bins. */
@@ -280,11 +295,12 @@ function main(argv) {
     if (!rest[1] || !rest[2]) throw new Error("--verify-sqlite-report takes N, the list report and the run's JSON report");
     const listed = listedFiles(ROOT, JSON.parse(readFileSync(rest[1], "utf8")));
     const report = JSON.parse(readFileSync(rest[2], "utf8"));
-    const { missing, extra } = verifySqliteReport(n, listed, report);
+    const { missing, extra, gated } = verifySqliteReport(n, listed, report);
     for (const f of missing) process.stderr.write(`ci-shards: MISSING ${f} was handed to sqlite shard ${n} and did not run\n`);
     for (const f of extra) process.stderr.write(`ci-shards: EXTRA ${f} ran in sqlite shard ${n} without being handed to it\n`);
-    process.stdout.write(`REPORT sqlite shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length}\n`);
-    return missing.length || extra.length ? 1 : 0;
+    for (const g of gated) process.stderr.write(`ci-shards: GATED ${g} — a service this job must start was missing\n`);
+    process.stdout.write(`REPORT sqlite shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length} gated=${gated.length}\n`);
+    return missing.length || extra.length || gated.length ? 1 : 0;
   }
   if (cmd === "--shard" || cmd === "--needs-dovecot") {
     const n = Number(rest[0]);
@@ -302,11 +318,12 @@ function main(argv) {
   if (cmd === "--verify-report") {
     const n = rest[0] === "desktop" ? "desktop" : Number(rest[0]);
     const report = JSON.parse(readFileSync(rest[1], "utf8"));
-    const { missing, extra } = verifyReport(n, report);
+    const { missing, extra, gated } = verifyReport(n, report);
     for (const f of missing) process.stderr.write(`ci-shards: MISSING ${f} was handed to shard ${n} and did not run\n`);
     for (const f of extra) process.stderr.write(`ci-shards: EXTRA ${f} ran in shard ${n} without being handed to it\n`);
-    process.stdout.write(`REPORT shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length}\n`);
-    return missing.length || extra.length ? 1 : 0;
+    for (const g of gated) process.stderr.write(`ci-shards: GATED ${g} — a service this job must start was missing\n`);
+    process.stdout.write(`REPORT shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length} gated=${gated.length}\n`);
+    return missing.length || extra.length || gated.length ? 1 : 0;
   }
   if (cmd === "--desktop") {
     const files = desktopFiles();

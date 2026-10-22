@@ -1,3 +1,4 @@
+// @services: none — its Postgres URL is never dialed
 import { describe, it, expect } from "vitest";
 import { MailService } from "@trafficflow/services";
 import { loadServerConfig } from "../src/config.js";

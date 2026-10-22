@@ -1,3 +1,4 @@
+// @services: none — its Postgres URL is never dialed
 import { describe, it, expect } from "vitest";
 import { silentLogger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";

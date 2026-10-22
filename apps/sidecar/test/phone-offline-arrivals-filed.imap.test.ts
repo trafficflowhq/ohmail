@@ -14,10 +14,13 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PORT, SERVER_UP,
-  bootPhone, cables, deliver, dirs, eventsSince, open, post, relaunch, rowOf, seedMailboxId,
+  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PORT, bootPhone, cables, deliver, dirs, eventsSince, open, post, relaunch, rowOf, seedMailboxId,
   untilIngested, untilScreened, type Phone,
 } from "./_phone-offline-rig.js";
+import { serviceUp } from "@trafficflow/db/testing";
+
+/** The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 afterEach(async () => {
   while (open.length > 0) await open.pop()!.stop().catch(() => undefined);

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { and, eq, isNull } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
 import { accounts, contacts, mailboxes, messageFailures, messages, type Tx } from "@trafficflow/db";
-import { makeTestDb } from "@trafficflow/db/testing";
+import { makeTestDb, serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import type { ChangeBatch, ImapConfig } from "@trafficflow/core/adapters/imap-types";
@@ -112,12 +112,9 @@ async function startFetchTap(target: { host: string; port: number }) {
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of closers.splice(0)) await c().catch(() => undefined); });
 
-async function serverUp(): Promise<boolean> {
-  const p = greenmailPorts();
-  const c = new ImapFlow({ host: p.imapHost, port: p.imapPort, secure: false, auth: { user: `up-${randomUUID()}@t.test`, pass: "t" }, logger: false });
-  try { await c.connect(); await c.logout(); return true; } catch { return false; }
-}
-const skip = (await serverUp()) ? "" : " (SKIPPED: no GreenMail answers)";
+/* The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const GM = serviceUp("greenmail", `${greenmailPorts().imapHost}:${greenmailPorts().imapPort}`);
+const skip = GM.up ? "" : ` (SKIPPED: ${GM.why})`;
 
 describe("a message over the download ceiling", () => {
   it.skipIf(skip !== "")(`is listed, found, opens to its sentence and moves, flags and deletes by UID${skip}`, async () => {

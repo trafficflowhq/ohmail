@@ -40,7 +40,7 @@ import { repoWithFailingMethod } from "./_fault.js";
  * and the refusal the act records on the suggestion row.
  */
 
-const AVAILABLE = realPgAvailable();
+const AVAILABLE = await realPgAvailable();
 const SCREENER = "ohmail/Screener";
 const SPAM = "ohmail/Quarantine";
 const NOW = new Date("2026-09-22T10:00:00.000Z");

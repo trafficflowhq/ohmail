@@ -6,7 +6,7 @@ import { ImapFlow } from "imapflow";
 import {
   accounts, auditLog, contacts, folderState, mailboxes, messageInstances, messages, type Tx,
 } from "@trafficflow/db";
-import { makeTestDb } from "@trafficflow/db/testing";
+import { makeTestDb, serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapCursor, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -25,11 +25,10 @@ import { greenmailPorts } from "./_greenmail-ports.js";
  */
 
 const p = greenmailPorts();
-const up = await (async () => {
-  const c = new ImapFlow({ host: p.imapHost, port: p.imapPort, secure: false, auth: { user: `probe-${randomUUID()}@x.test`, pass: "t" }, logger: false });
-  try { await c.connect(); await c.logout(); return true; } catch { return false; }
-})();
-const SKIP = up ? "" : ` (SKIPPED: no GreenMail answers at ${p.imapHost}:${p.imapPort})`;
+/* The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const gm = serviceUp("greenmail", `${p.imapHost}:${p.imapPort}`);
+const up = gm.up;
+const SKIP = up ? "" : ` (SKIPPED: ${gm.why})`;
 
 const closers: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const c of closers.splice(0)) await c().catch(() => undefined); });

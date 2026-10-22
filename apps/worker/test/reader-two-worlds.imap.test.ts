@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { createConnection } from "node:net";
 import { describe, expect, it } from "vitest";
 import { ImapFlow } from "imapflow";
 import { eq } from "drizzle-orm";
 import { mailboxes, messages, type Tx } from "@trafficflow/db";
-import { makeTestDb } from "@trafficflow/db/testing";
+import { makeTestDb, serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { NO_TRUSTED_AUTHSERV_IDS, UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
@@ -67,18 +66,8 @@ import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
 const HOST = process.env.IMAP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.IMAP_PORT ?? 3143);
 
-async function greenmailUp(): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const s = createConnection({ host: HOST, port: PORT });
-    const done = (ok: boolean): void => { s.destroy(); resolve(ok); };
-    s.setTimeout(1500);
-    s.once("connect", () => { done(true); });
-    s.once("error", () => { done(false); });
-    s.once("timeout", () => { done(false); });
-  });
-}
-
-const GM_UP = await greenmailUp();
+/* The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const GM_UP = serviceUp("greenmail", `${HOST}:${PORT}`).up;
 
 const USER = (): string => `rw-${randomUUID()}@trafficflow.test`;
 

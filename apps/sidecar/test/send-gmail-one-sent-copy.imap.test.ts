@@ -1,6 +1,5 @@
 import { rmSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
-import { connect as netConnect } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapFlow } from "imapflow";
 import { eq } from "drizzle-orm";
@@ -10,6 +9,7 @@ import { createSidecar, type Sidecar } from "../src/engine.js";
 import { freshDataDir } from "./_datadir.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { sentUidsFor, startGmailLikePair, type GmailLikePair } from "../../../packages/core/test/adapters/_gmail-like.js";
+import { serviceUp } from "@trafficflow/db/testing";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS + 30_000 });
 
@@ -25,18 +25,7 @@ vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS + 30_000 });
 const HOST = process.env.IMAP_HOST ?? "127.0.0.1";
 const PORT = Number(process.env.IMAP_PORT ?? 3143);
 
-function imapAnswers(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const sock = netConnect({ host, port });
-    const finish = (v: boolean): void => { sock.destroy(); resolve(v); };
-    sock.setTimeout(timeoutMs);
-    sock.once("timeout", () => finish(false));
-    sock.once("error", () => finish(false));
-    sock.once("data", (b: Buffer) => finish(/^\* (OK|PREAUTH)/im.test(b.toString("utf8"))));
-  });
-}
-
-const SERVER_UP = await imapAnswers(HOST, PORT);
+const SERVER_UP = serviceUp("greenmail", `${HOST}:${PORT}`).up;
 
 describe.skipIf(!SERVER_UP)("the local door on a server that files its own submissions", () => {
   const cleanups: (() => Promise<void> | void)[] = [];

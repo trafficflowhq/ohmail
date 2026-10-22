@@ -114,9 +114,16 @@ npx playwright install chromium        # the layout tests render in it
 - `npm test` runs the whole suite (vitest over `apps/*/test`, `packages/*/test`
   and `test/`). The `*.pg.test.ts` files and the mail tests need the test
   services in `docker-compose.yml` (Postgres, GreenMail, RustFS, Dovecot, all on
-  loopback) and a database of this checkout's own; without them the suite
-  skips what needs them and runs the rest. That is the run on macOS and
-  Windows:
+  loopback) and a database of this checkout's own. The run checks once, before
+  any test, whether each service answers on its port, and prints one line for
+  each that does not. A file that needs a missing service is skipped, and the
+  skip names the service, its address and the reason; everything else runs. A
+  service that answers but is broken still fails. `TF_REQUIRE_PG=1`,
+  `TF_REQUIRE_GREENMAIL=1`, `TF_REQUIRE_DOVECOT=1` and `TF_REQUIRE_RUSTFS=1`
+  turn a missing service into a failure, as CI sets them. A test that checks
+  for a service itself takes `serviceUp("greenmail")` (or `"pg"`, `"dovecot"`,
+  `"rustfs"`) from `@trafficflow/db/testing` and skips only its own cases. The
+  run without services is the run on macOS and Windows:
 
   <!-- run by .github/workflows/contributor.yml: suite -->
   ```bash
@@ -144,12 +151,12 @@ npx playwright install chromium        # the layout tests render in it
   failed=
   for n in $(seq $((PART - 1)) "$PARTS" 15); do
     bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-    TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+    TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
   done
   if [ "$PART" = "$PARTS" ]; then
     for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
       bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
-      TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+      TF_REQUIRE_PG=1 TF_REQUIRE_GREENMAIL=1 TF_REQUIRE_DOVECOT=1 TF_REQUIRE_RUSTFS=1 npx vitest run "$f" || failed=1
     done
   fi
   test -z "$failed"
@@ -159,7 +166,8 @@ npx playwright install chromium        # the layout tests render in it
   services are up. `bash scripts/lane-db.sh "$PWD"` creates this checkout's
   database and writes `.lane-db.env`; on it, `TF_REQUIRE_PG=1 npx vitest run
   <files>` runs the files you changed (`TF_REQUIRE_PG=1`, as in CI: a database
-  that cannot be reached fails, it does not skip).
+  that cannot be reached fails, it does not skip; the loop above requires all
+  four services the same way).
 - `npm run test:sqlite` runs the files that also run on SQLite, the phone's and
   the desktop's store.
 - `node scripts/changelog-fold.mjs --check` checks the entries in

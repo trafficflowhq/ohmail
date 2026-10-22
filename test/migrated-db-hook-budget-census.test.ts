@@ -1,3 +1,4 @@
+// @services: none — reads test source as text
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

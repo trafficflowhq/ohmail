@@ -12,9 +12,13 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { startPhoneEngine } from "../src/mobile.js";
 import {
-  EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PASS, PORT, SERVER_UP, SMTP_PORT,
+  EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PASS, PORT, SMTP_PORT,
   dialectSeam, dirs, folderOnServer, nodeExecutor, open, post, rowOf, seedMailboxId, withServer, type Line, type Phone,
 } from "./_phone-offline-rig.js";
+import { serviceUp } from "@trafficflow/db/testing";
+
+/** The run's one probe (test/setup/services.global.ts), at the address this file dials. */
+const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
 
 afterEach(async () => {
   while (open.length > 0) await open.pop()!.stop().catch(() => undefined);

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ImapFlow } from "imapflow";
 import type { ImapConfig } from "../../src/adapters/imap-types.js";
 import { greenmailEndpoint, readLaneGreenmail } from "../../../../scripts/lib/lane-greenmail-env.mjs";
+import { CONDSTORE_HOST, CONDSTORE_PORT, TEST_SERVICES, probedService, serviceUp } from "../../../../test/support/services.js";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
@@ -130,8 +131,7 @@ export async function seedInbox(
  * A skip that names the closed port is a skip somebody can act on; a silent one is how this got
  * here.
  */
-export const CONDSTORE_HOST = process.env.IMAP_CONDSTORE_HOST ?? process.env.IMAP_HOST ?? "127.0.0.1";
-export const CONDSTORE_PORT = Number(process.env.IMAP_CONDSTORE_PORT ?? 3144);
+export { CONDSTORE_HOST, CONDSTORE_PORT };
 
 export type CondstoreProbe = { ok: true } | { ok: false; why: string };
 
@@ -184,12 +184,23 @@ export async function probeCondstore(
 ): Promise<CondstoreProbe> {
   // FORCE-ON. An operator who says the server is there outranks a probe that cannot reach it.
   if (process.env.IMAP_CONDSTORE) return { ok: true };
+  const remedy = `${TEST_SERVICES.dovecot.start} starts it, or set IMAP_CONDSTORE=1 to force these on`;
+  /* The run's one probe first (test/setup/services.global.ts): absent is a skip without a dial
+     (a failure under TF_REQUIRE_DOVECOT=1); listening, the exchange below must then succeed. */
+  const at = `${host}:${port}`;
+  const absent = serviceUp("dovecot", at);
+  if (!absent.up) return { ok: false, why: `${absent.why} — ${remedy}` };
+  const listening = probedService("dovecot", at)?.up === true;
   const answer = await imapPostLoginCapabilities(host, port, timeoutMs);
   if ("error" in answer) {
-    return { ok: false, why: `no IMAP server answered on ${host}:${port} (${answer.error}) — start it with \`sg docker -c "docker compose --profile condstore up -d dovecot"\`, or set IMAP_CONDSTORE=1 to force these on` };
+    const why = `no IMAP server answered on ${at} (${answer.error})`;
+    if (listening) throw new Error(`Dovecot listens at ${at}, but ${why}`);
+    return { ok: false, why: `${why} — ${remedy}` };
   }
   if (!/\bCONDSTORE\b/i.test(answer.text)) {
-    return { ok: false, why: `the server on ${host}:${port} answered IMAP but advertises no CONDSTORE (GreenMail does not have it — check IMAP_CONDSTORE_PORT points at Dovecot, not 3143)` };
+    const why = `the server on ${at} answered IMAP but advertises no CONDSTORE (GreenMail does not have it — check IMAP_CONDSTORE_PORT points at Dovecot, not 3143)`;
+    if (listening) throw new Error(why);
+    return { ok: false, why };
   }
   return { ok: true };
 }
