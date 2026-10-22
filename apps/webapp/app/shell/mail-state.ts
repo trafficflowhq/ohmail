@@ -379,6 +379,7 @@ type OrganizerRow = Parameters<typeof readerStandDown>[0] & {
   organizerEventSeenAt?: string | null;
   takeoverAuthorizedAt?: string | null;
   gapLetters?: number | null;
+  gapStrangers?: number | null;
 };
 
 /**
@@ -648,20 +649,25 @@ export function organizerNotices(facts: ReadonlyArray<OrganizerRow> | null): Org
 }
 
 /**
- * THE GAP OFFERS STANDING (mail 0151): per live mailbox this install organizes, the letters that
- * arrived while no device was organizing it and that the person's rules would file. The server
- * sends the count only while the offer waits for an answer; nothing moves until the person presses.
+ * THE GAP OFFERS STANDING (mail 0151, 0158): per live mailbox this install organizes, the letters
+ * that arrived while no device was organizing it and that the person's rules would file (`count`),
+ * and those from senders they have not decided about (`strangers`, 0 from an older server). The
+ * server sends the counts only while the offer waits for an answer; nothing moves until the press.
  */
 export interface GapOffer {
   id: string;
   address: string;
   count: number;
+  strangers: number;
 }
 
 export function gapOffers(facts: ReadonlyArray<OrganizerRow> | null): GapOffer[] {
-  return (facts ?? []).flatMap((m) => m.status !== "disabled" && m.organizerRole !== "reader"
-    && typeof m.gapLetters === "number" && m.gapLetters > 0
-    ? [{ id: m.id ?? "", address: m.address ?? "", count: m.gapLetters }] : []);
+  return (facts ?? []).flatMap((m) => {
+    if (m.status === "disabled" || m.organizerRole === "reader" || typeof m.gapLetters !== "number") return [];
+    const strangers = typeof m.gapStrangers === "number" ? m.gapStrangers : 0;
+    return m.gapLetters + strangers > 0
+      ? [{ id: m.id ?? "", address: m.address ?? "", count: m.gapLetters, strangers }] : [];
+  });
 }
 
 /**
@@ -858,6 +864,8 @@ export interface MailboxFacts {
    * offer the server counted was drawn on no surface.
    */
   gapLetters?: number | null;
+  /** The gap offer's stranger count (mail 0158), forwarded on the same rule as {@link gapLetters}. */
+  gapStrangers?: number | null;
   /**
    * `false` while the local engine has not read the lease for this reader row, when its NULL
    * `organizerState` is "not looked" rather than "nobody". Absent is every other case and every

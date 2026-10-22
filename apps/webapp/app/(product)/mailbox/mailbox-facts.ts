@@ -95,6 +95,8 @@ export function toMailboxFacts(m: MailboxDTO): MailboxFacts {
     // server counted off every web surface; `mailbox-facts-census.test.ts` reads
     // every field the server sends against this map.
     gapLetters: m.gapLetters,
+    // Its stranger count (mail 0158), on the same rule.
+    gapStrangers: m.gapStrangers,
     // WOULD A DECISION MADE HERE BE ACCEPTED. Untouched, and here the absent case is the one
     // that matters most: it degrades to the state that offers NO decision controls and names
     // the way out, which is the honest screen for a server that cannot answer the question.

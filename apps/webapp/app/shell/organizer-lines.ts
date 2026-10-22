@@ -33,7 +33,7 @@ export function useOrganizerLines({ facts, demo, organizerNoticeTransport, gapLe
   const noticeOn = !demo && organizerNoticeTransport !== undefined && organizerChanges.length > 0;
   /* The gap offers: the rows are read again either way, so a refused count is replaced by the new one. */
   const gapOfferList = useMemo(() => gapOffers(facts), [facts]);
-  const answerGapLetters: GapLettersTransport = useStableCallback(async (id: string, a: { file: boolean; count: number }) => {
+  const answerGapLetters: GapLettersTransport = useStableCallback(async (id: string, a: { file: boolean; count: number; strangers: number }) => {
     try { return await gapLettersTransport?.(id, a); } finally { refreshFacts(); }
   });
   const gapOn = !demo && gapLettersTransport !== undefined && gapOfferList.length > 0;

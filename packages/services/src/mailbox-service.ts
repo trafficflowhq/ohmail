@@ -2054,19 +2054,25 @@ export class MailboxService {
   }
 
   async answerGapLetters(
-    ctx: ServiceContext, id: string, answer: { file: boolean; count: unknown },
+    ctx: ServiceContext, id: string, answer: { file: boolean; count: unknown; strangers?: unknown },
   ): Promise<{ outcome: "pressed" | "left" | "changed"; mailbox: MailboxDTO }> {
-    // The person's answer to the gap offer (mail 0151). "File" stamps `gap_pressed_at` only while
-    // the row offers exactly the count they were shown, on a mailbox this install organizes; the
-    // organizer's next pass files that set or offers the new count. A stale count writes nothing and
-    // answers `changed`. "Leave" closes the window and moves nothing. Under the row's lock.
+    // The person's answer to the gap offer (mail 0151, 0158). "File" stamps `gap_pressed_at` only
+    // while the row offers exactly the pair of counts they were shown (a missing `strangers` is 0,
+    // so an older client never screens letters it did not show), on a mailbox this install
+    // organizes; the organizer's next pass files and screens that set or offers the new counts. A
+    // stale pair writes nothing and answers `changed`. "Leave" closes the window and moves nothing.
+    // Under the row's lock.
+    const strangers = answer.strangers === undefined ? 0 : answer.strangers;
     const outcome = await asTx(ctx).transaction(async (tx) => {
       const m = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
       // A replay of a press that landed answers as it did, writing nothing.
-      if (answer.file && m.gapPressedAt !== null && m.gapSince !== null && m.gapLetters === answer.count) return "pressed" as const;
-      if (answer.file && (gapOffer(m) === null || gapOffer(m) !== answer.count)) return "changed" as const;
+      if (answer.file && m.gapPressedAt !== null && m.gapSince !== null && m.gapLetters === answer.count
+        && (m.gapStrangers ?? 0) === strangers) return "pressed" as const;
+      if (answer.file && (gapOffer(m) === null || gapOffer(m) !== answer.count || (m.gapStrangers ?? 0) !== strangers)) {
+        return "changed" as const;
+      }
       await tx.update(mailboxes)
-        .set(answer.file ? { gapPressedAt: ctx.now() } : { gapSince: null, gapLetters: null, gapPressedAt: null })
+        .set(answer.file ? { gapPressedAt: ctx.now() } : { gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null })
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       return answer.file ? "pressed" as const : "left" as const;
     });
@@ -3113,6 +3119,7 @@ export class MailboxService {
       organizerEventAt: m.organizerEventAt ? m.organizerEventAt.toISOString() : null,
       organizerEventSeenAt: m.organizerEventSeenAt ? m.organizerEventSeenAt.toISOString() : null,
       gapLetters: gapOffer(m),
+      gapStrangers: gapOffer(m) === null ? null : (m.gapStrangers ?? 0),
       /**
        * Would a reader's decision be accepted here — the request door's rule, projected so a
        * client can withhold a control before the press. `state === "held" && hasCapability(...)`,

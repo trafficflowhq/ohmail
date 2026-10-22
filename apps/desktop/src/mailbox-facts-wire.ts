@@ -114,6 +114,8 @@ interface MailboxWire {
   takeoverAuthorizedAt?: string | null;
   /** The gap offer's count (mail 0151), non-null only while it waits for the person's answer. */
   gapLetters?: number | null;
+  /** Its stranger count (mail 0158), beside it: letters File puts in the Screener. */
+  gapStrangers?: number | null;
   /** `false` while this engine has not read the lease for a reader row yet; absent otherwise. */
   organizerChecked?: boolean;
   /** The server's answer to whether this address is the account's own (`MailboxDTO.addressIsOwn`). */
@@ -284,6 +286,7 @@ export async function readMailboxFactsVia(
     /* THE GAP OFFER'S COUNT (mail 0151), by the same `in` spread: absent is an engine that predates
        the column. Unforwarded, no desktop door drew the offer its engine or the account counted. */
     ...("gapLetters" in m ? { gapLetters: m.gapLetters } : {}),
+    ...("gapStrangers" in m ? { gapStrangers: m.gapStrangers } : {}),
     ...("organizerChecked" in m ? { organizerChecked: m.organizerChecked } : {}),
     ...("addressIsOwn" in m ? { addressIsOwn: m.addressIsOwn } : {}),
     ...("organizerAcceptsRequests" in m ? { organizerAcceptsRequests: m.organizerAcceptsRequests } : {}),

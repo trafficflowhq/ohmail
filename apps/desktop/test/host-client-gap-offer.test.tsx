@@ -97,17 +97,17 @@ describe("the gap offer's answer on a device paired to this desktop", () => {
   it("rides the bearer to the host's own route, one answer per press", async () => {
     const answer = (await gapTransport())!;
     sent.length = 0;
-    await answer("mb 1", { file: true, count: 2 });
+    await answer("mb 1", { file: true, count: 2, strangers: 1 });
     expect(sent.map((s) => s.url)).toEqual(["/mailboxes/mb%201/gap-letters"]);
     expect(sent[0]!.init?.method).toBe("POST");
     expect(sent[0]!.init?.headers?.authorization).toBe("Bearer a1");
-    expect(JSON.parse(sent[0]!.init!.body!)).toEqual({ file: true, count: 2 });
+    expect(JSON.parse(sent[0]!.init!.body!)).toEqual({ file: true, count: 2, strangers: 1 });
   });
 
   it("a count that moved is a rejection carrying 409, which the notice words as changed", async () => {
     const answer = (await gapTransport())!;
     status = 409;
-    await expect(answer("mb-1", { file: true, count: 2 })).rejects.toMatchObject({ status: 409, code: "gap_changed" });
+    await expect(answer("mb-1", { file: true, count: 2, strangers: 0 })).rejects.toMatchObject({ status: 409, code: "gap_changed" });
   });
 
   it("the route it asks for is served on the paired-device table", () => {

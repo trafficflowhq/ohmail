@@ -3,10 +3,12 @@
  * nothing. The strip is the Settings card's own derivation (`claimHere`) worded with the card's
  * own label and note; these cases hold which arms draw and which verb they carry.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DECKS } from "../src/copy";
+import { DE } from "../src/copy.de";
 import { EN } from "../src/copy.en";
+import { answerGapLetters, readMailboxes } from "../src/net/mailboxes";
 import { CLAIM_LAPSES_AFTER_MINUTES } from "../src/engine/standalone-door";
 import { gapOffersOf, organizerStripOf } from "../src/ui/organizer-strip";
 import { claimHere } from "../src/ui/standalone-form";
@@ -94,7 +96,7 @@ describe("the gap offer on the list (mail 0151)", () => {
   });
   it("offers a positive count on a mailbox this phone organizes, and nothing else", () => {
     expect(gapOffersOf([row({ role: "organizer", gap: 3 })]))
-      .toEqual([{ id: "mb-organizer-3", address: "me@example.test", count: 3 }]);
+      .toEqual([{ id: "mb-organizer-3", address: "me@example.test", count: 3, strangers: 0 }]);
     expect(gapOffersOf([
       row({ role: "reader", gap: 3 }), row({ role: null, gap: 3 }),
       row({ role: "organizer", gap: 0 }), row({ role: "organizer", gap: null }), row({ role: "organizer" }),
@@ -103,5 +105,51 @@ describe("the gap offer on the list (mail 0151)", () => {
   it("says the count and asks, in both decks", () => {
     expect(EN.gapLetters(2, "a@b.test")).toBe("2 letters arrived in a@b.test while no device was organizing it. File them by your rules?");
     expect(EN.gapLetters(1, "a@b.test")).toContain("File it by your rules?");
+  });
+});
+
+describe("the gap offer's strangers on the phone (mail 0158)", () => {
+  const session = (rows: unknown[], sent: unknown[] = []) => ({
+    profile: { origin: "https://srv.test", accountId: "a" },
+    fetch: vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.body !== undefined) sent.push(JSON.parse(String(init.body)));
+      return { status: init?.method === "POST" ? 202 : 200, json: async () => ({ items: rows }) } as unknown as Response;
+    }),
+  }) as never;
+
+  it("reads a strangers-only offer, whose rules' count is 0, and keeps both counts", async () => {
+    const rows = await readMailboxes(session([
+      { id: "m1", address: "a@own.test", organizerRole: "organizer", gapLetters: 0, gapStrangers: 2 },
+      { id: "m2", address: "b@own.test", organizerRole: "organizer", gapLetters: 1 },
+      { id: "m3", address: "c@own.test", organizerRole: "organizer", gapLetters: -1, gapStrangers: "2" },
+    ]));
+    expect(rows!.map((r) => [r.gapLetters, r.gapStrangers])).toEqual([[0, 2], [1, undefined], [undefined, undefined]]);
+    expect(gapOffersOf(rows!)).toEqual([
+      { id: "m1", address: "a@own.test", count: 0, strangers: 2 },
+      { id: "m2", address: "b@own.test", count: 1, strangers: 0 },
+    ]);
+  });
+
+  it("offers strangers beside the rules' letters, and nothing for an empty pair", () => {
+    const at = (gapLetters: number | null, gapStrangers?: number | null) =>
+      ({ id: `m-${gapLetters}-${gapStrangers}`, address: "me@example.test", organizerRole: "organizer", gapLetters, gapStrangers });
+    expect(gapOffersOf([at(0, 3), at(2, 1), at(0, 0), at(null, 2)]).map((o) => [o.count, o.strangers])).toEqual([[0, 3], [2, 1]]);
+  });
+
+  it("the press carries the stranger count", async () => {
+    const sent: unknown[] = [];
+    expect(await answerGapLetters(session([], sent), "m1", { file: true, count: 0, strangers: 2 })).toBe("pressed");
+    expect(sent).toEqual([{ file: true, count: 0, strangers: 2 }]);
+  });
+
+  it("names the Screener for strangers, never the rules, in both decks", () => {
+    expect(EN.gapStrangers(2, "a@b.test")).toBe(
+      "2 letters from senders you have not decided about arrived in a@b.test while no device was organizing it. Put them in the Screener?");
+    expect(EN.gapStrangers(1, "a@b.test")).not.toMatch(/rules/);
+    expect(EN.gapBoth(1, 2, "a@b.test")).toMatch(/^1 letter for your rules and 2 from senders you have not decided about arrived in a@b\.test/);
+    expect(DE.gapStrangers(1, "a@b.test")).toContain("In den Screener legen?");
+    expect(DE.gapBoth(2, 1, "a@b.test")).toMatch(/^2 Mails für deine Regeln und 1 von einem Absender, über den du nie entschieden hast,/);
+    expect(typeof EN.gapScreen).toBe("string");
+    expect(typeof DE.gapScreen).toBe("string");
   });
 });

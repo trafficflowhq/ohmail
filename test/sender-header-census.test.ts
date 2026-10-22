@@ -208,6 +208,11 @@ const CLASSIFIED: Record<string, Row> = {
   },
 
   // ── the worker ────────────────────────────────────────────────────────────────────────
+  "apps/worker/src/gap-catchup.ts": {
+    terms: ["messageIdHeader"], classes: ["threading-corroborated"],
+    why: "the gap's stranger class asks `gateHoldsSender` with the letter's own id for the gate's reply arm "
+      + "(`pipeline.ts#correspondentAtGate`), so an answer to the person's own writing is never screened",
+  },
   "apps/worker/src/thread-join-heal.ts": {
     terms: ["ccAddresses", "toAddresses"], classes: ["threading-corroborated"],
     why: "`counterpartyEvidence` says WHO put each address on the thread; a To/Cc a sender wrote is not evidence",

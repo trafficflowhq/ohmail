@@ -500,5 +500,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE INDEX IF NOT EXISTS \"messages_account_sender_date_idx\" ON \"messages\" (\"account_id\", lower(\"from_address\"), coalesce(\"date\", \"created_at\"));"
     ]
+  },
+  {
+    "name": "0158_mailboxes_gap_strangers.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"gap_strangers\" integer;"
+    ]
   }
 ] as const;

@@ -121,10 +121,12 @@ describe("the web mailbox-facts seam", () => {
     // ANTI-VACUITY: a parse that found nothing agrees with everything.
     expect(server.length).toBeGreaterThan(30);
     expect(server).toContain("gapLetters");
+    expect(server).toContain("gapStrangers");
     expect(server).toContain("organizerRole");
     expect(client.size).toBeGreaterThan(30);
     expect(facts.size).toBeGreaterThan(30);
     expect(forwarded).toContain("gapLetters");
+    expect(forwarded).toContain("gapStrangers");
   });
 
   it("classifies every field the server sends: declared on MailboxFacts, or named with its reason", () => {
@@ -140,6 +142,7 @@ describe("the web mailbox-facts seam", () => {
     expect(unresolved, "a row type this census cannot read").toEqual([]);
     expect([...rows.keys()]).toContain("OrganizerRow");
     expect(rows.get("OrganizerRow")).toContain("gapLetters");
+    expect(rows.get("OrganizerRow")).toContain("gapStrangers");
     expect(rows.get("NothingOrganizesRow")).toContain("organizerReleasedAt");
     const undeclared = [...rows].flatMap(([row, keys]) => keys.filter((k) => !facts.has(k)).map((k) => `${row}.${k}`));
     expect(undeclared, "a derivation reads a field no narrowing carries").toEqual([]);
@@ -159,5 +162,6 @@ describe("the web mailbox-facts seam", () => {
     expect(forwarded.filter((k) => got[k] !== row[k]), "forwarded, but not as the server sent it").toEqual([]);
     for (const k of Object.keys(WEB_DROPS)) expect(k in got, `${k} is dropped on purpose`).toBe(false);
     expect(got.gapLetters).toBe("v:gapLetters");
+    expect(got.gapStrangers).toBe("v:gapStrangers");
   });
 });

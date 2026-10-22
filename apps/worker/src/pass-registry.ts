@@ -207,7 +207,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     triggers: ["cycle-tail", "sidecar-drain"],
     cadence: "every cycle tail, per account, while a mailbox this install organizes has its gap window open (mailboxes.gap_since) and its rules are settled; on a standalone install at the head of an organizer drain, after a quiet one",
     budget: "GAP_CATCHUP_BATCH / GAP_CATCHUP_WRITES_PER_CYCLE / GAP_CATCHUP_MAX_PAGES",
-    owns: "mail that arrived while nothing organized the mailbox is filed by the person's rules, once",
+    owns: "mail that arrived while nothing organized the mailbox is filed by the person's rules, and a new sender's put in the Screener, once, on the person's press",
     fence: "leader lock; desired-state writes only (the reconciler carries them to IMAP); the window closes in the last page's transaction",
   },
   {

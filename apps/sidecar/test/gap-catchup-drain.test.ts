@@ -56,10 +56,10 @@ class MemoryMetaFolder implements LeaseIo, ProfileIo {
 }
 
 let uid = 40;
-function letter(internalDate: Date): ChangeBatch["creates"][number] {
+function letter(internalDate: Date, from = "Letters <letters@news.test>"): ChangeBatch["creates"][number] {
   uid += 1;
   const raw = Buffer.from([
-    "From: Letters <letters@news.test>", "To: owner@trafficflow.test", `Subject: letter ${uid}`,
+    `From: ${from}`, "To: owner@trafficflow.test", `Subject: letter ${uid}`,
     `Message-ID: <gap-${uid}@news.test>`, "Date: Fri, 09 Oct 2026 10:00:00 +0000",
     "Content-Type: text/plain; charset=utf-8", "", "this week's letter", "",
   ].join("\r\n"));
@@ -124,6 +124,9 @@ describe("letters from a gap are counted for the person and filed only on their 
     (await s.db.select({ g: mailboxes.gapSince }).from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId)))[0]!.g;
   const rowOf = async (s: Sidecar) => (await s.db.select({
     since: mailboxes.gapSince, letters: mailboxes.gapLetters, pressed: mailboxes.gapPressedAt,
+  }).from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId)))[0]!;
+  const strangersOf = async (s: Sidecar) => (await s.db.select({
+    letters: mailboxes.gapLetters, strangers: mailboxes.gapStrangers,
   }).from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId)))[0]!;
   const newsRule = (s: Sidecar, olderThan: Date) => s.db.insert(rules).values({
     accountId: s.world.accountId, kind: "sender", match: "letters@news.test", destination: "ohmail/News",
@@ -271,6 +274,57 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(moves, "Leave moved mail").toEqual([]);
     expect(await rowOf(s)).toEqual({ since: null, letters: null, pressed: null });
   }, 90_000);
+
+  it("a stranger's letters from the gap are counted beside the rules' and screened only by File through the route", async () => {
+    const meta = new MemoryMetaFolder();
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    await meta.laptopHolds();
+    const s = await boot(meta, pending, moves);
+    meta.clear();
+    await s.syncUntilQuiet();
+    const noted = await sinceOf(s);
+    expect(noted, "premise: the gap was noted").not.toBeNull();
+    await newsRule(s, noted!);
+    // WHILE NOTHING ORGANIZES: one letter the rules file, and two from a sender nobody knows.
+    pending.push(letter(new Date()), letter(new Date(), "New <new@stranger.test>"), letter(new Date(), "New <new@stranger.test>"));
+    await s.syncUntilQuiet();
+    const strangers = (await s.db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.fromAddress, "new@stranger.test"))).map((r) => r.id);
+    expect(strangers, "premise: the reader took the stranger's letters in").toHaveLength(2);
+
+    /* THE PROMOTION CONTROL: a promotion and quiet drains move nothing and write no Screener intent. */
+    await promote(s);
+    expect(await strangersOf(s), "the strangers were not offered beside the rules' letter").toEqual({ letters: 1, strangers: 2 });
+    expect(moves, "a promotion moved mail unasked").toEqual([]);
+    for (const id of strangers) {
+      const [fs] = await s.db.select().from(folderState).where(eq(folderState.messageId, id));
+      expect(fs, "a promotion screened a stranger unasked").toMatchObject({ desiredFolder: "INBOX", lastSetBy: "peer" });
+    }
+
+    const older = await answer(s, { file: true, count: 1 });
+    expect(older.status, "a press that never saw the strangers was accepted").toBe(409);
+    expect((await rowOf(s)).pressed).toBeNull();
+
+    const pressed = await answer(s, { file: true, count: 1, strangers: 2 });
+    expect(pressed.status, await pressed.clone().text()).toBe(202);
+    for (let i = 0; i < 100 && moves.length < 3; i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 2; i++) await s.syncUntilQuiet();
+    expect(moves.filter((m) => m.to === "ohmail/News")).toEqual([{ from: "INBOX", to: "ohmail/News" }]);
+    expect(moves.filter((m) => m.to === "ohmail/Screener"), "the strangers were not screened exactly once")
+      .toEqual([{ from: "INBOX", to: "ohmail/Screener" }, { from: "INBOX", to: "ohmail/Screener" }]);
+    expect(await rowOf(s)).toEqual({ since: null, letters: null, pressed: null });
+    const queue = await s.handle(new Request("http://local/screener", { headers: { authorization: `Bearer ${s.sessionToken}` } }));
+    const body = (await queue.json()) as { items: { sender: { address: string } }[] };
+    expect(body.items.map((i) => i.sender.address), "the sender is not waiting in the Screener").toContain("new@stranger.test");
+
+    /* POSITIVE CONTROL: a stranger arriving once this install organizes is held at arrival, unasked. */
+    pending.push(letter(new Date(), "Later <later@stranger.test>"));
+    for (let i = 0; i < 2; i++) await s.syncUntilQuiet();
+    const [later] = await s.db.select({ id: messages.id }).from(messages).where(eq(messages.fromAddress, "later@stranger.test"));
+    const [fs] = await s.db.select().from(folderState).where(eq(folderState.messageId, later!.id));
+    expect(fs!.desiredFolder, "premise: the live gate holds a stranger").toBe("ohmail/Screener");
+  }, 120_000);
 
   it("an install that cannot read the settings folder withholds the offer, and the window stays open", async () => {
     const meta = new MemoryMetaFolder();

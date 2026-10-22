@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, auditLog, changeLog, drafts, folderState, mailboxes, messageStates, messages, routingDecisions, rules,
+  accounts, approvals, auditLog, changeLog, contacts, drafts, folderState, mailboxFolders, mailboxes, messageBodies,
+  messageInstances, messageStates, messageTags, messages, routingDecisions, rules, tags, threads,
   type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
@@ -12,6 +13,7 @@ import {
   type OrganizerProfileDoc, type ProfileRuleEntry,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
+import { OHBOX_UNSCREENED_GROUPS_MAX as GROUPS } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Logger, SweepClearance } from "@trafficflow/core/mail";
 import { gapCatchupPass } from "../src/gap-catchup.js";
 import { markMailboxStoodDown } from "../src/mailboxes.js";
@@ -32,6 +34,9 @@ const RULE_MADE = new Date("2026-10-01T00:00:00Z");
 const BEFORE_GAP = new Date("2026-10-09T09:00:00Z");
 const GAP = new Date("2026-10-09T10:00:00Z");
 const IN_GAP = new Date("2026-10-09T10:30:00Z");
+/** The pass's clock: the Screener's window is read from it, so the dates above stay inside it. */
+const NOW = new Date("2026-10-09T12:00:00Z");
+const SCREENER = "ohmail/Screener";
 
 interface World { db: Awaited<ReturnType<typeof makeTestDb>>; accountId: string; mailboxId: string }
 
@@ -59,7 +64,8 @@ async function seedRule(w: World, match: string, o: { kind?: string; updatedAt?:
 /** One stored arrival — a reader's INBOX `'peer'` taken in now (inside the window) by default. */
 async function seedArrival(w: World, o: {
   from: string; arrivedAt?: Date | null; takenInAt?: Date; folder?: string; lastSetBy?: string;
-  sensitivityCategory?: string | null; noAi?: boolean;
+  sensitivityCategory?: string | null; noAi?: boolean; headers?: Record<string, string[]>; threadId?: string;
+  decidedAt?: Date;
 }): Promise<string> {
   const dedup = `mid:${randomUUID()}`;
   const folder = o.folder ?? INBOX;
@@ -69,10 +75,13 @@ async function seedArrival(w: World, o: {
     arrivedAt: o.arrivedAt === undefined ? IN_GAP : o.arrivedAt,
     ...(o.takenInAt ? { createdAt: o.takenInAt } : {}),
     sensitivityCategory: o.sensitivityCategory ?? null, noAi: o.noAi ?? false,
+    ...(o.threadId ? { threadId: o.threadId } : {}),
   }).returning();
+  if (o.headers) await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: o.headers });
   await w.db.insert(folderState).values({
     messageId: m!.id, desiredFolder: folder, observedFolder: folder,
     lastSetBy: o.lastSetBy ?? "peer", reconcileStatus: "reconciled", conflict: false,
+    ...(o.decidedAt ? { decidedAt: o.decidedAt } : {}),
   });
   return m!.id;
 }
@@ -92,8 +101,19 @@ const run = (w: World, o: {
   const { clearance = CLEAR, ...rest } = o;
   return gapCatchupPass(w.db as unknown as Tx, {
     accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: () => clearance, ...rest,
-  });
+  }, NOW);
 };
+/** The whole offer, the stranger count with it. */
+const windowOf = async (w: World) =>
+  (await w.db.select({
+    since: mailboxes.gapSince, letters: mailboxes.gapLetters, strangers: mailboxes.gapStrangers, pressed: mailboxes.gapPressedAt,
+  }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!;
+const CLOSED = { since: null, letters: null, strangers: null, pressed: null };
+/** A sender the account knows: the gate lets them through, so they are nobody's stranger. */
+const knowContact = (w: World, address: string) => w.db.insert(contacts).values({ accountId: w.accountId, address });
+/** The Screener's audit rows, one per sender group a press moved. */
+const sweeps = async (w: World) => (await w.db.select({ action: auditLog.action, payload: auditLog.payload }).from(auditLog)
+  .where(eq(auditLog.accountId, w.accountId))).filter((r) => r.action === "screener.unscreened_sweep");
 
 /** A logger that keeps what the pass says. */
 function captured(): { log: Logger; lines: Array<{ event: string; fields: Record<string, unknown> }> } {
@@ -160,8 +180,9 @@ describe("letters from a gap are counted for the person and filed only on their 
       "no_ai": await seedArrival(w, { from: "letters@news.test", noAi: true }),
       "a delivery report": await seedArrival(w, { from: "mailer-daemon@news.test" }),
       "an arrival with no date": await seedArrival(w, { from: "letters@news.test", arrivedAt: null }),
-      "unmatched by any rule": await seedArrival(w, { from: "a.person@example.test" }),
     };
+    // Unmatched by any rule, from a sender nobody knows: the second class, screened on the press.
+    const stranger = await seedArrival(w, { from: "a.person@example.test" });
     const flagged = await seedArrival(w, { from: "letters@news.test" });
     await w.db.insert(messageStates).values({ accountId: w.accountId, messageId: flagged, state: "reply_later" });
     untouched["flagged by the person"] = flagged;
@@ -176,9 +197,11 @@ describe("letters from a gap are counted for the person and filed only on their 
 
     expect(await run(w)).toMatchObject({ offered: 1 });
     expect((await offerOf(w)).letters, "an excluded shape was counted").toBe(1);
+    expect((await windowOf(w)).strangers, "the stranger was not counted").toBe(1);
     await press(w);
-    expect(await run(w)).toMatchObject({ moved: 1, completed: 1 });
+    expect(await run(w)).toMatchObject({ moved: 2, completed: 1 });
     expect(await placement(w, control), "the control was not filed — the refusals say nothing").toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, stranger)).toEqual({ d: SCREENER, by: "us" });
     for (const [why, id] of Object.entries(untouched)) {
       expect(await placement(w, id), `${why}: moved`).toEqual({ d: INBOX, by: "peer" });
     }
@@ -209,9 +232,15 @@ describe("letters from a gap are counted for the person and filed only on their 
 
   it("closes a window with nothing to offer, and ends one past its page bound unoffered", async () => {
     const empty = await newWorld();
-    await seedArrival(empty, { from: "nobody@else.test" });
+    await knowContact(empty, "somebody@else.test");
+    await seedArrival(empty, { from: "somebody@else.test" });
     expect(await run(empty)).toEqual({ offered: 0, moved: 0, completed: 1 });
     expect(await offerOf(empty)).toEqual({ since: null, letters: null, pressed: null });
+    /* A sender nobody knows is something to offer: the Screener's half. */
+    const strange = await newWorld();
+    await seedArrival(strange, { from: "nobody@else.test" });
+    expect(await run(strange)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(strange)).toMatchObject({ letters: 0, strangers: 1, pressed: null });
 
     const big = await newWorld();
     await seedRule(big, "letters@news.test");
@@ -284,9 +313,19 @@ describe("the gap pass waits for settled rules", () => {
     expect(await run(w, { clearance: HELD, log })).toEqual({ offered: 0, moved: 0, completed: 0 });
     expect(withheld(lines), "the withheld line repeats every pass").toHaveLength(1);
 
-    /* CONTROL: the same world, cleared, closes the window — what the pass did before the gate. */
-    expect(await run(w, { log })).toEqual({ offered: 0, moved: 0, completed: 1 });
-    expect(await offerOf(w)).toEqual({ since: null, letters: null, pressed: null });
+    /* CONTROL: the same world, cleared, offers the stranger's letter for the Screener. */
+    expect(await run(w, { log })).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: 1, pressed: null });
+  });
+
+  it("(a) CONTROL: a sender the account knows, cleared, closes the window — nothing to file or screen", async () => {
+    const w = await newWorld();
+    await knowContact(w, "letters@news.test");
+    const letter = await seedArrival(w, { from: "letters@news.test" });
+    expect(await run(w, { clearance: HELD })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(await run(w)).toEqual({ offered: 0, moved: 0, completed: 1 });
+    expect(await windowOf(w)).toEqual(CLOSED);
+    expect(await placement(w, letter)).toEqual({ d: INBOX, by: "peer" });
   });
 
   it.each(["read_fault", "garbled", "no_folder"] as const)("(b) unread (%s) withholds by name", async (why) => {
@@ -353,5 +392,229 @@ describe("the gap pass waits for settled rules", () => {
     await seedRule(unstamped, "letters@news.test", { updatedAt: young });
     await seedArrival(unstamped, { from: "letters@news.test" });
     expect(await run(unstamped)).toEqual({ offered: 0, moved: 0, completed: 1 });
+  });
+});
+
+describe("letters from new senders in a gap go to the Screener, and only on the person's press", () => {
+  it("counts the rules' letters and the strangers' apart, moves nothing unasked, and on File files one and screens three", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    const ruled = await seedArrival(w, { from: "letters@news.test" });
+    const first = [await seedArrival(w, { from: "first@stranger.test" }), await seedArrival(w, { from: "First@Stranger.test" })];
+    const second = await seedArrival(w, { from: "second@stranger.test" });
+    await knowContact(w, "friend@known.test");
+    const friend = await seedArrival(w, { from: "friend@known.test" });
+
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 1, strangers: 3, pressed: null });
+    expect(await sweeps(w), "a count screened a sender").toEqual([]);
+    for (const id of [ruled, ...first, second, friend]) {
+      expect(await placement(w, id), "a count moved mail").toEqual({ d: INBOX, by: "peer" });
+    }
+    expect(await run(w), "an offer waiting for the person was walked again").toEqual({ offered: 0, moved: 0, completed: 0 });
+
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 4, completed: 1 });
+    expect(await placement(w, ruled)).toEqual({ d: NEWS, by: "us" });
+    for (const id of [...first, second]) {
+      const [fs] = await w.db.select().from(folderState).where(eq(folderState.messageId, id));
+      expect(fs).toMatchObject({ desiredFolder: SCREENER, observedFolder: INBOX, lastSetBy: "us", reconcileStatus: "pending" });
+    }
+    expect((await sweeps(w)).map((r) => r.payload).sort((a, b) =>
+      String((a as { address: string }).address).localeCompare(String((b as { address: string }).address)))).toEqual([
+      { address: "first@stranger.test", count: 2, from: INBOX, to: SCREENER, via: "gap" },
+      { address: "second@stranger.test", count: 1, from: INBOX, to: SCREENER, via: "gap" },
+    ]);
+    const moves = (await w.db.select().from(changeLog)).filter((r) => r.op === "move").map((r) => r.entityId);
+    expect(moves.sort()).toEqual([ruled, ...first, second].sort());
+    expect(await w.db.select().from(routingDecisions), "a screened letter got a rule's decision").toHaveLength(1);
+    expect(await windowOf(w)).toEqual(CLOSED);
+    expect(await placement(w, friend), "a known sender's letter moved").toEqual({ d: INBOX, by: "peer" });
+    expect(await run(w)).toEqual({ offered: 0, moved: 0, completed: 0 });
+  });
+
+  it("offers a window of strangers only as {0, K} and screens them on File", async () => {
+    const w = await newWorld();
+    const a = await seedArrival(w, { from: "new@stranger.test" });
+    const b = await seedArrival(w, { from: "new@stranger.test" });
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: 2, pressed: null });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 2, completed: 1 });
+    expect(await placement(w, a)).toEqual({ d: SCREENER, by: "us" });
+    expect(await placement(w, b)).toEqual({ d: SCREENER, by: "us" });
+    expect(await windowOf(w)).toEqual(CLOSED);
+  });
+
+  it("screens none of the shapes the gate or the person already answered, beside a stranger it screens", async () => {
+    const w = await newWorld();
+    const own = (await w.db.select({ a: mailboxes.address }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId)))[0]!.a;
+    // The reply arm's evidence: a Sent copy of the person's own writing, after the mailbox was connected.
+    await w.db.update(mailboxes).set({ createdAt: new Date("2026-09-01T00:00:00Z"), sentFolder: "Sent" })
+      .where(eq(mailboxes.id, w.mailboxId));
+    await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder: "Sent" });
+    const [plan] = await w.db.insert(threads).values({ accountId: w.accountId, subject: "plan", rootMessageIdHeader: "own-1@rig.test" }).returning();
+    const sentAt = new Date("2026-10-08T09:00:00Z");
+    const [sent] = await w.db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "sent", dedupKey: `sent:${randomUUID()}`, subject: "plan",
+      fromAddress: own, date: sentAt, createdAt: sentAt, arrivedAt: sentAt, unread: false, threadId: plan!.id,
+      messageIdHeader: "own-1@rig.test", toAddresses: [{ name: null, address: "team@lists.rig.test" }],
+      nativeLocator: { folder: "Sent", ref: "1:1" },
+    }).returning();
+    await w.db.insert(messageBodies).values({ messageId: sent!.id, text: "", html: null, headers: {} });
+    await w.db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId: sent!.id, folder: "Sent", uidvalidity: 1n, uid: 1, isPrimary: true,
+    });
+    await w.db.insert(folderState).values({
+      messageId: sent!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
+    });
+    // An answered sender: the person wrote to them in the thread their letter is in.
+    const [talk] = await w.db.insert(threads).values({ accountId: w.accountId, subject: "talk" }).returning();
+    await w.db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "sent2", dedupKey: `sent:${randomUUID()}`, subject: "talk",
+      fromAddress: own, date: sentAt, createdAt: sentAt, arrivedAt: sentAt, unread: false, threadId: talk!.id,
+      messageIdHeader: "own-2@rig.test", toAddresses: [{ name: null, address: "answered@stranger.test" }],
+      nativeLocator: { folder: "Sent", ref: "1:2" },
+    });
+    const young = new Date("2026-10-09T11:00:00Z");
+    await seedRule(w, "denied@stranger.test", { updatedAt: young });
+    await w.db.update(rules).set({ destination: "ohmail/Screened" }).where(eq(rules.match, "denied@stranger.test"));
+    await seedRule(w, "allowed@stranger.test", { updatedAt: young });
+    await w.db.update(rules).set({ destination: INBOX }).where(eq(rules.match, "allowed@stranger.test"));
+
+    const control = await seedArrival(w, { from: "control@stranger.test" });
+    const untouched: Record<string, string> = {
+      "a correspondent's reply": await seedArrival(w, {
+        from: "reply@stranger.test", threadId: plan!.id,
+        headers: { "in-reply-to": ["<own-1@rig.test>"], references: ["<own-1@rig.test>"] },
+      }),
+      "the account's own mail": await seedArrival(w, { from: own }),
+      "a decided placement": await seedArrival(w, { from: "decided@stranger.test", decidedAt: IN_GAP }),
+      "sensitivity-flagged": await seedArrival(w, { from: "otp@stranger.test", sensitivityCategory: "otp" }),
+      "no_ai": await seedArrival(w, { from: "noai@stranger.test", noAi: true }),
+      "a delivery report": await seedArrival(w, { from: "mailer-daemon@stranger.test" }),
+      "an answered sender": await seedArrival(w, { from: "answered@stranger.test", threadId: talk!.id }),
+      "a deny rule": await seedArrival(w, { from: "denied@stranger.test" }),
+      "a younger allow rule": await seedArrival(w, { from: "allowed@stranger.test" }),
+      "an arrival before the window": await seedArrival(w, { from: "early@stranger.test", arrivedAt: BEFORE_GAP }),
+      "an intake before the window": await seedArrival(w, { from: "held@stranger.test", takenInAt: BEFORE_GAP }),
+    };
+    const tagged = await seedArrival(w, { from: "tagged@stranger.test" });
+    const [tag] = await w.db.insert(tags).values({ accountId: w.accountId, name: "keep" }).returning();
+    await w.db.insert(messageTags).values({ accountId: w.accountId, messageId: tagged, tagId: tag!.id });
+    untouched["a tagged letter"] = tagged;
+    const piled = await seedArrival(w, { from: "piled@stranger.test" });
+    await w.db.insert(messageStates).values({ accountId: w.accountId, messageId: piled, state: "reply_later" });
+    untouched["a triage pile"] = piled;
+    const drafted = await seedArrival(w, { from: "drafted@stranger.test" });
+    await w.db.insert(drafts).values({ accountId: w.accountId, mailboxId: w.mailboxId, inReplyToMessageId: drafted, subject: "re" });
+    untouched["a reply draft"] = drafted;
+    const approved = await seedArrival(w, { from: "approved@stranger.test" });
+    await w.db.insert(approvals).values({
+      accountId: w.accountId, kind: "routing", messageId: approved, action: "move", status: "approved",
+    });
+    untouched["a decided approval"] = approved;
+
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w), "an excluded shape was counted").toMatchObject({ letters: 0, strangers: 1 });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, control), "the control was not screened — the refusals say nothing").toEqual({ d: SCREENER, by: "us" });
+    for (const [why, id] of Object.entries(untouched)) {
+      expect((await placement(w, id)).d, `${why}: screened`).toBe(INBOX);
+    }
+    expect((await sweeps(w)).map((r) => (r.payload as { address: string }).address)).toEqual(["control@stranger.test"]);
+  });
+
+  it("re-offers when the strangers changed after the person saw them, and screens nothing", async () => {
+    const w = await newWorld();
+    const a = await seedArrival(w, { from: "a@stranger.test" });
+    const b = await seedArrival(w, { from: "b@stranger.test" });
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: 2 });
+    // The person moved one themselves, then pressed File for the two they were shown.
+    await w.db.update(folderState).set({ lastSetBy: "external" }).where(eq(folderState.messageId, b));
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: 1, pressed: null });
+    expect(await placement(w, a), "a press for a count that no longer held screened mail").toEqual({ d: INBOX, by: "peer" });
+    expect(await sweeps(w)).toEqual([]);
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, a)).toEqual({ d: SCREENER, by: "us" });
+    expect(await placement(w, b)).toEqual({ d: INBOX, by: "external" });
+  });
+
+  it("Leave moves nothing over two passes; CONTROL — File moves them", async () => {
+    const left = await newWorld();
+    const kept = [await seedArrival(left, { from: "x@stranger.test" }), await seedArrival(left, { from: "y@stranger.test" })];
+    expect(await run(left)).toMatchObject({ offered: 1 });
+    // The door's Leave: the window and both counts closed, nothing else.
+    await left.db.update(mailboxes).set({ gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null })
+      .where(eq(mailboxes.id, left.mailboxId));
+    expect(await run(left)).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(await run(left)).toEqual({ offered: 0, moved: 0, completed: 0 });
+    for (const id of kept) expect(await placement(left, id)).toEqual({ d: INBOX, by: "peer" });
+    expect(await sweeps(left)).toEqual([]);
+
+    const filed = await newWorld();
+    const moved = [await seedArrival(filed, { from: "x@stranger.test" }), await seedArrival(filed, { from: "y@stranger.test" })];
+    expect(await run(filed)).toMatchObject({ offered: 1 });
+    await press(filed);
+    expect(await run(filed)).toMatchObject({ moved: 2, completed: 1 });
+    for (const id of moved) expect(await placement(filed, id)).toEqual({ d: SCREENER, by: "us" });
+  });
+
+  it("a press under held screens nothing; the press stays and screens once cleared", async () => {
+    const w = await newWorld();
+    const letter = await seedArrival(w, { from: "new@stranger.test" });
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    await press(w);
+    expect(await run(w, { clearance: HELD })).toEqual({ offered: 0, moved: 0, completed: 0 });
+    expect(await placement(w, letter), "a press under held screened mail").toEqual({ d: INBOX, by: "peer" });
+    const row = await windowOf(w);
+    expect(row).toMatchObject({ letters: 0, strangers: 1 });
+    expect(row.pressed, "the press was dropped").not.toBeNull();
+    expect(await run(w)).toEqual({ offered: 0, moved: 1, completed: 1 });
+    expect(await placement(w, letter)).toEqual({ d: SCREENER, by: "us" });
+  });
+
+  it("an offer an older build counted, pressed, is offered again with its strangers and never screened unseen", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    const ruled = await seedArrival(w, { from: "letters@news.test" });
+    const stranger = await seedArrival(w, { from: "new@stranger.test" });
+    // An older build counted the rules' letter only and wrote no stranger count; the person pressed it.
+    await w.db.update(mailboxes).set({ gapLetters: 1, gapStrangers: null, gapPressedAt: new Date() })
+      .where(eq(mailboxes.id, w.mailboxId));
+    expect(await run(w)).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(await windowOf(w)).toMatchObject({ letters: 1, strangers: 1, pressed: null });
+    expect(await placement(w, stranger), "a letter the person never saw counted was screened").toEqual({ d: INBOX, by: "peer" });
+    expect(await placement(w, ruled)).toEqual({ d: INBOX, by: "peer" });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: 2, completed: 1 });
+    expect(await placement(w, stranger)).toEqual({ d: SCREENER, by: "us" });
+  });
+
+  it("counts and moves the Screener's sender-group bound, no more: one stranger past it stays", async () => {
+    const w = await newWorld();
+    const senders = Array.from({ length: GROUPS + 1 }, (_, k) => `s${String(k).padStart(4, "0")}@many.test`);
+    const made = await w.db.insert(messages).values(senders.map((from, k) => ({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageIdHeader: `many-${k}@rig.test`, bodyHash: randomUUID(),
+      dedupKey: `mid:${randomUUID()}`, subject: "hello", fromAddress: from, nativeLocator: { folder: INBOX, ref: `2:${k}` },
+      arrivedAt: IN_GAP,
+    }))).returning({ id: messages.id, from: messages.fromAddress });
+    await w.db.insert(folderState).values(made.map((m) => ({
+      messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "peer" as const,
+      reconcileStatus: "reconciled" as const, conflict: false,
+    })));
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    expect(await windowOf(w)).toMatchObject({ letters: 0, strangers: GROUPS });
+    await press(w);
+    expect(await run(w)).toEqual({ offered: 0, moved: GROUPS, completed: 1 });
+    const left = [];
+    for (const m of made) if ((await placement(w, m.id)).d === INBOX) left.push(m.from);
+    expect(left, "past the bound's last sender a letter stays for the Screener's own offer").toEqual([senders[GROUPS]]);
+    expect(await sweeps(w)).toHaveLength(GROUPS);
   });
 });

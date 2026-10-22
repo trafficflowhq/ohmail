@@ -22,15 +22,21 @@ export interface OrganizerStrip {
 }
 
 /**
- * THE GAP OFFERS (mail 0151): the mailboxes this phone organizes whose rows carry a count of
- * letters that arrived while no device was organizing them. Shown with File and Leave; nothing
- * moves until the person presses one.
+ * THE GAP OFFERS (mail 0151, 0158): the mailboxes this phone organizes whose rows carry counts of
+ * letters that arrived while no device was organizing them — for the person's rules (`count`) and
+ * from senders they have not decided about (`strangers`). Shown with File and Leave; nothing moves
+ * until the person presses one.
  */
 export function gapOffersOf(
-  rows: readonly { id: string; address: string; organizerRole: string | null; gapLetters?: number | null }[],
-): { id: string; address: string; count: number }[] {
-  return rows.flatMap((r) => r.organizerRole === "organizer" && typeof r.gapLetters === "number" && r.gapLetters > 0
-    ? [{ id: r.id, address: r.address, count: r.gapLetters }] : []);
+  rows: readonly {
+    id: string; address: string; organizerRole: string | null; gapLetters?: number | null; gapStrangers?: number | null;
+  }[],
+): { id: string; address: string; count: number; strangers: number }[] {
+  return rows.flatMap((r) => {
+    if (r.organizerRole !== "organizer" || typeof r.gapLetters !== "number") return [];
+    const strangers = typeof r.gapStrangers === "number" ? r.gapStrangers : 0;
+    return r.gapLetters + strangers > 0 ? [{ id: r.id, address: r.address, count: r.gapLetters, strangers }] : [];
+  });
 }
 
 export function organizerStripOf(

@@ -220,6 +220,8 @@ export interface MailboxDTO {
     organizerParkedAt?: string | null;
     /** The gap offer's count (mail 0151); the desktop reads it through `mailbox-facts-wire.ts`. */
     gapLetters?: number | null;
+    /** Its stranger count (mail 0158), the same way. */
+    gapStrangers?: number | null;
     organizerAcceptsRequests?: boolean;
     errorCode?: "auth" | "connect" | "tls" | "timeout" | "storage" | "sync" | "unknown" | null;
     errorDetail?: string | null;
@@ -413,6 +415,7 @@ export const mailboxes: {
     answerGapLetters: (id: string, answer: {
         file: boolean;
         count: number;
+        strangers: number;
     }) => Promise<{
         outcome: string;
         mailbox: MailboxDTO;

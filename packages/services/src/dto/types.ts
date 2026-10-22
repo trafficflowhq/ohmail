@@ -657,6 +657,12 @@ export interface MailboxDTO {
    */
   gapLetters?: number | null;
   /**
+   * Mail 0158 — the letters in the same window from senders the gate does not know, which the same
+   * press puts in the Screener. Non-null exactly when {@link gapLetters} is (0 when none); absent
+   * on an older API, which reads as 0.
+   */
+  gapStrangers?: number | null;
+  /**
    * Can the holder of this mailbox accept a decision from a reader? (0.14.1) `true` only where a
    * reader's press has somewhere to go: the holder is still renewing AND its claim advertises the
    * request capability; `false` everywhere else. On the wire because the client must withhold a

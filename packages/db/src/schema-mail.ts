@@ -261,6 +261,11 @@ export const mailboxes = pgTable("mailboxes", {
   gapLetters: integer("gap_letters"),
   /** The person pressed "File them" for the count in {@link gapLetters}; the next pass files that set or re-offers. */
   gapPressedAt: timestamp("gap_pressed_at", { withTimezone: true }),
+  /**
+   * Mail 0158 — the letters in that window from senders the gate does not know, which the same
+   * press puts in the Screener. Written beside {@link gapLetters} (0 when none), cleared with it.
+   */
+  gapStrangers: integer("gap_strangers"),
   // Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect. Canonical
   // `/`-delimited paths, resolved by `ImapAdapter.findSpecialFolders` (SPECIAL-USE first, then
   // the name belts) and re-written on every connect, so a mailbox that gains or renames the

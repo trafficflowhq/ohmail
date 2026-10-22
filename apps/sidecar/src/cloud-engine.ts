@@ -30,7 +30,7 @@ import {
   requestDesktopApproval,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
-import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror } from "./cloud-mirror.js";
+import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror, type HostedGap } from "./cloud-mirror.js";
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { answerAccountFirst } from "./cloud-account-first.js";
@@ -308,14 +308,14 @@ async function decorateHostedImports(
 }
 
 /**
- * Put the ACCOUNT's gap offer (mail 0151) on a local `GET /mailboxes` answer, per mailbox the last
+ * Put the ACCOUNT's gap offer (mail 0151, 0158) on a local `GET /mailboxes` answer, both counts, per mailbox the last
  * refresh carried one for (`CloudMirror.hostedGaps`). The row read from this store says nothing about
  * it: the window is the account's and the mirror stores none of it, so without this the offer the
  * account counted reached no Cloud-paired window. A row the map has nothing for is left as read.
  */
 async function decorateHostedGaps(
   res: Response,
-  gaps: ReadonlyMap<string, number | null>,
+  gaps: ReadonlyMap<string, HostedGap | null>,
 ): Promise<Response> {
   if (gaps.size === 0) return res;
   let body: unknown;
@@ -328,7 +328,9 @@ async function decorateHostedGaps(
   if (!Array.isArray(items)) return res;
   const decorated = items.map((row) => {
     const id = (row as { id?: unknown })?.id;
-    return typeof id === "string" && gaps.has(id) ? { ...(row as object), gapLetters: gaps.get(id) } : row;
+    if (typeof id !== "string" || !gaps.has(id)) return row;
+    const gap = gaps.get(id) ?? null;
+    return { ...(row as object), gapLetters: gap?.letters ?? null, gapStrangers: gap === null ? null : gap.strangers ?? 0 };
   });
   return json({ ...(body as object), items: decorated }, res.status);
 }

@@ -192,6 +192,8 @@ describe("the SQLite journal, applied", () => {
       "0156_routing_decisions_sender_reason.sql",
       // The Screener cutline probe's index, the pg index's twin.
       "0157_messages_sender_date.sql",
+      // The gap offer's stranger count, the pg column's twin.
+      "0158_mailboxes_gap_strangers.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -312,6 +314,8 @@ describe("the SQLite journal, applied", () => {
       "0156_routing_decisions_sender_reason.sql",
       // The Screener cutline probe's index, the pg index's twin.
       "0157_messages_sender_date.sql",
+      // The gap offer's stranger count, the pg column's twin.
+      "0158_mailboxes_gap_strangers.sql",
     ]);
   });
 
