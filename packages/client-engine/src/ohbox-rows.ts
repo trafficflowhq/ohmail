@@ -1,7 +1,10 @@
 import {
   arrivalMs,
   conversationKeyOf,
+  isFromSomeone,
   isItipAcknowledgement,
+  isOwnSent,
+  newestFromSomeone,
   ohboxView,
   resurfacedFocus,
   resurfacedThreads,
@@ -35,7 +38,12 @@ export interface OhboxRow {
   placing: EngineMessage[];
   /** Whose words and stamp the row shows: the newest member a person wrote (Resurfaced: the focus). */
   face: EngineMessage;
-  /** What a click, ↵ and the row's verbs act on: the latest unread member, else the face. */
+  /**
+   * What a click, ↵ and the row's verbs act on: the latest unread member that is not our own Sent
+   * copy; else the face when somebody else wrote it; else the newest member somebody else wrote
+   * (an answered conversation stands for the letter, not our reply, read or flagged unread); else,
+   * our own mail alone, its latest unread, else the face.
+   */
   openTarget: EngineMessage;
   unreadCount: number;
   /**
@@ -70,6 +78,12 @@ function faceOf(members: readonly EngineMessage[]): EngineMessage {
   return latestOf(human.length > 0 ? human : members);
 }
 
+/**
+ * An unread member that is not our own Sent copy. Own mail is ingested read; a copy flagged unread
+ * (a row's Mark unread over every member did that) is no letter for the row to stand for.
+ */
+const isUnreadLetter = (m: EngineMessage): boolean => m.unread && !isOwnSent(m);
+
 function rowOf(
   key: string, section: OhboxRowSection, members: EngineMessage[], placing: EngineMessage[],
   engineRow: ResurfacedThreadRow | undefined,
@@ -89,9 +103,12 @@ function rowOf(
     };
   }
   const face = faceOf(members);
+  const letters = unread.filter(isUnreadLetter);
   return {
     key, section, members, placing, face,
-    openTarget: unread.length > 0 ? latestOf(unread) : face,
+    openTarget: letters.length > 0
+      ? latestOf(letters)
+      : isFromSomeone(face) ? face : newestFromSomeone(members) ?? (unread.length > 0 ? latestOf(unread) : face),
     unreadCount: unread.length,
   };
 }
@@ -155,6 +172,44 @@ export function rowOpenTarget(
     if (row) return row.members.some((m) => m.id === opened.id) ? opened : row.openTarget;
   }
   return opened;
+}
+
+/**
+ * What a triage press or a Mark unread over a set acts on: `ids`, less our own mail whose
+ * conversation the set also carries somebody else's letter of. A folded row picked or dragged
+ * hands in every member; the letter is filed or marked unread and our reply stays as it was. Own
+ * mail with no letter beside it, and ids the reader lacks, are kept, in order.
+ */
+export function triageSubjectIds(reader: EntityReader, ids: readonly string[]): string[] {
+  const rows = ids.map((id) => reader.get<EngineMessage>("message", id));
+  const lettered = new Set<string>();
+  for (const m of rows) if (m && isFromSomeone(m)) lettered.add(conversationKeyOf(m));
+  return ids.filter((_, i) => {
+    const m = rows[i];
+    return m === undefined || isFromSomeone(m) || !lettered.has(conversationKeyOf(m));
+  });
+}
+
+/**
+ * Our own mail facing the Ohbox row `m` stands for, when `m` is that row's open target with no
+ * unread letter (our own Sent copy flagged unread is none) and `m` not held open; else null.
+ * The web's row press records it, and Move seeds its subjects from it, so a Move on an answered
+ * row still reaches every sender's letter (`moveSubjectIds`).
+ */
+export function ownFaceOfRow(
+  reader: EntityReader, m: EngineMessage, openHeld: string | null = null,
+): EngineMessage | null {
+  const key = conversationKeyOf(m);
+  const rows = ohboxRows(reader, openHeld);
+  for (const section of SECTIONS) {
+    const row = rows[section].find((r) => r.key === key);
+    if (!row) continue;
+    // Only where the read arm moved the target off our reply: an unread letter, or one read at
+    // the open and held, stands for itself.
+    return !row.members.some(isUnreadLetter) && m.id !== openHeld && row.openTarget.id === m.id
+      && row.face.id !== m.id && !isFromSomeone(row.face) ? row.face : null;
+  }
+  return null;
 }
 
 const rowsCache = new WeakMap<

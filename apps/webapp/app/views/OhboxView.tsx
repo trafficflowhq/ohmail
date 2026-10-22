@@ -702,12 +702,14 @@ export function OhboxView({
       return;
     }
     const next = nextSurvivor(before, new Set(ids), acted.id);
-    if (next != null) {
-      verbAdvance.current = next;
-      onSelect(next);
+    // Land on the row, not the member: a folded row stands for its open target.
+    const landing = next == null ? null : ((navRows[rowIndexOf(next)] ?? olderRowOf(next))?.openTarget.id ?? next);
+    if (landing != null) {
+      verbAdvance.current = landing;
+      onSelect(landing);
       // The landing is a cursor stop like j: two seconds on it read it. Not `selectByUser`, which
       // would let go of the acted row's hold and spend its Undo.
-      setDwellOn(next);
+      setDwellOn(landing);
     }
   });
 
@@ -2266,11 +2268,11 @@ export function OhboxView({
         participants={participants}
         hasAttachment={g.members.some((m) => m.hasAttachments)}
         protectedLabel={shown.protected != null ? rowBadge.protectedLabel : undefined}
-        /* The open target's state, because the target is what the row's click and every verb
-           pressed on this row act on — a chip describing some OTHER member would promise a
-           toggle the keys cannot deliver. */
+        /* The open target's state and tags, because the target is what the row's click and
+           every verb pressed on this row act on — a chip describing some OTHER member would
+           promise a toggle the keys cannot deliver. The phone's row draws the same. */
         stateNote={stateNoteOf(target)}
-        tags={tagsOfMessage(shown, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+        tags={tagsOfMessage(target, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={pickState(g.members.every((m) => picked.has(m.id)))}
         actions={actions}
         onClick={() => {

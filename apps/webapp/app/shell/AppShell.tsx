@@ -1711,7 +1711,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, siblingSeen, flushSiblingSeen,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, selectOhboxRow, siblingSeen, flushSiblingSeen,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1927,7 +1927,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
-    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", flushSiblingSeen,
+    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor, flushSiblingSeen,
     readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
@@ -2591,7 +2591,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 /* The column's third answer — see `ohboxGone`. One prop, because "the message
                    this column was showing has been taken away" is one fact. */
                 gone={ohboxGone ? { openTrash: openTrashWindow } : null}
-                onSelect={setOhboxSel}
+                /* The row's own selection, which also decides Move's seed — see `selectOhboxRow`. */
+                onSelect={selectOhboxRow}
                 /* The ID travels, and that is not tidiness. This was `() => setReaderOpen(true)`
                    against a reader hard-wired to `selectedOhbox`, so the indirection hid a
                    staleness: `OhboxView.open` calls `onSelect(id)` and this in the SAME tick,

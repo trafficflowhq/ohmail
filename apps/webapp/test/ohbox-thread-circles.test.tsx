@@ -118,8 +118,10 @@ async function render(props: Props): Promise<void> {
   await act(async () => { root!.render(el); });
 }
 
+/** The row holding `id`: its own, or the folded conversation it is a member of. */
 const rowEl = (id: string): HTMLElement =>
-  host!.querySelector<HTMLElement>(`.row[data-id="${id}"]`)!;
+  (host!.querySelector<HTMLElement>(`.row[data-id="${id}"]`)
+    ?? [...host!.querySelectorAll<HTMLElement>(".row[data-ids]")].find((r) => (r.dataset.ids ?? "").split(" ").includes(id)))!;
 const circleText = (row: HTMLElement, sel: string): string[] =>
   [...row.querySelectorAll(sel)].map((e) => e.textContent ?? "");
 

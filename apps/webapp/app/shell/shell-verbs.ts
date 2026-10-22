@@ -25,6 +25,7 @@ import {
   ruleFingerprint,
   rulesInPlay,
   rulesList,
+  triageSubjectIds,
   type EngineMessage,
   type EngineMutation,
   type EntityReader,
@@ -176,6 +177,8 @@ export interface ShellVerbsInput {
   readSetFor?: ShellOpenState["readSetFor"];
   /** The route is not the Ohbox: no view there holds the row, so a read names it to the engine. */
   offOhbox?: boolean;
+  /** Our own reply facing the Ohbox row a message was selected on, decided at the press: Move seeds from it. */
+  ownFaceFor?: ShellOpenState["ownFaceFor"];
   /** Drains the scroll-to-read glance batch before a read press (its Undo never carries a glance). */
   flushSiblingSeen: ShellOpenState["flushSiblingSeen"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
@@ -207,7 +210,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -726,8 +729,11 @@ export function useShellVerbs({
 
   const moveToPlace = useStableCallback((m: EngineMessage, view: OhmailView) => {
     /* A CONVERSATION WHOSE NEWEST LETTER IS OURS moves the letters other people sent in it
-       (`moveSubjectIds`): one sender's on this arm, several senders' through the selection's. */
-    const subjects = moveSubjectIds(withRow(engine.verbRead(), m), m.id, ownAddresses);
+       (`moveSubjectIds`): one sender's on this arm, several senders' through the selection's. A
+       row pressed on stands for its letter, so the seed is the reply facing that row; a letter
+       reached by a link, a search or opened unread and then answered seeds itself. */
+    const seed = offOhbox ? m : ownFaceFor?.(m) ?? m;
+    const subjects = moveSubjectIds(withRow(engine.verbRead(), seed), seed.id, ownAddresses);
     const senders = new Set(subjects.map((id) => engine.verbRead().get<EngineMessage>("message", id)?.from.address.trim().toLowerCase()));
     if (senders.size > 1) { onBulkAction(`move:${view}` as BulkAction, subjects); return; }
     const planned = subjects[0] === m.id
@@ -1372,17 +1378,20 @@ export function useShellVerbs({
         // that partly lands offers an Undo for exactly the chunks that landed and says how many.
         const unread = action === "unread";
         const pre = setRead();
+        // A folded row hands in every member: a read takes them all, and Mark unread leaves our
+        // own reply read beside its letter (own mail is ingested read), as the phone's row does.
+        const marked = unread ? triageSubjectIds(pre, ids) : ids;
         const chunks: string[][] = [];
-        for (let i = 0; i < ids.length; i += MARK_SEEN_CHUNK) chunks.push(ids.slice(i, i + MARK_SEEN_CHUNK));
+        for (let i = 0; i < marked.length; i += MARK_SEEN_CHUNK) chunks.push(marked.slice(i, i + MARK_SEEN_CHUNK));
         const inverses = chunks.map((c) => chunkMarkSeen(inverseMutations(pre, { kind: "mark_seen", messageIds: c, unread })));
         void Promise.all(chunks.map((c) => markSeen(c, unread))).then((oks) => {
           const done = chunks.filter((_, i) => oks[i]).reduce((n, c) => n + c.length, 0);
           if (done === 0) return;
           const undo = inverses.filter((_, i) => oks[i]).flat();
           toastWithUndo(
-            done === ids.length
-              ? t(unread ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", { count: ids.length })
-              : t(unread ? "ohbox.toastBulkUnreadPartial" : "ohbox.toastBulkReadPartial", { done, count: ids.length }),
+            done === marked.length
+              ? t(unread ? "ohbox.toastBulkUnread" : "ohbox.toastBulkRead", { count: marked.length })
+              : t(unread ? "ohbox.toastBulkUnreadPartial" : "ohbox.toastBulkReadPartial", { done, count: marked.length }),
             undo,
           );
         });
@@ -1430,8 +1439,9 @@ export function useShellVerbs({
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
         const when = action === "resurface" ? tomorrowAt(nowAt(), consent.resurfaceTime).iso : null;
+        // A folded row hands in every member: the letter is filed, our reply stays.
         void mutateSetAndReport(
-          ids.map((messageId) => ({
+          triageSubjectIds(setRead(), ids).map((messageId) => ({
             kind: "triage_set" as const,
             messageId,
             state,

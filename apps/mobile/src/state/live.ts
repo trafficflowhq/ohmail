@@ -4328,10 +4328,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
   /**
    * The messages a folded row's verb acts on: the open target first, then the rest, each once.
-   * Junk, Later and Done never touch mail the person sent (a conversation answered from here
-   * holds the reply), so `own: false` drops it; the read slot marks every member, as the web's
-   * pick of a row does (OhboxView's `runBulk`, read over the whole pick by shell-verbs'
-   * `onBulkAction`). A row that is all own mail acts on its target.
+   * Junk, Later, Done and Mark unread never touch mail the person sent (a conversation answered
+   * from here holds the reply), so `own: false` drops it; the read slot's Mark read marks every
+   * member, as the web's pick of a row does (OhboxView's `runBulk`, read over the whole pick by
+   * shell-verbs' `onBulkAction`). A row that is all own mail acts on its target.
    */
   const membersOf = (id: string, members?: readonly string[], opts: { own?: boolean } = {}): string[] => {
     const all = [...new Set([id, ...(members ?? [])])];
@@ -4408,7 +4408,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // new with the undo (the 0.20 review): the flip is visible, but the pill is where the way back
     // lives, and a verb whose undo has no surface is a verb with no undo.
     // Chunked at the route's cap both ways, the press and its Undo (a conversation's set can be wide).
-    const ids = membersOf(messageId, members, { own: true });
+    // A read takes every member; Mark unread leaves our own mail read, so the row stands for the letter.
+    const ids = membersOf(messageId, members, { own: !unread });
     // `readRow` is the engine's to judge and drop; it never reaches the wire.
     const row = !unread && readRow !== undefined ? { readRow } : {};
     const m: EngineMutation = { kind: "mark_seen", messageIds: ids, unread, ...row };

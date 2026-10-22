@@ -377,7 +377,7 @@ describe("one conversation, one row — on the shell and on the phone alike", ()
       "msg:solo-new New solo-new",
       "C New c-unread",
       "msg:solo-mid New solo-mid",
-      "D Earlier d-own",
+      "D Earlier d-read-2",
       "msg:solo-read Earlier solo-read",
     ]);
     expect(phoneRows).toEqual(shell);

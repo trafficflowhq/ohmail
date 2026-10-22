@@ -400,6 +400,8 @@ export {
   // ONE ROW PER CONVERSATION under Resurfaced, derived from the per-message pin already on the
   // wire — additive beside `ohboxView.resurfaced`, which stays per message. Exported because both
   // the web app and the phone render the same rows from it.
+  isFromSomeone,
+  newestFromSomeone,
   resurfacedFocus,
   resurfacedThreads,
   // ONE ROW PER CONVERSATION across every Ohbox section — the key both folds and the census read.
@@ -471,7 +473,9 @@ export {
 export {
   foldOhboxRows,
   ohboxRows,
+  ownFaceOfRow,
   rowOpenTarget,
+  triageSubjectIds,
   type OhboxRow,
   type OhboxRowLists,
   type OhboxRowSection,

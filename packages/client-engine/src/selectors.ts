@@ -850,8 +850,27 @@ export function arrivalMs(m: Pick<EngineMessage, "sortAt" | "date" | "arrivedAt"
  * things the conversation did to itself; counting them would pull a thread forward on the strength
  * of the user having just dealt with it, which is the pass fighting the spend.
  */
-function isFromSomeone(m: EngineMessage): boolean {
+export function isFromSomeone(m: EngineMessage): boolean {
   return !isOwnSent(m) && m.autoReplyByUs !== true && !isItipAcknowledgement(m);
+}
+
+/** The newest by {@link arrivalMs}; ties break on the larger id. Null for none. */
+function newestOf(of: readonly EngineMessage[]): EngineMessage | null {
+  let best: EngineMessage | null = null;
+  let bestMs: number | null = null;
+  for (const m of of) {
+    const t = arrivalMs(m);
+    if (best === null || (t !== null && (bestMs === null || t > bestMs || (t === bestMs && m.id > best.id)))) {
+      best = m;
+      bestMs = t;
+    }
+  }
+  return best;
+}
+
+/** The newest member somebody else wrote ({@link isFromSomeone}), or null for our own mail alone. */
+export function newestFromSomeone(members: readonly EngineMessage[]): EngineMessage | null {
+  return newestOf(members.filter(isFromSomeone));
 }
 
 /**
@@ -867,19 +886,7 @@ export function resurfacedFocus(
   members: readonly EngineMessage[],
   pinned: readonly EngineMessage[] = [],
 ): EngineMessage {
-  const newest = (of: readonly EngineMessage[]): EngineMessage | null => {
-    let best: EngineMessage | null = null;
-    let bestMs: number | null = null;
-    for (const m of of) {
-      const t = arrivalMs(m);
-      if (best === null || (t !== null && (bestMs === null || t > bestMs || (t === bestMs && m.id > best.id)))) {
-        best = m;
-        bestMs = t;
-      }
-    }
-    return best;
-  };
-  return newest(members.filter(isFromSomeone)) ?? newest(pinned) ?? newest(members) ?? members[0]!;
+  return newestFromSomeone(members) ?? newestOf(pinned) ?? newestOf(members) ?? members[0]!;
 }
 
 const msOf = (iso: string | null): number | null => {

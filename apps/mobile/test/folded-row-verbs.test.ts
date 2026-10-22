@@ -141,8 +141,9 @@ describe("a folded row's verbs", () => {
 });
 
 /* REVIEW-026-PHONE-SAYS-EVERY-PRESS-2 HIGH-1: a conversation answered from here holds the person's
-   OWN reply (the Ohbox carries own Sent mail). Junk, Later and Done never touch it; the read slot
-   marks every member, as the web's pick of a row does. */
+   OWN reply (the Ohbox carries own Sent mail). Junk, Later, Done and Mark unread never touch it (an
+   unread reply would make the row stand for it); the read slot's Mark read marks every member, as
+   the web's pick of a row does. */
 describe("a folded row that holds the person's own reply", () => {
   const ME = { name: "Me", address: "owner@fake.test" };
   const answered = (faceIsMine: boolean) => [
@@ -165,7 +166,7 @@ describe("a folded row that holds the person's own reply", () => {
       } finally { s.close(); }
     });
   }
-  it("Later and Done leave my reply alone; the read slot marks it with the rest", async () => {
+  it("Later, Done and Mark unread leave my reply alone; the read slot's Mark read marks it with the rest", async () => {
     const s = await scene([], answered(false));
     try {
       let before = writes(s).length;
@@ -180,6 +181,10 @@ describe("a folded row that holds the person's own reply", () => {
       expect(writes(s).slice(before).map((r) => r.body).join(" "), "Done touched my reply").not.toContain("m2");
       before = writes(s).length;
       await s.actions.markSeen("m1", true, ["m1", "m2"]);
+      await until("the unread on the wire", () => writes(s).length > before);
+      expect(writes(s).slice(before).map((r) => r.body).join(" "), "Mark unread touched my reply").not.toContain("m2");
+      before = writes(s).length;
+      await s.actions.markSeen("m1", false, ["m1", "m2"]);
       await until("the read on the wire", () => writes(s).length > before);
       expect(writes(s).slice(before).map((r) => r.body).join(" ")).toContain("m2");
     } finally { s.close(); }

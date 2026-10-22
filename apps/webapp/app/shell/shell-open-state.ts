@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import type { useTranslations } from "next-intl";
 import {
   isResurfaced,
+  ownFaceOfRow,
   rowOpenTarget,
   senderKey,
   VIEW_OF_FOLDER,
@@ -631,6 +632,27 @@ export function useShellOpenState({
   const [rowOpen, setRowOpen] = useState<{ id: string; target: EngineMessage } | null>(null);
   const forwardTargetFor = useStableCallback((m: EngineMessage): EngineMessage =>
     route.view === "ohbox" && rowOpen !== null && rowOpen.id === m.id ? rowOpen.target : m);
+  /**
+   * THE ROW PRESS AND THE REPLY FACING ITS ROW — Move's seed, decided when the selection is made.
+   * Only `OhboxView`'s own selection writes it (a click, ↵, j/k, the after-verb landing, an Undo
+   * putting the row back) and the placed first cursor, reading `ownFaceOfRow` over the rows the
+   * open reads at that moment: our reply facing an answered row whose letter is read and not held,
+   * else nothing. A link, a reload, Back or a search landing records nothing, and a letter opened
+   * unread records nothing either, so answering it later does not widen its Move to every sender.
+   */
+  const [rowSeed, setRowSeed] = useState<{ id: string; ownFace: string | null } | null>(null);
+  const selectOhboxRow = useStableCallback((id: string | null) => {
+    const m = id === null ? undefined : presented.get<EngineMessage>("message", id);
+    const next = m ? { id: m.id, ownFace: ownFaceOfRow(presented, m, engine.openRowHeld())?.id ?? null } : null;
+    // The same answer keeps the same record: a press on the row already selected renders nothing more.
+    setRowSeed((cur) => (cur?.id === next?.id && cur?.ownFace === next?.ownFace ? cur : next));
+    setOhboxSel(id);
+  });
+  /** Our own reply facing the row `m` was selected on, while that row selection stands. */
+  const ownFaceFor = useStableCallback((m: EngineMessage): EngineMessage | null =>
+    route.view === "ohbox" && ohboxSel === m.id && rowSeed?.id === m.id && rowSeed.ownFace !== null
+      ? presented.get<EngineMessage>("message", rowSeed.ownFace) ?? null
+      : null);
 
   /**
    * Opening the reader — the one gate. A live walk at 1440 found the message painted twice: the
@@ -707,6 +729,7 @@ export function useShellOpenState({
       screener.flush();
       setReaderFor(null);
       setRowOpen(null);
+      setRowSeed(null);
       setPicker(null);
       setPickerIds(null);
       setFr(null);
@@ -940,6 +963,8 @@ export function useShellOpenState({
     );
     switch (target.kind) {
       case "ohbox":
+        // A landing is no row press: its Move moves the message it landed on (`ownFaceFor`).
+        setRowSeed(null);
         setOhboxSel(target.id);
         // The reader, and via `readerPending` because `go` is about to clear it.
         if (target.reader) setReaderPending(target.id);
@@ -1112,6 +1137,8 @@ export function useShellOpenState({
       }
       if (route.view === "ohbox" && held) {
         setOhboxSel(id);
+        // A link, a reload or Back is no row press (`ownFaceFor`).
+        setRowSeed(null);
         // The overlay either IS this reading (narrow) or must not stand over it: at a split
         // width a stale reader left by an earlier off-pile route would sit over the column
         // and re-claim the bar on a later pass.
@@ -1283,9 +1310,16 @@ export function useShellOpenState({
   const placeCursor = useStableCallback((label: string): boolean => {
     if (!SHELL_CURSOR_VIEWS.has(route.view)) return false;
     const current = focused?.id ?? null;
+    /* A folded row carries its open target's `data-id`, not always its newest member's
+       (`allOhbox[0]`): seed from the row on screen that holds it. */
+    const lead = allOhbox[0];
+    const leadRowId = route.view !== "ohbox" || lead == null || typeof document === "undefined"
+      ? undefined
+      : document.querySelector<HTMLElement>(`.view .row[data-ids~="${CSS.escape(lead.id)}"]`)?.dataset.id;
+    const leadTarget = leadRowId === undefined ? undefined : allOhbox.find((m) => m.id === leadRowId);
     const host: CursorHost =
       route.view === "ohbox"
-        ? { rows: allOhbox, current, scope: ".view", select: setOhboxSel }
+        ? { rows: leadTarget ? [leadTarget] : allOhbox, current, scope: ".view", select: selectOhboxRow }
         : route.view === "reads"
           ? { rows: [...partition.fresh, ...partition.seen], current, scope: ".view", select: setReadsCur }
           : route.view === "receipts"
@@ -1299,6 +1333,8 @@ export function useShellOpenState({
 
   return {
     forwardTargetFor,
+    ownFaceFor,
+    selectOhboxRow,
     absoluteTime,
     barPanel,
     chipState,

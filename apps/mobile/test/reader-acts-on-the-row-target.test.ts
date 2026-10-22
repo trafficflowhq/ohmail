@@ -2,11 +2,12 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore, OhmailEngine, ohboxRows, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
+  MemoryMirrorStore, OhmailEngine, ohboxRows, triagePiles, type EngineAdapter, type EngineMessage, type SyncChange, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createProjector, type ProjectionInputs, type Projected } from "../src/state/world-projection";
 import { SCREENING_UNSUPPLIED, liveActions, type WorldActions, type WorldMail } from "../src/state/live";
 import { paneRouteFor } from "../src/ui/pane-routes";
+import { readFaceOf } from "../src/ui/row-swipe";
 import { derivePosture, type PostureInput } from "../src/ui/posture/derive";
 import { scaffoldPlan } from "../src/ui/scaffold/plan";
 import { withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
@@ -57,12 +58,16 @@ const consent = (): SyncChange => create("rule", "rule_lena", {
 async function phone(first: SyncChange[]) {
   let seq = 1000;
   const pages: SyncChange[][] = [[consent(), ...first].map((c) => ({ ...c, seq: seq++ }))];
+  const posted: string[] = [];
   const adapter = {
     sync: async (): Promise<SyncResponse> => ({
       changes: { creates: pages.shift() ?? [], updates: [], moves: [], deletes: [] },
       cursor: `c${seq}`, hasMore: false, serverTime: new Date(AT).toISOString(),
     }),
-    mutate: async () => ({ ok: true as const, changes: [] }),
+    mutate: async (m: { kind: string; messageId?: string; messageIds?: string[]; state?: string; unread?: boolean }) => {
+      posted.push(`${m.kind}:${m.messageId ?? (m.messageIds ?? []).join(",")}${m.state ? `:${m.state}` : ""}${m.unread === true ? ":unread" : ""}`);
+      return { ok: true as const, changes: [] };
+    },
   } as unknown as EngineAdapter;
   const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), storePolicy: { mode: "full" } });
   await engine.start();
@@ -77,7 +82,7 @@ async function phone(first: SyncChange[]) {
   } as unknown as ProjectionInputs);
   const world = (): Projected => projector.project(inputs());
   const actions = liveActions({ engine, toast: () => undefined, uuid: () => "00000000-0000-4000-8000-000000000001", zone: "UTC" });
-  return { engine, world, actions };
+  return { engine, world, actions, posted };
 }
 
 /** The Ohbox row a press on `member`'s conversation is made on: its own id, which is its target. */
@@ -227,6 +232,115 @@ describe("an open that is not a row press shows the message it names", () => {
     const w = p.world();
     expect(mount(w, "x2")).toBe("x2");
     expect(mount(w, "a1")).toBe("a1");
+  });
+});
+
+describe("an answered conversation, all read: the row stands for the letter", () => {
+  const answered = () => [create("message", "a1", msg("a1", AT)), create("message", "x2", msg("x2", AT + 3_600_000, laterX2["our own reply"]))];
+
+  it("the row's id and its open target are the letter; the row still wears our reply", async () => {
+    const p = await phone(answered());
+    const w = p.world();
+    const rows: WorldMail[] = [...w.ohbox.resurfaced, ...w.ohbox.fresh, ...w.ohbox.seen];
+    const row = rows.find((r) => r.id === "a1" || (r.memberIds ?? []).includes("a1"));
+    expect(row?.id).toBe("a1");
+    expect(w.rowOpenTarget(row!.id)).toBe("a1");
+    expect(threadRow(p.engine)?.target).toBe("a1");
+  });
+
+  for (const [verb, posts, pile] of [
+    ["Later", "triage_set:a1:reply_later", "replyLater"],
+    ["Set aside", "triage_set:a1:set_aside", "setAside"],
+    ["Junk", null, null],
+  ] as const) {
+    it(`the reader's ${verb}, pressed on what the row opened, acts on the letter`, async () => {
+      const p = await phone(answered());
+      const w0 = p.world();
+      const open = press(w0, "a1");
+      await p.actions.openMessage(open);
+      p.posted.length = 0;
+      await VERBS[verb]!(p, w0, open);
+      expect(p.posted.some((x) => x.includes("x2")), `nothing acts on our reply: ${p.posted.join(" ")}`).toBe(false);
+      if (posts) expect(p.posted).toEqual([posts]);
+      else expect(p.posted.some((x) => x.includes("a1")), `the letter moved: ${p.posted.join(" ")}`).toBe(true);
+      if (pile) expect(triagePiles(p.engine.read())[pile].map((e) => e.messageId)).toEqual(["a1"]);
+    });
+  }
+
+  it("the row draws the letter's tags, not our reply's, as the web row does", async () => {
+    const tag = create("tag", "tag_1", { id: "tag_1", name: "Keepme", hue: "blue", createdAt: new Date(AT).toISOString(), updatedAt: new Date(AT).toISOString() });
+    for (const [on, want] of [["a1", ["Keepme"]], ["x2", []]] as const) {
+      const p = await phone([
+        tag,
+        create("message", "a1", msg("a1", AT, { labels: on === "a1" ? ["tag_1"] : [] })),
+        create("message", "x2", msg("x2", AT + 3_600_000, { ...laterX2["our own reply"], labels: on === "x2" ? ["tag_1"] : [] })),
+      ]);
+      const row = [...p.world().ohbox.fresh, ...p.world().ohbox.seen].find((r) => (r.memberIds ?? []).includes("a1"))!;
+      expect((row.tags ?? []).map((t) => t.name), `the tag on ${on}`).toEqual(want);
+    }
+  });
+
+  it("CONTROL: the row's swipe Later, with its members, files the letter alone", async () => {
+    const p = await phone(answered());
+    const w = p.world();
+    const row = [...w.ohbox.fresh, ...w.ohbox.seen].find((r) => (r.memberIds ?? []).includes("a1"))!;
+    await p.actions.pileToggle(row.id, "replyLater", row.memberIds);
+    expect(p.posted).toEqual(["triage_set:a1:reply_later"]);
+  });
+});
+
+describe("an answered conversation marked unread from its row still stands for the letter", () => {
+  const ours = laterX2["our own reply"];
+  const rowHolding = (w: Projected, member: string): WorldMail => {
+    const row = [...w.ohbox.resurfaced, ...w.ohbox.fresh, ...w.ohbox.seen].find((r) => r.id === member || (r.memberIds ?? []).includes(member));
+    expect(row, `an Ohbox row holds ${member}`).toBeTruthy();
+    return row!;
+  };
+  /** The row's read slot as MailRow presses it: the verb its sheet shows, over the row's members. */
+  const swipeReadSlot = async (p: Awaited<ReturnType<typeof phone>>, row: WorldMail): Promise<void> => {
+    const face = readFaceOf({ pile: row.pile ?? null, unread: !!row.unread });
+    await p.actions.markRowSeen(row.id, face === "markUnread", row.memberIds);
+  };
+  /** The press, the open, and the reader's Later: what it posts and what the Reply Run then lists. */
+  const pressThenLater = async (p: Awaited<ReturnType<typeof phone>>): Promise<{ open: string; posted: string[]; pile: Array<string | undefined> }> => {
+    const w = p.world();
+    const open = press(w, "a1");
+    await p.actions.openMessage(open);
+    p.posted.length = 0;
+    await VERBS.Later!(p, w, open);
+    return { open, posted: [...p.posted], pile: triagePiles(p.engine.read()).replyLater.map((e) => e.messageId) };
+  };
+
+  it("the swipe's Mark unread marks the letter alone; the press opens the letter and the reader's Later files it", async () => {
+    const p = await phone([create("message", "a1", msg("a1", AT)), create("message", "x2", msg("x2", AT + 3_600_000, ours))]);
+    const row = rowHolding(p.world(), "a1");
+    expect(readFaceOf({ pile: row.pile ?? null, unread: !!row.unread }), "the premise: the all-read row's read slot").toBe("markUnread");
+    await swipeReadSlot(p, row);
+    expect(p.posted, "our own reply stays read").toEqual(["mark_seen:a1:unread"]);
+    expect(rowHolding(p.world(), "a1").id).toBe("a1");
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+  });
+
+  it("our reply left unread beside the read letter (an earlier Mark unread): the press opens the letter and Later files it", async () => {
+    const p = await phone([create("message", "a1", msg("a1", AT)), create("message", "x2", msg("x2", AT + 3_600_000, { ...ours, unread: true }))]);
+    expect(rowHolding(p.world(), "a1").id).toBe("a1");
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+  });
+
+  it("the letter and our reply both unread (as another device's Mark unread left them): the letter", async () => {
+    const p = await phone([create("message", "a1", msg("a1", AT, { unread: true })), create("message", "x2", msg("x2", AT + 3_600_000, { ...ours, unread: true }))]);
+    expect(rowHolding(p.world(), "a1").id).toBe("a1");
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+  });
+
+  it("CONTROL: the read slot's Mark read still marks every member, our reply included", async () => {
+    const p = await phone([create("message", "a1", msg("a1", AT, { unread: true })), create("message", "x2", msg("x2", AT + 3_600_000, { ...ours, unread: true }))]);
+    const row = rowHolding(p.world(), "a1");
+    expect(readFaceOf({ pile: row.pile ?? null, unread: !!row.unread }), "the premise: the unread row's read slot").toBe("markRead");
+    await swipeReadSlot(p, row);
+    expect(p.posted).toHaveLength(1);
+    const [kind, ids, direction] = p.posted[0]!.split(":");
+    expect([kind, ids!.split(",").sort(), direction]).toEqual(["mark_seen", ["a1", "x2"], undefined]);
   });
 });
 

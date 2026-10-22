@@ -22,11 +22,14 @@ import {
  * members over six member states, crossed with every choice of the held open row, beside two
  * threadless controls. MUTATIONS WATCHED: `ohboxView`'s filing put back to per message reddens
  * (d); the fold keyed by section, (c); the last claim winning, (a) (b) (c); the absorb dropped,
- * the belt arm below only — the engine's own lists never need it.
+ * the belt arm below only — the engine's own lists never need it; the row's target put back to
+ * its face, or to the latest unread member with our own Sent copy counted, (e).
  */
 
-type State = "unread" | "read" | "sent" | "pin" | "bubbled" | "parked";
-const STATES: readonly State[] = ["unread", "read", "sent", "pin", "bubbled", "parked"];
+/** `sent-unread`: our own Sent copy flagged unread, as a row's Mark unread over every member left it. */
+type State = "unread" | "read" | "sent" | "sent-unread" | "pin" | "bubbled" | "parked";
+const STATES: readonly State[] = ["unread", "read", "sent", "sent-unread", "pin", "bubbled", "parked"];
+const OWN: ReadonlySet<State> = new Set(["sent", "sent-unread"]);
 
 const CLAIM_AT = "2026-08-01T08:00:00.000Z";
 const at = (i: number): string => `2026-08-0${2 + i}${"T"}09:00:00.000Z`;
@@ -35,8 +38,8 @@ function mk(id: string, threadId: string | null, s: State, i: number): EngineMes
   return {
     id, accountId: "a", mailboxId: "mb", threadId, messageIdHeader: null,
     subject: `s-${id}`, from: { name: id, address: `${id}@example.invalid` }, to: [], cc: [],
-    date: at(i), arrivedAt: at(i), folder: s === "sent" ? "Sent" : "INBOX", snippet: "",
-    unread: s === "unread", hasAttachments: false, attachmentCount: 0,
+    date: at(i), arrivedAt: at(i), folder: OWN.has(s) ? "Sent" : "INBOX", snippet: "",
+    unread: s === "unread" || s === "sent-unread", hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: at(i),
   } as EngineMessage;
@@ -88,16 +91,18 @@ function* mirrors(): Generator<Mirror> {
 
 /** The mirrors the space predicts: per combo, one with nothing held plus one per INBOX member. */
 function predictedCount(): number {
+  const s = STATES.length;
+  const inbox = STATES.filter((x) => !OWN.has(x)).length;
   let n = 0;
   for (let k = 1; k <= 3; k++) {
-    // Σ over combos of (1 + inbox members) = 6^k (1 + 2 controls) + k · 5 · 6^(k−1).
-    n += 6 ** k * 3 + k * 5 * 6 ** (k - 1);
+    // Σ over combos of (1 + inbox members) = s^k (1 + 2 controls) + k · inbox · s^(k−1).
+    n += s ** k * 3 + k * inbox * s ** (k - 1);
   }
   return n;
 }
 
 /** Ohbox members by the rule's own words: not parked, not the account's calendar reply. */
-const onOhbox = (s: State): boolean => s === "unread" || s === "read" || s === "sent";
+const onOhbox = (s: State): boolean => s === "unread" || s === "read" || OWN.has(s);
 
 describe("the Ohbox draws each conversation once (exhaustive census)", () => {
   it("every mirror: one row per key, nothing dropped, the section by the rule, ohboxView exclusive", () => {
@@ -154,13 +159,19 @@ describe("the Ohbox draws each conversation once (exhaustive census)", () => {
         if (lists.size > 1) failures.push(`(d) ${label}: ${k} in ${[...lists].join("+")}`);
         if (resurfacedKeys.has(k)) failures.push(`(d) ${label}: ${k} resurfaced and in ${[...lists].join("+")}`);
       }
+
+      // (e) a New or Earlier row never stands for our own mail beside a letter, read or unread.
+      for (const r of [...rows.new, ...rows.earlier]) {
+        if (!OWN.has(states.get(r.openTarget.id)!)) continue;
+        if (r.members.some((m) => !OWN.has(states.get(m.id)!))) failures.push(`(e) ${label}: ${r.key} stands for ${r.openTarget.id}`);
+      }
     }
     // A zero is a reading only beside the space it was read over.
     expect(count, "fewer mirrors than the space predicts").toBe(predictedCount());
     for (const s of ["resurfaced", "new", "earlier"] as const) {
       expect(sections.get(s) ?? 0, `the census never produced a ${s} row`).toBeGreaterThan(0);
     }
-    const byClause = ["(a)", "(b)", "(c)", "(d)"].map((c) => `${c} ${failures.filter((f) => f.startsWith(c)).length}`);
+    const byClause = ["(a)", "(b)", "(c)", "(d)", "(e)"].map((c) => `${c} ${failures.filter((f) => f.startsWith(c)).length}`);
     expect(failures.slice(0, 12), `${failures.length} failures — ${byClause.join(", ")}`).toEqual([]);
   });
 
@@ -180,7 +191,7 @@ describe("the Ohbox draws each conversation once (exhaustive census)", () => {
     expect(rows.new).toEqual([]);
     expect(rows.earlier.map((r) => r.key)).toEqual(["T"]);
     expect(rows.earlier[0]!.face.id).toBe("t2");
-    expect(rows.earlier[0]!.openTarget.id).toBe("t2");
+    expect(rows.earlier[0]!.openTarget.id, "the letter, not our reply").toBe("t1");
   });
 
   it("CONTROL: plain threadless rows are unchanged — one row each, their own section", () => {

@@ -17,16 +17,20 @@ const ME = "walker@example.invalid";
 const FRIEND = "friend@example.invalid";
 const OTHER = "other@example.invalid";
 let seq = 0;
+/** Other's letter in t2 still unread: our reply is newer than a letter we have not read. */
+let gbUnread = false;
+/** t2 carries our reply from the first sync; off, the reply is the one the case sends. */
+let t2Answered = true;
 
 const create = (type: string, id: string, entity: Record<string, unknown>) => ({
   type, op: "create", id, seq: ++seq, updatedAt: ISO, entity,
 });
 const at = (min: number): string => new Date(Date.parse(ISO) - min * 60_000).toISOString();
-const message = (id: string, o: { from: string; to: string; folder: string; threadId?: string; ago: number; subject: string }) =>
+const message = (id: string, o: { from: string; to: string; folder: string; threadId?: string; ago: number; subject: string; unread?: boolean }) =>
   create("message", id, {
     id, accountId: "acct_live_1", mailboxId: "mb_1", threadId: o.threadId ?? null, messageIdHeader: null, subject: o.subject,
     from: { name: null, address: o.from }, to: [{ name: null, address: o.to }], cc: [],
-    date: at(o.ago), arrivedAt: at(o.ago), sortAt: at(o.ago), folder: o.folder, snippet: o.subject, unread: false,
+    date: at(o.ago), arrivedAt: at(o.ago), sortAt: at(o.ago), folder: o.folder, snippet: o.subject, unread: o.unread ?? false,
     hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null, labels: [], remoteContent: "none", updatedAt: ISO,
   });
 const rule = (id: string, match: string) => create("rule", id, {
@@ -47,8 +51,8 @@ function syncPage(): Response {
     // A conversation two people answered, our letter newest.
     rule("rule_other", OTHER),
     message("g_a", { from: FRIEND, to: ME, folder: "INBOX", threadId: "t2", ago: 30, subject: "Trip" }),
-    message("g_b", { from: OTHER, to: ME, folder: "INBOX", threadId: "t2", ago: 20, subject: "Re: Trip" }),
-    message("g_mine", { from: ME, to: FRIEND, folder: "Sent", threadId: "t2", ago: 10, subject: "Re: Trip" }),
+    message("g_b", { from: OTHER, to: ME, folder: "INBOX", threadId: "t2", ago: 20, subject: "Re: Trip", unread: gbUnread }),
+    ...(t2Answered ? [message("g_mine", { from: ME, to: FRIEND, folder: "Sent", threadId: "t2", ago: 10, subject: "Re: Trip" })] : []),
     // A letter from our own address still held at the gate (one that failed its sender check).
     message("held_me", { from: ME, to: ME, folder: "ohmail/Screener", ago: 5, subject: "Held note" }),
   ];
@@ -62,8 +66,10 @@ const click = async (el: Element): Promise<void> => {
   await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
   await settle();
 };
+/** The row holding `id`: its own, or the folded conversation it is a member of. */
 const row = (host: HTMLElement, id: string): HTMLElement => {
-  const r = host.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
+  const r = host.querySelector<HTMLElement>(`.row[data-id="${id}"]`)
+    ?? [...host.querySelectorAll<HTMLElement>(".row[data-ids]")].find((x) => (x.dataset.ids ?? "").split(" ").includes(id));
   if (!r) throw new Error(`no row ${id}`);
   return r;
 };
@@ -82,20 +88,28 @@ function writes(): string[] {
   });
 }
 
-/** Open the row, press Move, press the place; then let the undo window close so held rules go. */
-async function moveTo(host: HTMLElement, id: string, place: string): Promise<void> {
-  await click(row(host, id));
+/** Press the bar's Move, then the place, on what is open. */
+async function pressMove(host: HTMLElement, place: string): Promise<void> {
   await click(host.querySelector(".abar-move")!);
   const target = [...host.querySelectorAll<HTMLButtonElement>(".abar-panel button")]
     .find((b) => (b.textContent ?? "").includes(`→ ${place}`));
   if (!target) throw new Error(`no move target ${place}`);
   await click(target);
 }
+/** Open the row, press Move, press the place; then let the undo window close so held rules go. */
+async function moveTo(host: HTMLElement, id: string, place: string): Promise<void> {
+  await click(row(host, id));
+  await pressMove(host, place);
+}
 const windowCloses = async (): Promise<void> => { for (let i = 0; i < 30; i++) await tick(1000); };
+const focusedPanel = (host: HTMLElement): string | null =>
+  host.querySelector<HTMLElement>(".read-col article.pm[aria-current]")?.dataset.convId ?? null;
 
 beforeEach(() => {
   installShellEnv();
   seq = 0;
+  gbUnread = false;
+  t2Answered = true;
   answerSyncWith(syncPage);
   window.location.hash = "#/ohbox";
 });
@@ -138,6 +152,66 @@ describe("Move on our own letter", () => {
       `PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`,
     ]);
     expect(said).not.toContain(ME);
+  });
+
+  for (const opened of [false, true]) {
+    it(`Other's letter unread under our newer reply, ${opened ? "opened" : "selected"}: Move takes that letter alone`, async () => {
+      gbUnread = true;
+      const host = await MOUNT();
+      await settle();
+      expect(row(host, "g_b").dataset.id, "the row stands for the unread letter").toBe("g_b");
+      if (opened) await click(row(host, "g_b"));
+      await moveTo(host, "g_b", "News");
+      await windowCloses();
+      const w = writes();
+      expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+      expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
+    });
+  }
+
+  /* Only a press on the conversation's row reaches every sender's letter: a letter reached any
+     other way, or opened unread and then answered, is moved as itself. */
+  it("Other's letter of the answered conversation opened by its link: Move takes that letter and its sender's rule alone", async () => {
+    window.location.hash = "#/ohbox/m/g_b";
+    const host = await MOUNT();
+    await settle();
+    expect(focusedPanel(host), "the premise: the link opened the letter").toBe("g_b");
+    await pressMove(host, "News");
+    await windowCloses();
+    const w = writes();
+    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+    expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
+  });
+
+  it("Other's letter opened unread from its row, then answered: Move takes that letter and its sender's rule alone", async () => {
+    gbUnread = true;
+    t2Answered = false;
+    const inner = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      const path = new URL(String(input), "https://h.invalid").pathname;
+      const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+      if (method === "POST" && /\/drafts$/.test(path)) return json({ id: "d1", bcc: [], contentRevision: "r1", status: "draft" });
+      if (method === "POST" && /\/drafts\/d1\/send$/.test(path)) return json({ status: "sent", providerMessageId: "<pm1@example.invalid>" });
+      return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof globalThis.fetch;
+    const { createEngine } = await import("../app/shell/engine-config.js");
+    const engine = createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }, null);
+    const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO } as never)], { engine });
+    await settle();
+    await click(row(host, "g_b"));
+    await click(row(host, "g_b"));
+    expect(engine.openRowHeld(), "the premise: the open holds the letter").toBe("g_b");
+    await act(async () => { await engine.mutate({ kind: "mail_send", inReplyTo: "g_b", body: "Sounds good" } as never); });
+    await settle();
+    expect(engine.openRowHeld(), "the premise: the answer ended the hold").toBeNull();
+    expect(row(host, "g_b").dataset.id, "the premise: the answered row stands for the letter").toBe("g_b");
+    expect(focusedPanel(host)).toBe("g_b");
+    await pressMove(host, "News");
+    await windowCloses();
+    const w = writes();
+    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+    expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
   });
 
   it("a picked conversation whose newest letter is ours moves the reply, never our Sent copies", async () => {
