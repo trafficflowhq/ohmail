@@ -11,6 +11,7 @@ import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type 
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, cssRect } from "@ohmail/ui";
 import { MessageFiles } from "./MessageFiles";
 import { InvitationNote } from "./InvitationNote";
+import { MessageEvents } from "./MessageEvents";
 import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
@@ -1711,6 +1712,8 @@ export function MessagePane({
           body text, else the stored-header fact. OUTSIDE `.msg-body` on purpose: that element holds
           the mail and nothing else. See `InvitationNote`. */}
       <InvitationNote message={message} text={body.text} full={body.state === "full"} className="msg-body-state" />
+      {/* The invitation's event, once, above the mail (`MessageEvents`). */}
+      <MessageEvents messageId={message.id} />
       {/* A `<div>` rather than the `<p>` this was, because `BodyText` emits the paragraphs
           now and a `<p>` may not contain one. `.msg-body` is unchanged and stays the one element
           that holds the mail and nothing else, which is what `test/conversation.test.ts` and

@@ -2,15 +2,11 @@
  *
  * Blanc grammar, applied: the card exists only once its bytes are FETCHED and PARSED, so it
  * stands on the surface (`--panel` + `--lift-0`, the `rise` entrance) exactly like a ready
- * tile — presence encoded by light, not by a new palette. Until then the ordinary tile is on
- * screen doing its ordinary truth-telling ("Fetching from your mailbox…"), and any calendar
- * part that fails to parse keeps that tile forever: the card is a promotion, never a claim.
+ * tile — presence encoded by light, not by a new palette.
  *
- * It is NOT a button. The tile's press means "look at it", and the card already IS the look —
- * a press that opened a raw-text overlay over the same facts would be a second name for less.
- * The one verb is SAVE, the strip's own corner control (`.att-side`), so a reader can still
- * put the .ics into their real calendar. That is also why the card spans the strip's full
- * grid row: it is a reading surface, and 210px tracks are sized for names, not sentences.
+ * It sits ABOVE the mail (`.msg-events`, one card per distinct event) and is NOT a button: the
+ * card already is the look, and the calendar parts stay ordinary tiles in the strip below, where
+ * the file can be saved. Text only, no control.
  *
  * The DATE GLYPH is a calendar page: month band over day numeral, the leaf's own geometry
  * (panel-on-tint figure/ground flip) one size up. On a CANCELLED event the glyph goes quiet
@@ -20,7 +16,12 @@
  * Both themes come free: every colour below is a token.
  */
 
-.ics-item { grid-column: 1 / -1; }
+.msg-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 16px;
+}
 
 .ics-card {
   flex: 1;
@@ -33,8 +34,6 @@
   box-shadow: var(--lift-0);
   animation: rise .25s var(--spring);
 }
-/* Room for the corner save control — the tile's own rule, restated for the card. */
-.att-item[data-side] > .ics-card { padding-right: 46px; }
 
 /* ── the calendar-page glyph ─────────────────────────────────────────────────────────── */
 

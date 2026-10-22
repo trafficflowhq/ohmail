@@ -25,6 +25,7 @@ import { MessageBody as MessageBodyView } from "../components/MessageBody";
 import { useWithheldSentence } from "./message-chrome";
 import type { WithheldCopyKey } from "./format";
 import { MessageFiles } from "./MessageFiles";
+import { MessageEvents } from "./MessageEvents";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
 import { COPY as BODY_COPY } from "./BodyText";
 
@@ -202,6 +203,8 @@ function StreamCardMemoInner({
       /* The one holder every reader uses; the card mounts it only while open, so expanding is
          the list's ask and a scroll past a collapsed card asks for nothing. */
       files={<MessageFiles messageId={m.id} />}
+      /* The invitation's event above the issue, mounted with the files: only while open. */
+      lead={<MessageEvents messageId={m.id} />}
       recipients={recipients}
       /* Its own node beside the recipients block and NOT inside its gate: that block asks who else
          was addressed, off the headers, and withholds itself below two recipients; this is a

@@ -118,6 +118,7 @@ import {
   type WorldHistory,
   type PhoneOrganizer,
   type WorldAttachment,
+  type WorldEvent,
   type WorldMail,
   type WorldPile,
   type WorldDraft,
@@ -486,6 +487,8 @@ export interface World {
   rowOpenTarget(id: string): string;
   /** One message's files, where a screen shows a row it holds rather than a reading row. */
   filesOf(id: string): WorldAttachment[] | undefined;
+  /** One message's events, once each, beside {@link filesOf}. */
+  eventsOf(id: string): readonly WorldEvent[] | undefined;
   /**
    * THE STORE'S DOORS — History's walker and Search's whole-mailbox pass, with the row mapping
    * both lists share. History and Search read these, never the mirror's window; the mirror only
@@ -711,6 +714,7 @@ function emptyWorld(actions: WorldActions): World {
     message: () => undefined,
     rowOpenTarget: (id) => id,
     filesOf: () => undefined,
+    eventsOf: () => undefined,
     store: {
       walker: null,
       searchWalker: null,
@@ -768,6 +772,9 @@ export function useBodyStamp(): number {
     () => (engine ? engine.read().stampOf("message_body") : 0),
   );
 }
+
+/** The files-and-events subscription, beside the body's (`files-stamp.ts`). */
+export { useFilesStamp } from "./files-stamp";
 
 /** A body reader for a surface that draws several — a new function whenever a body lands. */
 export function useBodies(): (id: string) => ReturnType<typeof liveBody> {

@@ -99,6 +99,11 @@ export interface StreamCardProps {
    * A slot: the app passes its own strip, which holds its own list. Default-absent.
    */
   files?: ReactNode;
+  /**
+   * Drawn above the message, outside the clip, only while the card is OPEN (the app's event card
+   * for an invitation). Default-absent.
+   */
+  lead?: ReactNode;
   onSelect?: (id: string) => void;
   /**
    * Called after the expand state flips (collapse-keeping-in-view etc.).
@@ -179,6 +184,7 @@ export function StreamCard({
   withheldLabel,
   bodySlot,
   files,
+  lead,
   onSelect,
   onToggle,
   recipients,
@@ -442,6 +448,11 @@ export function StreamCard({
           </div>
         ) : null}
       </div>
+      {open && lead ? (
+        <div className="sc-lead" onClick={(e) => e.stopPropagation()}>
+          {lead}
+        </div>
+      ) : null}
       <div className="sc-clip" ref={clipRef}>
         {showViewer ? (
           // The rendered message. The text preview is set aside, not stacked above it — one

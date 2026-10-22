@@ -4,7 +4,8 @@
  * engines — an unvetted parser over attacker-controlled bytes is the surface to keep small. ZERO
  * imports, because the webapp and desktop shell run it in a BROWSER (`@trafficflow/core/ics` maps
  * to this source file). `parseIcsEvent(text)` returns a preview or `null`, never throws; every
- * string is TEXT for the consumer to escape. Time: trailing `Z` exact; `VALUE=DATE` is UTC
+ * string is TEXT for the consumer to escape, and bounded to what a card draws (see
+ * {@link SUMMARY_MAX}). Time: trailing `Z` exact; `VALUE=DATE` is UTC
  * midnight of an all-day day (DTEND exclusive); `TZID=` resolves through `Intl`, Windows names
  * via {@link WINDOWS_TZ}; unknown zones and floating times keep `epochMs: null`.
  */
@@ -30,18 +31,22 @@ export interface IcsTime {
   wall: IcsWallTime;
   /** `VALUE=DATE` — a calendar day with no clock. `epochMs` is its UTC midnight. */
   allDay: boolean;
-  /** The TZID as written (unquoted), or null for UTC/floating/all-day forms. */
+  /**
+   * The TZID as written (unquoted), or null for UTC/floating/all-day forms. Drawn as the label of
+   * a zone that does not resolve, so cut past {@link ZONE_LABEL_MAX}: no zone name is that long.
+   */
   tzid: string | null;
   /** The trailing-Z form. */
   utc: boolean;
 }
 
 export interface IcsPerson {
-  /** The CN parameter, decoded to text. Attacker text — the renderer escapes it. */
+  /** The CN parameter, decoded to text, cut past {@link NAME_MAX}. Attacker text — the renderer escapes it. */
   name: string | null;
   /**
    * The mailto: address, lowercased, query stripped. `null` for any other URI scheme — an
-   * ORGANIZER of `javascript:…` is not an address and must never become one on screen.
+   * ORGANIZER of `javascript:…` is not an address and must never become one on screen — and for
+   * one longer than {@link ADDRESS_MAX}, which no transport delivers to.
    */
   email: string | null;
 }
@@ -55,7 +60,9 @@ export interface IcsRecurrence {
 
 export interface IcsEventPreview {
   method: IcsMethod | null;
+  /** Cut past {@link SUMMARY_MAX} code units, the ellipsis included. */
   summary: string | null;
+  /** Cut past {@link LOCATION_MAX} code units, the ellipsis included. */
   location: string | null;
   /** Required — an event card without a start is not an event card, so the parse refuses. */
   start: IcsTime;
@@ -77,6 +84,14 @@ export interface IcsEventPreview {
   oldStart: IcsTime | null;
   oldEnd: IcsTime | null;
   recurrence: IcsRecurrence | null;
+  /**
+   * The event's identity, compared and never drawn: UID, RECURRENCE-ID (canonical, see
+   * {@link distinctCalendarEvents}) and SEQUENCE, from the first VEVENT only. Sender text.
+   */
+  uid: string | null;
+  recurrenceId: string | null;
+  /** 0 to 2^31-1, else null. */
+  sequence: number | null;
 }
 
 /* ── the shared naming + type facts, so writers cannot drift ───────────────────────────────── */
@@ -105,6 +120,23 @@ export const CALENDAR_FALLBACK_FILENAME = "invite.ics";
  * a file: the caller shows the plain row and the reader can still download it.
  */
 export const ICS_PARSE_MAX_CHARS = 512 * 1024;
+
+/**
+ * THE MOST OF ONE SENDER-WRITTEN VALUE A CARD DRAWS, in UTF-16 code units, the ellipsis included.
+ * The parse ceiling and the engine's 256 KiB calendar budget leave room for a 250,000-character
+ * SUMMARY, and the phone lays a Text out whole above the body (a 65,536-character one took ~450 ms
+ * of its JS thread). Cut here, where the web, the desktop and the phone all read the preview
+ * ({@link drawnText}). Real invites are 1–4 KB whole, so no real title, place or name is cut, and no
+ * zone name is longer than a label (the longest IANA name is 32 characters).
+ */
+const SUMMARY_MAX = 1000;
+const LOCATION_MAX = 1000;
+/** Each person's CN. */
+const NAME_MAX = 200;
+/** The label of a TZID that does not resolve. */
+const ZONE_LABEL_MAX = 64;
+/** RFC 5321's 254, the store's `MAX_STORED_ADDRESS_CHARS`: a longer mailto: is no address, never cut. */
+const ADDRESS_MAX = 254;
 
 /**
  * Microsoft's message-level "this is a meeting message" marker (`Content-Class:`). It is the one
@@ -534,8 +566,10 @@ function parseIcsDate(value: string, tzidParam: string | null, valueParam: strin
     return { epochMs: Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute), wall, allDay: false, tzid: null, utc: true };
   }
   if (tzidParam) {
-    const zone = WINDOWS_TZ[tzidParam] ?? tzidParam;
-    return { epochMs: epochFromWall(wall, zone), wall, allDay: false, tzid: tzidParam, utc: false };
+    // A TZID longer than a label names no zone: it is never looked up, and its label is cut.
+    const nameable = tzidParam.length <= ZONE_LABEL_MAX;
+    const epochMs = nameable ? epochFromWall(wall, WINDOWS_TZ[tzidParam] ?? tzidParam) : null;
+    return { epochMs, wall, allDay: false, tzid: drawnText(tzidParam, ZONE_LABEL_MAX), utc: false };
   }
   // Floating: no zone claimed, so no instant claimed. The consumer may read it as viewer-local.
   return { epochMs: null, wall, allDay: false, tzid: null, utc: false };
@@ -624,6 +658,25 @@ function unescapeText(v: string): string {
   return out;
 }
 
+/**
+ * At most `max` code units of a value a card draws: the value itself, or its head and an
+ * ellipsis, the head never ending in half a surrogate pair (the store's `storedSubject` rule) or
+ * in white space.
+ */
+function drawnText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  let head = value.slice(0, max - 1);
+  const last = head.charCodeAt(head.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) head = head.slice(0, -1);
+  return `${head.trimEnd()}…`;
+}
+
+/** A TEXT value as a card draws it: unescaped and trimmed, null when empty, cut past `max`. */
+function drawnTextValue(raw: string, max: number): string | null {
+  const v = unescapeText(raw).trim();
+  return v === "" ? null : drawnText(v, max);
+}
+
 /** CAL-ADDRESS value + CN param → a person. Only `mailto:` yields an address; query stripped. */
 function parsePerson(line: ContentLine): IcsPerson {
   const cn = line.params.get("CN") ?? null;
@@ -631,9 +684,9 @@ function parsePerson(line: ContentLine): IcsPerson {
   let email: string | null = null;
   if (/^mailto:/i.test(v)) {
     const addr = v.slice("mailto:".length).split("?")[0]!.trim().toLowerCase();
-    if (addr.includes("@")) email = addr;
+    if (addr.includes("@") && addr.length <= ADDRESS_MAX) email = addr;
   }
-  return { name: cn ? unescapeText(cn).trim() || null : null, email };
+  return { name: cn ? drawnTextValue(cn, NAME_MAX) : null, email };
 }
 
 const FREQ_WORDS = new Set(["DAILY", "WEEKLY", "MONTHLY", "YEARLY"]);
@@ -668,6 +721,24 @@ function parseRecurrence(value: string): IcsRecurrence | null {
 /* ── the parse ─────────────────────────────────────────────────────────────────────────────── */
 
 const MAX_ATTENDEES = 8;
+const SEQUENCE_MAX = 2 ** 31 - 1;
+
+/** `YYYYMMDDTHHMM` of a wall time, zero-padded. */
+function wallKey(w: IcsWallTime): string {
+  const p = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${p(w.year, 4)}${p(w.month)}${p(w.day)}T${p(w.hour)}${p(w.minute)}`;
+}
+
+/**
+ * RECURRENCE-ID as a comparable key: the instant where it resolves, else zone, wall time and day
+ * form. The zone is the TZID as written, never its drawn label: an identity is compared whole.
+ */
+function canonicalRecurrenceId(line: ContentLine): string | null {
+  const tzid = line.params.get("TZID") ?? null;
+  const t = parseIcsDate(line.value, tzid, line.params.get("VALUE") ?? null);
+  if (!t) return null;
+  return t.epochMs !== null ? String(t.epochMs) : `${tzid ?? ""}|${wallKey(t.wall)}|${t.allDay}`;
+}
 
 /**
  * See the module header for the contract. The walk tracks BEGIN/END nesting so a VTIMEZONE's
@@ -700,6 +771,12 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
   let oldStart: IcsTime | null = null;
   let oldEnd: IcsTime | null = null;
   let recurrence: IcsRecurrence | null = null;
+  let uid: string | null = null;
+  let uidSeen = false;
+  let recurrenceId: string | null = null;
+  let recurrenceIdSeen = false;
+  let sequence: number | null = null;
+  let sequenceSeen = false;
 
   for (const raw of lines) {
     if (raw === "") continue;
@@ -734,10 +811,10 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
 
     switch (line.name) {
       case "SUMMARY":
-        if (summary === null) summary = unescapeText(line.value).trim() || null;
+        if (summary === null) summary = drawnTextValue(line.value, SUMMARY_MAX);
         break;
       case "LOCATION":
-        if (location === null) location = unescapeText(line.value).trim() || null;
+        if (location === null) location = drawnTextValue(line.value, LOCATION_MAX);
         break;
       case "DTSTART":
         if (start === null) start = parseIcsDate(line.value, line.params.get("TZID") ?? null, line.params.get("VALUE") ?? null);
@@ -772,6 +849,26 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
       case "X-MS-OLDEND":
         if (oldEnd === null) oldEnd = parseIcsDate(line.value, line.params.get("TZID") ?? null, null);
         break;
+      case "UID":
+        if (!uidSeen) {
+          uidSeen = true;
+          uid = unescapeText(line.value).trim() || null;
+        }
+        break;
+      case "RECURRENCE-ID":
+        if (!recurrenceIdSeen) {
+          recurrenceIdSeen = true;
+          recurrenceId = canonicalRecurrenceId(line);
+        }
+        break;
+      case "SEQUENCE":
+        if (!sequenceSeen) {
+          sequenceSeen = true;
+          const v = line.value.trim();
+          const n = /^\d{1,10}$/.test(v) ? Number(v) : NaN;
+          sequence = Number.isInteger(n) && n <= SEQUENCE_MAX ? n : null;
+        }
+        break;
     }
   }
 
@@ -783,13 +880,17 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
     const endEpoch = start.epochMs === null ? null : start.epochMs + durationMs;
     const wallMs = Date.UTC(start.wall.year, start.wall.month - 1, start.wall.day, start.wall.hour, start.wall.minute) + durationMs;
     const w = new Date(wallMs);
-    end = {
-      epochMs: endEpoch,
-      wall: { year: w.getUTCFullYear(), month: w.getUTCMonth() + 1, day: w.getUTCDate(), hour: w.getUTCHours(), minute: w.getUTCMinutes() },
-      allDay: false,
-      tzid: start.tzid,
-      utc: start.utc,
-    };
+    // A DURATION past the range of a Date (P999999999D) keeps no end: the start-only line.
+    const inRange = Number.isFinite(w.getTime()) && (endEpoch === null || Number.isFinite(new Date(endEpoch).getTime()));
+    if (inRange) {
+      end = {
+        epochMs: endEpoch,
+        wall: { year: w.getUTCFullYear(), month: w.getUTCMonth() + 1, day: w.getUTCDate(), hour: w.getUTCHours(), minute: w.getUTCMinutes() },
+        allDay: false,
+        tzid: start.tzid,
+        utc: start.utc,
+      };
+    }
   }
 
   return {
@@ -808,5 +909,216 @@ export function parseIcsEvent(text: string): IcsEventPreview | null {
     oldStart: method === "COUNTER" ? oldStart : null,
     oldEnd: method === "COUNTER" ? oldEnd : null,
     recurrence,
+    uid,
+    recurrenceId,
+    sequence,
   };
+}
+
+/* ── one card per event ────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Which of a message's calendar parts speaks for its event first: 0 the iTIP part
+ * (`text/calendar; method=…`), 1 any other `text/calendar`, 2 `application/ics` (a file attached
+ * by hand, or Google's copy of the alternative). Anything else ranks last.
+ */
+export function calendarPartRank(contentType: string): number {
+  const base = (contentType.split(";")[0] ?? "").trim().toLowerCase();
+  if (base === "text/calendar") return icsMethodOfContentType(contentType) !== null ? 0 : 1;
+  return base === "application/ics" ? 2 : 3;
+}
+
+/** One calendar part of one message: its id, its stored type and its decoded text. No filename. */
+export interface CalendarPartText {
+  id: string;
+  contentType: string;
+  text: string;
+}
+
+export interface DistinctCalendarEvent {
+  partId: string;
+  event: IcsEventPreview;
+}
+
+/** Every field the card draws, so two UID-less parts are one event only when they would draw alike. */
+function drawnFingerprint(e: IcsEventPreview): string {
+  const drawn: Partial<IcsEventPreview> = { ...e };
+  delete drawn.uid;
+  delete drawn.recurrenceId;
+  delete drawn.sequence;
+  return JSON.stringify(drawn);
+}
+
+/**
+ * THE EVENTS A MESSAGE CARRIES, ONCE EACH. Google and Thunderbird send one invitation as two parts
+ * (the nameless alternative and `invite.ics`), so a card per part drew the meeting twice. Parts
+ * that do not parse are dropped. Identity is `(UID, RECURRENCE-ID)` where a UID exists, otherwise
+ * every drawn field; never the filename (the input has none) and never the bytes. Per key the
+ * winner is the higher SEQUENCE (none counts below 0), then the lower {@link calendarPartRank},
+ * then input order; the output keeps each key's first appearance. Within one message only.
+ */
+export function distinctCalendarEvents(parts: readonly CalendarPartText[]): DistinctCalendarEvent[] {
+  const order: string[] = [];
+  const best = new Map<string, { partId: string; event: IcsEventPreview; rank: number }>();
+  for (const part of parts) {
+    const event = parseIcsEvent(part.text);
+    if (!event) continue;
+    const key = event.uid !== null
+      ? `u\u0000${event.uid}\u0000${event.recurrenceId ?? ""}`
+      : `f\u0000${drawnFingerprint(event)}`;
+    const rank = calendarPartRank(part.contentType);
+    const held = best.get(key);
+    if (!held) {
+      order.push(key);
+      best.set(key, { partId: part.id, event, rank });
+      continue;
+    }
+    const seq = event.sequence ?? -1;
+    const heldSeq = held.event.sequence ?? -1;
+    if (seq > heldSeq || (seq === heldSeq && rank < held.rank)) best.set(key, { partId: part.id, event, rank });
+  }
+  return order.map((key) => {
+    const { partId, event } = best.get(key)!;
+    return { partId, event };
+  });
+}
+
+/* ── what the card says, shared by the web and the phone ───────────────────────────────────── */
+
+/** The reader's locale and display zone. */
+export interface IcsFormatOptions {
+  locale: string;
+  zone: string;
+}
+
+/** The Date whose UTC fields are the wall-clock fields: a floating or unresolvable time formats through it. */
+function wallDate(t: IcsTime): Date {
+  return new Date(Date.UTC(t.wall.year, t.wall.month - 1, t.wall.day, t.wall.hour, t.wall.minute));
+}
+
+/** The instant to format and the zone to format it in: the two honest-degradation branches. */
+function displayBasis(t: IcsTime, zone: string): { date: Date; zone: string; zoneLabel: string | null } {
+  if (t.allDay) return { date: new Date(t.epochMs!), zone: "UTC", zoneLabel: null };
+  if (t.epochMs !== null) return { date: new Date(t.epochMs), zone, zoneLabel: null };
+  return { date: wallDate(t), zone: "UTC", zoneLabel: t.tzid };
+}
+
+/** A date `Intl` can format; anything else would throw "Invalid time value" during render. */
+function formattable(date: Date): boolean {
+  return Number.isFinite(date.getTime());
+}
+
+function icsFmt(date: Date, locale: string, zone: string, opts: Intl.DateTimeFormatOptions): string {
+  if (!formattable(date)) return "";
+  return new Intl.DateTimeFormat(locale, { ...opts, timeZone: zone }).format(date);
+}
+
+const ICS_DATE_OPTS: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short", year: "numeric" };
+const ICS_TIME_OPTS: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * The when-line, in the reader's locale and zone (`allDay` is the reader's word for it):
+ *   timed, same day    "Fri, Sep 11, 2026 · 4:00 – 4:30 PM"
+ *   timed, multi-day   "Fri, Sep 11, 2026, 4:00 PM – Sat, Sep 12, 2026, 10:00 AM"
+ *   all-day, one day   "Tue, Sep 15, 2026 · All day"
+ *   all-day, multi-day "Tue, Sep 15, 2026 – Wed, Sep 16, 2026" (DTEND is exclusive)
+ *   unresolvable zone  "Wed, Aug 19, 2026 · 2:00 PM (Middle Earth Standard Time)"
+ */
+export function formatIcsWhen(start: IcsTime, end: IcsTime | null, opts: IcsFormatOptions & { allDay: string }): string {
+  const { locale } = opts;
+  const s = displayBasis(start, opts.zone);
+  if (start.allDay) {
+    const first = icsFmt(s.date, locale, "UTC", ICS_DATE_OPTS);
+    if (end?.allDay && end.epochMs !== null && end.epochMs - start.epochMs! > DAY_MS && formattable(new Date(end.epochMs - DAY_MS))) {
+      return `${first} – ${icsFmt(new Date(end.epochMs - DAY_MS), locale, "UTC", ICS_DATE_OPTS)}`;
+    }
+    return `${first} · ${opts.allDay}`;
+  }
+  const dayOf = (d: Date, zone: string) => icsFmt(d, locale, zone, { year: "numeric", month: "numeric", day: "numeric" });
+  const label = s.zoneLabel ? ` (${s.zoneLabel})` : "";
+  const startDate = icsFmt(s.date, locale, s.zone, ICS_DATE_OPTS);
+  const startTime = icsFmt(s.date, locale, s.zone, ICS_TIME_OPTS);
+  // An end is comparable only on the same basis (both resolved, or both wall).
+  const basis = end && !end.allDay && (end.epochMs !== null) === (start.epochMs !== null) ? displayBasis(end, opts.zone) : null;
+  const e = basis && formattable(basis.date) ? basis : null;
+  if (!e) return `${startDate} · ${startTime}${label}`;
+  if (dayOf(s.date, s.zone) === dayOf(e.date, e.zone)) {
+    return `${startDate} · ${startTime} – ${icsFmt(e.date, locale, e.zone, ICS_TIME_OPTS)}${label}`;
+  }
+  return `${startDate}, ${startTime} – ${icsFmt(e.date, locale, e.zone, ICS_DATE_OPTS)}, ${icsFmt(e.date, locale, e.zone, ICS_TIME_OPTS)}${label}`;
+}
+
+/** The calendar-page glyph's two lines, on the when-line's basis. */
+export function icsDateGlyph(t: IcsTime, opts: IcsFormatOptions): { month: string; day: string } {
+  const b = displayBasis(t, opts.zone);
+  return {
+    month: icsFmt(b.date, opts.locale, b.zone, { month: "short" }).replace(/\.$/, ""),
+    day: icsFmt(b.date, opts.locale, b.zone, { day: "numeric" }),
+  };
+}
+
+export type IcsKickerKey = "request" | "counter" | "cancelled" | "accepted" | "declined" | "tentative" | "reply" | "event";
+
+/** What kind of calendar message is on screen, as a copy key: the METHOD said plainly. */
+export function icsKicker(ev: IcsEventPreview): { key: IcsKickerKey; tone: "cancel" | null } {
+  if (ev.cancelled) return { key: "cancelled", tone: "cancel" };
+  switch (ev.method) {
+    case "COUNTER":
+      return { key: "counter", tone: null };
+    case "REPLY":
+      return {
+        key: ev.replyStatus === "ACCEPTED" ? "accepted"
+          : ev.replyStatus === "DECLINED" ? "declined"
+            : ev.replyStatus === "TENTATIVE" ? "tentative"
+              : "reply",
+        tone: null,
+      };
+    case "REQUEST":
+      return { key: "request", tone: null };
+    default:
+      return { key: "event", tone: null };
+  }
+}
+
+/** A recurrence the card can say in one true line, as a copy key and its values. */
+export type IcsRecurrenceSaying =
+  | { key: "daily" | "weekly" | "monthly" | "yearly" }
+  | { key: "everyNDays" | "everyNWeeks" | "everyNMonths" | "everyNYears"; n: number }
+  | { key: "weeklyOn"; days: IcsWeekday[] }
+  | { key: "everyNWeeksOn"; n: number; days: IcsWeekday[] };
+
+export function icsRecurrence(rec: IcsRecurrence | null): IcsRecurrenceSaying | null {
+  if (!rec) return null;
+  const n = rec.interval;
+  const days = rec.byDay;
+  switch (rec.freq) {
+    case "DAILY":
+      return n === 1 ? { key: "daily" } : { key: "everyNDays", n };
+    case "WEEKLY":
+      if (n === 1) return days.length > 0 ? { key: "weeklyOn", days } : { key: "weekly" };
+      return days.length > 0 ? { key: "everyNWeeksOn", n, days } : { key: "everyNWeeks", n };
+    case "MONTHLY":
+      // An ordinal BYDAY never reaches here (the parser refuses it): a plain monthly rule.
+      return n === 1 ? { key: "monthly" } : { key: "everyNMonths", n };
+    case "YEARLY":
+      return n === 1 ? { key: "yearly" } : { key: "everyNYears", n };
+  }
+}
+
+/** ICS weekday code → day of June 2026 on that weekday (June 1 is a Monday), for Intl naming. */
+const WEEKDAY_ANCHOR: Record<IcsWeekday, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
+
+export function icsWeekdayName(code: IcsWeekday, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026, 5, WEEKDAY_ANCHOR[code])));
+}
+
+/**
+ * The people line's facts: on a REPLY the replier, otherwise the organizer and how many are
+ * invited (`invited` null where none are). Names fall back to plain addresses, text only.
+ */
+export function icsPeople(ev: IcsEventPreview): { who: string | null; invited: number | null } {
+  const nameOf = (p: IcsPerson | null): string | null => (p ? p.name || p.email : null);
+  if (ev.method === "REPLY") return { who: nameOf(ev.attendees[0] ?? null) ?? nameOf(ev.organizer), invited: null };
+  return { who: nameOf(ev.organizer), invited: ev.attendeeCount > 0 ? ev.attendeeCount : null };
 }

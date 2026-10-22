@@ -10,6 +10,7 @@
  */
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
+import { calendarEventsOf, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -442,6 +443,13 @@ export interface WorldAttachment {
   state: "idle" | "loading" | "ready" | "too_large" | "failed";
 }
 
+/** One event a message carries, once (`calendarEventsOf`): what the event card draws. */
+export type WorldEvent = DistinctCalendarEvent;
+/** The event card's words and dates, core's own (the web card draws with the same), through this seam. */
+export {
+  formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName, type IcsTime,
+} from "@ohmail/client-engine";
+
 /**
  * THE MESSAGE'S TRIAGE STATE as the action bar reads it — which pile it sits in, or the pin.
  * The webapp bar's `aria-pressed` face and its Done slot are decided from exactly this.
@@ -470,6 +478,8 @@ export { autoUnsubscribeConfirms } from "@ohmail/client-engine";
 /** A conversation member under the opened message, with its own files beside its text. */
 export type WorldEarlier = Held & {
   attachments?: WorldAttachment[];
+  /** The events its calendar parts carry, once each; absent where none. */
+  events?: readonly WorldEvent[];
   /** A pinned member: its pin is the row's to release, so the reader's Mark as read leaves it out. */
   resurfaced?: true;
   /** Newer than the opened message: the reader's heading over the members names them for it. */
@@ -481,6 +491,8 @@ export type WorldMail = Omit<Mail, "earlier"> & {
    *  than this message carries `later`. */
   earlier: WorldEarlier[];
   attachments?: WorldAttachment[];
+  /** The events its calendar parts carry, once each; absent where none. */
+  events?: readonly WorldEvent[];
   bodyState?: BodyState;
   /** WHICH policy emptied a `withheld` body — the reader owes each marker its own sentence. */
   bodyWithheld?: WithheldMarker;
@@ -1980,17 +1992,24 @@ export function owaInvitationOf(body: Pick<MessageBody, "state" | "text">): OwaI
 export const liveFiles = (engine: OhmailEngine, id: string): WorldAttachment[] | undefined =>
   filesField(engine, id).attachments;
 
+/** One message's events for a screen that draws them beside a row it holds (Reads, the Screener). */
+export const liveEvents = (engine: OhmailEngine, id: string): readonly WorldEvent[] | undefined =>
+  filesField(engine, id).events;
+
 /**
- * One message's files, off the engine's own list, as the `attachments` field or nothing. The
- * opened row, the off-mirror row and every conversation member read them here.
+ * One message's files, off the engine's own list, as the `attachments` field or nothing, and the
+ * events its calendar parts carry as `events`. The opened row, the off-mirror row and every
+ * conversation member read them here.
  */
-function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAttachment[] } {
+function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAttachment[]; events?: readonly WorldEvent[] } {
   const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
   const atts = engine.attachmentsOf(id, EVERY_PART);
   if (atts.state !== "ready" || atts.items.length === 0) return {};
   // Real files first, the body's own pictures after them — the web strip's partition.
   const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
+  const events = calendarEventsOf(engine, id);
   return {
+    ...(events.length > 0 ? { events } : {}),
     attachments: items.map((item) => ({
       id: item.id,
       filename: item.filename,
@@ -3699,6 +3718,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
             if (!listHolds.has(next)) continue;
             await engine.loadAttachments(next).catch(() => undefined);
             if (!listHolds.has(next)) engine.releaseAttachments(next);
+            // The invitation's event: its calendar parts, inside the engine's own budget.
+            else void engine.loadCalendarTexts(next);
           }
         } finally {
           listCrew -= 1;
@@ -3807,7 +3828,13 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
   };
 
-  const watchLists = (): (() => void) => watchWireFailedLists(engine, () => listHolds.keys());
+  // The web's re-ask: a list that answers again asks its calendar parts, as the first open did.
+  const watchLists = (): (() => void) => watchWireFailedLists(engine, () => listHolds.keys(), (lid) => {
+    void engine.reaskAttachments(lid).then((o) => {
+      if (!listHolds.has(lid)) engine.releaseAttachments(lid);
+      else if (o.state === "ready") void engine.loadCalendarTexts(lid);
+    });
+  });
 
   const loadInlineImages = (messageId: string, contentIds: string[]): void => {
     if (contentIds.length === 0) return;

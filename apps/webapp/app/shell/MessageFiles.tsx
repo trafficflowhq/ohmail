@@ -32,7 +32,6 @@ export function MessageFiles({ messageId }: { messageId: string }) {
       canPreview={(item) => isPreviewable(item.mimeType)}
       onDownloadAll={() => attachments.downloadAll(messageId, { includeInlineParts: true })}
       downloadingAll={attachments.downloadingAll(messageId)}
-      calendarTextOf={(attachmentId) => attachments.calendarTextsOf(messageId).get(attachmentId)}
     />
   );
 }

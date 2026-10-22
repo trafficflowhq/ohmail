@@ -15,7 +15,7 @@ import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
-import { useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
+import { useFilesStamp, useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
 import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline } from "../../src/ui/base";
 import { BodyPages } from "../../src/ui/BodyPages";
 import { withheldNote } from "../../src/ui/body-note";
@@ -23,6 +23,7 @@ import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type RowFrame } from "../../src/ui/MailList";
 import { AttachmentTiles, MessageReader } from "../../src/ui/MessageReader";
+import { EventCards } from "../../src/ui/EventCard";
 import { FadeOut } from "../../src/ui/FadeOut";
 import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
@@ -194,6 +195,7 @@ function StreamCard({
     holdFiles([m.id]);
     return () => releaseFiles([m.id]);
   }, [open, m.id, holdFiles, releaseFiles, worldKey]);
+  useFilesStamp(open ? [m.id] : []);
   // What the open card is actually showing, said out loud — never a preview presented as
   // the whole issue.
   const bodyNote =
@@ -246,6 +248,7 @@ function StreamCard({
                 {bodyNote}
               </Txt>
             ) : null}
+            {open ? <EventCards events={w.eventsOf(m.id)} /> : null}
             <BodyPages variant="streamBody" numberOfLines={clamped ? 6 : undefined} text={m.body} />
             {clamped ? <FadeOut color={t.c.panel} /> : null}
           </View>

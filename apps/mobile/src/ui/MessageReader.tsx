@@ -15,7 +15,7 @@ import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-no
 import { ActivityIndicator, AppState, Linking, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
-import { useBodyStamp, useWorld, useWorldToast } from "../state/world";
+import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/world";
 import { openConfirmedLink } from "../mail/frame-nav";
 import { endMark } from "../engine/ui-marks";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
@@ -23,6 +23,7 @@ import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
+import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
 import { MessageActions } from "./MessageActions";
@@ -56,6 +57,8 @@ export function MessageReader({
   // The reader draws the body, so it subscribes to it: a body landing redraws this pane alone.
   useBodyStamp();
   const m = w.message(id);
+  // …and to its files and events: a list or a calendar part landing redraws the tiles and cards.
+  useFilesStamp(m ? [m.id, ...m.earlier.map((h) => h.id)] : [id]);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
      a detail bar above it would stand Back twice. */
   const railBack = readerVerbMode(scaffoldPlan(usePosture(), platformName)) === "rail";
@@ -313,6 +316,8 @@ export function MessageReader({
                   ) : null}
                 </Txt>
               ) : null}
+              {/* The invitation's event, once, above the mail (`EventCards`). */}
+              <EventCards events={m.events} />
               {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the
                   text part is the fallback AND the reader's own "Show as text" choice. */}
               {m.html != null && m.html !== "" && textFor !== m.id ? (
@@ -362,6 +367,7 @@ export function MessageReader({
                       {h.time}
                     </Txt>
                   </View>
+                  <EventCards events={h.events} style={{ marginTop: 10, marginBottom: 0 }} />
                   <BodyPages variant="streamBody" tone="ink2" style={{ marginTop: 10 }} text={h.body} />
                   {/* Each member's own files: the reader's open asked for its list. */}
                   <AttachmentTiles m={h} />

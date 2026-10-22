@@ -177,7 +177,7 @@ function readyAttachments(byId: Record<string, Array<Record<string, unknown>>>):
     downloadingAll: () => false,
     cidImagesOf: () => new Map<string, string>(),
     needCidImages: () => {},
-    calendarTextsOf: () => new Map<string, string>(),
+    eventsOf: () => [],
     hold: (id: string) => {
       held.push(id);
       return () => {};
