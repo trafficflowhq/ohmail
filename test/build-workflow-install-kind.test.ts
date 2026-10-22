@@ -125,7 +125,8 @@ const alive = (pid: number) => {
   }
 };
 
-describe("the mounted AppImage says it is an AppImage", () => {
+/* The harness is the Linux jobs' own: setsid, FUSE, Xvfb, an AppImage. */
+describe.skipIf(process.platform !== "linux")("the mounted AppImage says it is an AppImage (a Linux-only harness)", () => {
   it("admits an image whose own updater line says installKind appimage", () => {
     const r = run(AMD64, { kind: "appimage" });
     expect(r.code, r.err).toBe(0);
@@ -191,7 +192,7 @@ describe("the mounted AppImage says it is an AppImage", () => {
 });
 
 describe("both Linux jobs carry it", () => {
-  it("runs the same step in both, on each job's own image", () => {
+  it.skipIf(process.platform !== "linux")("runs the same step in both, on each job's own image (a Linux-only harness)", () => {
     expect(ARM).toBe(AMD64.replace("build/ohmail-linux-x86_64.AppImage", "build/ohmail-linux-aarch64.AppImage"));
     const r = run(ARM, { kind: "appimage" });
     expect(r.code, r.err).toBe(0);

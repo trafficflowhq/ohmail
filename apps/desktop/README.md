@@ -33,7 +33,7 @@ command that selects all three (the Cargo feature, the UI flag and the resource
 config) and is what CI runs.
 
 ```bash
-npm ci                      # in apps/desktop, from its own package-lock.json
+npm ci --ignore-scripts     # in apps/desktop, from its own package-lock.json
 npm run ui:build:engine     # → dist/  (the bundle Tauri embeds)
 npm run smoke               # → SMOKE OK (39 checks, engine)
 npx tauri build --debug     # → src-tauri/target/debug/bundle/…
@@ -490,12 +490,14 @@ on the other for a reason nothing here records.
 
 ## Verify it
 
+<!-- run by .github/workflows/contributor.yml: verify in apps/desktop -->
 ```bash
 npm run ui:typecheck                       # tsc over the shell, the views and the shim
 npm run ui:build:engine && npm run smoke   # the render + offline audit, on the built bundle
 npm run scan:engine                        # what the bytes contain, both directions
 cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
-cd apps/desktop/src-tauri && cargo test    # the signature + downgrade proofs
+cd apps/desktop/src-tauri && cargo test --locked       # the signature + downgrade proofs
+cargo test --locked --features local-engine            # and the engine module's own tests
 ```
 
 `test/desktop-shell.test.ts` is the drift guard: it asserts the identifier, the

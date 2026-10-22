@@ -178,6 +178,8 @@ describe("pr-build-scope.sh answers the paths each build reads", () => {
     ["the CI retry wrapper", [".github/scripts/retry-infra.sh"], "true", "true"],
     ["nothing", [], "false", "false"],
     ["a changelog fragment", ["changelog.d/x.md"], "false", "false"],
+    ["the line-ending rules every checkout reads", [".gitattributes"], "true", "true"],
+    ["the weekly fresh-clone workflow", [".github/workflows/contributor.yml"], "false", "false"],
   ])("%s", (_label, paths, desktop, android) => {
     expect(scope(paths)).toMatchObject({ desktop, android });
   });

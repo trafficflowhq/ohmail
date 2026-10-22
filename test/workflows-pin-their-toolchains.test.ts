@@ -63,6 +63,12 @@ function rustFindings(file: string, wf: Workflow, pin: string): string[] {
   return out;
 }
 
+/** A RUST_TOOLCHAIN a workflow or one of its jobs sets that is not build.yml's: its own Rust, unchecked. */
+function pinFindings(file: string, wf: Workflow, pin: string): string[] {
+  const envs: Array<[string, Record<string, unknown> | undefined]> = [["env", wf.env], ...Object.entries(wf.jobs ?? {}).map(([id, j]) => [`${id}.env`, (j as { env?: Record<string, unknown> }).env] as [string, Record<string, unknown> | undefined])];
+  return envs.filter(([, e]) => e && PIN_VAR in e && String(e[PIN_VAR]) !== pin).map(([at, e]) => `${file} ${at}: ${PIN_VAR} is ${String(e![PIN_VAR])}, build.yml's is ${pin}`);
+}
+
 /** The channel a rust-toolchain(.toml) names: `channel = "x"` in the TOML form, the first line otherwise. */
 const fileChannel = (name: string, text: string) =>
   name.endsWith(".toml") ? /^\s*channel\s*=\s*"([^"]+)"/m.exec(text)?.[1] ?? "" : text.split("\n")[0].trim();
@@ -95,6 +101,16 @@ describe("every setup-node names one exact Node: the one the published base carr
 describe("every Rust a public workflow compiles with is one exact release", () => {
   it(`build.yml names it once, as ${PIN_VAR}, an exact x.y.z`, () => {
     expect(PIN, `${PIN_VAR} is not an exact release in build.yml's env`).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it.each(FILES)("%s: a RUST_TOOLCHAIN it sets is build.yml's", (f) => {
+    expect(pinFindings(f, WORKFLOWS.find((w) => w.f === f)?.wf ?? {}, PIN)).toEqual([]);
+  });
+
+  it("refuses a second workflow pinning another release", () => {
+    expect(pinFindings("x", load(`env:\n  ${PIN_VAR}: "${PIN}"\n`), PIN), "the positive control").toEqual([]);
+    expect(pinFindings("x", load(`env:\n  ${PIN_VAR}: "1.98.0"\n`), PIN)).toHaveLength(1);
+    expect(pinFindings("x", load(`jobs:\n  j:\n    env:\n      ${PIN_VAR}: "1.98.0"\n`), PIN), "a job's own env").toHaveLength(1);
   });
 
   it.each(FILES)("%s: no channel, no other toolchain, and every compiling job installs the pin first", (f) => {

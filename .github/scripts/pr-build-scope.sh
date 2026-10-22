@@ -12,7 +12,8 @@
 # A SCOPE IS THE TREE ITS BUILD READS. The desktop app bundles the engine (apps/sidecar, which imports
 # apps/worker and every package) and renders a window made of apps/webapp's views and catalogues; the phone
 # bundles the same engine beside apps/mobile. Both install the root lockfile, apply patches/ and run
-# scripts/. A workflow, the scripts it names under .github/scripts and this file belong to their scope;
+# scripts/, and .gitattributes sets the bytes every checkout gets (LF on Windows too). A workflow, the scripts it
+# names under .github/scripts and this file belong to their scope;
 # Cargo files count for the desktop wherever they sit, and the version files a release bump writes count for
 # the build that ships them (the root manifests for both, Resources/ for the desktop). A test directory at the top of an
 # app or a package is read by the suite and by no build, so it needs no build, except under apps/desktop,
@@ -37,7 +38,7 @@ shared() {
   case "$1" in
     apps/sidecar/* | apps/worker/* | packages/* | patches/* | scripts/*) return 0 ;;
     package.json | package-lock.json | tsconfig*.json) return 0 ;;
-    .github/scripts/pr-build-scope.sh | .github/scripts/retry-infra.sh) return 0 ;;
+    .github/scripts/pr-build-scope.sh | .github/scripts/retry-infra.sh | .gitattributes) return 0 ;;
   esac
   return 1
 }

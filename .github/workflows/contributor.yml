@@ -1,0 +1,627 @@
+name: contributor
+
+# A FRESH CLONE BUILDS AND TESTS FROM THE DOCUMENTS ALONE (1.0 criterion 7).
+#
+# Every week, on clean GitHub runners per platform, the README's build, CONTRIBUTING.md's install, the suite
+# and the desktop app's checks, each step the block its name marks, word for word: a step named
+# `<doc> · <id>` runs the block under `<!-- run by .github/workflows/contributor.yml: <id> -->` in <doc>, and
+# test/contributor-route.test.ts holds the two equal, so a change to one is a change to both. The clone has
+# full history and no credential; nothing here reads a secret, a variable or a cache, and no pull request or
+# push runs it. Linux runs the suite with the test services as CI does (sixteen shards, each on a fresh
+# database, then the alone files); macOS and Windows run it without them, as CONTRIBUTING.md says a
+# contributor can, until those platforms have runners that hold the services.
+#
+# Per platform, one job builds (the README, the install, the desktop checks) and the suite runs in parts, one
+# job each, every job its own fresh clone: in one job the serial suite ran 310 min on Windows, 156 on macOS
+# and 268 on Linux (run 39637951099), against a 345-min timeout. A part's step sets only PART and PARTS,
+# which the block reads; test/contributor-route.test.ts holds the parts to cover the suite once.
+
+on:
+  schedule:
+    - cron: "41 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: contributor-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+
+jobs:
+  linux-build:
+    name: fresh clone · Linux · build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: README.md · linux-packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev librsvg2-dev libayatana-appindicator3-dev \
+            libssl-dev build-essential curl wget file patchelf desktop-file-utils
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          test "$(rustc --version | cut -d' ' -f2)" = "$RUST_TOOLCHAIN" \
+            || { echo "rustc reports $(rustc --version), not the pinned $RUST_TOOLCHAIN" >&2; exit 1; }
+          rustc --version
+          node --version
+
+      - name: README.md · interface
+        run: |
+          cd apps/desktop
+          npm ci --ignore-scripts  # apps/desktop has its own lockfile
+          npm run ui:build:engine  # → dist/, the bundle the app embeds
+          npm run smoke            # → SMOKE OK — renders, offline audit included
+
+      - name: README.md · engine
+        run: |
+          # The engine, bundled with the pinned esbuild — a devDependency of the root
+          # manifest, so `npm ci` at the root is the whole resolution. The bundle is only
+          # reproducible for a fixed bundler version, so a different one is refused.
+          # --ignore-scripts: no dependency's install script runs, as in CI.
+          npm ci --ignore-scripts
+          # The changes this repository carries to its dependencies (`patches/`), applied
+          # with git. The bundler refuses an engine that does not carry them.
+          node scripts/apply-patches.mjs apply
+          node scripts/engine-bundle.mjs
+
+          # It boots from the layout it ships in — and refuses to when its migration
+          # journal is moved away, which is what makes the first half worth anything.
+          node scripts/verify-engine-boot.mjs
+
+          # The official Node build for this platform, checked against nodejs.org's own
+          # SHASUMS256.txt before it is unpacked. A mismatch is a refusal, not a warning.
+          node scripts/vendor-node.mjs
+
+          # And the app itself.
+          cd apps/desktop && npm run app:build:engine
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · desktop
+        run: |
+          npx vitest run $(node test/support/ci-shards.mjs --desktop)
+          cd apps/desktop
+          npm run ui:typecheck      # tsc over the shell, the views and the shim
+          npm run ui:build:engine   # the bundle the app embeds, into dist/
+          npm run smoke             # renders the built bundle and audits it offline
+          cd src-tauri
+          cargo test --locked
+          cargo test --locked --features local-engine
+
+      - name: apps/desktop/README.md · verify
+        working-directory: apps/desktop
+        run: |
+          npm run ui:typecheck                       # tsc over the shell, the views and the shim
+          npm run ui:build:engine && npm run smoke   # the render + offline audit, on the built bundle
+          npm run scan:engine                        # what the bytes contain, both directions
+          cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
+          cd apps/desktop/src-tauri && cargo test --locked       # the signature + downgrade proofs
+          cargo test --locked --features local-engine            # and the engine module's own tests
+
+  linux-suite-1:
+    name: fresh clone · Linux · suite 1 of 2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite-services
+        env:
+          PART: "1"
+          PARTS: "2"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          docker compose --profile condstore up -d --wait
+          failed=
+          for n in $(seq $((PART - 1)) "$PARTS" 15); do
+            bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+            TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+          done
+          if [ "$PART" = "$PARTS" ]; then
+            for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
+              bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+              TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+            done
+          fi
+          test -z "$failed"
+
+  linux-suite-2:
+    name: fresh clone · Linux · suite 2 of 2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite-services
+        env:
+          PART: "2"
+          PARTS: "2"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          docker compose --profile condstore up -d --wait
+          failed=
+          for n in $(seq $((PART - 1)) "$PARTS" 15); do
+            bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+            TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+          done
+          if [ "$PART" = "$PARTS" ]; then
+            for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
+              bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+              TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+            done
+          fi
+          test -z "$failed"
+
+  macos-build:
+    name: fresh clone · macOS · build
+    runs-on: macos-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          test "$(rustc --version | cut -d' ' -f2)" = "$RUST_TOOLCHAIN" \
+            || { echo "rustc reports $(rustc --version), not the pinned $RUST_TOOLCHAIN" >&2; exit 1; }
+          rustc --version
+          node --version
+
+      - name: README.md · interface
+        run: |
+          cd apps/desktop
+          npm ci --ignore-scripts  # apps/desktop has its own lockfile
+          npm run ui:build:engine  # → dist/, the bundle the app embeds
+          npm run smoke            # → SMOKE OK — renders, offline audit included
+
+      - name: README.md · engine
+        run: |
+          # The engine, bundled with the pinned esbuild — a devDependency of the root
+          # manifest, so `npm ci` at the root is the whole resolution. The bundle is only
+          # reproducible for a fixed bundler version, so a different one is refused.
+          # --ignore-scripts: no dependency's install script runs, as in CI.
+          npm ci --ignore-scripts
+          # The changes this repository carries to its dependencies (`patches/`), applied
+          # with git. The bundler refuses an engine that does not carry them.
+          node scripts/apply-patches.mjs apply
+          node scripts/engine-bundle.mjs
+
+          # It boots from the layout it ships in — and refuses to when its migration
+          # journal is moved away, which is what makes the first half worth anything.
+          node scripts/verify-engine-boot.mjs
+
+          # The official Node build for this platform, checked against nodejs.org's own
+          # SHASUMS256.txt before it is unpacked. A mismatch is a refusal, not a warning.
+          node scripts/vendor-node.mjs
+
+          # And the app itself.
+          cd apps/desktop && npm run app:build:engine
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · desktop
+        run: |
+          npx vitest run $(node test/support/ci-shards.mjs --desktop)
+          cd apps/desktop
+          npm run ui:typecheck      # tsc over the shell, the views and the shim
+          npm run ui:build:engine   # the bundle the app embeds, into dist/
+          npm run smoke             # renders the built bundle and audits it offline
+          cd src-tauri
+          cargo test --locked
+          cargo test --locked --features local-engine
+
+      - name: apps/desktop/README.md · verify
+        working-directory: apps/desktop
+        run: |
+          npm run ui:typecheck                       # tsc over the shell, the views and the shim
+          npm run ui:build:engine && npm run smoke   # the render + offline audit, on the built bundle
+          npm run scan:engine                        # what the bytes contain, both directions
+          cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
+          cd apps/desktop/src-tauri && cargo test --locked       # the signature + downgrade proofs
+          cargo test --locked --features local-engine            # and the engine module's own tests
+
+  macos-suite-1:
+    name: fresh clone · macOS · suite 1 of 2
+    runs-on: macos-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "1"
+          PARTS: "2"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"
+
+  macos-suite-2:
+    name: fresh clone · macOS · suite 2 of 2
+    runs-on: macos-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "2"
+          PARTS: "2"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"
+
+  windows-build:
+    name: fresh clone · Windows · build
+    runs-on: windows-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          test "$(rustc --version | cut -d' ' -f2)" = "$RUST_TOOLCHAIN" \
+            || { echo "rustc reports $(rustc --version), not the pinned $RUST_TOOLCHAIN" >&2; exit 1; }
+          rustc --version
+          node --version
+
+      - name: README.md · interface
+        run: |
+          cd apps/desktop
+          npm ci --ignore-scripts  # apps/desktop has its own lockfile
+          npm run ui:build:engine  # → dist/, the bundle the app embeds
+          npm run smoke            # → SMOKE OK — renders, offline audit included
+
+      - name: README.md · engine
+        run: |
+          # The engine, bundled with the pinned esbuild — a devDependency of the root
+          # manifest, so `npm ci` at the root is the whole resolution. The bundle is only
+          # reproducible for a fixed bundler version, so a different one is refused.
+          # --ignore-scripts: no dependency's install script runs, as in CI.
+          npm ci --ignore-scripts
+          # The changes this repository carries to its dependencies (`patches/`), applied
+          # with git. The bundler refuses an engine that does not carry them.
+          node scripts/apply-patches.mjs apply
+          node scripts/engine-bundle.mjs
+
+          # It boots from the layout it ships in — and refuses to when its migration
+          # journal is moved away, which is what makes the first half worth anything.
+          node scripts/verify-engine-boot.mjs
+
+          # The official Node build for this platform, checked against nodejs.org's own
+          # SHASUMS256.txt before it is unpacked. A mismatch is a refusal, not a warning.
+          node scripts/vendor-node.mjs
+
+          # And the app itself.
+          cd apps/desktop && npm run app:build:engine
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · desktop
+        run: |
+          npx vitest run $(node test/support/ci-shards.mjs --desktop)
+          cd apps/desktop
+          npm run ui:typecheck      # tsc over the shell, the views and the shim
+          npm run ui:build:engine   # the bundle the app embeds, into dist/
+          npm run smoke             # renders the built bundle and audits it offline
+          cd src-tauri
+          cargo test --locked
+          cargo test --locked --features local-engine
+
+      - name: apps/desktop/README.md · verify
+        working-directory: apps/desktop
+        run: |
+          npm run ui:typecheck                       # tsc over the shell, the views and the shim
+          npm run ui:build:engine && npm run smoke   # the render + offline audit, on the built bundle
+          npm run scan:engine                        # what the bytes contain, both directions
+          cd ../.. && CI=true npx vitest run apps/desktop/test   # the config assertions
+          cd apps/desktop/src-tauri && cargo test --locked       # the signature + downgrade proofs
+          cargo test --locked --features local-engine            # and the engine module's own tests
+
+  windows-suite-1:
+    name: fresh clone · Windows · suite 1 of 4
+    runs-on: windows-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "1"
+          PARTS: "4"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"
+
+  windows-suite-2:
+    name: fresh clone · Windows · suite 2 of 4
+    runs-on: windows-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "2"
+          PARTS: "4"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"
+
+  windows-suite-3:
+    name: fresh clone · Windows · suite 3 of 4
+    runs-on: windows-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "3"
+          PARTS: "4"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"
+
+  windows-suite-4:
+    name: fresh clone · Windows · suite 4 of 4
+    runs-on: windows-latest
+    timeout-minutes: 345
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+
+      - name: CONTRIBUTING.md · install
+        run: |
+          npm ci --ignore-scripts
+          (cd apps/desktop && npm ci --ignore-scripts)
+          node scripts/apply-patches.mjs apply
+          npm run build                          # the workspace's TypeScript projects (tsc -b)
+          node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
+          node apps/mobile/scripts/bundle-engine.mjs
+          node scripts/bundle-host.mjs server
+          node scripts/bundle-host.mjs worker
+          npx playwright install chromium        # the layout tests render in it
+
+      - name: CONTRIBUTING.md · suite
+        env:
+          PART: "4"
+          PARTS: "4"
+        run: |
+          : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+          npm test -- --shard="$PART/$PARTS"

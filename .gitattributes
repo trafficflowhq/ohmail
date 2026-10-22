@@ -1,3 +1,11 @@
+# EVERY TEXT FILE CHECKS OUT LF, ON EVERY PLATFORM.
+#
+# The Windows runners (and many Windows clones) set core.autocrlf=true, and on a
+# CRLF checkout most of the tests that read a file as text fail. A file whose
+# exact bytes are under test needs its own `-text` line BELOW this one: the
+# later line wins.
+* text=auto eol=lf
+
 # THE UPDATER FIXTURES ARE BYTES, NOT TEXT.
 #
 # `src-tauri/src/updater_tests.rs` verifies a committed minisign signature over a

@@ -54,8 +54,8 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   only when the pull request changes something they build: the desktop app or
   the phone app, the engine and the packages it bundles, the web app's views the
   desktop window renders, `patches/`, `scripts/`, the root manifests and
-  lockfile, Cargo files, the workflow itself, or the version files a release
-  bump writes. A pull request that changes only tests, docs or other workflows
+  lockfile, `.gitattributes`, Cargo files, the workflow itself, or the version
+  files a release bump writes. A pull request that changes only tests, docs or other workflows
   skips them, and they show as skipped. `.github/scripts/pr-build-scope.sh`
   decides, and its `changes` job prints why. The engine job and the
   engine-bearing UI smoke run on every pull request, and a push to `main`, a
@@ -81,17 +81,27 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 ## Running the tests
 
 Node 22 (CI runs 22.23.3), and stable Rust for the desktop app's native half.
-Every command runs from the repository root unless it says otherwise; these
-are the steps CI runs.
+Every command runs from the repository root unless it says otherwise, in bash
+(Git Bash on Windows).
+
+Every week `.github/workflows/contributor.yml` clones the repository on a clean
+Linux, macOS and Windows runner and runs the blocks marked for it, here and in
+the READMEs, word for word. `test/contributor-route.test.ts` holds the
+workflow and the blocks equal, so a pull request that changes a marked block
+fails until the workflow changes with it. That half is the maintainers' to
+carry (the guard check fails a fork's change under `.github/`); say so in the
+pull request.
 
 The root is an npm workspace with one lockfile; `apps/desktop` has its own and
-is installed beside it. Then apply the patches this repository carries to its
+is installed beside it. `--ignore-scripts` runs no dependency's install script,
+as every CI install does. Then apply the patches this repository carries to its
 dependencies (it is idempotent, and patches every installed copy, so it comes
 after both installs), and build what the tests read:
 
+<!-- run by .github/workflows/contributor.yml: install -->
 ```bash
-npm ci
-(cd apps/desktop && npm ci)
+npm ci --ignore-scripts
+(cd apps/desktop && npm ci --ignore-scripts)
 node scripts/apply-patches.mjs apply
 npm run build                          # the workspace's TypeScript projects (tsc -b)
 node scripts/engine-bundle.mjs         # the bundles the tests that read a bundle read
@@ -105,26 +115,51 @@ npx playwright install chromium        # the layout tests render in it
   and `test/`). The `*.pg.test.ts` files and the mail tests need the test
   services in `docker-compose.yml` (Postgres, GreenMail, RustFS, Dovecot, all on
   loopback) and a database of this checkout's own; without them the suite
-  skips what needs them and runs the rest:
+  skips what needs them and runs the rest. That is the run on macOS and
+  Windows:
 
+  <!-- run by .github/workflows/contributor.yml: suite -->
   ```bash
-  docker compose up -d
-  bash scripts/lane-db.sh "$PWD"   # creates this checkout's database, writes .lane-db.env
-  TF_REQUIRE_PG=1 npm test         # as CI: a database that cannot be reached fails, it does not skip
+  : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+  npm test -- --shard="$PART/$PARTS"
   ```
 
-- The whole suite on one database leaves rows behind, and the files marked
-  `@postpush: alone` (`node test/support/ci-shards.mjs --alone` lists them)
-  fail over state they did not write. CI runs the rest in sixteen shards, each
-  on a database of its own, and each of those files on a database made from
-  empty. One shard, or one such file, as CI runs it:
+  The suite runs one file at a time, so on one machine it takes hours (about
+  two and a half on a GitHub macOS runner, five on Windows). Parts split it: `PART=2
+  PARTS=4` runs the second quarter of the files, and the parts 1 to n together
+  are the whole suite. The weekly job runs each part on its own fresh clone.
 
+- With the services, the whole suite on one database leaves rows behind, and
+  the files marked `@postpush: alone` (`node test/support/ci-shards.mjs
+  --alone` lists them) fail over state they did not write. So it runs as CI
+  runs it, in sixteen shards, each on a database of its own, and each of those
+  files on a database made from empty. That is the run on Linux, in parts as
+  above: part k of n runs every n-th shard from shard k-1, and the last part
+  also runs the files that run alone:
+
+  <!-- run by .github/workflows/contributor.yml: suite-services -->
   ```bash
-  bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"   # a fresh database
-  TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard 3)   # 0 to 15
-  TF_REQUIRE_PG=1 npx vitest run packages/db/test/migration-replay-idempotence.pg.test.ts
+  : "${PART:=1}" "${PARTS:=1}"   # the whole suite, unless PART=k PARTS=n asks for part k of n
+  docker compose --profile condstore up -d --wait
+  failed=
+  for n in $(seq $((PART - 1)) "$PARTS" 15); do
+    bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+    TF_REQUIRE_PG=1 npx vitest run $(node test/support/ci-shards.mjs --shard "$n") || failed=1
+  done
+  if [ "$PART" = "$PARTS" ]; then
+    for f in $(git grep -l '@postpush: alone' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'); do
+      bash scripts/lane-db.sh --drop "$PWD" && bash scripts/lane-db.sh "$PWD"
+      TF_REQUIRE_PG=1 npx vitest run "$f" || failed=1
+    done
+  fi
+  test -z "$failed"
   ```
 
+  `--profile condstore` starts Dovecot as well, and `--wait` holds until the
+  services are up. `bash scripts/lane-db.sh "$PWD"` creates this checkout's
+  database and writes `.lane-db.env`; on it, `TF_REQUIRE_PG=1 npx vitest run
+  <files>` runs the files you changed (`TF_REQUIRE_PG=1`, as in CI: a database
+  that cannot be reached fails, it does not skip).
 - `npm run test:sqlite` runs the files that also run on SQLite, the phone's and
   the desktop's store.
 - `node scripts/changelog-fold.mjs --check` checks the entries in
@@ -135,6 +170,7 @@ npx playwright install chromium        # the layout tests render in it
   (without it, `npm test` leaves them out and says so); CI runs them in a job of
   their own. The app itself is checked on its own install:
 
+  <!-- run by .github/workflows/contributor.yml: desktop -->
   ```bash
   npx vitest run $(node test/support/ci-shards.mjs --desktop)
   cd apps/desktop

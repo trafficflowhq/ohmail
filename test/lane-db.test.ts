@@ -34,6 +34,9 @@ const maxima = (mail: [number, number], cloud: [number, number]) => [
   { name: "cloud", tree: cloud[0], db: cloud[1] },
 ];
 
+/** The cases that run lane-db.sh to its lock: it needs flock, sha256sum and `realpath -m`, which a Mac or Windows host lacks. */
+const onLinux = it.skipIf(process.platform !== "linux");
+
 describe("the lane database's name", () => {
   it("is the same for one path and different for two", () => {
     expect(laneDbName("/a/b/wt-one")).toBe(laneDbName("/a/b/wt-one"));
@@ -173,7 +176,7 @@ describe("what the tool refuses before it opens a connection", () => {
   });
 
   /* --list-invalid reads the whole server and drops nothing, so it takes nothing beside it. */
-  it("takes --list-invalid alone, refusing a worktree or another flag beside it", () => {
+  onLinux("takes --list-invalid alone, refusing a worktree or another flag beside it (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     for (const args of [["--list-invalid", "."], ["--list-invalid", "--drop"], ["--check", "--list-invalid", "."]]) {
       const r = run(args);
       expect(r.status, args.join(" ")).toBe(2);
@@ -188,7 +191,7 @@ describe("what the tool refuses before it opens a connection", () => {
     expect(doorOfDb("trafficflow_test")).toBe("other");
   });
 
-  it("refuses a flag it does not know rather than reading it as a path", () => {
+  onLinux("refuses a flag it does not know rather than reading it as a path (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     const r = run(["--drops", "."]);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("--drops");
@@ -207,7 +210,7 @@ describe("what the tool refuses before it opens a connection", () => {
       env: { ...process.env, DATABASE_URL_PG_TEST: DEAD },
     });
 
-  it("drops the database of a worktree that has already been removed", () => {
+  onLinux("drops the database of a worktree that has already been removed (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     const gone = join(tmpdir(), `lane-db-vanished-${process.pid}`);
     const r = runDead(["--drop", gone]);
     expect(r.stderr, "the create-path refusal fired on a drop").not.toContain("no such directory");
@@ -239,7 +242,7 @@ describe("what the tool refuses before it opens a connection", () => {
     expect(admitted.status, admitted.stderr.slice(-200)).toBe(1);
   }, 60_000);
 
-  it("refuses --name beside a worktree, and --name without --drop", () => {
+  onLinux("refuses --name beside a worktree, and --name without --drop (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     const both = runDead(["--drop", "--name", "trafficflow_l_0123456789ab", REPO]);
     expect(both.status).toBe(2);
     expect(both.stderr).toContain("takes no worktree");
@@ -373,7 +376,7 @@ describe("the worker databases a drop takes with it", () => {
     expect(moved.key).toEqual(laneDbName(elsewhere).replace("trafficflow_l_", ""));
   }, 60_000);
 
-  it("prints the key it will use before it opens a connection", () => {
+  onLinux("prints the key it will use before it opens a connection (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     const gone = join(tmpdir(), `lane-db-keys-${process.pid}`);
     const { key } = produced(laneDbName(gone), gone, []);
     expect(drive(["--drop", gone]).stderr).toContain(`checkout keys ${key}`);
@@ -559,7 +562,7 @@ describe("the lane role", () => {
   }, 60_000);
 
   /* The host fence runs before any connection and before the env file is written. */
-  it("refuses to make a lane role anywhere but the local box, before it connects", () => {
+  onLinux("refuses to make a lane role anywhere but the local box, before it connects (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", () => {
     for (const base of [`postgres://${BOX_ROLE}:${BOX_ROLE}@db.example.com:5433/trafficflow_test`, `postgres://${BOX_ROLE}:${BOX_ROLE}@127.0.0.1:1/trafficflow_test`]) {
       const r = runOffline([REPO], { DATABASE_URL_PG_TEST: base });
       expect(r.status, base).toBe(1);
@@ -595,7 +598,7 @@ describe("the lane role", () => {
   }, 60_000);
 
   /* A drop takes the database and the env, so it shares the create's per-worktree lock. */
-  it("refuses a --drop rc 75 while another lane-db.sh holds the worktree's lock", async () => {
+  onLinux("refuses a --drop rc 75 while another lane-db.sh holds the worktree's lock (lane-db.sh is Linux-only: flock, sha256sum, realpath -m)", async () => {
     const wt = mkdtempSync(join(tmpdir(), "lane-db-droplock-"));
     const key = spawnSync("bash", ["-c", 'cd "$1" && printf %s "$(pwd)" | sha256sum | cut -c1-16', "_", wt], { encoding: "utf8" }).stdout.trim();
     const lock = `/tmp/ohmail-lane-db-${key}.lock`;
