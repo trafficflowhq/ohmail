@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { uptime as osUptime } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -842,6 +842,13 @@ export class DataDirLockedError extends Error {
 export const LOCK_FILE = "sidecar.lock";
 
 /**
+ * The lock the OS holds on macOS and Windows: an empty file beside {@link LOCK_FILE}, opened
+ * exclusively for the engine's whole life and never deleted. The kernel lets go when the process
+ * ends, however it ends, so no pid or start time has to be trusted. Linux keeps the identity rule.
+ */
+export const HOLD_FILE = "sidecar.hold";
+
+/**
  * The store on this computer could not be opened. The one class the window reads as "this copy
  * is the problem", where setting it aside and reading the mailbox again is the way out. Keeps the
  * cause's `code` (42P01 and the like) so the start's log line still names it.
@@ -1543,6 +1550,11 @@ interface LockRecord {
    */
   exe?: string;
   /**
+   * The {@link HOLD_FILE} the writer held while this record stood (macOS and Windows), by device and
+   * inode as decimal strings. Written only when the hold proved itself exclusive.
+   */
+  hold?: HoldId;
+  /**
    * Minted per record, so two records that agree on every identity field still differ in BYTES —
    * {@link removeIfUnchanged} compares bytes, and this keeps "same bytes" meaning "same claim".
    */
@@ -1645,13 +1657,16 @@ export function imageFromTasklistCsv(text: string | null, pid: number): string |
   return m && Number(m[2]) === pid ? normalizedImage(m[1]!) : null;
 }
 
+/** How much of an executable's name macOS keeps as the process's name (`MAXCOMLEN`). */
+const DARWIN_COMM_MAX = 16;
+
 /**
  * WHAT is running as `pid`, not merely whether something is — the live half of {@link LockRecord.exe}.
  * Linux answers from `/proc` (the exe link, then argv[0] where the link is another user's);
  * Windows and macOS ask their own process tools, only ever on the contested path. `null` is
  * "cannot read", which decides nothing.
  */
-function processImageOf(pid: number): string | null {
+export function processImageOf(pid: number): string | null {
   if (process.platform === "linux") {
     try {
       return normalizedImage(readlinkSync(`/proc/${pid}/exe`));
@@ -1666,8 +1681,11 @@ function processImageOf(pid: number): string | null {
     }
   }
   if (process.platform === "darwin") {
-    const comm = probe("ps", ["-p", String(pid), "-o", "comm="]);
-    return comm === null ? null : normalizedImage(comm);
+    /* `ucomm`: the name the kernel set at exec. `comm` is argv[0], which a process rewrites with
+       its title (vitest's workers do), and a reading the holder can rewrite is never evidence
+       that takes a lock. */
+    const name = probe("ps", ["-p", String(pid), "-o", "ucomm="]);
+    return name === null ? null : normalizedImage(name);
   }
   if (process.platform === "win32") {
     return imageFromTasklistCsv(probe("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]), pid);
@@ -1716,14 +1734,19 @@ function lockStillOurs(rec: LockRecord, nowBoot: { bootId?: string; bootAtMs: nu
    * Both arms act only on a POSITIVE reading; an unreadable image decides nothing. */
   const image = processImageOf(rec.pid);
   if (image !== null) {
-    if (rec.exe !== undefined && image !== rec.exe) return false;
+    if (rec.exe !== undefined && image !== recordedImage(rec.exe)) return false;
     if (!couldBeAnEngine(image)) return false;
   }
   return true;
 }
 
-/** The identity of THIS process, as it goes into the file. */
-function selfLockRecord(): LockRecord {
+/** A recorded image as this platform's reader can spell it: macOS keeps its first 16 characters. */
+function recordedImage(exe: string): string {
+  return process.platform === "darwin" ? exe.slice(0, DARWIN_COMM_MAX) : exe;
+}
+
+/** The identity of THIS process, as it goes into the file, with the hold it has where it has one. */
+function selfLockRecord(hold: Hold | null): LockRecord {
   const boot = bootIdentity();
   const ticks = processStartTicks(process.pid);
   return {
@@ -1731,8 +1754,17 @@ function selfLockRecord(): LockRecord {
     ...(ticks === null ? {} : { startTicks: ticks }),
     ...boot,
     exe: normalizedImage(process.execPath),
+    ...(hold === null ? {} : { hold: hold.id }),
     nonce: randomUUID(),
   };
+}
+
+/** A hold's identity as a record spells it: two decimal strings, or nothing. */
+function isHoldId(v: unknown): v is HoldId {
+  const h = v as Partial<Record<keyof HoldId, unknown>> | null;
+  return typeof h === "object" && h !== null
+    && typeof h.dev === "string" && /^\d{1,40}$/.test(h.dev)
+    && typeof h.ino === "string" && /^\d{1,40}$/.test(h.ino);
 }
 
 /**
@@ -1754,6 +1786,7 @@ function parseLockRecord(raw: string): LockRecord | null {
         ...(typeof o.bootId === "string" && o.bootId ? { bootId: o.bootId } : {}),
         ...(Number.isFinite(o.bootAtMs) ? { bootAtMs: o.bootAtMs as number } : {}),
         ...(typeof o.exe === "string" && o.exe ? { exe: o.exe } : {}),
+        ...(isHoldId(o.hold) ? { hold: { dev: o.hold.dev, ino: o.hold.ino } } : {}),
         ...(typeof o.nonce === "string" && o.nonce ? { nonce: o.nonce } : {}),
       };
     } catch {
@@ -1833,13 +1866,13 @@ function removeIfUnchanged(path: string, judged: HeldLock): boolean {
  * the same directory and is `link`ed into place: `link` fails `EEXIST` when the name is taken,
  * and the name appears only once the bytes are behind it.
  */
-function claimLockFile(path: string): void {
+function claimLockFile(path: string, hold: Hold | null): void {
   const tmp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 10)}.tmp`;
   try {
     const fd = openSync(tmp, "wx");
     try {
       // A TRAILING NEWLINE, as before: `cat`ing this file in a terminal is how somebody debugs it.
-      writeSync(fd, `${JSON.stringify(selfLockRecord())}\n`);
+      writeSync(fd, `${JSON.stringify(selfLockRecord(hold))}\n`);
       /* ON THE DISK BEFORE THE NAME IS: unsynced, a power cut on ext4 kept the link and lost the
          bytes, and the empty lock refused the next start for a minute. */
       fsyncSync(fd);
@@ -1854,6 +1887,95 @@ function claimLockFile(path: string): void {
   }
 }
 
+/** A {@link HOLD_FILE}'s identity: its device and inode, as decimal strings. */
+interface HoldId {
+  dev: string;
+  ino: string;
+}
+
+/** The hold this process has: its descriptor, and the file's identity, which goes into the record. */
+interface Hold {
+  fd: number;
+  id: HoldId;
+}
+
+/** Windows asks again this often, this far apart, past a handle an indexer or antivirus has open. */
+const HOLD_RETRIES = 5;
+const HOLD_RETRY_MS = 50;
+
+/**
+ * libuv's `UV_FS_O_EXLOCK`, which Node hands to the OS and does not export: `O_EXLOCK` (an flock
+ * taken by the open itself) on macOS, sharing mode 0 on Windows. Nothing on Linux.
+ */
+function exclusiveOpenFlag(): number | null {
+  if (process.platform === "darwin") return 0x20;
+  if (process.platform === "win32") return 0x10000000;
+  return null;
+}
+
+/** The answer an exclusive open gets while another descriptor holds the file. */
+function holdIsBusy(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return process.platform === "win32" ? code === "EBUSY" : code === "EAGAIN" || code === "EWOULDBLOCK";
+}
+
+/**
+ * Take {@link HOLD_FILE}, or say it is taken. `"busy"`: another descriptor holds it, so another
+ * engine runs on this directory. `null`: no hold here (Linux, or a filesystem or runtime without the
+ * lock), and the identity rule decides alone. Every take proves itself: a second exclusive open must
+ * be refused, or a flag ignored somewhere would read as "free" for ever.
+ */
+function takeHold(dataDir: string, log?: Diagnostic): Hold | "busy" | null {
+  const exclusive = exclusiveOpenFlag();
+  if (exclusive === null) return null;
+  const path = join(dataDir, HOLD_FILE);
+  // O_NONBLOCK on macOS, or a second engine waits in a synchronous open while the first one runs.
+  const flags = fsConstants.O_RDWR | fsConstants.O_CREAT | exclusive
+    | (process.platform === "darwin" ? fsConstants.O_NONBLOCK : 0);
+  let fd: number | undefined;
+  try {
+    for (let attempt = 0; fd === undefined; attempt++) {
+      try {
+        fd = openSync(path, flags, 0o600);
+      } catch (err) {
+        if (!holdIsBusy(err)) throw err;
+        if (process.platform !== "win32" || attempt >= HOLD_RETRIES) return "busy";
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, HOLD_RETRY_MS);
+      }
+    }
+    let second: number | undefined;
+    try {
+      second = openSync(path, flags, 0o600);
+    } catch (err) {
+      if (!holdIsBusy(err)) throw err;
+    }
+    if (second !== undefined) {
+      closeSync(second);
+      throw Object.assign(new Error("a second exclusive open was not refused"), { code: "not-exclusive" });
+    }
+    const st = fstatSync(fd, { bigint: true });
+    return { fd, id: { dev: String(st.dev), ino: String(st.ino) } };
+  } catch (err) {
+    if (fd !== undefined) closeSync(fd);
+    log?.("data_dir_hold_skipped", {
+      kind: (err as NodeJS.ErrnoException | null)?.code ?? "unknown",
+      reason: "the operating-system lock on the data directory could not be taken here, so a lock "
+        + "left in it is judged by its writer's identity alone, as before",
+    });
+    return null;
+  }
+}
+
+/** The refusal while another engine holds {@link HOLD_FILE}: named from its record, if it has one. */
+function heldElsewhere(dataDir: string, path: string): DataDirLockedError {
+  const held = readLockFile(path);
+  const rec = held === null ? null : parseLockRecord(held.raw);
+  return new DataDirLockedError(
+    dataDir, rec === null ? "another ohmail engine" : `pid ${rec.pid}`,
+    "Quit the other copy of ohmail, or wait for it to finish closing, and open ohmail again.",
+  );
+}
+
 /**
  * Take an exclusive lock on the data directory, or refuse. {@link claimLockFile} is atomic, and
  * the winner's file names it from the instant it exists. A lock left by a crash names a pid, and
@@ -1862,16 +1984,42 @@ function claimLockFile(path: string): void {
  * starts again and some unrelated process is issued the dead engine's number, so `kill(pid, 0)`
  * answers "alive" for a process that never heard of this mailbox. {@link LockRecord} records
  * WHICH process, and a live pid whose identity does not match the record is taken over.
+ *
+ * On macOS and Windows the OS decides first ({@link takeHold}): while another engine holds the
+ * hold nothing is judged, and a record naming the very hold this process now has was written by
+ * an engine the kernel has let go of, whatever its pid names today.
  */
 export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
   const path = join(dataDir, LOCK_FILE);
+  const hold = takeHold(dataDir, log);
+  if (hold === "busy") throw heldElsewhere(dataDir, path);
+  try {
+    return claimDataDir(dataDir, path, hold, log);
+  } catch (err) {
+    if (hold !== null) closeSync(hold.fd);
+    throw err;
+  }
+}
+
+function claimDataDir(dataDir: string, path: string, hold: Hold | null, log?: Diagnostic): () => void {
   /* Three passes, not two: a pass that finds the lock REPLACED underneath it removes nothing and
      spends its turn judging the replacement instead, and the O_EXCL retry after a real removal
      still needs one of its own. */
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      claimLockFile(path);
-      return () => rmSync(path, { force: true });
+      claimLockFile(path, hold);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        /* THE RECORD FIRST: let go of the hold before it, and the next engine could claim in
+           between and lose its new record to this removal. The hold file itself stays. */
+        try {
+          rmSync(path, { force: true });
+        } finally {
+          if (hold !== null) closeSync(hold.fd);
+        }
+      };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       const held = readLockFile(path);
@@ -1906,7 +2054,12 @@ export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
         }
         throw new DataDirLockedError(dataDir, "a lock file this build cannot read");
       }
-      const holderAlive = alive(rec.pid);
+      /* THE HOLD DECIDES FIRST: its writer held this very file while the record stood, and this
+         process could take it, so that engine has ended. A record with no hold, or another file's
+         (the hold replaced under a writer that may still run), takes the identity rule. */
+      const holdReleased = hold !== null && rec.hold !== undefined
+        && rec.hold.dev === hold.id.dev && rec.hold.ino === hold.id.ino;
+      const holderAlive = !holdReleased && alive(rec.pid);
       if (holderAlive && lockStillOurs(rec, bootIdentity())) {
         throw new DataDirLockedError(dataDir, `pid ${rec.pid}`);
       }
@@ -1915,9 +2068,9 @@ export function lockDataDir(dataDir: string, log?: Diagnostic): () => void {
       // in the log and none for the person — recovering from a crash is the ordinary path.
       if (!removeIfUnchanged(path, held)) continue;
       log?.("data_dir_lock_reclaimed", {
-        kind: holderAlive ? "owner-replaced" : "owner-gone",
-        reason: "a leftover data-directory lock from a crash or power loss named a process that " +
-          "is provably not the engine that wrote it; reclaimed, and the start continues",
+        kind: holdReleased ? "hold-released" : holderAlive ? "owner-replaced" : "owner-gone",
+        reason: "a leftover data-directory lock from a crash or power loss belonged to an engine that " +
+          "has provably ended; reclaimed, and the start continues",
       });
     }
   }

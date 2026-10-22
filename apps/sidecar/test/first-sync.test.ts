@@ -347,6 +347,8 @@ describe("the first import's start and finish, on the standalone door", () => {
       again.lines.filter((l) => l.event.startsWith("first_sync_")),
       "a relaunch over a finished import announced it again",
     ).toEqual([]);
+    // Stopped first: on Windows a running engine's directory cannot be removed under it.
+    await again.sidecar.stop();
     rmSync(first.dataDir, { recursive: true, force: true });
   });
 });

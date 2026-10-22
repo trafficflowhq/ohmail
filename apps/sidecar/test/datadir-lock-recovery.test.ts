@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   DataDirLockedError,
+  HOLD_FILE,
   LOCK_FILE,
   bootIdFromRegQuery,
   imageFromTasklistCsv,
@@ -112,17 +113,41 @@ describe("the data-directory lock reclaims a provably dead owner", () => {
     expect(existsSync(path), "the refusal deleted the lock it refused over").toBe(true);
   });
 
-  it("the record this build writes names its owner: pid, boot, image, start, nonce", () => {
+  /**
+   * …AND WHAT IT STANDS ON PER PLATFORM. Linux reads a start time out of `/proc`; macOS and Windows
+   * have none a reader can trust, so there the OS holds the lock and the record names the file it
+   * holds. Either way a second take is refused while it is held and succeeds once it is released.
+   */
+  it("the record this build writes names its owner: pid, boot, image, start or hold, nonce", () => {
     const dir = tempDir();
+    const osHeld = process.platform === "darwin" || process.platform === "win32";
     const release = lockDataDir(dir);
     const rec = JSON.parse(readFileSync(join(dir, LOCK_FILE), "utf8")) as Record<string, unknown>;
     expect(rec.pid).toBe(process.pid);
-    expect(typeof rec.bootId, "no boot id on a Linux host").toBe("string");
+    expect(typeof rec.bootId, "no boot id on this host").toBe("string");
     expect(rec.exe).toBe("node");
-    expect(Number.isInteger(rec.startTicks), "no start ticks on a Linux host").toBe(true);
+    if (osHeld) {
+      expect(existsSync(join(dir, HOLD_FILE)), "no OS-held lock beside the record on macOS or Windows").toBe(true);
+    } else {
+      expect(Number.isInteger(rec.startTicks), "no start ticks on a Linux host").toBe(true);
+    }
     expect(typeof rec.nonce).toBe("string");
+    expect(outcome(dir), "a second take while the lock is held").toBe("refused");
     release();
     expect(existsSync(join(dir, LOCK_FILE)), "release left the lock behind").toBe(false);
+    if (osHeld) {
+      /* Read once it is let go, through a descriptor as the engine reads its own: Windows opens
+         nothing another descriptor holds exclusively. */
+      const fd = openSync(join(dir, HOLD_FILE), "r");
+      try {
+        const st = fstatSync(fd, { bigint: true });
+        expect(rec.hold, "the record does not name the file the OS held")
+          .toEqual({ dev: String(st.dev), ino: String(st.ino) });
+      } finally {
+        closeSync(fd);
+      }
+    }
+    expect(outcome(dir), "the lock outlived its release").toBe("took");
   });
 });
 

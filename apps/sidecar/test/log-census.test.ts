@@ -634,9 +634,14 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   local_retention_failed: "error",
   // db.ts — a data-directory lock whose recorded owner is provably gone (a crash or power loss)
   // is reclaimed on start, with this one sentence and none for the person. `kind` says which
-  // evidence decided (owner-gone / owner-replaced); no pid, no path. `info`, not error: the
-  // recovery IS the ordinary path after a power cut, and the refusal case throws instead.
+  // evidence decided (owner-gone / owner-replaced / hold-released); no pid, no path. `info`, not
+  // error: the recovery IS the ordinary path after a power cut, and the refusal case throws instead.
   data_dir_lock_reclaimed: "info",
+  // db.ts — the OS-held lock (macOS, Windows) could not be taken on this directory, so a lock left
+  // in it is judged by identity alone, as before. `kind` is the open's errno code or `not-exclusive`;
+  // no path, no pid. `info`, and named so: an `error` line here would become the shell's quoted first
+  // error for a start that fails later for another reason.
+  data_dir_hold_skipped: "info",
   // db.ts — a store a start never finished making, set aside (kept) before a new one is made.
   // `kind` says which evidence decided (unfinished / holds-nothing); no path. `info`: the store
   // held nothing, and making it again is the recovery, not a failure.

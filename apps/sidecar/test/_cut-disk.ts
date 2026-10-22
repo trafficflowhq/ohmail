@@ -1,7 +1,7 @@
 import fs, { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { PGDATA_SUBDIR } from "../src/db.js";
+import { HOLD_FILE, PGDATA_SUBDIR } from "../src/db.js";
 
 /**
  * THE POWER-CUT EMULATOR AT THE node:fs SEAM, shared by the cut tests. A byte under the root counts
@@ -86,7 +86,9 @@ export class Disk {
   /** The data directory after the cut: the entries as they stand, each file's bytes as last made durable. */
   image(dataDir: string): string {
     const dest = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-cut-image-"));
-    cpSync(dataDir, dest, { recursive: true });
+    // Not the hold: Windows refuses to read a file another descriptor holds exclusively.
+    const hold = resolve(dataDir, HOLD_FILE);
+    cpSync(dataDir, dest, { recursive: true, filter: (src) => resolve(src) !== hold });
     rmSync(join(dest, "sidecar.lock"), { force: true });   // this process still holds the live store's
     const root = join(dest, PGDATA_SUBDIR);
     const walk = (dir: string): void => {

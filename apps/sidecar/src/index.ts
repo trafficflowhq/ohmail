@@ -21,7 +21,7 @@ export {
   maybeStartHostListener, resolveHostConfig, startHostListener,
   type HostDoor, type HostListener, type HostState, type ResolvedHostConfig,
 } from "./host-listener.js";
-export { openLocalDb, DataDirLockedError, LOCK_FILE, PGDATA_SUBDIR, type LocalDb, type OpenLocalDb } from "./db.js";
+export { openLocalDb, DataDirLockedError, HOLD_FILE, LOCK_FILE, PGDATA_SUBDIR, type LocalDb, type OpenLocalDb } from "./db.js";
 export { ensureLocalWorld, mintLaunchSession, type LaunchSession, type LocalWorld } from "./identity.js";
 // The exit from a stand-down. Exactly one active organizer per mailbox is the invariant, and this
 // is the only way a mailbox this install stood down from ever comes back to it — the shell drives

@@ -276,6 +276,15 @@ jobs:
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
 
+      # The data-directory lock on this platform's own kernel, which holds the store here
+      # (`sidecar.hold`) where Linux judges a holder by /proc. ci.yml runs the same files on Linux.
+      - name: The data-directory lock refuses a second engine
+        run: |
+          npx vitest run apps/sidecar/test/datadir-lock-hold.test.ts \
+            apps/sidecar/test/datadir-lock-identity.test.ts \
+            apps/sidecar/test/datadir-lock-recovery.test.ts \
+            apps/sidecar/test/cloud-session-engine.test.ts
+
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.
       # engine-bundle.mjs asserts the version it got: the bundle is only
@@ -968,6 +977,15 @@ jobs:
       # the installed tree off the disk against the lockfile first, and refuses one that moved.
       - name: Apply the patches this repository carries
         run: node scripts/apply-patches.mjs apply
+
+      # The data-directory lock on this platform's own kernel, which holds the store here
+      # (`sidecar.hold`) where Linux judges a holder by /proc. ci.yml runs the same files on Linux.
+      - name: The data-directory lock refuses a second engine
+        run: |
+          npx vitest run apps/sidecar/test/datadir-lock-hold.test.ts \
+            apps/sidecar/test/datadir-lock-identity.test.ts \
+            apps/sidecar/test/datadir-lock-recovery.test.ts \
+            apps/sidecar/test/cloud-session-engine.test.ts
 
       # The bundler is a pinned devDependency of the root manifest, so the
       # `npm ci` above is the whole resolution and this step reaches no network.

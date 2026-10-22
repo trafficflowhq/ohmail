@@ -264,7 +264,13 @@ const dirs: string[] = [];
 
 afterEach(async () => {
   for (const cl of clients.splice(0)) cl.close();
-  for (const c of children.splice(0)) if (c.exitCode === null) c.kill("SIGKILL");
+  // Gone before its directory goes: on Windows a running engine's directory cannot be removed.
+  for (const c of children.splice(0)) {
+    if (c.exitCode !== null || c.signalCode !== null) continue;
+    const gone = new Promise((r) => c.once("exit", r));
+    c.kill("SIGKILL");
+    await gone;
+  }
   for (const s of servers.splice(0)) s.close();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   await new Promise((r) => setTimeout(r, 50));

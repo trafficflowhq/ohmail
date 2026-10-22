@@ -19,8 +19,6 @@ import { join } from "node:path";
  * were judged.
  */
 
-/** Arms ONE substitution: the next read of the boot id also replaces the lock file. */
-let onBootIdRead: (() => void) | null = null;
 /**
  * Arms ONE failure of the write that puts the holder record into the lock — the kill, the power
  * loss or the full disk, at the statement where it costs something. Fires once: a rig that kept
@@ -32,18 +30,6 @@ vi.mock("node:fs", async (importOriginal) => {
   const real = await importOriginal<typeof import("node:fs")>();
   return {
     ...real,
-    readFileSync: ((p: unknown, ...rest: unknown[]) => {
-      /* THE MUTATION HAPPENS IN THE WINDOW THE FIX PROTECTS, not before the call and not after
-         it: `lockStillOurs` reads this path while it is deciding, which is exactly where another
-         launcher's replacement would land. Fires once — a second attempt must judge what it
-         finds, not what this armed. */
-      if (typeof p === "string" && p.endsWith("/random/boot_id") && onBootIdRead !== null) {
-        const fire = onBootIdRead;
-        onBootIdRead = null;
-        fire();
-      }
-      return (real.readFileSync as (...a: unknown[]) => unknown)(p, ...rest);
-    }) as typeof real.readFileSync,
     writeSync: ((...args: unknown[]) => {
       if (onLockWrite !== null) {
         const fire = onLockWrite;
@@ -55,7 +41,13 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
-const { DataDirLockedError, LOCK_FILE, lockDataDir } = await import("../src/db.js");
+const { DataDirLockedError, HOLD_FILE, LOCK_FILE, lockDataDir } = await import("../src/db.js");
+
+/**
+ * What a released directory keeps: on macOS and Windows the OS-held lock's file, which is permanent
+ * by design (deleting it would let two launchers lock two different files). Never a temp file.
+ */
+const KEPT: string[] = process.platform === "darwin" || process.platform === "win32" ? [HOLD_FILE] : [];
 
 /**
  * HOW FAR BACK A CRASH'S RESIDUE IS DATED. Not the module's own window constant, on purpose:
@@ -101,7 +93,6 @@ function outcome(dir: string): "refused" | "took" {
 
 describe("the data-directory lock removes by identity", () => {
   beforeEach(() => {
-    onBootIdRead = null;
     onLockWrite = null;
   });
 
@@ -214,7 +205,7 @@ describe("the data-directory lock removes by identity", () => {
     expect(
       readdirSync(dir),
       "the killed launch left a lock file naming nobody — every later launch refuses it",
-    ).toEqual([]);
+    ).toEqual(KEPT);
 
     /* AND THE NEXT LAUNCH OPENS, which is the whole of what the person experiences. */
     const release = lockDataDir(dir);
@@ -230,10 +221,10 @@ describe("the data-directory lock removes by identity", () => {
   it("leaves NO temporary file behind — before or after the release", () => {
     const dir = tempDir();
     const release = lockDataDir(dir);
-    expect(readdirSync(dir), "the atomic claim left its temp file in the data directory")
-      .toEqual([LOCK_FILE]);
+    expect(readdirSync(dir).sort(), "the atomic claim left its temp file in the data directory")
+      .toEqual([...KEPT, LOCK_FILE].sort());
     release();
-    expect(readdirSync(dir)).toEqual([]);
+    expect(readdirSync(dir)).toEqual(KEPT);
   });
 
   /** …and a REFUSED claim leaves none either: the temp file is dropped on that path too. */
@@ -241,7 +232,8 @@ describe("the data-directory lock removes by identity", () => {
     const dir = tempDir();
     writeFileSync(join(dir, LOCK_FILE), `${process.pid}\n`);   // the legacy spelling, alive
     expect(outcome(dir)).toBe("refused");
-    expect(readdirSync(dir), "a refused claim left its temp file behind").toEqual([LOCK_FILE]);
+    expect(readdirSync(dir).sort(), "a refused claim left its temp file behind")
+      .toEqual([...KEPT, LOCK_FILE].sort());
   });
 
   it("REFUSES a lock file whose bytes it cannot parse, and leaves it alone", () => {
@@ -255,22 +247,37 @@ describe("the data-directory lock removes by identity", () => {
   it("does NOT remove a lock that was replaced while it was being judged", () => {
     const dir = tempDir();
     const path = join(dir, LOCK_FILE);
-    /* A record this process must judge STALE: a boot id that is not this boot's. Reading the boot
-       id is what fires the replacement, so the file under `path` is a different, LIVE lock by the
-       time the removal would run. */
+    /* A record this process must judge STALE: a boot id that is not this boot's. The alive probe
+       fires the replacement, so the file under `path` is a different, LIVE lock by the time the
+       removal would run. `kill(pid, 0)` and not the boot id's read: that read is a `/proc` file
+       on Linux only, and a cached tool's answer on macOS and Windows, where it never fired. */
     writeFileSync(path, `${JSON.stringify({
       pid: process.pid,
       bootId: "00000000-0000-4000-8000-000000000000",
       bootAtMs: Date.now(),
     })}\n`);
     const replacement = `${JSON.stringify({ pid: process.pid })}\n`;
-    onBootIdRead = () => writeFileSync(path, replacement);
+    const realKill = process.kill.bind(process);
+    let fired = 0;
+    const probe = vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: string | number) => {
+      // Once: a second attempt must judge what it finds, not what this armed.
+      if (signal === 0 && fired === 0) {
+        fired += 1;
+        writeFileSync(path, replacement);
+      }
+      return realKill(pid, signal);
+    }) as typeof process.kill);
 
-    expect(
-      outcome(dir),
-      "the lock another launcher had already put in place was deleted — two engines on one directory",
-    ).toBe("refused");
-    expect(readFileSync(path, "utf8"), "the replacement lock was removed").toBe(replacement);
+    try {
+      expect(
+        outcome(dir),
+        "the lock another launcher had already put in place was deleted — two engines on one directory",
+      ).toBe("refused");
+      expect(fired, "the judgement never probed the holder, so nothing was replaced").toBe(1);
+      expect(readFileSync(path, "utf8"), "the replacement lock was removed").toBe(replacement);
+    } finally {
+      probe.mockRestore();
+    }
   });
 
   /* ── AND THE ORDINARY CASES STILL WORK, so none of the above is "refuse everything" ───────── */

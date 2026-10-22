@@ -1636,6 +1636,8 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     expect(mb.organizeConsentedAt, "the re-added mailbox inherited a consent nobody gave")
       .toBeNull();
 
+    // Stopped first: on Windows a running engine's directory cannot be removed under it.
+    await again.sidecar.stop();
     rmSync(first.dataDir, { recursive: true, force: true });
   });
 
