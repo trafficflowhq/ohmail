@@ -176,10 +176,11 @@ const REGISTRY: Record<string, Partial<Record<Verb, Seam>>> = {
       why: "one receipt per cycle, and the renewals inside it write this runtime's nonce back",
     },
     releaseOwnClaim: {
-      calls: 6,
+      calls: 7,
       upholds: "no-swallowed-start",
-      why: "the stop, the release route, the detach, the hand-back, the roster removal and a "
-        + "refused server change's claim on the candidate server — every "
+      why: "the stop, the release route, the detach, the hand-back, the roster removal, a "
+        + "refused server change's claim on the candidate server and a quit that cut the pass "
+        + "(over a one-shot dial of its own, the cut socket being gone) — every "
         + "giving-up path this install has, and each names BOTH nonces, so a claim a lost answer "
         + "left cannot outlive the install that wrote it. A cycle that merely FAILED is not one "
         + "of them: the poll owns the retry and the claim stays",
@@ -187,7 +188,7 @@ const REGISTRY: Record<string, Partial<Record<Verb, Seam>>> = {
     releaseMailboxClaim: {
       calls: 1,
       upholds: "identity-recorded-before-the-write",
-      why: "one door under the six callers above, so the address cannot differ between them",
+      why: "one door under the seven callers above, so the address cannot differ between them",
     },
   },
 };

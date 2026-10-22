@@ -236,6 +236,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // `count`, on this file's own rule: `totalMs` and `slowestMs` are different quantities and one
   // `count` meaning either is not a claim a reviewer can check. (`drained` is already above.)
   "cycles", "totalMs", "slowestMs",
+  // WHERE A QUIT'S TIME WENT (`engine_left`), added WITH its call site: milliseconds from a
+  // monotonic clock and one count of destroyed sockets. No mailbox, no message.
+  "requestsMs", "passesMs", "storeWaitMs", "storeCloseMs", "goodbyesMs", "forced",
   // HOW LONG THE FIRST DRAIN HELD FOR THE READER'S FIRST PAGE (`first_page_before_drain`,
   // `first_page_grace_expired`), added WITH its call site. One `Date.now()` delta, an integer from
   // a clock, naming no mailbox and no message — and it is the only number that says which of the

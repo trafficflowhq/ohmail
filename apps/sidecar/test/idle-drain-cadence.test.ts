@@ -390,7 +390,8 @@ describe("the idle drain cadence rests behind a doorbell", () => {
     const exempt = (i: number): string | null => {
       const near = lines.slice(Math.max(0, i - 3), i + 2).join("\n");
       if (/const kick = delayMs === 0;/.test(lines[i + 1] ?? "")) return "schedule's re-arm";
-      if (/async detach\(/.test(near)) return "detach";
+      // `detach()`'s body, which a quit also runs on its own two instants (`detachBy`).
+      if (/by: DetachBounds, quit: boolean/.test(near)) return "detach";
       if (/releaseRefusal: null, holderState: null };\n\s*stopped = true;/.test(near)) return "a mailbox removed mid-read";
       return null;
     };

@@ -70,10 +70,11 @@ const THREAD_PAGE = 500;
  * window's own mirror drops it too. Idempotent; safe on an empty store.
  *
  * NOT a transaction, and that is a decision. The caller has already committed the tombstone and
- * the credential deletion, so a failure part-way here leaves a REMOVED mailbox with some mail
- * still on disk — untidy, harmless, and recoverable by removing again. Wrapping it would put a
- * long multi-table delete inside the same lock as a lifecycle write, on a database also serving
- * the window, for no correctness this needs.
+ * the credential deletion, so a failure part-way here — or a close that shuts the store under it —
+ * leaves a REMOVED mailbox with some mail still on disk: recoverable by removing again, and
+ * finished by the next start, which wipes every tombstone that still holds rows
+ * ({@link mirrorRowsRemain}). Wrapping it would put a long multi-table delete inside the same lock
+ * as a lifecycle write, on a database also serving the window, for no correctness this needs.
  */
 export async function wipeLocalMirror(
   db: LocalDb, args: { accountId: string; mailboxId: string },
@@ -241,6 +242,26 @@ export async function announceExclusiveThreads(
     })));
     announced += page.length;
   }
+}
+
+/**
+ * DOES THIS INSTALL STILL HOLD ANYTHING OF A MAILBOX — a message, a folder or a draft. The start
+ * asks it of every removed mailbox, to finish a wipe a close or a crash cut short: the walk deletes
+ * the drafts first, the folders after the messages' children and the messages last, so a wipe cut
+ * anywhere leaves one of the three (a mailbox that ever synced has its folders). Three `limit(1)`
+ * reads, the first two on an index that leads with the mailbox; asked at every start, so it stays
+ * that cheap.
+ */
+export async function mirrorRowsRemain(db: LocalDb, mailboxId: string): Promise<boolean> {
+  const message = await db.select({ id: messages.id }).from(messages)
+    .where(eq(messages.mailboxId, mailboxId)).limit(1);
+  if (message.length > 0) return true;
+  const folder = await db.select({ id: mailboxFolders.id }).from(mailboxFolders)
+    .where(eq(mailboxFolders.mailboxId, mailboxId)).limit(1);
+  if (folder.length > 0) return true;
+  const draft = await db.select({ id: drafts.id }).from(drafts)
+    .where(eq(drafts.mailboxId, mailboxId)).limit(1);
+  return draft.length > 0;
 }
 
 /**

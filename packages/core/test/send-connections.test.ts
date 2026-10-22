@@ -179,4 +179,47 @@ describe("SendConnections — one connection across consecutive presses", () => 
     expect(keep.size()).toBe(0);
     expect(d.made.map((c) => c.state.closes)).toEqual([1, 1]);
   });
+
+  it("(10) closeAll within a bound destroys the connection whose LOGOUT never answers, and only it", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const d = dialler();
+    await (await keep.open("mb-1", d.dial)).close();
+    await (await keep.open("mb-2", d.dial)).close();
+    // mb-1's server never answers the LOGOUT.
+    d.made[0]!.real.close = () => new Promise<void>(() => undefined);
+    const began = performance.now();
+    await keep.closeAll({ withinMs: 200 });
+    const took = performance.now() - began;
+    expect(took).toBeGreaterThanOrEqual(190);
+    expect(took).toBeLessThan(1_000);
+    expect(d.made.map((c) => c.state.forced)).toEqual([1, 0]);
+    expect(d.made[1]!.state.closes).toBe(1);
+    expect(keep.size()).toBe(0);
+  });
+
+  it("(11) closeAll within a bound leaves a leased connection to its send, and closes it on release", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const d = dialler();
+    const leased = await keep.open("mb-1", d.dial);
+    let ended = false;
+    const closing = keep.closeAll({ withinMs: 2_000 }).then(() => { ended = true; });
+    await new Promise((r) => { setTimeout(r, 50); });
+    expect(d.made[0]!.state.closes, "the send's connection was logged out under it").toBe(0);
+    expect(ended, "closeAll returned while a send held its connection").toBe(false);
+    expect(keep.size(), "a new press could still lease the connection").toBe(0);
+    await leased.send(MSG);
+    await leased.close();
+    await closing;
+    expect(d.made[0]!.state).toMatchObject({ sends: 1, closes: 1, forced: 0 });
+  });
+
+  it("(12) a lease never released is destroyed at the bound", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const d = dialler();
+    await keep.open("mb-1", d.dial);
+    const began = performance.now();
+    await keep.closeAll({ withinMs: 200 });
+    expect(performance.now() - began).toBeGreaterThanOrEqual(190);
+    expect(d.made[0]!.state).toMatchObject({ closes: 0, forced: 1 });
+  });
 });

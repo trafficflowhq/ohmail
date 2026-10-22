@@ -348,6 +348,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // The close outlived its bound and the engine left without it, as the shell's kill would have.
   // `info`, like `shutdown`: the bound is the designed end, and the next open replays the log.
   shutdown_deadline: "info",
+  // How the engine left (store closed or left open) and where the quit's time went. `info`: a
+  // store left open is already `shutdown_failed`.
+  engine_left: "info",
   start_failed: "error",
   transport_fatal: "error",
   serving: "info",
@@ -594,6 +597,14 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // `mailboxId` + `reason`, on `organizer_claim_released`'s rule.
   organizer_released_by_lapse: "info",
   local_mirror_wipe_failed: "error",
+  // `local_mirror_wipe_finished` — the start finishing a removal a close, a crash or an older
+  // build left with mail under its tombstone. `info`: nothing failed, the mail was taken off as the
+  // removal promised. `mailboxId` + `reason`, the same pair as its `_failed` twin above, which the
+  // start writes when it cannot.
+  local_mirror_wipe_finished: "info",
+  // `inherited_sends_read_failed` — the open's read of the send reservations the last run left
+  // pending. `err` + `reason`: nothing is decided early and the rows keep the ten-minute window.
+  inherited_sends_read_failed: "error",
   ensure_folders_failed: "error",
   // `organizer_peek_failed` — the APPEND-less look a pre-consent install takes so its own consent
   // screen can name the holder. `err` + `reason`, no holder and no mailbox: the whole content of a

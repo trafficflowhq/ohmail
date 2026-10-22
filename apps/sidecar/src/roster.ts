@@ -284,6 +284,9 @@ export type RuntimeSyncDeps = Omit<
   | "ohboxPolicy" | "ohboxBar" | "screeningCutoff"
 >;
 
+/** The two instants a quit gives one mailbox, on the engine's monotonic clock. */
+export interface DetachBounds { passBy: number; goodbyeBy: number }
+
 /**
  * ONE MAILBOX, RUNNING — the thirteen closure fields, plus the handful of entry points that let a
  * caller holding the map do to one mailbox what `createSidecar` used to do to its only one.
@@ -417,6 +420,16 @@ export interface LocalMailboxRuntime {
    *  before the claim goes back (RULING-026 lane A, as amended); a removal or a
    *  re-point leaves it out. */
   detach(leaving: "quit" | "restart", opts?: { leaveSettings?: boolean }): Promise<void>;
+  /**
+   * {@link detach} on the quit plan's two instants (the engine's monotonic clock). The pass and any
+   * re-dial get until `passBy`, then the socket is destroyed; `leaveSettings` writes the settings
+   * (a store reader, so also until `passBy`), then the claim release and LOGOUT get until
+   * `goodbyeBy`. `passSettled` resolves when the mailbox no longer writes, `done` when it has let go,
+   * `true` where its socket had to be destroyed.
+   */
+  detachBy(
+    leaving: "quit" | "restart", by: DetachBounds, opts?: { leaveSettings?: boolean },
+  ): { passSettled: Promise<void>; done: Promise<boolean> };
   /**
    * Re-dial now if this mailbox's connection is dead — the foreground wake, exposed. The engine
    * already re-dials a dead connection at the top of its poll, the right cadence for a desktop whose

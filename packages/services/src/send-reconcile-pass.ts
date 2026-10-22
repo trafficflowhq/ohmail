@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lt, ne } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
@@ -13,8 +13,9 @@ import {
 /**
  * THE RECONCILING PASS FOR STRANDED SEND RESERVATIONS — resolves an `outbound_sends` row left
  * `pending` by an attempt nobody is coming back for, running the IDENTICAL resolution:
- * `SendService.resolveStale`, the single writer. TWO HOSTS, NOT THREE — the API host (`GET
- * /internal/sends/reconcile/run`) and `apps/server`; the desktop does NOT run it yet. NOTHING
+ * `SendService.resolveStale`, the single writer. THREE HOSTS — the API host (`GET
+ * /internal/sends/reconcile/run`), `apps/server`, and the local engine's drain (`apps/sidecar`,
+ * `reconcileStrandedSends`), the one that names `inherited` rows. NOTHING
  * HERE CAN SEND: `resolveStale` has no `send`; the adapter is PROBE-ONLY (its `send` throws); the
  * pass never enters `reserve`; every finalizer is compare-and-swap on `status='pending'`. LOGINS
  * cap at `SEND_RECONCILE_BATCH`, rows examined at batch × `SEND_RECONCILE_SCAN_FACTOR` per
@@ -188,6 +189,14 @@ export interface SendReconcilePassDeps {
    * record of a send that ALREADY happened is not automation.
    */
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
+  /**
+   * RESERVATIONS NO ATTEMPT CAN STILL BE SENDING, claimed whatever their age. The stale window
+   * exists because a young `pending` row may have a live sender behind it; a caller that KNOWS it
+   * does not names the rows here. The desktop names the rows already `pending` when its engine
+   * opened the store it holds alone (the data-directory lock): their process is gone. Every row not
+   * named keeps {@link SEND_STALE_AFTER_MS}. Absent ⇒ none.
+   */
+  inherited?: readonly string[];
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -251,7 +260,7 @@ export async function runSendReconcilePass(
   const startedAt = now().getTime();
   const rows = await claimStale(
     db, now(), batch * SEND_RECONCILE_SCAN_FACTOR, batch * SEND_RECONCILE_SCAN_FACTOR,
-    deps.accountEligible,
+    deps.accountEligible, deps.inherited ?? [],
   );
   result.claimed = rows.filter((r) => r.kind === "pending").length;
   if (rows.length === 0) return result;
@@ -612,15 +621,20 @@ function probeOnly(real: SendAdapter): SendAdapter {
  * both write it (the finalizers are compare-and-swap); overlap costs a duplicate probe, never a
  * wrong outcome. NO predicate on `drafts.status`: the subject is the RESERVATION, which must stop
  * paging whatever became of the draft — a hand-recovered draft still leaves a `pending` row.
- * `ORDER BY created_at`, oldest first.
+ * `ORDER BY created_at`, oldest first. A row the caller names as `inherited` is stale whatever its
+ * age — see {@link SendReconcilePassDeps.inherited}.
  */
 async function claimStale(
   db: Db, now: Date, dialWindow: number, waitWindow: number,
   accountEligible: ((accountId: string, db: Db) => Promise<boolean>) | undefined,
+  inherited: readonly string[],
 ): Promise<StaleRow[]> {
   const d = dialect(db);
   return bridgeTx(db).transaction(async (tx) => {
     const staleBefore = new Date(now.getTime() - SEND_STALE_AFTER_MS);
+    const stale = inherited.length > 0
+      ? or(lt(outboundSends.createdAt, staleBefore), inArray(outboundSends.id, [...inherited]))
+      : lt(outboundSends.createdAt, staleBefore);
     // SKIP LOCKED through the seam, restricted to the send rows: on the server it is what lets
     // several runners share one window instead of queueing, and on the device store it is the
     // identity for the same reason the lock is — one serialized writer, nothing to skip.
@@ -664,7 +678,7 @@ async function claimStale(
         )
         : and(
           eq(outboundSends.status, "pending"),
-          lt(outboundSends.createdAt, staleBefore),
+          stale,
           which === "dialable" ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
         ))
       .orderBy(outboundSends.createdAt)

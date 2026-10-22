@@ -26,6 +26,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
+import { QUIT_GOODBYE_MS, QUIT_PASS_MS, QUIT_REQUESTS_MS, QUIT_STORE_WAIT_MS } from "../src/main.js";
 import { requestOrganizerTakeover } from "../src/organize-here.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
@@ -830,7 +831,9 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     expect(await b.gap(), "the letter X kept was counted").toMatchObject({ letters: 1, pressed: null });
   }, 120_000);
 
-  it.each(["quit", "background"] as const)("%s: B counts from the instant X let go, and File moves only the later letter", async (exit) => {
+  /* "planned quit" is the desktop's own: `main.ts` closes the store first, so the settings, which
+     read the store, have to be left inside the quit's writer window. */
+  it.each(["quit", "planned quit", "background"] as const)("%s: B counts from the instant X let go, and File moves only the later letter", async (exit) => {
     const meta = new MemoryMetaFolder();
     const b = await bWindowOpen(meta);
     const x = await desktop(meta, "install-x");
@@ -843,7 +846,11 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     const mark = meta.trace.length;
     const before = Date.now();
     if (exit === "quit") await x.s.stop();
-    else expect(await x.s.handBack(), "premise: the hand-back gave the claim back").toEqual([{ mailboxId: x.id, released: 1 }]);
+    else if (exit === "planned quit") {
+      await x.s.stop({
+        passMs: QUIT_PASS_MS, requestsMs: QUIT_REQUESTS_MS, storeWaitMs: QUIT_STORE_WAIT_MS, goodbyeMs: QUIT_GOODBYE_MS,
+      });
+    } else expect(await x.s.handBack(), "premise: the hand-back gave the claim back").toEqual([{ mailboxId: x.id, released: 1 }]);
     const after = Date.now();
     expect(meta.claims, "premise: X's claim went back").toEqual([]);
     expect(meta.trace.slice(mark), "the settings did not go into the mailbox before the claim left")

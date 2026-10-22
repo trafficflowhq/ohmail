@@ -153,6 +153,26 @@ describe("the local store's close waits for what it admitted", () => {
     expect(w.afterTerminate()).toEqual([]);
   });
 
+  it("a quit's own bound replaces the default, and a completed close says what it spent", async () => {
+    // The default would wait 30 s here; the quit asks for 200 ms.
+    const o = await open({ closeWaitMs: 30_000 });
+    const h = hold();
+    let entered!: () => void;
+    const inside = new Promise<void>((r) => { entered = r; });
+    const tx = o.db.transaction(async (t) => { await t.execute(write); entered(); await h.gate; })
+      .then(() => "committed", (e: unknown) => `failed: ${String(e)}`);
+    await inside;
+    const began = Date.now();
+    const verdict = await o.close({ waitMs: 200 }).then(() => "closed", (e: unknown) => e);
+    expect((verdict as Error).name, "the quit's bound was not the close's").toBe("StoreCloseTimeoutError");
+    expect(Date.now() - began).toBeLessThan(2_000);
+    h.release();
+    expect(await tx).toBe("committed");
+    const report = await o.close({ waitMs: 200 });
+    expect(report, "a completed close reported nothing").toMatchObject({ waitedMs: expect.any(Number), terminateMs: expect.any(Number) });
+    expect((report as { terminateMs: number }).terminateMs).toBeGreaterThan(0);
+  });
+
   it("a call after the close began is refused unrun and by name, and said once", async () => {
     const lines: Array<{ event: string }> = [];
     const o = await open({ log: (event: string) => { lines.push({ event }); } });

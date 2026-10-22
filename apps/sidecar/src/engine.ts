@@ -29,6 +29,8 @@ import {
   accountSettings, closeStoodDownAppointments, exportPendingMovesOnStandDown,
   RELEASED_ORGANIZER_SEND_SENTENCE,
   mailboxCredentials, mailboxes,
+  // Read once at the open: the send reservations the last run left `pending` (see `inheritedSends`).
+  outboundSends,
   // The erasure fence's mailbox arm and its refusal class — one module for both doors, the
   // sign-out fence's rule. The class is read by the seal's catch arm, which treats an erased
   // mailbox exactly as it treats a signed-out one.
@@ -251,12 +253,12 @@ import { isEndedBearerExit, launchSessionExpiredResponse, mintLaunchBearer } fro
 import {
   LocalRoster,
   type CandidateClaim, type CandidateDial,
-  type CredentialBlock, type CredentialState, type DialAnswer, type LocalMailboxRuntime,
+  type CredentialBlock, type CredentialState, type DetachBounds, type DialAnswer, type LocalMailboxRuntime,
   type MailboxConnectionState, type OrganizerState,
 } from "./roster.js";
 // Removing a mailbox takes this install's copy of its mail with it. See `local-mirror.ts` for why
 // this is the sidecar's job and not `MailboxService.delete`'s.
-import { mirroredFirstSyncFacts, mirroredMessageCount, wipeLocalMirror } from "./local-mirror.js";
+import { mirroredFirstSyncFacts, mirroredMessageCount, mirrorRowsRemain, wipeLocalMirror } from "./local-mirror.js";
 // An earlier build's sign-out left the outgoing password behind; the boot removes it.
 import { removeSignedOutResidue } from "./signed-out-residue.js";
 import { stampSynced } from "./sync-stamp.js";
@@ -601,6 +603,41 @@ export interface SidecarConfig {
  */
 export type BootPhase = LocalDbOpenPhase | "preparing";
 
+/**
+ * A QUIT'S PLAN, in milliseconds from the moment the stop begins (`main.ts` derives them from the
+ * shell's grace). The passes and the search backfill get `passMs`; the doors' requests keep the
+ * store until they end or `requestsMs`; the store's wait for its admitted calls ends at
+ * `storeWaitMs`, or a quarter second after the writers let go when that is later; the claim
+ * releases, LOGOUTs and kept send connections end at `goodbyeMs`.
+ */
+export interface QuitPlan {
+  passMs: number;
+  /** Never earlier than `passMs`: a request is a writer at least as long as a pass is. */
+  requestsMs: number;
+  storeWaitMs: number;
+  goodbyeMs: number;
+  /** The doors' requests draining: a writer until `requestsMs`, then a goodbye until `goodbyeMs`. */
+  requests?: Promise<unknown>;
+}
+
+/** What a planned stop spent, each in ms from its start except the store's two. */
+export interface QuitReport {
+  requestsMs: number;
+  passesMs: number;
+  storeWaitMs: number;
+  storeCloseMs: number;
+  goodbyesMs: number;
+  /** Mailboxes whose socket had to be destroyed. */
+  forced: number;
+}
+
+/** A planned stop whose store did not close: it stays recorded open and keeps its lock. */
+export class QuitLeftOpenError extends Error {
+  constructor(cause: unknown, readonly report: QuitReport) {
+    super("the local store did not close inside the quit", { cause });
+    this.name = "QuitLeftOpenError";
+  }
+}
 
 export interface Sidecar {
   readonly app: App;
@@ -797,8 +834,15 @@ export interface Sidecar {
    * settling and the logout: an install that is going down organizes nothing, and a claim left to
    * age out is `DEFAULT_STALE_AFTER_MS` in which NOBODY organizes the mailbox. The ROW is
    * untouched, so the next launch claims it back unless another install has taken it.
+   *
+   * With a {@link QuitPlan} (the desktop's quit, `main.ts`) the store closes FIRST: the passes get
+   * `passMs` and the doors' requests until they end or `requestsMs`, then the store closes while the
+   * claim releases, the LOGOUTs and any request still running go on beside it until `goodbyeMs`. A
+   * store that could not close rejects with {@link QuitLeftOpenError}; a goodbye never rejects.
+   * Without a plan the order is the one above, one drain interval per mailbox.
    */
   stop(): Promise<void>;
+  stop(plan: QuitPlan): Promise<QuitReport>;
   /**
    * THE SHELL SAID WHY IT IS STOPPING THIS ENGINE — its `leaving` frame, before the EOF. Only
    * `"restart"` changes anything: the {@link stop} that follows keeps every claim for the relaunch,
@@ -901,6 +945,13 @@ const LOCAL_IMAP_ADMISSION = {
   acquire: async () => true,
   release: async () => {},
 };
+
+/**
+ * How many of the last run's `pending` send reservations a launch names to the reconcile pass,
+ * oldest first. A quit or a crash leaves the few a person had pressed; a store holding more is a
+ * different fault, and the rest keep the ordinary stale window.
+ */
+const INHERITED_SENDS_MAX = 200;
 
 /**
  * Give this install's claim back, keeping every distinct answer apart — one function because a bare
@@ -2105,6 +2156,31 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     // the other in the failure this instrumentation exists to attribute.
     const worldMs = Date.now() - tWorld;
     if (session.revoked > 0) log("stale_sessions_revoked", { count: session.revoked });
+
+    /**
+     * THE SEND RESERVATIONS THE LAST RUN LEFT `pending`, read before any door serves and before any
+     * drain, so no attempt of THIS run is among them. Where this engine opened its store itself it
+     * holds the data directory alone (`db.ts`'s lock), so the process that made them is gone and
+     * nothing can still be sending them: the reconcile pass decides them at the first drain
+     * (`runSendReconcilePass`'s `inherited`) instead of after `SEND_STALE_AFTER_MS`, so a delivered
+     * message does not read "Sending…" for ten minutes. A quit that closed the store before a send's
+     * finalize, or a crash, is what leaves one. A store handed in (the phone's) holds no such lock,
+     * so its rows keep the stale window, as every row this run makes does. A read that fails names
+     * none, which is today's behaviour.
+     */
+    const inheritedSends: readonly string[] = config.store !== undefined ? [] : await db
+      .select({ id: outboundSends.id }).from(outboundSends)
+      .where(eq(outboundSends.status, "pending"))
+      .orderBy(outboundSends.createdAt)
+      .limit(INHERITED_SENDS_MAX)
+      .then((rows) => rows.map((r) => r.id), (err: unknown) => {
+        log("inherited_sends_read_failed", {
+          err,
+          reason: "the send reservations the last run left pending could not be read, so they wait "
+            + "out the ordinary ten minutes before the drain checks the Sent folder for them",
+        });
+        return [];
+      });
 
     // rpID/origin are required by `makeAuthConfig` and validated at construction. Nothing local
     // performs a WebAuthn ceremony — there is no browser and no RP — but the config is built
@@ -6181,6 +6257,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                the hosted host does not have — a standalone store holds ONE account, so store-wide
                IS this install's own reservations. */
             now,
+            /* The last run's reservations, decided now rather than after the stale window: no
+               attempt of theirs is alive (see `inheritedSends`). */
+            ...(inheritedSends.length > 0 ? { inherited: inheritedSends } : {}),
           });
           if (r.claimed > 0) {
             log("send_reconcile_pass", {
@@ -7804,6 +7883,191 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         );
       });
 
+      /**
+       * THE STOP ON TWO INSTANTS — `detach()`'s body, split so a quit can close the store between
+       * its halves. The pass (the queue, and any re-dial) gets until `passBy`; past it the socket is
+       * destroyed at once, which ends the server call it was parked in. A mailbox whose pass let go
+       * then leaves its settings (the install's own quit), gives its claim back and logs out, until
+       * `goodbyeBy`; past that the socket is destroyed too. The settings flush reads the store, so it
+       * is a writer: `passSettled` waits for it until `passBy` as well, and a flush still running then
+       * meets the closed store and is said as not saved. `quit` marks a quit plan's instants rather
+       * than one drain interval's.
+       */
+      const detachBy = (
+        leaving: "quit" | "restart", by: DetachBounds, quit: boolean, opts: { leaveSettings?: boolean } = {},
+      ): { passSettled: Promise<void>; done: Promise<boolean> } => {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+        if (heartbeatTimer) clearTimeout(heartbeatTimer);
+        /* `startedAt` is read back from the stop's one instant, so the forced line measures the
+           whole stop rather than this method's slice. */
+        stopStartedAt ??= monotonic();
+        const startedAt = stopStartedAt;
+        const leftUntil = (at: number): number => at - monotonic();
+        const force = (phase: "pass" | "goodbye", at: number): void => {
+          /* The same teardown the re-dial uses on a connection found dead, and for the same
+             reason. `adapter` is re-read here, so a re-dial that installed a fresh one is the one
+             that goes: this runtime is stopping, and the newest connection is the one with no
+             owner. */
+          const held = adapter;
+          if (held.forceClose !== undefined) {
+            try { held.forceClose(); } catch { /* the socket is going away regardless */ }
+          } else {
+            /* An injected double with no `forceClose`. NOT awaited — a teardown this method waits
+               on is the latch it is escaping. */
+            try { void Promise.resolve(held.close()).catch(() => undefined); }
+            catch { /* threw synchronously; it is going away either way */ }
+          }
+          if (quit) {
+            log("mailbox_detach_forced", {
+              mailboxId: mb.id,
+              phase,
+              boundMs: Math.round(at - startedAt),
+              totalMs: Math.round(monotonic() - startedAt),
+              reason: "this install is quitting and this mailbox did not finish its " + phase
+                + " inside the quit's bound, so the connection was destroyed so that the local "
+                + "store closes cleanly; the next launch picks the mailbox up where it was",
+            });
+            return;
+          }
+          log("mailbox_detach_forced", {
+            mailboxId: mb.id,
+            pollIntervalMs: detachWaitMs,
+            totalMs: Math.round(monotonic() - startedAt),
+            reason: "this mailbox did not let go within one drain interval — the cycle, the " +
+              "re-dial or the logout was waiting on a link that answers nothing, which is what " +
+              "a half-open link produces — so the connection was destroyed and the stop " +
+              "completed. Destroying it is also what ends the hung command, so nothing is left " +
+              "to log out and the mailbox's timers are already down",
+          });
+        };
+        const passSettled = (async (): Promise<boolean> => {
+          /* THE QUEUE, which a drain parked inside a serialized body holds. */
+          let settled = await settledWithin(tail, leftUntil(by.passBy));
+          /* AND THE RE-DIAL, WHICH IS NOT IN THE QUEUE — see {@link redialInFlight}. Without this
+             a re-dial suspended in `connect()` resumes AFTER the teardown has closed the adapter
+             and dropped the runtime, and then installs a fresh authenticated connection for a
+             mailbox that no longer exists: an organizer claim renewed after the removal route
+             released it, folders created in somebody's mailbox on the way out, and a login with
+             no handle anywhere that can close it. `stopped` is already true here, so the re-dial's
+             own re-checks turn this wait into an early exit rather than a full second dial.
+             It SHARES the bound rather than getting its own: two bounds in sequence would be a
+             stop that can take twice as long as the number this method promises. */
+          if (settled) settled = await settledWithin(redialInFlight, leftUntil(by.passBy));
+          if (!settled) force("pass", by.passBy);
+          return settled;
+        })();
+        /* `claimed` AND NOT `organizing` — the field that means "a claim of ours may be in the
+           folder". The gate takes the claim a full round trip before it declares `organizing`
+           (see the CLAIM IS OURS FROM HERE block), so a stop landing inside that window read
+           the ATTACH DEFAULT rather than anything this pass knew, and reached the right answer
+           by accident. No reachable state has `organizing` true with `claimed` false, so this
+           releases in exactly the cases it released in before, and in the window as well.
+           NOT on a runtime that never dialled: there is no login to release through, and the
+           attempt was a TypeError logged as a failed release. A claim from before ages out.
+           AND NOT ON A RESTART THE SHELL MARKED: the relaunch continues this claim under the same
+           install id (lease rule 3); a restart that never comes back leaves it to age out. */
+        const keepForRestart = leaving === "restart";
+        const giving = passSettled.then((settled) => settled && organizer.claimed && !launchSkipped && !keepForRestart);
+        /* THE APP'S OWN QUIT LEAVES ITS SETTINGS FIRST (RULING-026 lane A, as amended):
+           the last write, with the instant this install let go, while the claim is still ours and
+           inside this same bound. A refused write is said once and the claim still goes back; one
+           that hangs runs out the bound the release has, and the claim then ages out as before.
+           Only `stop()` asks: a removal (its route released the claim and wiped the store before
+           this) and a re-point (attached again at once) never do. */
+        const settingsFirst = async (): Promise<void> => {
+          if (opts.leaveSettings !== true || !organizer.organizing) return;
+          let written: Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> = "not_saved";
+          try {
+            written = await profileSync.flushBeforeLeaving(leasePermit, adapter, lettingGo());
+          } catch { /* never thrown by its contract; said below as not saved if it is */ }
+          settingsNotLeft(written, "quit");
+        };
+        const settings = giving.then((give) => (give ? settingsFirst() : undefined));
+        const writesSettled = (async (): Promise<void> => {
+          if (await passSettled) await settledWithin(settings, leftUntil(by.passBy));
+        })();
+        const releasedOnStop = (released: number | "sibling" | null): void => {
+          leaseNonce = null;
+          organizer = { ...organizer, organizing: false };
+          if (typeof released === "number" && released > 0) {
+            log("organizer_claim_released_on_stop", {
+              mailboxId: mb.id,
+              claims: released,
+              reason: "this install stopped organizing this mailbox because it is shutting "
+                + "down, so the claim is given back rather than left to age out; the row is "
+                + "untouched and the next launch claims the mailbox again unless another "
+                + "install has taken it",
+            });
+          }
+        };
+        /* A QUIT THAT CUT THE PASS STILL GIVES THE CLAIM BACK, on a one-shot dial of its own (the
+           cut socket is gone) until `goodbyeBy`. Addressed by (install, nonce), so it cannot remove
+           a newer claim. The settings flush reads the store, closed by now, so it is skipped. */
+        const releaseAfterCut = async (until: number): Promise<void> => {
+          const fresh = config.adapterFactory
+            ? config.adapterFactory(imapConfig, ONE_SHOT_DIAL)
+            : new ImapAdapter(imapConfig, ONE_SHOT_DIAL);
+          const releasing = (async () => {
+            if (signedOutSinceDial()) return;
+            await pinPlaintextDial(imapConfig);
+            await fresh.connect();
+            releasedOnStop(await releaseOwnClaim(
+              fresh, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+              "this install is quitting, its pass was cut and its claim could not be removed; it "
+                + "ages out of ohmail/_meta on its own and another install takes the mailbox then",
+            ));
+            await fresh.close();
+          })().catch((err: unknown) => {
+            log("organizer_claim_release_failed", {
+              err, mailboxId: mb.id,
+              reason: "this install is quitting and could not open a connection to remove its "
+                + "claim; it ages out of ohmail/_meta on its own and another install takes the "
+                + "mailbox then",
+            });
+          });
+          if (await settledWithin(releasing, leftUntil(until))) return;
+          try { fresh.forceClose?.(); } catch { /* going away regardless */ }
+        };
+        const done = passSettled.then(async (settled) => {
+          if (!settled) {
+            if (quit && !keepForRestart && organizer.claimed && !launchSkipped) await releaseAfterCut(by.goodbyeBy);
+            return true;
+          }
+          /* AND THE CLAIM GOES BACK, then the LOGOUT — ONE wait, in that order. The claim first
+             because the release needs the login; left standing it obstructs every other install
+             for `DEFAULT_STALE_AFTER_MS` while the machine that wrote it is gone. Only where this
+             install believes it organizes — a reader's release would be an IMAP read that can only
+             fail. The logout's rejection still reaches the log: a server answering LOGOUT with an
+             error is not one answering nothing. ONE `settledWithin`, started in a MICROTASK, both
+             for the bound: a fourth hop re-derives its deadline, and `setTimeout` schedules against
+             the loop's clock, which a synchronous prologue does not refresh — measured as a 299
+             against a 300 ms bound. */
+          const politely = giving.then((give) => (give
+            ? settings.then(() => releaseOwnClaim(
+              adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+              "this install is stopping and its claim could not be removed; it ages out of "
+                + "ohmail/_meta on its own and another install takes the mailbox then",
+            )).then(releasedOnStop)
+            : keepForRestart && organizer.claimed && !launchSkipped
+              ? Promise.resolve().then(() => {
+                log("organizer_claim_kept_for_restart", {
+                  mailboxId: mb.id,
+                  staleAfterMs: config.leaseStaleAfterMs ?? DEFAULT_STALE_AFTER_MS,
+                  reason: "the shell is restarting this app, so the claim stays in ohmail/_meta for "
+                    + "the relaunch to continue; a restart that does not come back leaves it to age out",
+                });
+              })
+              : Promise.resolve()))
+            .then(() => Promise.resolve(adapter.close()))
+            .catch((err: unknown) => { log("adapter_close_failed", { err }); });
+          if (await settledWithin(politely, leftUntil(by.goodbyeBy))) return false;
+          force("goodbye", by.goodbyeBy);
+          return true;
+        });
+        return { passSettled: writesSettled, done };
+      };
+
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
         address: mb.address,
@@ -8168,121 +8432,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          * DESTROYED, ending the hung command.
          */
         async detach(leaving: "quit" | "restart", opts: { leaveSettings?: boolean } = {}) {
-          stopped = true;
-          if (timer) clearTimeout(timer);
-          if (heartbeatTimer) clearTimeout(heartbeatTimer);
           /* The budget is armed by whichever stop method arrives first — `quiesce()` on the
-             removal route, this one everywhere else — and `startedAt` is read back from it so the
-             forced-teardown line below measures the whole stop rather than this method's slice. */
-          const left = stopLeft;
-          left();                                  // arms it where nothing has yet
-          const startedAt = stopStartedAt as number;
-          /* THE QUEUE, which a drain parked inside a serialized body holds. */
-          let wedged = !(await settledWithin(tail, left()));
-          /* AND THE RE-DIAL, WHICH IS NOT IN THE QUEUE — see {@link redialInFlight}. Without this
-             a re-dial suspended in `connect()` resumes AFTER the teardown has closed the adapter
-             and dropped the runtime, and then installs a fresh authenticated connection for a
-             mailbox that no longer exists: an organizer claim renewed after the removal route
-             released it, folders created in somebody's mailbox on the way out, and a login with
-             no handle anywhere that can close it. `stopped` is already true here, so the re-dial's
-             own re-checks turn this wait into an early exit rather than a full second dial.
-             It SHARES the budget rather than getting its own: two bounds in sequence would be a
-             stop that can take twice as long as the number this method promises. */
-          if (!wedged) wedged = !(await settledWithin(redialInFlight, left()));
-          /* AND THE CLAIM GOES BACK, then the LOGOUT — ONE wait, in that order. The claim first
-             because the release needs the login; left standing it obstructs every other install
-             for `DEFAULT_STALE_AFTER_MS` while the machine that wrote it is gone. Only where this
-             install believes it organizes — a reader's release would be an IMAP read that can only
-             fail. The logout's rejection still reaches the log: a server answering LOGOUT with an
-             error is not one answering nothing. ONE `settledWithin`, started in a MICROTASK, both
-             for the bound: a fourth hop re-derives its deadline, and `setTimeout` schedules against
-             the loop's clock, which a synchronous prologue does not refresh — measured as a 299
-             against a 300 ms bound. */
-          if (!wedged) {
-            /* `claimed` AND NOT `organizing` — the field that means "a claim of ours may be in the
-               folder". The gate takes the claim a full round trip before it declares `organizing`
-               (see the CLAIM IS OURS FROM HERE block), so a stop landing inside that window read
-               the ATTACH DEFAULT rather than anything this pass knew, and reached the right answer
-               by accident. No reachable state has `organizing` true with `claimed` false, so this
-               releases in exactly the cases it released in before, and in the window as well.
-               NOT on a runtime that never dialled: there is no login to release through, and the
-               attempt was a TypeError logged as a failed release. A claim from before ages out.
-               AND NOT ON A RESTART THE SHELL MARKED: the relaunch continues this claim under the same
-               install id (lease rule 3); a restart that never comes back leaves it to age out. */
-            const keepForRestart = leaving === "restart";
-            /* THE APP'S OWN QUIT LEAVES ITS SETTINGS FIRST (RULING-026 lane A, as amended):
-               the last write, with the instant this install let go, while the claim is still ours and
-               inside this same bound. A refused write is said once and the claim still goes back; one
-               that hangs runs out the bound the release has, and the claim then ages out as before.
-               Only `stop()` asks: a removal (its route released the claim and wiped the store before
-               this) and a re-point (attached again at once) never do. */
-            const settingsFirst = async (): Promise<void> => {
-              if (opts.leaveSettings !== true || !organizer.organizing) return;
-              // Not `left`: that name is this method's own budget, read again below.
-              let written: Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> = "not_saved";
-              try {
-                written = await profileSync.flushBeforeLeaving(leasePermit, adapter, lettingGo());
-              } catch { /* never thrown by its contract; said below as not saved if it is */ }
-              settingsNotLeft(written, "quit");
-            };
-            const politely = Promise.resolve().then(() => (organizer.claimed && !launchSkipped && !keepForRestart
-              ? settingsFirst().then(() => releaseOwnClaim(
-                adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
-                "this install is stopping and its claim could not be removed; it ages out of "
-                  + "ohmail/_meta on its own and another install takes the mailbox then",
-              )).then((released) => {
-                leaseNonce = null;
-                organizer = { ...organizer, organizing: false };
-                if (typeof released === "number" && released > 0) {
-                  log("organizer_claim_released_on_stop", {
-                    mailboxId: mb.id,
-                    claims: released,
-                    reason: "this install stopped organizing this mailbox because it is shutting "
-                      + "down, so the claim is given back rather than left to age out; the row is "
-                      + "untouched and the next launch claims the mailbox again unless another "
-                      + "install has taken it",
-                  });
-                }
-              })
-              : keepForRestart && organizer.claimed && !launchSkipped
-                ? Promise.resolve().then(() => {
-                  log("organizer_claim_kept_for_restart", {
-                    mailboxId: mb.id,
-                    staleAfterMs: config.leaseStaleAfterMs ?? DEFAULT_STALE_AFTER_MS,
-                    reason: "the shell is restarting this app, so the claim stays in ohmail/_meta for "
-                      + "the relaunch to continue; a restart that does not come back leaves it to age out",
-                  });
-                })
-                : Promise.resolve()))
-              .then(() => Promise.resolve(adapter.close()))
-              .catch((err: unknown) => { log("adapter_close_failed", { err }); });
-            wedged = !(await settledWithin(politely, left()));
-          }
-          if (!wedged) return;
-          /* The same teardown the re-dial uses on a connection found dead, and for the same
-             reason. `adapter` is re-read here, so a re-dial that installed a fresh one is the one
-             that goes: this runtime is stopping, and the newest connection is the one with no
-             owner. */
-          const held = adapter;
-          if (held.forceClose !== undefined) {
-            try { held.forceClose(); } catch { /* the socket is going away regardless */ }
-          } else {
-            /* An injected double with no `forceClose`. NOT awaited — a teardown this method waits
-               on is the latch it is escaping. */
-            try { void Promise.resolve(held.close()).catch(() => undefined); }
-            catch { /* threw synchronously; it is going away either way */ }
-          }
-          log("mailbox_detach_forced", {
-            mailboxId: mb.id,
-            pollIntervalMs: detachWaitMs,
-            totalMs: Math.round(monotonic() - startedAt),
-            reason: "this mailbox did not let go within one drain interval — the cycle, the " +
-              "re-dial or the logout was waiting on a link that answers nothing, which is what " +
-              "a half-open link produces — so the connection was destroyed and the stop " +
-              "completed. Destroying it is also what ends the hung command, so nothing is left " +
-              "to log out and the mailbox's timers are already down",
-          });
+             removal route, this one everywhere else. One drain interval for both waits. */
+          stopLeft();                              // arms it where nothing has yet
+          const by = (stopStartedAt as number) + detachWaitMs;
+          await detachBy(leaving, { passBy: by, goodbyeBy: by }, false, opts).done;
         },
+        detachBy: (leaving: "quit" | "restart", by: DetachBounds, opts: { leaveSettings?: boolean } = {}) =>
+          detachBy(leaving, by, true, opts),
         /**
          * The claim goes back; the row does not move (see `LocalMailboxRuntime.handBack`). Inside
          * `serialize`, so it cannot land between a gate's claim and the drain that claim authorises.
@@ -8519,7 +8676,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * be the seed and the `serving` line then prints the id of the one mailbox with no runtime — an
      * incident that reads backwards from the log. One line per left-out row (the ordinary install
      * says nothing extra); the id and the reason, never the address. */
-    for (const row of await loadUnattachedLocalRoster(db, world.accountId)) {
+    const unattached = await loadUnattachedLocalRoster(db, world.accountId);
+    for (const row of unattached) {
       log("local_mailbox_not_attached", {
         mailboxId: row.id,
         disabledReason: row.disabledReason,
@@ -8527,6 +8685,44 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           + "timer and no organizer claim. A row with a reason is paused; one without is a "
           + "mailbox that was removed here",
       });
+    }
+    /**
+     * A REMOVAL THE LAST RUN DID NOT FINISH IS FINISHED HERE. A removal commits its tombstone and
+     * then wipes the mirror in many statements, and a close, a crash or an older build can leave
+     * the tombstone with mail still under it — readable in the window, and doubled the day the
+     * address is added again. From the next launch a tombstone has no runtime, so nothing else
+     * would ever wipe it. Only a row WITHOUT a reason (`endLegacyOrganizerPauses`' own
+     * discriminator; a paused row is the same mailbox and keeps every message) and WITHOUT a
+     * credential, which is the removal's own shape: `MailboxService.delete` writes the tombstone
+     * and deletes the credentials in one transaction, while a row switched off by a plain
+     * `PATCH {status: "disabled"}` keeps both its credential and its mail. And only one that still
+     * holds rows (`mirrorRowsRemain`), so an ordinary start reads a few empty rows per removed
+     * mailbox and writes nothing. BEFORE the doors serve, so the window never reads the mail
+     * again; the wipe writes its receipt, which takes the mailbox out of the window's own mirror. A
+     * wipe that fails is said and tried at the next start; it never stops this one.
+     */
+    for (const row of unattached) {
+      if (row.disabledReason !== null) continue;
+      try {
+        const credential = await db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+          .where(eq(mailboxCredentials.mailboxId, row.id)).limit(1);
+        if (credential.length > 0) continue;
+        if (!(await mirrorRowsRemain(db, row.id))) continue;
+        await wipeLocalMirror(db, { accountId: world.accountId, mailboxId: row.id });
+        log("local_mirror_wipe_finished", {
+          mailboxId: row.id,
+          reason: "this mailbox was removed here and its mail was still on this computer — a "
+            + "removal cut short by a close or a crash, or one an older version made — so this "
+            + "start took it off and told the window; nothing was deleted from the mail server",
+        });
+      } catch (err) {
+        log("local_mirror_wipe_failed", {
+          err,
+          mailboxId: row.id,
+          reason: "a mailbox removed here still has mail on this computer and this start could "
+            + "not clear it; the next start tries again, and removing it again runs the same wipe",
+        });
+      }
     }
 
     /* THE REPAIRS RUN AFTER THE ATTACH, and the order is the whole of whether they ever fire.
@@ -8858,6 +9054,65 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           doorKickInFlight = false;
         }
       })();
+    };
+
+    /**
+     * THE QUIT: THE STORE CLOSES FIRST, THE NETWORK GOODBYES BESIDE IT. The shell kills at its
+     * grace, and the store close used to queue behind every mailbox's claim release and LOGOUT,
+     * each allowed a whole drain interval: on a slow server the kill landed first and the store
+     * stayed recorded open with its lock behind. So the passes and the search backfill get until
+     * `passBy`, a pass still running is cut by destroying its socket, and the store closes as soon
+     * as the writers let go while the goodbyes run until `goodbyeBy`.
+     *
+     * THE DOORS' REQUESTS ARE WRITERS UNTIL `requestsBy`, later than the passes: a request is what
+     * the person pressed, and its last act is a store write — a send's finalize, a removal's wipe.
+     * Cut at `passBy`, a send went out and was recorded pending (and `unverified` when its Sent copy
+     * had failed), and a removal answered 503 with the mail still on disk. `requestsBy` is the
+     * instant that still leaves the measured close reserve before the deadline, so a request that
+     * ends inside it records what it did; one still running past it stays a goodbye below.
+     */
+    const quit = async (plan: QuitPlan): Promise<QuitReport> => {
+      const began = monotonic();
+      const passBy = began + plan.passMs;
+      const requestsBy = began + Math.max(plan.passMs, plan.requestsMs);
+      const since = (): number => Math.round(monotonic() - began);
+      searchWarmup?.stop();
+      const leaving = leavingForRestart ? "restart" : "quit";
+      // The quit leaves each organized mailbox's settings, as a writer, before its claim goes back.
+      const detaching = runtimes.all().map((r) => r.detachBy(
+        leaving, { passBy, goodbyeBy: began + plan.goodbyeMs }, { leaveSettings: leaving === "quit" },
+      ));
+      const writer = async (work: Promise<unknown>, by: number): Promise<number> => {
+        await settledWithin(work, by - monotonic());
+        return since();
+      };
+      const [requestsMs, backfillMs, mailboxesMs] = await Promise.all([
+        writer(plan.requests ?? Promise.resolve(), requestsBy),
+        writer(searchBackfill?.stop() ?? Promise.resolve(), passBy),
+        writer(Promise.all(detaching.map((d) => d.passSettled)), passBy),
+      ]);
+      /* A quarter second at least, for a pass cut at `passBy` to unwind its last statement, or a
+         request cut at `requestsBy` its own. */
+      const closing = Promise.resolve(opened.close({ waitMs: Math.max(250, began + plan.storeWaitMs - monotonic()) }));
+      /* The requests still running stay a goodbye: a send past its SMTP start keeps the process
+         (and its leased connection, see `closeAll`) until it ends or `goodbyeBy`. */
+      const goodbyes = Promise.all([
+        ...detaching.map((d) => d.done),
+        sendConnections.closeAll({ withinMs: Math.max(0, began + plan.goodbyeMs - monotonic()) }).then(() => false),
+        settledWithin(plan.requests ?? Promise.resolve(), began + plan.goodbyeMs - monotonic()).then(() => false),
+      ]).then((forced) => ({ forced: forced.filter(Boolean).length, at: since() }));
+      const [store, bye] = await Promise.allSettled([closing, goodbyes]);
+      const closed = store.status === "fulfilled" ? store.value : undefined;
+      const report: QuitReport = {
+        requestsMs,
+        passesMs: Math.max(backfillMs, mailboxesMs),
+        storeWaitMs: closed?.waitedMs ?? 0,
+        storeCloseMs: closed?.terminateMs ?? 0,
+        goodbyesMs: bye.status === "fulfilled" ? bye.value.at : since(),
+        forced: bye.status === "fulfilled" ? bye.value.forced : 0,
+      };
+      if (store.status === "rejected") throw new QuitLeftOpenError(store.reason, report);
+      return report;
     };
 
     return {
@@ -9899,12 +10154,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                /* And the engine beside the row, which the shared service cannot reach.
                 * `MailboxService.delete` knows about ROWS; not that this door holds an open IMAP
                 * login, renews an organizer claim each poll and serves the mirror — all three were
-                * measured still running after a removal. ORDER: quiesce (above), release, wipe,
-                * then stop — the release needs the login the stop closes, the wipe needs the pass
-                * already finished. `assertMailboxStillHere` refuses any commit that finishes into
-                * the removed mailbox. The RELEASE is best effort and reported (`claimReleased`);
-                * the WIPE is not — a removal that left the mail here is refused, because "it is
-                * gone" would be a false statement about the only copy the person can see. */
+                * measured still running after a removal. ORDER: quiesce (above), wipe, release,
+                * then stop — the wipe needs only the pass already finished, the release needs the
+                * login the stop closes. The WIPE COMES BEFORE THE RELEASE because it is the store
+                * half: it used to wait behind the release's eight or nine IMAP answers, so a close
+                * soon after the press shut the store first and the removal answered 503 with the
+                * mail left, its claim already given back. `assertMailboxStillHere` refuses any
+                * commit that finishes into the removed mailbox. The RELEASE is best effort and
+                * reported (`claimReleased`); the WIPE is not — a removal that left the mail here is
+                * refused, because "it is gone" would be a false statement about the only copy the
+                * person can see. */
                /* "If the roster holds it", not "if it is the one mailbox". This read
                 * `if (mailboxId === world.mailboxId)`, the same statement while an install ran one
                 * mailbox and a silent hole the moment it runs two: removing the SECOND matched
@@ -9914,6 +10173,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 * question asks; each act uses THAT runtime's adapter, or a release would expunge from
                 * the wrong mailbox. */
               const removed = runtimes.get(mailboxId);
+              /* ── A WIPE THAT DID NOT WIPE FAILS THE REMOVAL, AND THE RUNTIME AND ITS CLAIM STAY ──
+               * This used to be caught and logged: the person was told the mailbox was gone while
+               * its mail was still on this disk, and the log's own remedy — remove it again — could
+               * not run, because the removal had already dropped the runtime the wipe needs. Thrown
+               * instead, BEFORE the claim release, so nothing is given back for a removal that is
+               * refused, `detach()` and the roster delete below are never reached, and a second
+               * press comes back through this same wipe. The row is a tombstone by now and
+               * `MailboxService.delete` is idempotent over one (`ownedRowOn` reads by id, not by
+               * status), so the retry is the ordinary press.
+               *
+               * WITH OR WITHOUT A RUNTIME. It ran only inside `if (removed)`, and a tombstone has no
+               * runtime from the next launch on (`loadLocalRoster` excludes it), so a removal cut
+               * short by a close answered a later press 200 and left every message where it was.
+               * The wipe needs only the store; it is idempotent, and the start finishes the same
+               * leftovers on its own (`local_mirror_wipe_finished`). */
+              try {
+                await wipeLocalMirror(db, { accountId: core.accountId, mailboxId });
+              } catch (err) {
+                log("local_mirror_wipe_failed", {
+                  err,
+                  reason: "this install still holds the removed mailbox's mail, so the removal "
+                    + "is refused rather than reported done; the mailbox keeps its runtime, its "
+                    + "claim and its place on this install's roster, and removing it again runs "
+                    + "this wipe, as the next start does",
+                });
+                throw Object.assign(
+                  new Error("this mailbox's mail could not be cleared from this computer"),
+                  { code: "local_mirror_not_cleared", httpStatus: 503 },
+                );
+              }
                /* Whether the claim is actually off the mailbox, carried out to the person. `false`
                 * means one thing: a release was ATTEMPTED and could not complete, so this install's
                 * claim may still stand in `ohmail/_meta`. The removal happened either way, but
@@ -9936,29 +10225,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    copy of this computer wrote it — the other machine will stand down against it. */
                 if (released === null || released === "sibling") claimReleased = false;
                 else if (released > 0) log("organizer_claim_released", { mailboxId, claims: released });
-                /* ── A WIPE THAT DID NOT WIPE FAILS THE REMOVAL, AND THE RUNTIME STAYS ──────
-                 * This used to be caught and logged: the person was told the mailbox was gone
-                 * while its mail was still on this disk, and the log's own remedy — remove it
-                 * again — could not run, because the removal had already dropped the runtime the
-                 * wipe needs. Thrown instead, so `detach()` and the roster delete below are never
-                 * reached and a second press comes back through this same wipe. The row is a
-                 * tombstone by now and `MailboxService.delete` is idempotent over one
-                 * (`ownedRowOn` reads by id, not by status), so the retry is the ordinary press. */
-                try {
-                  await wipeLocalMirror(db, { accountId: core.accountId, mailboxId });
-                } catch (err) {
-                  log("local_mirror_wipe_failed", {
-                    err,
-                    reason: "this install still holds the removed mailbox's mail, so the removal "
-                      + "is refused rather than reported done; the mailbox keeps its runtime and "
-                      + "its place on this install's roster, and removing it again runs this wipe",
-                  });
-                  throw Object.assign(
-                    new Error("this mailbox's mail could not be cleared from this computer"),
-                    { code: "local_mirror_not_cleared", httpStatus: 503 },
-                  );
-                }
-                /* THE TIMER AND THE LOGIN — release, wipe, then stop, and the order is the whole
+                /* THE TIMER AND THE LOGIN — wipe, release, then stop, and the order is the whole
                    implementation: the release needs the login the stop closes, and the wipe needs
                    the poll not to be mid-cycle writing rows back in. This is one of the two paths
                    that still mean "stop syncing entirely" for a mailbox; a reader keeps its timer
@@ -10362,7 +10629,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         });
         return { failures };
       },
-      async stop() {
+      stop: (async (plan?: QuitPlan): Promise<QuitReport | void> => {
         // The INSTALL is going down, which is what the account-scoped passes yield on. Each
         // mailbox's own timer, in-flight cycle and login go with its runtime; the STORE is the
         // install's and is closed once, here, after every mailbox has let go of it.
@@ -10371,6 +10638,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // engine, and one taken between the last detach and the store close would describe a
         // process mid-teardown as though it were serving.
         stopVitals();
+        if (plan !== undefined) return quit(plan);
         // A round in flight finishes before the store closes under it.
         await searchBackfill?.stop();
         searchWarmup?.stop();
@@ -10385,7 +10653,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // The send door's kept connections go with the install: nothing outlives the stop.
         await sendConnections.closeAll();
         await opened.close();
-      },
+      }) as Sidecar["stop"],
       leaving(reason: unknown) {
         /* STRICT: the one word that keeps the claim. Anything else is the quit, and releases. */
         if (reason === "restart") leavingForRestart = true;

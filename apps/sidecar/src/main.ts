@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { type Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { blankRepairModeFrom } from "@trafficflow/core/mail";
-import { createSidecar, type Sidecar, type SidecarConfig } from "./engine.js";
+import { createSidecar, QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig } from "./engine.js";
 import { armFirstPageGate } from "./first-page-gate.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
 import {
@@ -375,6 +375,31 @@ export function ignoreEpipe(stream: NodeJS.EventEmitter): void {
  */
 export const SHUTDOWN_DEADLINE_MS = 5_000;
 
+/**
+ * THE QUIT'S PLAN, inside that grace (`Sidecar.stop`). The passes and the search backfill get
+ * `QUIT_PASS_MS`, then the store closes: its wait for running calls ends at `QUIT_STORE_WAIT_MS`
+ * and Postgres' shutdown gets `QUIT_STORE_CLOSE_RESERVE_MS` after that. The claim releases and
+ * LOGOUTs run beside it until `QUIT_GOODBYE_MS`. Held: store wait + reserve <= goodbye <= deadline
+ * - 500 ms. A clean close on a slow server measured 15 s when every goodbye ran before the store
+ * close. The reserve is measured: Postgres' shutdown on a large seeded test store took 1.5 to 3.7 s
+ * with a thousand messages written since the open, 0.2 to 0.55 s with none, so the passes get 1 s
+ * rather than the grace growing.
+ */
+export const QUIT_PASS_MS = 1_000;
+export const QUIT_STORE_WAIT_MS = 1_500;
+export const QUIT_STORE_CLOSE_RESERVE_MS = 3_000;
+export const QUIT_GOODBYE_MS = 4_500;
+/**
+ * …AND THE DOORS' REQUESTS keep the store until they end or this instant: the deadline less the
+ * measured close reserve. A request is what the person pressed — a send whose finalize records it
+ * `sent`, a removal whose wipe takes the mail off this computer — and one cut at `QUIT_PASS_MS`
+ * delivered the message and recorded it pending, or answered a removal 503 with its mail left on
+ * disk. Only a request still running holds the close; with none in flight the store closes as the
+ * passes let go. Past this the request is a goodbye until `QUIT_GOODBYE_MS`, and the store records
+ * nothing more for it.
+ */
+export const QUIT_REQUESTS_MS = SHUTDOWN_DEADLINE_MS - QUIT_STORE_CLOSE_RESERVE_MS;
+
 let shutdownDeadline: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -427,6 +452,95 @@ export function serveLocalBridge(
   });
 }
 
+/** What {@link localShutdown} closes, read when the shutdown begins. */
+export interface LocalShutdownDeps {
+  sidecar: () => Pick<Sidecar, "stop"> | null;
+  host: () => StdioHost | null;
+  /** The network doors: they stop admitting and drain as the stdio door does. */
+  listeners: () => ReadonlyArray<{ close(): Promise<void> } | null>;
+  log: Diagnostic;
+  exit: (code: number) => void;
+}
+
+/**
+ * THE LOCAL ENGINE'S SHUTDOWN, for every way in: input end, SIGTERM/SIGINT, EPIPE, a fatal
+ * transport. `arm` starts the deadline; `shutdown` arms it too and runs the quit plan at once.
+ * The doors' requests are handed to the engine as writers until `QUIT_REQUESTS_MS` rather than
+ * awaited first, so a request that cannot finish no longer holds the store close past the instant
+ * that still leaves its measured reserve. Exported so tests drive this composition.
+ */
+export function localShutdown(deps: LocalShutdownDeps): {
+  arm(reason: string): void;
+  shutdown(reason: string, code: number): Promise<void>;
+} {
+  const log = deps.log;
+  let armedAt = 0;
+  let deadline: ReturnType<typeof setTimeout> | null = null;
+  let running: Promise<void> | null = null;
+  const inFlight = (): number => deps.host()?.inFlight ?? 0;
+  const arm = (reason: string): void => {
+    if (deadline !== null) return;
+    armedAt = performance.now();
+    deadline = setTimeout(() => {
+      log("shutdown_deadline", {
+        reason: `${reason}: the close had not finished, so the engine leaves without it`,
+        boundMs: SHUTDOWN_DEADLINE_MS,
+        inFlight: inFlight(),
+      });
+      deps.exit(1);
+    }, SHUTDOWN_DEADLINE_MS);
+  };
+  const shutdown = (reason: string, code: number): Promise<void> => {
+    running ??= (async () => {
+      arm(reason);
+      const left = (ms: number): number => Math.max(0, ms - (performance.now() - armedAt));
+      log("shutdown", { reason, inFlight: inFlight() });
+      const host = deps.host();
+      // Both network doors stop admitting and drain, the LAN socket included: it reads the same store.
+      const requests = (async () => {
+        await Promise.all(deps.listeners().map((l) => l?.close()));
+        if (host) {
+          host.stop();
+          await host.finished();
+        }
+      })();
+      requests.catch(() => undefined);
+      let outcome = "closed";
+      let report: QuitReport | undefined;
+      try {
+        report = await deps.sidecar()?.stop({
+          passMs: left(QUIT_PASS_MS),
+          requestsMs: left(QUIT_REQUESTS_MS),
+          storeWaitMs: left(QUIT_STORE_WAIT_MS),
+          goodbyeMs: left(QUIT_GOODBYE_MS),
+          requests,
+        });
+      } catch (err) {
+        if (err instanceof QuitLeftOpenError) report = err.report;
+        log("shutdown_failed", { err: err instanceof QuitLeftOpenError ? err.cause : err });
+        outcome = "left_open";
+        code = 1;
+      }
+      /* ONE LINE SAYS HOW THE ENGINE LEFT, and where the time went. */
+      log("engine_left", {
+        reason,
+        outcome,
+        totalMs: Math.round(performance.now() - armedAt),
+        requestsMs: report?.requestsMs ?? null,
+        passesMs: report?.passesMs ?? null,
+        storeWaitMs: report?.storeWaitMs ?? null,
+        storeCloseMs: report?.storeCloseMs ?? null,
+        goodbyesMs: report?.goodbyesMs ?? null,
+        forced: report?.forced ?? null,
+      });
+      if (deadline !== null) clearTimeout(deadline);
+      deps.exit(code);
+    })();
+    return running;
+  };
+  return { arm, shutdown };
+}
+
 export async function runSidecar(): Promise<void> {
   const stdout = claimStdout();
   ignoreEpipe(process.stderr);
@@ -453,37 +567,22 @@ export async function runSidecar(): Promise<void> {
   let host: StdioHost | null = null;
   let hostListener: HostListener | null = null;
   let lanListener: LanListener | null = null;
-  let shuttingDown: Promise<void> | null = null;
   /**
-   * Order matters, and getting it wrong corrupts the local mirror. Stop accepting requests → let the
-   * in-flight ones finish → only THEN close IMAP and the database. `sidecar.stop()` closes PGlite;
-   * a handler still reading it gets a dead connection at best and a mid-write close at worst. The
-   * stdin path already waited (through `host.finished()`); SIGTERM did not, which was the hole. The
-   * HOST-DOOR LISTENER goes first for the same reason one door over — a paired phone's request reads
-   * the same store — so the socket stops admitting and drains before anything it could be mid-read of
-   * closes; its `close()` never throws, and the shell's process grace is the backstop for a hung handler.
+   * Order matters, and getting it wrong corrupts the local mirror. Stop accepting requests, give
+   * the passes the quit plan's first stretch and the in-flight requests until they end or
+   * `QUIT_REQUESTS_MS`, and only THEN close the database; IMAP says goodbye beside the close
+   * (`localShutdown`, `Sidecar.stop`). A request that reaches the store after its close began is
+   * refused unrun. The HOST-DOOR LISTENER stops
+   * admitting first for the same reason one door over — a paired phone's request reads the same
+   * store; its `close()` never throws, and the shell's process grace is the backstop.
    */
-  const shutdown = (reason: string, code: number): Promise<void> => {
-    shuttingDown ??= (async () => {
-      armShutdownDeadline(log, reason, () => host?.inFlight ?? 0);
-      log("shutdown", { reason, inFlight: host?.inFlight ?? 0 });
-      try {
-        // Both network doors stop admitting and drain before the store can close under them —
-        // the LAN socket is a reader of the same store the loopback one is.
-        await Promise.all([hostListener?.close(), lanListener?.close()]);
-        if (host) {
-          host.stop();
-          await host.finished();
-        }
-        await sidecar?.stop();
-      } catch (err) {
-        log("shutdown_failed", { err });
-        code = 1;
-      }
-      process.exit(code);
-    })();
-    return shuttingDown;
-  };
+  const { arm, shutdown } = localShutdown({
+    sidecar: () => sidecar,
+    host: () => host,
+    listeners: () => [hostListener, lanListener],
+    log,
+    exit: (code) => process.exit(code),
+  });
 
   try {
     // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
@@ -507,8 +606,12 @@ export async function runSidecar(): Promise<void> {
       void shutdown("transport_fatal", 1);
     },
   });
-  // The input ending starts the shutdown's clock, even while a request still holds `finished()`.
-  process.stdin.once("end", () => armShutdownDeadline(log, "stdin_closed", () => host?.inFlight ?? 0));
+  /* The input ending starts the shutdown and its clock at once: a request still in flight is one
+     of the quit's writers, and no longer something the store close waits behind. */
+  process.stdin.once("end", () => {
+    arm("stdin_closed");
+    void shutdown("stdin_closed", 0);
+  });
 
   await host.ready({
     baseUrl: "http://sidecar",

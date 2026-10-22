@@ -258,4 +258,26 @@ describe("the standalone drain settles a send this install stranded", () => {
     expect((await sendRow(sidecar, s.sendId)).status).toBe("pending");
     expect((await draftRow(sidecar, s.draftId)).status).toBe("sending");
   }, 60_000);
+
+  /**
+   * THE LAST RUN'S RESERVATION IS NOT IN FLIGHT, however fresh. This engine holds the data
+   * directory alone (the lock), so a row already `pending` when it opened the store was left by a
+   * process that is gone — a quit that closed the store before a send's finalize, or a crash. The
+   * first drain settles it rather than leaving a delivered message "Sending…" for ten minutes.
+   * The case above is the other half: a row THIS run made keeps the cutoff.
+   */
+  it("settles at the first drain a reservation the LAST run left pending, however fresh", async () => {
+    const dir = await dataDir();
+    const first = await boot(dir, quietMailbox(new MemoryMetaFolder()));
+    const s = await strandOne(first, { ageMs: 30_000 });
+    await first.stop();
+
+    const mailbox = quietMailbox(new MemoryMetaFolder());
+    const next = await boot(dir, mailbox);
+    await next.syncUntilQuiet();
+
+    expect((await sendRow(next, s.sendId)).status, "the next start left it for the stale window").toBe("sent");
+    expect((await draftRow(next, s.draftId)).status).toBe("sent");
+    expect(mailbox.sends).toHaveLength(0);
+  }, 60_000);
 });

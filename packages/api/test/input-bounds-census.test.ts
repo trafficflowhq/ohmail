@@ -1778,6 +1778,11 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
      both cron clocks, and the pass returns early on an empty list rather than issuing an `IN ()`.
      Not caller-supplied in the sense this census is about — no request body reaches it. */
   "schedule-send-pass.ts :: [...mailboxIds]": { origin: { bounded: "the install's own attached roster, one account on one machine; one id on the sidecar drain, absent on both cron clocks, never caller-supplied" }, count: 1 },
+  /* THE RESERVATIONS AN EARLIER RUN LEFT PENDING, named by the reconcile pass's caller. Only the
+     local engine passes them: the rows already `pending` when it opened the store it holds alone,
+     read once by its own `limit`ed select (`INHERITED_SENDS_MAX`, 200). Absent on the API route and
+     the self-host clock, and the claim builds no `IN` when the list is empty. */
+  "send-reconcile-pass.ts :: [...inherited]": { origin: { bounded: "the local engine's own read at open, at most `INHERITED_SENDS_MAX` (200) ids; absent on both hosted clocks, never caller-supplied" }, count: 1 },
   /* ── THE READER'S BULK-MOVE REFUSAL, CHUNKED — AND THE HOLE IT BRIEFLY OPENED ──────────────
    *
    * `refuseBulkMoveOnReader` asks which DISTINCT mailboxes a bulk move would touch, so that an

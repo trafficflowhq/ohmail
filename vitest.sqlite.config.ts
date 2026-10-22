@@ -385,6 +385,9 @@ export default defineConfig({
       // cycle is where the device's defect lives and the door file above never runs one. Same
       // composition, an in-memory `ohmail/_meta` for the lease, so no mail server and no box lock.
       "apps/sidecar/test/phone-stop-then-start.test.ts",
+      // A REMOVED MAILBOX'S MAIL LEAVES THIS STORE TOO: the wipe before the claim release, a Remove
+      // of a removed mailbox, and the start's sweep of a wipe that did not finish. Same composition.
+      "apps/sidecar/test/phone-removal-finishes.test.ts",
       // A HAND-BACK OPENS THE GAP AT THE PRESS: the phone's stop, a letter taken in
       // before the first look, the offer after Organize here. Same composition, no mail server.
       "apps/sidecar/test/gap-window-opens-at-release.test.ts",

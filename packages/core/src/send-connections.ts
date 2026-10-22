@@ -18,6 +18,8 @@ interface Kept {
   readonly real: SendAdapter & { isLive(): boolean };
   leases: number;
   idle: unknown;
+  /** Set by a bounded `closeAll` while leased: called once the last lease has closed it. */
+  closed?: () => void;
 }
 
 /**
@@ -71,11 +73,33 @@ export class SendConnections {
   /** How many connections are kept right now (tests and vitals). */
   size(): number { return this.kept.size; }
 
-  /** Close every kept connection now — the host is going down. */
-  async closeAll(): Promise<void> {
+  /**
+   * Close every kept connection now — the host is going down. With `withinMs`, a connection a
+   * send still leases is left to that send (its Sent copy goes out on it) and closes on its
+   * release, and whatever has not closed by then is destroyed; without it every connection is
+   * closed at once and the wait is unbounded.
+   */
+  async closeAll(opts: { withinMs?: number } = {}): Promise<void> {
     const all = [...this.kept.values()];
     for (const entry of all) this.drop(entry);
-    await Promise.all(all.map((e) => e.real.close().catch(() => { /* already gone */ })));
+    const open = new Set(all);
+    const bounded = opts.withinMs !== undefined;
+    const polite = Promise.all(all.map((e) => (bounded && e.leases > 0
+      ? new Promise<void>((resolve) => { e.closed = resolve; })
+      : e.real.close())
+      .catch(() => { /* already gone */ })
+      .finally(() => { open.delete(e); })));
+    if (opts.withinMs === undefined) { await polite; return; }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, Math.max(0, opts.withinMs!));
+      timer.unref?.();
+    });
+    await Promise.race([polite, late]);
+    clearTimeout(timer);
+    for (const e of open) {
+      try { e.real.forceClose?.(); } catch { /* going away regardless */ }
+    }
   }
 
   private lease(entry: Kept): SendAdapter {
@@ -95,6 +119,7 @@ export class SendConnections {
         if (!released) { released = true; entry.leases = Math.max(0, entry.leases - 1); }
         this.drop(entry);
         entry.real.forceClose?.();
+        entry.closed?.();
       },
     };
   }
@@ -105,6 +130,7 @@ export class SendConnections {
     if (this.kept.get(entry.mailboxId) !== entry || !entry.real.isLive()) {
       this.drop(entry);
       await entry.real.close().catch(() => { /* already gone */ });
+      entry.closed?.();
       return;
     }
     entry.idle = this.timers.set(() => {

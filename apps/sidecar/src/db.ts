@@ -683,7 +683,15 @@ export interface OpenLocalDb {
    * with {@link StoreCloseTimeoutError} rather than shut down under one still running.
    */
   close(): Promise<void>;
+  /** The quit's form: its own bound on the admitted calls, and what the close spent (desktop store). */
+  close(opts: StoreCloseOptions): Promise<StoreCloseReport | void>;
 }
+
+/** A close's own bound on the admitted calls; absent is {@link STORE_CLOSE_WAIT_MS}. */
+export interface StoreCloseOptions { waitMs?: number }
+
+/** What a completed close spent: waiting for the admitted calls, then shutting Postgres down. */
+export interface StoreCloseReport { waitedMs: number; terminateMs: number }
 
 /**
  * PGlite's WASM heap, read from the runtime rather than inferred from `process.memoryUsage()`.
@@ -2336,7 +2344,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
        a process stays alive, and a fresh timer per tick rather than `setInterval` so a slow
        checkpoint cannot have a second one queued behind it. */
     let tick: ReturnType<typeof setTimeout> | null = null;
-    let closing: Promise<void> | null = null;
+    let closing: Promise<StoreCloseReport> | null = null;
     const schedule = (): void => {
       if (closed) return;
       tick = setTimeout(() => {
@@ -2386,8 +2394,8 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
          sends is admitted by the door, and one sent after the shut is refused unrun. At the bound it
          throws and terminates nothing (the store stays recorded open, so the next launch replays its
          log); a later call waits again. */
-      close: () => {
-        closing ??= (async () => {
+      close: ((closeOpts?: StoreCloseOptions): Promise<StoreCloseReport> => {
+        closing ??= (async (): Promise<StoreCloseReport> => {
           closed = true;
           cancelStatistics();
           if (tick) clearTimeout(tick);
@@ -2395,18 +2403,20 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
           flush.stop();
           door.shut();
           const began = Date.now();
-          if (!(await door.quiet(closeWaitMs))) {
+          if (!(await door.quiet(closeOpts?.waitMs ?? closeWaitMs))) {
             const err = new StoreCloseTimeoutError(door.pending(), Date.now() - began);
             log?.("local_db_close_failed", { err, reason: err.message });
             throw err;
           }
+          const waitedMs = Date.now() - began;
           await terminate();
+          return { waitedMs, terminateMs: Date.now() - began - waitedMs };
         })().catch((err: unknown) => {
           if (err instanceof StoreCloseTimeoutError) closing = null;
           throw err;
         });
         return closing;
-      },
+      }) as OpenLocalDb["close"],
     };
   } catch (err) {
     releaseSyncs?.();
