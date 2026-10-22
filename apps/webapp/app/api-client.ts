@@ -2056,6 +2056,10 @@ export const mailboxes = {
     return api<OrganizeDecisionCountWire>(`/screener/unscreened/count?${q.toString()}`);
   },
 
+  /** How many senders wait with mail in this mailbox: the queue's total, narrowed to it. */
+  waitingCount: (id: string) =>
+    api<WaitingCountWire>(`/screener/waiting/count?${new URLSearchParams({ mailboxId: id }).toString()}`),
+
   /**
    * STOP ORGANIZING THIS MAILBOX HERE, AND KEEP THE MAIL. The mirror of {@link organize}, and NOT step-up-gated,
    * which is the asymmetry worth stating rather than smoothing over. A second factor guards the direction that TAKES
@@ -2197,6 +2201,11 @@ export interface OrganizeDecisionCountWire {
   max: number;
   /** False while the first import is still reading the mailbox: a count so far. */
   mirrored: boolean;
+}
+
+/** `GET /screener/waiting/count` — the waiting senders with held mail in one mailbox. */
+export interface WaitingCountWire {
+  senders: number;
 }
 
 export type MailboxTakeover =

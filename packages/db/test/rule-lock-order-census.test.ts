@@ -626,6 +626,9 @@ const EXPECTED: ReadonlyArray<{ file: string; fn?: string; closure?: string; tak
   // A mailbox leaving (removed or switched off) asks the belt for the presses its legs held back.
   { file: "packages/services/src/mailbox-service.ts", fn: "delete", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
   { file: "packages/services/src/mailbox-service.ts", fn: "update", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
+  // The Agree press: the settings row before the mailbox row; its settings change row (the counter) in
+  // a transaction of its own after the commit, the account row then shared.
+  { file: "packages/services/src/mailbox-service.ts", fn: "organizeHere", takes: [ACCOUNT, SETTINGS, MAILBOX_X, COUNTER] },
   // The profile import at both doors, and the HEY import.
   { file: "packages/services/src/profile-import-service.ts", fn: "apply", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
   { file: "apps/worker/src/profile.ts", fn: "answerImportAsk", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },

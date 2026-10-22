@@ -400,6 +400,8 @@ export default defineConfig({
       // ORGANIZE HERE AFTER A HAND-BACK CLAIMS AT ONCE (VERIFY-026 L6): the same composition, the
       // person's press through the phone's door, no mail server and no box.
       "apps/sidecar/test/phone-organize-here-wakes.test.ts",
+      // The consent doors' settings doorbell, after their commit, on the store the phone's press reaches.
+      "apps/sidecar/test/agree-doorbell-after-the-commit.test.ts",
       // A RESUME THAT DID NOT FINISH STARTING. The hand-back clears the poll timer, the resume
       // claims the mailbox and the store then refuses before anything is scheduled — the state
       // where a person is shown a mailbox being organized by an install running nothing. Same
@@ -507,6 +509,8 @@ export default defineConfig({
       "packages/services/test/mailbox-facts-batched.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
       "packages/services/test/organize-rerun-window.test.ts",
+      // The Agree press's settings doorbell, after its commit: a failed change row leaves the press.
+      "packages/services/test/organize-doorbell-after-the-commit.test.ts",
       "packages/db/test/json-merge-dialect.test.ts",
       // WHERE A BUDGETED FIRST SYNC STOPPED (mail 0115). The phone composes the worker's own sync
       // cycle over this store, so the two statements the stop needs — an `is not null`-filtered

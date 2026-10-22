@@ -9159,6 +9159,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 ...(screening ? { screening } : {}),
                 // Only `true`: the press was made on a screen that stated the agree's rule.
                 ...(body.screenBacklog === true ? { screenBacklog: true as const } : {}),
+                // A settings doorbell that fails after the commit is named on this channel.
+                log,
               });
               log("local_mailbox_organize_consented", {
                 verdict: result.outcome,
@@ -10123,7 +10125,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let result;
           try {
             result = await requestOrganizerTakeover(db, {
-              mailboxId, now: now(), intent: "takeover",
+              mailboxId, now: now(), intent: "takeover", log,
             });
           } catch (err) {
             /* The fenced refusal, answered here rather than escaping: the consent write inside

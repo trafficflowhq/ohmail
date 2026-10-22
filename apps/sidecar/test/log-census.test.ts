@@ -1314,6 +1314,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   /* A PERSON'S CONSENT ON A REFUSED PRESS COULD NOT BE WRITTEN. `error`: it carries `err`, and the
      consent the person gave is lost until they press again. `err` + `mailboxId` + `reason`. */
   organizer_consent_record_failed: "error",
+  /* THE SETTINGS DOORBELL AFTER A CONSENT COMMITTED COULD NOT BE WRITTEN (`organize-here.ts`). `error`:
+     it carries `err`, and an open window reads the new window only at the next settings change or
+     consent read. The consent itself stands. `err` + `mailboxId` + `reason`, never an address. */
+  organizer_consent_doorbell_failed: "error",
   /* THE GAP CATCH-UP FILED MAIL THAT ARRIVED WHILE NOTHING ORGANIZED THE MAILBOX, or closed its
      window. `info`, the retro pass's twin: counts only. Its failure arm carries `err` + `reason`. */
   gap_catchup_pass: "info",

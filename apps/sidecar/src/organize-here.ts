@@ -1,12 +1,16 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { accountSettings, auditAction, auditLog, mailboxes, standDownMemory, type OrganizerIntent,} from "@trafficflow/db";
+import {
+  accountSettings, auditAction, auditLog, mailboxes, recordChanges, standDownMemory,
+  type LedgerTx, type OrganizerIntent,
+} from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // The product default and the scope union, from the ONE place that owns them — never a second
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
-import { fenceErasedAccount } from "@trafficflow/services/mail";
+import { ServiceError, fenceErasedAccount } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb } from "./db.js";
+import { createSidecarLog, type Diagnostic } from "./log.js";
 
 /**
  * "Organize this mailbox from this machine" — the one action that ends a stand-down, inside the
@@ -67,6 +71,8 @@ export interface AuthorizeTakeoverInput {
    * a takeover verb and that is what its two doors mean.
    */
   intent: OrganizerIntent;
+  /** Where a settings doorbell that failed after the commit is named ({@link ringSettingsAfterCommit}); stderr when absent. */
+  log?: Diagnostic;
 }
 
 /**
@@ -154,6 +160,7 @@ export async function authorizeOrganizerTakeover(
       await db.transaction(async (tx) => {
         await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
       });
+      await ringSettingsAfterCommit(db, row.accountId, row.id, input.log);
     }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
@@ -197,6 +204,7 @@ export async function authorizeOrganizerTakeover(
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });
+  await ringSettingsAfterCommit(db, row.accountId, row.id, input.log);
 
   /* -- `previousReason` IS DERIVED, AND READING THE COLUMN RETURNED NULL FOR A YEAR OF ROWS --
    *
@@ -305,6 +313,39 @@ async function writeConsentScreening(
 }
 
 /**
+ * THE SETTINGS DOORBELL, AFTER EACH CONSENT COMMITS: the window just written reaches an open window
+ * through `/sync` (`useConsentState` re-asks `GET /consent` per `settings` row). Its OWN short
+ * transaction, the erasure fence first and the change-log counter second, the hosted press's shape
+ * (`MailboxService.organizeHere`), where taking the counter inside the press deadlocked a writer that
+ * takes the counter before it reads the account row. A drain that reads this row's seq still reads
+ * the window, which committed first. A failure costs one doorbell and is logged, never retried: the
+ * consent stands, and the next settings change or consent read carries the window. An erased account
+ * answers 410, as at the consent's own fence, and gets no change row.
+ */
+async function ringSettingsAfterCommit(
+  db: LocalDb, accountId: string, mailboxId: string, injected: Diagnostic | undefined,
+): Promise<void> {
+  try {
+    await db.transaction(async (tx) => {
+      await fenceErasedAccount(tx, dialect(db), accountId);
+      await recordChanges(tx as unknown as LedgerTx, [
+        { accountId, entityType: "settings", entityId: accountId, op: "update" },
+      ]);
+    });
+  } catch (err) {
+    if (err instanceof ServiceError && err.code === "account_erased") throw err;
+    // The caller's diagnostic channel; the CLI and a direct call have none, so stderr.
+    const log = injected ?? createSidecarLog();
+    log("organizer_consent_doorbell_failed", {
+      err,
+      mailboxId,
+      reason: "the consent and its window COMMITTED; only the settings change row failed, so an open "
+        + "window reads the new window at the next settings change or consent read instead of at once",
+    });
+  }
+}
+
+/**
  * IS THERE A SETTINGS RECORD TO MEASURE A WINDOW FROM — the question the `already_organizing`
  * arms never asked. Those arms answer about the MAILBOX ROW and read "the row already says so"
  * as "everything this press would write is already written". Measured at the 0.18.0 rc: a
@@ -347,6 +388,8 @@ export async function requestOrganizerTakeover(
     screening?: LocalScreeningConsent;
     /** The press stated the agree's rule; recorded on a first consent (`MailboxService.organizeHere`). */
     screenBacklog?: true;
+    /** Where a settings doorbell that failed after the commit is named; stderr when absent. */
+    log?: Diagnostic;
   },
 ): Promise<TakeoverAuthorizationResult> {
   /* -- THE BOUNDS ARE CHECKED BEFORE THE TRANSACTION, AND THEY THROW -------------------------
@@ -452,6 +495,7 @@ export async function requestOrganizerTakeover(
           ...(input.screening ? { dials: { days, scope } } : {}),
         });
       });
+      await ringSettingsAfterCommit(db, row.accountId, row.id, input.log);
     }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
   }
@@ -498,6 +542,7 @@ export async function requestOrganizerTakeover(
       });
     }
   });
+  await ringSettingsAfterCommit(db, row.accountId, row.id, input.log);
 
   // Derived, for the reason the CLI arm above gives — this is the half the Settings button uses.
   return { outcome: "authorized", previousReason: standDownMemory(row), mailboxId: row.id };
@@ -513,7 +558,11 @@ export async function requestOrganizerTakeover(
  */
 export async function recordConsentWithoutClaim(
   db: LocalDb,
-  input: { mailboxId: string; now: Date },
+  input: {
+    mailboxId: string; now: Date;
+    /** Where a settings doorbell that failed after the commit is named; stderr when absent. */
+    log?: Diagnostic;
+  },
 ): Promise<"recorded" | "removed" | "no_mailbox"> {
   const [row] = await db
     .select({ id: mailboxes.id, accountId: mailboxes.accountId, status: mailboxes.status })
@@ -531,6 +580,7 @@ export async function recordConsentWithoutClaim(
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
   });
+  await ringSettingsAfterCommit(db, row.accountId, row.id, input.log);
   return "recorded";
 }
 

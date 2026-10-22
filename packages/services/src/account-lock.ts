@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { accounts, mailboxes, type LedgerTx } from "@trafficflow/db";
+import { accounts, accountSettings, mailboxes, type LedgerTx } from "@trafficflow/db";
 import type { Dialect } from "@trafficflow/db/dialect";
 
 /**
@@ -18,6 +18,19 @@ export async function lockAccountRow(
   tx: LedgerTx, d: Dialect, accountId: string, mode: "update" | "share" = "update",
 ): Promise<void> {
   await d.forUpdate(tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, accountId)).limit(1), { mode });
+}
+
+/**
+ * The account's `account_settings` row `FOR UPDATE`, as a statement the rule-lock census reads: a door
+ * that writes the settings row after it has read a mailbox row takes this first, so the settings row
+ * keeps its place in the chain, after the account row and before any mailbox row. The upserts after it
+ * re-take the same row. An account with no settings row yet has nothing to lock here; its first upsert
+ * creates the row under the account row the caller holds, which every server writer of the table takes
+ * first. A no-op clause on a single-writer device store, through the dialect seam.
+ */
+export async function lockAccountSettingsRow(tx: LedgerTx, d: Dialect, accountId: string): Promise<void> {
+  await d.forUpdate(tx.select({ accountId: accountSettings.accountId }).from(accountSettings)
+    .where(eq(accountSettings.accountId, accountId)).limit(1));
 }
 
 /**

@@ -173,6 +173,9 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
     id: string, screening: { dormancyDays?: number; scope?: "window" | "all_time" },
   ) => mailboxApi.organizeCount(id, screening), []);
 
+  // This mailbox's waiting senders, the decide step's lead on an install with several mailboxes.
+  const countWaiting = useCallback(async (id: string) => mailboxApi.waitingCount(id), []);
+
   const complete = useCallback(async () => {
     await consentApi.completeOnboarding();
   }, []);
@@ -213,6 +216,7 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
       connect,
       organize,
       countDecision,
+      countWaiting,
       complete,
       setAiEnabled: writeAi,
       forgetMailbox,
@@ -231,5 +235,5 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
         prompt: (p) => createElement(StepUpPrompt, p),
       },
     } satisfies FirstRunHost;
-  }, [ai, complete, connect, countDecision, demo, forgetMailbox, operatorAi, organize, pairNode, probe, writeAi]);
+  }, [ai, complete, connect, countDecision, countWaiting, demo, forgetMailbox, operatorAi, organize, pairNode, probe, writeAi]);
 }

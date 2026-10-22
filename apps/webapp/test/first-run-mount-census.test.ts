@@ -85,6 +85,29 @@ function argCounts(source: string, fn: string): number[] {
   return out;
 }
 
+/** The `many` property's initializer in the decide subject `firstRunDecide` returns, or null. */
+function decideMany(source: string): string | null {
+  const file = ts.createSourceFile("AppShell.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let decl: ts.VariableDeclaration | undefined;
+  const walk = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "firstRunDecide") decl = node;
+    ts.forEachChild(node, walk);
+  };
+  walk(file);
+  if (!decl) throw new Error("no firstRunDecide in AppShell.tsx — stale census, not a pass");
+  let init: string | null = null;
+  const find = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node) && node.expression && ts.isObjectLiteralExpression(node.expression)) {
+      for (const p of node.expression.properties) {
+        if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === "many") init = p.initializer.getText(file);
+      }
+    }
+    ts.forEachChild(node, find);
+  };
+  find(decl);
+  return init;
+}
+
 const real = readFileSync(SHELL, "utf8");
 
 describe("AppShell's first-run mount", () => {
@@ -143,5 +166,15 @@ describe("AppShell's first-run mount", () => {
     const doctored = real.replace("history, firstRunMailbox.id)", "history, firstRunMailbox.id, storeTotal)");
     expect(doctored, "the counters' call was not doctored").not.toBe(real);
     expect(argCounts(doctored, "firstRunCounts")).toEqual([4]);
+  });
+
+  it("the decide subject says whether the install has several mailboxes, by `firstRunQueue`'s rule (R20-03)", () => {
+    expect(decideMany(real), "the decide step cannot tell an added mailbox from a single one").toBe("(facts?.length ?? 0) > 1");
+  });
+
+  it("DOCTORED CONTROL — a subject without `many` is read as without it", () => {
+    const doctored = real.replace(/ many: \(facts\?\.length \?\? 0\) > 1,/, "");
+    expect(doctored, "`many` was not doctored").not.toBe(real);
+    expect(decideMany(doctored)).toBeNull();
   });
 });

@@ -564,6 +564,8 @@ const READ = [
   "GET /screener/unscreened",
   // What agreeing will screen: the same walk over one mailbox and a window, a read for the same reason.
   "GET /screener/unscreened/count",
+  // The decide step's count of one mailbox's waiting senders: the queue's total, a read.
+  "GET /screener/waiting/count",
   "GET /search",
   "GET /snippets",
   "GET /snippets/:id",
@@ -943,7 +945,9 @@ describe("the route table declares what every handler causes", () => {
     // together and the gated remainder is unchanged.
     // 248 -> 252: the alert drills' four routes (cloud 0051), each `unauthenticated`, so they join
     // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
-    expect(apiRoutes).toHaveLength(252);
+    // 252 -> 253: `GET /screener/waiting/count`, the decide step's count, a `read`, so it joins
+    // the exempt list above and this total together.
+    expect(apiRoutes).toHaveLength(253);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1171,7 +1175,9 @@ describe("the route table declares what every handler causes", () => {
     // each, the remainder does not move.
     // 248 -> 252 with the alert drills' four routes, `unauthenticated`: the total and
     // `UNAUTHENTICATED` grow by four each, the remainder does not move.
-    expect(gated.length).toBe(252 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 252 -> 253 with the decide step's waiting count, a `read`: the total and `READ` grow by one
+    // each, the remainder does not move.
+    expect(gated.length).toBe(253 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

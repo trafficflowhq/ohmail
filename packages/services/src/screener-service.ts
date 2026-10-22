@@ -1068,6 +1068,21 @@ export class ScreenerReadService {
   }
 
   /**
+   * HOW MANY SENDERS WAIT WITH MAIL IN THIS MAILBOX — the first-run decide step's count (R20-03).
+   * The queue's own statement narrowed to held mail in the mailbox: the first page's `total`, so
+   * activity in any mailbox, decided and own excluded, in-flight decisions subtracted. A sender
+   * held in two mailboxes counts in each. 404 for a mailbox not the caller's or removed.
+   */
+  async waitingCount(ctx: ServiceContext, mailboxId: string): Promise<{ senders: number }> {
+    const [mb] = await bridgeTx(ctx.db).select({ status: mailboxes.status }).from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, ctx.accountId))).limit(1);
+    if (!mb || mb.status === "disabled") throw new ServiceError("not_found", 404, "mailbox not found");
+    const cutline = cutlinesOf(await effectiveScreeningWindows(ctx), ctx.now());
+    const { total } = await this.heldSenderPage(ctx, { after: null, limit: 1, cutline, withTotal: true, mailboxId });
+    return { senders: total ?? 0 };
+  }
+
+  /**
    * ══════════════════════════════════════════════════════════════════════════════════════════
    *  VALIDATE — pure input-format checks, shared by the organizer's direct write and the
    *  reader's request. 0.14.1: extracted so the SAME function refuses a malformed
@@ -1615,8 +1630,9 @@ export class ScreenerReadService {
    * rows back by id. The window sorts every held message of the account; carried whole (subject,
    * snippet, locator) that sort left memory for disk on a large mailbox (74k: 12k held rows, 6 MB).
    */
-  private heldSenderKeys(ctx: ServiceContext) {
-    const { d, filters, window } = this.heldWindow(ctx);
+  private heldSenderKeys(ctx: ServiceContext, mailboxId?: string) {
+    // A mailbox narrows the held rows only; activity, decided and own stay account-wide.
+    const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId));
     // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -1684,9 +1700,11 @@ export class ScreenerReadService {
       cutline?: CutlineSet;
       /** Count the whole queue in the same statement — the first page's `total`. */
       withTotal?: boolean;
+      /** Only senders with held mail in this mailbox ({@link waitingCount}). */
+      mailboxId?: string;
     },
   ): Promise<{ rows: ScreenerRow[]; total: number | undefined }> {
-    const held = this.heldSenderKeys(ctx);
+    const held = this.heldSenderKeys(ctx, opts.mailboxId);
     const { reps, d } = held;
 
     /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────

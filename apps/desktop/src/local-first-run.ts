@@ -445,6 +445,12 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
     return jsonOf<FirstRunDecisionCount>(await bridgeFetch(`/screener/unscreened/count?${q.toString()}`, { method: "GET" }));
   }, []);
 
+  /* This mailbox's waiting senders, the decide step's lead: the shared route as well. */
+  const countWaiting = useCallback(async (mailboxId: string): Promise<{ senders: number }> => {
+    const q = new URLSearchParams({ mailboxId });
+    return jsonOf<{ senders: number }>(await bridgeFetch(`/screener/waiting/count?${q.toString()}`, { method: "GET" }));
+  }, []);
+
   const complete = useCallback(async () => {
     /* LEAVE THE FLOW. `consentRoutes` are mounted on `localRoutes` (mail 0083), so this is the
        same `PATCH /consent/settings` a browser tab sends, answered out of this machine's own
@@ -482,6 +488,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       connect,
       organize,
       countDecision,
+      countWaiting,
       complete,
       setAiEnabled,
       forgetMailbox,
@@ -495,7 +502,7 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
       ...(pairNode ? { pairNode } : {}),
     } satisfies FirstRunHost;
   }, [
-    complete, connect, countDecision, forgetMailbox, local, organize, pairNode, posture, probe, providerForm,
-    setAiEnabled,
+    complete, connect, countDecision, countWaiting, forgetMailbox, local, organize, pairNode, posture, probe,
+    providerForm, setAiEnabled,
   ]);
 }

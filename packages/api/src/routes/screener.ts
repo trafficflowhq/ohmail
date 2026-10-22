@@ -217,6 +217,24 @@ export const screenerRoutes: Route[] = [
   },
   {
     /**
+     * HOW MANY SENDERS WAIT WITH MAIL IN ONE MAILBOX — the first-run decide step's count. The
+     * queue's own total narrowed to held mail in the mailbox; a read, no lock, no mailbox opened.
+     */
+    method: "GET",
+    pattern: "/screener/waiting/count",
+    relay: true,
+    cost: "read",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const mailboxId = new URL(req.url).searchParams.get("mailboxId") ?? "";
+      if (!/^[0-9a-f-]{36}$/i.test(mailboxId)) {
+        throw new ServiceError("validation_failed", 400, "mailboxId must be a mailbox id");
+      }
+      return jsonResponse(await screener(deps).waitingCount(ctx, mailboxId));
+    },
+  },
+  {
+    /**
      * THE PRESS. Sends the named sender groups — or every group shown, when `addresses` is absent
      * — to the Screener, through the door a fresh arrival takes. It writes the intent and the
      * delta and opens no mailbox: the organizer's reconciler performs the physical move.

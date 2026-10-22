@@ -29,15 +29,23 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 /* The head of the mailbox lock order, imported as a STATEMENT rather than reached through the
  * gate: which policy a host installed decides whether the gate runs, and the lock order may not
  * depend on that. */
-import { lockAccountRow, lockMailboxRow } from "./account-lock.js";
+import { lockAccountRow, lockAccountSettingsRow, lockMailboxRow } from "./account-lock.js";
+import { recordSettingsChange } from "./consent-seed.js";
 import { ownedMessages } from "./message-service.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
-import { DEFAULT_DORMANCY_DAYS, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";
+import { DEFAULT_DORMANCY_DAYS, createLogger, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
+
+/**
+ * Where the Agree press reports a settings doorbell that failed after its commit. Module scope and
+ * not injected, `filing_doorbell_failed`'s reason: one warn line on a path whose failure costs one
+ * doorbell, and nothing reads it back.
+ */
+const settingsDoorbellLog = createLogger({ service: "mailbox" });
 
 /**
  * The origin of a credential written into a mailbox row this very transaction creates. A sign-out
@@ -2407,15 +2415,28 @@ export class MailboxService {
     // remote call under the account's row lock is the deadlock the send pass already records.
     const access = await this.access(ctx.accountId);
 
+    /* WHETHER THE PRESS WROTE THE ACCOUNT'S SETTINGS ROW (the window, or the baseline alone), set on
+       each path that wrote it and returned: the doorbell after the commit rings for those alone. */
+    const wrote = { settings: false };
     // The consent write, through the fenced door: this upserts `account_settings` — the very
     // table and the very race `erasure-fence.ts` was written about — and reaches the allowance
     // gate below, so it takes the account row at UPDATE strength once, at the head. That is the
     // head of the mailbox lock order too, so no second `lockAccountRow` is taken inside.
-    return withAccountTx(ctx, async (tx) => {
+    const answer = await withAccountTx(ctx, async (tx) => {
+      // THE CHAIN, AT THE HEAD (`rule-lock-order-census.test.ts`): the account row (the fence,
+      // `FOR UPDATE`), the account's settings row, this mailbox row `FOR UPDATE`. Every arm below
+      // writes the settings row after it has read the mailbox row, so the settings row is taken
+      // here, before it; the upserts below re-take it, or create it on an account that has none yet
+      // (`lockAccountSettingsRow`). NO CHANGE-LOG COUNTER IN THIS TRANSACTION: the settings change
+      // row is written after the commit, in a transaction of its own (below the `catch`).
+      await lockAccountSettingsRow(tx, dialect(ctx.db), ctx.accountId);
       // `FOR UPDATE`, in the same order and on the same row as `update` and `delete` take it, so
       // the three serialize instead of interleaving. Without it, an organize and a `delete` can
       // both read the row and commit in either order, and the losing order leaves a mailbox that
-      // is authorized to organize and has had its credentials deleted.
+      // is authorized to organize and has had its credentials deleted. Taken by the statement the
+      // census reads, so the credential's erasure fence below shares a row already held, never
+      // first; `ownedRowOn` re-takes it and answers the 404.
+      await lockMailboxRow(tx, dialect(ctx.db), ctx.accountId, id);
       const current = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
 
       /**
@@ -2475,9 +2496,10 @@ export class MailboxService {
          * about the MAILBOX ROW, and reading it as "everything is already written" is what left
          * the account with no record. So the record is written where NONE is readable — the state
          * with no cutline to slide; where one is readable this press still writes nothing. */
-        if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
+        if (input.screening) { await this.writeScreeningAnswer(tx, ctx, input.screening); wrote.settings = true; }
         else if (!(await this.settingsRecordReadable(tx, ctx.accountId))) {
           await this.writeConsentBaseline(tx, ctx);
+          wrote.settings = true;
         }
         return { outcome: "already_organizing" as const };
       }
@@ -2649,6 +2671,8 @@ export class MailboxService {
           payload: { mailboxId: id }, createdAt: stamp,
         });
       }
+      // The baseline and the window above: the doorbell after the commit rings for them.
+      wrote.settings = true;
       /**
        * Derived from the ROLE, because the column has had no writer since mail 0083. This read
        * `current.disabledReason`, which is now `null` for every reader row this build writes — so
@@ -2669,6 +2693,37 @@ export class MailboxService {
       if (isActiveAddressConflict(err)) throw addressTaken();
       throw err;
     });
+    /**
+     * THE SETTINGS DOORBELL, AFTER THE COMMIT, in a short transaction of its own: the erasure fence
+     * (the account row `FOR SHARE`) and the change-log counter, nothing else. An open window re-asks
+     * `GET /consent` for the window just written when this row reaches it (`useConsentState`).
+     *
+     * NEVER INSIDE THE PRESS. There it took the counter under the account row the press holds `FOR
+     * UPDATE` from its first statement, and a writer that takes the counter BEFORE it reads the
+     * account row (triage with an Idempotency-Key, among others: WRITERS-READ-THE-ACCOUNT-AFTER-THE-
+     * COUNTER) waited on the press while the press waited on it: 40P01 on Postgres, a 500 to one of
+     * the two (`organize-here-lock-order.pg.test.ts`, each side first). Here the press holds nothing.
+     *
+     * A drain that reads this row's seq still reads the window it announces, because the window
+     * committed first. A failure costs one doorbell and is logged, never retried: the press HAS
+     * committed, and the next settings change or the next consent read carries the window. Only an
+     * erased account answers 410, as the fenced seam does, and gets no change row.
+     */
+    if (wrote.settings) {
+      try {
+        await withAccountTx(ctx, async (tx) => { await recordSettingsChange(tx, ctx.accountId); });
+      } catch (err) {
+        if (err instanceof ServiceError && err.code === "account_erased") throw err;
+        settingsDoorbellLog.warn("organize_settings_doorbell_failed", {
+          accountId: ctx.accountId,
+          mailboxId: id,
+          err,
+          reason: "the press COMMITTED; only its settings change row failed, so an open window reads "
+            + "the new window at the next settings change or consent read instead of at once",
+        });
+      }
+    }
+    return answer;
   }
 
   private async probedImapMeta(

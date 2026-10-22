@@ -1497,7 +1497,7 @@ async function composePhoneEngine(
     if (press?.person === true && new URL(req.url).pathname.startsWith("/local/")) {
       try {
         consentRecorded = (await recordConsentWithoutClaim(
-          store.db, { mailboxId, now: deps.now?.() ?? new Date() },
+          store.db, { mailboxId, now: deps.now?.() ?? new Date(), log },
         )) === "recorded";
       } catch (err) {
         log("organizer_consent_record_failed", {
