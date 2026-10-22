@@ -4612,8 +4612,9 @@ export async function startWorkerWithLock(
           if (setAside) {
             log.info("sync_cycle_set_aside", {
               mailboxId: rt.mailboxId, accountId: rt.accountId,
-              reason: "the server sent more of one message than it declared; that message is set " +
-                "aside and the connection retired — NOT counted toward maxSyncFailures and NOT " +
+              reason: "the server sent more of one message than it declared, or more for a batch than " +
+                "it declared; that message is set aside, or the mail read before the batch overrun " +
+                "was kept, and the connection retired — NOT counted toward maxSyncFailures and NOT " +
                 "quarantined",
             });
           } else {

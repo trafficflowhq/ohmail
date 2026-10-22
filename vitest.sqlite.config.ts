@@ -236,6 +236,9 @@ export default defineConfig({
       "apps/worker/test/store-fault-classes.test.ts",
       // The local backstop over the same store: one cycle's cap, then the write-offs hold.
       "apps/worker/test/write-off-backstop.test.ts",
+      // A batch-total overrun in a first-read and a renumbered folder: the cursor, the repoint and
+      // the reset's proof over the device store, where the phone's engine runs them.
+      "apps/worker/test/overrun-batch-total-stores.test.ts",
       "packages/services/test/search-part-word.test.ts",
       "packages/services/test/search-punctuation-parity.test.ts",
       // The device answers what the server answers: stems, joined forms, part-words (the census).

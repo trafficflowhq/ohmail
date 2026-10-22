@@ -888,11 +888,14 @@ export interface ChangeBatch {
    */
   oversize?: ReadonlyArray<{ folder: string; uidValidity: string; uid: number; size: number }>;
   /**
-   * The pass STOPPED at a message whose own bytes crossed a read bound: the connection is retired,
-   * folders before it carry their work and cursors, that folder and every later one keep their
-   * stored cursor. The caller sets the message aside, commits the batch, and rethrows `breach`.
+   * The pass STOPPED at a read bound's `body_overrun`: the connection is retired, folders before it
+   * carry their work and cursors, that folder and every later one keep their stored cursor. A folder
+   * whose cursor names no live epoch (none yet, or one the server renumbered) gets one naming it and
+   * no UID, which advances nothing; a renumbered folder's reset deletes go with it. With a UID, the
+   * caller sets that message aside; without one (a batch total no single message decides) nothing
+   * is. Either way it commits the batch and rethrows `breach`.
    */
-  overrun?: MessageSite & { breach: Error };
+  overrun?: (MessageSite & { breach: Error }) | { folder: string; breach: Error; uidValidity?: undefined; uid?: undefined };
   /** {@link ImapCursor.setAside} rows whose epoch the folder's live UIDVALIDITY contradicts. */
   setAsideStale?: readonly MessageSite[];
   /**

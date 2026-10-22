@@ -48,7 +48,9 @@ export class ImapBoundExceeded extends Error {
   /**
    * The ONE message whose own bytes crossed the bound, where one did: a per-message
    * `body_overrun` names it, so the caller can set that message aside before the re-dial asks for
-   * it again. Absent for every bound no single message decides (a listing, a clock, a batch total).
+   * it again. A batch total names one only when the command that crossed asked for that one UID
+   * and its reply had not arrived. Absent for every bound no single message decides (a listing, a
+   * clock, a batch total over several asked UIDs).
    */
   readonly site?: { readonly uidValidity: string; readonly uid: number };
   constructor(

@@ -500,16 +500,23 @@ const keyOf = (folder: string, uidValidity: string, uid: number): string =>
 const storedEpoch = (v: string): string => (/^[0-9]+$/.test(v) ? String(BigInt(v)) : "0");
 
 /**
- * WAS THIS BREACH PROGRESS? A per-message `body_overrun` that names its message, and THIS CYCLE wrote
- * that message off ({@link DeadLetterLedger.wroteOffThisCycle}; `revoke` takes it back when the durable
- * row could not be written). A row from an earlier cycle is not progress: a server naming no
- * UIDVALIDITY hands the same liar back every pass. Asked at cycle end by both engines: progress does
- * not climb the reconnect ladder, arm the outage clock or count toward quarantine. Anything else — the
- * batch total, a set-aside the cap refused, a revoked or an older row — stays a failure.
+ * WAS THIS BREACH PROGRESS? A `body_overrun` that names its message, and THIS CYCLE wrote that message
+ * off ({@link DeadLetterLedger.wroteOffThisCycle}; `revoke` takes it back when the durable row could
+ * not be written). One that names none (a batch total) when THIS CYCLE stored new mail into, re-learned
+ * a message under the live epoch of, or wrote a message off from, its folder
+ * ({@link DeadLetterLedger.progressedThisCycleIn}): the mail read before the breach was kept. Each of
+ * those happens once per message (a re-learned one is repointed to that epoch), so this cannot loop.
+ * A row from an earlier cycle is not progress: a server naming no UIDVALIDITY hands the same liar back every pass.
+ * Asked at cycle end by both engines: progress does not climb the reconnect ladder, arm the outage
+ * clock or count toward quarantine. Anything else — a total over nothing new, a set-aside the cap
+ * refused, a revoked or an older row — stays a failure.
  */
-export function breachSetAside(err: unknown, ledger: Pick<DeadLetterLedger, "wroteOffThisCycle"> | undefined): boolean {
+export function breachSetAside(
+  err: unknown, ledger: Pick<DeadLetterLedger, "wroteOffThisCycle" | "progressedThisCycleIn"> | undefined,
+): boolean {
   if (ledger === undefined || !isImapBoundExceeded(err) || err.bound !== "body_overrun") return false;
-  if (err.site === undefined || err.folder === undefined) return false;
+  if (err.folder === undefined) return false;
+  if (err.site === undefined) return ledger.progressedThisCycleIn(err.folder);
   return ledger.wroteOffThisCycle(err.folder, err.site.uidValidity, err.site.uid);
 }
 
@@ -533,6 +540,8 @@ export class DeadLetterLedger {
   private thisCycle = 0;
   /** The keys {@link record} wrote off in the CURRENT cycle (and {@link revoke} did not take back). */
   private readonly writtenThisCycle = new Set<string>();
+  /** Folders the CURRENT cycle stored new mail into, re-learned a message in, or wrote one off from. */
+  private readonly progressIn = new Set<string>();
   /** See {@link holdsAtCap}; the instant the hold engaged, or null. */
   private heldSince: Date | null = null;
   /** See {@link storeFaultSince}. */
@@ -627,7 +636,16 @@ export class DeadLetterLedger {
   }
 
   /** Called once at the top of every sync cycle, so the per-cycle cap is per cycle. */
-  beginCycle(): void { this.thisCycle = 0; this.writtenThisCycle.clear(); }
+  beginCycle(): void { this.thisCycle = 0; this.writtenThisCycle.clear(); this.progressIn.clear(); }
+
+  /**
+   * This cycle stored a new message into `folder`, re-learned one it held there under the folder's
+   * live epoch, or wrote one off from it durably.
+   */
+  noteProgressIn(folder: string): void { this.progressIn.add(folder); }
+
+  /** Did THIS cycle store into, re-learn in, or write off from `folder`? See {@link breachSetAside}. */
+  progressedThisCycleIn(folder: string): boolean { return this.progressIn.has(folder); }
 
   /** Did THIS cycle write this message off? See {@link breachSetAside}. */
   wroteOffThisCycle(folder: string, uidValidity: string, uid: number): boolean {
