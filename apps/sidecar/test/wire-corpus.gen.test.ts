@@ -211,10 +211,10 @@ const DATE_KEYS = new Set([
   // `sortAt` arrived with the Ohbox sorting by arrival rather than by the date a sender wrote.
   // Minted per run, so listing it is what the comment above prescribes — a re-record that did not
   // list it wrote a wall-clock value into the corpus and the very next comparison failed on it.
-  // KNOWN, MEASURED, AND NOT HIDDEN: slots are positions in the SORTED DISTINCT set, and this
-  // field's raw instant sometimes coincides with another stamp and sometimes does not, so the
-  // slot count moves and every later date shifts by one — 1 run in 6 here. The instability is the
-  // renumbering's, not this field's; it is the first field close enough to another to expose it.
+  // It resolves to `arrivedAt`, the IMAP INTERNALDATE, which GreenMail keeps to the second: three
+  // appends left to the server's clock usually shared a second and, 1 run in 6, straddled one,
+  // which split the field's slots (10:00 read 10:01 in four rows). The journey now names each
+  // append's INTERNALDATE, so the field's order and its slots are fixed.
   "sortAt",
   // `asOf` arrived with the filing strip's split counts: every `GET /mailboxes` row carries THE
   // READ'S OWN INSTANT (`mailbox-service.ts`), unconditionally, so a client can say when it last
@@ -282,21 +282,25 @@ describe("the wire corpus the desktop app decodes", () => {
         followUp: `follow-up-${randomUUID()}@stranger.test`,
         otherSender: `kiln-${randomUUID()}@pottery.test`,
       };
+      // Each append names its INTERNALDATE, a minute apart in the Date headers' order, from one
+      // clock read floored to the second (the server's precision): arrival order is not timing.
+      const base = Math.floor(Date.now() / 1000) * 1000;
+      const arrival = (minutesAgo: number): Date => new Date(base - minutesAgo * 60_000);
       await w.raw.append("INBOX", eml({
         from: "stranger@nowhere.test", to: w.cfg.auth.user, subject: "Can we talk?",
         messageId: ids.firstContact, date: "Mon, 03 Aug 2026 08:14:00 +0000",
         body: "Hello — we have not met before. I am writing about the pottery studio.",
-      }));
+      }), [], arrival(3));
       await w.raw.append("INBOX", eml({
         from: "stranger@nowhere.test", to: w.cfg.auth.user, subject: "Following up",
         messageId: ids.followUp, date: "Mon, 03 Aug 2026 09:41:00 +0000",
         body: "Following up on the studio question — no rush.",
-      }));
+      }), [], arrival(2));
       await w.raw.append("INBOX", eml({
         from: "studio@pottery.test", to: w.cfg.auth.user, subject: "Kiln schedule for August",
         messageId: ids.otherSender, date: "Mon, 03 Aug 2026 10:02:00 +0000",
         body: "The kiln is booked Tuesdays and Thursdays through the end of the month.",
-      }));
+      }), [], arrival(1));
 
       // ── 2. The engine starts: connect, ensure the ohmail/* tree, drain the mailbox.
       await w.sidecar.start();
@@ -314,6 +318,8 @@ describe("the wire corpus the desktop app decodes", () => {
       const [row] = await w.sidecar.db.select().from(messages)
         .where(eq(messages.messageIdHeader, ids.firstContact));
       expect(row, "first contact was never ingested").toBeDefined();
+      expect(row!.arrivedAt?.getTime(), "arrival is not the INTERNALDATE the append named")
+        .toBe(arrival(3).getTime());
 
       // ── 4. The routes the app speaks, in the order it speaks them.
       //

@@ -22,18 +22,41 @@ import { listAddressBackfillPass } from "../src/list-address-backfill.js";
  * connections: the `?|` read over the account's bodies, the composite-key upsert in its fenced
  * chunks and the stamp; and a person's press writing a brand into the JSON column under the
  * rule-key lock, through postgres-js. Scoped to this file's own account and removed afterwards.
+ *
+ * The corpus insert and the cleanup run on a client of their own with a wider bound: since mail
+ * 0154 the insert computes `messages_recipient_keys` per row for its GIN index, and on a loaded
+ * CI VM it outran the 10 s meant for the backfill (cancelled at 10.16 s; 11.2-15.2 s for the
+ * whole file alone). The 10 s still holds every statement the backfill and the press run.
  */
 const AVAILABLE = await realPgAvailable();
 const MESSAGES = 100_000;
+/** The backfill's own bound, on `sql`. */
+const PASS_TIMEOUT_MS = 10_000;
+/** The fixture's bound, on `fixture`: 6x the slowest whole-file run (15.2 s), up to the next step. */
+const FIXTURE_TIMEOUT_MS = 120_000;
+
+/** A statement timeout (57014) rethrown with the statement's name, its elapsed time and its bound. */
+async function named<T>(name: string, budgetMs: number, run: () => Promise<T>): Promise<T> {
+  const t0 = performance.now();
+  try {
+    return await run();
+  } catch (e) {
+    if ((e as { code?: unknown }).code !== "57014") throw e;
+    const ms = Math.round(performance.now() - t0);
+    throw new Error(`${name} hit its ${budgetMs} ms statement_timeout after ${ms} ms`, { cause: e });
+  }
+}
 
 describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
   let db: Tx;
   let sql: ReturnType<typeof postgres>;
+  let fixture: ReturnType<typeof postgres>;
   let accountId = "";
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
-    sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { statement_timeout: 10_000 } });
+    sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {}, connection: { statement_timeout: PASS_TIMEOUT_MS } });
+    fixture = postgres(PG_TEST_URL, { max: 1, onnotice: () => {}, connection: { statement_timeout: FIXTURE_TIMEOUT_MS } });
     db = brandDialect(drizzle(sql, { schema }), "pg") as unknown as Tx;
     accountId = randomUUID();
     await db.insert(accounts).values({ id: accountId, name: `lbpg-${accountId.slice(0, 8)}` });
@@ -42,7 +65,8 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
     }).returning();
     // One statement: the rows and their bodies. A list post every 20th row, naming one of 31 lists;
     // a sparse share of rows failed authentication and names an address that must not be recorded.
-    await sql`
+    const t0 = performance.now();
+    await named("the corpus insert", FIXTURE_TIMEOUT_MS, () => fixture`
       with m as (
         insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, native_locator, auth_verdict)
         select ${accountId}::uuid, ${mb!.id}::uuid, 'h', 'lbpg:' || g, 'm' || g, 'sender' || g || '@example.test',
@@ -57,7 +81,8 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
         when substr(subject, 2)::int % 20 = 0
           then jsonb_build_object('list-post', jsonb_build_array('<mailto:list' || (substr(subject, 2)::int % 31) || '@lists.test?subject=x>'))
         else '{}'::jsonb end
-        from m`;
+        from m`);
+    process.stderr.write(`list-address-backfill: corpus of ${MESSAGES} inserted in ${Math.round(performance.now() - t0)} ms\n`);
     await db.insert(listAddresses).values({ accountId, address: "list0@lists.test", consentedBrands: ["PostFinance"] });
   }, 300_000);
 
@@ -66,25 +91,27 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
       // Every row this account holds — the press writes rules, contacts and deltas too: the rows keyed
       // by message first, then each base table carrying `account_id`, again while a key refuses one.
       // The account row goes last, so a row left behind fails the cleanup by name.
-      const own = sql`(select id from messages where account_id = ${accountId}::uuid)`;
-      await sql`delete from folder_state where message_id in ${own}`;
-      await sql`delete from message_bodies where message_id in ${own}`;
-      let left = (await sql`select c.table_name as t from information_schema.columns c
+      const own = fixture`(select id from messages where account_id = ${accountId}::uuid)`;
+      await fixture`delete from folder_state where message_id in ${own}`;
+      await fixture`delete from message_bodies where message_id in ${own}`;
+      let left = (await fixture`select c.table_name as t from information_schema.columns c
         join information_schema.tables b on b.table_schema = c.table_schema and b.table_name = c.table_name
         where c.table_schema = 'public' and c.column_name = 'account_id' and b.table_type = 'BASE TABLE'`)
         .map((r) => String(r.t));
       for (let pass = 0; left.length > 0 && pass < 6; pass += 1) {
         const refused: string[] = [];
-        for (const t of left) await sql`delete from ${sql(t)} where account_id = ${accountId}::uuid`.catch(() => refused.push(t));
+        for (const t of left) await fixture`delete from ${fixture(t)} where account_id = ${accountId}::uuid`.catch(() => refused.push(t));
         left = refused;
       }
-      await sql`delete from accounts where id = ${accountId}::uuid`;
+      await fixture`delete from accounts where id = ${accountId}::uuid`;
     }
     await sql.end({ timeout: 5 });
-  }, 120_000);
+    await fixture.end({ timeout: 5 });
+  }, 300_000);
 
   it("records the 31 list addresses once under the timeout, keeps a consented brand, and stamps", async () => {
-    const r = await listAddressBackfillPass(db, { accountId });
+    const pass = () => named("listAddressBackfillPass", PASS_TIMEOUT_MS, () => listAddressBackfillPass(db, { accountId }));
+    const r = await pass();
     expect(r).toMatchObject({ ran: true, addresses: 31 });
     const rows = await db.select({ address: listAddresses.address, brands: listAddresses.consentedBrands })
       .from(listAddresses).where(eq(listAddresses.accountId, accountId));
@@ -94,7 +121,7 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
     const [s] = await db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
       .where(eq(accountSettings.accountId, accountId));
     expect(s?.at).not.toBeNull();
-    expect(await listAddressBackfillPass(db, { accountId })).toEqual({ ran: false, values: 0, addresses: 0 });
+    expect(await pass()).toEqual({ ran: false, values: 0, addresses: 0 });
   }, 120_000);
 
   it("a person's press adds its brand to the JSON column once, and a second brand beside it", async () => {
