@@ -165,6 +165,18 @@ describe("an embedded picture heals after a short drop, with the letter open", (
     expect(summary, "the invitation stayed a plain tile after the list answered").toBe("Kiln check with Bea");
   }, 60_000);
 
+  it("the path beside, in the reader: the invitation's list dropped once draws one card above the body", async () => {
+    carries = "invite";
+    drop.list = 1;
+    await openTheLetter("url");
+    await tick(45_000);
+    expect(drop.list, "the drop never happened").toBe(0);
+    const cards = document.querySelectorAll(".ics-card");
+    expect(cards, "the invitation drew no card, or two").toHaveLength(1);
+    const body = document.querySelector(".msg-body");
+    expect(body?.contains(cards[0]!), "the card is inside the mail").toBe(false);
+  }, 60_000);
+
   it("control: the picture with no drop is drawn on open, with one byte fetch", async () => {
     await openTheLetter();
     await tick(2_000);

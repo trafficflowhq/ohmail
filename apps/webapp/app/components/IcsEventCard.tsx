@@ -17,7 +17,10 @@
  */
 
 import { useMemo } from "react";
-import type { IcsEventPreview, IcsTime, IcsWeekday } from "@trafficflow/core/ics";
+import {
+  formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName,
+  type IcsEventPreview, type IcsTime,
+} from "@trafficflow/core/ics";
 import "./ics-event-card.css";
 import { liveCopy, activeFormatLocale, activeFormatZone } from "../shell/locale";
 
@@ -69,146 +72,41 @@ export const COPY: typeof EN = liveCopy("icsEvent", EN, {
   everyNYears: ["n"],
 });
 
-/* ── time formatting ───────────────────────────────────────────────────────────────────── */
+/* ── what the card says: core's shared helpers, in this reader's words ─────────────────── */
 
-/**
- * The Date whose UTC fields ARE the wall-clock fields — what a floating or unresolvable time
- * formats through (`timeZone: "UTC"` reproduces the fields verbatim).
- */
-function wallDate(t: IcsTime): Date {
-  return new Date(Date.UTC(t.wall.year, t.wall.month - 1, t.wall.day, t.wall.hour, t.wall.minute));
-}
+const formatOpts = () => ({ locale: activeFormatLocale(), zone: activeFormatZone() });
 
-/** The instant to format and the zone to format it in — the two honest-degradation branches. */
-function displayBasis(t: IcsTime): { date: Date; zone: string; zoneLabel: string | null } {
-  if (t.allDay) return { date: new Date(t.epochMs!), zone: "UTC", zoneLabel: null };
-  if (t.epochMs !== null) return { date: new Date(t.epochMs), zone: activeFormatZone(), zoneLabel: null };
-  // No instant: format the wall fields verbatim, naming the zone only where one was claimed.
-  return { date: wallDate(t), zone: "UTC", zoneLabel: t.tzid };
-}
-
-function fmt(date: Date, zone: string, opts: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat(activeFormatLocale(), { ...opts, timeZone: zone }).format(date);
-}
-
-const DATE_OPTS: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short", year: "numeric" };
-const TIME_OPTS: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
-
-/** All-day DTEND is EXCLUSIVE (RFC 5545) — the last day the reader is AT the event. */
-function inclusiveAllDayEnd(end: IcsTime): Date {
-  return new Date(end.epochMs! - 24 * 3600 * 1000);
-}
-
-/**
- * The when-line. Shapes, in the reader's locale and zone:
- *   timed, same day    — "Fri, Sep 11, 2026 · 4:00 – 4:30 PM"
- *   timed, multi-day   — "Fri, Sep 11, 2026, 4:00 PM – Sat, Sep 12, 2026, 10:00 AM"
- *   all-day, one day   — "Tue, Sep 15, 2026 · All day"
- *   all-day, multi-day — "Tue, Sep 15, 2026 – Wed, Sep 16, 2026"
- *   unresolvable zone  — "Wed, Aug 19, 2026 · 2:00 PM (Middle Earth Standard Time)"
- */
+/** The when-line (`formatIcsWhen`), in the reader's locale and zone. */
 export function formatWhen(start: IcsTime, end: IcsTime | null): string {
-  const s = displayBasis(start);
-
-  if (start.allDay) {
-    const first = fmt(s.date, "UTC", DATE_OPTS);
-    if (end?.allDay && end.epochMs !== null && end.epochMs - start.epochMs! > 24 * 3600 * 1000) {
-      return `${first} – ${fmt(inclusiveAllDayEnd(end), "UTC", DATE_OPTS)}`;
-    }
-    return `${first} · ${COPY.allDay}`;
-  }
-
-  const dayOf = (d: Date, zone: string) => fmt(d, zone, { year: "numeric", month: "numeric", day: "numeric" });
-  const label = s.zoneLabel ? ` (${s.zoneLabel})` : "";
-  const startDate = fmt(s.date, s.zone, DATE_OPTS);
-  const startTime = fmt(s.date, s.zone, TIME_OPTS);
-
-  // An end is comparable only when it lives on the same basis (both resolved, or both wall).
-  const e = end && !end.allDay && (end.epochMs !== null) === (start.epochMs !== null) ? displayBasis(end) : null;
-  if (!e) return `${startDate} · ${startTime}${label}`;
-  if (dayOf(s.date, s.zone) === dayOf(e.date, e.zone)) {
-    return `${startDate} · ${startTime} – ${fmt(e.date, e.zone, TIME_OPTS)}${label}`;
-  }
-  return `${startDate}, ${startTime} – ${fmt(e.date, e.zone, DATE_OPTS)}, ${fmt(e.date, e.zone, TIME_OPTS)}${label}`;
+  return formatIcsWhen(start, end, { ...formatOpts(), allDay: COPY.allDay });
 }
 
-/** The calendar-page glyph's two lines, from the same display basis as the when-line. */
-function glyphFields(t: IcsTime): { month: string; day: string } {
-  const b = displayBasis(t);
-  return { month: fmt(b.date, b.zone, { month: "short" }).replace(/\.$/, ""), day: fmt(b.date, b.zone, { day: "numeric" }) };
-}
-
-/* ── the spoken recurrence ─────────────────────────────────────────────────────────────── */
-
-/** ICS weekday code → a Date pinned to that weekday (2026-06-01 is a Monday), for Intl naming. */
-const WEEKDAY_ANCHOR: Record<IcsWeekday, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
-
-function weekdayName(code: IcsWeekday): string {
-  return new Intl.DateTimeFormat(activeFormatLocale(), { weekday: "long", timeZone: "UTC" }).format(
-    new Date(Date.UTC(2026, 5, WEEKDAY_ANCHOR[code])),
-  );
-}
-
-/** "Weekly on Tuesday" — words only where the rule is trivially true in words; else nothing. */
+/** "Weekly on Tuesday": words only where the rule is trivially true in words; else nothing. */
 export function recurrenceLine(rec: IcsEventPreview["recurrence"]): string | null {
-  if (!rec) return null;
-  const days = rec.byDay.map(weekdayName).join(", ");
-  switch (rec.freq) {
-    case "DAILY":
-      return rec.interval === 1 ? COPY.daily : COPY.everyNDays(rec.interval);
-    case "WEEKLY":
-      if (rec.interval === 1) return days ? COPY.weeklyOn(days) : COPY.weekly;
-      return days ? COPY.everyNWeeksOn(rec.interval, days) : COPY.everyNWeeks(rec.interval);
-    case "MONTHLY":
-      // A BYDAY-qualified monthly rule was already refused by the parser (ordinal days are not
-      // trivially speakable), so what reaches here is a plain "monthly on the start date".
-      return rec.interval === 1 ? COPY.monthly : COPY.everyNMonths(rec.interval);
-    case "YEARLY":
-      return rec.interval === 1 ? COPY.yearly : COPY.everyNYears(rec.interval);
-  }
-}
-
-/* ── the kicker: METHOD semantics, said plainly ────────────────────────────────────────── */
-
-function kicker(ev: IcsEventPreview): { text: string; tone: "cancel" | null } {
-  if (ev.cancelled) return { text: COPY.cancelled, tone: "cancel" };
-  switch (ev.method) {
-    case "COUNTER":
-      return { text: COPY.counter, tone: null };
-    case "REPLY":
-      return {
-        text:
-          ev.replyStatus === "ACCEPTED"
-            ? COPY.accepted
-            : ev.replyStatus === "DECLINED"
-              ? COPY.declined
-              : ev.replyStatus === "TENTATIVE"
-                ? COPY.tentative
-                : COPY.reply,
-        tone: null,
-      };
-    case "REQUEST":
-      return { text: COPY.request, tone: null };
+  const said = icsRecurrence(rec);
+  if (!said) return null;
+  const locale = activeFormatLocale();
+  switch (said.key) {
+    case "everyNDays":
+    case "everyNWeeks":
+    case "everyNMonths":
+    case "everyNYears":
+      return COPY[said.key](said.n);
+    case "weeklyOn":
+      return COPY.weeklyOn(said.days.map((d) => icsWeekdayName(d, locale)).join(", "));
+    case "everyNWeeksOn":
+      return COPY.everyNWeeksOn(said.n, said.days.map((d) => icsWeekdayName(d, locale)).join(", "));
     default:
-      return { text: COPY.event, tone: null };
+      return COPY[said.key];
   }
 }
 
-/* ── who ───────────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One compact line of people. On a REPLY the replier is the story; otherwise the organizer,
- * with the invited count beside them when there is one. Names fall back to plain addresses —
- * TEXT, never a link (see the header).
- */
+/** One compact line of people: the replier, or the organizer with the invited count. Text, never a link. */
 function peopleLine(ev: IcsEventPreview): string | null {
-  const nameOf = (p: { name: string | null; email: string | null } | null): string | null =>
-    p ? p.name || p.email : null;
-  if (ev.method === "REPLY") return nameOf(ev.attendees[0] ?? null) ?? nameOf(ev.organizer);
-  const host = nameOf(ev.organizer);
-  const count = ev.attendeeCount > 0 ? COPY.invited(ev.attendeeCount) : null;
-  if (host && count) return `${host} · ${count}`;
-  return host ?? count ?? nameOf(ev.attendees[0] ?? null);
+  const { who, invited } = icsPeople(ev);
+  const count = invited !== null ? COPY.invited(invited) : null;
+  if (who && count) return `${who} · ${count}`;
+  return who ?? count;
 }
 
 /* ── glyphs (the icon set's stroke grammar: 16-grid, 1.3 stroke) ───────────────────────── */
@@ -242,8 +140,8 @@ export interface IcsEventCardProps {
 }
 
 export function IcsEventCard({ event }: IcsEventCardProps) {
-  const k = kicker(event);
-  const glyph = glyphFields(event.start);
+  const k = icsKicker(event);
+  const glyph = icsDateGlyph(event.start, formatOpts());
   const when = formatWhen(event.start, event.end);
   // Old → new, only where the COUNTER carried the time it proposes to replace.
   const previously = useMemo(
@@ -261,7 +159,7 @@ export function IcsEventCard({ event }: IcsEventCardProps) {
       </span>
       <div className="ics-body">
         <div className="ics-kicker" data-tone={k.tone ?? undefined}>
-          {k.text}
+          {COPY[k.key]}
         </div>
         {event.summary ? <div className="ics-summary">{event.summary}</div> : null}
         <div className="ics-when">{when}</div>

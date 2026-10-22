@@ -70,6 +70,7 @@ import { useBodyStalled, type BodyTarget } from "../shell/message-chrome";
 import { MessageFiles } from "../shell/MessageFiles";
 import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
 import { InvitationNote } from "../shell/InvitationNote";
+import { MessageEvents } from "../shell/MessageEvents";
 import { goFirstRun, goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
 import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
@@ -2359,6 +2360,7 @@ export function HeldMail({
         className="hm-state"
         offerLink={!dull}
       />
+      {message ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
         <MessageBody
           text={body}

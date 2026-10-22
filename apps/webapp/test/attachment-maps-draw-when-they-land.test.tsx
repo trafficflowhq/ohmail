@@ -39,7 +39,8 @@ const INVITE_ITEM = { id: INVITE, filename: "invite.ics", contentType: "text/cal
 
 /* The picture is read in the Ohbox reader, the invitation on a News card: each surface that draws
    one of the maps today, so each case measures the subscription and not a surface's wiring. */
-const folderOf = (): string => (parts === "picture" ? "INBOX" : "ohmail/News");
+let inReader = false;
+const folderOf = (): string => (parts === "picture" || inReader ? "INBOX" : "ohmail/News");
 const letter = () => ({
   id: LETTER, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
   subject: "Kiln check", from: { name: "Bea", address: "bea@example.invalid" },
@@ -53,6 +54,7 @@ const beaRule = () => ({
 });
 
 beforeEach(() => {
+  inReader = false;
   installShellEnv();
   window.localStorage.clear();
   answerConsentWith({ foldersEnabledAt: ISO });
@@ -138,6 +140,16 @@ describe("a letter's picture and invitation are drawn the moment their bytes lan
       [...document.querySelectorAll("iframe")].some((f) => (f.getAttribute("srcdoc") ?? "").includes(DRAWN))
       || [...document.querySelectorAll("img.msg-img")].some((i) => i.getAttribute("src") === DRAWN);
     expect(await msToDraw(PICTURE, drawn), "the picture waited for another render")
+      .toBeLessThanOrEqual(100);
+  }, 60_000);
+
+  it("the invitation card, in the reader", async () => {
+    parts = "invite";
+    inReader = true;
+    await mountWithTheLetter();
+    await goHash(`#/ohbox/m/${LETTER}`);
+    const summary = (): string => document.querySelector(".msg-events .ics-card .ics-summary")?.textContent ?? "";
+    expect(await msToDraw(INVITE, () => summary() === "Kiln check with Bea"), "the invitation waited for another render")
       .toBeLessThanOrEqual(100);
   }, 60_000);
 

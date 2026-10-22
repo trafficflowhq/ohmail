@@ -1,10 +1,14 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { parseIcsEvent } from "@trafficflow/core/ics";
 import { IcsEventCard, formatWhen } from "../app/components/IcsEventCard";
 import { AttachmentStrip, type AttachmentItem, type AttachmentsView } from "../app/components/AttachmentStrip";
+import { calendarEventsOf } from "@ohmail/client-engine";
+import { HOSTILE_DURATION } from "../../../packages/core/test/fixtures/invite-shapes";
+import { MessageEvents } from "../app/shell/MessageEvents";
+import { MessageChromeProvider } from "../app/shell/message-chrome";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog, setActiveFormatZone } from "../app/shell/locale";
 import fs from "node:fs";
 import path from "node:path";
@@ -20,8 +24,8 @@ import { fileURLToPath } from "node:url";
  * so the injection case is load-bearing: a SUMMARY carrying `<script>` must land in the DOM as
  * inert characters, and a crafted ORGANIZER must never become a link.
  *
- * The strip-level tests pin the degradation: a calendar part whose text does not parse KEEPS
- * its plain tile — the card is a promotion, never a replacement for the honest row.
+ * The block-level tests pin the degradation: a calendar part whose text does not parse draws no
+ * card, and the strip keeps every calendar part as its plain tile.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -250,17 +254,25 @@ describe("the time forms the parser distinguishes render distinctly", () => {
   });
 });
 
-/* ── the strip: promotion where the text parses, the plain tile everywhere else ─────────── */
+/* ── MessageEvents: the card where the text parses, nothing otherwise; the strip keeps the tile ── */
 
-function stripWith(items: AttachmentItem[], textOf: (id: string) => string | undefined) {
+/** The events block over a message whose list and texts are these, through the real `calendarEventsOf`. */
+function eventsWith(items: AttachmentItem[], textOf: (id: string) => string | undefined) {
+  const texts = new Map(items.flatMap((i): [string, string][] => {
+    const t = textOf(i.id);
+    return t === undefined ? [] : [[i.id, t]];
+  }));
+  const engine = {
+    attachmentsOf: () => ({ state: "ready", items: items.map((i) => ({ ...i, inline: false, contentId: null })) }),
+    calendarTextsOf: () => texts,
+  };
+  const attachments = { eventsOf: (id: string) => calendarEventsOf(engine as never, id), hold: () => () => {} };
+  return h(MessageChromeProvider as never, { value: { attachments }, children: h(MessageEvents, { messageId: "m1" }) } as never);
+}
+
+function stripWith(items: AttachmentItem[]) {
   const view: AttachmentsView = { state: "ready", items };
-  return h(AttachmentStrip, {
-    items: view,
-    onOpen: () => {},
-    onDownloadAll: () => {},
-    downloadingAll: false,
-    calendarTextOf: textOf,
-  });
+  return h(AttachmentStrip, { items: view, onOpen: () => {}, onDownloadAll: () => {}, downloadingAll: false });
 }
 
 const calItem = (over: Partial<AttachmentItem> = {}): AttachmentItem => ({
@@ -272,43 +284,62 @@ const calItem = (over: Partial<AttachmentItem> = {}): AttachmentItem => ({
   ...over,
 });
 
-describe("the strip promotes and degrades honestly", () => {
-  it("a calendar item whose text parses renders the event card, with the strip's own Save", async () => {
-    const el = await render(stripWith([calItem()], () => REQUEST_ICS));
-    expect(el.querySelector(".ics-card")).not.toBeNull();
-    expect(el.querySelector(".att-tile"), "the tile is replaced, not doubled").toBeNull();
-    const save = el.querySelector(".ics-item .att-side");
-    expect(save, "the card keeps the corner download control").not.toBeNull();
-    expect(save!.getAttribute("aria-label")).toContain("invite.ics");
+describe("the event block draws where the text parses, and degrades honestly", () => {
+  it("a calendar part whose text parses renders the event card, with no control of its own", async () => {
+    const el = await render(eventsWith([calItem()], () => REQUEST_ICS));
+    expect(el.querySelector(".msg-events .ics-card")).not.toBeNull();
+    expect(el.querySelectorAll("a, button"), "the card is text only").toHaveLength(0);
   });
 
-  it("MALFORMED ics degrades to the plain attachment row — never a broken card", async () => {
-    const el = await render(stripWith([calItem()], () => "BEGIN:VCALENDAR\r\ngarbage without an event\r\n"));
+  it("the strip keeps the calendar part as a plain tile with its Save", async () => {
+    const el = await render(stripWith([calItem()]));
     expect(el.querySelector(".ics-card")).toBeNull();
     expect(el.querySelector(".att-tile")).not.toBeNull();
     expect(el.textContent).toContain("invite.ics");
   });
 
-  it("text still arriving (undefined) keeps the tile standing", async () => {
-    const el = await render(stripWith([calItem({ state: "loading" })], () => undefined));
+  it("MALFORMED ics draws no card, never a broken one", async () => {
+    const el = await render(eventsWith([calItem()], () => "BEGIN:VCALENDAR\r\ngarbage without an event\r\n"));
     expect(el.querySelector(".ics-card")).toBeNull();
-    expect(el.querySelector(".att-tile")).not.toBeNull();
+    expect(el.querySelector(".msg-events")).toBeNull();
   });
 
-  it("a non-calendar item never consults the feed", async () => {
-    let asked = 0;
-    const el = await render(
-      stripWith([calItem({ id: "p1", filename: "doc.pdf", mimeType: "application/pdf" })], () => {
-        asked++;
-        return REQUEST_ICS;
-      }),
-    );
-    expect(asked).toBe(0);
+  it("text still arriving draws nothing", async () => {
+    const el = await render(eventsWith([calItem({ state: "loading" })], () => undefined));
+    expect(el.querySelector(".msg-events")).toBeNull();
+  });
+
+  it("a non-calendar part is never drawn as an event", async () => {
+    const el = await render(eventsWith([calItem({ id: "p1", filename: "doc.pdf", mimeType: "application/pdf" })], () => REQUEST_ICS));
     expect(el.querySelector(".ics-card")).toBeNull();
   });
 
   it("a disposed, NAMED .ics gets the same card — the disposition changes nothing", async () => {
-    const el = await render(stripWith([calItem({ filename: "meeting.ics" })], () => REQUEST_ICS));
+    const el = await render(eventsWith([calItem({ filename: "meeting.ics" })], () => REQUEST_ICS));
     expect(el.querySelector(".ics-card")).not.toBeNull();
+  });
+});
+
+/* ── a crafted calendar part cannot take the message down ─────────────────────────────────────── */
+
+describe("a hostile calendar part draws at most its own card, never a throw", () => {
+  it("DURATION past the range of a Date: one card, the start only", async () => {
+    const el = await render(eventsWith([calItem({ id: "hostile-file" })], () => HOSTILE_DURATION.parts[0]!.bytes));
+    expect(el.querySelectorAll(".msg-events .ics-card")).toHaveLength(1);
+    expect(el.querySelector(".ics-card .ics-summary")?.textContent).toBe("Endless meeting");
+  });
+
+  it("a card whose render throws draws nothing; the other cards and the pane stay", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const throwing = new Proxy({}, { get: () => { throw new Error("hostile"); } });
+    const attachments = {
+      hold: () => () => {},
+      eventsOf: () => [{ partId: "bad", event: throwing }, { partId: "good", event: parseIcsEvent(REQUEST_ICS)! }],
+    };
+    const el = await render(h("div", { className: "pane" },
+      h(MessageChromeProvider as never, { value: { attachments }, children: h(MessageEvents, { messageId: "m1" }) } as never)));
+    quiet.mockRestore();
+    expect(el.querySelector(".pane"), "the pane went down").not.toBeNull();
+    expect(el.querySelectorAll(".msg-events .ics-card")).toHaveLength(1);
   });
 });

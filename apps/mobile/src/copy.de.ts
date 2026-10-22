@@ -1137,6 +1137,27 @@ export const DE: Deck = {
   invitationOwaRemedy:
     "Damit Einladungen mit angehängtem Termin ankommen, lass dir in den Web-Einstellungen deines Mailanbieters unter POP und IMAP Besprechungseinladungen im iCalendar-Format senden, oder frag deine Administration.",
   invitationOwaOpenSetting: "Einstellung im Browser öffnen",
+  icsRequest: "Einladung",
+  icsCounter: "Neue vorgeschlagene Zeit",
+  icsCancelled: "Abgesagt",
+  icsAccepted: "Zugesagt",
+  icsDeclined: "Abgelehnt",
+  icsTentative: "Mit Vorbehalt",
+  icsReply: "Antwort",
+  icsEvent: "Termin",
+  icsAllDay: "Ganztägig",
+  icsPreviously: "war",
+  icsInvited: (count: number) => `${count} eingeladen`,
+  icsDaily: "Jeden Tag",
+  icsEveryNDays: (n: number) => `Alle ${n} Tage`,
+  icsWeekly: "Wöchentlich",
+  icsWeeklyOn: (days: string) => `Wöchentlich am ${days}`,
+  icsEveryNWeeks: (n: number) => `Alle ${n} Wochen`,
+  icsEveryNWeeksOn: (n: number, days: string) => `Alle ${n} Wochen am ${days}`,
+  icsMonthly: "Monatlich",
+  icsEveryNMonths: (n: number) => `Alle ${n} Monate`,
+  icsYearly: "Jährlich",
+  icsEveryNYears: (n: number) => `Alle ${n} Jahre`,
 
   /* ------------------------------------------------- the mail body's frame */
 

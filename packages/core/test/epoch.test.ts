@@ -199,6 +199,10 @@ const CENSUS: ReadonlyArray<readonly [string, string, Kind]> = [
   ["packages/core/src/adapters/organizer-lease.ts", 'epochs === "stale"', "door"],
   ["packages/core/src/adapters/organizer-lease.ts", 'epochs !== "usable"', "door"],
   ["packages/core/src/ics.ts", "start.epochMs === null", "not-an-epoch"],
+  ["packages/core/src/ics.ts", "t.epochMs !== null", "not-an-epoch"],
+  ["packages/core/src/ics.ts", "end.epochMs !== null", "not-an-epoch"],
+  ["packages/core/src/ics.ts", "start.epochMs !== null", "not-an-epoch"],
+  ["packages/core/src/ics.ts", "(end.epochMs !== null) === (start.epochMs !== null)", "not-an-epoch"],
   /* THE THIRD WORD, which the needle above reads too. A folder GENERATION is a UIDVALIDITY under
      the name the `ohmail/_meta` memo uses for it, so the same rule applies and the same door
      answers. The request drain's comparison went with its cursor (FIX-026, one door); the rest are

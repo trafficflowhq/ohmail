@@ -6,7 +6,7 @@ import type { Logger } from "@trafficflow/core/mail";
  * THE AWAY-REPLY SWEEP — THE PRODUCER OF `awayReplyFlagRedeliverPass`. The pass walks one account; this
  * decides WHEN, for WHICH accounts, and WHERE EACH stopped — two concerns in two files, not tidiness:
  * while the sweep sat beside the pass, the only caller was in the pass's own file and
- * the producer census (`every-pass-has-a-producer.test.ts`, a private test) reported it `entry-only` (a pass with no producer). That census
+ * the producer census (`test/every-pass-has-a-producer.test.ts`) reported it `entry-only` (a pass with no producer). That census
  * exists because `bubbleUpPass` shipped with seven green tests and nothing calling it while the Ohbox
  * promised a dated resurface. A caller inside the pass's own file cannot answer "who calls this" — the fix
  * is the split, since the manifest is for CLI backstops and crons and this pass is neither. It is run by

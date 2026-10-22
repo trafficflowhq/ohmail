@@ -1754,6 +1754,28 @@ const TABLE = {
   invitationOwaRemedy:
     "To receive invitations with the event attached, choose “Send meeting invitations in iCalendar format” in your mail account’s web settings under POP and IMAP, or ask your administrator.",
   invitationOwaOpenSetting: "Open the setting in your browser",
+  /* The event card: the web's `icsEvent` words, word for word. */
+  icsRequest: "Invitation",
+  icsCounter: "Proposed new time",
+  icsCancelled: "Cancelled",
+  icsAccepted: "Accepted",
+  icsDeclined: "Declined",
+  icsTentative: "Tentative",
+  icsReply: "Reply",
+  icsEvent: "Event",
+  icsAllDay: "All day",
+  icsPreviously: "was",
+  icsInvited: (count: number) => `${count} invited`,
+  icsDaily: "Every day",
+  icsEveryNDays: (n: number) => `Every ${n} days`,
+  icsWeekly: "Weekly",
+  icsWeeklyOn: (days: string) => `Weekly on ${days}`,
+  icsEveryNWeeks: (n: number) => `Every ${n} weeks`,
+  icsEveryNWeeksOn: (n: number, days: string) => `Every ${n} weeks on ${days}`,
+  icsMonthly: "Monthly",
+  icsEveryNMonths: (n: number) => `Every ${n} months`,
+  icsYearly: "Yearly",
+  icsEveryNYears: (n: number) => `Every ${n} years`,
 
   /* ------------------------------------------------- the mail body's frame */
 

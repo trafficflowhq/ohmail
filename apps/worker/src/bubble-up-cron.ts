@@ -24,7 +24,7 @@ export { bubbleUpPass } from "./bubble-up-pass.js";
  * isolated so one failure never skips the rest) and release. That lock is exactly why this is NOT a
  * platform cron: while the worker is healthy a scheduled process would only start, fail to acquire and
  * exit — the resurfacing production depends on happens inline in `cycle()`. Recorded `MANUAL_BACKSTOP` in
- * `SCHEDULE_MANIFEST` (`every-pass-has-a-producer.test.ts`, a private test). `log` defaults to `silentLogger` — see `cron-log.ts`.
+ * `SCHEDULE_MANIFEST` (`test/every-pass-has-a-producer.test.ts`). `log` defaults to `silentLogger` — see `cron-log.ts`.
  */
 export async function runBubbleUpCron(
   config: WorkerConfig, log: Logger = silentLogger,

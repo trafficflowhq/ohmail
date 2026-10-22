@@ -119,10 +119,11 @@ describe("loadCalendarTexts — the automatic fetch of what the card renders", (
     expect(engine.calendarTextsOf("m1").has("c1")).toBe(true);
   });
 
-  it("never pays for a non-calendar part, an inline part, or a declared-oversized part", async () => {
+  // An embedded CALENDAR part is fetched (calendar-events.test.ts); an inline picture never is.
+  it("never pays for a non-calendar part, an inline picture, or a declared-oversized part", async () => {
     const { engine, fetched } = engineWith([
       wire({ id: "pdf", contentType: "application/pdf" }),
-      wire({ id: "embedded", inline: true }),
+      wire({ id: "logo", inline: true, contentType: "image/png", contentId: "logo@example.test" }),
       wire({ id: "big", sizeBytes: CALENDAR_TEXT_MAX_BYTES + 1 }),
     ]);
     await engine.loadCalendarTexts("m1");

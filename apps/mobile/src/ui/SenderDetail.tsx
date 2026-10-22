@@ -25,13 +25,14 @@ import {
 import { relayMarkFor, senderSheetLine } from "../state/relay";
 import { noneOrganizedWhy } from "./not-organizing";
 import { domainScopeOffered } from "../state/live";
-import { useBodies, useWorld } from "../state/world";
+import { useBodies, useFilesStamp, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { withheldNote } from "./body-note";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
+import { EventCards } from "./EventCard";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
 import { DECISION_ROW_GAP, DECISION_ROW_PAD, decisionPanelShape, SENDER_TITLE_LINES, scopeFitsRow, senderTitleVariant } from "./sender-fit";
@@ -80,6 +81,7 @@ export function SenderDetail({
     holdFiles(ids);
     return () => releaseFiles(ids);
   }, [heldKey, hydrateHeld, holdFiles, releaseFiles, worldKey]);
+  useFilesStamp(heldKey ? heldKey.split(",") : []);
 
   if (!row) {
     return (
@@ -273,6 +275,7 @@ export function SenderDetail({
                 {Copy.liveBodyFailed}
               </Txt>
             ) : null}
+            <EventCards events={w.eventsOf(h.id)} style={{ marginTop: 12, marginBottom: 0 }} />
             <BodyPages variant="streamBody" tone="ink" style={{ marginTop: 12 }} text={h.body} />
             {/* The held message's files, through the reader's one strip. */}
             <AttachmentTiles m={{ id: h.id, attachments: w.filesOf(h.id) }} />

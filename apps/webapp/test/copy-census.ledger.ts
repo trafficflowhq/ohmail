@@ -141,12 +141,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "[role=\"dialog\"], [role=\"alertdialog\"], [role=\"menu\"]", why: "a CSS selector — what counts as a layer above the deck" },
     { text: "{} button:not([disabled])", why: "a CSS selector, composed per zone" },
   ],
-  "apps/webapp/app/components/IcsEventCard.tsx": [
-    { text: "UTC", why: "an IANA zone identifier the formatter is given, not a word" },
-    { text: "ACCEPTED", why: "an iCalendar PARTSTAT value on the wire (RFC 5545)" },
-    { text: "DECLINED", why: "an iCalendar PARTSTAT value on the wire" },
-    { text: "TENTATIVE", why: "an iCalendar PARTSTAT value on the wire" },
-  ],
   "apps/webapp/app/components/ComposeAttach.tsx": [
     { text: "read failed", why: "the reason on a rejected FileReader, logged and re-thrown — never rendered" },
   ],

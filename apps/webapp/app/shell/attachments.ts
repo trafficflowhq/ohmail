@@ -20,7 +20,9 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { watchWireFailedLists, type EngineMessage, type OhmailEngine } from "@ohmail/client-engine";
+import {
+  calendarEventsOf, watchWireFailedLists, type DistinctCalendarEvent, type EngineMessage, type OhmailEngine,
+} from "@ohmail/client-engine";
 import { previewKind } from "../components/AttachmentPreview";
 import {
   fileRetryIsOffered, isAuthListFailure, listRetryIsOffered, type AttachmentItem, type AttachmentsView,
@@ -101,13 +103,12 @@ export interface AttachmentsChrome {
    */
   needCidImages(messageId: string, contentIds: string[]): void;
   /**
-   * THE CALENDAR TEXTS ALREADY IN HAND for one message — `attachmentId → decoded ics text`,
-   * straight off the engine (`calendarTextsOf`). What the strip's event card parses and draws.
-   * Filled automatically when the message's list loads (the same effect that loads the list
-   * asks — budgets and single-flight live in the engine, `loadCalendarTexts`); empty until
-   * then, and empty is the strip's signal to keep the plain tile standing.
+   * THE EVENTS ONE MESSAGE CARRIES, once each (`calendarEventsOf`): what `MessageEvents` draws
+   * above the mail. Filled automatically when the message's list loads (the same effect that
+   * loads the list asks; budgets and single-flight live in the engine, `loadCalendarTexts`);
+   * empty until then.
    */
-  calendarTextsOf(messageId: string): ReadonlyMap<string, string>;
+  eventsOf(messageId: string): readonly DistinctCalendarEvent[];
   /**
    * HOLD one message's list while a pane shows it; the return releases the hold. A list nobody
    * asked for reads as the silent first-ask state for ever, so every pane that renders a strip
@@ -491,7 +492,8 @@ export function useMessageAttachments(
         // A meeting invitation should be readable, not merely saveable: fetch the message's
         // calendar parts (tiny, budgeted, single-flight — the engine owns all three bounds) so
         // the strip can draw the event card. Fire-and-forget for the reason needCidImages is.
-        if (outcome.state === "ready" && outcome.items.length > 0) void engine.loadCalendarTexts(id);
+        // Ready with no file still asks: an embedded calendar part is listed inline only.
+        if (outcome.state === "ready") void engine.loadCalendarTexts(id);
       });
     },
     [engine, wanted],
@@ -777,8 +779,8 @@ export function useMessageAttachments(
     [engine],
   );
 
-  const calendarTextsOf = useCallback(
-    (id: string): ReadonlyMap<string, string> => engine.calendarTextsOf(id),
+  const eventsOf = useCallback(
+    (id: string): readonly DistinctCalendarEvent[] => calendarEventsOf(engine, id),
     [engine],
   );
 
@@ -916,9 +918,9 @@ export function useMessageAttachments(
   const chrome = useMemo(
     (): AttachmentsChrome => ({
       itemsOf, open, ensure, releasePreviews, blobOf, downloadAll, downloadingAll: downloadingAllOf,
-      cidImagesOf, needCidImages, calendarTextsOf, hold,
+      cidImagesOf, needCidImages, eventsOf, hold,
     }),
-    [itemsOf, open, ensure, releasePreviews, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, calendarTextsOf, hold],
+    [itemsOf, open, ensure, releasePreviews, blobOf, downloadAll, downloadingAllOf, cidImagesOf, needCidImages, eventsOf, hold],
   );
 
   return available ? chrome : undefined;

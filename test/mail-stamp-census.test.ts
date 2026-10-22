@@ -156,12 +156,6 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "German sentence without its decimal point reading as a thousands separator. The census "
       + "keys on the method name, and this is the one caller that formats a size with it.",
   },
-  "apps/webapp/app/components/IcsEventCard.tsx": {
-    calls: 2,
-    why: "A calendar invitation's EVENT time, rendered in the event's own zone — not the instant "
-      + "the mail carrying it arrived. The card shows both, and they are different facts. Its "
-      + "`DATE_OPTS`/`TIME_OPTS` beside them are option objects, not calls.",
-  },
   "apps/mobile/src/state/live.ts": {
     calls: 2,
     why: "`calendarDayLabel` and its no-ICU fallback — a WEEKDAY AND MONTH label for the two "

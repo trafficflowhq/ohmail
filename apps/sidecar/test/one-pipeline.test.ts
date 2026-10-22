@@ -23,11 +23,9 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * ── AND THE PUBLISH BOUNDARY ───────────────────────────────────────────────────────────────
  *
  * This package holds the engine — `@trafficflow/api`, `@trafficflow/db`, `imapflow`, PGlite —
- * and PUBLISHES with the rest of the open product: the mirror carries the whole server now, and
- * the publisher names `apps/sidecar/src` as a literal payload entry. The half worth asserting
- * flipped sign with that decision: the allow-list is positive, so publication has to be DELIBERATE
- * — a named entry, never a prefix accident. The entry staying named is pinned in the private
- * one-pipeline-payload.test.ts, which reads the publisher; the block below pins the engine tier.
+ * and is open source with the rest of the product, the whole server included. The case that held
+ * the earlier private tree's export step to naming `apps/sidecar/src` on purpose left with that
+ * step, which is not part of this repository; the block below pins the engine tier.
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));

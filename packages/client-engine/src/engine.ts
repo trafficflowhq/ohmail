@@ -11,7 +11,7 @@
 // `@trafficflow/core/ics` maps to a dependency-free SOURCE module (see its header) — the ONE
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
-import { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ics";
+import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
   StayedWhy, WithdrawSendAnswer, WithdrawSendOutcome,
@@ -1801,9 +1801,12 @@ export const CALENDAR_TEXT_MAX_PARTS = 3;
 /** The stable empty answer of {@link OhmailEngine.calendarTextsOf} — one identity, never mutated. */
 const NO_CALENDAR_TEXTS: ReadonlyMap<string, string> = new Map();
 
-/** The parts the automatic calendar pass may consider: real files declared as calendar data. */
+/**
+ * The parts the automatic calendar pass may consider: every part declared as calendar data,
+ * embedded ones too (a calendar part with a Content-ID under multipart/related is stored inline).
+ */
 function isCalendarItem(item: AttachmentItem): boolean {
-  return !item.inline && isCalendarMime(item.mimeType);
+  return isCalendarMime(item.mimeType);
 }
 
 /**
@@ -11099,8 +11102,10 @@ export class OhmailEngine {
     if (held?.state !== "ready") return;
 
     const have = this.calendarTexts.get(messageId);
+    // The iTIP part first (stable sort), so a message over the budget still shows its invitation.
     const wanted = held.items
       .filter((i) => isCalendarItem(i) && !have?.has(i.id) && i.sizeBytes <= CALENDAR_TEXT_MAX_BYTES)
+      .sort((a, b) => calendarPartRank(a.mimeType) - calendarPartRank(b.mimeType))
       .slice(0, CALENDAR_TEXT_MAX_PARTS);
     if (wanted.length === 0) return;
 

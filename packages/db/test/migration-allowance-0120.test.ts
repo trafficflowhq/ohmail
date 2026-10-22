@@ -15,7 +15,8 @@ import { classifyDrift, gitProvenanceReader } from "../src/migration-provenance.
  * Without a named allowance `classifyDrift` reads `executable` and the next `db:setup:prod`
  * refuses with `journal MISDESCRIBED` — a migration step that stops a release, for a change that
  * leaves the same schema. The arms that ask the real reader to find the released version in this
- * repository's git history live in the private migration-allowance-0120-history.test.ts.
+ * repository's git history need the whole history, which a shallow checkout does not hold, so they
+ * left this file.
  */
 
 const TAG = "0120_held_release_dismissed";

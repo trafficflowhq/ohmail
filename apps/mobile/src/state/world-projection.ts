@@ -21,6 +21,7 @@ import {
   hiddenMessagesReader,
   historyRow,
   liveDrafts,
+  liveEvents,
   liveFiles,
   liveFolder,
   liveFolderUnread,
@@ -295,6 +296,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       /* Over the reader and held row the Ohbox list folds with, so a press and its row agree. */
       rowOpenTarget: (id) => liveRowOpenTarget(pres, id, openHeld) ?? id,
       filesOf: (id) => liveFiles(engine, id),
+      eventsOf: (id) => liveEvents(engine, id),
       search: liveSearch(engine, base, v),
       store: {
         walker: inp.walker,
