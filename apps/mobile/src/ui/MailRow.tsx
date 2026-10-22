@@ -6,7 +6,7 @@
  * Blanc's row hierarchy survives the narrower column intact: weight carries
  * unread, colour carries seen, and the dot is the only mark.
  */
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Animated, PanResponder, View } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
@@ -15,12 +15,13 @@ import { useWorld } from "../state/world";
 import { moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
 import { Badge, TagChip, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
-import { mailRowSpoken, threadOfRow, trackerShort } from "./row-spoken";
+import { mailRowSpoken, marksOfRow, threadBadgeOf, trackerShort } from "./row-spoken";
 import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-actions";
 import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
+import { marksShown } from "./reader-marks";
 
 export function MailRow({
   m,
@@ -41,7 +42,8 @@ export function MailRow({
   const t = useTheme();
   const w = useWorld();
   const seen = !m.unread;
-  const thread = threadOfRow(m);
+  const thread = threadBadgeOf(m);
+  const marks = marksOfRow(m);
   // A list row carries no body (the world's lists key on the stamp that ignores bodies); the snippet is the preview.
   const preview = m.protected ? Copy.protectedPreview : (m.snippet ?? "");
   /* EVERY BADGE INSIDE THE STRIP DECIDES WHETHER THE STRIP IS DRAWN. `newSince` was missing, and
@@ -187,6 +189,8 @@ export function MailRow({
         </Txt>
       ) : null}
 
+      {marks ? <RowMarks marks={marks} /> : null}
+
       {badges ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 7 }}>
           {m.protected ? (
@@ -244,6 +248,39 @@ export function MailRow({
       >
         {row}
       </Animated.View>
+    </View>
+  );
+}
+
+/**
+ * THE CONVERSATION'S SQUARES under the preview, oldest left: solid accent unread, dimmed read,
+ * hollow the account's own. Where the row is too narrow the oldest give way and the newest stay.
+ */
+function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] }) {
+  const t = useTheme();
+  const [room, setRoom] = useState<number | null>(null);
+  const shown = marksShown(marks, room);
+  return (
+    <View
+      style={{ flexDirection: "row", gap: 3, marginTop: 6, overflow: "hidden" }}
+      onLayout={(e) => setRoom(e.nativeEvent.layout.width)}
+      importantForAccessibility="no-hide-descendants"
+      accessibilityElementsHidden
+      testID="row-marks"
+    >
+      {shown.map((k, i) => (
+        <View
+          key={i}
+          style={{
+            width: 8,
+            height: 8,
+            backgroundColor: k === "mine" ? "transparent" : t.c.accent,
+            borderWidth: k === "mine" ? 1.5 : 0,
+            borderColor: t.c.accent,
+            opacity: k === "unread" ? 1 : k === "mine" ? t.c.markMine : t.c.markRead,
+          }}
+        />
+      ))}
     </View>
   );
 }

@@ -23,3 +23,8 @@ export function recordPaneScroll(key: string, y: number): void {
 export function paneScrollOf(key: string): number {
   return offsets.get(key) ?? 0;
 }
+
+/** Was an offset kept for `key` — a remount that has a place to resume, not a first open. */
+export function hasPaneScroll(key: string): boolean {
+  return offsets.has(key);
+}

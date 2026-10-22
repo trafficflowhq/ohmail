@@ -205,8 +205,11 @@ export function Scroller({
   refresh,
   bounded,
   avoidKeyboard = false,
+  scrollRef,
   ...rest
 }: React.ComponentProps<typeof ScrollView> & {
+  /** The scroll view itself, for a screen that scrolls it to a place (the reader's rail). */
+  scrollRef?: React.Ref<ScrollView>;
   contentStyle?: StyleProp<ViewStyle>;
   refresh?: PullRefresh;
   /**
@@ -227,6 +230,7 @@ export function Scroller({
   const scroller = (
     <ScrollView
       {...rest}
+      ref={scrollRef}
       refreshControl={pullRefreshControl(t, refresh)}
       style={{ flex: 1 }}
       contentContainerStyle={[

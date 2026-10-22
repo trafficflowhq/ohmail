@@ -20,6 +20,7 @@ const FILES = [
   "components/MessageBody.tsx",
   "shell/MessageCard.tsx",
   "shell/Conversation.tsx",
+  "shell/ThreadMarks.tsx",
   "shell/zone-nav.tsx",
   "shell/focus-follows.ts",
   "shell/MoreMenu.tsx",

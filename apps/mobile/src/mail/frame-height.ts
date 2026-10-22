@@ -88,6 +88,11 @@ export function nextFrameHeight(base: FrameHeight, reportedDp: number, viewDp: n
   return streak > FRAME_RUNAWAY_GROWS ? asText(next, "runaway") : next;
 }
 
+/** The frame's height is its document's (a reading came, no re-measure is open), or it reads as text. */
+export function frameFinal(s: FrameHeight, asText: boolean): boolean {
+  return asText || s.text !== null || (s.answered && s.floor === null);
+}
+
 /** When a re-measure settles: null with no seed-size reading at this width (no settle is armed). */
 export function settleDelayMs(s: FrameHeight, now: number): number | null {
   if (s.floor === null || s.measured === null || s.firstMeasuredAt === null) return null;

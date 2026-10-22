@@ -13,6 +13,7 @@ export type RowSpokenKind =
   | "readState"
   | "senderCheck"
   | "thread"
+  | "marks"
   | "attachment"
   | "protected"
   | "held"
@@ -33,6 +34,7 @@ export const ROW_SPOKEN_ORDER: readonly RowSpokenKind[] = [
   "readState",
   "senderCheck",
   "thread",
+  "marks",
   "attachment",
   "protected",
   "held",
@@ -86,6 +88,8 @@ export interface MessageRowFacts {
    * this package holds no catalogue, so the fact is spoken only where the host handed a sentence.
    */
   threadLabel?: string;
+  /** The conversation's squares in words ("4 messages, oldest first: 3 unread"), where drawn. */
+  marksLabel?: string;
   protectedLabel?: string;
   heldCount?: number;
   heldLabel?: string;
@@ -115,6 +119,7 @@ export function messageRowFacts(p: MessageRowFacts): RowSpokenFact[] {
   if (p.threadCount !== undefined && p.threadCount > 1 && p.threadLabel !== undefined) {
     said.push({ kind: "thread", text: p.threadLabel });
   }
+  if (p.marksLabel) said.push({ kind: "marks", text: p.marksLabel });
   if (p.hasAttachment && p.spoken) said.push({ kind: "attachment", text: p.spoken.attachment });
   if (p.protectedLabel !== undefined) said.push({ kind: "protected", text: p.protectedLabel });
   if (p.heldCount !== undefined && p.heldCount > 1 && p.heldLabel !== undefined) {

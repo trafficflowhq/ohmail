@@ -73,8 +73,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-17 (both): the authenticator's Copy and QR label, the codes' Copy and Download,
  *  "Did you mean" and "Wrong address?" (join, carried whole).
  *  Raised 2026-10-18 (both): the splash's waiting line and the sign-in's sentence for a pending
- *  sign-out (resume, carried whole). */
-const INLINE_CEILING_BYTES = { en: 36_650, de: 41_900 } as const;
+ *  sign-out (resume, carried whole).
+ *  Raised 2026-10-23 (both): the reader's Mark unread and the conversation squares' spoken labels
+ *  (message, carried whole). */
+const INLINE_CEILING_BYTES = { en: 37_030, de: 42_330 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

@@ -132,6 +132,11 @@ export interface Mail {
    */
   rowKey?: string;
   memberIds?: readonly string[];
+  /**
+   * THE CONVERSATION'S SQUARES — one per message, oldest first (`unread`, `read`, `mine`), from
+   * the engine's `threadMarksIndex`, set by `liveOhbox` alone; absent for a conversation of one.
+   */
+  marks?: readonly ("unread" | "read" | "mine")[];
   /** The tags this message carries, in the tag list's order; absent where it carries none. */
   tags?: readonly MailTag[];
   /**

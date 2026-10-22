@@ -572,10 +572,10 @@ const ENGINE_IMPORTERS = new Set([
    */
   "src/ui/mailto.ts",
   /**
-   * SCROLL-TO-READ'S CORE — a named consumer of the shared reader-seen rules (`DWELL_MS`,
-   * `EVIDENCE_WINDOW_MS`, `READING_LINE`, `atScrollEnd`, `atScrollTop`, `dwellCommits`), the numbers and the dwell
-   * decision the web reader runs too. Pure arithmetic over boxes it is handed; no connection, and the
-   * pattern scan above holds it to that.
+   * THE THREAD-READ RULE'S DOOR — a named consumer of the shared rule (`createThreadRead`, its
+   * `ThreadRead` record, the dwell, the top's line count and the fade constants), the rule the web
+   * reader runs too, which it re-exports to the reader and its visit records. Pure arithmetic over
+   * line boxes it is handed; no connection, and the pattern scan above holds it to that.
    */
   "src/ui/reader-seen.ts",
 ]);

@@ -158,11 +158,12 @@ describe("a conversation opened from its Ohbox row on the phone", () => {
     expect(p.world().ohbox.resurfaced, "Done in the reader left the conversation Resurfaced").toEqual([]);
   });
 
-  it("the open reads a2 and the row's own target moves to the older unread a1: every remount stays on a2", async () => {
+  it("the reader reads a2 and the row's own target moves to the older unread a1: every remount stays on a2", async () => {
     const p = await phone([create("message", "a1", rowA1()), create("message", "a2", msg("a2", AT + 3_600_000, { unread: true }))]);
     const open = press(p.world(), "a2");
     expect(open).toBe("a2");
     await p.actions.openMessage(open);
+    await p.actions.markGlanced([open]);   // the reader's rule, with a2 on screen
     expect(threadRow(p.engine)?.target, "the premise: the row's own target moved").toBe("a1");
     const w1 = p.world();
     expect(shownAt(w1, remounts(w1, open))).toEqual(all(remounts(w1, open), "a2"));

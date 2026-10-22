@@ -13,12 +13,13 @@ import type { Mail } from "../state/model";
 
 /** The badge facts this surface has. The head — name, subject, stamp, read state — comes first. */
 export type PhoneRowBadgeKind =
-  | "senderCheck" | "thread" | "protected" | "newSince" | "tracker" | "place" | "amount" | "tag";
+  | "senderCheck" | "thread" | "marks" | "protected" | "newSince" | "tracker" | "place" | "amount" | "tag";
 
 /** The web's order, restricted to the badges this row wears. */
 export const PHONE_ROW_BADGE_ORDER: readonly PhoneRowBadgeKind[] = [
   "senderCheck",
   "thread",
+  "marks",
   "protected",
   "newSince",
   "tracker",
@@ -50,10 +51,22 @@ export function threadOfRow(m: Mail): number {
   return m.earlier.length > 0 ? m.earlier.length + 1 : 0;
 }
 
+/** The row's squares, where it has two or more: one per message, oldest first. */
+export function marksOfRow(m: Mail): readonly ("unread" | "read" | "mine")[] | null {
+  return m.marks && m.marks.length > 1 ? m.marks : null;
+}
+
+/** Is the count badge drawn? Not where the squares are as many: they say the length. */
+export function threadBadgeOf(m: Mail): number {
+  const thread = threadOfRow(m);
+  const marks = marksOfRow(m);
+  return thread > 1 && !(marks && marks.length === thread) ? thread : 0;
+}
+
 /** Every badge the row wears, in the order it is spoken in. */
 export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
   const said: PhoneRowBadgeFact[] = [];
-  const thread = threadOfRow(m);
+  const thread = threadBadgeOf(m);
   // The sentence, for the chip's reason above: "Not PostFinance" alone says nothing about whom.
   if (m.senderCheck && m.sentTo === undefined) {
     said.push({
@@ -64,6 +77,8 @@ export function rowBadgeFacts(m: Mail): PhoneRowBadgeFact[] {
     });
   }
   if (thread > 1) said.push({ kind: "thread", text: Copy.mailRowThreadAria(thread) });
+  const marks = marksOfRow(m);
+  if (marks) said.push({ kind: "marks", text: Copy.mailRowMarksAria(marks.length, marks.filter((k) => k === "unread").length) });
   if (m.protected) said.push({ kind: "protected", text: Copy.protectedLead });
   /* The SENTENCE, not the chip's face: "2 new" read aloud in a list is a number and a word with
      no referent. The web row's own description makes the same substitution. */

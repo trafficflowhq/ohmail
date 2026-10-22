@@ -151,7 +151,8 @@ describe("↵ on a focused where-line link", () => {
   it("control: ↵ off the link still opens the selected letter", async () => {
     await mount("n1");
     expect(await enterOn(document.body)).toBe(true);
-    expect(calls).toContain("seen:n1");
+    // The open enters the letter; what turns read is the reader's rule, on screen.
+    expect(calls).toContain("select:n1");
     expect(calls).toContain("reader:n1");
   });
 

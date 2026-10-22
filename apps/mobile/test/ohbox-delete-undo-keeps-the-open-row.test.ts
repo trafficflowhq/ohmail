@@ -52,6 +52,7 @@ describe("the phone's held delete, undone", () => {
     const s = await session();
     try {
       expect(await s.actions.openMessage("m2")).toBe(true);
+      await s.actions.markGlanced(["m2"]);   // the reader's rule, with m2 on screen
       armHeldDelete("m2", 60_000, () => s.actions.deleteMessage("m2", { quiet: true }));
       expect(s.box().fresh.map((m) => m.id), "the press hides the row").toEqual(["m1", "m3"]);
       expect(s.boot.engine.openRowHeld(), "the reader is still over the pill").toBe("m2");
@@ -69,6 +70,7 @@ describe("the phone's held delete, undone", () => {
     const s = await session();
     try {
       await s.actions.openMessage("m2");
+      await s.actions.markGlanced(["m2"]);
       armHeldDelete("m2", 60_000, () => s.actions.deleteMessage("m2", { quiet: true }));
       s.actions.leaveMessage("m2");
       await undoHeldDelete("m2");

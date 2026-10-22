@@ -6,12 +6,15 @@ import { NextIntlClientProvider } from "next-intl";
 import { FixturesAdapter, MemoryMirrorStore, OhmailEngine, type MirrorRecord } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../../webapp/messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "../../webapp/test/fixtures/thread-layout.js";
 
 /**
- * THE DESKTOP'S OHBOX SAVES A READ WHEN IT SHOWS ONE. Paired and standalone windows
- * mount the web client's `AppShell` with an engine the window built (`DesktopGate`: `demo={false}`
- * plus `engine`), so they share the Ohbox's arm, and this is that shape: an open puts the glance
- * read on the outbox and the wire while the message is on screen, and the count follows it.
+ * THE DESKTOP'S OHBOX SAVES A READ WHEN IT SHOWS ONE. Paired and standalone windows mount the web
+ * client's `AppShell` with an engine the window built (`DesktopGate`: `demo={false}` plus `engine`),
+ * so they share the Ohbox's thread-read rule, and this is that shape: an open puts the glance read
+ * of the message on screen on the outbox and the wire once its top was on screen for the dwell,
+ * while it is still open, and the count follows it; a j preview writes nothing. The window's reader
+ * is laid out (`thread-layout.ts`).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -37,8 +40,10 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let wire: Array<{ kind: string; ids: string[]; unread?: boolean; via?: string }> = [];
 
+let layout: ThreadLayout;
 beforeEach(() => {
   vi.useFakeTimers();
+  layout = stubThreadLayout();
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
       matches: false, media: query, onchange: null, addListener() {}, removeListener() {},
@@ -57,6 +62,7 @@ afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null; host = null;
+  layout.restore();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -65,7 +71,7 @@ const count = (): number => Number(/(\d+) unread/.exec(host!.textContent ?? "")?
 const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`.row[data-id="${id}"]`)!;
 
 describe("the desktop window's Ohbox", () => {
-  it("an open saves the read to the outbox and the wire while the message is still open", async () => {
+  it("an open saves the read to the outbox and the wire while the message is still open; a preview writes nothing", async () => {
     const store = new LaterTaskDisk();
     const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store, storePolicy: { mode: "full" } });
     const { AppShell } = await import("../../webapp/app/shell/AppShell");
@@ -88,9 +94,14 @@ describe("the desktop window's Ohbox", () => {
     expect(row, "the fixture Ohbox shows no unread row").not.toBeNull();
     const id = row!.dataset.id!;
     const before = count();
-    await act(async () => { row!.click(); });            // the cursor lands
-    await act(async () => { rowOf(id).click(); });       // …a second click is the open
+    // A preview: the first row on screen, resting well past the old dwell. Nothing is written.
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true })); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(wire.filter((w) => w.kind === "mark_seen"), "a preview wrote a read").toEqual([]);
+    await act(async () => { rowOf(id).click(); });       // a click is the open
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    expect(wire.filter((w) => w.kind === "mark_seen"), "the write waits for the dwell").toEqual([]);
+    await layout.passDwell();                            // its top on screen for the dwell: read
 
     expect(wire.filter((w) => w.kind === "mark_seen" && w.ids.includes(id)), "the desktop never sent the read")
       .toEqual([{ kind: "mark_seen", ids: [id], unread: false, via: "glance" }]);

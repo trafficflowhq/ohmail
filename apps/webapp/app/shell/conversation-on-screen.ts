@@ -13,18 +13,16 @@ export function conversationOnScreen(presented: EntityReader, raw: EntityReader,
 
 /**
  * WHAT THE READER'S MARK AS READ TAKES — the unread members of the conversation on screen (the
- * opened message alone where there is none), minus a resurfaced pin (its own Done answers it) and
- * minus the armed read, which presents as read already. The bar's FACE is this set's emptiness and
- * the press writes exactly this set, so the two cannot disagree. Wired on the Ohbox only.
+ * opened message alone where there is none), minus a resurfaced pin (its own Done answers it). The
+ * bar's FACE is this set's emptiness and the press writes exactly this set, so the two cannot
+ * disagree. Wired on the Ohbox only.
  */
-export function conversationReadSet(
-  presented: EntityReader, raw: EntityReader, messageId: string, armedId: string | null,
-): string[] {
+export function conversationReadSet(presented: EntityReader, raw: EntityReader, messageId: string): string[] {
   const panels = conversationOnScreen(presented, raw, messageId);
   const opened = presented.get<EngineMessage>("message", messageId) ?? raw.get<EngineMessage>("message", messageId);
   const members = panels.length > 0 ? panels : opened ? [opened] : [];
   return members
-    .filter((m) => m.unread === true && !isResurfaced(m) && m.id !== armedId)
+    .filter((m) => m.unread === true && !isResurfaced(m))
     .map((m) => m.id);
 }
 
@@ -35,13 +33,13 @@ export const readSetWalks = (): number => walks;
 /**
  * `conversationReadSet`, memoized per mirror version and (thread, opened message): the Ohbox's column
  * and the sheet ask it on every render, and `threadOf` walks the whole mirror, so a render whose
- * mirror has not moved does no second walk. Any version, reader or armed-read change empties it.
+ * mirror has not moved does no second walk. Any version or reader change empties it.
  */
-export function createReadSetMemo(): (presented: EntityReader, raw: EntityReader, messageId: string, armedId: string | null) => string[] {
+export function createReadSetMemo(): (presented: EntityReader, raw: EntityReader, messageId: string) => string[] {
   let stamp: readonly unknown[] = [];
   const cache = new Map<string, string[]>();
-  return (presented, raw, messageId, armedId) => {
-    const next = [presented, raw, presented.version(), raw.version(), armedId];
+  return (presented, raw, messageId) => {
+    const next = [presented, raw, presented.version(), raw.version()];
     if (next.some((v, i) => v !== stamp[i])) {
       stamp = next;
       cache.clear();
@@ -51,7 +49,7 @@ export function createReadSetMemo(): (presented: EntityReader, raw: EntityReader
     let set = cache.get(key);
     if (set === undefined) {
       walks += 1;
-      set = conversationReadSet(presented, raw, messageId, armedId);
+      set = conversationReadSet(presented, raw, messageId);
       cache.set(key, set);
     }
     return set;

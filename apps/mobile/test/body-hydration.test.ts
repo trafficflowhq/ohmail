@@ -198,7 +198,9 @@ describe.each(SHAPES)("a message opened on the phone renders its body [$name]", 
     fake.setBody("r1", BODY);
     const live = await liveWorldOn(fake, origin, deps);
 
+    // The open and the reader's read of it on screen (in the Ohbox the open reads nothing itself).
     await live.actions.openMessage("r1");
+    void live.actions.markGlanced(["r1"]);
     await bodyArrives(live.engine, "r1");
     await arrived("the mark-read PATCH on the wire", () => fake.seen.some((r) => r.method === "PATCH" && r.url === "/messages"));
     await arrived("r1 read on the server", () => fake.message("r1")?.unread === false);

@@ -179,8 +179,6 @@ export interface ShellVerbsInput {
   offOhbox?: boolean;
   /** Our own reply facing the Ohbox row a message was selected on, decided at the press: Move seeds from it. */
   ownFaceFor?: ShellOpenState["ownFaceFor"];
-  /** Drains the scroll-to-read glance batch before a read press (its Undo never carries a glance). */
-  flushSiblingSeen: ShellOpenState["flushSiblingSeen"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
   readerFor: ShellOpenState["readerFor"];
   setReaderFor: ShellOpenState["setReaderFor"];
@@ -210,7 +208,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, flushSiblingSeen, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -1120,7 +1118,6 @@ export function useShellVerbs({
           {
             const set = readSetFor?.(m.id);
             if (set && set.length > 0) {
-              flushSiblingSeen();
               onBulkAction("read", set);
             } else {
               // Off the Ohbox a read here is a read in ohmail (owner 2026-10-21): the engine

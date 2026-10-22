@@ -64,10 +64,12 @@ const rowUnread = (engine: OhmailEngine): boolean =>
     .members.some((m) => m.unread);
 
 describe("the phone reader's read slot covers the conversation", () => {
-  it("open a2 → glance [a2]; the set is [a1]; the press writes [a1] with an Undo; then Mark unread is a2 alone", async () => {
+  it("open a2, read on screen → glance [a2]; the set is [a1]; the press writes [a1] with an Undo; then Mark unread is a2 alone", async () => {
     const p = await phone([create("message", "a1", msg("a1", AT)), create("message", "a2", msg("a2", AT + 60_000))]);
     await p.actions.openMessage("a2");
-    expect(reads(p.sent), "the open glances the opened message only").toEqual([{ ids: ["a2"], unread: false, via: "glance" }]);
+    expect(reads(p.sent), "the Ohbox open reads nothing by itself").toEqual([]);
+    await p.actions.markGlanced(["a2"]);   // the reader's rule, with a2 on screen
+    expect(reads(p.sent), "the glance is the opened message only").toEqual([{ ids: ["a2"], unread: false, via: "glance" }]);
     const open = liveMessage(p.engine, "a2", view)!;
     const set = conversationUnreadIds(open);
     expect(set, "the slot's face is Mark as read, over the rest of the conversation").toEqual(["a1"]);
@@ -88,6 +90,7 @@ describe("the phone reader's read slot covers the conversation", () => {
     const RES = { messageId: "a1", state: "resurfaced", bubbleUpAt: null, setAt: new Date(AT).toISOString(), updatedAt: new Date(AT).toISOString() } as unknown as EngineMessage["triage"];
     const p = await phone([create("message", "a1", msg("a1", AT, { triage: RES })), create("message", "b1", msg("b1", AT + 30_000)), create("message", "a2", msg("a2", AT + 60_000))]);
     await p.actions.openMessage("a2");
+    await p.actions.markGlanced(["a2"]);   // the reader's rule, with a2 on screen
     const open = liveMessage(p.engine, "a2", view)!;
     expect(open.earlier.find((h) => h.id === "a1")?.resurfaced, "the premise: the member carries its pin").toBe(true);
     const set = conversationUnreadIds(open);
@@ -106,10 +109,11 @@ describe("the phone reader's read slot covers the conversation", () => {
   it("the compact bar, the rail and the sheet read the one set, and the rail re-publishes on its key", () => {
     const src = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageActions.tsx", import.meta.url)), "utf8"));
     expect(src).toContain("const unreadIds = conversationUnreadIds(m);");
-    expect(src, "the compact bar's and the rail's face").toContain("unreadIds.length > 0\n        ? { icon: \"check\" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds, m.id), a11y: Copy.actionMarkReadCount(unreadIds.length) }");
+    expect(src, "the press writes the set").toContain("const markRead = (): void => {\n    for (const id of unreadIds) record?.release(id);\n    a.markSeen(unreadIds[0]!, false, unreadIds, m.id);");
+    expect(src, "the compact bar's and the rail's face").toContain("unreadIds.length > 0\n        ? { icon: \"check\" as IconName, label: Copy.actionMarkRead, press: () => markRead(), a11y: Copy.actionMarkReadCount(unreadIds.length) }");
     expect(src, "the compact bar's accessible name carries the count").toContain('a11yLabel: "a11y" in readFace ? readFace.a11y : undefined');
     expect(src, "the rail entry is the face").toContain('return { id, icon: readFace.icon, label: readFace.label, onPress: readFace.press };');
-    expect(src, "the sheet switches on the same set").toContain("unreadIds.length > 0 ? (\n          <SheetRow icon=\"check\" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds, m.id); }} />");
+    expect(src, "the sheet switches on the same set").toContain("unreadIds.length > 0 ? (\n          <SheetRow icon=\"check\" label={Copy.actionMarkRead} onPress={() => { close(); markRead(); }} />");
     const deps = /publishReaderRail\(null\);[\s\S]*?\}, \[([^\]]*)\]\);/.exec(src)?.[1] ?? "";
     expect(deps.split(",").map((d) => d.trim()), "the rail effect's dependencies carry the face key").toContain("unreadKey");
   });

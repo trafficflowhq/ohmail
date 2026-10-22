@@ -1,15 +1,16 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { installShellEnv, teardownShellEnv } from "./fixtures/live-walk-shell.js";
-import { click, key, mountThread, msg, patches, readSlot, toastText } from "./fixtures/thread-read-shell.js";
+import { click, key, mountThread, msg, patches, readSlot, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * AN EXPLICIT MARK READ ON THE MESSAGE ON SCREEN IS A READ IN OHMAIL (owner 2026-10-21, after
  * 2026-10-07): the Mark read button or ⇧I on the shown message files it at the top of Earlier
- * once the reader moves on, exactly like opening it. Before, only an armed read (dwell, open, →)
- * took the engine's hold, so a message shown without one (a URL landing, a press inside the dwell,
- * after `u`) left New at the press and filed at its arrival slot.
- * Through the shipped shell and the real engine. Mark all read and multi-select keep arrival.
+ * once the reader moves on, exactly like opening it — a message shown in a preview (a URL landing,
+ * j, the after-verb advance, after `u`) included. A conversation's Mark read is ONE request.
+ * Through the shipped shell and the real engine, its reader laid out (`fixtures/thread-layout.ts`).
+ * Mark all read and multi-select keep arrival.
  */
 
 const deliberate = () => patches.filter((p) => p.via === undefined);
@@ -22,7 +23,7 @@ const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLEle
 const selected = (): string | null => document.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
 /** "old" unread (08:00) under "newer" read (08:30): New ["old"], Earlier ["newer"]. */
 const two = () => [msg("old", 0, { threadId: "t-old" }), msg("newer", 30, { threadId: "t-newer", unread: false })];
-/** Three seconds of nothing: longer than the 2 s dwell. */
+/** Three seconds of nothing. */
 const idle = async (): Promise<void> => { for (let i = 0; i < 10; i++) await key("Shift"); };
 const OPEN_READ = { ids: ["old"], unread: false, openRead: true };
 
@@ -30,14 +31,19 @@ beforeAll(async () => {
   await import("../app/shell/AppShell.js");
   await import("@ohmail/ui");
 }, 120_000);
+let layout: ThreadLayout;
 beforeEach(() => {
   installShellEnv();
+  layout = stubThreadLayout();
   window.location.hash = "#/ohbox";
 });
-afterEach(async () => { await teardownShellEnv(); });
+afterEach(async () => {
+  layout.restore();
+  await teardownShellEnv();
+});
 
 describe("an explicit Mark read on the shown message files it at the top of Earlier", () => {
-  it("after a verb's advance, ⇧I inside its dwell: held while shown, top of Earlier once left", async () => {
+  it("after a verb's advance (a preview), ⇧I: held while shown, top of Earlier once left", async () => {
     await mountThread([msg("first", 20, { threadId: "t-first" }), ...two()]);
     await key("j");
     expect(selected()).toBe("first");
@@ -46,7 +52,7 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
     await key("I", { shiftKey: true });
     expect(deliberate()).toEqual([OPEN_READ]);
     await idle();
-    expect(patches, "the advance's dwell adds nothing").toEqual([OPEN_READ]);
+    expect(patches, "the advance adds nothing").toEqual([OPEN_READ]);
     expect(ids("New"), "it keeps its place while on screen").toEqual(["old"]);
     await click(rowOf("newer"), "move on");
     expect(ids("Earlier"), "left, it takes the top of Earlier").toEqual(["old", "newer"]);
@@ -63,12 +69,12 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
     expect(ids("Earlier")).toEqual(["old", "newer"]);
   }, 30_000);
 
-  it("Mark read inside the dwell: one PATCH, an open read", async () => {
+  it("Mark read on a j preview: one PATCH, an open read", async () => {
     await mountThread(two());
-    await click(rowOf("old"), "select old");
+    await key("j");
     await click(readSlot(col()), "Mark read");
     await idle();
-    expect(patches, "the dwell adds nothing").toEqual([OPEN_READ]);
+    expect(patches, "the preview adds nothing").toEqual([OPEN_READ]);
     expect(ids("New")).toEqual(["old"]);
     await click(rowOf("newer"), "move on");
     expect(ids("Earlier")).toEqual(["old", "newer"]);
@@ -76,7 +82,6 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
 
   it("opened, u, then ⇧I: the read again counts as an open read", async () => {
     await mountThread(two());
-    await click(rowOf("old"), "select old");
     await click(rowOf("old"), "open old");
     await key("u");
     expect(ids("New")).toEqual(["old"]);
@@ -87,7 +92,7 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
     expect(ids("Earlier")).toEqual(["old", "newer"]);
   }, 30_000);
 
-  it("two unread in the conversation, landed on x2: both open reads, the Undo restores a1 alone", async () => {
+  it("two unread in the conversation, landed on x2: one open read for both, and one Undo for both", async () => {
     window.location.hash = "#/ohbox/m/x2";
     await mountThread([
       msg("a1", 0, { threadId: "t-old" }), msg("x2", 10, { threadId: "t-old" }),
@@ -95,30 +100,28 @@ describe("an explicit Mark read on the shown message files it at the top of Earl
     ]);
     expect(readSlot(col())?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
     await click(readSlot(col()), "Mark read");
-    expect(deliberate()).toEqual([
-      { ids: ["x2"], unread: false, openRead: true },
-      { ids: ["a1", "x2"], unread: false, openRead: true },
-    ]);
+    expect(deliberate(), "one request for the conversation").toEqual([{ ids: ["a1", "x2"], unread: false, openRead: true }]);
     expect(toastText()).toContain("2 messages marked read.");
     await click(document.querySelector(".toast .toast-act"), "Undo");
-    expect(deliberate().at(-1), "Undo takes back the other message only").toEqual({ ids: ["a1"], unread: true });
-    expect(readSlot(col())?.getAttribute("aria-label")).toBe("Mark 1 unread message as read");
+    expect(deliberate().at(-1), "Undo takes back what the press wrote").toEqual({ ids: ["a1", "x2"], unread: true });
+    expect(readSlot(col())?.getAttribute("aria-label")).toBe("Mark 2 unread messages as read");
   }, 30_000);
 });
 
 describe("CONTROLS: what keeps its arrival slot, and the open", () => {
   it("an open saves a glance that is an open read", async () => {
     await mountThread(two());
-    await click(rowOf("old"), "select old");
     await click(rowOf("old"), "open old");
+    await layout.passDwell(); // its top on screen for the dwell: read
+    await settle();
     expect(patches).toEqual([{ ids: ["old"], unread: false, via: "glance", openRead: true }]);
   }, 30_000);
 
   it("⇧U over two picks of two conversations: no open read, arrival order", async () => {
     await mountThread([msg("p1", 0, { threadId: "t-old" }), msg("p2", 10, { threadId: "t-newer" })]);
-    await click(rowOf("p1"), "select p1");
+    await key("j");
     await key("x");
-    await click(rowOf("p2"), "select p2");
+    await key("j");
     await key("x");
     await key("U", { shiftKey: true });
     expect(patches.length).toBeGreaterThan(0);
@@ -128,7 +131,9 @@ describe("CONTROLS: what keeps its arrival slot, and the open", () => {
 
   it("Mark all read with a row selected: no open read, arrival order", async () => {
     await mountThread([msg("p1", 0, { threadId: "t-old" }), msg("p2", 10, { threadId: "t-newer" })]);
-    await click(rowOf("p1"), "select p1");
+    await key("j");
+    await key("j");
+    expect(selected()).toBe("p1");
     await click(document.querySelector(".mark-all-read"), "Mark all read");
     expect(patches.length).toBeGreaterThan(0);
     expect(openReads()).toEqual([]);

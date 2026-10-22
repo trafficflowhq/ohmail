@@ -9,6 +9,7 @@
  * three faces. The AI drafter is not here — no engine verb, so an absent control, never a dead one.
  */
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import type { ThreadRead } from "./reader-seen";
 import {
   Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
   type LayoutChangeEvent,
@@ -114,6 +115,7 @@ import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
 import { conversationUnreadIds } from "./read-slot";
+import { useReaderCover } from "./reader-cover";
 
 /**
  * One pick's verdicts, held as KINDS — the sentence is derived where it is shown, so a refusal
@@ -155,8 +157,11 @@ export function MessageActions({
   onDeleted,
   onBack,
   inPane = false,
+  record,
 }: {
   m: WorldMail;
+  /** The reader's visit: a Mark unread here keeps the message unread for it, a Mark read lets go. */
+  record?: ThreadRead;
   /** Drawn in the list-detail pair's reading pane, which already starts past the rail. */
   inPane?: boolean;
   /**
@@ -284,12 +289,21 @@ export function MessageActions({
    * one Undo; Mark unread stays this message alone.
    */
   const unreadIds = conversationUnreadIds(m);
+  /* The person's own read lets the visit's keeps go; their Mark unread keeps it for the visit. */
+  const markRead = (): void => {
+    for (const id of unreadIds) record?.release(id);
+    a.markSeen(unreadIds[0]!, false, unreadIds, m.id);
+  };
+  const markUnread = (): void => {
+    record?.keepUnread(m.id);
+    a.markSeen(m.id, true);
+  };
   const readFace =
     m.pile === "resurfaced"
       ? { icon: "check" as IconName, label: Copy.actionDone, press: () => a.resurfaceDone(m.id) }
       : unreadIds.length > 0
-        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => a.markSeen(unreadIds[0]!, false, unreadIds, m.id), a11y: Copy.actionMarkReadCount(unreadIds.length) }
-        : { icon: "x" as IconName, label: Copy.actionMarkUnread, press: () => a.markSeen(m.id, true) };
+        ? { icon: "check" as IconName, label: Copy.actionMarkRead, press: () => markRead(), a11y: Copy.actionMarkReadCount(unreadIds.length) }
+        : { icon: "x" as IconName, label: Copy.actionMarkUnread, press: () => markUnread() };
 
   /* THE RAIL CLAIM (unfolded-landscape Duo): the reader's verbs ride the ONE right-edge rail —
      back · reply · reply all · forward, Done · Park · Junk, ⋯ (prototype v5, Mail's order) —
@@ -582,9 +596,9 @@ export function MessageActions({
         {!moreHas("read") ? null : m.pile === "resurfaced" ? (
           <SheetRow icon="check" label={Copy.actionDone} onPress={() => { close(); a.resurfaceDone(m.id); }} />
         ) : unreadIds.length > 0 ? (
-          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); a.markSeen(unreadIds[0]!, false, unreadIds, m.id); }} />
+          <SheetRow icon="check" label={Copy.actionMarkRead} onPress={() => { close(); markRead(); }} />
         ) : (
-          <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); a.markSeen(m.id, true); }} />
+          <SheetRow icon="x" label={Copy.actionMarkUnread} onPress={() => { close(); markUnread(); }} />
         )}
         {/* Delete stands LAST and opens its own confirm — a destructive verb never fires off a
             scrolled thumb, and the desktop keeps the ask on its button press too. Move-to-Trash
@@ -1131,6 +1145,8 @@ export function ComposeSheet({
   const heightClass = usePosture().heightClass;
   const windowHeight = useWindowDimensions().height;
   const modalKey = useModalKey();
+  /* The composer stands over the reader: nothing under it is read while it is shown (`reader-cover.ts`). */
+  useReaderCover(true);
   /* An unfold redraws the dialog; the field that held the caret gets it back (`keep-focus.ts`). */
   const focusKeeper = useFocusKeeper(Date.now, showKeyboardWhenFocused);
   const toField = useRef<TextInput | null>(null);

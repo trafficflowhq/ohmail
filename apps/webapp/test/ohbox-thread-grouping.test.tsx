@@ -252,11 +252,11 @@ describe("Ohbox conversation grouping", () => {
 
     await click("t3");
     // The open names the latest unread member — the reader lands on it, per the thread-open
-    // contract — and only that member is saved read, exactly as for a plain row: the folded
-    // members are not bulk-marked.
+    // contract — and writes nothing by itself: what turns read is the reader's thread-read rule
+    // (the sheet, at this width), and the folded members are never bulk-marked.
     expect(opened).toEqual(["t3"]);
     expect(selected).toContain("t3");
-    expect(marked.map((m) => m.ids)).toEqual([["t3"]]);
+    expect(marked.map((m) => m.ids)).toEqual([]);
   });
 
   it("j/k traverse conversations — a folded member is never a keyboard stop", async () => {

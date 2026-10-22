@@ -1408,7 +1408,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
-    notifications, allOhbox, participantsOf, threadCountOf, threadSubjectOf, fallbackMailboxId,
+    notifications, allOhbox, participantsOf, threadCountOf, threadMarksOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled,
   } = useShellDerivations({
     engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
@@ -1707,11 +1707,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     picker, pickerIds, previewFor, railOpen, readerCrossed, readerFor, readerGone, readerMessage, readSetFor, readsCur,
     readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
     searchQuery, selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setChipState, setCloseCard,
-    setFr, setFrDone, setFrPending, setFrValues, setJump, setOhboxArmedRead, setOhboxSel, setPicker,
+    setFr, setFrDone, setFrPending, setFrValues, setJump, holdOhboxRow, setOhboxSel, setPicker,
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, selectOhboxRow, siblingSeen, flushSiblingSeen,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1927,7 +1927,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
-    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor, flushSiblingSeen,
+    markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
     readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
@@ -2581,6 +2581,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 previouslySeen={ohbox.previouslySeen}
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
+                threadMarksOf={threadMarksOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}
@@ -2603,11 +2604,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    It is `enterReader` and no longer `setReaderFor` — see the gate above. */
                 onEnterReader={enterReader}
                 onMarkSeen={markSeen}
-                /* The view's armed read, held for the reader sheet's verb — see `ohboxArmedRead`. */
-                onReadArmed={setOhboxArmedRead}
+                /* The row being read, held in New by the engine; the visit's wiring for the sheet. */
+                onHoldRow={holdOhboxRow}
+                onThreadRead={setOhboxThreadRead}
                 readSetFor={readSetFor}
-                onSiblingSeen={siblingSeen}
-                flushSiblingSeen={flushSiblingSeen}
                 /* An Undo puts the row back as it stood at the press — the view answers (`UndoLink`). */
                 undoLink={undoLink}
                 onRestoreHold={restoreOhboxHold}
@@ -3517,7 +3517,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       >
         {sheetMessage ? (
           <MessagePane
-            /* Presented state, not stored state — see `ohboxArmedRead`. The ACTIONS still act on
+            /* Presented state, not stored state — see `sheetMessage`. The ACTIONS still act on
                the real message: `sheetMessage` differs only in the `unread` the verb derives
                from, and `onMessageAction` receives the same id either way. */
             message={sheetMessage}
@@ -3526,9 +3526,15 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             onAction={(a) => onMessageAction(a, sheetMessage)}
             onAddTag={openTagPicker}
             /* On the Ohbox the sheet's read slot is the conversation's (`readSetFor`) and the
-               sheet scrolls to read; elsewhere the per-message face and no scroll-to-read. */
+               sheet runs the visit's thread-read record (the sheet is an open); elsewhere the
+               per-message face and no rule. */
             {...(route.view === "ohbox"
-              ? { readSet: readSetFor(sheetMessage.id), scroller: readerRef, onSiblingSeen: siblingSeen }
+              ? {
+                  readSet: readSetFor(sheetMessage.id),
+                  scroller: readerRef,
+                  // The visit is the Ohbox selection's: the sheet runs it only over that message.
+                  threadRead: ohboxThreadRead && selectedOhbox?.id === sheetMessage.id ? ohboxThreadRead : undefined,
+                }
               : {})}
           />
         ) : readerGone ? (

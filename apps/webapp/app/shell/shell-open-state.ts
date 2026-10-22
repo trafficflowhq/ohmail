@@ -35,6 +35,7 @@ import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } fro
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
 import { createReadSetMemo } from "./conversation-on-screen";
+import type { ThreadReadWiring } from "./reader-seen";
 import { readColumnHidden, watchNarrow } from "./narrow";
 import { dispatchMarkAll, dispatchMarkAllRead } from "./read-all";
 import type { RichValue } from "./rich-text";
@@ -570,45 +571,35 @@ export function useShellOpenState({
   const readerMessage: EngineMessage | null = readerGone ? null : readerAnswer;
 
   /**
-   * THE OHBOX'S ARMED READ — reported by `OhboxView.onReadArmed`, held here for ONE consumer:
-   * the reader sheet's `MessagePane`, whose read-state verb derives from `message.unread`. The
-   * Ohbox saves the read at the arm and holds the row in place until it is left or answered; this carries
-   * the same presentation to the sheet, so sheet and row never disagree, and a refused save
-   * clears it for both. The sheet is mounted HERE, so the fact travels up. A report of
-   * view-local presentation state, never a second writer of read-state: nothing else may
-   * read it.
+   * THE ROW BEING READ — the engine holds it in "New" (`holdOpenRow`) from the moment the Ohbox's
+   * visit to its conversation is entered, so every read of the conversation meanwhile is an open
+   * read; the view's departures release it the same way. Synchronous, so the place and the read's
+   * paint reach the list in one snapshot. Never a writer of read-state.
    */
-  const [ohboxArmedRead, setArmedReadState] = useState<string | null>(null);
-  /**
-   * …AND THE ENGINE HOLDS THE SAME ROW IN "NEW" (`holdOpenRow`), which is what keeps its place:
-   * the view reports the arm synchronously, before it saves the read, so the row's place and the
-   * read's paint reach the list in one snapshot; a state update alone arrived a render late. The
-   * view's departures release it the same way.
-   */
-  const setOhboxArmedRead = useStableCallback((id: string | null) => {
+  const holdOhboxRow = useStableCallback((id: string | null) => {
     if (id === null) engine.releaseOpenRow();
     else engine.holdOpenRow(id);
-    setArmedReadState(id);
   });
   /**
-   * The sheet's message, with read state as the list behind it draws it —
-   * the same pair `OhboxView.effUnread` applies, shared through
-   * `presentsUnread` so sheet and row cannot disagree: a RESURFACED message
-   * reads unread whatever its stored flag says (owner ruling 2026-08-31),
-   * so the sheet offers "Mark as read" — the deliberate verb that spends
-   * the pin; an ARMED read reads read, so the sheet offers "Mark unread"
-   * over a read saved as a glance — and the arm does not spend a pin.
+   * THE OHBOX'S THREAD-READ WIRING, held here for ONE consumer: the reader sheet's `MessagePane`
+   * (the sheet is an open, so it runs the same record as the column). Reported by
+   * `OhboxView.onThreadRead`; `null` while nothing is open there.
    */
+  const [ohboxThreadRead, setOhboxThreadRead] = useState<ThreadReadWiring | null>(null);
   /**
    * THE READER'S MARK AS READ SET (`conversationReadSet`) — the unread members of the conversation
-   * the panels show, minus a resurfaced pin and the armed read. The Ohbox's column and the sheet
-   * over it draw their read slot from it and write it on the press; no other view is handed it.
+   * the panels show, minus a resurfaced pin. The Ohbox's column and the sheet over it draw their read
+   * slot from it and write it on the press; no other view is handed it.
    */
   const readSetMemo = useMemo(() => createReadSetMemo(), []);
   const readSetFor = useStableCallback((messageId: string): string[] =>
-    readSetMemo(presented, engine.read(), messageId, ohboxArmedRead));
-  const sheetPresentsUnread =
-    readerMessage != null && (isResurfaced(readerMessage) || (readerMessage.unread && readerMessage.id !== ohboxArmedRead));
+    readSetMemo(presented, engine.read(), messageId));
+  /**
+   * The sheet's message, with read state as the list behind it draws it (`presentsUnread`): a
+   * RESURFACED message reads unread whatever its stored flag says (owner ruling 2026-08-31), so the
+   * sheet offers "Mark as read" — the deliberate verb that spends the pin.
+   */
+  const sheetPresentsUnread = readerMessage != null && (isResurfaced(readerMessage) || readerMessage.unread);
   const sheetMessage: EngineMessage | null =
     readerMessage != null && readerMessage.unread !== sheetPresentsUnread
       ? { ...readerMessage, unread: sheetPresentsUnread }
@@ -794,16 +785,6 @@ export function useShellOpenState({
       }),
     [engine],
   );
-  /**
-   * The reader's scroll-to-read over a conversation's sibling panels (`reader-seen.ts`), batched
-   * the same way and labelled a glance: nobody pressed a read verb, so a pin survives it.
-   */
-  const conversationSeenBatch = useMemo(
-    () => createSeenBatcher((ids) => { void markSeen(ids, false, "glance"); }),
-    [markSeen],
-  );
-  const siblingSeen = useStableCallback((id: string) => conversationSeenBatch.add(id));
-  const flushSiblingSeen = useStableCallback(() => conversationSeenBatch.flushNow());
   const readsMarkSeen = useStableCallback((id: string) => readsSeenBatch.add(id));
   const receiptsMarkSeen = useStableCallback((id: string) => receiptsSeenBatch.add(id));
   /**
@@ -816,14 +797,13 @@ export function useShellOpenState({
     const drain = (): void => {
       readsSeenBatch.flushNow();
       receiptsSeenBatch.flushNow();
-      conversationSeenBatch.flushNow();
     };
     window.addEventListener("pagehide", drain);
     return () => {
       window.removeEventListener("pagehide", drain);
       drain();
     };
-  }, [readsSeenBatch, receiptsSeenBatch, conversationSeenBatch]);
+  }, [readsSeenBatch, receiptsSeenBatch]);
 
   /**
    * THE LEAVE-COMMIT, both streams — one anchored `feed_mark_seen` per departure, the
@@ -1360,8 +1340,8 @@ export function useShellOpenState({
     readerFor,
     readerCrossed,
     readSetFor,
-    siblingSeen,
-    flushSiblingSeen,
+    ohboxThreadRead,
+    setOhboxThreadRead,
     readerGone,
     readerMessage,
     readsCur,
@@ -1386,7 +1366,7 @@ export function useShellOpenState({
     setFrPending,
     setFrValues,
     setJump,
-    setOhboxArmedRead,
+    holdOhboxRow,
     setOhboxSel,
     setPicker,
     setPickerIds,

@@ -18,15 +18,17 @@ import {
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import { UNDO_MS } from "../app/shell/delete-undo";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * UNDO PUTS THE LIST BACK AS IT STOOD AT THE PRESS — the row's place in New, the cursor on it.
  *
- * The 2 s dwell saves the read and holds the open row in New until the reader moves on. A held
- * Delete (and Park, Answer later) took the row away with its hold, so Undo returned a read row
- * to Earlier — off screen on a long New, under a toast saying it is where it was (the tester's
- * 2026-09-28 to 10-03). The dwell's read stands; only the place and the cursor come back.
- * MOVING ON is any change of the selection, the sheet or the armed read after the verb, by any
+ * An open holds the row in New until the reader moves on, and the read rule saves the read of what
+ * is on screen (the reader is laid out here, `fixtures/thread-layout.ts`). A held Delete (and Park,
+ * Answer later) took the row away with its hold, so Undo returned a read row to Earlier — off
+ * screen on a long New, under a toast saying it is where it was (the tester's 2026-09-28 to 10-03).
+ * The read stands; only the place and the cursor come back. A j preview holds nothing and reads
+ * nothing. MOVING ON is any change of the selection, the sheet or the hold after the verb, by any
  * door — then Undo restores nothing and nothing stays held in New.
  * MUTATIONS WATCHED (mutation-control.sh): the verb's record released at the press; one door
  * bypassing the moving-on watcher; the engine's no-op hold not spending the restore.
@@ -76,11 +78,14 @@ beforeEach(() => {
   sent = [];
   seq = 0;
   narrow = false;
+  layout = stubThreadLayout();
 });
+let layout: ThreadLayout;
 
 afterEach(async () => {
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
+  layout.restore();
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
@@ -354,11 +359,15 @@ const selectedRow = (el: HTMLElement): string =>
 const sleep = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 
-/** Open w8 by a click, dwell `ms`, take it away with key `k`, press the toast's Undo. */
-async function pressAndUndo(ms: number, k: string): Promise<HTMLElement> {
+/**
+ * Put w8 on screen — `open` by a click (the read rule reads it), `preview` by j (nothing is read,
+ * nothing held) — wait `ms`, take it away with key `k`, press the toast's Undo.
+ */
+async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "open"): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
   expect(where(c, "w8")).toBe(`${NEW}#0`);
-  await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  if (how === "open") await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
+  else await key("j");
   await sleep(ms);
   await key(k);
   await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
@@ -371,9 +380,9 @@ async function pressAndUndo(ms: number, k: string): Promise<HTMLElement> {
 }
 
 describe("a held Delete, undone", () => {
-  for (const ms of [1000, 1500, 1800]) {
-    it(`before the dwell (${ms} ms): back at the top of New, selected, still unread, nothing sent`, async () => {
-      const c = await pressAndUndo(ms, "Backspace");
+  for (const ms of [300, 2300]) {
+    it(`a preview (${ms} ms): back at the top of New, selected, still unread, nothing sent`, async () => {
+      const c = await pressAndUndo(ms, "Backspace", "preview");
       expect(where(c, "w8")).toBe(`${NEW}#0`);
       expect(selectedRow(c)).toBe("w8");
       expect(seen()).toBe(0);
@@ -381,12 +390,12 @@ describe("a held Delete, undone", () => {
       expect(deletes()).toEqual([]);
     }, 30000);
   }
-  for (const ms of [2300, 2600, 3000]) {
-    it(`after the dwell (${ms} ms): back at the top of New and selected, the read standing`, async () => {
+  for (const ms of [300, 1500, 3000]) {
+    it(`after opening it (${ms} ms): back at the top of New and selected, the read standing`, async () => {
       const c = await pressAndUndo(ms, "Backspace");
       expect(where(c, "w8"), "Undo filed the row under Earlier").toBe(`${NEW}#0`);
       expect(selectedRow(c), "Undo left the cursor where the delete moved it").toBe("w8");
-      expect(seen(), "the dwell's read").toBe(1);
+      expect(seen(), "the open's read").toBe(1);
       expect(toastText()).toContain(messages.ohbox.deleteUndone);
       expect(deletes()).toEqual([]);
     }, 30000);
@@ -415,7 +424,7 @@ describe("a held Delete, undone", () => {
   }, 30000);
 });
 
-describe("the verbs beside it: Park and Answer later, undone after the dwell", () => {
+describe("the verbs beside it: Park and Answer later, undone after an open", () => {
   for (const [verb, k] of [["Park", "e"], ["Answer later", "a"]] as const) {
     it(`${verb}: back at the top of New and selected`, async () => {
       const c = await pressAndUndo(2300, k);
@@ -424,8 +433,8 @@ describe("the verbs beside it: Park and Answer later, undone after the dwell", (
       expect(toastText()).toContain(messages.ohbox.toastUndone);
       expect(deletes()).toEqual([]);
     }, 30000);
-    it(`${verb}, CONTROL before the dwell: back at the top of New`, async () => {
-      const c = await pressAndUndo(1000, k);
+    it(`${verb}, CONTROL on a preview: back at the top of New`, async () => {
+      const c = await pressAndUndo(1000, k, "preview");
       expect(where(c, "w8")).toBe(`${NEW}#0`);
       expect(deletes()).toEqual([]);
     }, 30000);
@@ -461,7 +470,7 @@ const clickUndo = async (): Promise<void> => {
   expect(undo, "the toast carried no Undo").not.toBeNull();
   await act(async () => { undo!.click(); });
 };
-/** Open w8 by a click, dwell past 2 s, take it away with `k`. */
+/** Open w8 by a click (the read rule reads it), wait, take it away with `k`. */
 async function dwellAndPress(k: string): Promise<HTMLElement> {
   const c = await shell(ORGANIZER_ROSTER);
   await act(async () => { c.querySelector<HTMLElement>('.row[data-id="w8"]')!.click(); });
@@ -535,7 +544,7 @@ describe("a person who moved on is not dragged back (every door)", () => {
     expect(toastText()).not.toContain(messages.ohbox.deleteUndone);
   }, 30000);
 
-  it("NOT STUCK IN NEW: Park after the dwell, j twice, Undo, then j on read rows", async () => {
+  it("NOT STUCK IN NEW: Park after an open, j twice, Undo, then j on read rows", async () => {
     const c = await dwellAndPress("e");
     await key("j"); await sleep(200);
     await key("j"); await sleep(200);

@@ -854,7 +854,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     root = createRoot(host);
     const { OhboxView } = await import("../app/views/OhboxView.js");
     const { KeymapProvider } = await import("../app/shell/keymap.js");
-    const readSetFor = (id: string) => conversationReadSet(engine.read(), engine.read(), id, null);
+    const readSetFor = (id: string) => conversationReadSet(engine.read(), engine.read(), id);
     const render = async (): Promise<void> => {
       const reader = engine.read();
       const box = ohboxView(reader);

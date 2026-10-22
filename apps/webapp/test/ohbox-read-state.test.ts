@@ -8,14 +8,16 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 
 /**
- * READ-STATE IN THE OHBOX (slice the mark-on-leave reversed by that change). Two judgements pull
- * against each other: an explicit open (Enter, click-into-reader, mobile tap) establishes reading,
- * and a j/k sweep past a row establishes NOTHING — get that wrong and a keyboard user empties their
- * own Ohbox by scrolling through it, which is why the 2 s dwell exists. Since that change the moment
- * reading is established is the moment it is SAVED: a read the screen shows is a read the account
- * holds. What still waits for the way out (a cursor move, unmount, the sheet closing where it was
- * the reading, Back) is the row's PLACE, so nothing re-sorts under the reader.
+ * READ-STATE IN THE OHBOX. Two judgements pull against each other: an open (Enter, a click on a
+ * row, a mobile tap) ENTERS the conversation, and a j/k sweep past a row is a preview that
+ * establishes NOTHING, however long it rests — get that wrong and a keyboard user empties their
+ * own Ohbox by scrolling through it. In an entered conversation a message turns read once its
+ * first and last line have been on screen (the thread-read rule), and that read is SAVED at once.
+ * What still waits for the way out (a cursor move, unmount, the sheet closing where it was the
+ * reading, Back) is the row's PLACE, so nothing re-sorts under the reader. The reading column has
+ * a laid-out geometry here (`fixtures/thread-layout.ts`): a message's lines are on screen.
  */
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 // See `sync-liveness-shell.test.ts` for why React is published as a global and why this file
 // writes `h(...)` rather than JSX.
@@ -31,6 +33,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+/** The old dwell, kept as a length of rest: a preview resting this long still reads nothing. */
 const DWELL_MS = 2000;
 
 interface Msg {
@@ -48,6 +51,8 @@ function msg(m: Msg): Record<string, unknown> {
     date: "2026-08-02T09:00:00.000Z",
     folder: "INBOX",
     snippet: "preview",
+    // The body rides the row, so the inert chrome reports it `full` and the rule may read it.
+    body: `the words of ${m.id}`,
     unread: m.unread,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
@@ -57,7 +62,7 @@ function msg(m: Msg): Record<string, unknown> {
 }
 
 /**
- * THE ARM'S SAVE, as the view dispatches it: `via: "glance"`, because nobody pressed a read verb.
+ * THE RULE'S SAVE, as the view dispatches it: `via: "glance"`, because nobody pressed a read verb.
  * The label lets the engine hold a resurfaced row's pin back from an involuntary read, while the
  * deliberate verbs (the read pill, `u`, the bulk bar) answer pins by omitting it.
  */
@@ -255,8 +260,8 @@ function entityOf(r: Msg): Record<string, unknown> {
 const unreadIds = (): string[] => live.filter((r) => r.unread).map((r) => r.id);
 
 /**
- * THE SHELL'S HOLD, modelled: the view reports its armed read (`onReadArmed`) and the shell has
- * the engine hold that row in New (`holdOpenRow`, only while it is unread at the arm), deriving
+ * THE SHELL'S HOLD, modelled: the view reports the row it entered (`onHoldRow`) and the shell has
+ * the engine hold that row in New (`holdOpenRow`, only while it is unread then), deriving
  * the groups through `ohboxView`'s one rule — `unread || id === held` (pinned on the real
  * selector in `packages/client-engine/test/ohbox-open-row-keeps-its-place.test.ts`).
  */
@@ -320,7 +325,7 @@ async function mountLive(rows: Msg[]): Promise<void> {
           },
           readerId: readerFor, readSetFor: (id: string) => [id],
           onMarkSeen: liveMarkSeen,
-          onReadArmed: holdArmed,
+          onHoldRow: holdArmed,
           bulk: bulkStub(liveMarkSeen),
           doorbellInitials: [],
           doorbellCount: 0,
@@ -402,10 +407,16 @@ const slide = async (): Promise<void> => {
   await act(async () => { vi.advanceTimersByTime(400); });
 };
 
+/** A frame passes: the rule looks at what is on screen. */
+const frame = async (): Promise<void> => {
+  await act(async () => { vi.advanceTimersByTime(20); });
+};
+
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, ...init }));
   });
+  await frame();
 };
 
 const rowEl = (id: string): HTMLElement =>
@@ -415,6 +426,7 @@ const click = async (id: string, init: MouseEventInit = {}): Promise<void> => {
   await act(async () => {
     rowEl(id).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await frame();
 };
 
 const text = (): string => host!.textContent ?? "";
@@ -449,8 +461,10 @@ const pagehide = async (): Promise<void> => {
   await act(async () => { window.dispatchEvent(new Event("pagehide")); });
 };
 
+let layout: ThreadLayout;
 beforeEach(() => {
   vi.useFakeTimers();
+  layout = stubThreadLayout({ columnHidden });
   marked = [];
   bulkRuns = [];
   entered = 0;
@@ -465,42 +479,50 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  layout.restore();
   // The shell guard spies on the engine's own body fetch; a spy left installed would silence
   // it for every file that runs after this one in the same worker.
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
-describe("opening a message SAVES the read; leaving releases its place", () => {
-  it("↵ opens the reader and saves the read at once; leaving writes nothing more", async () => {
-    // THE GUARD. Drop the `markSeenRef` call from `armRead` in `OhboxView.tsx` and this
-    // goes red: the row shows read while nothing is sent, and a reload finds it unread again.
+describe("opening a message enters it: what is on screen is read and SAVED; leaving releases its place", () => {
+  it("↵ opens the reader and saves the read once its top was on screen for the dwell; leaving writes nothing more", async () => {
+    // THE GUARD. Drop the `markSeenRef` call from `readByRule` in `OhboxView.tsx` and this
+    // goes red: the message is read on screen while nothing is sent.
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("Enter");
+    expect(marked, "the write waits for the dwell").toEqual([]);
+    await layout.passDwell();
     expect(marked).toEqual([glance("a")]);
     expect(entered).toBe(1);
     await key("j");
     expect(marked).toEqual([glance("a")]);
   });
 
-  it("a second click on the already-selected row is an open, and it saves the read", async () => {
+  it("a click on a row is an open: it enters, and what is on screen is saved read", async () => {
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
-    await click("b");                       // moves the cursor only
-    expect(marked).toEqual([]);
-    await click("b");                       // …now it is an open, and the read is saved
+    await click("b");                       // a click enters: "b" is on screen
+    await layout.passDwell();
     expect(marked).toEqual([glance("b")]);
-    await click("a");                       // leaving "b" writes nothing more
+    await click("b");                       // a second click opens again and writes nothing more
     expect(marked).toEqual([glance("b")]);
+    await click("a");                       // leaving "b" for "a" reads "a", nothing for "b"
+    await layout.passDwell();
+    expect(marked).toEqual([glance("b"), glance("a")]);
   });
 
-  it("on MOBILE a single tap is the open and saves the read; closing the sheet adds nothing", async () => {
+  it("on MOBILE a single tap is the open: the sheet is raised; the hidden column reads nothing", async () => {
+    // The sheet is the shell's (`conversation-read-slot` drives it); the column here is
+    // `display:none`, so nothing in it is on screen.
     setViewport(true);
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await click("b");
     expect(entered).toBe(1);
-    expect(marked).toEqual([glance("b")]);
+    expect(readerFor).toBe("b");
+    expect(marked).toEqual([]);
     await closeReader();
-    expect(marked).toEqual([glance("b")]);
+    expect(marked).toEqual([]);
   });
 
   it("opening an ALREADY-read message arms nothing, so no departure writes anything", async () => {
@@ -514,7 +536,7 @@ describe("opening a message SAVES the read; leaving releases its place", () => {
 
   it("the message being read keeps its PLACE, and its ink and the count agree with the save", async () => {
     // The row is saved read at the open and the list re-partitions, but the held place keeps it
-    // in "New" under the reader (the shell's hold, `holdArmed`: report nothing from `onReadArmed`
+    // in "New" under the reader (the shell's hold, `holdArmed`: report nothing from `onHoldRow`
     // and it is gone after the 280 ms slide); leaving files it under "Earlier". The count follows the save.
     await mountLive([
       { id: "a", subject: "A", unread: true },
@@ -535,11 +557,11 @@ describe("opening a message SAVES the read; leaving releases its place", () => {
   });
 });
 
-describe("the 2 s dwell — reading, not navigating", () => {
+describe("a preview reads nothing — j/k is navigating, however long it rests", () => {
   it("a j/k sweep past several rows commits NOTHING", async () => {
-    // THE GUARD that matters most here. Remove the `clearTimeout` cleanup from the dwell effect
-    // in `OhboxView.tsx` and this goes red: every row the sweep touched is marked read, i.e. a
-    // keyboard user empties their own Ohbox by scrolling through it.
+    // THE GUARD that matters most here. Make `selectByUser` enter the conversation and this goes
+    // red: every row the sweep touched is marked read, i.e. a keyboard user empties their own
+    // Ohbox by scrolling through it.
     await mount([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: true },
@@ -553,16 +575,19 @@ describe("the 2 s dwell — reading, not navigating", () => {
     expect(marked).toEqual([]);
   });
 
-  it("A COMPLETED DWELL SAVES the read while the message stays open — once", async () => {
-    // The dwell's end is the moment reading is established, so it is the moment it is saved
-    // no second message has to be opened for the read to reach the account.
+  it("a preview resting forty seconds saves nothing, with the message on screen", async () => {
+    // Base: the 2 s dwell saved it. A preview is never a read, so nobody's mail turns read by a
+    // cursor left on it.
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("j");
-    await idle(20);                         // twenty dwell periods of doing nothing at all
+    await idle(20);
+    expect(marked).toEqual([]);
+    await key("Enter");                     // …and entering it is what reads
+    await layout.passDwell();
     expect(marked).toEqual([glance("b")]);
   });
 
-  it("stopping on a row for 2 s and then MOVING ON commits exactly that one", async () => {
+  it("resting on a row and then MOVING ON commits nothing", async () => {
     await mount([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: true },
@@ -571,12 +596,10 @@ describe("the 2 s dwell — reading, not navigating", () => {
     await key("j");
     await act(async () => { vi.advanceTimersByTime(DWELL_MS); });
     await key("j");
-    expect(marked).toEqual([glance("b")]);
+    expect(marked).toEqual([]);
   });
 
-  it("a dwell that never completes saves nothing, then or on the way out", async () => {
-    // The dwell's judgement is still the judgement. Passing THROUGH a row for less than two
-    // seconds is navigation, and nothing is saved for it.
+  it("passing through a row saves nothing, then or on the way out", async () => {
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("j");
     await act(async () => { vi.advanceTimersByTime(DWELL_MS - 100); });
@@ -586,7 +609,7 @@ describe("the 2 s dwell — reading, not navigating", () => {
     expect(marked).toEqual([]);
   });
 
-  it("the dwell does not fire on MOBILE — a selection there shows nothing", async () => {
+  it("a selection on MOBILE shows nothing and reads nothing", async () => {
     setViewport(true);
     await mount([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("j");
@@ -598,7 +621,7 @@ describe("the 2 s dwell — reading, not navigating", () => {
     expect(marked).toEqual([]);
   });
 
-  it("an already-read selection arms no timer at all", async () => {
+  it("an already-read selection writes nothing", async () => {
     await mount([{ id: "a", subject: "A", unread: false }]);
     await act(async () => { vi.advanceTimersByTime(DWELL_MS * 3); });
     expect(marked).toEqual([]);
@@ -606,8 +629,8 @@ describe("the 2 s dwell — reading, not navigating", () => {
 });
 
 /**
- * ═══ THE FOUR DEPARTURES ═══ The read is saved at the arm; a departure releases the held PLACE and
- * writes nothing. Four, and no more: the window blurring, the list re-partitioning or a delta
+ * ═══ THE FOUR DEPARTURES ═══ The read is saved while the message is open; a departure releases the
+ * held PLACE and writes nothing. Four, and no more: the window blurring, the list re-partitioning or a delta
  * landing is not leaving, and a fifth trigger would slide rows away while they are being read.
  */
 describe("the four departures", () => {
@@ -615,6 +638,7 @@ describe("the four departures", () => {
     await mountLive([{ id: "a", subject: "A", unread: true }, { id: "b", subject: "B", unread: true }]);
     await key("j");
     await key("Enter");
+    await layout.passDwell();
     expect(marked).toEqual([glance("a")]);
     await key("j");
     await slide();
@@ -639,19 +663,19 @@ describe("the four departures", () => {
     // away by the rail loses nothing and writes nothing more.
     await mount([{ id: "a", subject: "A", unread: true }]);
     await key("Enter");
+    await layout.passDwell();
     expect(marked).toEqual([glance("a")]);
     await unmount();
     expect(marked).toEqual([glance("a")]);
   });
 
-  it("#3 — the reader sheet closing, AT A MOBILE WIDTH", async () => {
+  it("#3 — the reader sheet closing, AT A MOBILE WIDTH, writes nothing", async () => {
     setViewport(true);
     await mount([{ id: "a", subject: "A", unread: true }]);
     await key("Enter");
     expect(readerFor).toBe("a");
-    expect(marked).toEqual([glance("a")]);
     await closeReader();
-    expect(marked).toEqual([glance("a")]);
+    expect(marked, "the sheet is the reading there; closing it is leaving, not reading").toEqual([]);
   });
 
   it("#3 does NOT fire at a SPLIT width — the column is still showing the message", async () => {
@@ -674,24 +698,25 @@ describe("the four departures", () => {
   it("#4 — pagehide owes nothing: the read went out at the open", async () => {
     await mount([{ id: "a", subject: "A", unread: true }]);
     await key("Enter");
+    await layout.passDwell();
     expect(marked).toEqual([glance("a")]);
     await pagehide();
     expect(marked).toEqual([glance("a")]);
   });
 
   it("a read is written ONCE, however many departures arrive", async () => {
-    setViewport(true);
     await mount([{ id: "a", subject: "A", unread: true }]);
     await key("Enter");
+    await layout.passDwell();
+    readerFor = "a";
+    await rerenderNow();
     await closeReader();
     await pagehide();
     await unmount();
     expect(marked).toEqual([glance("a")]);
   });
 
-  it("a message filed out of the Ohbox before the dwell completes is not written", async () => {
-    // The arm re-reads the list when the timer fires: a write against a row that left the pile
-    // would be a `\Seen` for a message no longer here. Drop the `allRef` lookup in `armRead`.
+  it("a message filed out of the Ohbox while previewed is not written", async () => {
     await mountLive([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: true },
@@ -704,7 +729,7 @@ describe("the four departures", () => {
     expect(marked).toEqual([]);
   });
 
-  it("a message already read by another device before the dwell completes is not re-written", async () => {
+  it("a message already read by another device while previewed is not re-written", async () => {
     await mountLive([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: true },
@@ -795,11 +820,12 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(ohboxSel).toBe("a");
   });
 
-  it("a dwell the user actually asked for saves that one, and stops there", async () => {
-    // The first `j` lands on "a": with nothing selected there is no cursor to move FROM. The save
-    // re-partitions the list, and the next unread row is not armed by it — only a cursor move arms.
+  it("an open saves that one, and stops there", async () => {
+    // The save re-partitions the list, and the next unread row is not entered by it — only a
+    // person's open enters.
     await mountLive(FIVE);
     await key("j");
+    await key("Enter");
     await idle(20);
     expect(marked).toEqual([glance("a")]);
     await pagehide();
@@ -807,14 +833,14 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(unreadIds()).toEqual(["b", "c", "d", "e"]);
   });
 
-  it("a walk down the list writes ONE message per stop and never gets ahead of the cursor", async () => {
-    // The runaway's shape under save-at-arm: each stop saves exactly its own message, and a save
-    // cannot arm anything, because arming needs a cursor move and a re-partition is not one.
+  it("a walk down the list writes ONE message per open and never gets ahead of the cursor", async () => {
+    // The runaway's shape under the rule: each open reads exactly its own message, and a read
+    // cannot enter anything, because entering needs a person's act and a re-partition is not one.
     // Positional, so "it stopped" and "it went one further" stay distinguishable.
     await mountLive(FIVE);
-    await key("j"); await idle(1);          // sit on "a" — the first j is the first selection
+    await key("j"); await key("Enter"); await idle(1);
     expect(marked).toEqual([glance("a")]);
-    await key("j"); await idle(1);          // …move to "b" and sit: "b" is written
+    await key("j"); await key("Enter"); await idle(1);
     expect(marked).toEqual([glance("a"), glance("b")]);
     await idle(20);
     expect(marked).toHaveLength(2);
@@ -830,10 +856,8 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(unreadIds()).toEqual(["a", "b", "c", "d", "e"]);
   });
 
-  it("a click that MOVES the cursor arms the dwell, like j does", async () => {
-    // A click is a deliberate move and has to arm; only the implicit fallback must not.
-    // Route this branch through `onSelect` instead of `selectByUser` and it goes red —
-    // mouse users would silently lose the dwell that keyboard users keep.
+  it("a click that MOVES the cursor enters, unlike j: that one is read, and only that one", async () => {
+    // A click is an open: a mouse never previews, or a mouse would never read.
     await mountLive(FIVE);
     await click("c");
     await idle(20);
@@ -842,12 +866,9 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(unreadIds()).toEqual(["a", "b", "d", "e"]);
   });
 
-  it("a message read by another route mid-dwell is not written a second time", async () => {
-    // The arm re-reads the world before it writes. Drop the `unread` re-check in `armRead` and
-    // this goes red with `mark_seen` dispatched twice for one message — a redundant `\\Seen`
-    // round trip to the user's server.
+  it("a message read by another route while previewed is not written a second time", async () => {
     await mountLive(FIVE);
-    await key("j");                                   // dwell armed on "a"
+    await key("j");                                   // a preview of "a"
     await act(async () => { vi.advanceTimersByTime(DWELL_MS / 2); });
     await key("x");                                   // pick it…
     await key("u", { shiftKey: true });               // …and ⇧U marks the picked set read
@@ -868,7 +889,7 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(unreadIds()).toEqual(["b", "c", "d", "e"]);
   });
 
-  it("moving the cursor onto an ALREADY-READ row arms nothing", async () => {
+  it("entering an ALREADY-READ row writes nothing", async () => {
     await mountLive([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: false },
@@ -881,36 +902,28 @@ describe("THE RUNAWAY: a read commit must never cause another read commit", () =
     expect(marked).toEqual([]);
   });
 
-  it("mail arriving mid-dwell neither restarts the clock nor moves the target", async () => {
-    // THE GUARD against the tempting wrong fix. Putting `all` in the dwell's dependency array
-    // also stops the cascade — and quietly breaks the dwell on any live mailbox, because every
-    // sync delta would restart the two seconds and the timer would never reach its own end.
-    // Add `all` to those deps and this goes red at the first assertion with `marked` empty.
+  it("mail arriving while a message is open neither moves the target nor reads the arrival", async () => {
     await mountLive(FIVE);
-    await key("j");                                   // deliberate: the cursor is on "a"
-    await act(async () => { vi.advanceTimersByTime(DWELL_MS - 500); });
+    await key("j");
+    await key("Enter");                               // "a" is entered and read
     await pushLive({ id: "z", subject: "Z", unread: true });
-    await act(async () => { vi.advanceTimersByTime(500); });
-    // The clock reached its end on the message the cursor is on, so the save is "a" and not "z".
-    await pagehide();
-    expect(marked).toEqual([glance("a")]);
     await idle(20);
+    await pagehide();
     expect(marked).toEqual([glance("a")]);
     expect(unreadIds()).toEqual(["z", "b", "c", "d", "e"]);
   });
 
-  it("`u` is not undone by a dwell that is already ticking", async () => {
-    // the rule: the pin is checked when the timer FIRES, not only when it was set. Drop the
-    // `pinnedUnread` check in `armRead` and this goes red — the explicit `u` is reverted by the
-    // dwell that was already ticking, while the user watches.
+  it("`u` is not undone by the rule: the opened message stays unread for the visit", async () => {
+    // Drop the `keepUnread` in `markUnread` and this goes red — the explicit `u` is reverted by
+    // the rule in the next frame, while the user watches.
     await mountLive([
       { id: "a", subject: "A", unread: true },
       { id: "b", subject: "B", unread: true },
     ]);
-    await key("j");                                   // arms the dwell on "a"
-    await act(async () => { vi.advanceTimersByTime(DWELL_MS / 2); });
+    await key("j");
+    await key("Enter");                               // "a" is read on screen
     await key("u");                                   // "a" is asked for unread…
-    await key("u");                                   // …and again, idempotently, now PINNED
+    await key("u");                                   // …and again, idempotently
     marked = [];
     await idle(20);
     await pagehide();

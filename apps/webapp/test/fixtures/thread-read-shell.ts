@@ -3,10 +3,10 @@
  * guards share (`conversation-read-slot`, `conversation-seen-on-scroll-runaway`). One page of mail
  * is served until the first read is written (later drains are empty, so a stale echo cannot undo it),
  * every `PATCH /messages` body is kept, and the server refuses what a real one refuses: more than
- * 200 ids (413) and an id it does not hold (404).
+ * 200 ids (413) and an id it does not hold (404). `arriveLater` hands one later drain a reply.
  */
 import { expect, vi } from "vitest";
-import { ISO, act, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
+import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
 import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
 export const ME = "walker@example.invalid";
@@ -50,23 +50,42 @@ export const serverLacks = (id: string | null): void => { staleId = id; };
 
 export const settle = async (): Promise<void> => { for (let i = 0; i < 6; i++) await tick(50); };
 
-/** Serve `messages` (thread T, consented sender) once, record the read wire, mount the shell. */
-export async function mountThread(messages: unknown[]): Promise<HTMLElement> {
+/** What the next drain after the first read serves, once: a reply synced into an open conversation. */
+let later: unknown[] = [];
+export const arriveLater = (messages: unknown[], threadIds: string[], tid = "T"): void => {
+  later = [...messages, thread(tid, threadIds)];
+};
+const takeLater = (): unknown[] => {
+  const out = later;
+  later = [];
+  return out;
+};
+
+/**
+ * Serve `messages` (thread T, consented sender) once, record the read wire, mount the shell.
+ * `threadIds` gives a thread the server's own length, past the members served.
+ */
+export async function mountThread(messages: unknown[], opts: { threadIds?: Record<string, number> } = {}): Promise<HTMLElement> {
   resetResumeLaneForTests();
   seq = 0;
   patches = [];
   staleId = null;
+  later = [];
   const byThread = new Map<string, string[]>();
   for (const m of messages as Array<{ type: string; id: string; entity: { threadId?: string } }>) {
     if (m.type !== "message") continue;
     const tid = m.entity.threadId ?? "T";
     byThread.set(tid, [...(byThread.get(tid) ?? []), m.id]);
   }
-  const creates = [consent(LENA.address), ...messages, ...[...byThread].map(([tid, ids]) => thread(tid, ids))];
+  const padded = (tid: string, ids: string[]): string[] =>
+    [...ids, ...Array.from({ length: Math.max(0, (opts.threadIds?.[tid] ?? 0) - ids.length) }, (_, i) => `${tid}-elsewhere-${i}`)];
+  const creates = [consent(LENA.address), ...messages, ...[...byThread].map(([tid, ids]) => thread(tid, padded(tid, ids)))];
+  // Every message's body, so a panel is final (`data-body-ready`) and the read rule may read it.
+  answerStoreWith([], Object.fromEntries([...byThread.values()].flat().map((id) => [id, `the words of ${id}`])));
   // The page stands until the client writes its first read; after that the drains are empty.
   let served = 0;
   answerSyncWith(() => json({
-    changes: { creates: patches.length === 0 ? creates : [], updates: [], moves: [], deletes: [] },
+    changes: { creates: patches.length === 0 ? creates : takeLater(), updates: [], moves: [], deletes: [] },
     cursor: `c${seq}-${++served}`, hasMore: false, serverTime: ISO,
   }));
   const base = globalThis.fetch;
@@ -99,10 +118,9 @@ export const key = async (k: string, init: KeyboardEventInit = {}): Promise<void
 /** The conversation's one Ohbox row. */
 export const theRow = (host: HTMLElement): HTMLElement | null =>
   host.querySelector<HTMLElement>('[role="listbox"] .row');
-/** A row press, as a person makes it: at a split width the first click selects and the second opens. */
+/** A row press, as a person makes it: one click opens the conversation (a second would open its next unread). */
 export const openTheRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host), "the conversation's row");
-  if (!document.querySelector(".reader .conv")) await click(theRow(host), "the conversation's row");
 };
 /** The read slot of the bar in `scope` (the column or the sheet). */
 export const readSlot = (scope: ParentNode): HTMLElement | null => scope.querySelector<HTMLElement>(".abar .abar-read");

@@ -128,7 +128,8 @@ describe("the world reads the engine's mirror", () => {
       const row = box.fresh.find((m) => m.id === "c3");
       expect(row?.threadCount).toBe(3);
       expect(threadOfRow(row!)).toBe(3);
-      expect(mailRowSpoken(row!)).toContain("3 messages in this conversation");
+      // The squares say the length (one per message, all three unread), so the count steps back.
+      expect(mailRowSpoken(row!)).toContain("3 messages, oldest first: 3 unread");
       live.store.close();
     } finally {
       fake.server.close();
@@ -211,7 +212,7 @@ describe("the world reads the engine's mirror", () => {
 });
 
 describe("mark-read: optimistic, round-trips through /sync, survives kill+relaunch", () => {
-  it("openMessage flips the row at once, the server round-trips it, the reopened mirror holds it", async () => {
+  it("the reader's read flips the row at once, the server round-trips it, the reopened mirror holds it", async () => {
     const fake = mailServer();
     const origin = await listen(fake.server);
     try {
@@ -221,7 +222,10 @@ describe("mark-read: optimistic, round-trips through /sync, survives kill+relaun
       const reader = live.engine.read();
       expect(reader.get<EngineMessage>("message", "m1")?.unread).toBe(true);
 
-      const settled = live.actions.openMessage("m1");
+      // The Ohbox open holds the row and reads nothing; the reader's rule reads it on screen.
+      await live.actions.openMessage("m1");
+      expect(reader.get<EngineMessage>("message", "m1")?.unread).toBe(true);
+      const settled = live.actions.markGlanced(["m1"]);
       await tick();
       // The optimistic overlay — visible before the wire has answered.
       expect(reader.get<EngineMessage>("message", "m1")?.unread).toBe(false);
@@ -258,7 +262,8 @@ describe("mark-read: optimistic, round-trips through /sync, survives kill+relaun
       const reader = live.engine.read();
 
       fake.failNext("PATCH", "/messages");
-      const settled = live.actions.openMessage("m1");
+      await live.actions.openMessage("m1");
+      const settled = live.actions.markGlanced(["m1"]);
       await tick();
       expect(reader.get<EngineMessage>("message", "m1")?.unread).toBe(false); // optimistic
       await settled;

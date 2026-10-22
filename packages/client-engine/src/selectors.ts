@@ -307,7 +307,7 @@ function preferTwin(a: EngineMessage, b: EngineMessage, openId: string): EngineM
 /** This row's collapse key, or `null` where its Message-ID may not stand for identity. */
 function twinKeyOf(m: EngineMessage): string | null {
   // The engine's own send record, or the server's Sent locator. Neither is a sender's claim.
-  const row = { messageIdHeader: m.messageIdHeader, ownOutbound: m.local === true || isOwnSent(m) };
+  const row = { messageIdHeader: m.messageIdHeader, ownOutbound: isOwnOutbound(m) };
   return mayGroupByMessageId(row) ? messageIdKey(row.messageIdHeader) : null;
 }
 
@@ -480,6 +480,11 @@ export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
   return isSentFolderPath(m.folder);
 }
 
+/** A message the account sent: the engine's own send record or the Sent folder's copy. */
+export function isOwnOutbound(m: Pick<EngineMessage, "folder" | "local">): boolean {
+  return m.local === true || isOwnSent(m);
+}
+
 /**
  * IS THIS THE ACCOUNT'S OWN FORWARD — an own-sent row (the ingested Sent copy, or the
  * confirm-time overlay, which is `local: true` under the Sent folder) whose subject opens with an
@@ -490,7 +495,7 @@ export function isOwnSent(m: Pick<EngineMessage, "folder">): boolean {
  * own forward wearing its sender's name.
  */
 export function isForwardedByUs(m: Pick<EngineMessage, "folder" | "subject" | "local">): boolean {
-  return (m.local === true || isOwnSent(m)) && opensWithForwardPrefix(m.subject);
+  return isOwnOutbound(m) && opensWithForwardPrefix(m.subject);
 }
 
 /**
@@ -952,6 +957,42 @@ export function threadSizeIndex(reader: EntityReader): ReadonlyMap<string, Threa
   }
   if (v !== null) sizeCache.set(reader, { v, sizes });
   return sizes;
+}
+
+/** One conversation member's square: unread, read, or the account's own (unread wins). */
+export type ThreadMark = "unread" | "read" | "mine";
+
+const marksCache = new WeakMap<EntityReader, { v: number; marks: Map<string, ThreadMark[]> }>();
+
+/**
+ * THE SQUARES OF EVERY CONVERSATION — `threadId` to one mark per member, oldest first. Membership
+ * is {@link threadOf}'s for a placed message: held strangers out, our own twin copies collapsed.
+ * A conversation of fewer than two is absent. One pass, memoized per version like
+ * {@link threadSizeIndex}: a per-row `threadOf` would walk the mirror once per row.
+ */
+export function threadMarksIndex(reader: EntityReader): ReadonlyMap<string, readonly ThreadMark[]> {
+  const v = typeof reader.version === "function" ? reader.version() : null;
+  if (v !== null) {
+    const hit = marksCache.get(reader);
+    if (hit && hit.v === v) return hit.marks;
+  }
+  const claims = winningStates(reader);
+  const byThread = new Map<string, EngineMessage[]>();
+  for (const m of reader.list<EngineMessage>("message")) {
+    if (!m.threadId || standsHeld(m, claims)) continue;
+    const list = byThread.get(m.threadId);
+    if (list) list.push(m);
+    else byThread.set(m.threadId, [m]);
+  }
+  const marks = new Map<string, ThreadMark[]>();
+  for (const [threadId, list] of byThread) {
+    if (list.length < 2) continue;
+    const members = collapseTwins(list.sort(byDateAsc), "");
+    if (members.length < 2) continue;
+    marks.set(threadId, members.map((m) => (m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read")));
+  }
+  if (v !== null) marksCache.set(reader, { v, marks });
+  return marks;
 }
 
 /**

@@ -1,70 +1,116 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DWELL_MS, EVIDENCE_WINDOW_MS, READING_LINE, createReaderSeen } from "../app/shell/reader-seen";
-import { scrollIntoViewProgrammatically, scrollProgrammatically, stampLive } from "../app/shell/programmatic-scroll";
+import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
+import { EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, viewOf } from "../app/shell/reader-seen";
+import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
 
 /**
- * THE READER-SEEN CORE, numbers only: a sibling panel is committed only by a PERSON's scroll — rule A
- * (a downward pass past its end), rule B (2 s at the reading line) and the end-of-reader rule (at the
- * scroll end, every panel wholly in view) — and a scroll is the person's only with EVIDENCE within a
- * second before it: a wheel, touch or pointer press on the scroller, a scroll key the app did not
- * take, or the frame clause (pointer on a frame, document focused, height steady, no focus,
- * selection or key move in the last second). A stamped app write is never one. jsdom has no
- * layout: panel rects come from `at`; the scroller is 1 000 px tall, so the line is at 330. Each
- * deciding line is mutated in turn and a case below goes red (the changes file lists them).
+ * THE THREAD-READ ADAPTER over the DOM (owner ruling 2026-10-23: the top of a message read is the
+ * message read). The top comes from the marker elements (`.msg-from`, then the body block's first
+ * three lines, or the body to its end where it is shorter; a frame's top), the view ends at the sticky
+ * bar's top, a message turns read once its top has been in view for the 0.7 s dwell, one look writes
+ * one batch, a hidden tab or a window nobody attends reads nothing, and only the person's own scroll
+ * or press ENTERS a preview. jsdom has no layout: every rect comes from `at`; the scroller is 800px
+ * tall; a line is the 24px fallback, so a body's first lines are its first 72px.
  */
 
-const H = 1000;
+const LEAD = 3 * TOP_LINE_FALLBACK_PX;
 let at: Record<string, { top: number; bottom: number }> = {};
-let height = 5000;
-let ch = 1000;
-let cw = 600;
-let top = 0;
-let hovered = false;
-let focused = true;
-let shown = true;
-let seen: string[] = [];
 let scroller: HTMLDivElement;
-let core: ReturnType<typeof createReaderSeen> | null = null;
+let shown = true;
+let focused = true;
+let reads: string[][] = [];
+let enters = 0;
+let frames: Array<() => void> = [];
+let core: ReturnType<typeof createThreadReadDom> | null = null;
+let record = createThreadRead();
+let top = 0;
 
-function panel(id: string, unseen = true): HTMLElement {
+const rect = (key: string) => () => {
+  const r = at[key] ?? { top: 0, bottom: 0 };
+  return { ...r, left: 0, right: 600, width: 600, height: r.bottom - r.top, x: 0, y: r.top, toJSON: () => ({}) } as DOMRect;
+};
+/** A panel whose sender line is [top, top+40], whose body starts 50px down and whose end marker sits at `end`. */
+function panel(
+  id: string, topY: number, end: number,
+  opts: { unseen?: boolean; ready?: boolean; marker?: boolean; framed?: { top: number; bottom: number } } = {},
+): HTMLElement {
   const el = document.createElement("article");
   el.dataset.convId = id;
-  if (unseen) el.setAttribute("data-unseen", "");
-  el.getBoundingClientRect = () => ({ ...at[id]!, left: 0, right: 600, width: 600, height: at[id]!.bottom - at[id]!.top, x: 0, y: at[id]!.top, toJSON: () => ({}) }) as DOMRect;
+  if (opts.unseen ?? true) el.setAttribute("data-unseen", "");
+  if (opts.ready ?? true) el.setAttribute("data-body-ready", "");
+  at[id] = { top: topY, bottom: end + 30 };
+  at[`${id}:from`] = { top: topY, bottom: topY + 40 };
+  el.getBoundingClientRect = rect(id);
+  const from = document.createElement("div");
+  from.className = "msg-from";
+  from.getBoundingClientRect = rect(`${id}:from`);
+  el.appendChild(from);
+  const body = document.createElement("div");
+  body.className = "pm-body";
+  at[`${id}:body`] = { top: topY + 50, bottom: end + 10 };
+  body.getBoundingClientRect = rect(`${id}:body`);
+  if (opts.framed) {
+    const frame = document.createElement("iframe");
+    frame.className = "mb-frame";
+    at[`${id}:frame`] = { ...opts.framed };
+    frame.getBoundingClientRect = rect(`${id}:frame`);
+    body.appendChild(frame);
+  }
+  if (opts.marker ?? true) {
+    const mark = document.createElement("span");
+    mark.setAttribute("data-own-end", "");
+    at[`${id}:end`] = { top: end, bottom: end };
+    mark.getBoundingClientRect = rect(`${id}:end`);
+    body.appendChild(mark);
+  }
+  el.appendChild(body);
   scroller.appendChild(el);
   return el;
 }
-function mount(opened = "open"): void {
-  core = createReaderSeen({
-    scroller, openedId: opened, onSeen: (id) => seen.push(id),
-    frameHovered: () => hovered, documentFocused: () => focused, visible: () => shown,
+function bar(topY: number): void {
+  const el = document.createElement("div");
+  el.className = "msg-actions";
+  at.bar = { top: topY, bottom: topY + 50 };
+  el.getBoundingClientRect = rect("bar");
+  scroller.appendChild(el);
+}
+function mount(): void {
+  core = createThreadReadDom({
+    scroller, record,
+    onRead: (ids) => reads.push(ids),
+    onEnter: () => { enters += 1; record.enter(Date.now()); },
+    visible: () => shown, frameHovered: () => false, documentFocused: () => focused,
+    now: () => Date.now(),
+    frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
   });
 }
-const fire = (type: string, target: EventTarget = scroller, init: EventInit = {}) => target.dispatchEvent(new Event(type, { bubbles: true, ...init }));
-const wheel = () => fire("wheel");
-const touch = () => fire("touchmove");
-const key = (k: string, init: KeyboardEventInit = {}, target: EventTarget = scroller) =>
-  target.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
-const scroll = () => scroller.dispatchEvent(new Event("scroll"));
-/** Move every panel up by `dy` and deliver the scroller's scroll event. */
-const scrollBy = (dy: number) => {
-  for (const r of Object.values(at)) { r.top -= dy; r.bottom -= dy; }
+/** One frame. */
+const flushOne = (): void => { const run = frames; frames = []; for (const f of run) f(); };
+/** Frames until none is asked for: a look that found the layout moved asks for the next. */
+const flush = (): void => { for (let i = 0; i < 10 && frames.length > 0; i++) flushOne(); };
+/** Time passes by `ms`; the looks the dwell's timer asks for run. */
+const pass = (ms: number): void => { vi.advanceTimersByTime(ms); flush(); };
+/** The whole dwell passes. */
+const dwell = (): void => pass(THREAD_READ_HOLD_MS + 1);
+const scrollBy = (dy: number): void => {
+  for (const [k, r] of Object.entries(at)) if (k !== "scroller" && k !== "bar") { r.top -= dy; r.bottom -= dy; }
   top += dy;
-  scroll();
+  scroller.dispatchEvent(new Event("scroll"));
 };
-const later = (ms: number) => vi.advanceTimersByTime(ms);
 
 beforeEach(() => {
   vi.useFakeTimers();
-  vi.setSystemTime(new Date("2026-10-07T09:00:00Z"));
-  at = {}; height = 5000; ch = 1000; cw = 600; top = 0; hovered = false; focused = true; shown = true; seen = [];
+  vi.setSystemTime(new Date("2026-10-22T09:00:00Z"));
+  at = { scroller: { top: 0, bottom: 800 } };
+  shown = true; focused = true; reads = []; enters = 0; frames = []; top = 0;
+  record = createThreadRead();
   scroller = document.createElement("div");
-  Object.defineProperty(scroller, "clientHeight", { get: () => ch });
-  Object.defineProperty(scroller, "clientWidth", { get: () => cw });
-  Object.defineProperty(scroller, "scrollHeight", { get: () => height });
+  Object.defineProperty(scroller, "clientHeight", { get: () => 800 });
+  Object.defineProperty(scroller, "clientWidth", { get: () => 600 });
+  Object.defineProperty(scroller, "scrollHeight", { get: () => 5000 });
   Object.defineProperty(scroller, "scrollTop", { get: () => top, set: (v: number) => { top = v; } });
-  scroller.getBoundingClientRect = () => ({ top: 0, bottom: H, left: 0, right: 600, width: 600, height: H, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+  scroller.getBoundingClientRect = rect("scroller");
   document.body.appendChild(scroller);
 });
 afterEach(() => {
@@ -74,355 +120,293 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("the numbers", () => {
-  it("are the ruling's", () => {
-    expect([READING_LINE, DWELL_MS, EVIDENCE_WINDOW_MS]).toEqual([0.33, 2000, 1000]);
+describe("a message's top comes from the marker elements", () => {
+  it("the sender line and the body's first three lines, the panel's readiness and height", () => {
+    panel("a", 100, 400);
+    expect(panelsOf(scroller)).toEqual([{
+      id: "a", ready: true, height: 330, first: { top: 100, bottom: 140 }, lead: { top: 150, bottom: 150 + LEAD },
+    }]);
+  });
+  it("a body shorter than three lines is its own top, to its end marker", () => {
+    panel("a", 100, 180);
+    expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 180 });
+  });
+  it("without a marker the body block's foot ends a short body", () => {
+    panel("a", 100, 160, { marker: false });
+    expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 170 });
+  });
+  it("a line is the body's own line height", () => {
+    const el = panel("a", 100, 900);
+    el.querySelector<HTMLElement>(".pm-body")!.style.lineHeight = "30px";
+    expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 240 });
+  });
+  it("a framed body's first lines are the top of its frame", () => {
+    panel("a", 100, 3000, { framed: { top: 210, bottom: 2990 } });
+    expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 210, bottom: 210 + LEAD });
+  });
+  it("the view ends at the sticky bar's top", () => {
+    bar(700);
+    expect(viewOf(scroller)).toEqual({ top: 0, bottom: 700 });
   });
 });
 
-describe("rule A — a downward pass past a panel's end", () => {
-  it("commits p1-p3 carried above the line by a wheel, not p4 still below it", () => {
-    at = { p1: { top: 100, bottom: 400 }, p2: { top: 420, bottom: 700 }, p3: { top: 720, bottom: 900 }, p4: { top: 920, bottom: 1500 } };
-    for (const id of Object.keys(at)) panel(id);
+describe("a message turns read once its top has been in view for the dwell", () => {
+  it("an entered visit reads each top in view once the dwell is done, in one batch (the control)", () => {
+    panel("a", 0, 300);
+    panel("b", 340, 600);
+    record.enter(0);
     mount();
-    wheel();
-    scrollBy(600);
-    expect(seen).toEqual(["p1", "p2", "p3"]);
+    flush();
+    expect(reads, "the dwell has only started").toEqual([]);
+    pass(THREAD_READ_HOLD_MS - 50);
+    expect(reads, "not a moment before it is done").toEqual([]);
+    pass(51);
+    expect(reads).toEqual([["a", "b"]]);
   });
-  it("a panel already above the line at the open is never committed by rule A (upward reading)", () => {
-    at = { old: { top: -800, bottom: 200 }, p2: { top: 400, bottom: 900 } };
-    panel("old"); panel("p2");
+  it("its last line is not needed: a long message whose end is screens below reads", () => {
+    panel("a", 0, 6000);
+    record.enter(0);
     mount();
-    wheel();
-    scrollBy(-50);
-    expect(seen).toEqual([]);
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("the baseline commits nothing, whatever it finds", () => {
-    at = { p1: { top: -500, bottom: -100 }, p2: { top: 340, bottom: 360 } };
-    panel("p1"); panel("p2");
+  it("first lines under the bar do not count, however long", () => {
+    panel("a", 600, 2000); // its first lines run to 722
+    bar(700);
+    record.enter(0);
     mount();
-    expect(seen).toEqual([]);
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
   });
-  it("the opened panel and a read one are never committed", () => {
-    at = { open: { top: 100, bottom: 400 }, read: { top: 420, bottom: 700 } };
-    panel("open"); panel("read", false);
-    mount("open");
-    wheel();
-    scrollBy(600);
-    expect(seen).toEqual([]);
+  it("a fast scroll past reads nothing it passes", () => {
+    panel("a", 900, 1300);
+    panel("b", 1340, 1700);
+    record.enter(0);
+    mount();
+    flush();
+    for (let i = 0; i < 40; i++) { scrollBy(60); pass(16); }
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
   });
-});
-
-describe("evidence before attribution", () => {
-  const one = () => { at = { p1: { top: 300, bottom: 500 } }; panel("p1"); mount(); };
-  it("a scroll 1 000 ms after the wheel is the person's, 1 001 ms is not", () => {
-    one(); wheel(); later(1000); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
+  it("a preview reads nothing, however long its top is in view", () => {
+    panel("a", 0, 300);
+    mount();
+    flush();
+    pass(10_000);
+    expect(reads).toEqual([]);
   });
-  it("1 001 ms after the wheel it is not", () => {
-    one(); wheel(); later(1001); scrollBy(300);
-    expect(seen).toEqual([]);
+  it("a panel not ready is not read; once it is, its dwell starts then", async () => {
+    const el = panel("a", 0, 300, { ready: false });
+    record.enter(0);
+    mount();
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
+    el.setAttribute("data-body-ready", "");
+    await Promise.resolve();
+    flush();
+    pass(THREAD_READ_HOLD_MS - 50);
+    expect(reads).toEqual([]);
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("a touch move and a touch start are evidence", () => {
-    one(); touch(); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-  it("a pointer press on the scroller (its scrollbar) is evidence; one on a panel inside it is not", () => {
-    one(); fire("pointerdown", scroller.firstElementChild!); scrollBy(300);
-    expect(seen, "a press on a panel").toEqual([]);
-    scrollBy(-300);
-    fire("pointerdown"); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-  it("a scroll key the app did not take is evidence; one it took is not", () => {
-    one();
-    const taken = new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true });
-    taken.preventDefault();
-    scroller.dispatchEvent(taken);
-    scrollBy(300);
-    expect(seen, "a key the app consumed").toEqual([]);
-    scrollBy(-300);
-    key("PageDown"); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-  it("j (not a scroll key) is no evidence", () => {
-    one(); key("j"); scrollBy(300);
-    expect(seen).toEqual([]);
-  });
-  it("a scroll with no input at all commits nothing and the next human one does not inherit it", () => {
-    one(); scrollBy(300); wheel(); scrollBy(10);
-    expect(seen, "the unattributed pass consumed p1's record").toEqual([]);
+  it("frames coalesce: many scrolls before a frame are one look", () => {
+    panel("a", 0, 300);
+    record.enter(0);
+    mount();
+    for (let i = 0; i < 5; i++) scroller.dispatchEvent(new Event("scroll"));
+    expect(frames.length).toBe(1);
   });
 });
 
-describe("the frame clause", () => {
-  const two = () => { at = { p1: { top: 100, bottom: 400 }, p2: { top: 420, bottom: 700 } }; panel("p1"); panel("p2"); };
-  it("pointer on a frame, focused, height steady, nothing moved for a second: a bare scroll is the person's", () => {
-    two();
-    const human: number[] = [];
-    core = createReaderSeen({ scroller, openedId: "open", onSeen: (id) => seen.push(id), frameHovered: () => hovered, documentFocused: () => focused, visible: () => shown, onHumanScroll: () => human.push(1) });
-    hovered = true;
-    scrollBy(450);
-    expect(seen).toEqual(["p1", "p2"]);
-    expect(human.length, "the anchor's handover is told").toBe(1);
-  });
-  it("a focus move within the second before: nothing (a focus() that scrolled)", () => {
-    two(); mount(); hovered = true;
-    fire("focusin", document.body); later(999); scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("a selection change within the second before: nothing (find-in-page)", () => {
-    two(); mount(); hovered = true;
-    document.dispatchEvent(new Event("selectionchange")); later(500); scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("a selection moved with its event still to come: nothing (WebKit's find scrolls first)", () => {
-    two(); mount(); hovered = true;
-    const t = document.createTextNode("WORDU4"); document.body.appendChild(t);
-    document.getSelection()!.selectAllChildren(document.body);
-    scrollBy(450);
-    expect(seen).toEqual([]);
-    t.remove();
-  });
-  it("any key within the second before: nothing (j, Tab, Enter)", () => {
-    two(); mount(); hovered = true;
-    key("Tab", {}, document.body); scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("the document not focused: nothing", () => {
-    two(); mount(); hovered = true; focused = false; scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("the height changed (a frame measuring, scroll anchoring): nothing", () => {
-    two(); mount(); hovered = true; height += 300; scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("not hovered and no input: nothing", () => {
-    two(); mount(); scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-});
-
-describe("the viewport's own geometry (the window grows at the scroll end)", () => {
-  const two = () => { at = { p1: { top: 100, bottom: 400 }, p2: { top: 420, bottom: 700 } }; panel("p1"); panel("p2"); };
-  it("the viewport grown taller under a resting pointer: nothing, and nothing from the dwell", () => {
-    two(); mount(); hovered = true; later(1200);
-    ch = 1140; scrollBy(450);
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
-  });
-  it("the viewport grown wider: nothing", () => {
-    two(); mount(); hovered = true; later(1200);
-    cw = 900; scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-  it("a window resize voids the evidence path for a second, and drops a running dwell", () => {
-    two(); mount();
-    wheel(); window.dispatchEvent(new Event("resize")); scrollBy(450);
-    expect(seen, "a wheel just before the resize").toEqual([]);
-    later(1001); scrollBy(-450); wheel(); scrollBy(450);
-    expect(seen, "a second later a person's scroll counts again").toEqual(["p1", "p2"]);
-  });
-  it("a resize drops a dwell a person's scroll armed", () => {
-    at = { tall: { top: 200, bottom: 3200 } }; panel("tall"); mount();
-    wheel(); scrollBy(100); later(500);
-    window.dispatchEvent(new Event("resize"));
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
-  });
-  it("the evidence path takes the geometry check too: a wheel, then the content grows under the scroll", () => {
-    two(); mount();
-    wheel(); height += 300; scrollBy(450);
-    expect(seen).toEqual([]);
-  });
-});
-
-describe("a later key, focus or selection move voids the evidence", () => {
-  const one = () => { at = { p1: { top: 300, bottom: 500 } }; panel("p1"); mount(); };
-  it("a wheel, then Tab 200 ms later: the scroll that follows is not the person's", () => {
-    one(); wheel(); later(200); key("Tab", {}, document.body); scrollBy(300);
-    expect(seen).toEqual([]);
-  });
-  it("a wheel, then a focus move 300 ms later: nothing", () => {
-    one(); wheel(); later(300); fire("focusin", document.body); scrollBy(300);
-    expect(seen).toEqual([]);
-  });
-  it("a wheel, then a selection change: nothing", () => {
-    one(); wheel(); document.dispatchEvent(new Event("selectionchange")); scrollBy(300);
-    expect(seen).toEqual([]);
-  });
-  it("a touch on a control, then the focus it takes: the scroll that follows is not the person's", () => {
-    one(); const btn = document.createElement("button"); scroller.appendChild(btn);
-    fire("touchstart", btn); fire("focusin", btn); scrollBy(300);
-    expect(seen).toEqual([]);
-  });
-  it("focus landing on the scroller itself moves nothing and voids nothing", () => {
-    one(); wheel(); fire("focusin", scroller); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-  it("a free scroll key is its own evidence, its keydown notwithstanding", () => {
-    one(); key("PageDown"); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-});
-
-describe("the stamp is the frame's, not the clock's", () => {
-  it("a scroll landing on the stamped value is never a reading, even inside a wheel's second", () => {
-    at = { p1: { top: 100, bottom: 400 } }; panel("p1"); mount();
-    wheel(); hovered = true;
-    for (const r of Object.values(at)) { r.top -= 500; r.bottom -= 500; }
-    scrollProgrammatically(scroller, 500);
-    scroll();
-    expect(seen).toEqual([]);
-    later(DWELL_MS * 2);
-    expect(seen, "the stamped scroll also cancelled the dwell").toEqual([]);
-  });
-  it("a scroll that left the stamped value is judged on its own evidence", () => {
-    at = { p1: { top: 300, bottom: 500 } }; panel("p1"); mount();
-    scrollProgrammatically(scroller, 0);
-    wheel(); scrollBy(300);
-    expect(seen).toEqual(["p1"]);
-  });
-  it("scrollIntoView stamps every ancestor where it ended", () => {
-    const dock = document.createElement("div"); scroller.appendChild(dock);
-    scrollIntoViewProgrammatically(dock, { block: "end" });
-    expect(stampLive(scroller)).toBe(true);
-  });
-});
-
-describe("rule B — the dwell, and the end of the reader", () => {
-  const tall = () => { at = { tall: { top: 200, bottom: 3200 } }; return panel("tall"); };
-  it("an older panel entering from above commits at 2 000 ms, not at 1 999", () => {
-    at = { old: { top: -900, bottom: -100 }, open: { top: 0, bottom: 1200 } };
-    panel("old"); panel("open", false); mount("open");
-    wheel(); scrollBy(-500);
-    later(1999); expect(seen).toEqual([]);
-    later(1); expect(seen).toEqual(["old"]);
-  });
-  it("a 3 000 px panel whose end never passes the line is read by the dwell alone", () => {
-    tall(); mount(); wheel(); scrollBy(100);
-    later(DWELL_MS); expect(seen).toEqual(["tall"]);
-  });
-  it("an unattributed scroll at 1 500 ms cancels it", () => {
-    tall(); mount(); wheel(); scrollBy(100); later(1200); // past the wheel's second, inside the dwell
-    scrollBy(5); later(DWELL_MS);
-    expect(seen).toEqual([]);
-  });
-  it("a press that read the panel meanwhile leaves the fire with nothing to write", () => {
-    const el = tall(); mount(); wheel(); scrollBy(100); later(1500);
-    el.removeAttribute("data-unseen"); later(600);
-    expect(seen).toEqual([]);
-  });
-  it("the page going hidden cancels the dwell, even if it is back before the fire", () => {
-    tall(); mount(); wheel(); scrollBy(100); later(500);
-    shown = false; document.dispatchEvent(new Event("visibilitychange"));
-    shown = true;
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
-  });
-  it("a fire while the page is hidden writes nothing", () => {
-    tall(); mount(); wheel(); scrollBy(100); later(500);
+describe("only while the person can be reading", () => {
+  it("nothing while the tab is hidden; back in view, the dwell starts over", () => {
+    panel("a", 0, 300);
+    record.enter(0);
+    mount();
+    flush();
+    pass(THREAD_READ_HOLD_MS - 100);
     shown = false;
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
+    document.dispatchEvent(new Event("visibilitychange"));
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
+    shown = true;
+    document.dispatchEvent(new Event("visibilitychange"));
+    flush();
+    pass(THREAD_READ_HOLD_MS - 100);
+    expect(reads, "the dwell counts from the tab's return").toEqual([]);
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("at the scroll end, every short panel wholly in view is read by the dwell", () => {
-    at = { open: { top: -400, bottom: 600 }, t1: { top: 620, bottom: 700 }, t2: { top: 720, bottom: 800 } };
-    panel("open", false); panel("t1"); panel("t2");
-    height = 1800; mount("open");
-    wheel(); top = 799; scrollBy(1); // 800 + 1000 = 1800: the end
-    expect(seen, "neither passes the line").toEqual([]);
-    later(DWELL_MS);
-    expect(seen).toEqual(["t1", "t2"]);
+  it("nothing while the window is not focused; its focus starts the dwell", () => {
+    panel("a", 0, 300);
+    record.enter(0);
+    focused = false;
+    mount();
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
+    focused = true;
+    window.dispatchEvent(new Event("focus"));
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("short of the end, only the panel spanning the line", () => {
-    at = { open: { top: -400, bottom: 600 }, t1: { top: 620, bottom: 700 }, t2: { top: 720, bottom: 800 } };
-    panel("open", false); panel("t1"); panel("t2");
-    height = 5000; mount("open");
-    wheel(); scrollBy(1);
-    later(DWELL_MS);
-    expect(seen).toEqual([]);
+  it("a window without focus that the person wheels reads what they wheel to", () => {
+    panel("p4", 0, 300, { unseen: false });
+    panel("p3", 1000, 1400);
+    record.enter(0);
+    focused = false;
+    mount();
+    flush();
+    scroller.dispatchEvent(new Event("wheel", { bubbles: true }));
+    scrollBy(1000);
+    flush();
+    dwell();
+    expect(reads, "the wheel is the person, the window beside another app").toEqual([["p3"]]);
+  });
+  it("a reply that arrives into the open visit turns read once its top has been in view, no key needed", async () => {
+    panel("a", 0, 300);
+    record.enter(0);
+    mount();
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
+    panel("b", 340, 600);
+    await Promise.resolve();
+    flush();
+    pass(THREAD_READ_HOLD_MS - 50);
+    expect(reads).toEqual([["a"]]);
+    dwell();
+    expect(reads).toEqual([["a"], ["b"]]);
   });
 });
 
-describe("the top of the reader (the first-letter twin of the end rule)", () => {
-  /** Twenty letters of 234 px, 12 apart, the opened one (newest) last: the tester's conversation. */
-  const conversation = (): string[] => {
-    const ids = Array.from({ length: 20 }, (_, i) => `m${i}`);
-    height = 20 + ids.length * 246;
-    top = height - ch;
-    at = Object.fromEntries(ids.map((id, i) => [id, { top: 20 + i * 246 - top, bottom: 20 + i * 246 + 234 - top }]));
-    ids.forEach((id, i) => panel(id, i < ids.length - 1));
-    mount(ids[ids.length - 1]);
-    return ids;
-  };
-  /** Wheel steps of `step` until scrollTop reaches `to`. */
-  const wheelTo = (to: number, step = 300): void => {
-    while (top !== to) { wheel(); scrollBy(Math.sign(to - top) * Math.min(step, Math.abs(to - top))); }
-  };
-  /** A short first letter, the reader resting on it after the person's own scroll up. */
-  const atTheTop = (): void => {
-    at = { first: { top: 20, bottom: 254 }, second: { top: 266, bottom: 500 }, third: { top: 512, bottom: 746 }, open: { top: 758, bottom: 1400 } };
-    panel("first"); panel("second"); panel("third"); panel("open", false);
-    height = 2000;
-    for (const r of Object.values(at)) { r.top -= 300; r.bottom -= 300; }
-    top = 300; mount("open");
-  };
+describe("what enters a preview", () => {
+  it("a wheel on the scroller enters, and the dwell then reads", () => {
+    panel("a", 0, 300);
+    mount();
+    flush();
+    scroller.dispatchEvent(new Event("wheel", { bubbles: true }));
+    expect(enters).toBe(1);
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
+  });
+  it("a pointer press in the reader enters", () => {
+    const el = panel("a", 0, 300);
+    mount();
+    el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(enters).toBe(1);
+  });
+  it("a scroll the app stamped does not enter", () => {
+    panel("a", 1000, 1300);
+    mount();
+    scrollProgrammatically(scroller, 900);
+    scrollBy(0);
+    flush();
+    dwell();
+    expect(enters).toBe(0);
+    expect(reads).toEqual([]);
+  });
+  it("a scroll after a key the app took (j) does not enter", () => {
+    panel("a", 1000, 1300);
+    mount();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
+    scrollBy(900);
+    flush();
+    dwell();
+    expect(enters).toBe(0);
+    expect(reads).toEqual([]);
+  });
+  it("a free scroll key, then the scroll, enters; past the window it does not", () => {
+    panel("a", 1000, 1300);
+    mount();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    vi.advanceTimersByTime(EVIDENCE_WINDOW_MS + 1);
+    scrollBy(100);
+    expect(enters).toBe(0);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    scrollBy(800);
+    expect(enters).toBe(1);
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
+  });
+});
 
-  it("scrolled from its first letter to its last after a dwell at the top, every letter is read", () => {
-    const ids = conversation();
-    wheelTo(0);
-    later(4000);
-    wheelTo(height - ch);
-    later(DWELL_MS);
-    expect([...new Set(seen)].sort()).toEqual(ids.slice(0, -1).sort());
+describe("a look counts only a layout that has settled", () => {
+  const shift = (id: string, dy: number): void => {
+    for (const k of [id, `${id}:from`, `${id}:body`, `${id}:end`]) { at[k]!.top += dy; at[k]!.bottom += dy; }
+  };
+  const grow = (id: string, dy: number): void => {
+    at[id]!.bottom += dy; at[`${id}:body`]!.bottom += dy; at[`${id}:end`]!.top += dy; at[`${id}:end`]!.bottom += dy;
+  };
+  /** z's body lands and grows by 400px: at the old scroll, a (above the view) is pushed wholly into it. */
+  async function land(): Promise<void> {
+    const z = scroller.querySelector<HTMLElement>('[data-conv-id="z"]')!;
+    grow("z", 400);
+    shift("a", 400);
+    shift("b", 400);
+    z.setAttribute("data-body-ready", "");
+    await Promise.resolve();
+  }
+  beforeEach(() => {
+    panel("z", -300, -230, { ready: false });
+    panel("a", -150, -40);
+    panel("b", 0, 1400, { unseen: false }); // the opened panel the anchor holds
+    record.enter(0);
+    mount();
+    flush();
   });
-  it("a short first letter, wholly above the line at the top, is read by the dwell at 2 000 ms, not 1 999", () => {
-    atTheTop();
-    wheel(); scrollBy(-300);
-    later(DWELL_MS - 1);
-    expect(seen).toEqual([]);
-    later(1);
-    expect(seen).toEqual(["first", "second"]);
+  it("a body landing above the anchored panel reads nothing the anchor kept off screen", async () => {
+    await land();
+    flushOne();
+    expect(reads, "a frame nobody saw").toEqual([]);
+    scrollBy(400); // the anchor puts b back at the top before paint
+    flush();
+    dwell();
+    expect(reads).toEqual([]);
   });
-  it("short of the top by two pixels, the first letter waits", () => {
-    atTheTop();
-    wheel(); scrollBy(-298);
-    later(DWELL_MS);
-    expect(seen).toEqual(["second"]);
+  it("the control: with no correction a stays in view, and its dwell then reads it", async () => {
+    await land();
+    flushOne();
+    expect(reads).toEqual([]);
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("a letter wholly in view below the line is not read at the top: it has the line still to pass", () => {
-    atTheTop();
-    wheel(); scrollBy(-300);
-    later(DWELL_MS);
-    expect(seen).not.toContain("third");
+});
+
+describe("a framed body is ready once its frame was measured", () => {
+  it("a frame without its end marker is not ready, whatever its state says; with it, its top's dwell reads", async () => {
+    const el = panel("a", 0, 300, { framed: { top: 60, bottom: 290 }, marker: false });
+    record.enter(0);
+    mount();
+    expect(panelsOf(scroller)[0]!.ready).toBe(false);
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(reads).toEqual([]);
+    const mark = document.createElement("span");
+    mark.setAttribute("data-own-end", "");
+    at["a:end"] = { top: 300, bottom: 300 };
+    mark.getBoundingClientRect = rect("a:end");
+    el.querySelector(".pm-body")!.appendChild(mark);
+    await Promise.resolve();
+    flush();
+    dwell();
+    expect(reads).toEqual([["a"]]);
   });
-  it("a jump to the top is a glance: nothing from the dwell, nothing when the person then scrolls on", () => {
-    atTheTop();
-    for (const r of Object.values(at)) { r.top += 300; r.bottom += 300; }
-    scrollProgrammatically(scroller, 0);
-    scroll();
-    later(DWELL_MS * 2);
-    expect(seen, "the jump").toEqual([]);
-    wheel(); scrollBy(300);
-    later(DWELL_MS);
-    expect(seen, "scrolled on from the jump").not.toContain("first");
-  });
-  it("a jump to the top inside a wheel's second is still the app's", () => {
-    atTheTop();
-    wheel();
-    for (const r of Object.values(at)) { r.top += 300; r.bottom += 300; }
-    scrollProgrammatically(scroller, 0);
-    scroll();
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
-  });
-  it("a resize at the top drops the dwell the person's scroll armed", () => {
-    atTheTop();
-    wheel(); scrollBy(-300);
-    later(500);
-    window.dispatchEvent(new Event("resize"));
-    later(DWELL_MS * 2);
-    expect(seen).toEqual([]);
+  it("a body standing in for its frame (the text before the mount) is not ready", () => {
+    const el = panel("a", 0, 300);
+    const pending = document.createElement("span");
+    pending.setAttribute("data-body-pending", "");
+    el.querySelector(".pm-body")!.appendChild(pending);
+    expect(panelsOf(scroller)[0]!.ready).toBe(false);
+    pending.remove();
+    expect(panelsOf(scroller)[0]!.ready).toBe(true);
   });
 });

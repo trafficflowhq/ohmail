@@ -1,16 +1,17 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * READING MOVES THE MESSAGE TO "EARLIER", AND IT MOVES IT NOW — mail read here or on another client
  * (a `\Seen` the worker writes into the mirror) re-files without a reload, by SLIDING (`slideOut`:
  * the row keeps its slot for `SETTLE_MS` wearing `settling`, then is redrawn below). Three things
  * hold at once: the move happens whatever read the message; it never happens while the message is
- * the one being read (its read is saved at the open, its place held until it is left — `heldRead`),
+ * the one being read (its read is saved while it is open, its place held until it is left — `heldRead`),
  * and it is never a teleport; a later explicit act beats it. THE HARNESS IS LIVE: `onMarkSeen`
  * mutates the mirror the way the shell's optimistic overlay does, or no row could change section.
  */
@@ -26,7 +27,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 /** Must match `SETTLE_MS` in `OhboxView.tsx` — the slide's own duration. */
 const SETTLE_MS = 280;
-/** Comfortably past the slide, without reaching the 2 s dwell. */
+/** Comfortably past the slide. */
 const AFTER_SLIDE_MS = 400;
 
 /** `false` is the split width (a reading column beside the list); `true` is the phone. */
@@ -46,7 +47,7 @@ function msg(m: Row): Record<string, unknown> {
   return {
     id: m.id, accountId: "a", mailboxId: "mb", threadId: m.threadId ?? null, messageIdHeader: null,
     subject: `subj-${m.id}`, from: { name: m.id, address: `${m.id}@ex.example` }, to: [], cc: [],
-    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`,
+    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`, body: `the words of ${m.id}`,
     unread: m.unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
@@ -65,8 +66,8 @@ const marked: Array<{ ids: string[]; unread: boolean }> = [];
 let replyDone: { messageId: string; at: string } | null = null;
 
 /**
- * THE SHELL'S HOLD, modelled: the view reports its armed read (`onReadArmed`) and the shell has
- * the engine hold that row in New (`holdOpenRow`, only while it is unread at the arm), deriving
+ * THE SHELL'S HOLD, modelled: the view reports the row it entered (`onHoldRow`) and the shell has
+ * the engine hold that row in New (`holdOpenRow`, only while it is unread then), deriving
  * the groups through `ohboxView`'s one rule — a CONVERSATION with a member `unread || id === held`
  * stands in New whole (pinned on the real selector in
  * `packages/client-engine/test/ohbox-one-row-per-conversation.test.ts`).
@@ -91,13 +92,13 @@ async function draw(): Promise<void> {
       older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
       newForYou: live.filter(inNew).map(msg),
       previouslySeen: live.filter((r) => !inNew(r)).map(msg),
-      onReadArmed: holdArmed,
+      onHoldRow: holdArmed,
       replyDone,
       tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
       selectedId: sel,
       onSelect: (id: string) => { sel = id; },
       onEnterReader: (id: string) => { if (window.matchMedia("(max-width: 699.98px)").matches) readerId = id; },
-      readerId, readSetFor: (id: string) => [id],
+      readerId, readSetFor: (id: string) => (live.find((r) => r.id === id)?.unread ? [id] : []),
       onMarkSeen: (ids: string[], unread: boolean) => {
         marked.push({ ids, unread });
         for (const id of ids) {
@@ -149,22 +150,33 @@ function idsInGroup(label: string): string[] {
   return [...box.querySelectorAll(".row[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
-/** A click, then the shell's re-render over whatever the click wrote. */
+/** A click, then the shell's re-render over whatever the click wrote, and a frame for the rule. */
 async function click(id: string): Promise<void> {
   await act(async () => { rowEl(id).click(); });
+  await draw();
+  await frame();
+}
+
+/** A frame passes: the rule looks at what is on screen. */
+async function frame(): Promise<void> {
+  if (vi.isFakeTimers()) await act(async () => { vi.advanceTimersByTime(20); });
+  else await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   await draw();
 }
 
 /**
- * READ A MESSAGE FOR REAL, the way the split pane does it: a click to put the cursor on it, a
- * second click on the selected row — an explicit OPEN, which saves the read — and then a click
- * somewhere else, the departure that releases the row's place so it can slide. A single click
- * moves the cursor and establishes nothing, which keeps a j/k sweep from emptying the Ohbox.
+ * READ A MESSAGE FOR REAL, the way the split pane does it: a click OPENS it, and the read rule
+ * saves the read of what is on screen; then the cursor moves off with `j`/`k` — a preview, the
+ * departure that releases the row's place so it can slide, and reads nothing itself.
  */
 async function readAndLeave(id: string, leaveTo: string): Promise<void> {
   await click(id);
-  await click(id);
-  await click(leaveTo);
+  await layout.passDwell(); // the message's top on screen for the dwell: it is read
+  const order = [...idsInGroup("Resurfaced"), ...idsInGroup("New"), ...idsInGroup("Earlier")];
+  const from = order.indexOf(sel ?? id);
+  const to = order.indexOf(leaveTo);
+  const step = to > from ? "j" : "k";
+  for (let i = 0; i < Math.abs(to - from); i++) await press(step);
 }
 
 /** A chord, the way the keymap's dispatcher sees it, then the shell's re-render. */
@@ -173,6 +185,7 @@ async function press(key: string, shift = false): Promise<void> {
     document.dispatchEvent(new KeyboardEvent("keydown", { key, shiftKey: shift, bubbles: true }));
   });
   await draw();
+  await frame();
 }
 
 /**
@@ -200,11 +213,16 @@ async function delta(id: string, unread: boolean): Promise<void> {
   await draw();
 }
 
+let layout: ThreadLayout;
+beforeEach(() => {
+  layout = stubThreadLayout({ columnHidden: () => window.matchMedia("(max-width: 699.98px)").matches });
+});
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null; host = null; live = []; sel = null; readerId = null; replyDone = null;
   marked.length = 0;
+  layout.restore();
   vi.useRealTimers();
 });
 
@@ -244,8 +262,9 @@ describe("a message read in the Ohbox moves to Earlier, now", () => {
     expect(idsInGroup("Earlier")).toEqual([]);
     expect(rowEl("a").classList.contains("settling")).toBe(true);
 
-    // …and one frame short of the end it is still there. The class comes off with the move.
-    await act(async () => { await vi.advanceTimersByTimeAsync(SETTLE_MS - 20); });
+    // …and short of the end it is still there (the leaving key's frame is 20 ms of it). The class
+    // comes off with the move.
+    await act(async () => { await vi.advanceTimersByTimeAsync(SETTLE_MS - 60); });
     await draw();
     expect(idsInGroup("New")).toContain("a");
 
@@ -381,23 +400,24 @@ describe("a later explicit act beats a slide", () => {
 describe("the reader is not yanked", () => {
   it("the row does not move while the message is the one being read", async () => {
     /* The only thing standing between the reader and a list that re-sorts under their eyes: the
-       read is saved at the open and the list re-partitions, but the held place keeps the row in
-       its group — the view reports its armed read and the shell's selector holds it (`holdArmed`,
-       `inNew` above). Report nothing and this goes red: the row leaves while it is being read. */
+       read is saved while the message is open and the list re-partitions, but the held place keeps
+       the row in its group — the view reports the row it entered and the shell's selector holds it
+       (`holdArmed`, `inNew` above). Report nothing and this goes red: the row leaves while it is
+       being read. */
     vi.useFakeTimers();
-    setViewport(true);                                   // phone: the sheet IS the reading
+    setViewport();
     await mount([{ id: "a", unread: true }, { id: "b", unread: true }]);
 
-    await click("a");                                    // a tap is the open, and saves the read
+    await click("a");                                    // a click opens; the dwell done, the read is saved
+    await layout.passDwell();
     await settle();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
     expect(idsInGroup("New")).toEqual(["a", "b"]);
     expect(rowEl("a").classList.contains("settling")).toBe(false);
-    // The row HOLDS ITS PLACE and presents as read, which it now is (`OhboxView`'s `armedRead`).
+    // The row HOLDS ITS PLACE and presents as read, which it now is.
     expect(rowEl("a").dataset.unseen).toBeUndefined();
 
-    readerId = null;                                     // closing the sheet is the departure
-    await draw();
+    await press("j");                                    // moving on is the departure
     await settle();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
     expect(idsInGroup("Earlier")).toEqual(["a"]);

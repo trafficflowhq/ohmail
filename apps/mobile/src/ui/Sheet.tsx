@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useKeyboardLift } from "./keyboard-lift";
+import { useReaderCover } from "./reader-cover";
 import { separatingVerticalHinge, usePosture } from "./posture";
 import { detailPaneRect, scaffoldPlan } from "./scaffold/plan";
 import { sheetPanelBounds, sheetRoom } from "./sheet-bounds";
@@ -78,6 +79,8 @@ export function Sheet({
   const insets = useSafeAreaInsets();
   const bounds = useSheetPanelBounds();
   const modalKey = useModalKey();
+  /* A shown sheet stands over the reader: nothing under it is read (`reader-cover.ts`). */
+  useReaderCover(open);
   if (!open) return null;
   const body = (
     <>

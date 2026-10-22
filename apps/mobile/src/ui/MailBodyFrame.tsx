@@ -9,7 +9,7 @@
  * confirm sheet, which names the destination. Remote images re-enter only as gated `data:` URIs.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Linking, useWindowDimensions, View } from "react-native";
 import { router } from "expo-router";
 import { WebView } from "react-native-webview";
@@ -20,6 +20,7 @@ import { buildPhoneMailDocument } from "../mail/mail-document";
 import {
   armFrameTimer,
   FRAME_UNANSWERED_MS,
+  frameFinal,
   frameHeightFor,
   frameLayout,
   nextFrameHeight,
@@ -79,7 +80,12 @@ function useFrameCount(plan: FramePlan | null, id: string, html: string, setDraw
   return plan === null ? null : frameReadingOf(plan, counted);
 }
 
-export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText: () => void }) {
+export function MailBodyFrame({ m, onShowAsText, onFinal }: {
+  m: WorldMail;
+  onShowAsText: () => void;
+  /** The drawn height is the document's now (or the text fallback's), or not any more. */
+  onFinal?: (final: boolean) => void;
+}) {
   const t = useTheme();
   const w = useWorld();
   const toast = useWorldToast();
@@ -191,6 +197,11 @@ export function MailBodyFrame({ m, onShowAsText }: { m: WorldMail; onShowAsText:
   }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
 
   const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);
+  // The read rule takes this frame's top, and the end marker under it, only once its height is the document's.
+  const final = frameFinal(sized, shows.show === "text");
+  const finalTo = useRef(onFinal);
+  finalTo.current = onFinal;
+  useEffect(() => { finalTo.current?.(final); }, [final]);
   if (shows.show === "text" || sized.text !== null) {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (

@@ -12,9 +12,11 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
 import {
-  arrivalMs, countWhen, foldOhboxRows, isOwnSent, isResurfaced, listSurface, presentsUnread, saysEmpty,
+  arrivalMs, conversationKeyOf, countWhen, createThreadRead, foldOhboxRows, isOwnSent, isResurfaced, listSurface,
+  presentsUnread, saysEmpty,
 } from "@ohmail/client-engine";
-import type { ListSurface } from "@ohmail/client-engine";
+import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
+import type { ThreadReadWiring } from "../shell/reader-seen";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -98,14 +100,25 @@ type PickPanel =
   | { kind: "confirm"; dest: MoveTarget };
 
 /**
- * How long a split-pane selection must survive before it counts as read.
- *
- * Two seconds is long enough that no j/k sweep reaches it (a sweep is tens of milliseconds per
- * row) and short enough that someone who stopped to read the pane has, by any reasonable
- * account, read it. It is a constant and not a setting: a knob here would be a knob about
- * whether the product tells the truth.
+ * The visit's read record for `m`'s conversation, made on first ask. Keyed by conversation and
+ * kept to the two latest, so a render that still shows the previous selection cannot replace the
+ * visit just entered; a departure clears them all.
  */
-const DWELL_MS = 2000;
+function recordIn(visits: MutableRefObject<Map<string, ThreadRead>>, m: EngineMessage): ThreadRead {
+  const key = conversationKeyOf(m);
+  let record = visits.current.get(key);
+  if (!record) {
+    record = createThreadRead();
+    visits.current.set(key, record);
+    for (const k of visits.current.keys()) {
+      if (visits.current.size <= 2) break;
+      visits.current.delete(k);
+    }
+  }
+  return record;
+}
+const recordOf = (visits: MutableRefObject<Map<string, ThreadRead>>, m: EngineMessage | null | undefined): ThreadRead | undefined =>
+  m ? visits.current.get(conversationKeyOf(m)) : undefined;
 
 /**
  * How long a finger must rest on a row before it starts a selection.
@@ -176,11 +189,11 @@ export function OhboxView({
   onSelect,
   onEnterReader,
   onMarkSeen,
-  onReadArmed,
+  onHoldRow,
+  onThreadRead,
+  threadMarksOf,
   readerId,
   readSetFor,
-  onSiblingSeen,
-  flushSiblingSeen,
   undoLink,
   onRestoreHold,
   doorbellInitials,
@@ -302,32 +315,34 @@ export function OhboxView({
    * The shell's `mark_seen` mutation — the one read-state writer.
    *
    * `via` says whether the reader ASKED for this or the view decided for them; it travels
-   * because a resurfaced pin is answered by being dealt with, and a dwell is not dealing with
-   * anything. Only {@link armRead} claims `"glance"`. Omitting it means deliberate, which is
-   * what every other caller here is. The shell answers whether the write landed.
+   * because a resurfaced pin is answered by being dealt with, and a glance is not dealing with
+   * anything. Only the thread-read rule's reads claim `"glance"` (`readByRule`). Omitting it means
+   * deliberate, which is what every other caller here is. The shell answers whether the write landed.
    */
   onMarkSeen: (ids: string[], unread: boolean, via?: "glance") => void | Promise<boolean>;
   /**
-   * The armed read, reported upward — `id` while a message's read is saved and its row held in
-   * place, `null` once the reader leaves it or `u` tears it up. An armed read PRESENTS as read
-   * ({@link armRead}, `effUnread`), and the mobile reader sheet is the SHELL's `MessagePane`,
-   * so the sheet's verb reads the same fact. A report of view-local fact, never a second writer
-   * of read-state. Optional: a harness mounted without it has no sheet to inform.
+   * The row being read, reported upward — `id` once its conversation is entered (the engine holds
+   * its row in New: `holdOpenRow`), `null` once the reader leaves it or `u` lets it go. Never a
+   * writer of read-state. Optional: a harness mounted without it holds no row.
    */
-  onReadArmed?: (id: string | null) => void;
+  onHoldRow?: (id: string | null) => void;
   /**
-   * THE READER'S MARK AS READ SET — the shell's `conversationReadSet` over the presented mirror and
-   * the armed read: the unread members of the conversation on screen. Required, no default: the
-   * read slot's face and ⇧I's write are this one function, and a default would be an untested arm.
+   * THE VISIT'S THREAD-READ WIRING, reported upward for the reader sheet (the shell mounts it, and
+   * the sheet is an open): the record, the rule's read and enter report-ups and the panels' Mark
+   * unread — the same the reading column is handed. `null` while nothing is open.
+   */
+  onThreadRead?: (wiring: ThreadReadWiring | null) => void;
+  /**
+   * THE CONVERSATION'S SQUARES for a row — the engine's `threadMarksIndex`, bound by the shell the
+   * way {@link threadParticipants} is. Absent, the rows draw no squares.
+   */
+  threadMarksOf?: (threadId: string) => readonly ThreadMark[] | undefined;
+  /**
+   * THE READER'S MARK AS READ SET — the shell's `conversationReadSet` over the presented mirror:
+   * the unread members of the conversation on screen. Required, no default: the read slot's face
+   * and ⇧I's write are this one function, and a default would be an untested arm.
    */
   readSetFor: (messageId: string) => string[];
-  /**
-   * A sibling panel a person scrolled through (`reader-seen.ts`), into the shell's glance batch,
-   * and that batch drained — the first act of a press, so a glance never rides its Undo. Optional:
-   * a harness with no shell has no scroll-to-read.
-   */
-  onSiblingSeen?: (id: string) => void;
-  flushSiblingSeen?: () => void;
   /** Where this view answers an Undo (`UndoLink`): the row a verb took from under the cursor comes back as it stood. */
   undoLink?: MutableRefObject<UndoLink | null>;
   /** Re-take the hold an undone act ended (`engine.restoreOpenRow`); `true` when the row is held. */
@@ -706,10 +721,9 @@ export function OhboxView({
     const landing = next == null ? null : ((navRows[rowIndexOf(next)] ?? olderRowOf(next))?.openTarget.id ?? next);
     if (landing != null) {
       verbAdvance.current = landing;
+      // The landing is a preview, like j. Not `selectByUser`, which would let go of the acted
+      // row's hold and spend its Undo.
       onSelect(landing);
-      // The landing is a cursor stop like j: two seconds on it read it. Not `selectByUser`, which
-      // would let go of the acted row's hold and spend its Undo.
-      setDwellOn(landing);
     }
   });
 
@@ -871,37 +885,18 @@ export function OhboxView({
   /* ── read-state ────────────────────────────────────────────────────────── */
 
   /**
-   * The list, readable from inside a timer. The dwell fires two seconds
-   * after the render that armed it and must judge the list as it is THEN —
-   * still present, still unread — without putting `all` in its dependency
-   * array (see the dwell). Assigned in render, not refreshed by an effect:
-   * an effect would make the dwell's correctness depend on effect
-   * declaration order, an invariant nothing states. Same shape as
-   * `StreamShell` and `useSeenOnScroll` in `@ohmail/ui`.
+   * The list, the cursor and the writer, readable from callbacks that must stay stable (the rule's
+   * read report-up is handed to the pane and the sheet). Assigned in render, so a callback fired
+   * between two renders reads the newer answer.
    */
   const allRef = useRef(all);
   allRef.current = all;
-  /** The cursor as rendered, so the dwell's timer reads only the row it is still on. */
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
-
-  /**
-   * THE WRITER, held the same way, so the dwell's deps are ONE value.
-   *
-   * `onMarkSeen` was a dependency of the dwell until this change, which made the dwell's
-   * correctness depend on a caller keeping its callback identity stable: `AppShell` does
-   * (`markSeen` is a `useCallback`), but a caller that did not would restart the two seconds
-   * on every render and the dwell would never fire at all — silently, with no error. That is
-   * too much load on a memo somebody else owns. Behind a ref, the effect depends on exactly
-   * one thing: the cursor the user put here.
-   */
   const markSeenRef = useRef(onMarkSeen);
   markSeenRef.current = onMarkSeen;
   const readSetForRef = useRef(readSetFor);
   readSetForRef.current = readSetFor;
-  const flushSiblingSeenRef = useRef(flushSiblingSeen);
-  flushSiblingSeenRef.current = flushSiblingSeen;
-
 
   /**
    * {@link earlierIds}, READABLE FROM INSIDE THE SLIDE TIMER, and held the same way and for the
@@ -913,87 +908,68 @@ export function OhboxView({
   earlierRef.current = earlierIds;
 
   /**
-   * The message `u` just put back to unread, and why nothing here may undo it: in the split
-   * pane the cursor is still on the row, so the dwell would arm and save it read again — the
-   * user's explicit act reverted by a heuristic while they watch. An
-   * explicit unread pins the message until the cursor MOVES. A ref, not state: readable in the
-   * same commit by code outside a render. Keyed to `dwellOn`, not `selected` — `selected` also
-   * moves when the list re-partitions, which is not a cursor move and must not release a pin.
-   * Declared here because the arm below reads it (no forward reference into a later const).
-   */
-  const pinnedUnread = useRef<string | null>(null);
-
-  /**
-   * THE READ IS SAVED WHEN IT IS SHOWN; THE PLACE WAITS FOR THE WAY OUT. This ref holds the one
-   * message whose read was armed — by the dwell or an explicit open — and saved at that moment through the
-   * shell's `mark_seen`, so the row, the pane, the count and every other device agree from the arm. It was a
-   * debt spent on departure, and a reload lost it: the outbox is durable-first (IndexedDB, then the wire), and a
-   * write first made inside `pagehide` reaches neither before the page is gone. What still waits for departure is
-   * the row's PLACE — `onReadArmed` has the engine hold it in New (`holdOpenRow`), so nothing re-sorts under the
-   * reader. At most one.
+   * THE ROW BEING READ HOLDS ITS PLACE. The one message whose conversation the person entered: the
+   * engine holds its row in New (`holdOpenRow`, through `onHoldRow`) until it is left or answered, so
+   * every read the thread-read rule makes meanwhile is an OPEN read and leaving files the row at the
+   * top of Earlier. At most one. The ref is for code outside a render; the state is for the effects
+   * that key on the hold (the after-verb record below).
    */
   const heldRead = useRef<string | null>(null);
-
-  /**
-   * The renderable twin of {@link heldRead}: the row loses its dot and the verb says "Mark unread" at the arm,
-   * the same moment the write goes out, while the engine's hold keeps the row in its slot until it is left or
-   * answered. One writer for the pair, {@link hold}; a refused write releases both, so a read the account refused
-   * never looks done.
-   */
-  const [armedRead, setArmedRead] = useState<string | null>(null);
-  const onReadArmedRef = useRef(onReadArmed);
-  onReadArmedRef.current = onReadArmed;
+  const [heldRow, setHeldRow] = useState<string | null>(null);
+  const onHoldRowRef = useRef(onHoldRow);
+  onHoldRowRef.current = onHoldRow;
   const hold = useCallback((id: string | null) => {
     heldRead.current = id;
-    setArmedRead(id);
-    onReadArmedRef.current?.(id);
+    setHeldRow(id);
+    onHoldRowRef.current?.(id);
   }, []);
 
-  /** Leaving the held message: its place is released and the slide may file it. Writes nothing. */
+  /**
+   * THE VISIT'S READ RECORD (`createThreadRead`), one per open conversation: renewed only when the
+   * open conversation changes (keyed by `conversationKeyOf`, so a second click that lands on the
+   * next unread keeps it) and ended by every departure. Nothing is read until the visit is ENTERED;
+   * `entered` bumps a render so the pane looks again at once.
+   */
+  const visit = useRef(new Map<string, ThreadRead>());
+  const [, setEntered] = useState(0);
+
+  /** Leaving the held message: its place is released and the visit's record ends. Writes nothing. */
   const leaveRead = useCallback(() => {
+    visit.current.clear();
     if (heldRead.current != null) hold(null);
   }, [hold]);
 
   /**
-   * Arm = save. Judged against the list as it is now: already read, or pinned unread by `u`, arms nothing.
-   * A GLANCE, and it says so: nobody pressed a read verb, so the server marks read WITHOUT spending a resurface
-   * pin (owner ruling 2026-08-26: reading a resurfaced message sticks; the pin is answered by dealing with the
-   * row). Reads only refs, so it is stable for the dwell's dependency array and callable from anywhere.
-   * `pressed`: an explicit Mark read on the shown message (owner 2026-10-21) arms the same way, as a
-   * deliberate read. Answers whether it armed.
+   * ENTER THE CONVERSATION — ↵, a click or tap on its row, → into the column, or a press, a hand
+   * scroll or a square inside it. An unread message's row takes its hold at once and nothing is
+   * written: what turns read is the rule's (`reader-seen.ts`). A read message holds nothing, as
+   * before. A preview never comes through here — j/k, the after-verb advance, a URL or search
+   * landing, an Undo — and nothing is read in one.
    */
-  const armRead = useCallback((id: string, pressed = false): boolean => {
-    if (heldRead.current === id) return false;
-    leaveRead();
-    if (pinnedUnread.current === id) return false;
-    if (!allRef.current.find((m) => m.id === id)?.unread) return false;
-    hold(id);
-    void Promise.resolve(markSeenRef.current([id], false, pressed ? undefined : "glance")).then((ok) => {
-      if (ok === false && heldRead.current === id) hold(null);
-    });
-    return true;
-  }, [hold, leaveRead]);
+  const enter = useCallback((m: EngineMessage) => {
+    const record = recordIn(visit, m);
+    const was = record.entered;
+    record.enter(Date.now());
+    if (!was) setEntered((n) => n + 1);
+    if (m.unread && heldRead.current !== m.id) hold(m.id);
+  }, [hold]);
 
   /**
-   * The cursor the USER put here — the only value that can arm the dwell. `selectedId` cannot answer
-   * this: it used to arrive through two implicit fallbacks meaning "the newest unread message",
-   * silently re-resolving on every re-partition — and since the list is partitioned BY `unread`, a
-   * commit fed the next arm: two seconds per message, straight through the Ohbox, onto a real IMAP
-   * server. Both fallbacks are gone; the dwell keys on this, not `selected`, which also moves when a
-   * message leaves the pile. Only `selectByUser` (j, k, click) and an Undo's `settle` (the dwell the
-   * verb took) SET it; `open`, `engage`, a selection taken away and a verb's `suspend` clear it.
-   * Nothing derived from the list can produce it.
+   * THE RULE'S READS — one glance per look, written as each message's top completes its dwell, so
+   * the read is on the durable outbox while the message is open. A glance spends no resurface pin.
    */
-  const [dwellOn, setDwellOn] = useState<string | null>(null);
+  const readByRule = useCallback((ids: string[]) => {
+    void markSeenRef.current(ids, false, "glance");
+  }, []);
 
   /**
-   * THE ROW A VERB TOOK FROM UNDER THE CURSOR, as it stood: its read hold, a running dwell, the
-   * sheet. `sel`, `reader0` and `armed0` are the selection, sheet and armed read the verb itself
-   * left; ANY later change of one of them, by any door, is moving on and spends the record.
+   * THE ROW A VERB TOOK FROM UNDER THE CURSOR, as it stood: its read hold and the sheet. `sel`,
+   * `reader0` and `held0` are the selection, sheet and hold the verb itself left; ANY later change
+   * of one of them, by any door, is moving on and spends the record.
    */
   const suspended = useRef<{
-    id: string; held: boolean; dwelling: boolean; reader: boolean;
-    sel: string | null; reader0: string | null; armed0: string | null;
+    id: string; held: boolean; reader: boolean;
+    sel: string | null; reader0: string | null; held0: string | null;
   } | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
@@ -1003,90 +979,65 @@ export function OhboxView({
   onRestoreHoldRef.current = onRestoreHold;
 
   /**
-   * Move the cursor because the USER moved it — j, k, and a click on an unselected row.
-   *
-   * DEPARTURE #1 of four. Landing on a different message is leaving the one before it, and it is
-   * the trigger that fires in ordinary use: read something, press j, and the row you were on
-   * moves to "Earlier" as you go. A move onto the SAME id is not a departure and releases nothing,
-   * which is why the place is let go only when the ids differ.
+   * Move the cursor because the USER moved it — j, k, and the first click on a row (which enters it
+   * too). Landing on a different message is leaving the one before it: its place is let go and its
+   * visit ends. A move onto the SAME id releases nothing.
    */
   const selectByUser = useCallback((id: string) => {
     if (heldRead.current !== id) leaveRead();
-    setDwellOn(id);
     onSelect(id);
   }, [onSelect, leaveRead]);
 
   /**
-   * Opening a message IS reading it — Enter, a second click on the selected row, mobile tap.
-   * `onEnterReader` is a statement of intent, not an instruction to raise a sheet: the shell answers with
-   * the reader only where the reading column is hidden — at a split width the column IS the open. It also
-   * pins the selection via `onSelect`, which is what makes `open` a complete statement on its own: the
-   * mobile tap and a `↵` from anywhere both need the cursor where the reader is. An open supersedes a dwell
-   * — reading is established, the timer has nothing to decide — and it is an explicit act, so it outranks an
-   * earlier `u` pin. It SAVES the read at once ({@link armRead}); the row keeps its place while on screen.
+   * Opening a message — Enter, a second click on the selected row, a tap where there is no column.
+   * `onEnterReader` is a statement of intent: the shell answers with the reader only where the
+   * reading column is hidden. It also pins the selection via `onSelect`, so `open` is a complete
+   * statement on its own. It enters the conversation; the rule reads what is on screen.
    */
   const open = useCallback((m: EngineMessage) => {
-    setDwellOn(null);
     onSelect(m.id);
-    if (m.unread) {
-      pinnedUnread.current = null;
-      armRead(m.id);
-    }
+    enter(m);
     onEnterReader(m.id);
-  }, [onSelect, onEnterReader, armRead]);
+  }, [onSelect, onEnterReader, enter]);
 
   /**
-   * Stepping into the pane with → is engagement — `open` minus the reader
-   * raise. The read-marking guard has two triggers: dwelling, and explicit
-   * engagement; arrowing into the reading column is the second, so it ARMS
-   * and saves the read through the same `armRead`, with the same `"glance"`
-   * label (pane focus is not "dealing with the row", so a resurface pin
-   * survives it). No sheet: at a split width the column already shows this
-   * message and → is a focus move. Where the column is hidden the zone hook
-   * calls `open` instead (`onHiddenEnter`).
+   * Stepping into the pane with → is entering it — `open` minus the reader raise. Where the column
+   * is hidden the zone hook calls `open` instead (`onHiddenEnter`).
    */
   const engage = useCallback((m: EngineMessage) => {
-    setDwellOn(null);
-    if (m.unread) {
-      pinnedUnread.current = null;
-      armRead(m.id);
-    }
-  }, [armRead]);
+    enter(m);
+  }, [enter]);
 
   /**
    * The selection taken away from outside is a departure. The URL carries the open message, so
    * Back on `#/ohbox/m/A` clears the SHELL's selection while this view stays mounted — a way of
-   * leaving A none of the four departures sees. So the cursor prop going null cancels the dwell
-   * (leaving inside two seconds is not reading) and releases the held place (the read itself was
-   * saved at the arm) — the same two halves `selectByUser` applies.
+   * leaving A none of the other departures sees. So the cursor prop going null releases the held
+   * place and ends the visit.
    */
   const prevSelectedId = useRef(selectedId);
   useEffect(() => {
     const prev = prevSelectedId.current;
     prevSelectedId.current = selectedId;
     // A TRANSITION to null, not the resting state: only a selection that existed and was taken
-    // away is a departure. (A parent may re-render this view with the cursor prop one commit
-    // behind its own click handling; a bare null must not spend a dwell that same commit.)
+    // away is a departure.
     if (selectedId !== null || prev === null) return;
     /* A VERB TOOK THE ROW: its hold stays until Undo or a move decides, so Undo finds its place. */
     if (suspended.current?.id === prev) return;
-    if (dwellOn === null && heldRead.current === null) return;
-    setDwellOn(null);
+    if (heldRead.current === null && visit.current.size === 0) return;
     leaveRead();
-  }, [selectedId, dwellOn, leaveRead]);
+  }, [selectedId, leaveRead]);
 
   /**
-   * MOVING ON, ONCE: the selection, the sheet or the armed read changing after the verb, by any
-   * door (a key, a click, →, a URL, a search, Back, Escape) — the verb's own advance excepted.
-   * It spends the record and lets go of the row's hold, so nothing stays in New nobody is on.
+   * MOVING ON, ONCE: the selection, the sheet or the hold changing after the verb, by any door (a
+   * key, a click, →, a URL, a search, Back, Escape) — the verb's own advance excepted. It spends
+   * the record and lets go of the row's hold, so nothing stays in New nobody is on.
    */
   function suspend(id: string): void {
     spendSuspended();
     suspended.current = {
-      id, held: heldRead.current === id, dwelling: dwellOn === id, reader: false,
-      sel: selectedId, reader0: readerId, armed0: heldRead.current,
+      id, held: heldRead.current === id, reader: false,
+      sel: selectedId, reader0: readerId, held0: heldRead.current,
     };
-    if (dwellOn === id) setDwellOn(null);
   }
   function spendSuspended(): void {
     const s = suspended.current;
@@ -1098,9 +1049,9 @@ export function OhboxView({
   const leftFrom = useRef<string | null>(null);
   useEffect(() => {
     const s = suspended.current;
-    if (!s || (selectedId === s.sel && readerId === s.reader0 && armedRead === s.armed0)) return;
+    if (!s || (selectedId === s.sel && readerId === s.reader0 && heldRow === s.held0)) return;
     if (s.sel === null && selectedId !== null && selectedId === verbAdvance.current
-        && readerId === s.reader0 && armedRead === s.armed0) {
+        && readerId === s.reader0 && heldRow === s.held0) {
       s.sel = selectedId;
       verbAdvance.current = null;
       return;
@@ -1108,13 +1059,13 @@ export function OhboxView({
     leftFrom.current = s.id;
     spendSuspended();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, readerId, armedRead]);
+  }, [selectedId, readerId, heldRow]);
 
   /**
    * UNDO PUTS IT BACK AS IT STOOD AT THE PRESS — asked by the shell before the reversal is sent.
-   * `ask` re-takes the hold, so the row lands in New; `settle` restores the cursor, the dwell and
-   * the sheet only when THAT row's reversal took, and lets the hold go when it did not. The
-   * dwell's read stands.
+   * `ask` re-takes the hold, so the row lands in New; `settle` restores the cursor and the sheet
+   * only when THAT row's reversal took, and lets the hold go when it did not. The restore is a
+   * preview: nothing is read by it.
    */
   useEffect(() => {
     if (!undoLink) return;
@@ -1123,18 +1074,15 @@ export function OhboxView({
         const s = suspended.current;
         if (!s || !ids.includes(s.id)) return null;
         if (s.held && !onRestoreHoldRef.current?.(s.id)) { spendSuspended(); return null; }
-        // The advance's dwell must not read while the row comes back.
-        setDwellOn(null);
         return s.id;
       },
       settle: (id, applied) => {
         const s = suspended.current;
         if (!s || s.id !== id) return;
-        if (!applied) { if (s.sel !== null) setDwellOn(s.sel); spendSuspended(); return; }
+        if (!applied) { spendSuspended(); return; }
         suspended.current = null;
         if (s.held) hold(s.id);
         onSelectRef.current(s.id);
-        if (s.dwelling) setDwellOn(s.id);
         if (s.reader) onEnterReaderRef.current(s.id);
       },
       left: (ids) => {
@@ -1150,55 +1098,34 @@ export function OhboxView({
   }, [undoLink, hold]);
 
   /**
-   * RELEASE THE `u` PIN WHEN THE CURSOR MOVES — the second half of `pinnedUnread`, declared
-   * above with the argument for it. It lives here because `dwellOn` is what "the cursor" means
-   * and `dwellOn` does not exist further up.
-   *
-   * NO GUARD BELOW FAILS IF THIS IS PUT BACK TO `selected?.id`, and that is stated rather
-   * than hidden: with `dwellOn` set, `onSelect` has set the shell's `ohboxSel` to the same
-   * id, so the two only diverge once the message leaves the Ohbox — and the commit's
-   * fire-time re-read already drops that case. This is coherence, not a fixed bug.
-   */
-  useEffect(() => {
-    if (pinnedUnread.current && pinnedUnread.current !== dwellOn) pinnedUnread.current = null;
-  }, [dwellOn]);
-
-  /**
-   * Two directions, not one toggle: "invert eleven messages" turns a mixed selection into a different mixed selection — a
-   * direction produces the same state from any state, which is why the bulk vocabulary has `read` and `unread` as separate
-   * members; the single-message case must not disagree. The pin is why these are not `onMarkSeen` at the call site: `u`
-   * inside the dwell window would otherwise be undone when the dwell arms and saves the read. So `u` sets the pin AND lets go
-   * of its own message's hold; the pin covers the dwell and re-entry. And it calls `returnToNew`: a row just made unread
-   * moves back above the "Earlier" line at its arrival place, and a slide in flight is cancelled.
+   * Two directions, not one toggle: "invert eleven messages" turns a mixed selection into a
+   * different mixed selection — a direction produces the same state from any state. `u` and a
+   * panel's ⋯ Mark unread keep the message unread for the rest of the visit (the rule never reads
+   * it back), let go of its own hold, and return it to New at its arrival place (`returnToNew`).
    */
   const markUnread = useCallback((m: EngineMessage) => {
-    pinnedUnread.current = m.id;
-    // Through `hold`, so letting go re-bolds the row and puts the verb back — the presentation half
-    // of "the later explicit act wins" (see `armedRead`).
+    recordIn(visit, m).keepUnread(m.id);
     if (heldRead.current === m.id) hold(null);
     returnToNew([m.id]);
     onMarkSeen([m.id], true);
   }, [onMarkSeen, returnToNew, hold]);
 
   const markRead = useCallback((m: EngineMessage) => {
-    // Reading it is consent for the dwell to have been right, so the pin is released. A hold, if
-    // any, is left alone: the write here and the one at the arm say the same thing.
-    pinnedUnread.current = null;
-    // An explicit read of the shown message is a read in ohmail: armed like an open, so it keeps
+    recordOf(visit, m)?.release(m.id);
+    // An explicit read of the shown message is a read in ohmail: held like an open, so it keeps
     // its place while shown and files at the top of Earlier when left. A resurfaced one keeps arrival.
-    if (m.unread && !isResurfaced(m) && armRead(m.id, true)) return;
+    if (m.unread && !isResurfaced(m) && heldRead.current !== m.id) hold(m.id);
     onMarkSeen([m.id], false);
-  }, [onMarkSeen, armRead]);
+  }, [onMarkSeen, hold]);
 
   /**
    * ⇧I AND THE READER'S MARK AS READ — the conversation on screen, read. The set is the one the
-   * slot's face was drawn from (`readSetRef`), floored by the mirror at the press after the glance
-   * batch drains, so a sibling that arrived after the face changed is never in it and a glance is
-   * never in its Undo. One member that is the open message is today's single read; more go out
-   * as ONE bulk read with its toast and Undo (`bulk.run`, never `runBulk`: no pick is involved).
+   * slot's face was drawn from (`readSetRef`), floored by the mirror at the press, so a sibling that
+   * arrived after the face changed is never in it. One member that is the open message is today's
+   * single read; more go out as ONE bulk read with its toast and Undo (`bulk.run`, never `runBulk`:
+   * no pick is involved). The keeps are let go: this is the person's own read.
    */
   const markConversationRead = useCallback((m: EngineMessage) => {
-    flushSiblingSeenRef.current?.();
     const floor = readSetForRef.current(m.id);
     const set = readSetRef.current.filter((id) => floor.includes(id));
     // A resurfaced open message keeps its own key: ⇧I is its deliberate read, the pin's way out.
@@ -1206,42 +1133,12 @@ export function OhboxView({
       markRead(m);
       return;
     }
-    if (set.includes(m.id)) pinnedUnread.current = null;
-    // Hold the shown message first (painted read before the press builds its Undo), so the whole
-    // set is an open read and the row files at the top of Earlier when left.
-    if (heldRead.current !== m.id) {
-      if (m.unread) armRead(m.id, true);
-      else { leaveRead(); hold(m.id); }
-    }
+    for (const id of set) recordOf(visit, m)?.release(id);
+    // Hold the shown message first, so the whole set is an open read and the row files at the top
+    // of Earlier when left.
+    if (heldRead.current !== m.id) hold(m.id);
     bulk.run("read", set);
-  }, [markRead, bulk, armRead, leaveRead, hold]);
-
-  /**
-   * The 2 s dwell, and why j/k alone must commit nothing: the split pane's reading column shows
-   * whatever the cursor is on, but `jjjjj` is navigation, and marking every passed row would empty
-   * the Ohbox by accident. The timer arms on selection, the cleanup cancels on every change;
-   * stopping for two seconds commits that one. It arms on `dwellOn` and NOTHING else — the
-   * dependency array is the guarantee: a re-partition cannot change `dwellOn`, so a commit can
-   * never arm the next one. `all` is deliberately not a dependency (read through `allRef`); the
-   * target is frozen at arm time; and it arms through {@link armRead}, which saves the read and
-   * holds the row's place. Split pane only: on mobile only `open` counts.
-   */
-  useEffect(() => {
-    if (dwellOn == null) return;
-    const id = dwellOn;
-    if (pinnedUnread.current === id) return;
-    if (!allRef.current.find((m) => m.id === id)?.unread) return;
-    if (typeof window === "undefined" || !window.matchMedia) return;
-    if (readColumnHidden()) return;
-    const timer = window.setTimeout(() => {
-      if (selectedIdRef.current !== id) return;
-      // Through `armRead`, so the row's ink, the verb and the write move together (see `armedRead`).
-      // Placement is held by the slide's skip and does not move. `armRead` reads only refs, so the
-      // dependency array below still re-runs this effect on `dwellOn` and on nothing else.
-      armRead(id);
-    }, DWELL_MS);
-    return () => window.clearTimeout(timer);
-  }, [dwellOn, armRead]);
+  }, [markRead, bulk, hold]);
 
   /**
    * ═══ DEPARTURES #2, #3 AND #4 ═════════════════════════════════════════════════════════════
@@ -1336,8 +1233,7 @@ export function OhboxView({
    */
   useEffect(() => {
     // The row being read never reaches `earlierIds` while it is read: the SELECTOR keeps it in New
-    // (`ohboxView`'s `openHeld`, held by the engine from the arm) until it is left or answered. A skip keyed on
-    // this view's own `armedRead` lost to the read's paint, which renders first.
+    // (`ohboxView`'s `openHeld`, held by the engine from the enter) until it is left or answered.
     for (const id of resurfacedOrder.current) if (earlierIds.has(id)) slideOut(id);
     for (const id of newOrder.current) if (earlierIds.has(id)) slideOut(id);
   }, [earlierIds, slideOut]);
@@ -1415,8 +1311,7 @@ export function OhboxView({
   };
   /**
    * ONE WALK, FOUR KEYCAPS. ↓/↑ are `j`/`k` — same steps, same entry moves, same
-   * `selectByUser` and therefore the same dwell guard: an arrow flick down the list arms
-   * and cancels exactly as a `jjjjj` sweep does and commits nothing (see `DWELL_MS`).
+   * `selectByUser`: a preview, which reads nothing, however long it rests.
    * Extracted so the letter bindings below and the zone hook's arrow bindings dispatch ONE
    * pair of closures — a second copy is how two keys presented as aliases drift apart.
    */
@@ -1792,9 +1687,9 @@ export function OhboxView({
 
   /**
    * THE ZONE MODEL — rail ← list → open message (`zone-nav.tsx`). ↓/↑ in the list are
-   * `stepDown`/`stepUp`, the same closures `j`/`k` dispatch, so the dwell guard is one
-   * mechanism under four keycaps. → into the pane is `engage` (the armed read, above); at
-   * widths where the column is hidden it is `open`, the deliberate open the sheet answers.
+   * `stepDown`/`stepUp`, the same closures `j`/`k` dispatch: previews under four keycaps.
+   * → into the pane is `engage` (it enters the conversation); at widths where the column is
+   * hidden it is `open`, the deliberate open the sheet answers.
    */
   useZoneNav({
     list: { up: stepUp, down: stepDown, followId: selected?.id ?? null },
@@ -2005,39 +1900,47 @@ export function OhboxView({
     );
   };
 
-  /**
-   * READ-STATE AS PRESENTED — {@link presentsUnread} minus the armed read (see `armedRead`). Used by exactly the
-   * surfaces that SHOW read-state: the row's dot/ink and the open message's verb. Everything that acts on or counts
-   * read-state (`unreadIds`, mark-all-read, the dwell's and the commit's re-judgements, the slide) keeps reading the
-   * store's own flag. A PINNED ROW IS UNREAD, AND THE ARMED READ DOES NOT SUBTRACT FROM IT: `presentsUnread` answers
-   * `true` for every resurfaced row (owner ruling 2026-08-31 — the engine holds the reasoning), and the `armedRead`
-   * subtraction is applied to what is LEFT of that, never over the top of it. Which is the point: the arming exists
-   * so a message being read stops looking new, and a resurfaced row is not claiming to be new — it is claiming the
-   * reader asked to see it again, and that claim is answered by Done or by a reply, not by looking.
-   */
-
-  /**
-   * Subtracting the arm here would put the flip-flop straight back: the row would unbold on the dwell, the
-   * glance-read would land without spending the pin, and the next render would re-bold it from a state nothing had
-   * changed.
-   */
-  const effUnread = (m: EngineMessage): boolean =>
-    isResurfaced(m) ? true : presentsUnread(m) && m.id !== armedRead;
 
   /**
    * The read slot's set for the open message — only while a reader SHOWS it (the column, or the
-   * sheet over a hidden column): with nothing on screen ⇧I stays the one message's read. The open
-   * message itself counts only as this view presents it (armed = read; a pin answers by Done).
-   * Written to `readSetRef` at render, so the press reads what was drawn.
+   * sheet over a hidden column): with nothing on screen ⇧I stays the one message's read. A pin is
+   * not in it (Done answers it). Written to `readSetRef` at render, so the press reads what was drawn.
    */
-  const readSet = selected && (!readColumnHidden() || readerId === selected.id)
-    ? readSetFor(selected.id).filter((id) => id !== selected.id || (effUnread(selected) && !isResurfaced(selected)))
-    : [];
+  const readSet = selected && (!readColumnHidden() || readerId === selected.id) ? readSetFor(selected.id) : [];
   /** The read set the reader last DREW — a press never writes a member drawn after its face changed. */
   const readSetRef = useRef<string[]>([]);
   readSetRef.current = readSet;
-  /** The reading column's scroller — scroll-to-read listens on it. */
+  /** The reading column's scroller — the thread-read rule observes it. */
   const readColRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * THE VISIT'S WIRING for the open message — the record of its conversation and the report-ups,
+   * handed to the reading column's pane here and to the shell's sheet (`onThreadRead`). The
+   * callbacks are stable; the record changes only with the conversation.
+   */
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const enterSelected = useCallback(() => {
+    const id = selectedIdRef.current;
+    const m = id === null ? undefined : shownRef.current.find((x) => x.id === id);
+    if (m) enter(m);
+  }, [enter]);
+  const markPanelUnread = useCallback((id: string) => {
+    const m = allRef.current.find((x) => x.id === id);
+    if (m) { markUnread(m); return; }
+    recordOf(visit, shownRef.current.find((x) => x.id === selectedIdRef.current))?.keepUnread(id);
+    returnToNew([id]);
+    markSeenRef.current([id], true);
+  }, [markUnread, returnToNew]);
+  const record = selected ? recordIn(visit, selected) : null;
+  const wiring = useMemo<ThreadReadWiring | null>(
+    () => (record ? { record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread } : null),
+    [record, readByRule, enterSelected, markPanelUnread],
+  );
+  const onThreadReadRef = useRef(onThreadRead);
+  onThreadReadRef.current = onThreadRead;
+  useEffect(() => { onThreadReadRef.current?.(wiring); }, [wiring]);
+  useEffect(() => () => onThreadReadRef.current?.(null), []);
 
   /**
    * WHAT THE ROW PUBLISHES AS ITS SELECTION, and it is not always the pick.
@@ -2055,6 +1958,13 @@ export function OhboxView({
    * `data-index` from another list's counting, which the window would then measure as its own.
    * Every call site wraps them in a lambda for that reason.
    */
+  /** A row's squares and their words, where its conversation has two or more messages. */
+  const marksOf = (threadId: string | null | undefined): Pick<MessageRowProps, "marks" | "marksLabel"> => {
+    const marks = threadId && threadMarksOf ? threadMarksOf(threadId) : undefined;
+    if (!marks || marks.length < 2) return {};
+    return { marks, marksLabel: rowBadge.marks(marks.length, marks.filter((k) => k === "unread").length) };
+  };
+
   const rowWith = (m: EngineMessage, actions?: ReactNode, windowIndex?: number, inSet?: MessageRowProps["inSet"]) => {
     // the conversation's people, computed by the shell's bound selector and never in the row.
     // Only for a threaded row; `[]` for a single-sender thread or none, and the row then leads
@@ -2077,15 +1987,15 @@ export function OhboxView({
       {...rowStamp(m, now, absoluteTime, onToggleTime)}
       subject={m.subject}
       preview={m.protected ? t("protectedPreview") : m.snippet}
-      /* As PRESENTED: a row whose read is armed drops its dot and its weight the moment the
-         reading is established and saved, and keeps its slot until it is left or answered. See `armedRead`. */
-      unread={effUnread(m)}
-      seen={!effUnread(m)}
+      /* As PRESENTED: a pinned row reads unread whatever its stored flag says (`presentsUnread`). */
+      unread={presentsUnread(m)}
+      seen={!presentsUnread(m)}
       selected={selected?.id === m.id}
       // the settling class rides the row for the 280 ms it takes to slide down to "Earlier" —
       // read here, answered, or read on another mail client. See `slideOut`.
       className={settling.has(m.id) ? "settling" : undefined}
       {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
+      {...marksOf(m.threadId)}
       /* An own-sent row's LEAD is the RECIPIENT's and stays that way: the row is about the
          person it went to. The strip beside the subject is NOT suppressed with it — the faces
          name who the CONVERSATION is between, which the reader's own reply is one voice of.
@@ -2115,15 +2025,14 @@ export function OhboxView({
           // selects as well as commits, so the cursor lands here exactly once.
           open(m);
         } else if (selected?.id === m.id) {
-          // Second click on the already-selected row: an explicit OPEN, so it is read — and
-          // at a split width that is all it is, because the pane beside this list is already
-          // showing it. This branch used to catch the FIRST click on the top row of an
-          // untouched Ohbox as well, because the implicit fallback had already made it
-          // `selected`; with that gone, every row's first click is the `else` below and this
-          // means what it says.
+          // Second click on the already-selected row: an explicit OPEN — at a split width the
+          // pane beside this list is already showing it.
           open(m);
         } else {
+          // A click is an open, not a preview: it selects and enters the conversation, so the
+          // rule reads what is on screen. A preview is j/k.
           selectByUser(m.id);
+          enter(m);
         }
       }}
     />
@@ -2163,9 +2072,9 @@ export function OhboxView({
    * renders byte-for-byte as it always has. The folded row shows the conversation's STORED name (server-cleaned; see
    * `threadSubject`, falling back to the newest member's subject until the thread row syncs), the newest member's
    * snippet and time, the distinct unread senders on the sender line — the same people as the row's lead circles
-   * (`participants` below) — and the member count as `⤷ N`. Click and ↵ act on the LATEST UNREAD member: the ordinary
-   * per-message open, so the thread view, dwell and held place behave exactly as for a plain row. The open marks
-   * that one member read; the reader's Mark as read and a person's scroll through the panels mark the rest.
+   * (`participants` below) — and its squares under the preview (`⤷ N` steps back where they are as many). Click and
+   * ↵ act on the LATEST UNREAD member: the ordinary per-message open, so the thread view and held place behave
+   * exactly as for a plain row. What turns read is the thread-read rule's, or the reader's Mark as read.
    * `selected` is row MEMBERSHIP, so the highlight survives the lead message changing.
    */
 
@@ -2247,12 +2156,12 @@ export function OhboxView({
               : shown.snippet
         }
         /* The fold's own count is true unread (it also picks `openTarget`); the DOT is presented
-           state — a conversation whose one unread member is being read right now reads as read.
-           See `armedRead`. */
-        unread={g.members.some(effUnread)}
-        seen={!g.members.some(effUnread)}
+           state (`presentsUnread`: a pinned member reads unread). */
+        unread={g.members.some(presentsUnread)}
+        seen={!g.members.some(presentsUnread)}
         selected={selected != null && g.members.some((m) => m.id === selected.id)}
         {...rowThread(threadCount, rowBadge.thread)}
+        {...marksOf(g.key)}
         newSinceLabel={
           g.resurfaced && g.resurfaced.newSince > 0
             ? t("newSince", { count: g.resurfaced.newSince })
@@ -2286,6 +2195,7 @@ export function OhboxView({
             open(target);
           } else {
             selectByUser(target.id);
+            enter(target);
           }
         }}
       />
@@ -2525,13 +2435,12 @@ export function OhboxView({
         {/* Resurfaced — pinned at the very top under its own quiet label, whole and outside the
             window (a scheduled set is small): not "this arrived" but "you asked to see this
             again now", so it earns its own heading. Every row here is drawn unread whatever its
-            stored flag says (owner ruling 2026-08-31 — `presentsUnread`, with `effUnread` above
-            keeping the armed read off it). A DELIBERATE read clears the pin server-side
-            (`MessageService.markSeen` without the glance label) and the row slides to "Earlier"
-            — once the selector actually files it there, why the slide keys on section
-            membership rather than the read flag (see `earlierIds`). A GLANCE — the two-second
-            dwell — records the reading and spends no pin, so the row does not move or change:
-            the fix for the reported flip-flop. Each row carries "Done" — see `doneFor`. */}
+            stored flag says (owner ruling 2026-08-31 — `presentsUnread`). A DELIBERATE read
+            clears the pin server-side (`MessageService.markSeen` without the glance label) and
+            the row slides to "Earlier" — once the selector actually files it there, why the slide
+            keys on section membership rather than the read flag (see `earlierIds`). A GLANCE —
+            the thread-read rule's — records the reading and spends no pin, so the row does not
+            move or change. Each row carries "Done" — see `doneFor`. */}
         {groupedResurfaced.length > 0 ? (
           <>
             <ListGroupLabel>{t("resurfacedGroup")}</ListGroupLabel>
@@ -2650,22 +2559,17 @@ export function OhboxView({
         {selected ? (
           <MessagePane
             /* The pane derives its read-state verb from `message.unread`, so the open message
-               travels with its PRESENTED state — in BOTH directions. An armed read offers
-               "Mark unread" (the only honest action on a message that is being read, and saved
-               read at the arm); a RESURFACED row offers "Mark as
-               read" whatever its stored flag says, because that is what the row beside it is
-               drawing and a pane that disagreed with its own list is the inconsistency this
-               whole seam exists to close. Pressing it is a deliberate read, which spends the
-               pin and releases the row — one of the three ways out, beside Done and Send + Done.
-               See `armedRead`; the shell does the same for the reader sheet via `onReadArmed`. */
-            message={effUnread(selected) === selected.unread ? selected : { ...selected, unread: effUnread(selected) }}
+               travels with its PRESENTED state: a RESURFACED row offers "Mark as read" whatever
+               its stored flag says, because that is what the row beside it is drawing. Pressing
+               it is a deliberate read, which spends the pin and releases the row — one of the
+               three ways out, beside Done and Send + Done. The shell does the same for the sheet. */
+            message={presentsUnread(selected) === selected.unread ? selected : { ...selected, unread: presentsUnread(selected) }}
             tags={tags}
             now={now}
             onAction={(a) => {
               /* The pane's read-state buttons press `u`/`⇧I` and fall back to `onAction("unread")`
                  — a FLIP — only where no keymap answers. A flip resolved ABOVE this view would
-                 derive from the store's flag and invert the verb on an armed message, and it
-                 would skip the pin/return/armed machinery either way. So the fallback is routed
+                 skip the keep/return/hold machinery. So the fallback is routed
                  through the same two directions the keys take; everything else passes through. */
               if (a === "unread") {
                 if (readSet.length > 0) markConversationRead(selected);
@@ -2677,7 +2581,7 @@ export function OhboxView({
             onAddTag={onAddTag}
             readSet={readSet}
             scroller={readColRef}
-            onSiblingSeen={onSiblingSeen}
+            threadRead={wiring ?? undefined}
           />
         ) : gone ? (
           /* BEFORE the resting panel, and that order is the whole arm: "nothing open" and "the

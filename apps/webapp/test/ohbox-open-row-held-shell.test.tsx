@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * THE WHOLE SHELL KEEPS THE ROW BEING READ IN "NEW" — the view reports its armed read, the shell
@@ -51,8 +52,10 @@ async function click(id: string): Promise<void> {
   await act(async () => { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); });
 }
 
+let layout: ThreadLayout;
 beforeEach(async () => {
   vi.useFakeTimers();
+  layout = stubThreadLayout();
   setViewport();
   const { AppShell } = await import("../app/shell/AppShell.js");
   window.location.hash = "#/ohbox";
@@ -75,16 +78,17 @@ afterEach(async () => {
   await act(async () => { root?.unmount(); });
   host?.remove();
   root = null; host = null;
+  layout.restore();
   vi.useRealTimers();
 });
 
 describe("the shell holds the open row in New", () => {
-  it("a dwelt-on row keeps its place while read; moving on files it in Earlier", async () => {
+  it("a clicked row keeps its place while read; moving on files it in Earlier", async () => {
     expect(ids("New")).toEqual(["giulia", "petra", "ben"]);
     expect(unreadCount()).toBe("3");
     expect(railCount()).toBe("3");
 
-    await click("petra");                     // the cursor lands; the 2 s dwell saves the read
+    await click("petra");                     // a click enters it: the message on screen is read
     for (let i = 0; i < 12; i++) await tick(250);
     expect(ids("New"), "the saved read moved the open row").toEqual(["giulia", "petra", "ben"]);
     expect(unreadCount(), "the count follows the read, the place does not").toBe("2");

@@ -77,6 +77,10 @@ export interface ReadingPaneProps {
    */
   reply?: ReactNode;
   className?: string;
+  /** Data attributes for the article itself — the host's read presentation. */
+  articleData?: Readonly<Record<`data-${string}`, string | undefined>>;
+  /** The article itself, for a host that places its scroller (a single message opens at its top). */
+  articleRef?: Ref<HTMLElement>;
 }
 
 /** Message anatomy: from-line, subject, chips, body, attachment, actions. */
@@ -99,6 +103,8 @@ export function ReadingPane({
   senderTitle,
   reply,
   className,
+  articleData,
+  articleRef,
 }: ReadingPaneProps) {
   const who = (
     <>
@@ -110,7 +116,7 @@ export function ReadingPane({
     </>
   );
   return (
-    <article className={className ? `msg ${className}` : "msg"}>
+    <article ref={articleRef} className={className ? `msg ${className}` : "msg"} {...articleData}>
       {/* THE BUILT-IN FROM-LINE, ONLY WHEN A CALLER ASKED FOR ONE. `MessagePane` composes its
           own `MessageHeader` in the children slot now — richer than this line (recipients, the
           absolute date on hover) and the same one an expanded sibling wears — so it leaves

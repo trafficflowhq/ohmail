@@ -160,7 +160,7 @@ describe("the function the row now calls", () => {
    */
   it("keeps the shared order exactly as both surfaces read it", () => {
     expect([...ROW_SPOKEN_ORDER]).toEqual([
-      "arrived", "readState", "senderCheck", "thread", "attachment", "protected", "held", "newSince",
+      "arrived", "readState", "senderCheck", "thread", "marks", "attachment", "protected", "held", "newSince",
       "stateNote", "aiReason", "tracker", "place", "mailbox", "destination", "detection",
       "amount", "tag",
     ]);

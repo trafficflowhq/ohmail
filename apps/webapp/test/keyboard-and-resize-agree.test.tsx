@@ -15,6 +15,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**
  * ═══ THE OPEN LETTER, THE LIST CURSOR AND THE LIST ARE ONE STATE ACROSS A RESIZE ════════════
@@ -34,6 +35,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 const NOW = new Date("2026-09-04T09:00:00.000Z");
 let roots: Root[] = [];
 let seq = 0;
+let layout: ThreadLayout | null = null;
 
 /* ── a window whose width the test moves: every query answers the width and hears its change ── */
 let width = 1440;
@@ -92,11 +94,16 @@ beforeEach(() => {
   };
   vi.spyOn(console, "error").mockImplementation(() => {});
   seq = 0;
+  /* The reader laid out, so an opened letter is read through the thread-read rule as in production;
+     the reading column is display:none below 700px, where the sheet reads instead. */
+  layout = stubThreadLayout({ columnHidden: () => width <= 699.98 });
 });
 
 afterEach(async () => {
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
+  layout?.restore();
+  layout = null;
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
@@ -279,6 +286,7 @@ describe("a resize keeps the open letter, the cursor and the list one state", ()
     expect(rowIds(container).slice(0, 4), "newest first").toEqual(["m1", "m2", "m3", "m4"]);
     await key("j");
     await enter();
+    await layout!.passDwell(); // its top on screen for the dwell: read
     expect(columnSubject(container), "the read letter stands in the column").toBe("m1");
     await setWidth(390);
     await waitFor(() => sheet(container) !== null, "the crossing raising the sheet");
@@ -320,6 +328,7 @@ describe("a resize keeps the open letter, the cursor and the list one state", ()
     const container = await shell();
     await key("j");
     await enter();
+    await layout!.passDwell(); // its top on screen for the dwell: read
     await key("j");
     await waitFor(() => earlierIds(container).includes("m1"), "the read letter filing under Earlier once left");
     await settle();

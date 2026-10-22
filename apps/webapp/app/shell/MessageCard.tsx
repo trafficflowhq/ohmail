@@ -13,7 +13,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AddressText, Avatar, Badge, Button, Icon } from "@ohmail/ui";
-import { forwardOffered, isForwardedByUs, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
+import { forwardOffered, isForwardedByUs, isOwnOutbound, isProtectedMessage, type EngineMessage } from "@ohmail/client-engine";
 import { AwayMark } from "./AwayMark";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -55,12 +55,21 @@ export function MessageHeader({
   onEnterReader,
   notice = null,
   unreadDot = false,
+  srUnread = false,
+  onMarkUnread,
 }: {
   message: EngineMessage;
   now: Date;
   onEnterReader?: () => void;
   /** A conversation panel's header carries the row's unread dot, shown while its panel is unseen. */
   unreadDot?: boolean;
+  /** Where the panel's tint says unread, the word says it to a screen reader. */
+  srUnread?: boolean;
+  /**
+   * The ⋯ menu's Mark unread for THIS message, after Reply, Reply all and Forward — wired on the
+   * Ohbox only, and offered only on a message that reads as read and is not the account's own.
+   */
+  onMarkUnread?: () => void;
   /**
    * WHAT THIS MESSAGE'S BODY HAD REFUSED — the viewer's report (`MessageBody.onNotice`), handed up
    * by the panel that mounts the body (`MessageCard` below; `MessagePane` for the focused message)
@@ -144,6 +153,13 @@ export function MessageHeader({
       run: () => { closeMenu(); chrome.forward!(message.id, message); },
     });
   }
+  if (onMarkUnread && !message.unread && !isOwnOutbound(message)) {
+    menuItems.push({
+      id: "mark_unread",
+      label: tm("menuMarkUnread"),
+      run: () => { closeMenu(); onMarkUnread(); },
+    });
+  }
 
   /**
    * SUBJECT-D — the message's own quiet subject line, under the sender, on every panel. The RAW
@@ -172,6 +188,7 @@ export function MessageHeader({
 
   return (
     <>
+      {srUnread ? <span className="tr-sr">{tm("rowUnread")}</span> : null}
       <div className="msg-from">
         <button
           type="button"
@@ -287,12 +304,23 @@ export function MessageHeader({
  * the same {@link MessageBody} the focused message uses, so a sibling inherits the sanitizer,
  * the sandboxed frame, remote-content blocking and dark adaptation with nothing re-implemented.
  */
+/**
+ * What a sibling panel is handed where the thread-read rule runs (the Ohbox's column and sheet): its
+ * presence wears the tint, and the panel's ⋯ Mark unread reports up by id. The tint settles when the
+ * read lands, which the rule writes only once the message's top was on screen for the dwell.
+ */
+export interface PanelReadWiring {
+  onMarkUnread: (id: string) => void;
+}
+
 export function MessageCard({
   message,
   now,
+  wiring,
 }: {
   message: EngineMessage;
   now: Date;
+  wiring?: PanelReadWiring;
 }) {
   const tb = useTranslations("body");
   const chrome = useMessageChrome();
@@ -385,10 +413,23 @@ export function MessageCard({
     ) : null;
 
   return (
-    /* `data-unseen` while unread: the panel's dot and the reader's scroll-to-read read this one fact. */
-    <article className="pm" data-conv-id={message.id} data-unseen={message.unread ? "" : undefined}>
+    /* `data-unseen` while unread and `data-body-ready` once the body is final: the panel's tint (or
+       dot, off the Ohbox) and the read rule read these. */
+    <article
+      className="pm"
+      data-conv-id={message.id}
+      data-unseen={message.unread ? "" : undefined}
+      data-body-ready={body.state === "full" || body.state === "withheld" || isProtectedMessage(message) ? "" : undefined}
+    >
       <div className="pm-in">
-        <MessageHeader message={message} now={now} notice={notice} unreadDot />
+        <MessageHeader
+          message={message}
+          now={now}
+          notice={notice}
+          unreadDot={!wiring}
+          srUnread={wiring !== undefined && message.unread}
+          onMarkUnread={wiring ? () => wiring.onMarkUnread(message.id) : undefined}
+        />
         {/* Above and outside `.pm-body`, as in the focused pane (`InvitationNote`). */}
         <InvitationNote message={message} text={body.text} full={body.state === "full"} className="hm-state" />
         {isProtectedMessage(message) ? null : <MessageEvents messageId={message.id} />}

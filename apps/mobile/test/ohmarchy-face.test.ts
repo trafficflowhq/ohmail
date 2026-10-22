@@ -119,6 +119,9 @@ describe("the face is GENERATED from the web face, and the committed file proves
         accentHair: slot(scheme, "--accent-hair"),
         onAccent: slot(scheme, "--on-accent"),
         scrim: slot(scheme, "--scrim"),
+        unreadWash: slot(scheme, "--unread-wash"),
+        markRead: Number(slot(scheme, "--mark-read")),
+        markMine: Number(slot(scheme, "--mark-mine")),
         tag: {
           moss: { ink: slot(scheme, "--tg-pottery-ink"), bg: slot(scheme, "--tg-pottery-bg") },
           ochre: { ink: slot(scheme, "--tg-buch-ink"), bg: slot(scheme, "--tg-buch-bg") },
@@ -158,7 +161,7 @@ describe("the face is GENERATED from the web face, and the committed file proves
       const p = ohmarchyPalettes[scheme];
       const values: [string, string][] = [
         ...Object.entries(p)
-          .filter(([k]) => k !== "scheme" && k !== "tag")
+          .filter(([k, v]) => k !== "scheme" && k !== "tag" && typeof v === "string")
           .map(([k, v]) => [k, v as string] as [string, string]),
         ...Object.entries(p.tag).flatMap(([hue, t]): [string, string][] => [
           [`tag.${hue}.ink`, t.ink],
@@ -168,8 +171,9 @@ describe("the face is GENERATED from the web face, and the committed file proves
           layers.map((l, i) => [`lift.${level}[${i}]`, l.color] as [string, string]),
         ),
       ];
-      // 16 colour slots + the three derived glass values + 10 tag hues × 2 + 6 lift levels × 1 flat ring each.
-      expect(values.length).toBe(45);
+      // 17 colour slots + the three derived glass values + 10 tag hues × 2 + 6 lift levels × 1 flat ring each
+      // (the two mark opacities are numbers, not colours).
+      expect(values.length).toBe(46);
       for (const [key, value] of values) {
         expect(normalize(value), `${scheme}.${key} = ${value}`).not.toBeNull();
       }

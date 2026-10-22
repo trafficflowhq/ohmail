@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { stubThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * THE ARROW-KEY SPATIAL MODEL — rail ← list → open message (`shell/zone-nav.tsx`). Asserted:
@@ -44,7 +45,7 @@ function msg(m: Row): Record<string, unknown> {
   return {
     id: m.id, accountId: "a", mailboxId: "mb", threadId: m.threadId ?? null, messageIdHeader: null,
     subject: `subj-${m.id}`, from: { name: `sender-${m.id}`, address: `${m.id}@ex.example` }, to: [], cc: [],
-    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`,
+    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`, body: `the words of ${m.id}`,
     unread: m.unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
@@ -108,6 +109,9 @@ const cursor = (): string | null =>
 
 const focused = (): Element | null => document.activeElement;
 
+/** Undone after each case: a layout stub one case installs. */
+const onTeardown: Array<() => void> = [];
+
 afterEach(async () => {
   vi.useRealTimers();
   if (root) await act(async () => { root!.unmount(); });
@@ -116,6 +120,7 @@ afterEach(async () => {
   root = null;
   host = null;
   rail = null;
+  for (const undo of onTeardown.splice(0)) undo();
 });
 
 const at = (hour: number): string => `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`;
@@ -180,26 +185,23 @@ describe("the read-marking guard on arrow navigation", () => {
       .toEqual([]);
   });
 
-  it("staying past the dwell marks exactly that message, while it is open, as a glance", async () => {
+  it("staying on a row is a preview: nothing is marked, however long", async () => {
     setViewport();
     await render(FIVE);
     vi.useFakeTimers();
 
     await key("ArrowDown");
     expect(cursor()).toBe("m1");
-    // The full dwell elapses on m1: the read ARMS and is SAVED at once, labelled as the glance
-    // it was; the row keeps its place until the cursor leaves it.
-    await act(async () => { vi.advanceTimersByTime(2100); });
-    expect(markSeen, "the dwell armed a read it never saved").toEqual([[["m1"], false, "glance"]]);
+    // Base: the 2 s dwell read m1 here. A preview reads nothing.
+    await act(async () => { vi.advanceTimersByTime(10_000); });
+    expect(markSeen, "a preview wrote read state").toEqual([]);
 
-    // Departure writes nothing more.
     await key("ArrowDown");
-    expect(markSeen).toEqual([[["m1"], false, "glance"]]);
+    expect(markSeen).toEqual([]);
 
-    // And it was ONE message: the row departed to is unwritten until its own dwell runs.
-    await act(async () => { vi.advanceTimersByTime(300); });
+    await act(async () => { vi.advanceTimersByTime(3000); });
     await key("ArrowDown");
-    expect(markSeen).toHaveLength(1);
+    expect(markSeen).toEqual([]);
   });
 });
 
@@ -299,8 +301,11 @@ describe("the zone walk: rail ← list → open message", () => {
     expect(cursor()).toBe("m1");
   });
 
-  it("→ from the list lands on the reading column as ENGAGEMENT: presented read and saved now", async () => {
+  it("→ from the list lands on the reading column as ENTERING it: what is on screen is read once the dwell is done", async () => {
     setViewport();
+    // The column laid out, so the message's lines are on screen.
+    const layout = stubThreadLayout();
+    onTeardown.push(() => layout.restore());
     await render(FIVE);
     await key("ArrowDown");
     const row = (): HTMLElement | null => host!.querySelector(`.row[data-id="m1"]`);
@@ -311,9 +316,12 @@ describe("the zone walk: rail ← list → open message", () => {
     expect(focused(), "→ did not focus the reading column").toBe(col);
     expect(col!.getAttribute("role")).toBe("region");
     expect(col!.getAttribute("tabindex")).toBe("-1");
-    // Engagement ARMS: the row presents read at once, and the read is saved in the same moment.
-    expect(row()!.dataset.unseen, "→ into the message did not arm the read").toBeUndefined();
-    expect(markSeen, "engagement armed a read it never saved").toEqual([[["m1"], false, "glance"]]);
+    // Entering starts the dwell on what is on screen, and once its top was there for it the read is
+    // saved (this harness's mirror does not move, so the row keeps its ink).
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    expect(markSeen, "the write waits for the dwell").toEqual([]);
+    await layout.passDwell();
+    expect(markSeen, "→ into the message did not read it").toEqual([[["m1"], false, "glance"]]);
 
     // ← walks back to the list; moving the cursor is a departure, and it writes nothing more.
     await key("ArrowLeft");

@@ -19,6 +19,7 @@ import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
   BodyText,
+  OwnEnd,
   inlineImageAdmitted,
   isAttribution,
   MAX_QUOTE_DEPTH,
@@ -3969,6 +3970,9 @@ export function MessageBody({
   if (mail.state !== "ok") {
     return (
       <>
+        {/* Before the mount the sanitizer is not asked yet: this text is a stand-in for the
+            frame about to replace it, and its top is no top (the read rule waits, `reader-seen.ts`). */}
+        {mounted ? null : <span data-body-pending="" hidden />}
         <BodyText text={text} />
         <p className="mb-note">
           {mail.state === "oversize" ? COPY.oversize : COPY.unsupported}
@@ -4146,6 +4150,10 @@ export function MessageBody({
           />
         </div>
       )}
+      {/* The framed body's end is the sheet's foot (its quote included), drawn only once this
+          document loaded and measured: before that the frame stands at its default height and its
+          foot is no end at all. The prose path marks its own. */}
+      {proseView || frameKey === null || loadedKey !== frameKey ? null : <OwnEnd />}
 
       {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE — a quiet text control AFTER the body,
           not a button in a bar. Mail that declares no canvas is set in the app's own type by

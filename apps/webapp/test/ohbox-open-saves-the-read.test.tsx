@@ -6,14 +6,16 @@ import { NextIntlClientProvider } from "next-intl";
 import { FixturesAdapter, MemoryMirrorStore, OhmailEngine, ohboxView, type EngineMessage, type MirrorRecord, type SyncChange } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
- * OPENING A MESSAGE SAVES THE READ. The screen never claims a read the account
- * does not hold: once the Ohbox shows a message as read (an explicit open at once, the split
- * pane's 2 s dwell at its end) the `mark_seen` is on its way, not owed to a departure. What
- * waits for the departure is the row's PLACE, so nothing re-sorts under the reader. The reload
- * cases model an IndexedDB outbox: its commit lands in a LATER task, so a write first made
- * inside `pagehide` reaches neither the disk nor the wire before the page is gone.
+ * AN OPEN SAVES THE READ. The screen never claims a read the account does not hold: once the
+ * thread-read rule reads a message in an entered conversation (an open, a click on its row) the
+ * `mark_seen` is on its way, not owed to a departure; a j/k preview reads nothing. What waits for
+ * the departure is the row's PLACE, so nothing re-sorts under the reader. The reload cases model an
+ * IndexedDB outbox: its commit lands in a LATER task, so a write first made inside `pagehide`
+ * reaches neither the disk nor the wire before the page is gone. The reader is laid out here
+ * (`fixtures/thread-layout.ts`), so an open message's lines are on screen.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -44,7 +46,7 @@ function msg(m: Row): Record<string, unknown> {
   return {
     id: m.id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `subj-${m.id}`, from: { name: m.id, address: `${m.id}@ex.example` }, to: [], cc: [],
-    date: m.date, folder: "INBOX", snippet: `snip-${m.id}`,
+    date: m.date, folder: "INBOX", snippet: `snip-${m.id}`, body: `the words of ${m.id}`,
     unread: m.unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: m.date,
@@ -67,8 +69,8 @@ const marked: Array<{ ids: string[]; unread: boolean; via?: "glance" }> = [];
 const heldAtSave: Array<string | null> = [];
 
 /**
- * THE SHELL'S HOLD, modelled: the view reports its armed read (`onReadArmed`) and the shell has
- * the engine hold that row in New (`holdOpenRow`, only while it is unread at the arm), deriving
+ * THE SHELL'S HOLD, modelled: the view reports the row it entered (`onHoldRow`) and the shell has
+ * the engine hold that row in New (`holdOpenRow`, only while it is unread then), deriving
  * the groups through `ohboxView`'s one rule — `unread || id === held` (pinned on the real
  * selector in `packages/client-engine/test/ohbox-open-row-keeps-its-place.test.ts`).
  */
@@ -105,11 +107,12 @@ async function draw(): Promise<void> {
       older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
       newForYou: g.newForYou,
       previouslySeen: g.previouslySeen,
-      onReadArmed: holdArmed,
+      onHoldRow: holdArmed,
       tags: [], now: new Date("2026-08-02T09:10:00.000Z"),
       selectedId: sel,
       onSelect: (id: string) => { sel = id; },
-      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
+      // The shell's set: the conversation's unread members (here, the one message while unread).
+      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => (live.find((r) => r.id === id)?.unread ? [id] : []),
       onMarkSeen: (ids: string[], unread: boolean, via?: "glance"): Promise<boolean> => {
         heldAtSave.push(held);
         marked.push({ ids, unread, ...(via ? { via } : {}) });
@@ -155,6 +158,14 @@ const looksUnread = (id: string): boolean => rowEl(id).dataset.unseen === "1";
 async function click(id: string): Promise<void> {
   await act(async () => { rowEl(id).click(); });
   await draw();
+  await act(async () => { vi.advanceTimersByTime(20); });   // a frame: the rule looks
+  await draw();
+}
+async function key(k: string): Promise<void> {
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
+  await draw();
+  await act(async () => { vi.advanceTimersByTime(20); });
+  await draw();
 }
 async function wait(ms: number): Promise<void> {
   await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -176,8 +187,10 @@ const B = { id: "b", unread: true, date: "2026-08-02T09:02:00.000Z" };
 const C = { id: "c", unread: false, date: "2026-08-02T09:01:00.000Z" };
 const glance = (id: string) => ({ ids: [id], unread: false, via: "glance" as const });
 
+let layout: ThreadLayout;
 beforeEach(() => {
   vi.useFakeTimers();
+  layout = stubThreadLayout();
   setViewport(false);
   answer = "ok";
 });
@@ -189,37 +202,47 @@ afterEach(async () => {
   marked.length = 0;
   heldAtSave.length = 0;
   Reflect.deleteProperty(document, "visibilityState");
+  layout.restore();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe("the Ohbox saves a read when it shows one", () => {
-  it("an explicit open saves at once, and nobody has to open a second message", async () => {
+  it("an open saves the read once its top was on screen for the dwell, and nobody has to open a second message", async () => {
     await mount([A, B, C]);
-    await click("a");                        // the cursor lands
-    await click("a");                        // …a second click is the open
+    await click("a");                        // a click enters: the message on screen is read…
+    expect(marked, "the write waits for the dwell").toEqual([]);
+    await layout.passDwell();                // …once its top was on screen for the dwell
+    await draw();
     expect(marked, "the read the row shows was never sent").toEqual([glance("a")]);
+    await click("a");                        // …a second click opens again and writes nothing more
+    expect(marked).toEqual([glance("a")]);
     expect(looksUnread("a")).toBe(false);
     expect(verb()).toContain("Mark unread");
     expect(count(), "the count still counts the message the row shows as read").toBe("1");
   });
 
-  it("the split pane's 2 s dwell saves at its end, while the message stays open", async () => {
+  it("a j preview saves nothing however long it rests; a click on the row then reads it", async () => {
     await mount([A, B, C]);
+    await key("j");
+    await wait(DWELL_MS * 5);
+    expect(marked, "base: the 2 s dwell saved it").toEqual([]);
+    expect(looksUnread("a")).toBe(true);
     await click("a");
-    await wait(DWELL_MS + 100);
+    await layout.passDwell();
+    await draw();
     expect(marked).toEqual([glance("a")]);
     expect(looksUnread("a")).toBe(false);
     expect(count()).toBe("1");
     expect(sel, "still the message on screen").toBe("a");
   });
 
-  it("leaving inside the dwell is not a read, and the row never claimed one", async () => {
+  it("walking past a row is not a read, and the row never claimed one", async () => {
     await mount([A, B, C]);
-    await click("a");
+    await key("j");
     await wait(800);
-    expect(looksUnread("a"), "a bare selection is not a reading").toBe(true);
-    await click("b");
+    expect(looksUnread("a"), "a preview is not a reading").toBe(true);
+    await key("j");
     await wait(800);
     expect(marked).toEqual([]);
     expect(looksUnread("a")).toBe(true);
@@ -229,7 +252,8 @@ describe("the Ohbox saves a read when it shows one", () => {
   it("hiding the tab finds the read already saved, and closing it writes nothing twice", async () => {
     await mount([A, B, C]);
     await click("a");
-    await click("a");
+    await layout.passDwell();
+    await draw();
     await hideTab();
     expect(marked, "a hidden tab the system discards loses the read").toEqual([glance("a")]);
     await closeTab();
@@ -240,7 +264,7 @@ describe("the Ohbox saves a read when it shows one", () => {
     answer = "refused";
     await mount([A, B, C]);
     await click("a");
-    await click("a");
+    await layout.passDwell();
     await wait(0);
     expect(marked).toEqual([glance("a")]);
     expect(looksUnread("a"), "the row claims a read the account refused").toBe(true);
@@ -250,14 +274,15 @@ describe("the Ohbox saves a read when it shows one", () => {
 });
 
 describe("the order after a read is the order before it", () => {
-  it("the arm reaches the shell BEFORE the read is saved, on the dwell and on an open", async () => {
+  it("the hold reaches the shell BEFORE the read is saved, on every open", async () => {
     // The desktop measured the other order: the save's paint rendered first, with nothing held,
     // and the row slid out of New while it was being read. The hold must precede the save.
     await mount([A, B, C]);
     await click("a");
     await wait(DWELL_MS + 100);
     await click("b");
-    await click("b");
+    await layout.passDwell();
+    await draw();
     expect(marked).toEqual([glance("a"), glance("b")]);
     expect(heldAtSave, "a save went out before its row was held").toEqual(["a", "b"]);
   });
@@ -269,10 +294,11 @@ describe("the order after a read is the order before it", () => {
     expect(idsInGroup("New")).toEqual(["b", "a"]);
     await click("a");
     await click("a");
+    await layout.passDwell();
     await wait(AFTER_SLIDE_MS);
     expect(idsInGroup("New"), "the saved read moved the row under the reader").toEqual(["b", "a"]);
     expect(idsInGroup("Earlier")).toEqual(["c"]);
-    await click("b");                        // the departure releases the place
+    await key("j");                          // the departure (a preview of b) releases the place
     await wait(AFTER_SLIDE_MS);
     expect(idsInGroup("New")).toEqual(["b"]);
     expect(idsInGroup("Earlier"), "read here, it takes the top of Earlier").toEqual(["a", "c"]);
@@ -351,7 +377,8 @@ describe("through the whole shell: the read survives a reload", () => {
     const before = Number(count());
     await act(async () => { row.click(); });
     await act(async () => { firstRow(id).click(); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(50); });   // the reader reads
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });   // the reader looks: the dwell starts
+    await layout.passDwell();                                            // its top on screen for the dwell: read
     expect(wire.filter((w) => w.kind === "mark_seen" && w.ids.includes(id)), "the read never left the tab")
       .toEqual([{ kind: "mark_seen", ids: [id], unread: false, via: "glance" }]);
     expect(store.disk.some((d) => d.startsWith("put ")), "the outbox row never reached the disk").toBe(true);

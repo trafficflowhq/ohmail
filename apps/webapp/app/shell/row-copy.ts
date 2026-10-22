@@ -23,6 +23,8 @@ export interface RowBadgeCopy {
    * capsule has room for and nothing at all to a reader hearing the row read out.
    */
   thread: (count: number) => string;
+  /** The conversation's squares as a sentence: how many, and how many of them unread. */
+  marks: (count: number, unread: number) => string;
   /**
    * THE TWO FACTS A ROW DRAWS IN COLOUR AND SHAPE, IN WORDS — read state and the clip. Same
    * journey as the badges above and one more reason: a screen reader hears no dot and no ink, so
@@ -39,6 +41,7 @@ export function useRowBadgeCopy(): RowBadgeCopy {
       protectedLabel: t("rowProtected"),
       held: (count: number) => t("rowHeld", { count }),
       thread: (count: number) => t("rowThread", { count }),
+      marks: (count: number, unread: number) => t("rowMarks", { count, unread }),
       spoken: {
         unread: t("rowUnread"),
         read: t("rowRead"),

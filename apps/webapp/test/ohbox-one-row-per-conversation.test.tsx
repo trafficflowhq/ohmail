@@ -12,6 +12,7 @@ import {
 } from "@ohmail/client-engine";
 import { threadedEngine } from "../../../packages/client-engine/test/fixtures/threaded-demo.js";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * ═══ NO FRAME DRAWS ONE CONVERSATION TWICE — THE SHELL (WEB AND DESKTOP), RENDERED ═════════════
@@ -44,8 +45,11 @@ interface Frame { label: string; rows: DrawnRow[]; handed: string[] }
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+/** The reader is laid out, so an open message's lines are on screen and the rule reads it. */
+let layout: ThreadLayout;
 
 beforeEach(() => {
+  layout = stubThreadLayout();
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = ((query: string) =>
     ({
       matches: false, media: query, onchange: null,
@@ -60,6 +64,7 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
+  layout.restore();
   vi.useRealTimers();
 });
 
@@ -90,7 +95,7 @@ async function mountLive(engine: OhmailEngine, olderItems: EngineMessage[] = [])
         const r = await engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
         return r.status !== "rolled_back";
       },
-      onReadArmed: (id: string | null) => { if (id) engine.holdOpenRow(id); else engine.releaseOpenRow(); },
+      onHoldRow: (id: string | null) => { if (id) engine.holdOpenRow(id); else engine.releaseOpenRow(); },
       doorbellInitials: [], doorbellCount: 0, settled: true, owed: false,
       onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
       bulk: {
@@ -172,8 +177,8 @@ describe("the reported sequence: open the unread reply, answer it, move on", () 
     // T is waiting (giulia is unread), so the WHOLE conversation stands in New: one row.
     expect(groupsOf(live.frames[0]!, "T")).toEqual(["New"]);
 
-    await live.click("giulia");
-    await live.click("giulia"); // the open: the read is saved at once and the row is held
+    await live.click("giulia"); // the open: the row is held and the reply on screen is read
+    await live.slide("read");
     expect(engine.openRowHeld()).toBe("giulia");
     expect(groupsOf(live.read("held"), "T")).toEqual(["New"]);
 

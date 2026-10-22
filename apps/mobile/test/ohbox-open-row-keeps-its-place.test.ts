@@ -1,6 +1,7 @@
 /**
  * THE ROW BEING READ KEEPS ITS PLACE IN "NEW" ON THE PHONE TOO (owner ruling 2026-09-18, narrowed
- * 2026-10-07). `openMessage` holds the row in the engine before it saves the read, the world
+ * 2026-10-07). `openMessage` holds the row in the engine (and in the Ohbox reads nothing: the
+ * reader's thread-read rule saves the read of what is on screen, `markGlanced`), the world
  * derives the Ohbox with that hold, and the reader's leaving lets it go — to the top of Earlier,
  * because the read was an open read; a read of another row with no row named keeps arrival (a
  * row's own Mark read names it: `row-read-is-an-open-read.test.ts`). On a two-pane
@@ -58,6 +59,7 @@ describe("the phone's Ohbox holds the open row", () => {
     try {
       expect(s.box().fresh.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
       expect(await s.actions.openMessage("m2")).toBe(true);
+      await s.actions.markGlanced(["m2"]);   // the reader's rule, with m2 on screen
       const open = s.box();
       expect(open.fresh.map((m) => m.id), "the read moved the row under the reader").toEqual(["m1", "m2", "m3"]);
       expect(open.seen.map((m) => m.id)).not.toContain("m2");
@@ -117,6 +119,7 @@ describe("an answer files the open row on the phone (owner defect 2026-09-28)", 
     const s = await session({ threaded: true });
     try {
       expect(await s.actions.openMessage("m2")).toBe(true);
+      await s.actions.markGlanced(["m2"]);   // the reader's rule, with m2 on screen
       expect(s.box().fresh.map((m) => m.id), "the premise: held in New").toContain("m2");
       const r = await s.actions.sendReply("m2", "TOPPPENS!", false);
       expect(r.outcome).toBe("sent");

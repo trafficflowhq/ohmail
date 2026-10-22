@@ -204,6 +204,10 @@
    paragraphs reads as one letter rather than a stack of separated blocks. */
 .msg-p{margin:0 0 10px;overflow-wrap:anywhere}
 .msg-p:last-child{margin-bottom:0}
+/* The body's own end, for the reader's read rule: a zero-size block that takes no room. The paragraph
+   before it keeps its last-child rhythm. */
+.own-end{display:block;height:0;margin:0}
+.msg-p:has(+ .own-end:last-child){margin-bottom:0}
 /* PLAIN TEXT KEEPS ITS OWN LINE BREAKS — a signature, an address, a list — and this is the one
    rule that says so. It goes on the element holding the text (`BodyText`'s plain paragraphs, the
    raw body below, a stream card's preview, a draft), never on a container: a container copy is

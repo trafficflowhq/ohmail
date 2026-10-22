@@ -52,6 +52,11 @@ export interface Palette {
   readonly accentHair: string;
   readonly onAccent: string;
   readonly scrim: string;
+  /** An unread message's panel in the reader (`--unread-wash`). */
+  readonly unreadWash: string;
+  /** A read square's opacity, and the account's own (hollow) square's (`--mark-read`, `--mark-mine`). */
+  readonly markRead: number;
+  readonly markMine: number;
   /** The flying menu's material — a translucent float the canvas shows through (glass pill). */
   readonly glass: string;
   /** The glass pill's 1px inset border. */
@@ -126,6 +131,15 @@ export const glassAuthored: Record<SchemeName, { glass: Oklch; brd: Oklch; flat:
 };
 
 /**
+ * The thread-read tint and squares, verbatim from `@ohmail/tokens` (`color[scheme].unreadWash`,
+ * `threadMark`): beside `authored`, whose sources do not carry them.
+ */
+export const threadReadAuthored: Record<SchemeName, { wash: Oklch; read: number; mine: number }> = {
+  light: { wash: oklch(0.955, 0.022, 42), read: 0.46, mine: 0.66 }, //   #feece5
+  dark: { wash: oklch(0.277, 0.025, 56), read: 0.42, mine: 0.62 }, //    #32251c
+};
+
+/**
  * The seven tag hues past the prototype's three, verbatim from `@ohmail/tokens` (the macOS
  * palette carries only three, so they live beside `authored`, which the fidelity tests pin to
  * both sources; `test/tags-shown.test.ts` pins these to the tokens alone).
@@ -171,6 +185,9 @@ function build(scheme: SchemeName): Palette {
     accentHair: css(a.accentHair),
     onAccent: css(a.onAccent),
     scrim: css(a.scrim),
+    unreadWash: css(threadReadAuthored[scheme].wash),
+    markRead: threadReadAuthored[scheme].read,
+    markMine: threadReadAuthored[scheme].mine,
     glass: css(glassAuthored[scheme].glass),
     glassBrd: css(glassAuthored[scheme].brd),
     glassFlat: css(glassAuthored[scheme].flat),

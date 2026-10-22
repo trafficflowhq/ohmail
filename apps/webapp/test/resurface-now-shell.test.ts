@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { FixturesAdapter, type EngineMutation } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
  * "RESURFACE NOW", DRIVEN THROUGH THE SHELL.
@@ -97,8 +98,11 @@ const barButton = (label: string): HTMLButtonElement | undefined =>
 
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
+/** The reader is laid out, so an open message's lines are on screen and the rule reads it. */
+let layout: ThreadLayout;
 beforeEach(() => {
   vi.useFakeTimers();
+  layout = stubThreadLayout();
   setViewport();
   window.location.hash = "#/ohbox";
   sent = [];
@@ -116,6 +120,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  layout.restore();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
@@ -123,8 +128,8 @@ afterEach(async () => {
 describe("the resurface chooser's fourth answer, through the shell", () => {
   it("Now puts `triage_set → resurfaced` on the wire, with no bubbleUpAt", async () => {
     await mountShell();
-    // Open the message under the cursor so its action bar is on screen.
-    await key("Enter");
+    // The message under the cursor shows its action bar in the column. A preview: it reads
+    // nothing, so the demo mailbox the next cases mount still holds it unread.
     const resurface = barButton("Resurface");
     expect(resurface, "the reader has no Resurface control").toBeTruthy();
 
@@ -146,7 +151,7 @@ describe("the resurface chooser's fourth answer, through the shell", () => {
 /**
  * A GLANCE READS BUT MUST NOT SPEND A RESURFACE, ASSERTED THROUGH THE WHOLE CHAIN. Under
  * the 2026-08-26 ruling a glance-read LANDS, and only the server can keep the pin — if the LABEL
- * reaches the wire. Three links, each silent alone: `OhboxView.armRead` labels its save `via:
+ * reaches the wire. Three links, each silent alone: `OhboxView.readByRule` labels its save `via:
  * "glance"`, `AppShell`'s `markSeen` FORWARDS it, the adapters send it (`MessageService` skips
  * `spendResurface`). A two-parameter callback is assignable where three are expected, so a
  * dropped `via` is no type error; this counts at the ADAPTER, downstream of every link.
@@ -159,14 +164,16 @@ describe("a resurfaced row survives being looked at, through the shell", () => {
     await act(async () => { window.dispatchEvent(new Event("pagehide")); });
   };
 
-  it("dwelling on a pinned row sends the read AS A GLANCE — the label on the wire", async () => {
-    await mountShell();                     // the cursor is on the first row, its dwell running
+  it("opening a pinned row sends the read AS A GLANCE — the label on the wire", async () => {
+    await mountShell();                     // the cursor is on the first row, a preview
     await click(barButton("Resurface"));
     await click(barButton("Now"));
 
     sent = [];
-    // Sit on it long enough for the dwell: the read is saved while the row is on screen.
-    await act(async () => { vi.advanceTimersByTime(2000); });
+    // Open it: the read rule saves the read once its top was on screen for the dwell.
+    await key("Enter");
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await layout.passDwell(); // its top on screen for the dwell: read
     await pagehide();
 
     // The read TRAVELS — dropping it was the reported flip-back (a pinned row presented
@@ -189,10 +196,12 @@ describe("a resurfaced row survives being looked at, through the shell", () => {
     await mountShell();
 
     sent = [];
-    await act(async () => { vi.advanceTimersByTime(2000); });
+    await key("Enter");
+    await act(async () => { vi.advanceTimersByTime(100); });
+    await layout.passDwell(); // its top on screen for the dwell: read
     await pagehide();
 
-    expect(seenIds(), "the dwell's save is not firing at all").toHaveLength(1);
+    expect(seenIds(), "the open's read is not firing at all").toHaveLength(1);
     const glance = kinds("mark_seen")[0] as { via?: string; unread: boolean };
     expect(glance.unread).toBe(false);
     // The label survived the shell. Without this the id above would have been sent for a PINNED

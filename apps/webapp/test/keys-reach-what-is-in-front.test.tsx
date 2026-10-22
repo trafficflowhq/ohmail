@@ -20,6 +20,7 @@ import { FocusFollows } from "../app/shell/focus-follows";
 import { KEY_PEEK, pageModal } from "../app/shell/modal-gate";
 import { revealInScroller } from "../app/shell/list-window";
 import { writeReplyDraft } from "../app/shell/mail-send";
+import { stubThreadLayout } from "./fixtures/thread-layout";
 import { parseRichValue } from "../app/shell/rich-text";
 import type { FirstRunHost } from "../app/shell/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
@@ -591,6 +592,12 @@ describe("pageModal — which surfaces own the page", () => {
 
 describe("through the shell: a page modal over the Ohbox keeps ↵ and j from the list", () => {
   it("the palette open, keys at the page root: j moves no cursor and ↵ opens no letter", async () => {
+    /* The reader laid out, so the ↵ that opens a letter reads it as production does: through the
+       thread-read rule, which reads a letter once its top was on screen for the dwell. Without a
+       layout ↵ would read nothing either way, and the check that ↵ behind the palette reads nothing
+       could not fail. The dwell is passed by hand once it is under way, never waited out. */
+    const layout = stubThreadLayout();
+    try {
     const el = await shell();
     await key("j");
     const before = cursorRow(el)?.dataset.id ?? null;
@@ -602,6 +609,10 @@ describe("through the shell: a page modal over the Ohbox keeps ↵ and j from th
     await keyAtRoot("j");
     await keyAtRoot("Enter");
     expect(cursorRow(el)?.dataset.id ?? null, "j moved the cursor behind the palette").toBe(before);
+    // m1 stands in the column, laid out: a ↵ that entered it would start its dwell in the next frame.
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    expect(layout.dwelling(), "↵ entered the letter behind the palette").toBe(false);
+    await layout.passDwell();
     expect(unseen(el, "m1"), "↵ opened, and so read, the letter behind the palette").toBe(true);
     await key("k", { ctrlKey: true });
     await waitFor(() => el.querySelector(".palette") === null, "the palette's own toggle closing it");
@@ -609,7 +620,12 @@ describe("through the shell: a page modal over the Ohbox keeps ↵ and j from th
     await keyAtRoot("j");
     expect(cursorRow(el)?.dataset.id ?? null, "j stayed dead after the palette closed").toBe("m2");
     await keyAtRoot("Enter");
+    await waitFor(() => layout.dwelling() || !unseen(el, "m2"), "↵ entering the letter: its top on screen, its dwell under way");
+    await layout.passDwell();
     await waitFor(() => !unseen(el, "m2"), "↵ opening the letter under the cursor");
+    } finally {
+      layout.restore();
+    }
   });
 
   it("the Reply Run is a page modal, and its own send key still sends from inside it", async () => {

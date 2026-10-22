@@ -9,10 +9,13 @@
  * was — continuity as data, not as tree position.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { JUNK_REFILL_BOUND_MS, type WorldAttachment } from "../state/live";
+import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
 import { invitationNote, junkLeaving, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
-import { ActivityIndicator, AppState, Linking, Platform, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import {
+  ActivityIndicator, Animated, AppState, Easing, Linking, Platform, ScrollView, StyleSheet, useWindowDimensions, View,
+  type NativeScrollEvent, type NativeSyntheticEvent,
+} from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useBodyStamp, useFilesStamp, useWorld, useWorldToast } from "../state/world";
@@ -30,8 +33,20 @@ import { MessageActions } from "./MessageActions";
 import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
 import { scaffoldPlan } from "./scaffold/plan";
-import { paneScrollOf, recordPaneScroll } from "./pane-memory";
-import { createPhoneReaderSeen } from "./reader-seen";
+import { hasPaneScroll, paneScrollOf, recordPaneScroll } from "./pane-memory";
+import { createOpenAnchor } from "./open-anchor";
+import {
+  THREAD_READ_FADE_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createPhoneThreadRead,
+} from "./reader-seen";
+import { standsInOhboxMail } from "./pane-routes";
+import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cover";
+import { Sheet, SheetRow } from "./Sheet";
+import { useBottomChromeExtent } from "./bottom-chrome";
+import {
+  RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsOf, railOffsetFor, readerChromeOverlap,
+  readerGroups, type MarkKind, type RailItem,
+} from "./reader-marks";
+import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
@@ -61,7 +76,8 @@ export function MessageReader({
   useFilesStamp(m ? [m.id, ...m.earlier.map((h) => h.id)] : [id]);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
      a detail bar above it would stand Back twice. */
-  const railBack = readerVerbMode(scaffoldPlan(usePosture(), platformName)) === "rail";
+  const verbMode = readerVerbMode(scaffoldPlan(usePosture(), platformName));
+  const railBack = verbMode === "rail";
   const bare = inPane || railBack;
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
   const [textFor, setTextFor] = useState<string | null>(null);
@@ -121,23 +137,141 @@ export function MessageReader({
     hydrateMessage(id);
   }, [id, shed, hydrateMessage]);
 
-  /* SCROLL-TO-READ over the members below the message — one core per open (`reader-seen.ts`), its
-     pending glance sent when the open ends. The mirror's own answer decides what is still unread. */
+  /* THE THREAD-READ RULE — one record per visit, entered at the mount (a phone reader is an open):
+     each member, and in the Ohbox the opened message too, turns read once its top — its sender line
+     and its first lines — has been on screen for the dwell, and goes out then as one glance
+     (`reader-seen.ts`). In the Ohbox the reader also wears the presentation: the time order, the
+     tint, the rail of squares and Mark unread in ⋯. The record lives outside this tree
+     (`visit-records.ts`): a fold remounts the reader, and the visit — what was kept unread in it —
+     goes on. */
   const markGlanced = w.actions.markGlanced;
   const glance = useRef(markGlanced);
   glance.current = markGlanced;
-  const earlierSeen = useRef<(mid: string) => boolean>(() => true);
-  earlierSeen.current = (mid) => m?.earlier.find((h) => h.id === mid)?.seen ?? true;
+  const record = visitRecordFor(id, Date.now());
+  useEffect(() => {
+    showVisit(id, Date.now());
+    return () => hideVisit(id);
+  }, [id]);
+  const inOhbox = m ? standsInOhboxMail(m) : false;
+  /* A REPLY THAT ARRIVES INTO THE OPEN READER is asked its text, as the open asked every member it
+     found: a snippet is never ready, and the rule could not read it however long it was on screen. */
+  const hydrateHeld = w.actions.hydrateHeld;
+  const asked = useRef<Set<string> | null>(null);
+  const memberIds = m ? m.earlier.map((h) => h.id).join(" ") : null;
+  useEffect(() => {
+    if (!m) return;
+    if (asked.current === null) {
+      asked.current = new Set(m.earlier.map((h) => h.id)); // the open asked these
+      return;
+    }
+    const fresh = arrivalsToAsk(m.earlier, asked.current);
+    if (fresh.length > 0) hydrateHeld(fresh);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [memberIds, hydrateHeld]);
+  /** The message whose frame has its document's height (`MailBodyFrame`'s `onFinal`). */
+  const [frameFinalFor, setFrameFinalFor] = useState<string | null>(null);
+  const framed = m != null && m.html != null && m.html !== "" && textFor !== m.id;
+  const facts = useRef<{ inOhbox: boolean; unread: (mid: string) => boolean; ready: (mid: string) => boolean }>({
+    inOhbox, unread: () => false, ready: () => false,
+  });
+  facts.current = {
+    inOhbox,
+    unread: (mid) => (mid === m?.id ? m.unread === true : m?.earlier.some((h) => h.id === mid && !h.seen) ?? false),
+    ready: (mid) => (mid === m?.id
+      ? openedBodyFinal(m, { framed, final: frameFinalFor === m.id })
+      : m?.earlier.find((h) => h.id === mid)?.ready === true),
+  };
+  const [here, setHere] = useState<string | null>(null);
+  /* A body's first lines, in its own type: the opened message reads at the reader's size, a member at the stream's. */
+  const lineOf = useRef({ opened: t.type.readerBody.lineHeight ?? 29, member: t.type.streamBody.lineHeight ?? 25 });
+  lineOf.current = { opened: t.type.readerBody.lineHeight ?? 29, member: t.type.streamBody.lineHeight ?? 25 };
   const seen = useMemo(
-    () => createPhoneReaderSeen({ isSeen: (mid) => earlierSeen.current(mid), onSeen: (ids) => glance.current(ids) }),
-    [id],
+    () => createPhoneThreadRead({
+      record,
+      openedId: () => (facts.current.inOhbox ? id : null),
+      unread: (mid) => facts.current.unread(mid),
+      ready: (mid) => facts.current.ready(mid),
+      onRead: (ids) => glance.current(ids),
+      lines: (mid) => THREAD_TOP_LINES * (mid === id ? lineOf.current.opened : lineOf.current.member),
+      /* In sight: the app in the foreground, its window focused, and no sheet or composer over it.
+         AppState stays active under a Modal and under the notification shade (`reader-cover.ts`). */
+      active: () => readerSees(AppState.currentState),
+      onHere: setHere,
+    }),
+    [id, record],
   );
   useEffect(() => () => seen.dispose(), [seen]);
-  /* The app leaving the foreground drops a running dwell: nobody is reading a backgrounded reader. */
+  /* Back in the foreground, the window focused again, a sheet gone: look again (nothing is read while
+     the app is away, its window blurred — Android's shade — or a modal stands over the reader). */
   useEffect(() => {
-    const sub = AppState.addEventListener("change", (s) => { if (s !== "active") seen.hidden(); });
-    return () => sub.remove();
+    const sub = AppState.addEventListener("change", (s) => { if (s === "active") seen.poke(); });
+    const blur = AppState.addEventListener("blur", () => setReaderWindowFocused(false));
+    const focus = AppState.addEventListener("focus", () => setReaderWindowFocused(true));
+    const off = onReaderCover(() => seen.poke());
+    /* Nobody tracks the focus once the reader is gone: the next one starts focused (it was opened by a touch). */
+    return () => { sub.remove(); blur.remove(); focus.remove(); off(); setReaderWindowFocused(true); };
   }, [seen]);
+  /* A read state, a body or the scope changed: look again (one look per frame however often). */
+  useEffect(() => { seen.poke(); });
+  /* Only what stands OVER the scroll view shortens the read zone: the compact bar stands below it. */
+  const chromeExtent = useBottomChromeExtent();
+  const chromeOver = readerChromeOverlap(verbMode, chromeExtent);
+  useEffect(() => { seen.chrome(chromeOver); }, [seen, chromeOver]);
+  const scrollRef = useRef<ScrollView>(null);
+  /** The message whose ⋯ sheet is open, or `null`. */
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [openedEndY, setOpenedEndY] = useState(0);
+  /* THE SCROLL'S PLACE. The remembered offset is where this mount STARTS, once — a fresh value each
+     render made the scroll view jump back to a stale offset on any re-render (the rail's jumps landed
+     short); the reader then learns where it stands from every scroll, drag end, fling end and its
+     own jumps. */
+  const scrollKey = `msg:${id}`;
+  const startAt = useMemo(() => ({ x: 0, y: paneScrollOf(scrollKey) }), [scrollKey]);
+  const stand = (y: number): void => {
+    recordPaneScroll(scrollKey, y);
+    seen.onScroll(y);
+  };
+  const box = useRef({ content: 0, view: 0 });
+  /** An animated jump's last frames may never reach `onScroll`: once it is done, the reader stands where it ends. */
+  const jumpEnd = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (jumpEnd.current) clearTimeout(jumpEnd.current); }, []);
+  /** How many members stand above the opened message: with none, it opens at the top as before. */
+  const aboveCount = useRef(0);
+  /* Until the anchor has placed the opened message the column is not drawn: its first frame stands at
+     the oldest member, and would flash it. A bound in case no layout ever places it. */
+  const [placed, setPlaced] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setPlaced(true), ANCHOR_PLACE_BOUND_MS);
+    return () => clearTimeout(t);
+  }, []);
+  /* THE OPEN ANCHOR (the Ohbox's time order puts the older members above the opened message): until
+     the person's first drag or square, every layout that moves the opened section, the content or the
+     view puts it back at the top, and keeps aiming until the view stands there (`open-anchor.ts`: a
+     scroll asked on a fresh start is clamped before the members' bodies mount). Every scroll report
+     goes through it: the reader stands where the view reached, never where it asked. A remembered
+     offset — a fold's remount — is the person's own place and wins. */
+  const standRef = useRef(stand);
+  standRef.current = stand;
+  const anchorFacts = useRef(() => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null));
+  anchorFacts.current = () => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null);
+  const anchor = useMemo(
+    () => createOpenAnchor({
+      holding: !hasPaneScroll(scrollKey),
+      start: startAt.y,
+      target: () => { const top = anchorFacts.current(); return top === null ? null : top - 8; },
+      extent: () => box.current,
+      scrollTo: (y) => scrollRef.current?.scrollTo({ y, animated: false }),
+      stand: (y) => standRef.current(y),
+      onPlaced: () => setPlaced(true),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seen, scrollKey],
+  );
+  useEffect(() => () => anchor.dispose(), [anchor]);
+  const handOver = (): void => {
+    anchor.handOver();
+    if (jumpEnd.current) { clearTimeout(jumpEnd.current); jumpEnd.current = null; }
+  };
 
   if (!m) {
     return (
@@ -168,11 +302,46 @@ export function MessageReader({
   const invitation = invitationNote(m);
 
   /** Continuity: the offset survives the remounts a posture change forces (`pane-memory`). */
-  const scrollKey = `msg:${m.id}`;
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    recordPaneScroll(scrollKey, e.nativeEvent.contentOffset.y);
-    seen.onScroll(e.nativeEvent.contentOffset.y);
-  };
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => anchor.reached(e.nativeEvent.contentOffset.y);
+  /** The Ohbox draws the conversation in time order around the opened message; elsewhere it leads. */
+  const { above, below } = readerGroups(m, inOhbox);
+  aboveCount.current = above.length;
+  /** Waiting for the open anchor: older members above, nothing remembered, not placed yet. */
+  const unplaced = inOhbox && above.length > 0 && anchor.holding && !placed;
+  /** A member's panel, above or below the opened message: its header, its body, its own files. */
+  const memberPanel = (h: WorldEarlier, group: "above" | "below") => (
+    <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
+      onLayout={(e) => seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
+      {inOhbox ? (
+        <ReadTint unread={!h.seen} style={{ top: 0, left: 0, right: 0, bottom: 0, borderRadius: t.radius.card }} />
+      ) : null}
+      <View
+        style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}
+        onLayout={(e) => seen.panelHeader(h.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+      >
+        {/* An unread member wears the list row's unread dot — where no tint says it. */}
+        {h.seen || inOhbox ? null : (
+          <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.c.accent, alignSelf: "center" }} />
+        )}
+        <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
+          {h.face ?? h.subject}
+        </Txt>
+        <View style={{ flex: 1 }} />
+        {inOhbox && markUnreadOffered({ read: h.seen, own: h.mine === true })
+          ? <MoreDots onPress={() => setMenuFor(h.id)} /> : null}
+        <Txt variant="caption" tone="ink3" tabular>
+          {h.time}
+        </Txt>
+      </View>
+      <EventCards events={h.events} style={{ marginTop: 10, marginBottom: 0 }} />
+      {/* Where its body starts and ends: its first lines, with the header, are the read rule's top. */}
+      <View style={{ height: 0, marginTop: 10 }} onLayout={(e) => seen.panelBody(h.id, e.nativeEvent.layout.y)} />
+      <BodyPages variant="streamBody" tone="ink2" text={h.body} />
+      <View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />
+      {/* Each member's own files: the reader's open asked for its list. */}
+      <AttachmentTiles m={h} />
+    </Panel>
+  );
 
   return (
     <Screen fullWindow={!inPane}>
@@ -197,26 +366,60 @@ export function MessageReader({
       </View>
       {/* `.msg{padding:20px 20px 40px}` in the ≤900px block — the message needs
           air above the from-line, or the back bar reads as part of the mail. */}
+      <View style={{ flex: 1, flexDirection: "row" }}>
+      {/* THE RAIL OF SQUARES, in time order — the order the reader draws the conversation in here,
+          and the list row's. Only in the Ohbox, and only for a conversation. */}
+      {inOhbox && railItemsOf(m).length > 0 ? (
+        <ReaderRail
+          items={railItemsOf(m)}
+          here={here}
+          over={chromeOver}
+          onJump={(mid) => {
+            handOver();
+            const top = seen.topOf(mid);
+            if (top === null) return;
+            const y = Math.max(0, top - 8);
+            const end = (): void => stand(Math.min(y, Math.max(0, box.current.content - box.current.view)));
+            scrollRef.current?.scrollTo({ y, animated: !t.reduceMotion });
+            if (t.reduceMotion) end();
+            else jumpEnd.current = setTimeout(() => { jumpEnd.current = null; end(); }, RAIL_JUMP_SETTLE_MS);
+          }}
+        />
+      ) : null}
       <Scroller
         key={scrollKey}
+        scrollRef={scrollRef}
         contentStyle={{ paddingHorizontal: 0 }}
-        contentOffset={{ x: 0, y: paneScrollOf(scrollKey) }}
+        contentOffset={startAt}
         onScroll={onScroll}
-        scrollEventThrottle={64}
-        onLayout={(e) => seen.viewport(e.nativeEvent.layout.height)}
-        onContentSizeChange={(_w, h) => seen.content(h)}
-        onScrollBeginDrag={seen.dragBegin}
-        onScrollEndDrag={seen.dragEnd}
-        onMomentumScrollBegin={seen.momentumBegin}
-        onMomentumScrollEnd={seen.momentumEnd}
+        onScrollBeginDrag={() => { handOver(); seen.poke(); }}
+        onScrollEndDrag={onScroll}
+        onMomentumScrollEnd={onScroll}
+        scrollEventThrottle={16}
+        onContentSizeChange={(_w, h) => { box.current.content = h; anchor.layout(); }}
+        onLayout={(e) => { box.current.view = e.nativeEvent.layout.height; seen.viewport(e.nativeEvent.layout.height); anchor.layout(); }}
       >
         <View
-          style={{ paddingHorizontal: 20, paddingTop: 18 }}
-          onLayout={(e) => seen.offset("padded", e.nativeEvent.layout.y)}
+          style={{ paddingHorizontal: 20, paddingTop: 18, opacity: unplaced ? 0 : 1 }}
+          onLayout={(e) => { seen.offset("padded", e.nativeEvent.layout.y); anchor.layout(); }}
         >
+          {/* In the Ohbox, the members older than the opened message, above it (oldest first). */}
+          {above.length > 0 ? (
+            <View style={{ marginBottom: 34, gap: 12 }} onLayout={(e) => { seen.offset("above", e.nativeEvent.layout.y); anchor.layout(); }}>
+              {above.map((h) => memberPanel(h, "above"))}
+            </View>
+          ) : null}
+          <View onLayout={(e) => { seen.offset("opened", e.nativeEvent.layout.y); anchor.layout(); }}>
+          {/* The opened message's unread tint, under its section (the Ohbox only). */}
+          {inOhbox ? (
+            <ReadTint unread={m.unread === true} style={{ top: -18, left: -20, right: -20, height: openedEndY + 32 }} />
+          ) : null}
           {/* THE NAME IS THE FACT, THE ADDRESS THE DETAIL: the address yields first, and below 360 dp
               it takes its own line under the name, so a name is the last thing to truncate. */}
-          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}>
+          <View
+            style={{ flexDirection: "row", alignItems: "baseline", gap: 9 }}
+            onLayout={(e) => seen.openedFrom(e.nativeEvent.layout.y, e.nativeEvent.layout.height)}
+          >
             <Txt variant="button" style={{ flexShrink: 0, maxWidth: "60%" }} numberOfLines={1}>
               {m.from.name}
             </Txt>
@@ -226,6 +429,8 @@ export function MessageReader({
               </Txt>
             )}
             <View style={{ flex: 1 }} />
+            {inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })
+              ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
             <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
               {m.time}
             </Txt>
@@ -286,6 +491,8 @@ export function MessageReader({
               : null}
           </View>
 
+          {/* Where its body starts — its first lines are the read rule's top, with the sender row. */}
+          {m.protected ? <View style={{ height: 0 }} onLayout={(e) => seen.openedBody(e.nativeEvent.layout.y)} /> : null}
           {m.protected ? <ProtectedBlock label={m.protected.label} policy={m.protected.policy} /> : null}
 
           {!m.protected ? (
@@ -318,10 +525,12 @@ export function MessageReader({
               ) : null}
               {/* The invitation's event, once, above the mail (`EventCards`). */}
               <EventCards events={m.events} />
+              <View style={{ height: 0 }} onLayout={(e) => seen.openedBody(e.nativeEvent.layout.y)} />
               {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the
                   text part is the fallback AND the reader's own "Show as text" choice. */}
               {m.html != null && m.html !== "" && textFor !== m.id ? (
-                <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)} />
+                <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)}
+                  onFinal={(final) => setFrameFinalFor((was) => (final ? m.id : was === m.id ? null : was))} />
               ) : (
                 <>
                   {m.html != null && m.html !== "" ? (
@@ -340,49 +549,54 @@ export function MessageReader({
               )}
             </>
           ) : null}
+          {/* Where the message's own words end — the body the read rule's first lines stop at. */}
+          <View
+            style={{ height: 0 }}
+            onLayout={(e) => { seen.openedEnd(e.nativeEvent.layout.y); setOpenedEndY(e.nativeEvent.layout.y); }}
+          />
 
           <AttachmentTiles m={m} />
+          </View>
 
-          {m.earlier.length > 0 ? (
+          {below.length > 0 ? (
             <View
               style={{ marginTop: 34, gap: 12 }}
-              onLayout={(e) => seen.offset("container", e.nativeEvent.layout.y)}
+              onLayout={(e) => seen.offset("below", e.nativeEvent.layout.y)}
             >
-              <Txt variant="caption" tone="ink3">
-                {threadHeading(Copy, m.earlier)}
-              </Txt>
-              {m.earlier.map((h) => (
-                <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
-                  onLayout={(e) => seen.panel(h.id, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
-                  <View style={{ flexDirection: "row", alignItems: "baseline", gap: 10 }}>
-                    {/* An unread member wears the list row's unread dot. */}
-                    {h.seen ? null : (
-                      <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: t.c.accent, alignSelf: "center" }} />
-                    )}
-                    <Txt variant="rowSubject" style={{ flexShrink: 1 }}>
-                      {h.face ?? h.subject}
-                    </Txt>
-                    <View style={{ flex: 1 }} />
-                    <Txt variant="caption" tone="ink3" tabular>
-                      {h.time}
-                    </Txt>
-                  </View>
-                  <EventCards events={h.events} style={{ marginTop: 10, marginBottom: 0 }} />
-                  <BodyPages variant="streamBody" tone="ink2" style={{ marginTop: 10 }} text={h.body} />
-                  {/* Each member's own files: the reader's open asked for its list. */}
-                  <AttachmentTiles m={h} />
-                </Panel>
-              ))}
+              {/* The heading over the members listed after the opened message — where it leads; in the
+                  Ohbox's time order the conversation reads on without one, as the web's column. */}
+              {inOhbox ? null : (
+                <Txt variant="caption" tone="ink3">
+                  {threadHeading(Copy, m.earlier)}
+                </Txt>
+              )}
+              {below.map((h) => memberPanel(h, "below"))}
             </View>
           ) : null}
 
         </View>
       </Scroller>
+      </View>
+      {/* A message's ⋯: Mark unread, for a read message that is not the account's own. It stays
+          unread for the rest of this visit. */}
+      <Sheet open={menuFor !== null} onClose={() => setMenuFor(null)} label={Copy.readerMessageActions}>
+        <SheetRow
+          icon="x"
+          label={Copy.actionMarkUnread}
+          onPress={() => {
+            const mid = menuFor;
+            setMenuFor(null);
+            if (mid === null) return;
+            record.keepUnread(mid);
+            w.actions.markSeen(mid, true);
+          }}
+        />
+      </Sheet>
       {/* The verbs place themselves by posture (`MessageActions`): the compact glass bar at
           the thumb, the desktop ActionBar pinned at this pane's foot, or the right-edge rail.
           A confirmed delete leaves this reader at once: the tombstone already dropped the row,
           and "no longer here" over the reader's own act would read as a failure. */}
-      <MessageActions m={m} onDeleted={onClose} onBack={onClose} inPane={inPane} />
+      <MessageActions m={m} onDeleted={onClose} onBack={onClose} inPane={inPane} record={record} />
     </Screen>
   );
 }
@@ -517,6 +731,156 @@ function ProtectedBlock({ label, policy }: { label: string; policy: string }) {
         {policy.replace(/^Protected/, "")}
       </Txt>
     </View>
+  );
+}
+
+const EASE = Easing.bezier(0.22, 0.61, 0.36, 1);
+/** An animated rail jump is done by then (Android's smooth scroll runs about 250ms). */
+const RAIL_JUMP_SETTLE_MS = 450;
+/** The longest the column waits, undrawn, for the open anchor to place the opened message. */
+const ANCHOR_PLACE_BOUND_MS = 400;
+
+/**
+ * THE UNREAD TINT under a message: the wash and a 3dp accent edge while unread; once read (its top
+ * was on screen for the dwell) it settles over the fade; back to unread it returns quicker. Reduced
+ * motion: instant.
+ */
+function ReadTint({ unread, style }: { unread: boolean; style: object }) {
+  const t = useTheme();
+  const v = useRef(new Animated.Value(unread ? 1 : 0)).current;
+  const was = useRef(unread);
+  useEffect(() => {
+    if (was.current === unread) return;
+    was.current = unread;
+    if (t.reduceMotion) { v.setValue(unread ? 1 : 0); return; }
+    Animated.timing(v, {
+      toValue: unread ? 1 : 0,
+      duration: unread ? THREAD_UNREAD_BACK_MS : THREAD_READ_FADE_MS,
+      easing: EASE,
+      useNativeDriver: true,
+    }).start();
+  }, [unread, t.reduceMotion, v]);
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        StyleSheet.absoluteFill,
+        style,
+        { opacity: v, backgroundColor: t.c.unreadWash, borderLeftWidth: 3, borderLeftColor: t.c.accent },
+      ]}
+    />
+  );
+}
+
+/** One square's opacity, settling with the panel's tint. */
+function RailSquare({ kind }: { kind: MarkKind }) {
+  const t = useTheme();
+  const target = kind === "unread" ? 1 : kind === "mine" ? t.c.markMine : t.c.markRead;
+  const v = useRef(new Animated.Value(target)).current;
+  const was = useRef(target);
+  useEffect(() => {
+    if (was.current === target) return;
+    was.current = target;
+    if (t.reduceMotion) { v.setValue(target); return; }
+    Animated.timing(v, {
+      toValue: target,
+      duration: kind === "unread" ? THREAD_UNREAD_BACK_MS : THREAD_READ_FADE_MS,
+      easing: EASE,
+      useNativeDriver: true,
+    }).start();
+  }, [target, kind, t.reduceMotion, v]);
+  return (
+    <Animated.View
+      style={{
+        width: 10,
+        height: 10,
+        opacity: v,
+        backgroundColor: kind === "mine" ? "transparent" : t.c.accent,
+        borderWidth: kind === "mine" ? 2 : 0,
+        borderColor: t.c.accent,
+      }}
+    />
+  );
+}
+
+/**
+ * THE RAIL — one square per message beside the reader, 22dp, in time order (oldest first, as the
+ * reader draws the conversation here and the row's squares run): solid accent unread, dimmed read,
+ * hollow the account's own; the message most in view ringed (neutral, never the accent). A tap
+ * brings that message to the top. Marks, never a count. It fits the reader's height less what of the
+ * bottom chrome stands over it — closer squares first, and past that it scrolls, keeping the ringed
+ * square in view — so the newest squares are never under the bar or off the screen (`railFit`).
+ */
+function ReaderRail({ items, here, over, onJump }: {
+  items: RailItem[];
+  here: string | null;
+  /** What of the bottom chrome stands over the rail's foot. */
+  over: number;
+  onJump: (id: string) => void;
+}) {
+  const t = useTheme();
+  const n = items.length;
+  const [height, setHeight] = useState<number | null>(null);
+  const room = height === null ? null : Math.max(0, height - over);
+  const { pitch, scrolls } = railFit(n, room);
+  const list = useRef<ScrollView>(null);
+  const at = items.findIndex((it) => it.id === here);
+  useEffect(() => {
+    if (!scrolls || room === null || at < 0) return;
+    list.current?.scrollTo({ y: railOffsetFor(at, n, pitch, room), animated: false });
+  }, [scrolls, room, at, n, pitch]);
+  const ring = Math.min(17, pitch);
+  const squares = items.map((it, i) => (
+    <Tap
+      key={it.id}
+      accessibilityRole="button"
+      accessibilityLabel={it.kind === "mine"
+        ? Copy.readerMarkMine(i + 1, n)
+        : Copy.readerMarkFrom(i + 1, n, it.sender, it.kind === "unread")}
+      accessibilityState={{ selected: it.id === here }}
+      testID={`rail-${it.id}`}
+      onPress={() => onJump(it.id)}
+      style={{ height: pitch, width: 22, alignItems: "center", justifyContent: "center" }}
+    >
+      <View
+        style={{
+          width: ring, height: ring, alignItems: "center", justifyContent: "center",
+          borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3,
+        }}
+      >
+        <RailSquare kind={it.kind} />
+      </View>
+    </Tap>
+  ));
+  return (
+    <View
+      accessibilityRole="toolbar"
+      accessibilityLabel={Copy.readerMarksAria}
+      style={{ width: 22, alignSelf: "stretch" }}
+      onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
+    >
+      {scrolls && room !== null ? (
+        <ScrollView
+          ref={list}
+          style={{ height: room, flexGrow: 0 }}
+          contentContainerStyle={{ paddingTop: RAIL_TOP }}
+          showsVerticalScrollIndicator={false}
+        >
+          {squares}
+        </ScrollView>
+      ) : (
+        <View style={{ paddingTop: RAIL_TOP }}>{squares}</View>
+      )}
+    </View>
+  );
+}
+
+/** A message's ⋯, beside its stamp. */
+function MoreDots({ onPress }: { onPress: () => void }) {
+  return (
+    <Tap accessibilityRole="button" accessibilityLabel={Copy.readerMessageActions} onPress={onPress} style={{ paddingHorizontal: 4 }}>
+      <Txt variant="caption" tone="ink3">⋯</Txt>
+    </Tap>
   );
 }
 

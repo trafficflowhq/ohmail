@@ -653,6 +653,7 @@ function PagedBody({ text }: { text: string }) {
   return (
     <>
       {ends.map((e, i) => <BodyPage key={i} index={i} text={text.slice(i === 0 ? 0 : ends[i - 1]!, e)} />)}
+      <OwnEnd />
       {end < text.length ? (
         <button type="button" className="msg-page-more" onClick={() => setShown({ text, pages: pages + 1 })}>
           {COPY.more(String(Math.floor((end / text.length) * 100)))}
@@ -660,6 +661,15 @@ function PagedBody({ text }: { text: string }) {
       ) : null}
     </>
   );
+}
+
+/**
+ * WHERE THE MESSAGE'S OWN WORDS END — a zero-size mark the reader's read rule takes as the body's
+ * end (`reader-seen.ts`: a body shorter than its first three lines is its own top): after the lead
+ * where history is folded, after the last shown page of a long body, else at the end.
+ */
+export function OwnEnd() {
+  return <span data-own-end="" aria-hidden="true" className="own-end" />;
 }
 
 /** `ownImages`: the message's own embedded-picture URLs, the only `blob:` srcs {@link inlineImageAdmitted} draws. */
@@ -689,7 +699,7 @@ export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
   const links: string[] = [];
   if (split === null) {
     const drawn = renderNodes(nodes, "b", ownImages, links);
-    return <>{drawn}<RenderedLinks hrefs={links} /></>;
+    return <>{drawn}<OwnEnd /><RenderedLinks hrefs={links} /></>;
   }
   const open = openedFor === text;
   const lead = renderNodes(split.lead, "b", ownImages, links);
@@ -697,6 +707,7 @@ export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
   return (
     <>
       {lead}
+      <OwnEnd />
       {/* A real <button> — Enter and Space come with the element; `aria-expanded` reports the
           fold. Collapsed history is NOT RENDERED rather than hidden: nothing in it (including
           its anchors) exists until the reader asks. */}

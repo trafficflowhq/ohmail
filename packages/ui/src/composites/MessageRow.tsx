@@ -189,6 +189,16 @@ export interface MessageRowProps {
    */
   threadLabel?: string;
   /**
+   * THE CONVERSATION'S SQUARES — one per message, oldest first: `unread` solid accent, `read` the
+   * same square dimmed, `mine` hollow (the account's own). A line of 8px squares under the
+   * preview; where the row is too narrow the oldest give way and the newest stay. Marks, never a
+   * count. Where their number equals {@link threadCount} the `⤷ N` badge stands back: the squares
+   * say how long the conversation is. Absent or fewer than two ⇒ no line.
+   */
+  marks?: readonly ("unread" | "read" | "mine")[];
+  /** The squares in words, from the host's catalogue — what the row speaks for them. */
+  marksLabel?: string;
+  /**
    * Thread participants: two or more entries draw overlapping small
    * circles in the badge strip, newest voice first, after the `⤷ N` count
    * — same {@link Avatar}, same address-keyed hue as everywhere else. The
@@ -312,6 +322,8 @@ export function MessageRow(props: MessageRowProps) {
     dull,
     threadCount,
     threadLabel,
+    marks,
+    marksLabel,
     participants,
     hasAttachment,
     tags,
@@ -350,7 +362,10 @@ export function MessageRow(props: MessageRowProps) {
       {senderCheckLabel}
     </Badge>
   ) : null;
-  if (threadCount) keep.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
+  const squares = marks && marks.length > 1 ? marks : null;
+  /* The squares say the length; a server count larger than the messages in hand still stands. */
+  const counted = threadCount !== undefined && threadCount > 0 && !(squares && squares.length === threadCount);
+  if (threadCount && counted) keep.push(<Badge key="thread" className="bdg-thread">⤷ {threadCount}</Badge>);
   /**
    * THE CONVERSATION'S FACES, DIRECTLY AFTER ITS COUNT — see
    * {@link MessageRowProps.participants} for why they stand here and not in the row's lead.
@@ -524,6 +539,13 @@ export function MessageRow(props: MessageRowProps) {
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
       {preview ? <span className="prev" style={{ display: "block" }}>{preview.slice(0, ROW_PREVIEW_MAX_CHARS)}</span> : null}
+      {squares ? (
+        <span className="row-marks" aria-hidden="true">
+          <span className="row-marks-in">
+            {squares.map((k, i) => <i key={i} className={`rm-sq ${k}`} />)}
+          </span>
+        </span>
+      ) : null}
       {chips.length ? <span className="sr-chips">{chips}</span> : null}
     </>
   );
@@ -559,8 +581,9 @@ export function MessageRow(props: MessageRowProps) {
     unread,
     spoken,
     hasAttachment,
-    threadCount,
+    threadCount: counted ? threadCount : undefined,
     threadLabel,
+    marksLabel: squares ? marksLabel : undefined,
     protectedLabel: typeof props.protectedLabel === "string" ? props.protectedLabel : undefined,
     heldCount,
     heldLabel: typeof heldLabel === "string" ? heldLabel : undefined,

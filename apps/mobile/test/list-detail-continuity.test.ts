@@ -85,8 +85,13 @@ describe("the migrations are wired, both directions", () => {
 describe("the reader writes and restores its position through pane-memory", () => {
   it("MessageReader records on scroll and restores the same key", () => {
     const src = read("../src/ui/MessageReader.tsx");
-    expect(src).toContain("recordPaneScroll(scrollKey, e.nativeEvent.contentOffset.y)");
-    expect(src).toContain("contentOffset={{ x: 0, y: paneScrollOf(scrollKey) }}");
-    expect(src).toContain("`msg:${m.id}`");
+    expect(src).toContain("const scrollKey = `msg:${id}`;");
+    expect(src).toContain("recordPaneScroll(scrollKey, y)");
+    // Every scroll report goes through the open anchor, which stands on the offset the view reached.
+    expect(src).toContain("const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => anchor.reached(e.nativeEvent.contentOffset.y);");
+    expect(src).toContain("stand: (y) => standRef.current(y),");
+    // Read ONCE per mount: a fresh offset each render scrolled the reader back to a stale place.
+    expect(src).toContain("const startAt = useMemo(() => ({ x: 0, y: paneScrollOf(scrollKey) }), [scrollKey]);");
+    expect(src).toContain("contentOffset={startAt}");
   });
 });

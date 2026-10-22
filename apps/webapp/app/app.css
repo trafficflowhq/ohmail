@@ -5787,6 +5787,154 @@ input.set-tag-input {
 .reader .conv:focus-within .msg-actions .abar-panel {
   opacity: 1;
 }
+
+/* ── THE THREAD-READ TINT AND SQUARES — the Ohbox's column and sheet only (`data-thread-read`) ──
+   An unread message sits on the unread wash with a 3px accent edge; once read (its top was on
+   screen for the 0.7s dwell, `reader-seen.ts`) it settles to the panel over 850ms; turning unread
+   brings the wash back in 320ms. A single message's panel is the column itself, so the column
+   carries its tint. Reduced motion: instant. */
+.tr-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.conv[data-thread-read] > article.pm,
+.reader .msg[data-thread-read],
+.read-col:has(> .msg[data-thread-read]) {
+  transition: background-color 850ms cubic-bezier(.22, .61, .36, 1), box-shadow 850ms cubic-bezier(.22, .61, .36, 1);
+}
+.conv[data-thread-read] > article.pm {
+  box-shadow: inset 0 0 0 0 transparent, var(--lift-1);
+}
+.reader .msg[data-thread-read] {
+  box-shadow: inset 0 0 0 0 transparent, var(--lift-3);
+}
+.read-col:has(> .msg[data-thread-read]) {
+  box-shadow: inset 0 0 0 0 transparent, var(--lift-1);
+}
+.conv[data-thread-read] > article.pm[data-unseen] {
+  background: var(--unread-wash);
+  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
+  transition-duration: 320ms;
+  transition-delay: 0s;
+}
+.reader .msg[data-thread-read][data-unseen] {
+  background: var(--unread-wash);
+  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-3);
+  transition-duration: 320ms;
+  transition-delay: 0s;
+}
+.read-col:has(> .msg[data-thread-read][data-unseen]) {
+  background: var(--unread-wash);
+  box-shadow: inset 3px 0 0 0 var(--accent), var(--lift-1);
+  transition-duration: 320ms;
+  transition-delay: 0s;
+}
+/* The column of squares: sticky at the scrollport's top with no flow height, in the
+   conversation's own left padding, so it never covers a panel. Thin below a 560px conversation. */
+.conv:has(> .thread-marks) {
+  padding-left: 34px;
+}
+.conv:has(> .thread-marks[data-narrow]) {
+  padding-left: 22px;
+}
+.thread-marks {
+  position: sticky;
+  top: 0;
+  height: 0;
+  z-index: 2;
+}
+.tm-bar {
+  position: absolute;
+  right: 100%;
+  top: 10px;
+  width: 34px;
+  max-height: calc(100dvh / var(--ui-zoom, 1) - 160px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.tm-bar::-webkit-scrollbar {
+  display: none;
+}
+.thread-marks[data-narrow] .tm-bar {
+  width: 22px;
+}
+.tm-mb {
+  position: relative;
+  flex: 0 1 24px;
+  min-height: 14px;
+  width: 100%;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.thread-marks[data-narrow] .tm-mb {
+  flex-basis: 30px;
+  min-height: 16px;
+}
+.tm-mb > .tm-sq,
+.tm-mb::after {
+  grid-area: 1 / 1;
+}
+.tm-mb:hover {
+  background: var(--tint);
+}
+.tm-mb:focus-visible {
+  outline-offset: -2px;
+}
+/* The message most in view: a quiet neutral ring — never the accent, which means new. It switches
+   at once: a fading ring on a box hung outside its sticky parent left stale rings painted in
+   WebKitGTK (several squares ringed at once until hovered), and the one ring is a place, not news.
+   `transition: none` is declared, not left out: without it the property falls back to `all`, and
+   reduced motion's `.01ms` (base.css) then gives the ring a real opacity transition again. */
+.tm-mb::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+.tm-mb[aria-current="location"]::after {
+  opacity: 1;
+}
+.tm-sq {
+  display: block;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1);
+}
+.tm-sq.unread {
+  transition-duration: 320ms;
+  transition-delay: 0s;
+}
+.tm-sq.read {
+  opacity: var(--mark-read);
+}
+.tm-sq.mine {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  opacity: var(--mark-mine);
+}
+@media (prefers-reduced-motion: reduce) {
+  .conv[data-thread-read] > article.pm,
+  .reader .msg[data-thread-read],
+  .read-col:has(> .msg[data-thread-read]),
+  .tm-sq {
+    transition: none;
+  }
+}
 @media (max-width: 560px) {
   .pm-in {
     padding: 20px 18px 24px;

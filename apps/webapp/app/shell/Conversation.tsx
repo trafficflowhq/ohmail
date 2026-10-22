@@ -21,7 +21,7 @@
  * recorded beside the ingest constant that sets it. State lives above; this component asks nothing.
  */
 import { Fragment, type ReactNode } from "react";
-import { MessageCard } from "./MessageCard";
+import { MessageCard, type PanelReadWiring } from "./MessageCard";
 import type { EngineMessage } from "@ohmail/client-engine";
 
 export function ConversationPanels({
@@ -29,6 +29,7 @@ export function ConversationPanels({
   focusedId,
   focusedPanel,
   now,
+  wiring,
 }: {
   /** The WHOLE conversation, OLDEST FIRST — the focused message included. */
   messages: EngineMessage[];
@@ -40,6 +41,8 @@ export function ConversationPanels({
    */
   focusedPanel: ReactNode;
   now: Date;
+  /** The thread-read rule's record and the panels' Mark unread, where the Ohbox wires it. */
+  wiring?: PanelReadWiring;
 }) {
   if (messages.length === 0) return null;
 
@@ -54,7 +57,7 @@ export function ConversationPanels({
           // Every panel prints its own true subject in its header (SUBJECT-D, `MessageHeader`);
           // the normalized-key suppression that once decided which panel earned a heading is
           // deleted with the thread lede it compared against.
-          <MessageCard key={m.id} message={m} now={now} />
+          <MessageCard key={m.id} message={m} now={now} wiring={wiring} />
         ),
       )}
     </>

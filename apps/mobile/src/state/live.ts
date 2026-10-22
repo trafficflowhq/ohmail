@@ -112,6 +112,9 @@ import {
   type WithdrawOutcome,
   type ZonedComposition,
   isResurfaced,
+  isOwnOutbound,
+  isProtectedMessage,
+  threadMarksIndex,
   resurfacedThreads,
   ohboxRows,
   rowOpenTarget,
@@ -484,6 +487,12 @@ export type WorldEarlier = Held & {
   resurfaced?: true;
   /** Newer than the opened message: the reader's heading over the members names them for it. */
   later?: true;
+  /** Its body is final (full, withheld, protected): the read rule may take its end as its end. */
+  ready?: true;
+  /** The account's own message: a hollow square, and no Mark unread. */
+  mine?: true;
+  /** Who wrote it, for its square's name in the reader's rail. */
+  sender?: string;
 };
 
 export type WorldMail = Omit<Mail, "earlier"> & {
@@ -1379,7 +1388,8 @@ export interface WorldOhbox {
  * keeps its conversation in New until it is left or answered.
  */
 const ohboxRowMemo = new WeakMap<EngineMessage, {
-  mail: WorldMail; face: WorldMail; subject: string; unread: boolean; newSince: number; members: string; key: string; row: WorldMail;
+  mail: WorldMail; face: WorldMail; subject: string; unread: boolean; newSince: number; members: string; key: string; marks: string;
+  row: WorldMail;
 }>();
 
 export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | null = null): WorldOhbox {
@@ -1391,6 +1401,7 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
    * and the counts below stay per message.
    */
   const rows = ohboxRows(pres, openHeld);
+  const marksIndex = threadMarksIndex(pres);
   const toRow = (r: OhboxRow): WorldMail => {
     const mail = toListRow(pres, r.openTarget, v);
     const face = r.face === r.openTarget ? mail : toListRow(pres, r.face, v);
@@ -1398,10 +1409,15 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
     const unread = r.members.some(presentsUnread);
     const newSince = r.resurfaced && r.resurfaced.newSince > 0 ? r.resurfaced.newSince : 0;
     const members = r.members.map((m) => m.id).join("\n");
+    /* The conversation's squares, by the same membership the web row draws. */
+    const tid = r.openTarget.threadId;
+    const marks = tid ? marksIndex.get(tid) : undefined;
+    const marksKey = marks ? marks.join(" ") : "";
     /* THE SAME ROW OBJECT while nothing it shows moved — see {@link toListRow}. */
     const hit = ohboxRowMemo.get(r.openTarget);
     if (hit !== undefined && hit.mail === mail && hit.face === face && hit.subject === subject
-      && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key) return hit.row;
+      && hit.unread === unread && hit.newSince === newSince && hit.members === members && hit.key === r.key
+      && hit.marks === marksKey) return hit.row;
     const { sentTo: _openTargetFace, ...open } = mail;
     const row: WorldMail = {
       ...open,
@@ -1413,8 +1429,9 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
       rowKey: r.key,
       memberIds: r.members.map((m) => m.id),
       ...(newSince > 0 ? { newSince } : {}),
+      ...(marks ? { marks } : {}),
     };
-    ohboxRowMemo.set(r.openTarget, { mail, face, subject, unread, newSince, members, key: r.key, row });
+    ohboxRowMemo.set(r.openTarget, { mail, face, subject, unread, newSince, members, key: r.key, marks: marksKey, row });
     return row;
   };
   const resurfaced = rows.resurfaced.map(toRow);
@@ -1964,6 +1981,9 @@ export function liveMessage(
         seen: !member.unread,
         ...(isResurfaced(member) ? { resurfaced: true as const } : {}),
         ...(later ? { later: true as const } : {}),
+        ...(bodyReady(bodyOf(pres, member).state, member) ? { ready: true as const } : {}),
+        ...(isOwnOutbound(member) ? { mine: true as const } : {}),
+        sender: member.from.name || member.from.address,
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),
         ...filesField(engine, member.id),
       };
@@ -1981,6 +2001,24 @@ export function liveMessage(
   row.inlineImages = engine.inlineImagesOf(id);
   Object.assign(row, filesField(engine, id));
   return row;
+}
+
+/** A body the read rule may take the end of: full, withheld, or protected. */
+export function bodyReady(state: string | undefined, m: EngineMessage): boolean {
+  return state === "full" || state === "withheld" || isProtectedMessage(m);
+}
+
+/**
+ * THE OHBOX ARM OF `paneRouteFor`, off the projection: the message is presented in the Ohbox, the
+ * projection holds it (not History), it is not held at the gate and not in one of the account's own
+ * folders. Where it stands, the open holds the row and the read is the thread-read rule's.
+ */
+export function standsInOhbox(presented: EntityReader, id: string): boolean {
+  const p = presented.get<EngineMessage>("message", id);
+  if (!p) return false;
+  const physical = physicalFolderOf(p);
+  if (VIEW_OF_FOLDER[physical as Folder] === undefined || physical === FOLDER_OF_VIEW.screener) return false;
+  return placeOfFolder(p.folder) === "ohbox";
 }
 
 /** An OWA invitation stub in a FULL body's text; a snippet or a loading body is never read. */
@@ -3804,6 +3842,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // list in one snapshot; a read row holds nothing. `leaveMessage` lets it go.
     engine.holdOpenRow(id);
     if (!m.unread) return true;
+    // IN THE OHBOX THE OPEN READS NOTHING BY ITSELF: the reader's thread-read rule reads the
+    // message once its top has been on screen for the dwell (`ui/reader-seen.ts`). Elsewhere
+    // the open is the read, as before.
+    if (standsInOhbox(presented, id)) return true;
     // A RESURFACED PIN IS NOT SPENT BY OPENING — but the READ LANDS (owner ruling 2026-08-26:
     // reading a resurfaced message sticks like anywhere else). This used to skip pinned rows
     // entirely because the engine pruned their ids from a glance and a one-id glance pruned to

@@ -485,10 +485,11 @@ describe("delete — DELETE /messages/:id, to the provider's Trash, never an exp
 });
 
 describe("the codex round-1 fixes, on the wire", () => {
-  it("opening a RESURFACED message reads it AS A GLANCE — the label travels, no failure toast", async () => {
-    // Owner ruling 2026-08-26: reading a resurfaced message STICKS. The open's involuntary read
+  it("reading a RESURFACED message on screen sends it AS A GLANCE — the label travels, no failure toast", async () => {
+    // Owner ruling 2026-08-26: reading a resurfaced message STICKS. The reader's involuntary read
     // goes to the server labelled `via: "glance"` — the route marks read WITHOUT spending the
     // pin — instead of being skipped client-side (the skip left the row flipping back to unread).
+    // In the Ohbox the open itself reads nothing; the reader's thread-read rule does.
     const { fake, live } = await scene((f) =>
       f.addMessage({
         ...dto("r1", { subject: "Pinned" }),
@@ -496,6 +497,8 @@ describe("the codex round-1 fixes, on the wire", () => {
       } as unknown as ReturnType<typeof dto>),
     );
     expect(await live.actions.openMessage("r1")).toBe(true);
+    expect(wire(fake, "PATCH", "/messages"), "the Ohbox open reads nothing by itself").toHaveLength(0);
+    await live.actions.markGlanced(["r1"]);   // the reader's rule, with the message on screen
     const glance = wire(fake, "PATCH", "/messages");
     expect(glance).toHaveLength(1);
     expect(glance[0]!.body.includes("r1")).toBe(true);
@@ -508,12 +511,15 @@ describe("the codex round-1 fixes, on the wire", () => {
     fake.server.close();
   });
 
-  it("an ordinary open marks read AS A GLANCE — via rides the mutation", async () => {
+  it("an Ohbox open reads nothing; the reader's read is a glance — via rides the mutation", async () => {
     const { fake, live } = await scene();
     await live.actions.openMessage("m1");
+    expect(wire(fake, "PATCH", "/messages")).toHaveLength(0);
+    await live.actions.markGlanced(["m1"]);
     const patch = wire(fake, "PATCH", "/messages");
     expect(patch).toHaveLength(1);
     expect(patch[0]!.body.includes("m1")).toBe(true);
+    expect(patch[0]!.body.includes("glance")).toBe(true);
     live.store.close();
     fake.server.close();
   });

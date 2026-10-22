@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslations } from "next-intl";
-import { FOLDER_OF_VIEW, forwardOffered, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, forwardOffered, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
 import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, cssRect } from "@ohmail/ui";
 import { MessageFiles } from "./MessageFiles";
 import { InvitationNote } from "./InvitationNote";
@@ -32,7 +32,8 @@ import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { SENDER_SHEET_ID } from "./SenderMenu";
 import { useFocusFollows } from "./focus-follows";
 import { scrollProgrammatically } from "./programmatic-scroll";
-import { useReaderSeen } from "./reader-seen";
+import { useThreadRead, type ThreadReadWiring } from "./reader-seen";
+import { ThreadMarks } from "./ThreadMarks";
 import { autoLoadsImages } from "./remote-images";
 import "./action-bar.css";
 
@@ -1406,7 +1407,7 @@ export function MessagePane({
   trash,
   readSet,
   scroller,
-  onSiblingSeen,
+  threadRead,
 }: {
   message: EngineMessage;
   tags: TagDTO[];
@@ -1415,11 +1416,12 @@ export function MessagePane({
   readSet?: readonly string[];
   /**
    * The element that scrolls this pane's panels (the reading column's `.read-col`, the sheet's
-   * `.reader`), and where a sibling a person scrolled through is reported (`reader-seen.ts`). Both
-   * absent off the Ohbox: no scroll-to-read there.
+   * `.reader`), and the thread-read rule's wiring (`reader-seen.ts`): the visit's record, the read
+   * and enter report-ups and the panels' Mark unread. Both absent off the Ohbox: the rule, the tint
+   * and the squares run there only.
    */
   scroller?: RefObject<HTMLElement | null>;
-  onSiblingSeen?: (id: string) => void;
+  threadRead?: ThreadReadWiring;
   onEnterReader?: () => void;
   onAction: (action: MessageAction) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
@@ -1609,13 +1611,30 @@ export function MessagePane({
     return release;
   }, [message.id, showConversation]);
 
-  /* SCROLL-TO-READ over the sibling panels — a new core per open (`reader-seen.ts`). Mounted only
-     where the shell wires both halves (the Ohbox's column and its sheet). */
-  useReaderSeen({
+  /**
+   * A SINGLE MESSAGE OPENS AT ITS OWN TOP, its sender line — never at the offset the conversation
+   * before it left. The reading column and the sheet are one scroller across selections, and the
+   * anchor above runs for a conversation only, so a lone letter opened mid-text, or at its end where
+   * the one before was longer. The scroll is the app's own (stamped), never a hand scroll.
+   */
+  const singleRef = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    if (showConversation) return;
+    let sc: HTMLElement | null = singleRef.current?.parentElement ?? null;
+    while (sc) {
+      const oy = getComputedStyle(sc).overflowY;
+      if (oy === "auto" || oy === "scroll" || oy === "overlay") break;
+      sc = sc.parentElement;
+    }
+    if (sc && sc.scrollTop !== 0) scrollProgrammatically(sc, 0);
+  }, [message.id, showConversation]);
+
+  /* THE THREAD-READ RULE over every panel, the opened one included — one adapter per record
+     (`reader-seen.ts`). Mounted only where the shell wires it (the Ohbox's column and its sheet). */
+  useThreadRead({
     scroller,
-    openedId: message.id,
-    active: showConversation,
-    onSeen: onSiblingSeen,
+    wiring: threadRead,
+    active: true,
     onHumanScroll: () => anchorRelease.current?.(),
   });
 
@@ -1924,8 +1943,22 @@ export function MessagePane({
    * message exactly as on every thread panel. `test/conversation.test.ts` holds the absence.
    */
   const focusedHeader = (
-    <MessageHeader message={message} now={now} onEnterReader={onEnterReader} notice={notice} unreadDot={showConversation} />
+    <MessageHeader
+      message={message}
+      now={now}
+      onEnterReader={onEnterReader}
+      notice={notice}
+      srUnread={threadRead !== undefined && message.unread}
+      onMarkUnread={threadRead ? () => threadRead.onMarkUnread(message.id) : undefined}
+    />
   );
+  /* The opened panel's read facts, for the rule and the tint: unread, and its body final. */
+  const bodyReady = body.state === "full" || body.state === "withheld" || isProtectedMessage(message);
+  const panelData = {
+    "data-conv-id": message.id,
+    "data-unseen": message.unread ? "" : undefined,
+    "data-body-ready": bodyReady ? "" : undefined,
+  };
 
   const bodyNoteFailed = body.state === "failed" || stalled;
 
@@ -2051,6 +2084,8 @@ export function MessagePane({
         bodyNoteFailed={bodyNoteFailed}
         actions={actionBar}
         reply={replyEditor}
+        articleData={{ ...panelData, "data-thread-read": threadRead ? "" : undefined }}
+        articleRef={singleRef}
       >
         {focusedHeader}
         {titleChrome}
@@ -2077,13 +2112,21 @@ export function MessagePane({
    * for one part of one view.
    */
   return (
-    <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef}>
+    <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef} data-thread-read={threadRead ? "" : undefined}>
+      {threadRead ? (
+        <ThreadMarks
+          messages={conversation.map((m) => (m.id === message.id ? message : m))}
+          scroller={scroller}
+          onEnter={threadRead.onEnter}
+        />
+      ) : null}
       <ConversationPanels
         messages={conversation}
         focusedId={message.id}
         now={now}
+        wiring={threadRead}
         focusedPanel={
-          <article className="pm conv-focus" data-conv-id={message.id} aria-current="true">
+          <article className="pm conv-focus" {...panelData} aria-current="true">
             <div className="pm-in">
               {focusedHeader}
               {titleChrome}

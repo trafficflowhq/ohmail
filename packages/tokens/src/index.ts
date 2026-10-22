@@ -9,6 +9,7 @@ export {
   zLayer,
   layout,
   gradient,
+  threadMark,
 } from "./tokens.js";
 export type {
   Tokens,

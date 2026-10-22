@@ -2771,6 +2771,16 @@ const TABLE = {
   mailRowThreadAria: (n: number) => `${n} message${n === 1 ? "" : "s"} in this conversation`,
   mailRowNewSinceAria: (n: number) =>
     `${n} message${n === 1 ? "" : "s"} since this came back`,
+  /** The row's squares, said: how many messages, and how many of them unread. */
+  mailRowMarksAria: (count: number, unread: number) =>
+    `${count} messages, oldest first: ${unread === 0 ? "all read" : `${unread} unread`}`,
+  /* THE READER'S SQUARES AND ⋯ — `ui/MessageReader.tsx`. */
+  readerMarksAria: "Messages in this conversation",
+  readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
+    `Message ${position} of ${count} from ${sender}, ${unread ? "unread" : "read"}`,
+  readerMarkMine: (position: number, count: number) => `Message ${position} of ${count}, sent by you`,
+  readerMessageActions: "Message actions",
+  readerUnread: "Unread",
 
   /* ───────────────────────────────────────────────── the managed account's wall and its strips
 

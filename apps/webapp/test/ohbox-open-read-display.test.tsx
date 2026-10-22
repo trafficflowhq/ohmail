@@ -1,16 +1,18 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
- * AN ARMED READ PRESENTS AS READ, AND IS SAVED AS READ (owner-reported presentation).
- * Arming — an explicit open, or the split pane's two-second dwell — drops the row's dot and weight,
- * flips the open message's verb to "Mark unread" and SAVES the read in the same moment, so the
- * counts agree with the row. The row keeps its PLACE under New until it is left (the session lease
- * and the slide's hold), and `u` re-bolds it in place and puts the verb back.
+ * WHAT THE SCREEN SAYS IS WHAT THE ACCOUNT HOLDS (owner-reported presentation). An open enters the
+ * conversation and the message on screen is read by the thread-read rule: the row's dot and weight
+ * go, the open message's verb says "Mark unread" and the read is SAVED in the same moment, so the
+ * counts agree with the row. A j/k preview shows the message and changes nothing. The row keeps
+ * its PLACE under New until it is left, and `u` re-bolds it in place, puts the verb back and keeps
+ * it unread for the visit. The column is laid out (`fixtures/thread-layout.ts`).
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -22,7 +24,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Comfortably past the slide, without reaching the 2 s dwell. */
+/** Comfortably past the slide. */
 const AFTER_SLIDE_MS = 400;
 
 function setViewport(mobile = false): void {
@@ -41,7 +43,7 @@ function msg(m: Row): Record<string, unknown> {
   return {
     id: m.id, accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `subj-${m.id}`, from: { name: m.id, address: `${m.id}@ex.example` }, to: [], cc: [],
-    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`,
+    date: m.date ?? "2026-08-02T09:00:00.000Z", folder: "INBOX", snippet: `snip-${m.id}`, body: `the words of ${m.id}`,
     unread: m.unread, hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-08-02T09:00:00.000Z",
@@ -54,7 +56,7 @@ let host: HTMLDivElement | null = null;
 let live: Row[] = [];
 let sel: string | null = null;
 const marked: Array<{ ids: string[]; unread: boolean }> = [];
-const armedLog: Array<string | null> = [];
+const heldLog: Array<string | null> = [];
 
 async function draw(): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
@@ -70,7 +72,7 @@ async function draw(): Promise<void> {
       tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
       selectedId: sel,
       onSelect: (id: string) => { sel = id; },
-      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
+      onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => (live.find((r) => r.id === id)?.unread ? [id] : []),
       onMarkSeen: (ids: string[], unread: boolean) => {
         marked.push({ ids, unread });
         for (const id of ids) {
@@ -78,7 +80,7 @@ async function draw(): Promise<void> {
           if (row) row.unread = unread;
         }
       },
-      onReadArmed: (id: string | null) => { armedLog.push(id); },
+      onHoldRow: (id: string | null) => { heldLog.push(id); },
       bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
       doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
     } as never) } as never),
@@ -112,9 +114,16 @@ function verb(): string {
   return b.textContent ?? "";
 }
 
+/** A frame passes: the rule looks at what is on screen. */
+async function frame(): Promise<void> {
+  await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+  await draw();
+}
+
 async function click(id: string): Promise<void> {
   await act(async () => { rowEl(id).click(); });
   await draw();
+  await frame();
 }
 
 async function press(key: string): Promise<void> {
@@ -122,6 +131,7 @@ async function press(key: string): Promise<void> {
     document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
   await draw();
+  await frame();
 }
 
 async function settle(ms = AFTER_SLIDE_MS): Promise<void> {
@@ -130,104 +140,82 @@ async function settle(ms = AFTER_SLIDE_MS): Promise<void> {
   await draw();
 }
 
+let layout: ThreadLayout;
+beforeEach(() => {
+  vi.useFakeTimers();
+  layout = stubThreadLayout();
+  setViewport();
+});
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
   root = null; host = null; sel = null; live = [];
-  marked.length = 0; armedLog.length = 0;
+  marked.length = 0; heldLog.length = 0;
+  layout.restore();
   vi.useRealTimers();
 });
 
+const two = (): Row[] => [{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }];
+
 describe("the selection taken away from outside is a departure", () => {
-  // The URL carries the open message now, so Back on `#/ohbox/m/A` clears the SHELL's
-  // selection while this view stays mounted — a way of leaving that none of the four in-view
-  // departures can see (a review finding). Two halves, matching `selectByUser`'s:
-  it("Back inside the dwell window cancels the arm — nothing is ever written for A", async () => {
-    vi.useFakeTimers();
-    try {
-      setViewport();
-      await mount([{ id: "a", unread: true }, { id: "b", unread: true }]);
-      await click("a"); // the cursor lands; the dwell arms
-      await act(async () => { await vi.advanceTimersByTimeAsync(800); });
-      // Back drops the id before the two seconds elapse: the shell's selection goes null.
-      sel = null;
-      await draw();
-      // The dwell must NOT complete off-screen and must not be spent by a later act.
-      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
-      await click("b");
-      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
-      expect(marked, "leaving before the dwell elapsed is not reading").toEqual([]);
-    } finally {
-      vi.useRealTimers();
-    }
+  // The URL carries the open message, so Back on `#/ohbox/m/A` clears the SHELL's selection while
+  // this view stays mounted — a way of leaving that none of the in-view departures can see.
+  it("Back from a preview: nothing is ever written for A", async () => {
+    await mount(two());
+    await press("j");          // a preview of "a"
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    sel = null;
+    await draw();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(marked, "a preview is not reading, however long it stood").toEqual([]);
   });
 
-  it("the dwell saves the read at its end; Back after it writes nothing more", async () => {
-    vi.useFakeTimers();
-    try {
-      setViewport();
-      await mount([{ id: "a", unread: true }, { id: "b", unread: true }]);
-      await click("a");
-      await act(async () => { await vi.advanceTimersByTimeAsync(2500); }); // armed and saved
-      expect(marked).toEqual([{ ids: ["a"], unread: false }]);
-      sel = null;
-      await draw();
-      expect(marked, "Back is a departure: it releases the place and writes nothing").toEqual([
-        { ids: ["a"], unread: false },
-      ]);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("an open saves the read; Back after it writes nothing more", async () => {
+    await mount(two());
+    await click("a");
+    await layout.passDwell(); // its top on screen for the dwell
+    await draw();
+    expect(marked).toEqual([{ ids: ["a"], unread: false }]);
+    sel = null;
+    await draw();
+    expect(marked, "Back is a departure: it releases the place and writes nothing").toEqual([
+      { ids: ["a"], unread: false },
+    ]);
   });
 });
 
-describe("an armed read presents as read", () => {
-  it("open: the verb offers Mark unread, the row unbolds IN PLACE, and the read is saved", async () => {
-    /* THE HEADLINE PAIR, owner-reported, now with the write that makes it true: the
-       bar offers "Mark unread", the row loses its ink, the count drops by the one saved read,
-       and the row stays in its slot under New while it is open. */
-    vi.useFakeTimers();
-    setViewport();
-    await mount([{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }]);
-
-    await click("a");          // select
-    await click("a");          // open — the read is ARMED, not written
+describe("the open message's read state is the account's", () => {
+  it("open: the message on screen is read, the verb offers Mark unread, the row unbolds IN PLACE", async () => {
+    await mount(two());
+    await click("a");
+    await layout.passDwell();
+    await draw();
     expect(verb()).toContain("Mark unread");
     expect(verb()).not.toContain("Mark read");
     expect(rowEl("a").dataset.unseen, "the open message's row keeps unread ink").toBeUndefined();
     expect(rowEl("a").classList.contains("seen")).toBe(true);
-    // …and IN PLACE: nothing moved, the read was written, and the count agrees with the row.
+    // …and IN PLACE: nothing moved yet, the read was written, and the count agrees with the row.
     expect(idsInGroup("New")).toEqual(["a", "b"]);
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
     expect(host!.textContent).toContain("1 unread");
   });
 
-  it("the split pane's two-second dwell arms the same presentation", async () => {
-    /* The dwell is the product's own "reading has happened" judgement, so it flips the same two
-       surfaces the open does. One click only — the cursor rests, the clock runs. */
-    vi.useFakeTimers();
-    setViewport();
-    await mount([{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }]);
-
-    await click("a");
-    expect(rowEl("a").dataset.unseen, "a bare selection is not a reading").toBe("1");
+  it("a preview shows the message as it is: bold, the verb Mark read, nothing saved", async () => {
+    await mount(two());
+    await press("j");
     await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
     await draw();
-    expect(rowEl("a").dataset.unseen).toBeUndefined();
-    expect(verb()).toContain("Mark unread");
-    expect(marked, "the dwell arms and saves").toEqual([{ ids: ["a"], unread: false }]);
-    expect(idsInGroup("New")).toEqual(["a", "b"]);
+    expect(rowEl("a").dataset.unseen, "a preview is not a reading").toBe("1");
+    expect(verb()).toContain("Mark read");
+    expect(marked).toEqual([]);
+    expect(host!.querySelector(".read-col [data-conv-id='a']")?.hasAttribute("data-unseen"), "the opened panel wears its unread state").toBe(true);
   });
 
-  it("`u` on the armed message re-bolds it in place and the verb offers Mark read again", async () => {
-    /* The endorsed refinement: an explicit unread while it sits in New re-bolds it and it
-       stays put. `u` already ends the hold and pins; the presentation must follow. */
-    vi.useFakeTimers();
-    setViewport();
-    await mount([{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }]);
-
+  it("`u` on the read message re-bolds it in place, the verb offers Mark read again, and it is not read back", async () => {
+    await mount(two());
     await click("a");
-    await click("a");
+    await layout.passDwell();
+    await draw();
     expect(rowEl("a").dataset.unseen).toBeUndefined();
 
     await press("u");
@@ -236,50 +224,40 @@ describe("an armed read presents as read", () => {
     expect(verb()).toContain("Mark read");
     expect(idsInGroup("New")).toEqual(["a", "b"]);
 
-    // …and the pin holds: nothing after `u` writes the message read again.
+    // …and the keep holds: nothing after `u` writes the message read again while it stays open.
     const afterU = marked.length;
-    await click("b");
     await settle();
+    await layout.passDwell();
+    await frame();
     expect(marked.slice(afterU).filter((m) => m.ids.includes("a") && !m.unread)).toEqual([]);
-    expect(idsInGroup("New")).toEqual(["a", "b"]);
   });
 
   it("the open writes exactly one read, leaving adds none, and the row then slides to Earlier", async () => {
-    /* The round trip: the presentation and the WRITE both land at the open, and the move waits
-       for the departure and stays the slide's. The display never disagrees with the account. */
-    vi.useFakeTimers();
-    setViewport();
-    await mount([{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }]);
-
+    await mount(two());
     await click("a");
-    await click("a");
+    await layout.passDwell();
+    await draw();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
 
-    await click("b");          // departure — the place is released, nothing is written
+    await press("j");          // departure: a preview of b — the place is released, nothing is written
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);
     await settle();
     expect(idsInGroup("New")).toEqual(["b"]);
     expect(idsInGroup("Earlier")).toEqual(["a"]);
   });
 
-  it("the armed id is reported upward, and cleared on departure — the sheet's bar reads it", async () => {
-    /* The mobile reader sheet is the SHELL's MessagePane (`AppShell`), not this view's column,
-       so the armed fact travels up through `onReadArmed` and the shell presents the sheet's
-       message with the same effective read-state. This pins the reporting contract the shell
-       relies on: armed on open, cleared on departure or when `u` tears it up. */
-    vi.useFakeTimers();
-    setViewport();
-    await mount([{ id: "a", unread: true, date: "2026-08-02T09:01:00.000Z" }, { id: "b", unread: true, date: "2026-08-02T09:00:00.000Z" }]);
-
+  it("the entered row is reported upward for the engine's hold, and cleared on departure", async () => {
+    /* The shell holds the row in New (`holdOpenRow`) from the enter, before anything is read, so
+       every read of the conversation meanwhile is an open read. */
+    await mount(two());
     await click("a");
-    await click("a");
-    expect(armedLog.at(-1)).toBe("a");
+    expect(heldLog.at(-1)).toBe("a");
     await press("u");
-    expect(armedLog.at(-1)).toBeNull();
+    expect(heldLog.at(-1)).toBeNull();
 
-    await click("a");          // open again (still unread — the pin held it)
-    expect(armedLog.at(-1)).toBe("a");
-    await click("b");          // selecting b is the departure; the hold ends
-    expect(armedLog.at(-1)).toBeNull();
+    await click("a");          // open again
+    expect(heldLog.at(-1)).toBe("a");
+    await press("j");          // a preview of b is the departure; the hold ends
+    expect(heldLog.at(-1)).toBeNull();
   });
 });

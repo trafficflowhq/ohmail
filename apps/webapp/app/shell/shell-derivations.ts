@@ -30,6 +30,7 @@ import {
   tagsCrossView,
   threadParticipantsIndex,
   threadSizeIndex,
+  threadMarksIndex,
   threadSubject,
   triagePiles,
   type ConsentPartition,
@@ -650,6 +651,9 @@ export function useShellDerivations({
    * row has not synced; the view falls back to the newest member's subject.
    */
   const threadSubjectOf = useStableCallback((threadId: string) => threadSubject(presented, threadId));
+  /** THE CONVERSATION'S SQUARES for a row — the engine's one-pass index, bound like the circles. */
+  const threadMarks = useMemo(() => threadMarksIndex(presented), [presented, derived]);
+  const threadMarksOf = useStableCallback((threadId: string) => threadMarks.get(threadId));
 
   /**
    * THE LAST-RESORT MAILBOX, MEMOIZED — it was read inline, so every render of this component
@@ -701,6 +705,7 @@ export function useShellDerivations({
     allOhbox,
     participantsOf,
     threadCountOf,
+    threadMarksOf,
     threadSubjectOf,
     fallbackMailboxId,
     drafts,

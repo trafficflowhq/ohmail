@@ -83,6 +83,13 @@ const COLOURS = [
   ["accentHair", "--accent-hair"],
   ["onAccent", "--on-accent"],
   ["scrim", "--scrim"],
+  ["unreadWash", "--unread-wash"],
+];
+
+/** Number slot → mobile `Palette` key: the thread-read squares' opacities. */
+const NUMBERS = [
+  ["markRead", "--mark-read"],
+  ["markMine", "--mark-mine"],
 ];
 
 /** The ten hues, in the palette's wheel order, and their CSS slots. See projection 1. */
@@ -231,6 +238,7 @@ export function renderOhmarchyModule(face) {
       `  ${scheme}: {`,
       `    scheme: ${JSON.stringify(scheme)},`,
       ...COLOURS.map(([key, slot]) => `    ${key}: ${JSON.stringify(need(scheme, slot))},`),
+      ...NUMBERS.map(([key, slot]) => `    ${key}: ${Number(need(scheme, slot))},`),
       ...glassOf(scheme),
       `    tag: {`,
       ...TAGS.map(

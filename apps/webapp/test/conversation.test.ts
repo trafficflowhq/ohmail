@@ -157,6 +157,11 @@ let itemsAsked: Array<{ id: string; inline: boolean }> = [];
 let previewed: string[] = [];
 /** Every panel's hold on its own list: the ask that makes the list exist at all. */
 let held: string[] = [];
+/**
+ * Mutation point: the thread-read wiring the Ohbox hands the pane (`reader-seen.ts`), or null —
+ * every other surface, where the rule, the tint, the squares and Mark unread are absent.
+ */
+let threadRead: Record<string, unknown> | null = null;
 
 /**
  * A ready attachments chrome over fixed per-message lists — the strip's own wire, stubbed at
@@ -267,6 +272,7 @@ async function mountPane(open: Record<string, unknown>, prepare?: (host: HTMLDiv
             onAction: () => {},
             onAddTag: () => {},
             onAttachment: () => {},
+            ...(threadRead ? { threadRead } : {}),
           } as never),
         } as never),
       })
@@ -311,6 +317,7 @@ beforeEach(() => {
   itemsAsked = [];
   previewed = [];
   held = [];
+  threadRead = null;
 });
 
 afterEach(async () => {
@@ -562,6 +569,47 @@ describe("the per-message actions menu", () => {
   /** The open menu's item — one menu is open at a time, so a host-wide query is exact. */
   const item = (itemId: string): HTMLButtonElement | null =>
     host!.querySelector<HTMLButtonElement>(`.msg-menu [role="menuitem"][data-item="${itemId}"]`);
+  /** The items of a panel's ⋯, in order, read with it open and closed again. */
+  const itemsOf = async (id: string): Promise<string[]> => {
+    await act(async () => { trigger(id)!.click(); });
+    const ids = [...host!.querySelectorAll<HTMLElement>('.msg-menu [role="menuitem"]')].map((e) => e.dataset.item!);
+    await act(async () => { trigger(id)!.click(); });
+    return ids;
+  };
+  /** The Ohbox's wiring, its Mark unread recorded by panel id. */
+  const wire = async (): Promise<string[]> => {
+    const { createThreadRead } = await import("@ohmail/client-engine");
+    const marked: string[] = [];
+    threadRead = { record: createThreadRead(), onRead: () => {}, onEnter: () => {}, onMarkUnread: (id: string) => marked.push(id) };
+    return marked;
+  };
+
+  it("MARK UNREAD, where the Ohbox wires it: appended after Reply and Forward, naming THAT panel", async () => {
+    const marked = await wire();
+    conversation = [A, B, C];
+    await mountPane(B);
+    expect(await itemsOf("a"), "the production items first, then Mark unread").toEqual(["reply", "forward", "mark_unread"]);
+    expect(await itemsOf("b"), "the opened panel's own ⋯ too").toEqual(["reply", "forward", "mark_unread"]);
+    await act(async () => { trigger("a")!.click(); });
+    expect(item("mark_unread")?.textContent).toBe("Mark unread");
+    await act(async () => { item("mark_unread")!.click(); });
+    expect(marked, "the press names the panel it was on").toEqual(["a"]);
+  });
+
+  it("MARK UNREAD is not offered on an unread message, nor on the account's own", async () => {
+    await wire();
+    conversation = [A, MINE, { ...C, unread: true }];
+    await mountPane(A);
+    expect(await itemsOf("c"), "unread already").not.toContain("mark_unread");
+    expect(await itemsOf("mine"), "your own").not.toContain("mark_unread");
+    expect(await itemsOf("a")).toContain("mark_unread");
+  });
+
+  it("CONTROL: no wiring (every surface but the Ohbox), no Mark unread, and the items unchanged", async () => {
+    conversation = [A, B, C];
+    await mountPane(B);
+    expect(await itemsOf("a")).toEqual(["reply", "forward"]);
+  });
 
   it("⋯ on an OLDER panel dispatches THAT panel's id — never the focused one's", async () => {
     // Mutation: hardcode the focused id into the menu's dispatch and both records read "b" — red.

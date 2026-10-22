@@ -539,6 +539,8 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
      A typing target INSIDE the sheet (an editor in the open message) keeps its native caret:
      the `when` yields for it, and with no sheet standing it yields for every field. */
   const scrollableTyping = (e: KeyboardEvent): boolean => {
+    /* The conversation's squares are a toolbar of their own: ↑/↓ walk it while focus is in it. */
+    if (e.target instanceof Element && e.target.closest(".thread-marks")) return false;
     if (!isTypingTarget(e.target)) return true;
     const el = e.target as HTMLElement;
     return document.querySelector(READER_OVERLAY) != null && !el.closest(READER_OVERLAY);

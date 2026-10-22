@@ -53,6 +53,8 @@ export interface ColorScheme {
   readonly accentHair: string;
   /** Text/icon color on solid accent. */
   readonly onAccent: string;
+  /** An unread message's panel in the reader (light: the accent's hue, pale; dark: 11% accent). */
+  readonly unreadWash: string;
   /** Overlay scrim behind palette / focus-reply / drawer. */
   readonly scrim: string;
   /**
@@ -118,6 +120,7 @@ export const color: { readonly light: ColorScheme; readonly dark: ColorScheme } 
     accentSoft: "oklch(0.60 0.13 45 / .09)",
     accentHair: "oklch(0.55 0.13 45 / .38)",
     onAccent: "oklch(0.995 0.004 85)",
+    unreadWash: "oklch(0.955 0.022 42)",
     scrim: "oklch(0.985 0.003 90 / .74)",
     tag: {
       rosewood: { ink: "oklch(0.45 0.10 25)", bg: "oklch(0.55 0.10 25 / .11)" },
@@ -151,6 +154,7 @@ export const color: { readonly light: ColorScheme; readonly dark: ColorScheme } 
     accentSoft: "oklch(0.75 0.115 55 / .12)",
     accentHair: "oklch(0.75 0.115 55 / .42)",
     onAccent: "oklch(0.19 0.035 50)",
+    unreadWash: "oklch(0.277 0.025 56)",
     scrim: "oklch(0.11 0.008 55 / .76)",
     tag: {
       rosewood: { ink: "oklch(0.80 0.08 25)", bg: "oklch(0.72 0.10 25 / .15)" },
@@ -165,6 +169,18 @@ export const color: { readonly light: ColorScheme; readonly dark: ColorScheme } 
       heather: { ink: "oklch(0.81 0.085 352)", bg: "oklch(0.75 0.095 352 / .15)" },
     },
   },
+} as const;
+
+/**
+ * The thread-read squares: a read message's square is the unread square at this opacity, the
+ * account's own (hollow) one a little stronger because it is thin.
+ */
+export const threadMark: {
+  readonly light: { readonly read: number; readonly mine: number };
+  readonly dark: { readonly read: number; readonly mine: number };
+} = {
+  light: { read: 0.46, mine: 0.66 },
+  dark: { read: 0.42, mine: 0.62 },
 } as const;
 
 /* --------------------------------------------------------------- shadow */

@@ -17,3 +17,13 @@ export function paneRouteFor(
   if (m.place === "receipts") return { pathname: "/receipts", params: { open: m.id } };
   return { pathname: "/", params: { open: m.id } };
 }
+
+/**
+ * THE OHBOX ARM OF {@link paneRouteFor}, as a predicate: the message stands in the Ohbox (not
+ * History, not held at the gate, not in one of the account's own folders). There the reader shows
+ * the thread-read presentation (tint, rail, Mark unread in ⋯) and the open reads nothing by itself;
+ * `state/live.ts#standsInOhbox` is the same question asked of the projection.
+ */
+export function standsInOhboxMail(m: Pick<WorldMail, "place" | "historyPlace" | "gateHeld" | "folderLeaf">): boolean {
+  return m.gateHeld !== true && m.folderLeaf === undefined && m.historyPlace === undefined && m.place === "ohbox";
+}
