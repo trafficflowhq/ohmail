@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { accountSettings, accounts, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
+import { and, eq } from "drizzle-orm";
+import { accountSettings, accounts, changeLog, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeMailboxService } from "../src/mailbox-service.js";
 import type { ServiceContext } from "../src/context.js";
@@ -65,7 +65,10 @@ async function readerMailbox() {
   });
   const settings = async () =>
     (await tx.select().from(accountSettings).where(eq(accountSettings.accountId, accountId)))[0];
-  return { svc, ctxAt, mailboxId: mb!.id, settings };
+  const rings = async () => (await tx.select().from(changeLog).where(and(
+    eq(changeLog.accountId, accountId), eq(changeLog.entityType, "settings"),
+  ))).length;
+  return { svc, ctxAt, mailboxId: mb!.id, settings, rings };
 }
 
 describe("organizeHere — the first consent stamps the screening baseline", () => {
@@ -104,5 +107,14 @@ describe("organizeHere — the first consent stamps the screening baseline", () 
       w.svc.organizeHere(w.ctxAt(NOW), w.mailboxId, { intent: "takeover", screening: { dormancyDays: 0 } }),
     ).rejects.toThrow(/dormancyDays/);
     expect((await w.settings())?.screeningBaselineAt ?? null).toBeNull();
+  });
+
+  it("the first consent rings the settings doorbell once, in its own transaction (R20-02)", async () => {
+    const w = await readerMailbox();
+    const out = await w.svc.organizeHere(w.ctxAt(NOW), w.mailboxId, { intent: "join",
+      screening: { dormancyDays: 90, scope: "window" },
+    });
+    expect(out.outcome).toBe("authorized");
+    expect(await w.rings(), "the window was written and no open window was told").toBe(1);
   });
 });

@@ -503,6 +503,41 @@ export function consentCacheOwner(): string | null {
   return s.source === "host" ? s.owner : null;
 }
 
+/**
+ * THE ROLES `GET /mailboxes` STATES, as one key: sorted `id:organizerRole` pairs, a mailbox with no
+ * role left out. A string, so a poll that moves only counters keeps the same key. `null`: no facts.
+ */
+export function windowOwnersOf(
+  facts: ReadonlyArray<{ id: string; organizerRole?: "organizer" | "reader" }> | null,
+): string | null {
+  if (facts === null) return null;
+  return facts.flatMap((m) => (m.organizerRole === undefined ? [] : [`${m.id}:${m.organizerRole}`])).sort().join(",");
+}
+
+/**
+ * IS THE WINDOW ANSWER OLDER THAN THE ROLES (R20-02). The server answers a mailbox this install
+ * organizes `own` and one it reads anything else; a promotion moves the role and rings no `/sync`
+ * row for a mailbox with no document, so the answer can describe the role before it. True when an
+ * entry's source disagrees with its role, or the facts name a mailbox the answer lacks. Never true
+ * without a map, without facts, or for an entry that states no source (an older server).
+ */
+export function windowAnswerStale(
+  map: Readonly<Record<string, MailboxScreening & ScreeningSource>> | null,
+  owners: string | null,
+): boolean {
+  if (map === null || owners === null || owners === "") return false;
+  for (const pair of owners.split(",")) {
+    const cut = pair.lastIndexOf(":");
+    const id = pair.slice(0, cut);
+    const role = pair.slice(cut + 1);
+    if (!Object.prototype.hasOwnProperty.call(map, id)) return true;
+    const source = map[id]!.source;
+    if (source === undefined) continue;
+    if ((role === "organizer") !== (source === "own")) return true;
+  }
+  return false;
+}
+
 /** The `boot-cache.ts` scope this hook owns. Exported for the sign-out test and nothing else. */
 export const CONSENT_BOOT_SCOPE = "consent";
 
@@ -578,6 +613,12 @@ export function useConsentState(
    * first drain). One small GET per session.
    */
   settingsStamp?: string | null,
+  /**
+   * The roles `GET /mailboxes` states ({@link windowOwnersOf}). When the window answer disagrees
+   * with them ({@link windowAnswerStale}) the hook re-asks once per distinct key: the Agree press
+   * and the promotion of a mailbox with no document reach the device through this, not `/sync`.
+   */
+  windowOwners?: string | null,
 ): ConsentState & {
   /**
    * "Apply for all devices" — store the account-wide face and keep the local answer in step
@@ -981,6 +1022,17 @@ export function useConsentState(
     seenStamp.current = settingsStamp;
     void fetchLive();
   }, [active, reachable, settingsStamp, fetchLive]);
+
+  /* THE ROLES' RE-ASK — once per distinct owners key, and only while the answer in hand disagrees
+     with them; an answer that stays inconsistent is not asked about again until the roles move. */
+  const askedForOwners = useRef<string | null>(null);
+  useEffect(() => {
+    if (!active || !reachable || windowOwners == null) return;
+    if (askedForOwners.current === windowOwners) return;
+    if (!windowAnswerStale(state.screeningByMailbox, windowOwners)) return;
+    askedForOwners.current = windowOwners;
+    void fetchLive();
+  }, [active, reachable, windowOwners, state.screeningByMailbox, fetchLive]);
 
   /**
    * A write's echo applies only in the era it was issued in — the setters' half of the

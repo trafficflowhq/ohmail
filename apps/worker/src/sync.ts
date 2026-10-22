@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
-  epochOf, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
+  epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
 import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-lease";
@@ -557,6 +557,19 @@ function soleEpochOf(entries: ReadonlyArray<{ uidValidity: string }>): string {
     else if (!sameEpoch(sole, cur)) return "0";
   }
   return sole.known ? sole.value : "0";
+}
+
+/**
+ * A message this folder held under ANOTHER named epoch, met again under the live one: the server
+ * renumbered the folder. The commit repoints it (`duplicate` across epochs), so the next read finds
+ * it at its own epoch and this answers yes once per message. Exported for its test.
+ */
+export function relearnedUnderNewEpoch(plan: ChangePlan): boolean {
+  const e = plan.existing;
+  if (plan.outcome !== "duplicate" || e === undefined) return false;
+  const was = epochOfRef(e.storedLocator.ref);
+  const now = epochOfRef(e.arrivalLocator.ref);
+  return was.known && now.known && !sameEpoch(was, now);
 }
 
 /** The folder + epoch a change was observed at. */
@@ -1291,6 +1304,7 @@ async function syncCycleWithin(
       });
       return;
     }
+    deadLetters.noteProgressIn(site.folder);
     log?.error("sync_message_skipped", {
       mailboxId, accountId, folder: site.folder, uidValidity: site.uidValidity, uid: site.uid,
       code: fault.code, skipped: deadLetters.skipped, attempts, err,
@@ -1425,7 +1439,10 @@ async function syncCycleWithin(
         }, deps.fence !== undefined));
       await runOwedDemotions(repo, accountId, mailboxId, committed, log);
       // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
-      if (plan.outcome === "new") deadLetters.noteStored();
+      if (plan.outcome === "new") { deadLetters.noteStored(); deadLetters.noteProgressIn(ch.locator.folder); }
+      // A message RE-LEARNED, which a renumbered folder's re-read does once per message: progress
+      // for a breach in its folder, as a store is.
+      else if (relearnedUnderNewEpoch(plan)) deadLetters.noteProgressIn(ch.locator.folder);
       // AFTER the commit settles, outside the transaction — a hold that committed owes the
       // account a suggest visit ({@link SyncDeps.onScreenerHold}); a refused commit threw above.
       if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
@@ -1473,10 +1490,13 @@ async function syncCycleWithin(
   const overrun = batch.overrun;
   if (overrun !== undefined) {
     if (!isImapBoundExceeded(overrun.breach) || overrun.breach.bound !== "body_overrun") throw overrun.breach;
-    await writeOff(
-      { folder: overrun.folder, ref: makeRef(overrun.uidValidity, overrun.uid) },
-      { code: "mime_too_large", deterministic: true }, overrun.breach,
-    );
+    // A batch total over several asked UIDs names no message: nothing is written off.
+    if (overrun.uid !== undefined) {
+      await writeOff(
+        { folder: overrun.folder, ref: makeRef(overrun.uidValidity, overrun.uid) },
+        { code: "mime_too_large", deterministic: true }, overrun.breach,
+      );
+    }
   }
 
   // UIDs the server withheld — recorded here, before any cursor moves. `batch.unanswered` is the set

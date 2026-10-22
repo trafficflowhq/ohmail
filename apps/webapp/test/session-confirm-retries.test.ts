@@ -28,18 +28,25 @@
  * instant; it asserts the window, and asserts it against the REAL constants — there is no
  * injectable schedule, on purpose, because the shipped numbers must be the ones under test.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ACCOUNT, coded401, db503, html502, installConfirmEnv, messages, mountCloudShell, overlay,
   rate429, refresh204, refreshCalls, rememberOwner, scriptRefresh, scriptSession, sessionCalls,
   sessionCallsAt, sessionEnrollment, sessionFull, shellRoot, showsEnded, showsUnconfirmed,
   scriptSync, syncCalls, syncPage,
-  teardownConfirmEnv, tick, tryAgainButton, uncoded401,
+  teardownConfirmEnv, tick, tryAgainButton, uncoded401, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
 import { markSessionDead, resetSessionTruthForTests, sessionIsDead } from "../app/shell/session-truth";
 
 /** The whole ladder's worst case: 5 s + 8 s + 8 s of waiting, plus slack. */
 const LADDER_MS = 30_000;
+
+/**
+ * The cold view tree, loaded once, so case 1 stays on 5 s: 3.1-5.0 s cold at load ~26, and
+ * 31-56 s in 20 runs under CPUQuota=10% (three over 40 s, so 90 s by #136's ladder).
+ */
+const WARM_BUDGET_MS = 90_000;
+beforeAll(warmCloudShell, WARM_BUDGET_MS);
 
 beforeEach(() => {
   resetSessionTruthForTests();

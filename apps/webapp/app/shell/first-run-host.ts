@@ -170,6 +170,12 @@ export interface FirstRunHost {
   ) => Promise<FirstRunDecisionCount>;
 
   /**
+   * HOW MANY SENDERS WAIT WITH MAIL IN THIS MAILBOX — `GET /screener/waiting/count`, the decide
+   * step's lead on an install with several mailboxes. Absent: the lead names no number there.
+   */
+  countWaiting?: (mailboxId: string) => Promise<{ senders: number }>;
+
+  /**
    * LEAVE THE FLOW — `PATCH /consent/settings { onboardingCompleted: true }`.
    *
    * Cancel and finish both call it, which is what lets ONE truth-condition close the flow for

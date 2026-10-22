@@ -20,8 +20,12 @@
  * stamp under one key CANNOT move another key's slots — the placeholder carries the field's band
  * in its hour and the rank in its minute — at the deliberate price that the corpus no longer
  * encodes cross-field equality of two run-minted instants, which was timing wearing the shape of
- * meaning. Within one field, two stamps that collide to the millisecond still share a slot; that
- * residue is unmeasured and stated here rather than papered over.
+ * meaning. Within one field, two stamps that collide still share a slot, so a field whose raw
+ * values only SOMETIMES coincide still moves its own slots: `sortAt` did, 1 run in 6 after the
+ * per-field grid, because it resolves to the IMAP INTERNALDATE, which GreenMail keeps to the
+ * second, and three appends usually shared one. The journey now names each append's INTERNALDATE.
+ * Stamps the engine mints per run to the millisecond (`createdAt`, `updatedAt`) could collide the
+ * same way; none has been seen to, and that is stated here rather than papered over.
  */
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };

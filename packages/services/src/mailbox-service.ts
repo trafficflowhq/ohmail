@@ -30,6 +30,7 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
  * gate: which policy a host installed decides whether the gate runs, and the lock order may not
  * depend on that. */
 import { lockAccountRow } from "./account-lock.js";
+import { recordSettingsChange } from "./consent-seed.js";
 import { ownedMessages } from "./message-service.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
@@ -2457,10 +2458,14 @@ export class MailboxService {
          * about the MAILBOX ROW, and reading it as "everything is already written" is what left
          * the account with no record. So the record is written where NONE is readable — the state
          * with no cutline to slide; where one is readable this press still writes nothing. */
-        if (input.screening) await this.writeScreeningAnswer(tx, ctx, input.screening);
+        let wrote = false;
+        if (input.screening) { await this.writeScreeningAnswer(tx, ctx, input.screening); wrote = true; }
         else if (!(await this.settingsRecordReadable(tx, ctx.accountId))) {
           await this.writeConsentBaseline(tx, ctx);
+          wrote = true;
         }
+        // The settings doorbell, last: an open window re-asks `GET /consent` for the window just written.
+        if (wrote) await recordSettingsChange(tx as LedgerTx, ctx.accountId);
         return { outcome: "already_organizing" as const };
       }
 
@@ -2631,6 +2636,8 @@ export class MailboxService {
           payload: { mailboxId: id }, createdAt: stamp,
         });
       }
+      // The settings doorbell, last in the press's transaction (see the arm above).
+      await recordSettingsChange(tx as LedgerTx, ctx.accountId);
       /**
        * Derived from the ROLE, because the column has had no writer since mail 0083. This read
        * `current.disabledReason`, which is now `null` for every reader row this build writes — so

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -8,6 +8,7 @@ import { resolve as resolvePath } from "node:path";
 import messages from "../messages/en.json";
 import { setActiveFormatZone } from "../app/shell/locale";
 import { COMPACT_LABELS } from "../app/shell/bar-density";
+import { act, caseLive, endCase, tracked } from "./_case-fence";
 
 /**
  * THE MESSAGE ACTION BAR.
@@ -35,7 +36,6 @@ import { COMPACT_LABELS } from "../app/shell/bar-density";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-08-04T12:00:00.000Z");
@@ -162,18 +162,29 @@ async function unmount(): Promise<void> {
  * is bound and show nothing when it is not, because that is the difference between reading
  * the registry and printing a string somebody typed.
  */
-async function mountBar(
-  open: Record<string, unknown>,
-  bound: readonly string[] = BAR_CHORDS,
-  opts: { disabled?: readonly string[]; foldersEnabled?: boolean; mirrorHolds?: boolean; verbHolds?: boolean } = {},
-): Promise<void> {
+type MountOpts = { disabled?: readonly string[]; foldersEnabled?: boolean; mirrorHolds?: boolean; verbHolds?: boolean };
+
+/** The modules a mount imports, in one place so the warm-up loads exactly these. */
+async function barModules() {
+  const { MessagePane } = await import("../app/shell/MessagePane.js");
+  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+  return { MessagePane, MessageChromeProvider, KeymapProvider, useKeyBindings };
+}
+
+/** Counted by the case fence, so a mount that outlives its case cannot write into the next. */
+function mountBar(open: Record<string, unknown>, bound: readonly string[] = BAR_CHORDS, opts: MountOpts = {}): Promise<void> {
+  caseLive();
+  return tracked(mountBarNow(open, bound, opts));
+}
+
+async function mountBarNow(open: Record<string, unknown>, bound: readonly string[], opts: MountOpts): Promise<void> {
   await unmount();
   currentFolders = opts.foldersEnabled;
   currentMirror = opts.mirrorHolds;
   currentVerb = opts.verbHolds;
-  const { MessagePane } = await import("../app/shell/MessagePane.js");
-  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
-  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+  const { MessagePane, MessageChromeProvider, KeymapProvider, useKeyBindings } = await barModules();
+  caseLive();
 
   /**
    * A view layer that declares exactly the chords this case is about.
@@ -295,6 +306,10 @@ async function clickOutside(): Promise<void> {
   });
 }
 
+/** The cold view tree, loaded once, so the first case stays on 5 s: 18-32 s in 20 runs under CPUQuota=10%. */
+const WARM_BUDGET_MS = 60_000;
+beforeAll(async () => { await barModules(); }, WARM_BUDGET_MS);
+
 beforeEach(() => {
   actions = [];
   tagged = [];
@@ -309,6 +324,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  await endCase();
   await unmount();
   setActiveFormatZone(null);
   vi.useRealTimers();

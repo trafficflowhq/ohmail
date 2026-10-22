@@ -695,6 +695,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // What agreeing will screen: one mailbox id matched to the caller's own, a window refused outside
   // 1-365 days or two scopes, and an answer cut at the move bound by a walk of at most 25 pages.
   "GET /screener/unscreened/count": { bounds: [OHBOX_UNSCREENED_MESSAGES_MAX] },
+  // The decide step's count: one mailbox id shape-checked and matched to the caller's own, one number back.
+  "GET /screener/waiting/count": { scalarsOnly: true },
   "POST /screener/:id": { scalarsOnly: true },
   // The list reads ENVELOPES, not bodies, so `JUNK_BODY_MAX_BYTES` is not its ceiling and citing
   // it here was a false disposition. What the REQUEST carries is bounded (the cursor's wire size,
@@ -1142,8 +1144,8 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   // could be added, removed or left unbounded without moving this set — which is how it stayed
   // unbounded while the census recorded its file and name as a shape-checked `identifier`.
   "routes/screener.ts#cursor": 2,
-  // The Junk body's mailbox and the organize decision's: two routes, each one identifier.
-  "routes/screener.ts#mailboxId": 2,
+  // The Junk body's mailbox, the organize decision's and the waiting count's: three routes, each one identifier.
+  "routes/screener.ts#mailboxId": 3,
   // Cloud 0047: the sync roster's keyset cursor and an account's activity cursor, two readers;
   // then the storage read's keyset cursor and the staff feed's `<iso>,<uuid>`, four.
   "routes/admin.ts#cursor": 4,

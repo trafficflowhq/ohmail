@@ -577,13 +577,14 @@ describe("hostile IMAP server — the SIZE ceiling (a lying RFC822.SIZE)", () =>
     expect(err.site?.uid).toBeLessThanOrEqual(4);
   });
 
-  it("many bodies each individually under the floor are refused by the BATCH total", async () => {
+  it("many bodies each individually under the floor are stopped by the BATCH total, keeping what arrived", async () => {
     /*
      * The per-message ceiling has a 1 MiB floor, so a server can stay under it for ever by
      * declaring nothing and streaming just under the floor a message. A batch of those is a large total through a
      * process shared with every other mailbox on the shard, and not one message breaks a rule.
      * The batch total is what closes that: 10 declared bytes apiece makes the batch ceiling the
-     * 1 MiB floor, and the second body crosses it.
+     * 1 MiB floor, and the second body crosses it. Both arrived whole, inside their own ceilings,
+     * so both are kept and the pass ends there; the next pass takes the rest.
      */
     const client = hostileClient({
       floodUids: 3, declaredSize: 10, actualBodyBytes: 900_000,
@@ -591,7 +592,9 @@ describe("hostile IMAP server — the SIZE ceiling (a lying RFC822.SIZE)", () =>
     adapter = new ImapAdapter(cfg, { client, capabilityOverrides: { condstore: false } });
     await adapter.connect();
 
-    const err = await refusal(() => adapter!.changesSince(emptyCursor()));
+    const batch = await adapter.changesSince(emptyCursor());
+    const err = await overrunIn(async () => batch);
+    expect(batch.creates.map((c) => c.locator.ref)).toEqual(["100:3", "100:2"]);
     expect(err.bound).toBe("body_overrun");
     expect(err.limit).toBe(IMAP_BODY_OVERRUN_FLOOR_BYTES);
     // Each body is under its own ceiling, so the per-message guard cannot be what fired — and it

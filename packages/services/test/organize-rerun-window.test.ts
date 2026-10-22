@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { accountSettings, accounts, mailboxes, type Tx } from "@trafficflow/db";
+import { accountSettings, accounts, changeLog, mailboxes, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { makeMailboxService } from "../src/mailbox-service.js";
 import type { ServiceContext } from "../src/context.js";
 
@@ -68,7 +68,10 @@ async function organizing(dials: { dormancyDays: number | null; scope: string })
     (await tx.select().from(accountSettings).where(eq(accountSettings.accountId, accountId)))[0]!;
   const mailbox = async () =>
     (await tx.select().from(mailboxes).where(eq(mailboxes.id, mb!.id)))[0]!;
-  return { svc, ctx, mailboxId: mb!.id, settings, mailbox };
+  const rings = async () => (await tx.select().from(changeLog).where(and(
+    eq(changeLog.accountId, accountId), eq(changeLog.entityType, "settings"),
+  ))).length;
+  return { svc, ctx, mailboxId: mb!.id, settings, mailbox, rings };
 }
 
 describe("organizeHere on a mailbox this account already organizes", () => {
@@ -118,6 +121,18 @@ describe("organizeHere on a mailbox this account already organizes", () => {
       w.svc.organizeHere(w.ctx, w.mailboxId, { intent: "takeover", screening: { dormancyDays: 0 } }),
     ).rejects.toThrow(/dormancyDays/);
     expect((await w.settings()).dormancyDays).toBe(30);
+  });
+
+  it("a re-run that stores a window rings the settings doorbell (R20-02)", async () => {
+    const w = await organizing({ dormancyDays: 90, scope: "window" });
+    await w.svc.organizeHere(w.ctx, w.mailboxId, { intent: "join", screening: { dormancyDays: 365, scope: "window" } });
+    expect(await w.rings(), "the widened window never reached an open window").toBe(1);
+  });
+
+  it("CONTROL: a press that writes nothing rings nothing", async () => {
+    const w = await organizing({ dormancyDays: 30, scope: "window" });
+    await w.svc.organizeHere(w.ctx, w.mailboxId, { intent: "takeover" });
+    expect(await w.rings()).toBe(0);
   });
 
   it("a claim-back with NO screening block writes no settings at all", async () => {
@@ -173,8 +188,17 @@ describe("organizeHere over an account with no settings record", () => {
     };
     const settings = async () =>
       (await tx.select().from(accountSettings).where(eq(accountSettings.accountId, accountId)))[0];
-    return { svc, ctx, mailboxId: mb!.id, settings };
+    const rings = async () => (await tx.select().from(changeLog).where(and(
+      eq(changeLog.accountId, accountId), eq(changeLog.entityType, "settings"),
+    ))).length;
+    return { svc, ctx, mailboxId: mb!.id, settings, rings };
   }
+
+  it("the baseline it writes there rings the settings doorbell too", async () => {
+    const w = await organizingWithNoSettings("absent");
+    await w.svc.organizeHere(w.ctx, w.mailboxId, { intent: "takeover" });
+    expect(await w.rings()).toBe(1);
+  });
 
   it("a press that asks nothing creates the record its consent always implied", async () => {
     const w = await organizingWithNoSettings("absent");

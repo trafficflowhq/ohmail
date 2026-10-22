@@ -231,18 +231,25 @@ describe("a server that states no RFC822.SIZE", () => {
 
   /* LOW 2: rows for another uid were dropped uncounted, so a server stating no sizes could stream
      any number of them. Every row of an unsized command now counts against one batch ceiling. */
-  it("rows an unsized FETCH streams for other uids count against the batch ceiling, which retires the connection", async () => {
+  it("rows an unsized FETCH streams for other uids count against the batch ceiling, which retires the connection and names the asked uid", async () => {
     const { client } = fakeServer({
       count: 2, declared: () => 0, actual: () => 1_000,
       extraRows: (asked) => Array.from({ length: 8 }, (_, i) => ({ uid: 900 + i + asked[0]!, bytes: 10 * mib })),
     });
-    adapter = new ImapAdapter(cfg, { client, capabilityOverrides: { condstore: false } });
+    const retired: unknown[] = [];
+    adapter = new ImapAdapter(cfg, { client, capabilityOverrides: { condstore: false }, onConnectionError: (e) => { retired.push(e); } });
     await adapter.connect();
-    let thrown: unknown;
-    try { await adapter.changesSince(emptyCursor()); } catch (err) { thrown = err; }
-    expect(thrown, "the extra rows were never counted").toBeInstanceOf(ImapBoundExceeded);
-    expect((thrown as ImapBoundExceeded).bound).toBe("body_overrun");
-    expect((thrown as ImapBoundExceeded).site, "a batch breach names no one message").toBeUndefined();
+    const batch = await adapter.changesSince(emptyCursor());
+    const breach = batch.overrun?.breach;
+    expect(breach, "the extra rows were never counted").toBeInstanceOf(ImapBoundExceeded);
+    expect(retired).toEqual([breach]);
+    expect((breach as ImapBoundExceeded).bound).toBe("body_overrun");
+    expect((breach as ImapBoundExceeded).limit).toBe(68_157_440);
+    expect((breach as ImapBoundExceeded).observed).toBe(73_400_320);
+    // The command asked for one uid and its reply never arrived: that uid is the one set aside.
+    expect((breach as ImapBoundExceeded).site).toEqual({ uidValidity: "100", uid: 2 });
+    expect(batch.overrun).toMatchObject({ folder: "INBOX", uidValidity: "100", uid: 2 });
+    expect(batch.creates).toEqual([]);
   });
 
   it("CONTROL: a few small extra rows under the ceiling are dropped and the asked message still arrives", async () => {

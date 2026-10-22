@@ -27,14 +27,14 @@ import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
 import messages from "../../messages/en.json";
 import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { act as fencedAct, caseLive, endCase, tracked } from "../_case-fence";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const h = React.createElement;
-export const act = (React as unknown as {
-  act: (cb: () => Promise<void> | void) => Promise<void>;
-}).act;
+/** React's act behind the case fence (`../_case-fence.ts`): a body past its budget cannot open a scope in the next case. */
+export const act = fencedAct;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 export const ISO = "2026-09-04T12:40:00.000Z";
@@ -314,6 +314,7 @@ export function installConfirmEnv(): void {
 }
 
 export async function teardownConfirmEnv(): Promise<void> {
+  await endCase();
   for (const root of roots) await act(() => root.unmount());
   roots = [];
   document.body.innerHTML = "";
@@ -337,11 +338,33 @@ export function rememberOwner(accountId = ACCOUNT): void {
   document.cookie = `tf_owner=${accountId}; Path=/`;
 }
 
-/** Mount the real `CloudShell` behind the provider the Cloud route wraps it in. */
-export async function mountCloudShell(): Promise<HTMLElement> {
+/** The modules a mount imports, in one place so the warm-up loads exactly these. */
+async function shellModules() {
   const { CloudShell } = await import("../../app/(product)/mailbox/CloudShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { localStorageDoor } = await import("../../app/shell/durable.js");
+  return { CloudShell, ThemeProvider, ToastHost, localStorageDoor };
+}
+
+/**
+ * Load the view tree once, from `beforeAll`, so no case pays its cold transform.
+ *
+ * Cold, the first mount took 3.1-5.0 s at load ~26 (179 ms warm) and timed the first case out.
+ * A caller's hook budget comes from its own runs under CPUQuota=10%.
+ */
+export async function warmCloudShell(): Promise<void> {
+  await shellModules();
+}
+
+/** Mount the real `CloudShell` behind the provider the Cloud route wraps it in. */
+export function mountCloudShell(): Promise<HTMLElement> {
+  caseLive();
+  return tracked(mountNow());
+}
+
+async function mountNow(): Promise<HTMLElement> {
+  const { CloudShell, ThemeProvider, ToastHost, localStorageDoor } = await shellModules();
+  caseLive();
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);

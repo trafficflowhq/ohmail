@@ -1,0 +1,3 @@
+### A mailbox keeps syncing when the server sends more for its mail than it stated
+
+When a mail server sends more for a batch of messages than their stated sizes allow, ohmail keeps the mail that arrived and syncs the rest over a new connection, on the desktop, the phone, Cloud and your own server. That holds in INBOX, in Sent and in your own folders, including a folder read for the first time and one the server has renumbered. Before, the mailbox stopped syncing until the server changed, and the desktop app said it could not reach the server. A message still too large on its own is set aside as before.

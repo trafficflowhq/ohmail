@@ -86,7 +86,7 @@ import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
 import { conversationOnScreen } from "./conversation-on-screen";
 import { useRemoteImages } from "./remote-images";
-import { useConsentState, type ConsentTransport } from "./consent-state";
+import { useConsentState, windowOwnersOf, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
 import type { FirstRunHost } from "./first-run-host";
 import { importOverOf, type OnboardingFacts } from "./onboarding";
@@ -1251,7 +1251,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      same one-render-wide difference the wake registration and the away notice record above:
      a prerendered `?demo=1` page hydrates with `serverDemo === false`, so this issued
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
-  const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp);
+  const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
+  const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp, windowOwners);
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
    * has yet completed for this engine", which is exactly the window in which ZERO folder
@@ -1598,8 +1599,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       name: notifiedSenderName(row, (brand) => t("screener.senderCheck.chip", { brand })),
       address: row.from.address,
       held: row.held.length,
-      // The rail's own count, so the step and the rail cannot say different numbers.
-      waiting: screener.waitingCount,
+      // The rail's own count, so the step and the rail cannot say different numbers; `many` as `firstRunQueue`.
+      waiting: screener.waitingCount, many: (facts?.length ?? 0) > 1,
       /* THE SCREENER'S OWN CAPTION, not a second sentence written for this card. `heldCaption`
          carries the first-contact time and `heldCaptionAll` does not, split by `firstContactTime`
          as every surface's caption is: one held message has no "first contact" apart from its own
@@ -1610,7 +1611,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       onDecide: (dest, opts) =>
         screener.decide(row, dest, { read: opts.markRead, scope: opts.scope }),
     };
-  }, [firstRunQueue, screener, t]);
+  }, [firstRunQueue, screener, t, facts?.length]);
 
   /**
    * THE LIVE JUNK WINDOW (FOLDERS-SPEC.md §16.2) — the Screener's third segment, flag-on.
@@ -3844,10 +3845,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             ? { screening: { dormancyDays: consent.dormancyDays, scope: consent.screeningScope } }
             : {})}
           /* RE-READ `GET /mailboxes` — the route every write in this flow changes (the create,
-             the claim, the consent stamp). The account's consent row re-reads itself: every
-             consent-settings write appends a `settings` change row, the wake channel rings, and
-             the stamp `useConsentState` watches moves on the next drain. So the two halves
-             refresh by different mechanisms and neither is polled harder for this screen. */
+             the claim, the consent stamp). The consent read follows by two doorbells: the Agree
+             press appends a `settings` change row on both doors, which moves the stamp
+             `useConsentState` watches on the next drain; and the promotion, which moves a
+             mailbox's window without a row, moves the roles `windowOwners` hands it. Neither is
+             polled harder for this screen. */
           onRefresh={refreshFacts}
           onLeave={() => go("ohbox")}
         />

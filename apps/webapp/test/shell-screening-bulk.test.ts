@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -61,9 +61,12 @@ async function unmount(): Promise<void> {
   host = null;
 }
 
+/** The module a mount imports, so the warm-up loads exactly it. */
+const shellModule = () => import("../app/shell/AppShell.js");
+
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { AppShell } = await shellModule();
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -144,6 +147,14 @@ const pick = async (n: number): Promise<void> => {
     if (i < n - 1) await key("j");
   }
 };
+
+/**
+ * The cold `AppShell` import, loaded once: 85% of the first case's time (1694 ms cold, 221 ms
+ * warm; 5.06 s once on a loaded VM), so the case stays on 5 s. 24-38 s in 20 runs under
+ * CPUQuota=10%.
+ */
+const WARM_BUDGET_MS = 60_000;
+beforeAll(async () => { await shellModule(); }, WARM_BUDGET_MS);
 
 beforeEach(() => {
   vi.useFakeTimers();

@@ -1,5 +1,8 @@
 import { and, eq, ne, sql } from "drizzle-orm";
-import { accountSettings, auditAction, auditLog, mailboxes, standDownMemory, type OrganizerIntent,} from "@trafficflow/db";
+import {
+  accountSettings, auditAction, auditLog, mailboxes, recordChanges, standDownMemory,
+  type LedgerTx, type OrganizerIntent,
+} from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // The product default and the scope union, from the ONE place that owns them — never a second
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
@@ -153,6 +156,7 @@ export async function authorizeOrganizerTakeover(
     if (!(await settingsRecordReadable(db, row.accountId))) {
       await db.transaction(async (tx) => {
         await writeConsentScreening(tx, dialect(db), { accountId: row.accountId, now: input.now });
+        await ringSettings(tx, row.accountId);
       });
     }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
@@ -196,6 +200,7 @@ export async function authorizeOrganizerTakeover(
         releaseRefusal: null,
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+    await ringSettings(tx, row.accountId);
   });
 
   /* -- `previousReason` IS DERIVED, AND READING THE COLUMN RETURNED NULL FOR A YEAR OF ROWS --
@@ -302,6 +307,16 @@ async function writeConsentScreening(
         updatedAt: o.now,
       },
     });
+}
+
+/**
+ * THE SETTINGS DOORBELL, last in every consent transaction: the window just written reaches an open
+ * window through `/sync` (`useConsentState` re-asks `GET /consent` per `settings` row).
+ */
+async function ringSettings(tx: LocalTx, accountId: string): Promise<void> {
+  await recordChanges(tx as unknown as LedgerTx, [
+    { accountId, entityType: "settings", entityId: accountId, op: "update" },
+  ]);
 }
 
 /**
@@ -451,6 +466,7 @@ export async function requestOrganizerTakeover(
           accountId: row.accountId, now: input.now,
           ...(input.screening ? { dials: { days, scope } } : {}),
         });
+        await ringSettings(tx, row.accountId);
       });
     }
     return { outcome: "already_organizing", previousReason: null, mailboxId: row.id };
@@ -497,6 +513,7 @@ export async function requestOrganizerTakeover(
         payload: { mailboxId: row.id }, createdAt: input.now,
       });
     }
+    await ringSettings(tx, row.accountId);
   });
 
   // Derived, for the reason the CLI arm above gives — this is the half the Settings button uses.
@@ -530,6 +547,7 @@ export async function recordConsentWithoutClaim(
         organizeConsentedAt: sql`coalesce(${mailboxes.organizeConsentedAt}, ${dialect(db).ts(input.now)})`,
       })
       .where(and(eq(mailboxes.id, row.id), ne(mailboxes.status, "disabled")));
+    await ringSettings(tx, row.accountId);
   });
   return "recorded";
 }

@@ -261,6 +261,18 @@ describe("the requests that leave this window", () => {
     expect(JSON.parse(asked.at(-1)!.body)).toEqual({});
   });
 
+  it("the decide step's count asks the shared route for THIS mailbox and answers its number (R20-03)", async () => {
+    answer = { status: 200, body: JSON.stringify({ senders: 24 }) };
+    const made = (await makeHost())!;
+    expect(typeof made.countWaiting, "the door cannot count one mailbox's waiting senders").toBe("function");
+    let got: { senders: number } | undefined;
+    await act(async () => { got = await made.countWaiting!(id); });
+    const call = asked.at(-1)!;
+    expect(call.method).toBe("GET");
+    expect(call.url).toBe(`/screener/waiting/count?mailboxId=${id}`);
+    expect(got).toEqual({ senders: 24 });
+  });
+
   it("leaving the flow patches the account's own consent row", async () => {
     answer = { status: 200, body: JSON.stringify({ onboardingCompletedAt: "2026-09-02T00:00:00Z" }) };
     const made = (await makeHost())!;

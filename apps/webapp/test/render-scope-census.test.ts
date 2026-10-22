@@ -75,6 +75,11 @@ const EXCEPTIONS: ReadonlyArray<{ hook: string; argument: string; because: strin
     because: "a `string | null` timestamp, not a derivation — the frame pins a stamp",
   },
   {
+    hook: "useConsentState",
+    argument: "windowOwners",
+    because: "a `string | null` key of sorted `id:role` pairs, not a derivation — the frame pins a string",
+  },
+  {
     hook: "useProfileImport",
     argument: "profileDoorbell",
     because: "a `number | null` seq (`settingsDoorbell`), not a derivation — the frame pins a number",

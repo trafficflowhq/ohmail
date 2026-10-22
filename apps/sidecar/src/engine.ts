@@ -7648,8 +7648,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 retryInMs: redialWait.left(),
                 skipped: deadLetters.skipped,
                 reason: "the connection was retired after a message the server sent more of than it " +
-                  "declared was set aside; that is progress, so the next re-dial waits the first " +
-                  "step and no outage is reported",
+                  "declared was set aside, or the mail read before a batch overrun was kept; that " +
+                  "is progress, so the next re-dial waits the first step and no outage is reported",
               });
               return;
             }

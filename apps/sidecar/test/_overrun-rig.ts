@@ -47,7 +47,8 @@ export function server(inbox: Array<[number, Msg]>) {
   const folders = new Map<string, { uidValidity: bigint; msgs: Map<number, Msg> }>([
     ["INBOX", { uidValidity: 100n, msgs: new Map(inbox) }],
   ]);
-  const state = { overrunBodies: 0, perLiar: {} as Record<string, number>, folders };
+  /** `bodies`: every body fetch, by message id. */
+  const state = { overrunBodies: 0, perLiar: {} as Record<string, number>, bodies: {} as Record<string, number>, folders };
   const client = () => {
     let path = "INBOX";
     const msgsOf = (p: string) => folders.get(p)?.msgs ?? new Map<number, Msg>();
@@ -68,7 +69,8 @@ export function server(inbox: Array<[number, Msg]>) {
       usable: true,
       capabilities: new Map<string, boolean>([["MOVE", true], ["UIDPLUS", true], ["IDLE", true]]),
       mailbox: undefined as unknown,
-      async list() { return [...FOLDERS, "Archive"].map((p) => ({ path: p, name: p.split("/").pop()!, delimiter: "/", flags: new Set<string>() })); },
+      // Every folder the script holds is listed too (a test adds Sent), beside the six and Archive.
+      async list() { return [...new Set([...FOLDERS, "Archive", ...folders.keys()])].map((p) => ({ path: p, name: p.split("/").pop()!, delimiter: "/", flags: new Set<string>() })); },
       async mailboxCreate(p: string) { return { path: p }; },
       async getMailboxLock(p: string) {
         path = p;
@@ -83,6 +85,7 @@ export function server(inbox: Array<[number, Msg]>) {
         for (const uid of parseSet(range)) {
           const m = msgsOf(path).get(uid)!;
           if (query?.source) {
+            state.bodies[m.id] = (state.bodies[m.id] ?? 0) + 1;
             if (m.id.startsWith("the-liar")) { state.overrunBodies++; state.perLiar[m.id] = (state.perLiar[m.id] ?? 0) + 1; }
             yield { uid, flags: new Set<string>(), envelope: { messageId: `<${m.id}@lane.test>` }, source: m.raw, internalDate: new Date(Date.UTC(2026, 8, 30) + uid * 1000) };
           } else if (query?.size) yield { uid, size: m.declared };
@@ -158,7 +161,7 @@ const realNow = Date.now.bind(Date);
 
 export async function boot(
   r: ReturnType<typeof rig>, clock: { skewMs: number }, cleanups: Array<() => Promise<void> | void>,
-  opts: { pollIntervalMs?: number; monotonic?: () => number } = {},
+  opts: { pollIntervalMs?: number; monotonic?: () => number; reader?: boolean } = {},
 ) {
   /* THE CLOCK NEVER RUNS BACKWARDS across the cases of one file. The first-page gate's arm instant is
      process-wide (`first-page-gate.ts`), and a case starting minutes behind the last one waited that
@@ -181,7 +184,10 @@ export async function boot(
     } }),
   });
   cleanups.push(async () => { await s.stop().catch(() => undefined); });
-  await s.db.update(mailboxes).set({ organizeConsentedAt: new Date(), organizerRole: "organizer" }).where(isNull(mailboxes.organizeConsentedAt));
+  // `reader`: no organize consent, so nothing is filed out of INBOX (this rig's move cannot follow a letter).
+  if (opts.reader !== true) {
+    await s.db.update(mailboxes).set({ organizeConsentedAt: new Date(), organizerRole: "organizer" }).where(isNull(mailboxes.organizeConsentedAt));
+  }
   await s.start().catch(() => undefined);
   const cycle = async (): Promise<void> => { await s.syncMailbox(s.world.mailboxId).catch(() => undefined); };
   const connection = async (): Promise<{ reachable: boolean; setAside: number }> => {

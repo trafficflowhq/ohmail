@@ -52,10 +52,11 @@ import type { EngineMessage } from "../src/types.js";
  * are in the subjects, `zqxbrimm` is in nothing. The ceilings stay where they were: they bound
  * the shape, and a build that got cheaper does not need them lowered to stay a guard.
  *
- * The RATIO is the sharper guard and it is the one that names this change. A build that put the
+ * The sharper guard is a COUNT, and it is the one that names this change. A build that put the
  * trigram arm back on the common path would leave every absolute number well inside its ceiling
- * — 3.3 ms is not a slow keystroke — while collapsing the gap between a query with an answer and
- * one without. So the ratio is asserted directly.
+ * — 3.3 ms is not a slow keystroke — so the no-answer case counts the trigram sets each query
+ * reads: none for a query with an answer, every reachable term's for one without. It used to be
+ * a ratio of two millisecond medians, which a loaded CI machine compressed below its floor.
  */
 
 const N = 20_000;
@@ -182,22 +183,25 @@ describe(`the local index at ${N} messages`, () => {
 
     /*
      * The bound that makes the tier rule a performance change: the expensive shape must be the
-     * rare one, and it must be VISIBLY more expensive. A build that ran the trigram arm on the
-     * common path would leave every absolute ceiling above green — 3 ms is not a slow keystroke
-     * — while collapsing this ratio to 1. That is why the ratio is asserted and not only the
-     * milliseconds.
+     * rare one. A build that ran the trigram arm on the common path would leave every absolute
+     * ceiling above green — 3 ms is not a slow keystroke — so which query runs the arm is
+     * COUNTED, not inferred from a ratio of two medians (2.6-4.9x on an idle machine, 1.7x on
+     * a loaded CI VM against a 1.8 floor).
      *
-     * The threshold is 1.8 against five measured runs of 2.6, 2.8, 3.4, 4.4 and 4.9 — the
-     * spread is real (this is a millisecond measured on a shared machine), so the number is set
-     * below the lowest of them rather than near the mean. It still catches the failure it is
-     * for, which is a collapse toward parity and not a drift of a tenth.
+     * The count is the index's own `trigramCache` reads: the fuzzy step is its only reader.
      */
     expect(miss, `median no-answer search ${miss} ms`).toBeLessThan(60);
-    expect(
-      miss / exact,
-      `no-answer search was ${(miss / exact).toFixed(1)}× the cost of one with an answer ` +
-        `(${miss} ms vs ${exact} ms) — the trigram arm looks like it is running on both`,
-    ).toBeGreaterThan(1.8);
+
+    const cache = (idx as unknown as { trigramCache: Map<string, Set<string>> }).trigramCache;
+    expect(cache, "SearchIndex no longer keeps its trigram sets in `trigramCache`").toBeInstanceOf(Map);
+    let reads = 0;
+    cache.get = (term: string) => { reads += 1; return Map.prototype.get.call(cache, term) as Set<string> | undefined; };
+    const readsOf = (q: string): number => { reads = 0; idx.search(q); return reads; };
+    const exactReads = readsOf("kiln");
+    const missReads = readsOf("zqxbrimm");
+    console.log(`  trigram sets read: ${missReads} with no answer, ${exactReads} with one`);
+    expect(exactReads, "a query with an answer ran the trigram arm").toBe(0);
+    expect(missReads, "a query with no literal answer did not run the trigram arm").toBeGreaterThan(0);
   });
 
   /**

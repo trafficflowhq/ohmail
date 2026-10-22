@@ -3026,15 +3026,16 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     curUidValidity: bigint,
     budget: { messages: number; bytes: number },
   ): Promise<CappedFetch> {
-    /* ONE MESSAGE'S OVERRUN KEEPS WHAT ARRIVED BEFORE IT. The connection is retired, so the fetch
-       ends here; the messages already read are handed back with the breach, newest first, and
-       the caller stores them before setting the liar aside. Any other refusal is thrown. */
+    /* AN OVERRUN KEEPS WHAT ARRIVED. The connection is retired, so the fetch ends here; the
+       messages already read are handed back with the breach, newest first, and the caller stores
+       them, then sets the named message aside (a batch total names one only when its command
+       asked for one). Any other refusal is thrown. */
     const fetched: InternalCreate[] = [];
     try {
       return await this.fetchCapped(fetched, uids, folder, curUidValidity, budget);
     } catch (err) {
       if (!(err instanceof ImapBoundExceeded) || err.bound !== "body_overrun"
-        || err.site === undefined || err.folder !== folder) throw err;
+        || err.folder !== folder) throw err;
       fetched.sort((a, b) => b.uid - a.uid);
       return { fetched, truncated: true, unanswered: [], oversize: [], budgetSpent: false, overrun: err };
     }
@@ -3173,22 +3174,25 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           throw because;
         }
         streamed += raw.length;
+        // Counted above; only this letter's own reply, with its bytes, claims the slot.
+        if (got === undefined && askedRow(m, asked, "source")) {
+          got = {
+            folder, uidValidity: curUidValidity, uid, raw,
+            seen: m.flags?.has("\\Seen") ?? false,
+            messageId: envelope ? normalizeMessageId(m.envelope?.messageId ?? null) : messageIdFromRaw(raw),
+            ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+              ? { internalDate: m.internalDate }
+              : {}),
+            ...structureField(m.bodyStructure),
+          };
+        }
         if (streamed > ImapAdapter.UNSIZED_COMMAND_CEILING) {
-          const because = new ImapBoundExceeded("body_overrun", ImapAdapter.UNSIZED_COMMAND_CEILING, streamed, folder);
+          if (got !== undefined) fetched.push(got);
+          const because = new ImapBoundExceeded("body_overrun", ImapAdapter.UNSIZED_COMMAND_CEILING, streamed, folder,
+            got === undefined ? { uidValidity: String(curUidValidity), uid } : undefined);
           this.retireConnection(because);
           throw because;
         }
-        // Counted above; only this letter's own reply, with its bytes, claims the slot.
-        if (got !== undefined || !askedRow(m, asked, "source")) return;
-        got = {
-          folder, uidValidity: curUidValidity, uid, raw,
-          seen: m.flags?.has("\\Seen") ?? false,
-          messageId: envelope ? normalizeMessageId(m.envelope?.messageId ?? null) : messageIdFromRaw(raw),
-          ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
-            ? { internalDate: m.internalDate }
-            : {}),
-          ...structureField(m.bodyStructure),
-        };
       };
       for await (const m of this.client.fetch(
         [uid], { uid: true, flags: true, envelope: true, source: true, internalDate: true, bodyStructure: true }, { uid: true },
@@ -3225,6 +3229,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * the first crossing. The honest limit, stated: `ImapFlow.fetch` yields a `source` already
      * buffered, so refusing here bounds what is retained and fetched AFTER the liar; it cannot
      * un-buffer the liar itself. {@link IMAP_BODY_OVERRUN_FACTOR} carries the numbers.
+     *
+     * A batch-total crossing KEEPS the asked rows that arrived, the crossing row included: each is
+     * inside its own ceiling. It names a UID only when its command asked for exactly one that did
+     * not arrive; otherwise no one message is to blame and none is set aside.
      */
     const declaredTotal = take.reduce((sum, uid) => sum + (sizes.get(uid) ?? 0), 0);
     const batchCeiling = bodyOverrunCeiling(declaredTotal);
@@ -3251,16 +3259,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         throw because;
       }
       streamedBytes += arrived;
-      if (streamedBytes > batchCeiling) {
-        const because = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
-        this.retireConnection(because);
-        throw because;
-      }
       // Counted above. Another session's flag change, a row for a UID nobody asked, or a second
-      // reply is no create: an empty one took the letter's place for good.
-      if (!askedRow(m, asked, "source") || answered.has(m.uid)) continue;
-      answered.add(m.uid);
-      fetched.push({
+      // reply is no create: an empty one took the letter's place for good. Kept before the total
+      // is checked, so a crossing keeps the row that crossed.
+      const first = askedRow(m, asked, "source") && !answered.has(m.uid);
+      if (first) answered.add(m.uid);
+      if (first) fetched.push({
         folder, uidValidity: curUidValidity, uid: m.uid,
         raw: sourceBytes(m),
         seen: m.flags?.has("\\Seen") ?? false,
@@ -3278,6 +3282,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           : {}),
         ...structureField(m.bodyStructure),
       });
+      if (streamedBytes > batchCeiling) {
+        const because = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder,
+          take.length === 1 && !answered.has(take[0]!) ? { uidValidity: String(curUidValidity), uid: take[0]! } : undefined);
+        this.retireConnection(because);
+        throw because;
+      }
       /**
        * Not `dates.set(...)` here, though the body fetch carries both fields. Every UID in `take`
        * came out of `arrivalDatesFor`, so its key is already cached — and writing it again would
@@ -3311,7 +3321,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     let unanswered: number[] = [];
     if (withheld.length > 0) {
       const again = new Set(withheld);
-      const retried = (m: FetchMessageObject): void => {
+      const retried = (m: FetchMessageObject, command: readonly number[]): void => {
         // ── THE RETRY IS A BODY FETCH TOO, AND IT WAS THE HOLE IN THE ACCOUNTING ────────────
         //
         // The byte accounting above was applied to the FIRST body fetch only, which left the
@@ -3332,35 +3342,37 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           throw becauseRetry;
         }
         streamedBytes += arrivedRetry;
+        // The first fetch's rule: only a withheld letter's own reply, with its bytes, once.
+        if (askedRow(m, again, "source") && !answered.has(m.uid)) {
+          const raw = sourceBytes(m);
+          answered.add(m.uid);
+          fetched.push({
+            folder, uidValidity: curUidValidity, uid: m.uid,
+            raw,
+            seen: m.flags?.has("\\Seen") ?? false,
+            // From the RAW HEADERS, because the envelope is the field this retry exists to avoid.
+            messageId: messageIdFromRaw(raw),
+            ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
+              ? { internalDate: m.internalDate }
+              : {}),
+            ...structureField(m.bodyStructure),
+          });
+        }
         if (streamedBytes > batchCeiling) {
-          const becauseBatch = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder);
+          const becauseBatch = new ImapBoundExceeded("body_overrun", batchCeiling, streamedBytes, folder,
+            command.length === 1 && !answered.has(command[0]!) ? { uidValidity: String(curUidValidity), uid: command[0]! } : undefined);
           this.retireConnection(becauseBatch);
           throw becauseBatch;
         }
-        // The first fetch's rule: only a withheld letter's own reply, with its bytes, once.
-        if (!askedRow(m, again, "source") || answered.has(m.uid)) return;
-        const raw = sourceBytes(m);
-        answered.add(m.uid);
-        fetched.push({
-          folder, uidValidity: curUidValidity, uid: m.uid,
-          raw,
-          seen: m.flags?.has("\\Seen") ?? false,
-          // From the RAW HEADERS, because the envelope is the field this retry exists to avoid.
-          messageId: messageIdFromRaw(raw),
-          ...(m.internalDate instanceof Date && Number.isFinite(m.internalDate.getTime())
-            ? { internalDate: m.internalDate }
-            : {}),
-          ...structureField(m.bodyStructure),
-        });
       };
       for await (const m of this.client.fetch(
         withheld,
         { uid: true, flags: true, source: true, internalDate: true, bodyStructure: true },
         { uid: true },
-      )) retried(m);
+      )) retried(m, withheld);
       const bare = withheld.filter((u) => !answered.has(u));
       if (bare.length > 0) {
-        for await (const m of this.client.fetch(bare, STRUCTURE_FREE_LAST_RESORT, { uid: true })) retried(m);
+        for await (const m of this.client.fetch(bare, STRUCTURE_FREE_LAST_RESORT, { uid: true })) retried(m, bare);
       }
       unanswered = withheld.filter((u) => !answered.has(u));
     }
@@ -3655,7 +3667,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       asideByFolder.set(a.folder, arr);
     }
     const setAsideStale: MessageSite[] = [];
-    let overrun: (MessageSite & { breach: Error }) | undefined;
+    let overrun: ChangeBatch["overrun"];
     // ONE budget for the whole call, spent in WATCHED_FOLDERS order (INBOX first, Sent LAST),
     // so the bound is per-cycle rather than per-folder — six folders each fetching a full batch
     // would be six times the memory this is supposed to cap.
@@ -3877,6 +3889,29 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         const unknownUids = currentUids.filter(
           (u) => u >= createFloorUid && !effectiveKnown.has(u) && !asideHere.has(u),
         );
+        // A RESET REPORTS EVERY PRIOR UID AS A DELETE, at its PRIOR epoch. Where the cursor names
+        // none, the folder's own is used — and it must be read as an epoch, not spliced into a
+        // string: `BigInt` of the `String(undefined)` a silent server persisted THROWS, which is the
+        // drain dying mid-cycle on a mailbox whose only fault is a server that does not answer the field.
+        const priorEpoch = prev ? epochOf(prev.uidValidity) : UNKNOWN_EPOCH;
+        const priorUidValidity = priorEpoch.known ? BigInt(priorEpoch.value) : curUidValidity;
+        const resetDeletes: InternalDelete[] = uidValidityChanged
+          ? [...knownMap].map(([uid, { messageId }]) => ({ folder, uidValidity: priorUidValidity, uid, messageId }))
+          : [];
+        // A RESET'S DELETE IS SILENCE, UNLESS THE WHOLE FOLDER SAYS OTHERWISE. A remembered
+        // Message-ID held by no UID the folder now has is gone; no UID is compared across the two
+        // epochs. The read is the whole folder even for Sent, whose creates re-read a window, and it
+        // is made BEFORE the bodies: an overrun retires the connection, and a reset whose re-read
+        // stops there settles here all the same, so the next pass resumes past what this one
+        // re-learned instead of re-reading the folder's newest mail for ever. (A pass whose budget
+        // is already spent stops at this folder before any delete, and reads it again next pass.)
+        const heldNow = resetDeletes.length > 0 ? await this.messageIdsHeld(folder, currentSet) : null;
+        const settleReset = (): void => {
+          for (const d of resetDeletes) {
+            deletes.push(d);
+            if (heldNow !== null && d.messageId !== null && !heldNow.has(messageIdKey(d.messageId))) provedGone.add(d);
+          }
+        };
         const {
           fetched, truncated, unanswered: withheldUids, oversize: refusedOnSize, budgetSpent,
           overrun: breach,
@@ -3884,11 +3919,23 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         creates.push(...fetched);
         budget.messages -= fetched.length;
         for (const f of fetched) budget.bytes -= f.raw.length;
-        /* ONE MESSAGE'S OVERRUN ENDS THE PASS HERE AND DISCARDS NOTHING BEFORE IT: the connection
-           is retired, so the pass returns the earlier folders' work and this folder's mail read
-           before the breach; this folder and every later one keep their stored cursor. */
-        if (breach !== undefined && breach.site !== undefined) {
-          overrun = { folder, uidValidity: breach.site.uidValidity, uid: breach.site.uid, breach };
+        /* AN OVERRUN ENDS THE PASS HERE AND DISCARDS NOTHING READ: the connection is retired, so
+           the pass returns the earlier folders' work and this folder's mail that arrived. A breach
+           naming no message (a batch total) sets nothing aside. A folder whose stored cursor names
+           its live epoch keeps it, and so does every later folder. One whose cursor does not —
+           none yet (Sent, which is not a watched folder, or a customer folder on its first read),
+           or one the server renumbered — gets one that names the live epoch and acknowledges no
+           UID, as a truncated reset's page does; a reset settles its deletes with it. Without it
+           the mail kept here is not known under the epoch the next pass reads, and every pass
+           crosses at the same row again. */
+        if (breach !== undefined) {
+          overrun = breach.site !== undefined
+            ? { folder, uidValidity: breach.site.uidValidity, uid: breach.site.uid, breach }
+            : { folder, breach };
+          if (uidValidityChanged) settleReset();
+          if (prev === undefined || uidValidityChanged) {
+            newFolders[folder] = { uidValidity: String(curUidValidity), uidNext: 0, highestModseq: "0" };
+          }
           hasBacklog = true;
           createsOwed = true;
           break;
@@ -4044,38 +4091,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             this.flagDrain.delete(folder);
           }
         }
-        // Deletes: previously-known UIDs that are gone (or ALL prior UIDs on a UIDVALIDITY change).
-        // A delete's ref carries the PRIOR epoch. Where the cursor names none, the folder's own
-        // is used — and it must be read as an epoch, not spliced into a string: `BigInt` of the
-        // `String(undefined)` a silent server persisted THROWS, which is the drain dying mid-cycle
-        // on a mailbox whose only fault is a server that does not answer the field.
-        const priorEpoch = prev ? epochOf(prev.uidValidity) : UNKNOWN_EPOCH;
-        const priorUidValidity = priorEpoch.known ? BigInt(priorEpoch.value) : curUidValidity;
-        const resetDeletes: InternalDelete[] = [];
-        for (const [uid, { messageId }] of knownMap) {
-          if (uidValidityChanged) {
-            const d = { folder, uidValidity: priorUidValidity, uid, messageId };
-            deletes.push(d);
-            resetDeletes.push(d);
-            continue;
-          }
-          // Outside the range this pass enumerated (Sent only — `enumFloorUid` is 0 everywhere
-          // else), so its absence from `currentSet` is silence, not evidence. Reporting it
-          // would tell `correlateMoves` that every ingested Sent message vanished the first
-          // time the watermark moved past it.
-          if (uid < enumFloorUid) continue;
-          if (!currentSet.has(uid)) {
-            deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
-          }
-        }
-        // A RESET'S DELETE IS SILENCE, UNLESS THE WHOLE FOLDER SAYS OTHERWISE. A remembered
-        // Message-ID held by no UID the folder now has is gone; no UID is compared across the two
-        // epochs. The read is the whole folder even for Sent, whose creates re-read a window.
-        if (resetDeletes.length > 0) {
-          const present = await this.messageIdsHeld(folder, currentSet);
-          if (present !== null) {
-            for (const d of resetDeletes) {
-              if (d.messageId !== null && !present.has(messageIdKey(d.messageId))) provedGone.add(d);
+        // Deletes: previously-known UIDs that are gone, at their PRIOR epoch — or, on a UIDVALIDITY
+        // change, every prior UID with the whole-folder proof read above.
+        if (uidValidityChanged) settleReset();
+        else {
+          for (const [uid, { messageId }] of knownMap) {
+            // Outside the range this pass enumerated (Sent only — `enumFloorUid` is 0 everywhere
+            // else), so its absence from `currentSet` is silence, not evidence. Reporting it
+            // would tell `correlateMoves` that every ingested Sent message vanished the first
+            // time the watermark moved past it.
+            if (uid < enumFloorUid) continue;
+            if (!currentSet.has(uid)) {
+              deletes.push({ folder, uidValidity: priorUidValidity, uid, messageId });
             }
           }
         }

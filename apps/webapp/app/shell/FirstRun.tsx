@@ -150,6 +150,11 @@ export interface FirstRunDecideSubject {
   held: number;
   /** How many senders wait in the Screener: the rail's count (`ScreenerState.waitingCount`). */
   waiting: number;
+  /**
+   * The install has several mailboxes: the lead counts this mailbox's waiting senders
+   * (`FirstRunHost.countWaiting`) and the second sentence carries {@link waiting}, the account's.
+   */
+  many?: boolean;
   /** The "first contact N days ago" line, already formatted by the host. */
   since: ReactNode;
   onDecide: (dest: DecisionDestination, opts: { markRead: boolean; scope: DecisionScope }) => void;
@@ -1134,6 +1139,24 @@ export function FirstRun({
   }, [countKey, host, mailboxId, step, takingOver, win]);
   const shownCount = decisionCount !== null && decisionCount.key === countKey && !takingOver
     ? decisionCount.value : null;
+
+  /* THE DECIDE STEP'S COUNT ON AN INSTALL WITH SEVERAL MAILBOXES (R20-03): this mailbox's waiting
+     senders, read again when the rail's count moves. Kept by mailbox, so another run's answer is
+     never shown; unknown or failed, the lead names no number. */
+  const decideMany = step === "decide" && decide?.many === true;
+  const decideWaiting = decide?.waiting ?? 0;
+  const [waitingHere, setWaitingHere] = useState<{ mailboxId: string; senders: number | null } | null>(null);
+  useEffect(() => {
+    const count = host.countWaiting;
+    if (!decideMany || mailboxId === null || !count) return;
+    let live = true;
+    count(mailboxId).then(
+      (v) => { if (live) setWaitingHere({ mailboxId, senders: v.senders }); },
+      () => { if (live) setWaitingHere({ mailboxId, senders: null }); },
+    );
+    return () => { live = false; };
+  }, [decideMany, decideWaiting, host, mailboxId]);
+  const hereCount = waitingHere !== null && waitingHere.mailboxId === mailboxId ? waitingHere.senders : null;
   /**
    * WHETHER ANYBODY HOLDS THIS MAILBOX, AND WHETHER THEY HAVE A NAME — read once, for the two
    * surfaces below, from `organizedBy` rather than from the display name.
@@ -1876,8 +1899,13 @@ export function FirstRun({
         {step === "decide" && decide ? (
           <>
             <h1 id={`${ids}-title`}>{t("decideTitle")}</h1>
-            {/* The Screener's count, the rail's; the card on screen is one waiting sender at least. */}
-            <p className="sub">{t("decideLead", { count: Math.max(1, decide.waiting) })}</p>
+            {/* The Screener's count, the rail's; the card on screen is one waiting sender at least.
+                With several mailboxes, this mailbox's, never above the rail's. */}
+            <p className="sub">{!decide.many
+              ? t("decideLead", { count: Math.max(1, decide.waiting) })
+              : hereCount === null
+                ? t("decideLeadHereUncounted")
+                : t("decideLeadHere", { count: Math.max(1, Math.min(hereCount, decide.waiting)) })}</p>
             <div className="ob-sender">
               <div className="who">
                 <span className="av" aria-hidden="true">{decide.name.slice(0, 1).toUpperCase()}</span>
@@ -1909,7 +1937,9 @@ export function FirstRun({
                 <li key={v.key}><Kbd>{v.key}</Kbd> {t(v.copy)}</li>
               ))}
             </ul>
-            <p className="set-note-inline">{t("decideAfter")}</p>
+            <p className="set-note-inline">{decide.many
+              ? t("decideAfterAccount", { count: decide.waiting })
+              : t("decideAfter")}</p>
             {foot({})}
           </>
         ) : null}
