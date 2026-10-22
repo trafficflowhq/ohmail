@@ -55,15 +55,15 @@ async function planOf(c: Client, text: string, params: unknown[]): Promise<PlanN
   }
 }
 
-/** Each read of `messages` or `folder_state` in a plan, subplans included. */
-function readsOf(node: PlanNode, table?: string, out: Read[] = []): Read[] {
+/** Each read of `tables` in a plan (by default `messages` and `folder_state`), subplans included. */
+function readsOf(node: PlanNode, table?: string, out: Read[] = [], tables: readonly string[] = ["messages", "folder_state"]): Read[] {
   // A bitmap index scan names its index; the bitmap heap scan above it names the table.
   const t = node["Relation Name"] ?? table;
-  if ((t === "messages" || t === "folder_state") && (node["Node Type"] === "Seq Scan" || node["Index Name"])) {
+  if (t !== undefined && tables.includes(t) && (node["Node Type"] === "Seq Scan" || node["Index Name"])) {
     out.push({ table: t, node: node["Node Type"], index: node["Index Name"], cond: node["Index Cond"] });
   }
   const bitmap = /^Bitmap( Heap Scan|And|Or)$/.test(node["Node Type"]);
-  for (const child of node.Plans ?? []) readsOf(child, bitmap ? t : undefined, out);
+  for (const child of node.Plans ?? []) readsOf(child, bitmap ? t : undefined, out, tables);
   return out;
 }
 
@@ -116,6 +116,12 @@ describe("the poll's filing aggregate beside a larger account", () => {
     const reads = readsOf(await planOf(c, filing[0]!.text, filing[0]!.params));
     expect(new Set(reads.map((r) => r.table))).toEqual(new Set(["messages", "folder_state"]));
     expect(await unbounded(c, reads), "reads of every account's rows on each poll").toEqual([]);
+
+    // The list read before it: the caller's mailboxes by the account index (mail 0160), where it
+    // walked every mailbox of the store through `mailboxes_id_account_uq` with no condition.
+    const listed = readsOf(await planOf(c, sent[0]!.text, sent[0]!.params), undefined, [], ["mailboxes"]);
+    expect(listed.map((r) => r.index)).toEqual(["mailboxes_account_idx"]);
+    expect(await unbounded(c, listed), "the list read walks every mailbox").toEqual([]);
 
     // Control: a whole-table read is told apart under the same planning.
     const whole = readsOf(await planOf(c, "select count(*) from folder_state", []));

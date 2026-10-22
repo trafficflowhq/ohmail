@@ -196,6 +196,10 @@ describe("the SQLite journal, applied", () => {
       "0158_mailboxes_gap_strangers.sql",
       // The reader's press ordering on rules, the pg column's twin.
       "0159_rules_settled_press_at.sql",
+      // The poll's outstanding filings: the column, its two triggers, the index and the backfill.
+      "0160_folder_state_outstanding.sql",
+      // The list read's index, the pg index's twin.
+      "0161_mailboxes_account_idx.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -320,6 +324,10 @@ describe("the SQLite journal, applied", () => {
       "0158_mailboxes_gap_strangers.sql",
       // The reader's press ordering on rules, the pg column's twin.
       "0159_rules_settled_press_at.sql",
+      // The poll's outstanding filings: the column, its two triggers, the index and the backfill.
+      "0160_folder_state_outstanding.sql",
+      // The list read's index, the pg index's twin.
+      "0161_mailboxes_account_idx.sql",
     ]);
   });
 

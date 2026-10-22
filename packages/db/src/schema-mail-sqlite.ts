@@ -12,6 +12,7 @@ import { sqliteTable, text, integer, real, unique, uniqueIndex, index, primaryKe
 import { sql, desc } from "drizzle-orm";
 import type { SignedOutMeta } from "./schema-mail.js";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 /**
  * A 64-bit counter that stays a `bigint` in TypeScript and a native integer in the store.
@@ -443,6 +444,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   gapStrangers: integer("gap_strangers"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
+  // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
+  ixAccount: index("mailboxes_account_idx").on(t.accountId, t.id),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail
   // forever against its own tombstone. On `lower(address)` because nothing normalizes this
@@ -826,6 +829,9 @@ export const folderState = sqliteTable("folder_state", {
   screenerFloorVersion: integer("screener_floor_version"),
   // Mail 0145: when a decision about the placement was placed — the stale-press floor's stamp.
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+  // Mail 0160: the message's account while the row is outstanding, written by the two triggers
+  // alone. See the server twin.
+  outstandingAccountId: text("outstanding_account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -834,6 +840,10 @@ export const folderState = sqliteTable("folder_state", {
   // applies, which is the read that cost the 0.19.0 drain its whole invocation.
   ixDesiredUpdated: index("folder_state_desired_updated_idx")
     .on(t.desiredFolder, t.updatedAt, t.messageId),
+  // Mail 0160: the mailbox poll's outstanding filings, by account.
+  ixOutstanding: index("folder_state_outstanding_idx")
+    .on(t.outstandingAccountId, t.messageId)
+    .where(sql.raw(OUTSTANDING_FILING_WHERE)),
 }));
 
 /**

@@ -72,6 +72,23 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
     expect(missing.kind === "probed" && missing.schemaOk).toBe(false);
   });
 
+  it("a database where mail 0160 never ran (only the prebuild did) is short its trigger function", async () => {
+    const healthy = found(await hosted(owned.db));
+    const prebuiltOnly = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`drop trigger "folder_state_outstanding_account_tg" on "folder_state"`));
+      await db.execute(sql.raw(`drop function "folder_state_outstanding_account"()`));
+      return hosted(db);
+    });
+    expect(found(prebuiltOnly)).toBe(healthy - 1);
+    expect(prebuiltOnly.kind === "probed" && prebuiltOnly.schemaOk).toBe(false);
+    const noIndexes = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`drop index "folder_state_outstanding_idx"`));
+      await db.execute(sql.raw(`drop index "mailboxes_account_idx"`));
+      return hosted(db);
+    });
+    expect(found(noIndexes)).toBe(healthy - 2);
+  });
+
   it("an int4 uid column is one short — the type probe on this server", async () => {
     const healthy = found(await hosted(owned.db));
     const narrowed = await rolledBack(async (db) => {

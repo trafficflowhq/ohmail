@@ -85,6 +85,17 @@ describe("no migration is written in a form that cannot be applied twice", () =>
       "…and the arm that does take it is admitted").toEqual([]);
   });
 
+  it("control: a CREATE TRIGGER is admitted behind its own pg_trigger guard, and only there", () => {
+    const forms = (sql: string): string[] =>
+      nonIdempotentForms(statementsOf(sql)).map((f) => `${f.form} ${f.object}`);
+    const create = `CREATE TRIGGER "t_tg" BEFORE INSERT ON "drafts" FOR EACH ROW EXECUTE FUNCTION f();`;
+    const guarded = (name: string): string =>
+      `DO $$ BEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '${name}') THEN\n    ${create}\n  END IF;\nEND $$;`;
+    expect(forms(create), "bare").toEqual(["CREATE TRIGGER t_tg"]);
+    expect(forms(guarded("t_tg")), "guarded by its own name").toEqual([]);
+    expect(forms(guarded("other_tg")), "a guard naming another trigger").toEqual(["CREATE TRIGGER t_tg"]);
+  });
+
   it("the comment scanner blanks SQL noise without moving a line", () => {
     const src = readFileSync(join(FIXTURES, "bare-add-constraint.sql"), "utf8");
     const statements = statementsOf(src);

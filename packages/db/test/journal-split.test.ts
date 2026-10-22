@@ -3059,6 +3059,21 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0159_rules_settled_press_at": [
     "3dddc21898e441c4",   // ADD COLUMN IF NOT EXISTS rules.settled_press_at timestamptz
   ],
+  // THE MAILBOX POLL'S OUTSTANDING FILINGS — folder_state.outstanding_account_id (a nullable column
+  // added where missing), the BEFORE trigger that copies the message's account onto an outstanding
+  // row, its partial index (prebuilt CONCURRENTLY by setup) and the backfill of the rows outstanding
+  // before it, read through that index.
+  "0160_folder_state_outstanding": [
+    "5db6d60f29c42909",   // DO … ADD COLUMN IF NOT EXISTS folder_state.outstanding_account_id uuid, where information_schema lacks it
+    "d7642e1d15875451",   // CREATE OR REPLACE FUNCTION folder_state_outstanding_account() … NEW.outstanding_account_id := messages.account_id
+    "5a0466bd3d616aee",   // DO … CREATE TRIGGER folder_state_outstanding_account_tg BEFORE INSERT OR UPDATE … WHEN (outstanding), where pg_trigger lacks it
+    "085861cdbfafb977",   // create index if not exists folder_state_outstanding_idx (outstanding_account_id, message_id) where outstanding
+    "8362d03f326e250e",   // UPDATE folder_state SET outstanding_account_id = messages.account_id WHERE IS NULL and outstanding
+  ],
+  // THE MAILBOX LIST READ'S INDEX — mailboxes (account_id, id), prebuilt CONCURRENTLY by setup. No DML.
+  "0161_mailboxes_account_idx": [
+    "ff852b369d4313f6",   // create index if not exists mailboxes_account_idx (account_id, id)
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4048,12 +4063,14 @@ describe("the two journals are well-formed", () => {
   // 0157_messages_sender_date's.
   // 159 → 160 for `0159_rules_settled_press_at`: its `when` (1791602600063) is strictly above
   // 0158_mailboxes_gap_strangers's.
+  // 160 → 162 for `0160_folder_state_outstanding` and `0161_mailboxes_account_idx`: their `when`s
+  // (1791602600064, 1791602600065) are strictly above 0159_rules_settled_press_at's, in order.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 160], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 162], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

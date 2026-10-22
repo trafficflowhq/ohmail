@@ -1,13 +1,14 @@
 import { createRequire } from "node:module";
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
+import { accounts, mailboxes, messageFailures } from "@trafficflow/db";
+import { ACCOUNT_MAILBOXES_MAX_READ, type MailboxDTO } from "@trafficflow/services";
 import {
-  accounts, folderState, mailboxCredentials, mailboxFolders, mailboxes, messageFailures, messages,
-} from "@trafficflow/db";
-import {
-  ACCOUNT_MAILBOXES_MAX_READ, makeMailboxService, type MailboxDTO, type ServiceContext,
-} from "@trafficflow/services";
+  A, B, GOLDEN, MIN, at, cred, ctxFor, erasing, failure, filing, folder, gapReader, goldenAnswer, heldReader, id,
+  inError, organizer, outstandingDrift, seed, seedPlain, settled, svc, theirFirst, theirSecond, theirThird, DAY, type Db,
+} from "./helpers/mailbox-facts-seed.js";
 
 /**
  * GET /mailboxes is polled every 30 s per open tab. Beside each row it reads four facts: the
@@ -17,170 +18,6 @@ import {
  * per-mailbox reads), and every statement that reads a fact binds the caller's account.
  * Counted at the store's own client, on both stores.
  */
-
-type Db = Awaited<ReturnType<typeof makeTestDb>>;
-
-const NOW = new Date("2026-10-21T10:00:00.000Z");
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
-const at = (ms: number): Date => new Date(NOW.getTime() + ms);
-const id = (tail: string): string => `00000000-0000-4000-8000-${tail.padStart(12, "0")}`;
-
-const A = id("a0");
-const B = id("b0");
-// A's and B's mailboxes interleave by id, the order `list` reads them in.
-const organizer = id("1"), theirFirst = id("2"), inError = id("3"), theirSecond = id("4");
-const heldReader = id("5"), theirThird = id("6"), erasing = id("7"), erased = id("9"), gapReader = id("b");
-
-const svc = makeMailboxService({
-  installId: "install-here",
-  lastOrganizerCycleAt: async () => "2026-10-21T09:59:00.000Z",
-});
-
-const ctxFor = (db: Db, accountId: string, now: () => Date = () => NOW): ServiceContext =>
-  ({ db, accountId, userId: null, now, requestId: "r" });
-
-let seq = 0;
-
-/** A message, and its filing unless `row` is null. */
-async function filing(db: Db, accountId: string, mailboxId: string, row: null | {
-  updatedAt: Date; attempts?: number; nextAttemptAt?: Date | null; lastErrorClass?: string | null;
-  by?: "us" | "external"; desired?: string; observed?: string; status?: "pending" | "reconciled";
-}): Promise<void> {
-  seq += 1;
-  const [m] = await db.insert(messages).values({
-    accountId, mailboxId, dedupKey: `mid:<mfb-${seq}@example.test>`, messageIdHeader: `<mfb-${seq}@example.test>`,
-    fromAddress: "stranger@example.test", subject: `s${seq}`, date: NOW, bodyHash: `mfb-hash-${seq}`,
-  }).returning();
-  if (row === null) return;
-  await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: row.desired ?? "ohmail/News", observedFolder: row.observed ?? "INBOX",
-    reconcileStatus: row.status ?? "pending", lastSetBy: row.by ?? "us", updatedAt: row.updatedAt,
-    attempts: row.attempts ?? 0, nextAttemptAt: row.nextAttemptAt ?? null, lastErrorClass: row.lastErrorClass ?? null,
-  });
-}
-
-async function failure(db: Db, accountId: string, mailboxId: string, uid: number, resolved: boolean): Promise<void> {
-  await db.insert(messageFailures).values({
-    accountId, mailboxId, folder: "INBOX", uidvalidity: 1n, uid, code: "mime_unparseable",
-    resolvedAt: resolved ? at(-MIN) : null,
-  });
-}
-
-async function cred(db: Db, mailboxId: string, transport: "imap" | "smtp", meta: unknown): Promise<void> {
-  await db.insert(mailboxCredentials).values({ mailboxId, transport, secretEnc: "sealed", keyVersion: 1, meta });
-}
-
-async function folder(db: Db, mailboxId: string, f: {
-  folder: string; updatedAt: Date; highestmodseq?: bigint; serverExists?: number; budgetStopUid?: bigint;
-}): Promise<void> {
-  await db.insert(mailboxFolders).values({
-    mailboxId, folder: f.folder, updatedAt: f.updatedAt, highestmodseq: f.highestmodseq ?? null,
-    serverExists: f.serverExists ?? null, budgetStopUid: f.budgetStopUid ?? null,
-    budgetStopUidvalidity: f.budgetStopUid === undefined ? null : 9n,
-  });
-}
-
-/** Account A: six mailboxes in different states, one a finished erasure; account B beside it. */
-async function seed(db: Db): Promise<void> {
-  await db.insert(accounts).values([{ id: A, name: "mfb-a" }, { id: B, name: "mfb-b" }]);
-
-  // An organizer with every kind of filing, failures, both credentials and folders out of order.
-  await db.insert(mailboxes).values({
-    id: organizer, accountId: A, provider: "imap", address: "a1@example.test", displayName: "Alpha",
-    createdAt: at(-3 * DAY), lastSyncAt: at(-MIN), initialImportCompletedAt: at(-DAY),
-    organizeConsentedAt: at(-2 * DAY), junkFolder: "Spam", smtpMaxSizeBytes: 26_214_400,
-    inboundQuietSince: at(-HOUR), inboundQuietDismissedAt: at(-30 * MIN), organizerEventAt: at(-2 * HOUR),
-    organizerEventSeenAt: at(-90 * MIN), gapSince: at(-DAY), gapLetters: 7,
-  });
-  await cred(db, organizer, "imap", { host: "imap.gmail.com", port: 993, secure: true, smtpUnsettled: "auth" });
-  await cred(db, organizer, "smtp", { host: "smtp.gmail.com", port: 465, smtpUnsettled: "tls" });
-  await folder(db, organizer, { folder: "Sent", highestmodseq: 7n, serverExists: 30, updatedAt: at(-2 * MIN) });
-  await folder(db, organizer, { folder: "Archive", updatedAt: at(-5 * MIN), budgetStopUid: 12n });
-  await folder(db, organizer, { folder: "INBOX", highestmodseq: 100n, serverExists: 120, updatedAt: at(-MIN) });
-  await filing(db, A, organizer, { updatedAt: at(-10_000) });
-  await filing(db, A, organizer, { updatedAt: at(-2 * MIN), attempts: 1, nextAttemptAt: at(HOUR), lastErrorClass: "no_such_folder" });
-  await filing(db, A, organizer, {
-    updatedAt: at(-HOUR), attempts: 1, nextAttemptAt: at(-MIN), lastErrorClass: "read_only", desired: "Receipts",
-  });
-  await filing(db, A, organizer, { updatedAt: at(-HOUR), by: "external", desired: "X", observed: "Y" });
-  await filing(db, A, organizer, { updatedAt: at(-HOUR), status: "reconciled" });
-  await filing(db, A, organizer, { updatedAt: at(-HOUR), desired: "INBOX", observed: "INBOX" });
-  await filing(db, A, organizer, null);
-  await failure(db, A, organizer, 1, false);
-  await failure(db, A, organizer, 2, false);
-  await failure(db, A, organizer, 3, true);
-
-  // In error, signed in with OAuth, blocked, and a credential naming no host.
-  await db.insert(mailboxes).values({
-    id: inError, accountId: A, provider: "imap", address: "a3@example.test", createdAt: at(-2 * DAY), status: "error",
-    errorCode: "timeout", errorDetail: "ETIMEDOUT", failedAt: at(-5 * MIN), retryCount: 3, authKind: "oauth",
-    syncBlockedReason: "lease_unreadable", syncBlockedSince: at(-10 * MIN),
-  });
-  await cred(db, inError, "imap", { host: "" });
-  await failure(db, A, inError, 1, false);
-
-  // A disabled reader whose holder is this install, with a release that was refused.
-  await db.insert(mailboxes).values({
-    id: heldReader, accountId: A, provider: "imap", address: "a5@example.test", createdAt: at(-DAY), status: "disabled",
-    disabledReason: "organized_elsewhere:local", organizerRole: "reader", organizedByKind: "local",
-    organizedByName: "Office laptop", organizedByInstallId: "install-here", organizedSince: at(-7 * DAY),
-    organizerState: "held", organizedByCapabilities: "requests,profiles", releaseRequestedAt: at(-HOUR),
-    releaseRefusal: "sibling_lapse", takeoverAuthorizedAt: at(-3 * HOUR), organizerParkedAt: at(-4 * HOUR),
-    lastSyncAt: at(-2 * HOUR), gapSince: at(-DAY), gapLetters: 3,
-  });
-  await cred(db, heldReader, "imap", { host: "imap.mail.me.com" });
-  await folder(db, heldReader, { folder: "INBOX", highestmodseq: 3n, serverExists: 0, updatedAt: at(-3 * MIN) });
-  await filing(db, A, heldReader, { updatedAt: at(-20 * MIN), lastErrorClass: "refused" });
-
-  // Still being erased, two letters left; and an erasure that finished, which is not listed.
-  await db.insert(mailboxes).values({
-    id: erasing, accountId: A, provider: "imap", address: "a7@example.test", createdAt: at(-HOUR), status: "disabled",
-    erasedAt: at(-MIN),
-  });
-  await filing(db, A, erasing, null);
-  await filing(db, A, erasing, null);
-  await db.insert(mailboxes).values({
-    id: erased, accountId: A, provider: "imap", address: "a9@example.test", createdAt: at(-30 * DAY), status: "disabled",
-    erasedAt: at(-DAY), erasureDoneAt: at(-23 * HOUR),
-  });
-
-  // A reader with a gap and no credential at all.
-  await db.insert(mailboxes).values({
-    id: gapReader, accountId: A, provider: "imap", address: "ab@example.test", createdAt: at(-MIN), organizerRole: "reader",
-    gapSince: at(-DAY), gapLetters: 2,
-  });
-
-  // B's mailboxes carry every fact too, and a refusal with more attempts than any of A's.
-  for (const [mb, address] of [[theirFirst, "b2@example.test"], [theirSecond, "b4@example.test"], [theirThird, "b6@example.test"]] as const) {
-    await db.insert(mailboxes).values({
-      id: mb, accountId: B, provider: "imap", address, createdAt: at(-DAY), lastSyncAt: at(-MIN),
-    });
-    await cred(db, mb, "imap", { host: "imap.gmail.com", smtpUnsettled: "tls" });
-    await folder(db, mb, { folder: "Zzz", updatedAt: at(-MIN) });
-    await folder(db, mb, { folder: "INBOX", highestmodseq: 9n, serverExists: 999, updatedAt: at(-MIN), budgetStopUid: 1n });
-    await filing(db, B, mb, { updatedAt: at(-2 * HOUR), attempts: 5, nextAttemptAt: at(HOUR), lastErrorClass: "refused" });
-    await filing(db, B, mb, { updatedAt: at(-MIN) });
-    await failure(db, B, mb, 1, false);
-    await failure(db, B, mb, 2, false);
-  }
-}
-
-/** An account with `n` connected mailboxes, each with a credential, two folders, a filing and a failure. */
-async function seedPlain(db: Db, accountId: string, n: number): Promise<void> {
-  await db.insert(accounts).values({ id: accountId, name: `mfb-${n}` });
-  for (let i = 0; i < n; i++) {
-    const [mb] = await db.insert(mailboxes).values({
-      accountId, provider: "imap", address: `p${n}-${i}@example.test`, createdAt: at(-DAY), lastSyncAt: at(-MIN),
-    }).returning();
-    await cred(db, mb!.id, "imap", { host: "imap.example.test" });
-    await folder(db, mb!.id, { folder: "INBOX", highestmodseq: 1n, serverExists: 10, updatedAt: at(-MIN) });
-    await folder(db, mb!.id, { folder: "Archive", updatedAt: at(-MIN) });
-    await filing(db, accountId, mb!.id, { updatedAt: at(-MIN) });
-    await failure(db, accountId, mb!.id, 1, false);
-  }
-}
 
 interface Sent { text: string; params: readonly unknown[] }
 interface Doors { query: (...a: unknown[]) => Promise<unknown>; exec: (...a: unknown[]) => Promise<unknown> }
@@ -306,16 +143,31 @@ describe("GET /mailboxes reads every mailbox's facts in a fixed number of statem
     const db = await makeTestDb();
     await seed(db);
     const list = await svc.list(ctxFor(db, A));
-    const answer = {
-      list,
-      counts: await svc.list(ctxFor(db, A), { counts: true }),
-      otherAccount: await svc.list(ctxFor(db, B)),
-      empty: await svc.list(ctxFor(db, id("e0"))),
-    };
-    await expect(`${JSON.stringify(answer, null, 2)}\n`)
-      .toMatchFileSnapshot("./__snapshots__/mailbox-facts-batched.golden.json");
+    await expect(await goldenAnswer(db)).toMatchFileSnapshot(GOLDEN);
     // A single mailbox's read answers what the list says about it.
     for (const row of list) expect(await svc.get(ctxFor(db, A), row.id)).toEqual(row);
+    // Every outstanding filing the seed wrote carries its message's account (mail 0159).
+    expect(await outstandingDrift(db)).toBe(0);
+  });
+
+  it("counts the filings mail 0159's trigger keeps, and only those", async () => {
+    const db = await makeTestDb();
+    const acct = id("90");
+    const mb = id("91");
+    await db.insert(accounts).values({ id: acct, name: "mfb-trigger" });
+    await db.insert(mailboxes).values({ id: mb, accountId: acct, provider: "imap", address: "t@example.test" });
+    for (let i = 0; i < 4; i++) await filing(db, acct, mb, { updatedAt: at(-MIN) });
+    expect((await svc.list(ctxFor(db, acct)))[0]!.pendingMoves).toBe(4);
+    // Control: with the trigger withheld a new filing carries no account and the strip misses it.
+    if (dialect(db).name === "sqlite") {
+      await db.run(sql`drop trigger folder_state_outstanding_account_insert`);
+      await db.run(sql`drop trigger folder_state_outstanding_account_update`);
+    } else {
+      await db.execute(sql`drop trigger folder_state_outstanding_account_tg on folder_state`);
+    }
+    await filing(db, acct, mb, { updatedAt: at(-MIN) });
+    expect(await outstandingDrift(db)).toBe(1);
+    expect((await svc.list(ctxFor(db, acct)))[0]!.pendingMoves).toBe(4);
   });
 
   it("takes the counts and `asOf` at one reading of the clock", async () => {
@@ -343,7 +195,7 @@ describe("GET /mailboxes reads every mailbox's facts in a fixed number of statem
     const db = await makeTestDb();
     await seed(db);
     const before = await svc.list(ctxFor(db, A));
-    expect(before.map((m) => m.id)).toEqual([organizer, inError, heldReader, erasing, gapReader]);
+    expect(before.map((m) => m.id)).toEqual([organizer, inError, heldReader, erasing, gapReader, settled]);
 
     for (const mb of [theirFirst, theirSecond, theirThird]) {
       await failure(db, B, mb, 7, false);

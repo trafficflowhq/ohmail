@@ -12,6 +12,7 @@
 import { pgTable, uuid, text, timestamp, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
+import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Migration 0008 — full-text `tsvector`. A DB-MANAGED
@@ -482,6 +483,8 @@ export const mailboxes = pgTable("mailboxes", {
   sentFolder: text("sent_folder"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
+  // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
+  ixAccount: index("mailboxes_account_idx").on(t.accountId, t.id),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
   // `status='disabled'` and a plain unique would make reconnecting a disconnected address fail
   // forever against its own tombstone. On `lower(address)` because nothing normalizes this
@@ -931,6 +934,15 @@ export const folderState = pgTable("folder_state", {
    * in another mail client writes it: a lower bound of when the person moved it, or NULL.
    */
   decidedAt: timestamp("decided_at", { withTimezone: true }),
+  /**
+   * The message's account while this row is an outstanding filing of ours (mail 0160), so the
+   * mailbox poll reads one account's outstanding filings from a small index instead of every
+   * message of the mailbox. Written by the BEFORE trigger alone, re-derived from `messages` on every
+   * write that leaves the row outstanding; never by application code (a test scans for it). Stale
+   * or NULL on other rows, which every reader excludes with the predicate. Not `account_id`: it is
+   * no account scope, and erasure and export stay keyed by message.
+   */
+  outstandingAccountId: uuid("outstanding_account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -939,6 +951,10 @@ export const folderState = pgTable("folder_state", {
   // applies, which is the read that cost the 0.19.0 drain its whole invocation.
   ixDesiredUpdated: index("folder_state_desired_updated_idx")
     .on(t.desiredFolder, t.updatedAt, t.messageId),
+  // Mail 0160: the mailbox poll's outstanding filings, by account. Prebuilt CONCURRENTLY on a server.
+  ixOutstanding: index("folder_state_outstanding_idx")
+    .on(t.outstandingAccountId, t.messageId)
+    .where(sql.raw(OUTSTANDING_FILING_WHERE)),
 }));
 
 /**

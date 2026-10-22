@@ -12,6 +12,7 @@ import { and, eq, gte, isNull, lte, not, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { folderState } from "./schema-mail.js";
+import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 
 /**
  * "This deferred mutation may be attempted again" — the due predicate every pending query shares
@@ -48,13 +49,27 @@ export function deferredUntilLater(col: AnyPgColumn, now: Date): SQL {
  * folders already agree is a no-op the reconciler retires without touching IMAP — `upsertDesired`
  * writes `pending` unconditionally, so these exist). The mailbox scope is NOT here: it belongs to
  * the caller's join.
+ *
+ * The values are LITERALS, not bound parameters: mail 0160's partial index `folder_state_outstanding_idx`
+ * carries this predicate as its WHERE, and a store only reads a partial index when the statement
+ * spells the same constants (SQLite always, Postgres under a generic plan). The index WHERE and the
+ * triggers' WHEN are {@link OUTSTANDING_FILING_WHERE}; a test holds the three equal.
  */
 export function ourOutstandingFiling(): SQL {
-  return and(
-    eq(folderState.reconcileStatus, "pending"),
-    eq(folderState.lastSetBy, "us"),
-    sql`${folderState.desiredFolder} <> ${folderState.observedFolder}`,
-  )!;
+  return sql`(${folderState.reconcileStatus} = 'pending' and ${folderState.lastSetBy} = 'us' and ${folderState.desiredFolder} <> ${folderState.observedFolder})`;
+}
+
+export { OUTSTANDING_FILING_WHERE };
+
+/**
+ * The outstanding filings of one account, by `folder_state.outstanding_account_id` (mail 0160): the
+ * message's account, copied by a trigger onto every row that is outstanding, never by application
+ * code. Read beside {@link ourOutstandingFiling}, which it narrows to the index range; on a row that
+ * is not outstanding the column may be stale or NULL, so it never stands alone. Not an account
+ * scope: erasure and export stay keyed by message.
+ */
+export function outstandingFilingsOf(accountId: string): SQL {
+  return eq(folderState.outstandingAccountId, accountId);
 }
 
 /** An outstanding filing of ours the next reconcile turn will pick up. */

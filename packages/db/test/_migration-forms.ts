@@ -103,6 +103,20 @@ const catchesDuplicate = (flat: string): boolean => {
 };
 
 /**
+ * A `DO` block that creates the trigger only where `pg_trigger` has no row of that name — mail
+ * 0159's form, which takes no lock on a second application (a DROP TRIGGER takes an exclusive
+ * one, and CREATE OR REPLACE TRIGGER needs Postgres 14). Read off the RAW statement: the guard
+ * names the trigger in a string literal, which the flat text blanks. The guard must come before
+ * the creation, in the same statement.
+ */
+const guardedByCatalog = (raw: string, name: string): boolean => {
+  if (!/^\s*DO\b/i.test(raw)) return false;
+  const guard = new RegExp(`IF\\s+NOT\\s+EXISTS\\s*\\(\\s*SELECT\\s+1\\s+FROM\\s+pg_trigger\\s+WHERE\\s+tgname\\s*=\\s*'${name}'`, "i").exec(raw);
+  const create = new RegExp(`CREATE\\s+TRIGGER\\s+"?${name}"?`, "i").exec(raw);
+  return guard !== null && create !== null && guard.index < create.index;
+};
+
+/**
  * THE DECIDING TABLE. Each rule finds a creating form and says when a SECOND application of it is
  * a no-op rather than an error. `admit` is the line a mutation control flips: weaken one and the
  * census's own reading for that migration stops agreeing with this file.
@@ -110,7 +124,7 @@ const catchesDuplicate = (flat: string): boolean => {
 const FORM_RULES: ReadonlyArray<{
   form: FormClass;
   re: RegExp;
-  admit: (flat: string, name: string, dropped: Dropped) => boolean;
+  admit: (flat: string, name: string, dropped: Dropped, raw: string) => boolean;
 }> = [
   {
     form: "ADD CONSTRAINT",
@@ -141,7 +155,8 @@ const FORM_RULES: ReadonlyArray<{
   {
     form: "CREATE TRIGGER",
     re: new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?TRIGGER\\s+${NAME}`, "i"),
-    admit: (flat, name, d) => /CREATE\s+OR\s+REPLACE\s+TRIGGER/i.test(flat) || d.trigger.has(name),
+    admit: (flat, name, d, raw) => /CREATE\s+OR\s+REPLACE\s+TRIGGER/i.test(flat) || d.trigger.has(name)
+      || guardedByCatalog(raw, name),
   },
   {
     form: "CREATE SEQUENCE",
@@ -174,7 +189,7 @@ export function nonIdempotentForms(statements: readonly Statement[]): Finding[] 
       const m = rule.re.exec(s.flat);
       if (m === null) continue;
       const name = m[1] ?? "";
-      if (!rule.admit(s.flat, name, dropped)) out.push({ statement: s.index, form: rule.form, object: name });
+      if (!rule.admit(s.flat, name, dropped, s.raw)) out.push({ statement: s.index, form: rule.form, object: name });
     }
     // AFTER the rules: a file that drops and re-adds in ONE statement is not made idempotent by
     // its own drop, and the pair is always two statements here.

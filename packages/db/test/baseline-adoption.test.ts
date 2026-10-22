@@ -863,6 +863,12 @@ describe("the baseline cutoff is frozen", () => {
       // The reader's press ordering: one nullable ADD COLUMN IF NOT EXISTS on rules, no default, no
       // data. Safe over any history.
       "0159_rules_settled_press_at",
+      // The poll's outstanding filings: a guarded nullable column, a trigger function, a trigger
+      // created only where missing, CREATE INDEX IF NOT EXISTS and a backfill of NULL outstanding
+      // rows from their message. Safe over any history.
+      "0160_folder_state_outstanding",
+      // The list read's index: CREATE INDEX IF NOT EXISTS, no data. Safe over any history.
+      "0161_mailboxes_account_idx",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

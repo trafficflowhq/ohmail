@@ -142,9 +142,13 @@ describe.skipIf(!PG_UP)("what the production spec table declares", () => {
       // table, so they are specs like the rest.
       "audit_log_created_at_idx",
       "auth_events_at_idx",
+      // Mail 0160's outstanding filings by account — the mailbox poll's filing facts.
+      "folder_state_outstanding_idx",
       // The Screener auto-apply held page: a growth table, unconditional like `messages`. Keyed by
       // the floor version since mail 0141; the old `folder_state_screener_held_idx` left the list.
       "folder_state_screener_held_floor_idx",
+      // Mail 0161's list read — the caller's mailboxes by account.
+      "mailboxes_account_idx",
       // Mail 0139's arrival order — the order every list, History and snapshot page walks.
       "messages_account_arrival_order_idx",
       "messages_account_date_order_idx",

@@ -846,6 +846,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `select().from(rules)`, so an API ahead of the migration 42703s the rules surface and a worker
   // stops filing mail. Deploy order migration → API → worker.
   ["rules", "settled_press_at"],
+  // mail 0160_folder_state_outstanding — the message's account on an outstanding filing, which the
+  // mailbox poll's filing statement binds; an API ahead of the migration 42703s on every poll.
+  // Deploy order setup → migration → API.
+  ["folder_state", "outstanding_account_id"],
 ] as const;
 
 /**
@@ -940,6 +944,11 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // mail 0157_messages_sender_date. The SILENT kind: the Screener cutline probe dates each held
   // sender's mail by this key, and without it reads every message of the sender from the heap.
   ["messages_account_sender_date_idx", "ON public.messages USING btree (account_id, lower(from_address), COALESCE(date, created_at))"],
+  // mail 0160_folder_state_outstanding. The SILENT kind: without it the poll's filing statement reads
+  // every outstanding filing of every account.
+  ["folder_state_outstanding_idx", "ON public.folder_state USING btree (outstanding_account_id, message_id) WHERE ((reconcile_status = 'pending'::text) AND (last_set_by = 'us'::text) AND (desired_folder <> observed_folder))"],
+  // mail 0161_mailboxes_account_idx. The SILENT kind: without it the list read walks every mailbox.
+  ["mailboxes_account_idx", "ON public.mailboxes USING btree (account_id, id)"],
 ];
 
 /**
@@ -1213,8 +1222,13 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
 export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // Mail 0140_body_tsv_bounded — the body vector over the first 65,536 characters. Against a 0139
   // database `body_tsv` is still generated over the whole text, and a long body of distinct words
-  // fails its ingest with 54000. The newest entry: the sentence about the tag moves with it.
+  // fails its ingest with 54000.
   ["message_bodies_body_tsv_bounded", "left(coalesce(NEW.text, ''), 65536)"],
+  // Mail 0160_folder_state_outstanding — the trigger function that keeps `outstanding_account_id`.
+  // The prebuild adds the column and the index ahead of the migrator, so this is the marker that
+  // says the migration itself ran: without it the column fills no further and the poll under-counts.
+  // The newest entry: the sentence about the tag moves with it.
+  ["folder_state_outstanding_account", "NEW.outstanding_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
 ];
 
 /**
@@ -1252,7 +1266,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0159_rules_settled_press_at";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0161_mailboxes_account_idx";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

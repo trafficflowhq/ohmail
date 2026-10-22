@@ -113,8 +113,7 @@ describe("the press stamp has one writer and one reader", () => {
       "declare packages/db/src/schema-mail-sqlite.ts#<module>",
       "declare packages/db/src/schema-mail.ts#<module>",
       "read packages/db/src/request-apply.ts#settleReaderRuleRows",
-      // The marker, and the journal tag that names the migration.
-      "sql packages/api/src/routes/health-markers.ts#<module>",
+      // The marker (the journal tag moved on to a later migration).
       "sql packages/api/src/routes/health-markers.ts#<module>",
       // The migration's file name, and its one statement.
       "sql packages/db-mail/src/sqlite-journal.ts#<module>",

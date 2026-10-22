@@ -9,7 +9,7 @@ import {
   hasCapability, CAPABILITY_REQUESTS,
   standDownMemory, mailboxCountsAsOwn,
   closeRemovedMailboxAppointments, lockAccountRuleKeys, settlePressesLeavingMailbox,
-  filingDue, filingDeferred, filingStuck, ourOutstandingFiling, isFilingRefusalClass,
+  filingDue, filingDeferred, filingStuck, ourOutstandingFiling, outstandingFilingsOf, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   OrganizedElsewhereError, auditAction, auditLog,
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
@@ -1165,6 +1165,7 @@ export class MailboxService {
           eq(messages.accountId, ctx.accountId),
           eq(messages.mailboxId, mailboxes.id),
           which,
+          outstandingFilingsOf(ctx.accountId),
           isNotNull(folderState.lastErrorClass),
         ))
         .orderBy(desc(folderState.attempts), desc(folderState.nextAttemptAt))
@@ -1207,7 +1208,11 @@ export class MailboxService {
         .innerJoin(folderState, eq(folderState.messageId, messages.id))
         // The account on `messages` too: joined to the listed mailboxes alone, the planner sizes
         // them from the whole table and, beside a larger account, reads every account's filings.
-        .where(and(scope, eq(messages.accountId, ctx.accountId)))
+        // THE OUTSTANDING ROWS ALONE (mail 0159): every aggregate here counts outstanding rows, so
+        // the WHERE says so and reads them through `folder_state_outstanding_idx` by the caller's
+        // account, not every message of the mailbox. A mailbox with none has no group row, which
+        // `toDTO` reads as the zeros and nulls the group gave.
+        .where(and(scope, eq(messages.accountId, ctx.accountId), ourOutstandingFiling(), outstandingFilingsOf(ctx.accountId)))
         .groupBy(mailboxes.id);
       for (const { mailboxId, ...p } of filings) entry(mailboxId).pending = p;
     }
@@ -2074,7 +2079,7 @@ export class MailboxService {
   async answerGapLetters(
     ctx: ServiceContext, id: string, answer: { file: boolean; count: unknown; strangers?: unknown },
   ): Promise<{ outcome: "pressed" | "left" | "changed"; mailbox: MailboxDTO }> {
-    // The person's answer to the gap offer (mail 0151, 0158). "File" stamps `gap_pressed_at` only
+    // The person's answer to the gap offer (mail 0151, 0159). "File" stamps `gap_pressed_at` only
     // while the row offers exactly the pair of counts they were shown (a missing `strangers` is 0,
     // so an older client never screens letters it did not show), on a mailbox this install
     // organizes; the organizer's next pass files and screens that set or offers the new counts. A
@@ -2998,7 +3003,7 @@ export class MailboxService {
       }
     }
     // Our own filings this mailbox has not applied yet, split by the operand that decides
-    // (`factsFor`). A mailbox with no `folder_state` row has no aggregate row, which reads as the
+    // (`factsFor`). A mailbox with no outstanding filing has no aggregate row, which reads as the
     // zeros and nulls an empty aggregate gives.
     const pending = facts.pending;
     return {
@@ -3056,7 +3061,7 @@ export class MailboxService {
       inboundQuietDismissedAt: m.inboundQuietDismissedAt ? m.inboundQuietDismissedAt.toISOString() : null,
       // UNCONDITIONAL, for the reason the sync-block pair above is: every state this number
       // describes happens while the row says `connected`. `?? 0` because a mailbox with no
-      // `folder_state` row has no group in `factsFor`'s aggregate, and that is "nothing
+      // outstanding filing has no group in `factsFor`'s aggregate, and that is "nothing
       // outstanding", never `NaN` on somebody's strip.
       pendingMoves: pending?.n ?? 0,
       // ── THE SAME ROWS, SPLIT BY THE OPERAND THAT DECIDES (mail 0097) ───────────────────

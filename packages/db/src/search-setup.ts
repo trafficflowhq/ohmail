@@ -167,9 +167,43 @@ export const SENDER_DATE_PREBUILD_SPEC: ConcurrentIndexSpec = {
   ddl: SENDER_DATE_INDEX_DDL,
 };
 
+/**
+ * Mail 0160's column, added only where it is missing: on a database that has it the block reads the
+ * catalog and takes no table lock. Byte-equal to the journal's first statement (a test).
+ */
+export const FOLDER_STATE_OUTSTANDING_COLUMN_DDL = sql`DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'folder_state' AND column_name = 'outstanding_account_id') THEN
+    ALTER TABLE "folder_state" ADD COLUMN IF NOT EXISTS "outstanding_account_id" uuid;
+  END IF;
+END $$`;
+
+/** Mail 0160's index: the outstanding filings by account, the WHERE `ourOutstandingFiling` spells. */
+export const FOLDER_STATE_OUTSTANDING_INDEX_DDL = sql`create index concurrently if not exists "folder_state_outstanding_idx" on public.folder_state using btree ("outstanding_account_id","message_id") where "reconcile_status" = 'pending' and "last_set_by" = 'us' and "desired_folder" <> "observed_folder"`;
+
+/**
+ * Mail 0160's index, built CONCURRENTLY ahead of the migrator. The column is the prelude's, not a
+ * `requiresColumn`: on a database below 0160 that would defer the build to the journal, a plain
+ * build that holds `folder_state`'s writes for the whole scan. The index stays empty of keys until
+ * the journal's trigger and backfill fill the column; nothing reads it before.
+ */
+export const FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "folder_state_outstanding_idx",
+  table: "folder_state",
+  prelude: [FOLDER_STATE_OUTSTANDING_COLUMN_DDL],
+  ddl: FOLDER_STATE_OUTSTANDING_INDEX_DDL,
+};
+
+/** Mail 0161's index: the mailbox list read, the caller's mailboxes in id order. */
+export const MAILBOXES_ACCOUNT_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "mailboxes_account_idx",
+  table: "mailboxes",
+  ddl: sql`create index concurrently if not exists "mailboxes_account_idx" on public.mailboxes using btree ("account_id","id")`,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
-  SENDER_DATE_PREBUILD_SPEC,
+  SENDER_DATE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

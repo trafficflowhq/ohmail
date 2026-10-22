@@ -502,6 +502,9 @@ export default defineConfig({
       "packages/services/test/mailbox-filing-report.test.ts",
       // The mailbox list's facts, read for all of an account's mailboxes at once, on this store too.
       "packages/services/test/mailbox-facts-batched.test.ts",
+      /* …and at 74k, through mail 0159's outstanding index; and the column its triggers keep. */
+      "packages/services/test/mailbox-facts-budget.test.ts",
+      "packages/db/test/folder-state-outstanding-account.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
       "packages/services/test/organize-rerun-window.test.ts",
       "packages/db/test/json-merge-dialect.test.ts",

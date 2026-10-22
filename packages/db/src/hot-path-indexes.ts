@@ -1,5 +1,8 @@
 import { sql } from "drizzle-orm";
-import { ARRIVAL_ORDER_INDEX_DDL, RECIPIENT_KEYS_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC } from "./search-setup.js";
+import {
+  ARRIVAL_ORDER_INDEX_DDL, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
+  RECIPIENT_KEYS_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC,
+} from "./search-setup.js";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
 } from "./concurrent-index.js";
@@ -103,6 +106,10 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   RECIPIENT_KEYS_PREBUILD_SPEC,
   // THE SCREENER CUTLINE PROBE (mail 0157): a held sender's mail dated by the cutline's own key.
   SENDER_DATE_PREBUILD_SPEC,
+  // THE MAILBOX POLL (mail 0160, 0161): the outstanding filings by account, column prelude and all,
+  // and the list read's mailboxes by account.
+  FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
+  MAILBOXES_ACCOUNT_PREBUILD_SPEC,
   {
     // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0148), by account then id. Every row is NULL
     // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,

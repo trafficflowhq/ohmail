@@ -512,5 +512,21 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"rules\" ADD COLUMN \"settled_press_at\" integer;"
     ]
+  },
+  {
+    "name": "0160_folder_state_outstanding.sql",
+    "statements": [
+      "ALTER TABLE \"folder_state\" ADD COLUMN \"outstanding_account_id\" text;",
+      "CREATE TRIGGER IF NOT EXISTS folder_state_outstanding_account_insert AFTER INSERT ON folder_state\n  WHEN NEW.\"reconcile_status\" = 'pending' and NEW.\"last_set_by\" = 'us' and NEW.\"desired_folder\" <> NEW.\"observed_folder\"\nBEGIN\n  UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id;\nEND;",
+      "CREATE TRIGGER IF NOT EXISTS folder_state_outstanding_account_update AFTER UPDATE ON folder_state\n  WHEN NEW.\"reconcile_status\" = 'pending' and NEW.\"last_set_by\" = 'us' and NEW.\"desired_folder\" <> NEW.\"observed_folder\"\nBEGIN\n  UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id AND outstanding_account_id IS NOT (SELECT account_id FROM messages WHERE id = NEW.message_id);\nEND;",
+      "CREATE INDEX IF NOT EXISTS \"folder_state_outstanding_idx\" ON \"folder_state\" (\"outstanding_account_id\", \"message_id\") WHERE \"reconcile_status\" = 'pending' and \"last_set_by\" = 'us' and \"desired_folder\" <> \"observed_folder\";",
+      "UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = folder_state.message_id)\n WHERE outstanding_account_id IS NULL AND \"reconcile_status\" = 'pending' and \"last_set_by\" = 'us' and \"desired_folder\" <> \"observed_folder\";"
+    ]
+  },
+  {
+    "name": "0161_mailboxes_account_idx.sql",
+    "statements": [
+      "CREATE INDEX IF NOT EXISTS \"mailboxes_account_idx\" ON \"mailboxes\" (\"account_id\", \"id\");"
+    ]
   }
 ] as const;

@@ -365,8 +365,8 @@ describe("migration lock cost — pg journals only", () => {
       expect(check(`create index if not exists "messages_account_msg_order_idx" on public.messages ("account_id");`))
         .toEqual(["index-build"]);
       // 0125's History index, the withheld-provenance index, 0139's arrival index, 0154's recipient
-      // keys and 0157's sender-date index.
-      expect(PREBUILT.size).toBe(5);
+      // keys, 0157's sender-date index, 0159's outstanding filings and 0160's mailboxes by account.
+      expect(PREBUILT.size).toBe(7);
     });
     it("a FOREIGN KEY spelled in a comment or a string is noise, not DDL", () => {
       expect(check(
