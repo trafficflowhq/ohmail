@@ -169,13 +169,13 @@ describe("a run that ends without an answer hands its claims back through one do
     const c = heldClassifier(); c.open();
     const svc = new ScreenerService({ adapter: new FakeAdapter(), classifier: c.port, credits: faulting, pricing: PLANE_PRICING });
     storeFaults(svc);
-    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const said = vi.spyOn(console, "log").mockImplementation(() => undefined);
     let thrown = "none";
     try {
       await svc.suggest(w.ctx, { senders: ["alice@ex.example"] }, { idempotency: { key: "k6", requestHash: "hA" } });
     } catch (err) { thrown = (err as Error).message; }
-    const lines = errors.mock.calls.filter((a) => String(a[0]).includes("claim release failed"));
-    errors.mockRestore();
+    const lines = said.mock.calls.filter((a) => String(a[0]).includes("\"event\":\"screener_suggest_release_failed\""));
+    said.mockRestore();
     expect(thrown).toBe("store 08006");
     expect(w.credits.releases, "the release was retried").toHaveLength(1);
     expect(lines, "the release fault was not logged exactly once").toHaveLength(1);
@@ -201,13 +201,13 @@ describe("a run that ends without an answer hands its claims back through one do
     (svc as unknown as { store: () => Promise<void> }).store = async () => {
       failTx = true; throw new Error("store 08006");
     };
-    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const said = vi.spyOn(console, "log").mockImplementation(() => undefined);
     let thrown = "none";
     try {
       await svc.suggest({ ...w.ctx, db }, { senders: ["alice@ex.example"] }, { idempotency: { key: "k7", requestHash: "hA" } });
     } catch (err) { thrown = (err as Error).message; }
-    const lines = errors.mock.calls.filter((a) => String(a[0]).includes("idempotency key release failed"));
-    errors.mockRestore();
+    const lines = said.mock.calls.filter((a) => String(a[0]).includes("\"event\":\"screener_suggest_key_release_failed\""));
+    said.mockRestore();
     expect(thrown, "the key's release fault replaced the pass error").toBe("store 08006");
     expect(lines, "the release fault was not logged exactly once").toHaveLength(1);
     // Left to its short TTL — which the case below proves frees it.

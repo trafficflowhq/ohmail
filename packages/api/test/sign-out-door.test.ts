@@ -217,12 +217,12 @@ describe("the ordinary sign-out through the door", () => {
       }
     }
     const pruneDown = { ...deps, services: { ...deps.services, auth: new PruneDown({ ...makeTestAuthDeps(), mail }) } };
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       const out = await H(req("POST", "/auth/refresh/logout", atRefreshPath(live)), pruneDown as ApiDeps);
       expect(out.status, JSON.stringify(await codeOf(out))).toBe(204);
       expectCleared(out, "the door's 204 over a failed prune");
-      expect(logged.mock.calls.filter((c) => String(c[0]).includes("wake-registration prune failed")))
+      expect(logged.mock.calls.filter((c) => String(c[0]).includes("\"event\":\"auth_logout_wake_prune_failed\"")))
         .toHaveLength(1);
     } finally {
       logged.mockRestore();

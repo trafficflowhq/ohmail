@@ -260,10 +260,10 @@ describe.skipIf(!PG_UP)("logout by refresh token on real Postgres", () => {
     const [phone] = await db.insert(devices)
       .values({ accountId: seed.accountId, userId: seed.userId, kind: "mobile-android" }).returning();
     const f = await seedFamily({ deviceId: phone!.id, accountId: seed.accountId, userId: seed.userId });
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       await expect(s.logout(ctx(at(1_000)), { refreshToken: f.r1 })).resolves.toEqual({ familyIds: [f.familyId] });
-      expect(logged.mock.calls.filter((c) => String(c[0]).includes("wake-registration prune failed")))
+      expect(logged.mock.calls.filter((c) => String(c[0]).includes("\"event\":\"auth_logout_wake_prune_failed\"")))
         .toHaveLength(1);
     } finally {
       logged.mockRestore();
