@@ -1123,6 +1123,9 @@ async function composePhoneEngine(
     /* See {@link phoneOneClickPost}: refused by name, so the failure is about the person's mail
        rather than about a missing Node module. */
     oneClickPost: phoneOneClickPost,
+    /* NO SENDER-SIGNATURE CHECK: its key lookup is a TXT query, which this build's DNS shim refuses.
+       A mailbox here whose provider names no authserv-id confirms no sender, and its row says so. */
+    dkimKeys: null,
     /* THE BLANK REPAIR IS OFF ON THE PHONE, and its code is not in this build: the alias table
        substitutes a twin that refuses (`phone/blank-repair.ts`), so the artifact stays under its
        size ceiling. The phone has the fix that stops new blanks; the desktop app, Cloud and the

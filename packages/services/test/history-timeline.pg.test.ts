@@ -92,7 +92,7 @@ describe("History pages the whole store (real Postgres)", () => {
      mailbox count took the tombstones in. Both figures answer one question, so they must agree. */
   it("Settings' per-mailbox counts add up to History's total, the tombstone in neither", async () => {
     const t = await svc.timeline(ctx);
-    const rows = await new MailboxService().list(ctx, { counts: true });
+    const rows = await new MailboxService({ signatureChecks: false }).list(ctx, { counts: true });
     const counted = rows.reduce((n, m) => n + (m.messageCount ?? 0), 0);
     expect(rows.map((m) => typeof m.messageCount)).toEqual(["number", "number"]);
     expect(counted, "Settings counted a message History says the account does not own").toBe(t.total);

@@ -10,6 +10,8 @@ import { folderState, messages, unsubscribeRecords } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import type { DkimKeyLookup } from "@trafficflow/core/adapters/dkim";
+import { fakeKeys, nodemailerSign, rsaKey } from "../../../packages/core/test/fixtures/dkim-signed.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 2 });
 
@@ -108,7 +110,9 @@ describe("the standalone door's unsubscribe believes each mailbox's own provider
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(all: Server[], post: ReturnType<typeof recordingPost>, keyRing = true): Promise<Sidecar> {
+  async function boot(
+    all: Server[], post: ReturnType<typeof recordingPost>, keyRing = true, dkimKeys: DkimKeyLookup | null = null,
+  ): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-unsub-per-mailbox-");
     const seed = all[0]!;
     const s = await createSidecar({
@@ -125,6 +129,7 @@ describe("the standalone door's unsubscribe believes each mailbox's own provider
       ...(keyRing ? { keks: { 1: Buffer.alloc(32, 7) } } : {}),
       adapterFactory: servers(all),
       oneClickPost: post,
+      dkimKeys,
       log: () => {},
     });
     cleanups.push(async () => { await s.stop().catch(() => undefined); rmSync(dataDir, { recursive: true, force: true }); });
@@ -227,5 +232,33 @@ describe("the standalone door's unsubscribe believes each mailbox's own provider
       const s = await boot([server("one@example.test", host)], recordingPost(), false);
       expect(await providerConfirmsOf(s), host).toEqual({ [s.world.mailboxId]: confirms });
     }
+  });
+
+  /* WHERE THE PROVIDER WRITES NOTHING OHMAIL BELIEVES, the sender's own signature: ingest checks it
+     against the key its domain publishes (here a fake lookup that counts), stores `pass`, and the
+     screen-out's unsubscribe is sent for it and keeps it. The rows then say a sender can be confirmed. */
+  it("an unmapped mailbox's letter signed by its sender is confirmed, unsubscribed, and the rows say so", async () => {
+    const post = recordingPost();
+    const key = rsaKey();
+    const keys = fakeKeys({ "s1._domainkey.paypal.com": key.record });
+    // The body ends in CRLF, as every letter delivered over SMTP does (RFC 6376 §3.4.4 adds one).
+    const signed = Buffer.from(await nodemailerSign(
+      `${letter("two@example.test", "mail.infomaniak.com; dkim=none", "c").toString("latin1")}\r\n`, "paypal.com", "s1", key,
+    ), "latin1");
+    const gmail = server("one@example.test", "imap.gmail.com");
+    const other = server("two@example.test", "mail.infomaniak.com", [signed]);
+    const s = await boot([gmail, other], post, true, keys);
+    const second = await addSecond(s, other);
+    const id = await heldLetter(s, second);
+    expect(await storedVerdict(s, id), "the signature was not checked at ingest").toBe("pass");
+    expect(keys.calls).toEqual(["s1._domainkey.paypal.com"]);
+    expect(await senderCheckOf(s, id), "a confirmed sender carries no did-not-confirm line").toBeNull();
+    expect(await providerConfirmsOf(s)).toEqual({ [s.world.mailboxId]: true, [second]: true });
+
+    const res = await call(s, "POST", `/screener/${id}`, { decision: "no" });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(post.calls).toEqual([ONE_CLICK_URL]);
+    expect(await records(s)).toHaveLength(1);
+    expect(await storedVerdict(s, id), "the request overwrote the signature's pass").toBe("pass");
   });
 });

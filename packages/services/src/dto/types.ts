@@ -902,10 +902,10 @@ export interface MailboxDTO {
    */
   smtpMaxSizeBytes?: number | null;
   /**
-   * Does ohmail read this mailbox's provider's word on who sent a message — an authserv-id known for
-   * the IMAP host its credential records (`providerAuthservIds`). `false`: every verdict there is
-   * `unavailable`, so nothing of its mail is unsubscribed from automatically. ABSENT where no host is
-   * recorded, which says nothing.
+   * Can a sender be confirmed at this mailbox — an authserv-id known for the IMAP host its credential
+   * records (`providerAuthservIds`), or an organizer that checks the sender's own DKIM signature
+   * where none is. `false`: every verdict there is `unavailable`, so nothing of its mail is
+   * unsubscribed from automatically. ABSENT where no host is recorded, which says nothing.
    */
   providerConfirms?: boolean;
   /**

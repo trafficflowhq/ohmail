@@ -126,7 +126,7 @@ describe("the folder summary is bounded at the read", () => {
  * rather than truncating, because this answer has to cover every connected mailbox; and it is
  * applied at the read, so a runaway account never builds the parameter list at all.
  */
-const pull = new MailboxService();
+const pull = new MailboxService({ signatureChecks: false });
 
 /** `n` connected mailboxes on one account. */
 async function connected(

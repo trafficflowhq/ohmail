@@ -43,11 +43,11 @@ export function unsubscribePostureOf(reader: EntityReader, messageId: string): U
 }
 
 /**
- * Can a screen-out on this account unsubscribe by itself at all: some mailbox not disconnected has a
- * provider whose word on a sender ohmail reads (`MailboxDTO.providerConfirms`). Where none has, every
- * verdict is `unavailable` and the server makes no automatic request, so the caller's press is not
- * armed. `null` (not read yet) and a row that cannot say answer yes: the failure to avoid is an
- * unsubscribe nobody was told about.
+ * Can a screen-out on this account unsubscribe by itself at all: some mailbox not disconnected is one
+ * where a sender can be confirmed (`MailboxDTO.providerConfirms`: its provider's word is read, or the
+ * organizer checks the sender's own signature). Where none is, every verdict is `unavailable` and the
+ * server makes no automatic request, so the caller's press is not armed. `null` (not read yet) and a
+ * row that cannot say answer yes: the failure to avoid is an unsubscribe nobody was told about.
  */
 export function autoUnsubscribeConfirms(
   mailboxes: readonly { status?: string | null; providerConfirms?: boolean }[] | null,

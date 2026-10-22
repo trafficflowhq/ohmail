@@ -29,7 +29,8 @@ const DESCRIPTION = "When a suggestion about a waiting sender is at least 90% su
   + "sender where the suggestion says — the Ohbox, News, Receipts, Screened or Spam — and writes the rule "
   + "for you. Each such rule is marked as ohmail's and you can undo it in Settings → Rules. Senders you "
   + "have written to, and sensitive mail, are never filed this way. If a Screened or Spam suggestion is "
-  + "about a message your mail provider did not confirm came from its sender, or rests only on the same "
+  + "about a message whose sender was not confirmed — by your mail provider, or by the signature the "
+  + "sender's own domain put on the message — or rests only on the same "
   + "subject from other first-time senders, ohmail files only that message, writes no rule, and lists it "
   + "under Filed automatically, where you can put it back. Off by default.";
 /** Where the Rules pane reads a copy without the mark (the desktop's hosted door). */

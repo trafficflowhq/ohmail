@@ -1,7 +1,8 @@
 import {
-  planChange, commitChange, isOrganizedFolder, MAX_RAW_MESSAGE_BYTES,
+  planChange, commitChange, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
   type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
-  type ImportHold, type Logger, type OhboxPolicy, type ProcessResult, type StorageCap,
+  type CycleSignatures, type ImportHold, type Logger, type OhboxPolicy, type PlanSignatures, type ProcessResult,
+  type StorageCap,
 } from "@trafficflow/core/mail";
 import {
   WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
@@ -162,6 +163,14 @@ export interface SyncDeps {
    * `NO_TRUSTED_AUTHSERV_IDS` — the "somebody has to type the empty set" rule.
    */
   trustedAuthservIds: ReadonlySet<string>;
+  /**
+   * The sender-signature check where {@link trustedAuthservIds} is empty (`PlanDeps.signatures`), with
+   * the account's one-click switch resolved per cycle; `null` checks nothing (the phone). REQUIRED on
+   * `trustedAuthservIds`'s rule: a root that forgot it would leave a mailbox the row calls confirmable
+   * unconfirmed. `sync-role-census.test.ts` names every root. Each cycle plans with a lookup budget
+   * of its own (`signaturesForCycle`), never one a root holds.
+   */
+  signatures: PlanSignatures | null;
   /**
    * The account's managed storage cap, threaded into `commitChange` — REQUIRED, on
    * `trustedAuthservIds`'s exact argument one field up: for a storage cap the absent-config
@@ -977,6 +986,9 @@ async function syncCycleWithin(
   deps: SyncDeps, at: CyclePageCursor,
 ): Promise<{ hasBacklog: boolean; owesFiling: boolean }> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importHold, storageCap, log } = deps;
+  // THE CYCLE'S LOOKUP BUDGET, once: every letter this cycle plans, the retry pass's included, spends
+  // the same one, so its senders' name servers can hold the cycle that long and no longer.
+  const signatures = signaturesForCycle(deps.signatures);
   /**
    * THE ONE DERIVATION. See {@link SyncDeps.role}.
    *
@@ -1427,7 +1439,7 @@ async function syncCycleWithin(
   const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
+      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
       const committed = await fencedIngest(deps, async (txRepo) =>
         // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
         // ran outside any transaction and may have spent a classifier call there, which is exactly
@@ -1626,7 +1638,7 @@ async function syncCycleWithin(
 
   // AFTER the cursor writes, and skipped entirely when anything is deferred — see
   // `retryFailedMessages` for both reasons.
-  if (deferred.size === 0) await retryFailedMessages(deps, deadLetters, version);
+  if (deferred.size === 0) await retryFailedMessages(deps, deadLetters, version, signatures);
 
   // THE SECOND DOOR OUT OF JUNK — refill `junk_filed` husks whose message this scan can see
   // alive in a watched folder (the user moved it back in another client, or the provider
@@ -1780,7 +1792,7 @@ async function consentPointFor(
 }
 
 async function retryFailedMessages(
-  deps: SyncDeps, deadLetters: DeadLetterLedger, version: string,
+  deps: SyncDeps, deadLetters: DeadLetterLedger, version: string, signatures: CycleSignatures | null,
 ): Promise<void> {
   const { repo, adapter, accountId, mailboxId, classifier, credits, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, importHold, storageCap, log } = deps;
   // The retry runs THE SAME two-phase ingest as the ordinary path, so it derives the mode the
@@ -1900,7 +1912,7 @@ async function retryFailedMessages(
       // `own_copy` for a Sent twin of mail we hold.
       try {
         const correspondenceSince = await consentPointFor(deps, readerMode, [change]);
-        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log });
+        const plan = await planChange(change, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log });
         // THROUGH THE INGEST'S OWN COMMIT DOOR, and never a second fence. `planChange` above ran
         // outside every transaction exactly as the ordinary path's does, so a removal lands in the
         // same gap and this commit needs the same question asked inside the same transaction —

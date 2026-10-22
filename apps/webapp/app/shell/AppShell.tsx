@@ -874,7 +874,11 @@ export function AppShell({
    * the proxy directly and is left exactly as it shipped.
    */
   imageWire?: (messageId: string, url: string) => Promise<string | null>;
-  /** A computer of the reader's own fetches the pictures (the desktop's local or host door). */
+  /**
+   * A computer of the reader's own fetches the pictures (the desktop's local or host door). Its
+   * engine also sends the one-click unsubscribe a screen-out asks for, so both unsubscribe notes
+   * read this too.
+   */
   imagesFromComputer?: boolean;
   /**
    * THE REACH-PAST BODY WIRE, when the host has its own — the desktop on its HOSTED door. The
@@ -3404,22 +3408,23 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                  * the other way: this switch rests ON, so drawing it before the server has answered would show it ON
                  * to an account that turned it OFF — and somebody who then left it alone would believe they had
                  * chosen the state they were merely shown. `supported` is the structural one, and it is why this is
-                 * not simply `known`: a STANDALONE install wires no unsubscribe service into its screener at all, so
-                 * nothing there could be switched off, and a control drawn on that build would store nothing and
-                 * govern nothing.
+                 * not simply `known`: a shell with no consent row to reach (`consent.standalone`) has no switch to
+                 * store, so a control drawn there would store nothing and govern nothing.
                  */
 
                 /**
                  * It used to read `apiConfigured()`, which also excluded the desktop's HOSTED door — where the
                  * screening decisions this flag qualifies are forwarded to the account and the hosted pass is what
-                 * sends the request, so the switch governs exactly what it says it does. That door hands in a wire;
-                 * the standalone door hands in none and is still excluded. Withheld from the demo like every other
-                 * injected pane.
+                 * sends the request, so the switch governs exactly what it says it does. That door hands in a wire,
+                 * and so does the desktop's standalone door, whose engine sends the request from the computer it
+                 * runs on (hence `fromComputer`). Withheld from the demo like every other injected pane.
                  */
                 autoUnsubscribeSection={!autoUnsub.control ? undefined : (
                   <AutoUnsubscribeRow
                     on={consent.autoUnsubscribe}
                     setBlockAutoUnsubscribe={consent.setBlockAutoUnsubscribe}
+                    // The desktop's own engine sends the request where it fetches the pictures.
+                    fromComputer={imagesFromComputer === true}
                   />
                 )}
                 /**
@@ -3709,6 +3714,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           // Our own address: the sheet says why it offers no press (`isOwnSubject`).
           own={isOwnSubject(engine.verbRead(), senderMenu!.messageId, senderMenu!.address, ownAddresses)}
           autoUnsubscribe={autoUnsubscribeDiscloses}
+          // Which machine sends that request, said in the confirm's fine print.
+          fromComputer={imagesFromComputer === true}
           // The held letters the scope's press moves: the posture their bodies carry, and each verdict.
           lettersFor={(scope) => senderMenuFor.scopes[scope].messages
             .filter((m) => m.folder === FOLDER_OF_VIEW.screener)

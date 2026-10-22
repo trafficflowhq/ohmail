@@ -775,6 +775,14 @@ export interface MailboxServiceDeps {
    * `GET /mailboxes`.
    */
   lastOrganizerCycleAt?: (ctx: ServiceContext) => Promise<string | null>;
+  /**
+   * Does this deployment's organizer check a sender's own DKIM signature at ingest where a mailbox's
+   * provider is named by no authserv-id (`pipeline.ts#signatureVerdict`)? Then a sender can be
+   * confirmed at every mailbox, and {@link MailboxDTO.providerConfirms} says so. REQUIRED, because
+   * either default makes the disclosure before a screen-out false somewhere: the hosted and the
+   * self-host APIs say `true`, the local engine whether it was handed a key lookup.
+   */
+  signatureChecks: boolean;
 }
 
 /**
@@ -1017,7 +1025,7 @@ export function wireInstant(at: Date | null): string | null {
 }
 
 export class MailboxService {
-  constructor(private readonly deps: MailboxServiceDeps = {}) {}
+  constructor(private readonly deps: MailboxServiceDeps) {}
 
   private get allowance(): MailboxAllowancePolicy {
     // The gate this instance runs. `??` and not a constructor default, so the paid gate is what an
@@ -2969,10 +2977,11 @@ export class MailboxService {
       ? unsettledRaw
       : null;
     /* The host the credential records, off the same read: whose `Authentication-Results` ingest and
-       the unsubscribe believe for this mailbox (`providerAuthservIds`). No host, no answer. */
+       the unsubscribe believe for this mailbox (`providerAuthservIds`), or, where none, whether the
+       organizer checks the sender's own signature. No host, no answer. */
     const imapHost = imapMeta?.host;
     const providerConfirms = typeof imapHost === "string" && imapHost.trim() !== ""
-      ? providerAuthservIds(imapHost).size > 0
+      ? providerAuthservIds(imapHost).size > 0 || this.deps.signatureChecks === true
       : undefined;
     const folders: MailboxFolderSummary[] = fRows.map((f) => ({
       folder: f.folder,
@@ -3238,9 +3247,12 @@ function holderRef(mailboxId: string, installId: string | null): string | null {
 }
 
 /** Construct a write-capable MailboxService with an injected KeyProvider. */
-export function makeMailboxService(deps: MailboxServiceDeps = {}): MailboxService {
+export function makeMailboxService(deps: MailboxServiceDeps): MailboxService {
   return new MailboxService(deps);
 }
 
-/** Read-only singleton (no KeyProvider) — the write methods require `makeMailboxService`. */
-export const mailboxService = new MailboxService();
+/**
+ * Read-only singleton (no KeyProvider) — the write methods require `makeMailboxService`. Its one
+ * reader is the desktop's Cloud mirror, whose rows carry no credential host and so say nothing.
+ */
+export const mailboxService = new MailboxService({ signatureChecks: false });

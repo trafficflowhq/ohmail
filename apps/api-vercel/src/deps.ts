@@ -227,6 +227,9 @@ function buildServices(cfg: HostConfig): ApiServices {
   //
   lazily(bag, "mailbox", () => makeMailboxService({
     keyProvider,
+    // The Cloud worker checks a sender's own signature where a mailbox's provider names no
+    // authserv-id, so a sender can be confirmed at every mailbox (`providerConfirms`).
+    signatureChecks: true,
     /* THE ACCESS VERDICT the allowance gate decides the LIMIT from, read before the create
        transaction opens. It reads the bag's OWN port member, so the gate and everything else that
        asks about this account's standing cannot answer differently.

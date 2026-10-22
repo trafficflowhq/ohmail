@@ -44,6 +44,8 @@ import {
   type ClassifierPort,
 } from "@trafficflow/core";
 import { agreeSweepPass, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
+import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, learnSmtpMaxSize,
   isImapBoundExceeded,
@@ -1367,8 +1369,11 @@ export async function startWorkerWithLock(
     // the storage cap per account: the hosted worker is THE metered composition (`SyncDeps.storageCap`
     // required, local engines `UNMETERED_STORAGE_CAP`), refreshed per cycle so a limit change moves within one.
     const storageCapFor = makeStorageCapResolver(entitlements, log);
+    /* ONE KEY LOOKUP FOR THE PROCESS: the sender-signature check where a mailbox's provider names no
+       authserv-id (`pipeline.ts#signatureVerdict`). Its cache holds public DNS answers only. */
+    const signatureCheck = makeSignatureCheck({ keys: makeDnsDkimKeys() });
     const SCREENING_TTL_MS = 30_000;
-    type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">;
+    type ScreeningDeps = Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff" | "signatures">;
     const screeningCache = new Map<string, { at: number; value: ScreeningDeps }>();
     async function screeningFor(accountId: string): Promise<ScreeningDeps> {
       const now = Date.now();
@@ -1380,20 +1385,24 @@ export async function startWorkerWithLock(
           bar: accountSettings.ohboxBar,
           baselineAt: accountSettings.screeningBaselineAt,
           dormancyDays: accountSettings.dormancyDays,
+          blockAutoUnsubscribeAt: accountSettings.blockAutoUnsubscribeAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays);
         const value: ScreeningDeps = {
           ohboxPolicy: resolveOhboxPolicy(row?.policy ?? null),
           ...(row?.bar ? { ohboxBar: row.bar } : {}),
           ...(cutoff ? { screeningCutoff: cutoff } : {}),
+          // A one-click letter's sender is worth confirming while a screen-out may unsubscribe.
+          signatures: { ...signatureCheck, listLetters: (row?.blockAutoUnsubscribeAt ?? null) === null },
         };
         screeningCache.set(accountId, { at: now, value });
         return value;
       } catch (err) {
         // Do NOT cache the fault: the next cycle re-reads, and until then we route LENIENT for the
-        // posture and with NO CUTOFF for the gate — which is the strict direction for the gate.
+        // posture and with NO CUTOFF for the gate — which is the strict direction for the gate —
+        // and confirm one-click senders for no unsubscribe.
         log.warn("screening_pref_read_failed", { accountId, err });
-        return { ohboxPolicy: DEFAULT_OHBOX_POLICY };
+        return { ohboxPolicy: DEFAULT_OHBOX_POLICY, signatures: { ...signatureCheck, listLetters: false } };
       }
     }
 
@@ -2749,6 +2758,9 @@ export async function startWorkerWithLock(
           // not name, which routes exactly as before this field existed; for Gmail/Microsoft it
           // is what lets a forged known-contact `From` be demoted to the Screener.
           trustedAuthservIds: providerAuthservIds(creds.imap.host),
+          // Where that set is empty, the sender's own signature. The account's one-click switch is
+          // the cycle's (`screeningFor`); until it is read, one-click letters are not checked.
+          signatures: { ...signatureCheck, listLetters: false },
           // One ledger per attachment, and that lifetime is the design. Per mailbox, because a
           // written-off UID is meaningless in another mailbox's folders. Built HERE rather than per
           // cycle, because the two things it remembers are cross-cycle: how many times a message has

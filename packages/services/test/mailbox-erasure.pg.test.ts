@@ -32,7 +32,7 @@ const PG_UP = await realPgAvailable();
 
 let client: ReturnType<typeof postgres>;
 let db: Db;
-const svc = new MailboxService();
+const svc = new MailboxService({ signatureChecks: false });
 const threadSvc = new ThreadService();
 const contactsSvc = new ContactsService();
 

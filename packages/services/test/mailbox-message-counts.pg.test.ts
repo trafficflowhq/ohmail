@@ -58,7 +58,7 @@ const COUNTS_SHAPE = /\bfrom "messages" where\b[\s\S]*\bgroup by\b/i;
 describe.skipIf(!AVAILABLE)("per-mailbox message counts", () => {
   let db: ReturnType<typeof drizzle<typeof schema>>;
   let sqlc: ReturnType<typeof postgres>;
-  const service = new MailboxService();
+  const service = new MailboxService({ signatureChecks: false });
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);

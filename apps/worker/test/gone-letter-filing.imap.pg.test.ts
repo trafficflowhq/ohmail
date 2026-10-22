@@ -58,7 +58,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     const auditsOf = async (id: string) => (await h.db.select({ action: auditLog.action, payload: auditLog.payload })
       .from(auditLog).where(eq(auditLog.accountId, h.accountId)))
       .filter((r) => (r.payload as { messageId?: string } | null)?.messageId === id).map((r) => r.action);
-    const facts = async () => (await new MailboxService().list(ctx, { counts: true }))
+    const facts = async () => (await new MailboxService({ signatureChecks: false }).list(ctx, { counts: true }))
       .find((m) => m.id === h.mailboxId)!;
     const expunge = async (folder: string, header: string) => {
       const uids = await uidInFolder(c, folder, header);

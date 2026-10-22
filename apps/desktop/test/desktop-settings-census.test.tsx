@@ -207,9 +207,10 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
     desktopStandalone: {
       state: "present",
       why:
-        "posture and the dormancy dial over the standalone consent row. Auto-suggest and " +
-        "auto-unsubscribe stay out: no ledger to price a batch against, and the standalone " +
-        "screener wires no unsubscribe service at all",
+        "posture, the dormancy dial and auto-unsubscribe over the standalone consent row; this " +
+        "computer's engine sends the unsubscribe and the switch's note says so " +
+        "(`desktop-unsubscribe-note-door.test.tsx`). Auto-suggest stays out: no ledger to price " +
+        "a batch against",
     },
   },
   away: {

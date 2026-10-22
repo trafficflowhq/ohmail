@@ -16,6 +16,8 @@
       "@trafficflow/core/adapters/organizer-profile-store": ["../../packages/core/src/adapters/organizer-profile-store.ts"],
       "@trafficflow/core/adapters/organizer-profile": ["../../packages/core/src/adapters/organizer-profile.ts"],
       "@trafficflow/core/adapters/drizzle-repo": ["../../packages/core/src/adapters/drizzle-repo.ts"],
+      "@trafficflow/core/adapters/dkim-keys": ["../../packages/core/src/adapters/dkim-keys.ts"],
+      "@trafficflow/core/adapters/dkim": ["../../packages/core/src/adapters/dkim.ts"],
       "@trafficflow/core/mail": ["../../packages/core/src/mail.ts"],
       "@trafficflow/core/ics": ["../../packages/core/src/ics.ts"],
       "@trafficflow/core/url-escapes": ["../../packages/core/src/url-escapes.ts"],

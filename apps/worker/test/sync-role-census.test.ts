@@ -174,6 +174,27 @@ describe("every composition that runs the pipeline names the role", () => {
     expect(checked, "no composition roots were checked — the list lost its entries").toBe(3);
   });
 
+  it("every COMPOSITION ROOT names the sender-signature check, and only the desktop's main and the phone choose it", () => {
+    /* `SyncDeps.signatures` is required: absent, a mailbox whose provider writes nothing ohmail
+       believes never checks a sender's own signature, while the mailbox row may already say a sender
+       can be confirmed there. Each root names it; the engine's lookup is the desktop's DNS lookup
+       or, on the phone, none (its DNS shim refuses a TXT query). */
+    const files = found();
+    let checked = 0;
+    for (const [file, kind] of Object.entries(CYCLE_SITES)) {
+      if (kind !== "role") continue;
+      const src = files.get(file);
+      expect(src, `${file} is listed as a composition root and the walk did not find it`).toBeDefined();
+      expect(/\bsignatures:\s/.test(src!), `${file} builds SyncDeps and does not name \`signatures\``).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(3);
+    const read = (rel: string) => withoutComments(readFileSync(join(REPO, rel), "utf8"));
+    expect(read("apps/sidecar/src/main.ts")).toMatch(/\bdkimKeys:\s*makeDnsDkimKeys\(/);
+    expect(read("apps/sidecar/src/mobile.ts")).toMatch(/\bdkimKeys:\s*null\b/);
+    expect(read("apps/sidecar/src/mobile.ts"), "the phone names no DNS lookup").not.toMatch(/dkim-keys/);
+  });
+
   it("`readerMode` is DERIVED IN ONE PLACE, and that place is `sync.ts`", () => {
     // The property that makes the role and the router unable to disagree about one message. A
     // second derivation anywhere is two answers to one question, which is how `screeningCutoff`'s

@@ -12,6 +12,7 @@ import {
   type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { agreeSweepPass, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeSignatureCheck, type DkimKeyLookup } from "@trafficflow/core/adapters/dkim";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
 // live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
 import { ClaimReleaseError } from "@trafficflow/core/adapters/organizer-lease";
@@ -443,6 +444,14 @@ export interface SidecarConfig {
    * probe, this URL is the sender's choice, never the user's own server.
    */
   oneClickPost?: OneClickPost;
+  /**
+   * THE DKIM KEY LOOKUP for the sender-signature check where a mailbox's provider names no
+   * authserv-id (`pipeline.ts#signatureVerdict`) — a TXT query to the system resolver, and on to the
+   * sender's DNS, for a letter from a company's own domain or a one-click letter. REQUIRED, and no
+   * import here: the desktop's `main.ts` passes `makeDnsDkimKeys()`, the phone `null` (its DNS shim
+   * refuses a TXT query), a test a counting fake. `null` checks nothing and the mailbox rows say so.
+   */
+  dkimKeys: DkimKeyLookup | null;
   /**
    * Test seam for the IMAGE PROXY's fetch — the third non-mailbox egress, beside
    * {@link oneClickPost} and the model endpoint, and here for the same reason they are: a test
@@ -1058,6 +1067,8 @@ function localServices(
    * appointments" rather than a derived flag a caller could compute the other way.
    */
   organizerKind: OrganizerKind,
+  /** This composition checks a sender's own signature (`SidecarConfig.dkimKeys`): `providerConfirms`. */
+  signatureChecks: boolean,
   ai?: LocalAi,
 ): ApiServices {
   const classifier = ai?.classifier();
@@ -1116,7 +1127,7 @@ function localServices(
      */
     entitlementsPort: UNMETERED,
     mailbox: makeMailboxService({
-      keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId,
+      keyProvider, allowance: UNMETERED_MAILBOX_ALLOWANCE, installId, signatureChecks,
       // Declared, not absent: `UNMETERED_MAILBOX_ALLOWANCE` ignores the verdict, and an ABSENT
       // reader is what a host that forgot to wire one looks like. This says which this is.
       accessOf: async () => UNMETERED_ACCESS,
@@ -1828,11 +1839,12 @@ export async function discloseLocalSyncFailures(
 /**
  * WHOSE WORD ON A SENDER THIS DOOR READS, per mailbox row (`MailboxDTO.providerConfirms`): the host
  * each runtime dials, which is what ingest and the unsubscribe believe, over the service's reading of
- * the credential row — a seed with no stored password has none. A row with no runtime keeps the
- * service's answer.
+ * the credential row — a seed with no stored password has none — or, where the host names no
+ * authserv-id, whether this engine checks the sender's own signature. A row with no runtime keeps
+ * the service's answer.
  */
 export async function discloseProviderConfirms(
-  res: Response, runtimes: readonly { mailboxId: string; imap: { host: string } }[],
+  res: Response, runtimes: readonly { mailboxId: string; imap: { host: string } }[], signatureChecks: boolean,
 ): Promise<Response> {
   if (res.status !== 200 || runtimes.length === 0) return res;
   const hostOf = new Map(runtimes.map((r) => [r.mailboxId, r.imap.host]));
@@ -1847,7 +1859,8 @@ export async function discloseProviderConfirms(
   const overlaid = items.map((row) => {
     const id = (row as { id?: unknown } | null)?.id;
     const host = typeof id === "string" ? hostOf.get(id) : undefined;
-    return host === undefined ? row : { ...(row as object), providerConfirms: providerAuthservIds(host).size > 0 };
+    return host === undefined
+      ? row : { ...(row as object), providerConfirms: providerAuthservIds(host).size > 0 || signatureChecks };
   });
   return new Response(JSON.stringify({ ...(body as object), items: overlaid }), {
     status: res.status, headers: { "content-type": "application/json" },
@@ -2063,6 +2076,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const wallNow = config.now ? (): number => now().getTime() : (): number => Date.now();
   const cadenceClocks: CadenceClocks = { wall: wallNow, mono: monotonic };
   const address = config.address ?? config.imap.auth.user;
+  /* THE SENDER-SIGNATURE CHECK, once for the install, over the lookup the composition chose; `null`
+     where it chose none (the phone). Its one-click half is resolved per drain (`screeningNow`). */
+  const signatureCheck = config.dkimKeys == null ? null : makeSignatureCheck({ keys: config.dkimKeys, now });
   /* WHAT THIS COMPOSITION CLAIMS AS, resolved ONCE. Hoisted to this scope because two readers now
      need it and `?? "local"` written twice is the "absent config selects the dangerous branch"
      shape duplicated: the lease writes it into the claim, and `composition-passes.ts` decides from
@@ -2453,7 +2469,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // credential fresh per send.
       services: localServices(
         authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
-        config.imageFetch ?? nodeRemoteFetch, organizerKind, ai,
+        config.imageFetch ?? nodeRemoteFetch, organizerKind, signatureCheck !== null, ai,
       ),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
       // `via` structurally unable to be "cookie", `withCsrf` becomes a no-op by construction
@@ -2691,8 +2707,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * files leniently and drops the bar: `people_only` is the strict posture, and defaulting to it on a blip
      * would demote a real person's mail. The event name is the hosted worker's.
      */
-    const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff">
+    const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff" | "signatures">
       & { actSettings?: ScreenerAutoActSettings }> => {
+      /* A one-click letter's sender is worth confirming while a screen-out may unsubscribe. */
+      const signaturesFor = (listLetters: boolean): SyncDeps["signatures"] =>
+        signatureCheck === null ? null : { ...signatureCheck, listLetters };
       try {
         const [row] = await db.select({
           policy: accountSettings.ohboxPolicy, bar: accountSettings.ohboxBar,
@@ -2710,6 +2729,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           dormancyDays: accountSettings.dormancyDays,
           scope: accountSettings.screeningScope,
           autoActAt: accountSettings.screenerAutoActAt,
+          blockAutoUnsubscribeAt: accountSettings.blockAutoUnsubscribeAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays, row?.scope);
         return {
@@ -2720,6 +2740,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // asks for. One state, reached two ways, and `resolveScreeningCutoff` is the single
           // place that decides which.
           ...(cutoff ? { screeningCutoff: cutoff } : {}),
+          signatures: signaturesFor((row?.blockAutoUnsubscribeAt ?? null) === null),
           // The cutline's row, handed to the act so its pass asks the store nothing more.
           actSettings: {
             screeningBaselineAt: row?.baselineAt ?? null,
@@ -2734,7 +2755,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             "pass files on the lenient default, sends no bar to a model and applies NO cutoff " +
             "(the strict direction for the gate); the next pass reads again",
         });
-        return { ohboxPolicy: DEFAULT_OHBOX_POLICY };
+        return { ohboxPolicy: DEFAULT_OHBOX_POLICY, signatures: signaturesFor(false) };
       }
     };
 
@@ -3070,7 +3091,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       services: {
         ...localServices(
           hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
-          config.imageFetch ?? nodeRemoteFetch, organizerKind, ai,
+          config.imageFetch ?? nodeRemoteFetch, organizerKind, signatureCheck !== null, ai,
         ),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
       },
@@ -10438,7 +10459,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // the pairing layer answers for the host. See {@link discloseLocalSyncFailures}.
         if (req.method === "GET" && url.pathname === "/mailboxes") {
           return await discloseProviderConfirms(
-            await discloseLocalSyncFailures(answered, runtimes.all(), now()), runtimes.all());
+            await discloseLocalSyncFailures(answered, runtimes.all(), now()), runtimes.all(), signatureCheck !== null);
         }
         return answered;
       }),

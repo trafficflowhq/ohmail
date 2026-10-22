@@ -66,12 +66,13 @@ mail arrives. Nothing applies itself unless you ask: a pattern you have
 confirmed often enough graduates and files itself from then on, spam included;
 or switch on "Act on confident suggestions for me" and a sender whose suggestion
 is confident is filed for you — never someone you have written to — with the
-rule listed for you to undo. A screen-out or spam verdict about a message your
-provider did not confirm, or one that rests only on the same subject from other
-first-time senders, files only that message, writes no rule, and lists it under
-Filed automatically to put back. Every move is recorded and reversible. A
-one-time code inside a message is stripped before any model sees it, and
-automatic routing leaves that mail alone entirely.
+rule listed for you to undo. A screen-out or spam verdict about a message whose
+sender was not confirmed — by your mail provider, or by the signature the
+sender's own domain put on the message — or one that rests only on the same
+subject from other first-time senders, files only that message, writes no rule,
+and lists it under Filed automatically to put back. Every move is recorded and
+reversible. A one-time code inside a message is stripped before any model sees
+it, and automatic routing leaves that mail alone entirely.
 
 Configure nothing and the Screener still holds first contact, rules still file
 mail, and search still works — the suggestion and the draft are not
@@ -84,8 +85,9 @@ Junk folder — where the mailbox has one — and the sender rule remembers, so
 the next mail from that sender never reaches the gate, and a message you move
 back out of Junk has its text again with the move. Screening out or
 marking spam also sends the list's one-click unsubscribe on your behalf, where
-one is offered and your mail provider confirmed the sender (on by default; a
-switch turns it off). Plain newsletters and
+one is offered and the sender was confirmed by your mail provider, or by the
+signature the sender's own domain put on the message (on by default; a switch
+turns it off). Plain newsletters and
 receipts can be filed out of the Screener by deterministic rules alone, once
 you switch that on. ohmail deletes nothing on its own.
 
@@ -283,11 +285,14 @@ them.
 server over TLS, mirrors your mailbox — every folder but Junk, Trash and Drafts
 — to a database on your own disk, and files mail into `ohmail/` folders on the
 server itself. Nothing leaves your computer but the connections to your provider
-(IMAP to read, SMTP to send), the signed update check, the one-click unsubscribe
-a screen-out sends where the list offers one (a switch turns it off), and — only
-if you turn it on — requests to whichever model provider you chose. Choose a
-local Ollama and that last one stays on your machine too. No telemetry, no
-analytics.
+(IMAP to read, SMTP to send), the signed update check, the pictures in a message
+you open (fetched by your computer; a switch makes each message ask first), the
+one-click unsubscribe a screen-out sends where the list offers one (a switch
+turns it off), a DNS lookup, through your system's resolver, of the key a
+company or a newsletter signs its mail with, where your provider does not
+confirm senders itself, and — only if you turn it on — requests to whichever
+model provider you chose. Choose a local Ollama and that last one stays on your
+machine too. No telemetry, no analytics.
 
 Your mail password is sealed under a per-install key and never written in the
 clear. The key is kept in your computer's keystore (Keychain, Credential

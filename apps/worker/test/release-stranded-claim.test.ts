@@ -420,7 +420,7 @@ describe("a claim this install left behind can be given up", () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);
     const mb = await seedStranded(db, fleet, "cloud");
-    const answer = await makeMailboxService().release(ctxOn(db, mb.accountId), mb.mailboxId);
+    const answer = await makeMailboxService({ signatureChecks: false }).release(ctxOn(db, mb.accountId), mb.mailboxId);
     expect(answer).toEqual({ outcome: "not_organizing" });
   });
 

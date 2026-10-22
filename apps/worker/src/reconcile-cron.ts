@@ -1,12 +1,15 @@
 import {
   makeOwnedDb, writeHeartbeat, clearHeartbeat, makeEntitlementsClient, entitlementsFaultRecorder,
 } from "@trafficflow/db/cloud";
+import { eq } from "drizzle-orm";
 import {
-  closeStoodDownAppointments, UNMETERED,
+  accountSettings, closeStoodDownAppointments, UNMETERED,
   type EntitlementsComposition, type Tx,
 } from "@trafficflow/db";
 import { providerAuthservIds, silentLogger, type Logger } from "@trafficflow/core";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
+import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import { ImapAdapter, WriteDeclinedError } from "@trafficflow/core/adapters/imap";
 import { deriveRequestKey } from "@trafficflow/core/adapters/organizer-lease";
 import { instanceIdFrom, selectionOf, type WorkerConfig } from "./config.js";
@@ -392,6 +395,11 @@ export async function runReconcileCron(
       },
     });
     await profileSync.armHoldFromFolder();
+    /* The account's one-click switch, read once for the sweep: while a screen-out may unsubscribe,
+       a one-click letter's sender is worth confirming. A failed read confirms none of them. */
+    const listLetters = await db.select({ at: accountSettings.blockAutoUnsubscribeAt })
+      .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1)
+      .then(([settings]) => (settings?.at ?? null) === null, () => false);
     /* WITHOUT THE PERMIT, and the type says so: this object is the sweep's two cycles' shared
        facts, and the receipt every page inside a cycle asks is named at each call below. */
     const deps: Omit<SyncDeps, "writeAuthority"> = {
@@ -403,6 +411,8 @@ export async function runReconcileCron(
       role: "organizer",
       // The same host string the adapter above dials names whose report may be believed.
       trustedAuthservIds: providerAuthservIds(config.imap.host),
+      // Where it names none, the sender's own signature, as the loop this pass stands in for.
+      signatures: { ...makeSignatureCheck({ keys: makeDnsDkimKeys() }), listLetters },
       // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
       // worker would have, so it asks the same port for the same cap — read once here and held
       // on these deps for the sweep's two cycles.

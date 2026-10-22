@@ -76,6 +76,18 @@
       "node": "./dist/adapters/drizzle-repo.js",
       "default": "./src/adapters/drizzle-repo.ts"
     },
+    "./adapters/dkim": {
+      "types": "./src/adapters/dkim.ts",
+      "ohmail-source": "./src/adapters/dkim.ts",
+      "node": "./dist/adapters/dkim.js",
+      "default": "./src/adapters/dkim.ts"
+    },
+    "./adapters/dkim-keys": {
+      "types": "./src/adapters/dkim-keys.ts",
+      "ohmail-source": "./src/adapters/dkim-keys.ts",
+      "node": "./dist/adapters/dkim-keys.js",
+      "default": "./src/adapters/dkim-keys.ts"
+    },
     "./organizer-install": {
       "types": "./src/organizer-install.ts",
       "ohmail-source": "./src/organizer-install.ts",

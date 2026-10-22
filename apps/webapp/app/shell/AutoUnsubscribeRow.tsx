@@ -8,7 +8,9 @@
  * sender is unsubscribed: the request goes only where the sender published `List-Unsubscribe` AND
  * `List-Unsubscribe-Post` (RFC 8058) — a `mailto:`-only route is refused outright, because this
  * product never sends mail on the user's behalf — so the copy says "where the sender offers it"
- * and stops; nor may it imply the switch retracts anything already sent.
+ * and stops; nor may it imply the switch retracts anything already sent. Nor may it say the
+ * request goes from our servers where it does not: on the desktop the engine on the person's own
+ * computer sends it, so the note names that computer and the network address the sender sees.
  */
 
 /**
@@ -29,11 +31,14 @@ import { SettingsRow, Switch } from "@ohmail/ui";
 export function AutoUnsubscribeRow({
   on,
   setBlockAutoUnsubscribe,
+  fromComputer,
 }: {
   /** Does a screen-out still unsubscribe? The STORED answer, as the server last gave it. */
   on: boolean;
   /** `useConsentState().setBlockAutoUnsubscribe`. Takes the OPT-OUT, resolves to the feature. */
   setBlockAutoUnsubscribe: (blocked: boolean) => Promise<boolean>;
+  /** The reader's own computer sends the request, so no server stands between it and the sender. */
+  fromComputer: boolean;
 }) {
   const t = useTranslations("settings");
   const [pending, setPending] = useState(false);
@@ -77,7 +82,7 @@ export function AutoUnsubscribeRow({
           />
         }
       />
-      <p className="set-note-inline">{t("autoUnsub.microcopy")}</p>
+      <p className="set-note-inline">{t(fromComputer ? "autoUnsub.microcopyComputer" : "autoUnsub.microcopy")}</p>
       {failed ? <span className="scn-sg-note">{t("autoUnsub.failed")}</span> : null}
     </>
   );

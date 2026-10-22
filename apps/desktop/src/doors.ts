@@ -438,7 +438,8 @@ export function consentDoorFor(
 /**
  * DOES A COMPUTER OF THE READER'S OWN FETCH THIS WINDOW'S PICTURES — the local engine, or the
  * paired host's. Both serve `GET /img` from that machine, so a sender sees its network address
- * and the Settings copy says so; the Cloud door relays `/img` to the hosted proxy.
+ * and the Settings copy says so; the Cloud door relays `/img` to the hosted proxy. The same engine
+ * sends the one-click unsubscribe a screen-out asks for, so the two unsubscribe notes read this too.
  */
 export function imagesFromComputer(status: EngineStatus | null): boolean {
   return status?.mode === "local" || isDesktopHost(status);

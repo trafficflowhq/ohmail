@@ -511,6 +511,8 @@ export default defineConfig({
       /* …and at 74k, through mail 0159's outstanding index; and the column its triggers keep. */
       "packages/services/test/mailbox-facts-budget.test.ts",
       "packages/db/test/folder-state-outstanding-account.test.ts",
+      // Whether a sender can be confirmed at each mailbox: the local engine answers it from this store.
+      "packages/services/test/mailbox-provider-confirms.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
       "packages/services/test/organize-rerun-window.test.ts",
       "packages/db/test/json-merge-dialect.test.ts",

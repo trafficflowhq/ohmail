@@ -238,6 +238,11 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
       demo={false}
       /* Another computer of the person's own serves this page: no Cloud, no credits. */
       managedService={false}
+      /* …and that computer's engine sends the one-click unsubscribe a screen-out here asks for
+         (`depsForHost` in the sidecar's engine), so both unsubscribe notes name it. The picture rows
+         read the same fact and are not drawn here: this page hands the shell no image wire, and its
+         `api-client` is the refusing stub, so `useRemoteImages` hands back nothing. */
+      imagesFromComputer={true}
       engine={engine}
       /* The sync strip's mailbox facts, over the same bearer socket — the door serves
          `GET /mailboxes` out of the store on the computer hosting this page. */

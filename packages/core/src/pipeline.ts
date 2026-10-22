@@ -8,10 +8,12 @@ import {
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
   NO_TRUSTED_AUTHSERV_IDS, DEFAULT_OHBOX_POLICY, authVerdictFromHeaders, autoReplySuppression,
-  dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDeliveryReportShape, screenerAdmits, type AuthVerdict,
-  type KnownSenders, type OhboxPolicy, type Rule,
+  dsnVerdict, effectForDestination, evaluateRules, gateAuthor, isDeliveryReportShape, screenerAdmits,
+  unsubscribeHeaderState, type AuthVerdict, type KnownSenders, type OhboxPolicy, type Rule,
 } from "./rules.js";
-import { claimedIdentity, registrableDomain, type IdentityFact } from "./sender-check.js";
+import { claimedIdentity, ownedBrand, registrableDomain, type IdentityFact } from "./sender-check.js";
+// TYPE-ONLY: the check is injected by the Node compositions, so no bundle carries it through here.
+import type { LookupBudget, SignatureCheck } from "./adapters/dkim.js";
 import { authScreens } from "./sender-headers.js";
 import { isProviderBrand, providerBrand } from "./authserv-ids.js";
 import { isSharedProviderDomain } from "./rule-order.js";
@@ -573,6 +575,12 @@ export interface PlanDeps {
    */
   trustedAuthservIds?: ReadonlySet<string>;
   /**
+   * The sender's own DKIM signature, checked where {@link trustedAuthservIds} is empty — see
+   * {@link signatureVerdict} for which letters — within the cycle's lookup budget
+   * ({@link signaturesForCycle}). Absent or `null`: no check, and no lookup.
+   */
+  signatures?: CycleSignatures | null;
+  /**
    * The account's Ohbox posture, resolved per-account from `account_settings.ohbox_policy` by the
    * worker — injected configuration, like `trustedAuthservIds` above: a property of how THIS
    * account asked its mail to be organised, resolved once per cycle and threaded here. Absent
@@ -624,6 +632,61 @@ export interface PlanDeps {
    * empty set, which would hold the account's own mail at the gate.
    */
   ownAddresses?: ReadonlySet<string>;
+}
+
+/** The check (`adapters/dkim.ts`) and the account's one-click switch, as a composition hands them on. */
+export interface PlanSignatures extends SignatureCheck {
+  /**
+   * The account lets a screen-out leave lists (`account_settings.block_auto_unsubscribe_at IS NULL`):
+   * a one-click letter's sender is then worth confirming. Resolved once per cycle by the caller.
+   */
+  listLetters: boolean;
+}
+
+/** {@link PlanDeps.signatures}: one mailbox cycle's view of {@link PlanSignatures}. */
+export interface CycleSignatures extends PlanSignatures {
+  /** The cycle's lookup allowance, spent by every letter it plans. */
+  budget: LookupBudget;
+}
+
+/**
+ * THE CYCLE'S LOOKUP BUDGET. A deadline bounds one lookup and two signatures one letter, but a page
+ * plans up to 200 letters in a row and their senders choose the domains a lookup goes to; a fresh
+ * budget per mailbox cycle ({@link SignatureCheck.cycleBudget}), spent by every letter it plans, is
+ * what bounds how long their name servers can hold the cycle. `sync.ts` makes one at each start.
+ */
+export function signaturesForCycle(signatures: PlanSignatures | null | undefined): CycleSignatures | null {
+  return signatures == null ? null : { ...signatures, budget: signatures.cycleBudget() };
+}
+
+/** How old a letter may be, by the server's clock, and still have its sender's signature checked. */
+const SIGNATURE_CHECK_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * THE SENDER'S OWN SIGNATURE, IN PLACE OF A HEADER NOBODY VOUCHES FOR. Only where the mailbox's
+ * provider is named by no authserv-id (the header verdict is then `unavailable`), and only for a
+ * letter something automatic reads `pass` on: a company's own domain (the act's admission and the
+ * identity line), or a one-click letter while the account lets a screen-out unsubscribe. Never the
+ * person's own mail, an oversize letter, or one INTERNALDATE says is over 30 days old. The check
+ * answers `pass` or `unavailable` and never `fail`, so routing, which reads `fail` alone, is
+ * unchanged. Outside any transaction, like the classifier call, and within the cycle's lookup
+ * budget; logged by reason alone.
+ */
+async function signatureVerdict(
+  change: Change, msg: NormalizedMessage, trusted: ReadonlySet<string>, deps: PlanDeps, header: AuthVerdict,
+): Promise<AuthVerdict> {
+  const signatures = deps.signatures ?? null;
+  if (signatures === null || change.ownAuthored === true || trusted.size > 0) return header;
+  if (change.raw === undefined || change.oversizeBytes !== undefined) return header;
+  const arrived = change.internalDate;
+  if (arrived !== undefined && signatures.now().getTime() - arrived.getTime() > SIGNATURE_CHECK_MAX_AGE_MS) return header;
+  const candidate = ownedBrand(msg.from.address) !== undefined
+    || (signatures.listLetters && unsubscribeHeaderState(msg.headers) === "one_click");
+  if (!candidate) return header;
+  const { verdict, reason } = await signatures.check(change.raw, msg, signatures.budget)
+    .catch(() => ({ verdict: "unavailable" as const, reason: "fault" as const }));
+  deps.log?.info("dkim_local", { reason });
+  return verdict === "pass" ? "pass" : header;
 }
 
 /**
@@ -1025,12 +1088,12 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
     // `"fail"` — and only to send a message DOWN; there is no `auth !== "pass"` anywhere and
     // there must never be one. Reading this may DEMOTE; it may never be REQUIRED before a
     // consented identity is honoured. With the trusted set empty this returns `"unavailable"` on
-    // its first line. Above the `ownAuthored` return: both plans need it, and it is a pure header
-    // read. `normalized.headers`, not `change.raw`: the same map the row stores, so re-evaluation
-    // passes parse the SAME input.
-    const authVerdict = authVerdictFromHeaders(
+    // its first line, and the sender's own signature may then say `pass` ({@link signatureVerdict},
+    // never for own mail). Above the `ownAuthored` return: both plans need it. `normalized.headers`,
+    // not `change.raw`: the same map the row stores, so re-evaluation passes parse the SAME input.
+    const authVerdict = await signatureVerdict(change, normalized, trustedAuthservIds, deps, authVerdictFromHeaders(
       normalized.headers, normalized.from.address, trustedAuthservIds,
-    );
+    ));
 
     // Mail the user WROTE leaves the pipeline here. Everything below is written for INBOUND mail
     // and answers destructively for outbound: the Screener would queue every message the user

@@ -57,8 +57,12 @@ to, to ohmail Cloud):**
 
 - In **local mode** it opens **one IMAP connection over TLS** to the mail server you
   give it, and — only if you enable it — one connection to your own Anthropic key or a
-  local Ollama. Beyond that it makes only the signed update check; there is no telemetry
-  and no analytics.
+  local Ollama. Beyond that it makes the signed update check, fetches the pictures in a
+  message you open (a switch makes each message ask first), sends the one-click
+  unsubscribe a screen-out asks for where the list offers one (a switch turns it off),
+  and, where your provider does not confirm senders itself, looks up through your
+  system's DNS resolver the key a company or a newsletter signs its mail with. There is
+  no telemetry and no analytics.
 - In **Cloud mode** — an optional sign-in — it connects instead to `api.ohmail.app`, the
   hosted ohmail service, over HTTPS, and acts as a viewer of a mailbox that service already
   organises. It runs no local engine and opens no IMAP connection in this mode. The Cloud

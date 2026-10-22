@@ -83,6 +83,9 @@ export default defineConfig({
       { find: "@trafficflow/core/adapters/organizer-profile-store", replacement: r("./packages/core/src/adapters/organizer-profile-store.ts") },
       { find: "@trafficflow/core/adapters/organizer-profile", replacement: r("./packages/core/src/adapters/organizer-profile.ts") },
       { find: "@trafficflow/core/adapters/drizzle-repo", replacement: r("./packages/core/src/adapters/drizzle-repo.ts") },
+      // The sender-signature check and its DNS lookup; `dkim-keys` before its prefix `dkim`.
+      { find: "@trafficflow/core/adapters/dkim-keys", replacement: r("./packages/core/src/adapters/dkim-keys.ts") },
+      { find: "@trafficflow/core/adapters/dkim", replacement: r("./packages/core/src/adapters/dkim.ts") },
       // The MAIL-half entry points, above their bare package names for the same ordering reason
       // as core's adapters: the table is scanned in order, so "@trafficflow/core" would otherwise
       // swallow "@trafficflow/core/mail".

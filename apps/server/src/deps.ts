@@ -337,6 +337,9 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     // allowance is obligation 1; see SELF_HOST_MAILBOX_ALLOWANCE above.
     mailbox: makeMailboxService({
       keyProvider, allowance: SELF_HOST_MAILBOX_ALLOWANCE,
+      // The organizer beside this process checks a sender's own signature where a mailbox's
+      // provider names no authserv-id, as the managed worker does (`providerConfirms`).
+      signatureChecks: true,
       // Declared, not absent — see the sidecar's own line for why the two differ.
       accessOf: async () => UNMETERED_ACCESS,
       // The same identity the organizer half writes — see `resolveCloudInstallId`.

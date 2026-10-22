@@ -218,6 +218,9 @@ export async function makeDeps(
       mailbox: makeMailboxService({
         keyProvider: authDeps.keyProvider,
         accessOf: async () => verdict,
+        // No signature check: `providerConfirms` reads the provider table alone here, as these
+        // route tests always have. `mailbox-provider-confirms.test.ts` drives both answers.
+        signatureChecks: false,
       }),
       rules: rulesService,
       message: messageService,

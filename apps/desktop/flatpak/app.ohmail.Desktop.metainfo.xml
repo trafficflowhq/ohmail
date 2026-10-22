@@ -24,9 +24,13 @@
       your server, so it is still true when you read the same mailbox on your phone.
     </p>
     <p>
-      The app carries its own mail engine and the runtime it runs on. Your mail server is the only
-      thing it talks to; this build does not check for updates, because your software centre
-      installs them.
+      The app carries its own mail engine and the runtime it runs on. Besides your mail server, it
+      fetches the pictures in a message you open (a switch makes each message ask first), sends the
+      one-click unsubscribe a screen-out asks for where the list offers one (a switch turns it off),
+      looks up through your system's DNS resolver the key a company or a newsletter signs its mail
+      with, where your provider does not confirm senders itself, and, only if you turn it on, sends
+      requests to the model provider you chose. This build does not check for updates, because your
+      software centre installs them.
     </p>
     <p>
       It works with any IMAP account — your own server, a hosting provider, or a mailbox from a

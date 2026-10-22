@@ -128,10 +128,10 @@ export type UnsubscribeRefusal =
    * The AUTOMATIC pass declined to act because the author's identity was not vouched for.
    *
    * Distinct from {@link UnsubscribeRefusal} `"author_failed_authentication"`, which is a
-   * provider saying "this is forged". This one is the mailbox's provider not confirming the
-   * author — saying nothing conclusive, or a provider no authserv-id is known for, where every
-   * verdict is `unavailable` — on the one path where nobody is looking at the message. See
-   * {@link UnsubscribeService.onScreenOut}.
+   * provider saying "this is forged". This one is nothing confirming the author — the mailbox's
+   * provider saying nothing conclusive, or a provider no authserv-id is known for whose letter's
+   * own signature ingest could not confirm either — on the one path where nobody is looking at the
+   * message. See {@link UnsubscribeService.onScreenOut}.
    */
   | "sender_identity_unverified"
   /**
@@ -505,6 +505,8 @@ interface MessageRow {
   mailboxId: string;
   fromAddress: string;
   headers: Record<string, unknown>;
+  /** `messages.auth_verdict` as ingest stored it: the sender's own signature's `pass` lives only here. */
+  storedVerdict: string | null;
   desiredFolder: string | null;
   /** A person's rule screens this sender out — the automatic arm's licence; see {@link run}. */
   personDecided: boolean;
@@ -587,10 +589,13 @@ export class UnsubscribeService {
     }
 
     // Per-mailbox trust, resolved for the mailbox that HOLDS this message — see
-    // {@link UnsubscribeDeps.trustedAuthservIdsFor}. An empty set answers `unavailable`.
+    // {@link UnsubscribeDeps.trustedAuthservIdsFor}. An empty set answers `unavailable` from the
+    // headers; there the only confirmation is the sender's own signature, which ingest checked from
+    // the raw message and stored, so a stored `pass` stands and anything else reads `unavailable`.
     const trusted = await within(
       this.deps.trustedAuthservIdsFor(asTx(ctx), row.mailboxId), "the trust read");
-    const authVerdict = authVerdictFromHeaders(row.headers, row.fromAddress, trusted);
+    const fromHeaders = authVerdictFromHeaders(row.headers, row.fromAddress, trusted);
+    const authVerdict: AuthVerdict = trusted.size === 0 && row.storedVerdict === "pass" ? "pass" : fromHeaders;
     await within(
       asTx(ctx).update(messages)
         .set({ authVerdict, updatedAt: ctx.now() })
@@ -641,14 +646,15 @@ export class UnsubscribeService {
     // namespaces under the CLAIMED author domain; the residual is a FORGED `From`, and this gate
     // is its other half. AUTOMATIC ONLY: `unsubscribe()` is a person looking at the mail;
     // `onScreenOut` is a pass nobody watches. ANY VERDICT BUT `pass` REFUSES, `unavailable`
-    // included: at a provider no authserv-id is known for every verdict is `unavailable`, and an
-    // automatic request there is made for whoever wrote the `From`. Before the claim, so a refusal
-    // writes no record and the person's button on the same letter still posts; the drain's walk
-    // reads the verdict saved above and does not offer the letter again (`scanChunk`).
+    // included: confirmed means by the mailbox's provider or by the signature the sender's own
+    // domain put on the letter, and without either an automatic request is made for whoever wrote
+    // the `From`. Before the claim, so a refusal writes no record and the person's button on the
+    // same letter still posts; the drain's walk reads the verdict saved above and does not offer
+    // the letter again (`scanChunk`).
     if (mode === "automatic" && authVerdict !== "pass") {
       refuse("sender_identity_unverified", 409,
-        "your provider did not confirm who sent this, and ohmail only leaves lists " +
-        "automatically for senders it can confirm");
+        "neither your mail provider nor a signature from the sender's own domain confirmed who " +
+        "sent this, and ohmail only leaves lists automatically for senders it can confirm");
     }
 
     // THE AUTOMATIC ARM ACTS ONLY FOR A SENDER A PERSON SCREENED OUT (UD-R4-03). This seam is the
@@ -1349,6 +1355,7 @@ export class UnsubscribeService {
     const rows = await asTx(ctx).select({
       mailboxId: messages.mailboxId,
       fromAddress: messages.fromAddress,
+      storedVerdict: messages.authVerdict,
       headers: messageBodies.headers,
       desiredFolder: folderState.desiredFolder,
       // A VERDICT WORD, for the drain's reason: the stores spell a boolean differently, and an
@@ -1381,7 +1388,7 @@ export class UnsubscribeService {
       ? (raw as Record<string, unknown>)
       : {};
     return {
-      mailboxId: row.mailboxId, fromAddress: row.fromAddress,
+      mailboxId: row.mailboxId, fromAddress: row.fromAddress, storedVerdict: row.storedVerdict ?? null,
       headers, desiredFolder: row.desiredFolder, mailboxStatus: row.mailboxStatus,
       personDecided: row.personDecided === "yes",
     };

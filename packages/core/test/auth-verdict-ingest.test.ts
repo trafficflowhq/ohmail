@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { planChange, commitChange , UNMETERED_STORAGE_CAP} from "../src/pipeline.js";
+import { planChange, commitChange , UNMETERED_STORAGE_CAP, signaturesForCycle } from "../src/pipeline.js";
 import { FakeRepo } from "./fakes.js";
 import type { Change } from "../src/ports.js";
 import type { AuthVerdict, Rule } from "../src/rules.js";
+import { providerAuthservIds } from "../src/authserv-ids.js";
+import { fakeKeys, letter, nodemailerSign, rsaKey } from "./fixtures/dkim-signed.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -376,5 +378,119 @@ describe("§4 — the verdict that routed is the verdict on the row", () => {
     expect(repo.rows.size).toBe(1);
     expect(repo.rows.get(a.messageId)!.input.authVerdict).toBe("fail");
     expect((await repo.getFolderState(a.messageId))!.desiredFolder).toBe("ohmail/Screener");
+  });
+});
+
+describe("§5 — where the provider writes nothing ohmail believes, the sender's own signature", () => {
+  /**
+   * `authserv-ids.ts` names no host but Gmail's and Microsoft's, so at every other mailbox a header
+   * says nothing and the verdict was `unavailable` for everything. The plan step now checks the
+   * sender's own DKIM signature there (`adapters/dkim.ts`), for the letters an automatic act or the
+   * identity line reads — a company's own domain, or a one-click letter while the account lets a
+   * screen-out unsubscribe. It answers `pass` or `unavailable`, never `fail`, so routing (which
+   * reads `fail` alone) is what it was.
+   */
+  const FASTMAIL = providerAuthservIds("imap.fastmail.com");
+  const GMAIL_HOST = providerAuthservIds("imap.gmail.com");
+  const KEY = rsaKey();
+  const BANK = rsaKey();
+  const LIST = rsaKey();
+  const TABLE = {
+    "s1._domainkey.paypal.com": KEY.record, "s1._domainkey.bank.example": BANK.record,
+    "s1._domainkey.list.example": LIST.record, "s1._domainkey.friends.example": LIST.record,
+  };
+  const ONE_CLICK = ["List-Unsubscribe: <https://list.example/u/1>", "List-Unsubscribe-Post: List-Unsubscribe=One-Click"];
+  const FORGED = "mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass header.from=paypal.com";
+
+  /** The check, loaded when asked: the plan step takes it injected, never by import; one cycle's view. */
+  async function signatures(keys: ReturnType<typeof fakeKeys>, listLetters = true) {
+    const { makeSignatureCheck } = await import("../src/adapters/dkim.js");
+    return signaturesForCycle({ ...makeSignatureCheck({ keys }), listLetters });
+  }
+
+  async function ingestWith(
+    repo: FakeRepo, raw: string, trusted: ReadonlySet<string>, keys: ReturnType<typeof fakeKeys>,
+    o: { listLetters?: boolean; change?: Partial<Change> } = {},
+  ): Promise<Ingested> {
+    const change: Change = {
+      type: "create", locator: { folder: "INBOX", ref: "1:10" }, raw: Buffer.from(raw, "latin1"), ...o.change,
+    };
+    const plan = await planChange(change, {
+      repo, accountId: "acct-1", mailboxId: "mb-1", readerMode: false, trustedAuthservIds: trusted,
+      signatures: await signatures(keys, o.listLetters ?? true),
+    });
+    const res = await commitChange(plan, { repo, accountId: "acct-1", mailboxId: "mb-1", storageCap: UNMETERED_STORAGE_CAP });
+    const state = await repo.getFolderState(res.messageId);
+    return { messageId: res.messageId, desired: state!.desiredFolder, persisted: repo.rows.get(res.messageId)!.input.authVerdict };
+  }
+
+  it("a company's signed letter at a provider nobody names reads pass, and routes as before", async () => {
+    const keys = fakeKeys(TABLE);
+    const out = await ingestWith(new FakeRepo(), await nodemailerSign(letter(), "paypal.com", "s1", KEY), FASTMAIL, keys);
+    expect(out.persisted).toBe("pass");
+    expect(keys.calls).toEqual(["s1._domainkey.paypal.com"]);
+    // A stranger is a stranger: `pass` is persisted and shown, never read by routing.
+    expect(out.desired).toBe("ohmail/Screener");
+  });
+
+  it("an unsigned letter wearing a forged provider header stays unavailable", async () => {
+    const keys = fakeKeys(TABLE);
+    const out = await ingestWith(new FakeRepo(), letter({ top: [`Authentication-Results: ${FORGED}`] }), FASTMAIL, keys);
+    expect(out.persisted).toBe("unavailable");
+    expect(keys.calls).toEqual([]);
+  });
+
+  it("a broken aligned signature under an allow rule is admitted exactly as before", async () => {
+    const raw = (await nodemailerSign(letter({ from: "Partner <partner@bank.example>", extra: ONE_CLICK }), "bank.example", "s1", BANK))
+      .replace("Thank you", "Please pay");
+    const checked = new FakeRepo();
+    checked.rules = [allowRule("partner@bank.example")];
+    const keys = fakeKeys(TABLE);
+    const out = await ingestWith(checked, raw, FASTMAIL, keys);
+    const plain = new FakeRepo();
+    plain.rules = [allowRule("partner@bank.example")];
+    const before = await ingest(plain, Buffer.from(raw, "latin1"), FASTMAIL);
+    expect(out).toMatchObject({ desired: before.desired, persisted: "unavailable" });
+    expect(before).toMatchObject({ desired: "ohmail/News", persisted: "unavailable" });
+  });
+
+  it("at Gmail and at Microsoft the same signed letter is read from the provider's header alone, with no lookup", async () => {
+    const signed = await nodemailerSign(letter(), "paypal.com", "s1", KEY);
+    for (const host of ["imap.gmail.com", "outlook.office365.com"]) {
+      const keys = fakeKeys(TABLE);
+      const out = await ingestWith(new FakeRepo(), signed, providerAuthservIds(host), keys);
+      expect(out.persisted, host).toBe("unavailable");
+      expect(keys.calls, host).toEqual([]);
+    }
+    // And the provider's own word still reads as it did: a header Gmail wrote, above the signature.
+    const confirmed = `Authentication-Results: mx.google.com; dkim=pass header.d=paypal.com; dmarc=pass\r\n${signed}`;
+    const keys = fakeKeys(TABLE);
+    expect((await ingestWith(new FakeRepo(), confirmed, GMAIL_HOST, keys)).persisted).toBe("pass");
+    expect(keys.calls).toEqual([]);
+  });
+
+  it("no lookup for a letter nothing automatic reads, own mail, oversize mail or old mail", async () => {
+    // Each signed by its own domain, so a lookup it skips is skipped for the reason named.
+    const signedPerson = await nodemailerSign(letter({ from: "Anna <anna@friends.example>" }), "friends.example", "s1", LIST);
+    const signedList = await nodemailerSign(letter({ from: "News <news@list.example>", extra: ONE_CLICK }), "list.example", "s1", LIST);
+    const signed = await nodemailerSign(letter(), "paypal.com", "s1", KEY);
+    const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    const cases: [string, string, Parameters<typeof ingestWith>[4]][] = [
+      ["a person's letter", signedPerson, {}],
+      ["a one-click letter while the account keeps its lists", signedList, { listLetters: false }],
+      ["the person's own mail", signed, { change: { ownAuthored: true, locator: { folder: "Sent", ref: "1:10" } } }],
+      ["a letter over the size ceiling", signed, { change: { oversizeBytes: 70 * 1024 * 1024 } }],
+      ["a letter forty days old", signed, { change: { internalDate: old } }],
+    ];
+    for (const [what, raw, o] of cases) {
+      const keys = fakeKeys(TABLE);
+      const out = await ingestWith(new FakeRepo(), raw, FASTMAIL, keys, o);
+      expect(keys.calls, what).toEqual([]);
+      expect(out.persisted, what).not.toBe("pass");
+    }
+    // CONTROL: the same one-click letter with the account's lists on is looked up, and passes.
+    const keys = fakeKeys(TABLE);
+    expect((await ingestWith(new FakeRepo(), signedList, FASTMAIL, keys)).persisted).toBe("pass");
+    expect(keys.calls).toEqual(["s1._domainkey.list.example"]);
   });
 });

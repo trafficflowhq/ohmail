@@ -138,6 +138,7 @@ export function SenderMenu({
   mailboxNameOf,
   onMoveToo,
   autoUnsubscribe = true,
+  fromComputer = false,
   lettersFor,
   forecastFor,
   rulesFor,
@@ -206,6 +207,12 @@ export function SenderMenu({
    * is still being sent.
    */
   autoUnsubscribe?: boolean;
+  /**
+   * The reader's own computer sends the request (the desktop's local engine, or the paired host's),
+   * so the confirm's fine print says so and names the network address the sender sees. Absent: the
+   * hosted worker sends it from our servers, the web shell's case.
+   */
+  fromComputer?: boolean;
   /**
    * Each held letter the scope's press moves: its one-click posture (`null` while unread) and its
    * provider's verdict on the sender. Absent: nothing is known, and an armed press says the request
@@ -614,15 +621,16 @@ export function SenderMenu({
           {/* THE FINE PRINT, SPLIT ON WHAT A PERSON MUST READ BEFORE PRESSING.
               "Once, and there is no undo" is the irreversible part and it stays on screen with
               the disclosure shut. HOW the request travels — from our servers rather than the
-              browser, and what happens to a sender with no unsubscribe link — is mechanism: it
-              is worth having and it is worth having HERE, but it was three lines of 10.5px
-              type between the sentence that says what will happen and the button that does it. */}
+              browser, or from the person's own computer on the desktop, and what happens to a
+              sender with no unsubscribe link — is mechanism: it is worth having and it is worth
+              having HERE, but it was three lines of 10.5px type between the sentence that says
+              what will happen and the button that does it. */}
           <InfoNote
             className="sm-confirm-fine"
             lead={t("unsubFine")}
             moreLabel={t("unsubFineMoreLabel")}
           >
-            {t("unsubFineMore")}
+            {t(fromComputer ? "unsubFineMoreComputer" : "unsubFineMore")}
           </InfoNote>
           <span className="sm-confirm-row">
             <button type="button" className="go" onClick={() => { setStep({ kind: "list" }); onChoose(confirm, scope, makeRule, applyRetro); }}>

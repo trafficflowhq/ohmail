@@ -223,6 +223,23 @@ describe.skipIf(!PG_UP)("the drain's cursor and its mark, on real Postgres", () 
       .rejects.toThrow(/unsubscribe_examined/);
   });
 
+  it("a stored pass at a mailbox no provider entry names is posted for and kept", async () => {
+    // The sender's own signature, checked at ingest: the request re-reads nothing that could
+    // confirm it at this mailbox, so it keeps the stored pass rather than overwrite it.
+    const w = await newWorld();
+    const [id] = await seedWindow(w, 1, () => ({
+      "list-unsubscribe": ["<https://sender.example/u?t=signed>"],
+      "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+    }));
+    await db.update(messages).set({ authVerdict: "pass" }).where(eq(messages.id, id!));
+    const post = spy();
+    const svc = makeUnsubscribeService({ post, resolver: PUBLIC_DNS, trustedAuthservIdsFor: async () => new Set<string>() });
+    await svc.drainScreenedOut(db as never, { now: () => NOW, requestId: "signed" });
+    expect(post.calls).toEqual(["https://sender.example/u?t=signed"]);
+    const [row] = await db.select({ v: messages.authVerdict }).from(messages).where(eq(messages.id, id!));
+    expect(row!.v).toBe("pass");
+  });
+
   it("a walk cut mid-window says where it stopped, and the next run goes on from there", async () => {
     // ONE PAGE AND ONE ROW, at the shipped page size — the smallest window a walk cannot cross in
     // a single chunk, which is the only shape in which "where it stopped" means anything.

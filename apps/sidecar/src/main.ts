@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { type Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { blankRepairModeFrom } from "@trafficflow/core/mail";
+import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import { createSidecar, QuitLeftOpenError, type QuitReport, type Sidecar, type SidecarConfig } from "./engine.js";
 import { armFirstPageGate } from "./first-page-gate.js";
 import { createCloudSidecar, type CloudSidecar, type CloudSidecarConfig } from "./cloud-engine.js";
@@ -158,8 +159,8 @@ function keksFromEnv(env: NodeJS.ProcessEnv): Record<number, Buffer> {
   return Object.fromEntries(versions.map((v) => [v, Buffer.from(hex.get(v)!, "hex")]));
 }
 
-/** Build the configuration from the environment the shell sets. */
-export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SidecarConfig {
+/** Build the configuration from the environment the shell sets; the key lookup is the entry's own. */
+export function configFromEnv(env: NodeJS.ProcessEnv = process.env): Omit<SidecarConfig, "dkimKeys"> {
   const user = env.OHMAIL_IMAP_USER ?? required("OHMAIL_IMAP_USER");
   const keks = keksFromEnv(env);
   // NOT `required`, and this is the change that makes a restart survivable: after the launch on
@@ -587,10 +588,11 @@ export async function runSidecar(): Promise<void> {
   try {
     // The narration is only valid while nothing else writes frames — see `bootPhaseEmitter`.
     // The constructor returns before `serveOverStdio` below is built, which is that window.
-    // The power reader is this entry's to supply: the engine is also the phone's, and must not import it.
+    // The power reader and the DKIM key lookup are this entry's to supply: the engine is also the
+    // phone's, and must not import either.
     sidecar = await createSidecar({
       ...configFromEnv(), log, logger, hostPower: createHostPower(), onPhase: bootPhaseEmitter(stdout),
-      onStoreFatal: exitOnStoreFatal,
+      onStoreFatal: exitOnStoreFatal, dkimKeys: makeDnsDkimKeys(),
     });
   } catch (err) {
     log("start_failed", { err });

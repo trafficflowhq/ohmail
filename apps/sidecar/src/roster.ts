@@ -271,17 +271,18 @@ export interface OrganizerState {
 /**
  * The parts of `SyncDeps` a runtime OWNS for the life of its attachment.
  *
- * The seven omitted fields are resolved fresh at every cycle edge and must never be frozen here:
+ * The eight omitted fields are resolved fresh at every cycle edge and must never be frozen here:
  * the ROLE (the gate's answer this pass), the WRITE AUTHORITY (the permit that gate took, or the
- * named reason a reader holds none), the CLASSIFIER (withheld after faults), the three SCREENING
- * inputs (read once per drain, so a Settings edit takes effect on the next poll) and the
- * import-decision hold. Anything cached here is a per-launch answer to a per-cycle question — and
- * for the permit, a receipt from before the last handover.
+ * named reason a reader holds none), the CLASSIFIER (withheld after faults), the four SCREENING
+ * inputs (read once per drain, so a Settings edit takes effect on the next poll; the signature
+ * check carries the one-click switch) and the import-decision hold. Anything cached here is a
+ * per-launch answer to a per-cycle question — and for the permit, a receipt from before the last
+ * handover.
  */
 export type RuntimeSyncDeps = Omit<
   SyncDeps,
   "role" | "writeAuthority" | "classifier" | "importHold"
-  | "ohboxPolicy" | "ohboxBar" | "screeningCutoff"
+  | "ohboxPolicy" | "ohboxBar" | "screeningCutoff" | "signatures"
 >;
 
 /** The two instants a quit gives one mailbox, on the engine's monotonic clock. */

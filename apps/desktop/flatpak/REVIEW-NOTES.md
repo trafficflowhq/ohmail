@@ -48,11 +48,16 @@ from a vendor: it is the `node22` SDK extension's own `node`, which freedesktop-
 source, copied into the app with its licence beside it.
 
 **Why `--share=network`.** It is an email client. It opens IMAP and SMTP connections to the server
-the person configures — their own, or their provider's — and there is no other host it contacts.
-The update check every other build of this app makes is off here, because the software centre
-installs updates; the app reads that it is running in a Flatpak and does not ask the release feed
-at all. Host mode, which serves the person's own phone on their own network, is the other user of
-the socket.
+the person configures — their own, or their provider's. Beyond that server it fetches the pictures in
+a message the person opens (a setting makes each message ask first), sends the one-click
+unsubscribe a screen-out asks for where the list offers one (a setting turns it off), looks up
+through the system's DNS resolver the key a company or a newsletter signs its mail with, where the
+person's provider does not confirm senders itself (a TXT query for `<selector>._domainkey.<domain>`,
+made when such a letter arrives), and, only if the person turns it on, sends requests to the model
+provider they chose. The update check every other build of this app makes is off here, because the
+software centre installs updates; the app reads that it is running in a Flatpak and does not ask
+the release feed at all. Host mode, which serves the person's own phone on their own network, is
+the other user of the socket.
 
 **Why `--talk-name=org.kde.StatusNotifierWatcher`.** Host mode — the app serving this person's
 own phone on their own network — draws a tray icon, and the icon is where that state is reported

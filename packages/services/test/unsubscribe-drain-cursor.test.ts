@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
-  folderState, mailboxes, messageBodies, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
+  folderState, mailboxes, messageBodies, messages, unsubscribeDrainState, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db";
 import {
   makeUnsubscribeService, type HostResolver, type OneClickPost,
@@ -283,5 +283,78 @@ describe("a sender the provider did not confirm is not a drain candidate", () =>
     expect(second.remaining).toBe(0);
     const third = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d3" });
     expect(third.sweep.considered).toBe(0);
+  });
+});
+
+/**
+ * A SENDER INGEST CONFIRMED BY ITS OWN SIGNATURE. Where a mailbox's provider writes nothing ohmail
+ * believes, the plan step stores the local check's `pass`; the request re-derives the verdict from
+ * the stored headers, which say nothing there, and must keep that `pass` rather than overwrite it.
+ * A mailbox whose provider is named re-derives from its header exactly as before.
+ */
+describe("a letter whose sender's signature ingest checked", () => {
+  const NOBODY: ReadonlySet<string> = new Set<string>();
+  const ONE_CLICK_TO = (tag: string) => ({
+    "list-unsubscribe": [`<https://sender.example/u?t=${tag}>`],
+    "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
+  });
+
+  async function world() {
+    const { db, accountId, mailboxId: unmapped, ctx } = await makeCtx();
+    const [g] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "mila@gmail.example" }).returning();
+    const gmail = g!.id;
+    const post = spy();
+    const svc = makeUnsubscribeService({
+      post, resolver: PUBLIC_DNS,
+      trustedAuthservIdsFor: async (_tx, mb) => (mb === gmail ? GMAIL : NOBODY),
+    });
+    return { db, accountId, unmapped, gmail, post, svc, ctx };
+  }
+
+  async function screenedOut(
+    db: Db, accountId: string, mailboxId: string, from: string, tag: string, authVerdict: string | null,
+  ): Promise<string> {
+    const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened", authVerdict });
+    await personScreenedOut(db, accountId, from);
+    await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK_TO(tag) });
+    await db.update(folderState).set({ updatedAt: ago(60_000) }).where(eq(folderState.messageId, messageId));
+    return messageId;
+  }
+
+  const stored = async (db: Db, id: string) =>
+    (await db.select({ v: messages.authVerdict }).from(messages).where(eq(messages.id, id)))[0]!.v;
+
+  it("at a mailbox no provider entry names, a stored pass is unsubscribed for and kept", async () => {
+    const w = await world();
+    const id = await screenedOut(w.db, w.accountId, w.unmapped, "news@signed.example", "signed", "pass");
+    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    expect(w.post.calls).toEqual(["https://sender.example/u?t=signed"]);
+    expect(run.sweep).toMatchObject({ considered: 1, posted: 1 });
+    expect(await stored(w.db, id), "the request overwrote the signature's pass").toBe("pass");
+  });
+
+  it("a stored NULL there is still refused, and reads unavailable", async () => {
+    const w = await world();
+    const id = await screenedOut(w.db, w.accountId, w.unmapped, "news@unsigned.example", "unsigned", null);
+    const run = await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    expect(w.post.calls).toEqual([]);
+    expect(run.sweep).toMatchObject({ considered: 1, posted: 0, skipped: 1 });
+    expect(await stored(w.db, id)).toBe("unavailable");
+  });
+
+  it("at a Gmail mailbox a stored pass is read from the stored headers, as before", async () => {
+    const w = await world();
+    const id = await screenedOut(w.db, w.accountId, w.gmail, "news@gmail-held.example", "gmail", "pass");
+    await w.svc.drainScreenedOut(w.db, { now: () => NOW, requestId: "d1" });
+    expect(w.post.calls, "Gmail's header is not on the letter, so its provider did not confirm it").toEqual([]);
+    expect(await stored(w.db, id)).toBe("unavailable");
+  });
+
+  it("a person's press on the signed letter keeps the pass too", async () => {
+    const w = await world();
+    const id = await screenedOut(w.db, w.accountId, w.unmapped, "news@pressed.example", "pressed", "pass");
+    const res = await w.svc.unsubscribe({ ...w.ctx, now: () => NOW }, id);
+    expect(res).toMatchObject({ posted: true, authVerdict: "pass" });
+    expect(await stored(w.db, id)).toBe("pass");
   });
 });

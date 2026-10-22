@@ -487,17 +487,18 @@ export async function screenerAutoActPass(
   if (result.unverified > 0) {
     log.info("screener_auto_act_unverified_kept", {
       accountId, skipped: result.unverified,
-      reason: "these senders were not let through: their address is a company's own and their mail "
-        + "provider did not confirm the mail came from it, and only a person's press admits that",
+      reason: "these senders were not let through: their address is a company's own and neither their "
+        + "mail provider nor the domain's own signature confirmed the mail came from it, and only a "
+        + "person's press admits that",
     });
   }
   // `skipped` and `moved` are names the hardened logger keeps; any other count would be dropped.
   if (result.unconfirmedDenies > 0) {
     log.info("screener_auto_act_unconfirmed_denied", {
       accountId, skipped: result.unconfirmedDenies, moved: unconfirmedFiled,
-      reason: "these senders were not screened out by rule: their advice met a letter their mail "
-        + "provider did not confirm, so no rule was written and only such letters were filed, each "
-        + "listed under Filed automatically to put back",
+      reason: "these senders were not screened out by rule: their advice met a letter whose sender "
+        + "neither their mail provider nor the domain's own signature confirmed, so no rule was written "
+        + "and only such letters were filed, each listed under Filed automatically to put back",
     });
   }
   if (result.crowdDenies > 0) {
