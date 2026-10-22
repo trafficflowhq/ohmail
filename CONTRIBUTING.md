@@ -138,9 +138,11 @@ npx playwright install chromium        # the layout tests render in it
 
 - With the services, the whole suite on one database leaves rows behind, and
   the files marked `@postpush: alone` (`node test/support/ci-shards.mjs
-  --alone` lists them) fail over state they did not write. So it runs as CI
-  runs it, in sixteen shards, each on a database of its own, and each of those
-  files on a database made from empty. That is the run on Linux, in parts as
+  --alone` lists them) fail over state they did not write. So it runs as CI's
+  whole run runs it (nightly, on a batch branch and on a fork's pull request;
+  a maintainer's other pull requests run only the files their change can
+  reach, `.github/scripts/ci-select.mjs`), in sixteen shards, each on a
+  database of its own, and each of those files on a database made from empty. That is the run on Linux, in parts as
   above: part k of n runs every n-th shard from shard k-1, and the last part
   also runs the files that run alone:
 

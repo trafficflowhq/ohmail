@@ -41,3 +41,9 @@ export function sqliteShardFiles(n: number, listed: string[], map: SqliteShardMa
 export function checkSqliteMap(root?: string, map?: SqliteShardMap): string[];
 export function verifySqliteReport(n: number, listed: string[], report: VitestReport, root?: string, map?: SqliteShardMap): { missing: string[]; extra: string[]; gated: string[] };
 export function packSqlite(cost: Map<string, number>, measuredAt: string): { map: SqliteShardMap; seconds: number[] };
+
+export const COSTS: string;
+export interface Costs { measuredAt: string; suite: Record<string, number>; sqlite: Record<string, number> }
+export function verifyList(want: string[], report: VitestReport, root?: string): { missing: string[]; extra: string[]; gated: string[] };
+export function treeFile(name: string, known: Set<string>): string | null;
+export function costsFrom(root: string, named: { path: string; report: VitestReport }[], measuredAt: string): Costs;

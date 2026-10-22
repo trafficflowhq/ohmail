@@ -56,7 +56,7 @@ npx vitest run $(node test/support/ci-shards.mjs --desktop)   # the desktop job:
 ```
 
 One database across the whole suite leaves residue that the `@postpush: alone` files (`ci-shards.mjs --alone`)
-fail over, so `TF_REQUIRE_PG=1 npm test` is red; CI runs the rest in 16 shards (`node test/support/ci-shards.mjs
+fail over, so `TF_REQUIRE_PG=1 npm test` is red; CI's whole run runs the rest in 16 shards (`node test/support/ci-shards.mjs
 --shard N`), each on a fresh database (`lane-db.sh --drop "$PWD"`, then create), and each alone file on a database
 made from empty. CONTRIBUTING.md's `suite-services` block is that route in one loop; contributor.yml's Linux suite
 jobs run it in two parts (`PART`/`PARTS`, every second shard each), its macOS and Windows ones run `npm test --
@@ -66,8 +66,13 @@ The root suite resolves one copy of every dependency, the root's, whether `apps/
 (`vitest.config.ts`, held by `apps/desktop/test/one-react.test.tsx`). A test that fails on "Invalid hook call" means
 that broke; never mock a component to get around it.
 
-`ci.yml` runs the suite on pull requests, in shards, each on the root install with its own Postgres, GreenMail and
-RustFS; its desktop job runs `ci-shards.mjs --desktop`'s files on both installs. `build.yml` runs on pull requests
+`ci.yml` runs the whole suite nightly, by dispatch, on a batch branch (`pr/batch-*`), on a fork's or a bot's pull request
+and on one that touches the harness (dependencies, tsconfigs, `vitest.config.ts`, `test/setup`, the shard maps, ci.yml,
+migrations, a deleted module), in shards, each on the root install with its own Postgres, GreenMail and RustFS. Any other maintainer's
+pull request runs only the test files its diff can reach (`.github/scripts/ci-select.mjs`: vitest's module graph, the
+files that read a changed path or a module whose imports reach it, or scan its app or package or the whole tree, root `test/`), in as few jobs as their measured time needs; the plan job's summary says
+which run it is and why, and `main` is proven whole by the batch and the nightly. Its desktop job runs
+`ci-shards.mjs --desktop`'s files on both installs, on every run. `build.yml` runs on pull requests
 and on `main`: on macOS, Windows and Linux it typechecks the window, builds the UI bundle and smokes it, runs the Rust tests in both configurations,
 packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
 phone app. On a pull request the platform jobs and the phone build run only when it changes what they build

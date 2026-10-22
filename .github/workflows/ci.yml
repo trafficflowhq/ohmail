@@ -11,6 +11,14 @@ name: ci
 # empty, because it reads state its own seeding does not own. A new test file needs no edit here: a
 # file the shard map does not name runs in the shard its path hashes to.
 #
+# What runs. The nightly, dispatch, a batch branch (pr/batch-*), a fork's or a bot's pull request, and a
+# pull request that touches the harness (dependencies, patches, tsconfigs, vitest.config.ts, test/setup,
+# the shard maps, this file, migrations) run the whole suite. Any other maintainer's pull request runs the
+# test files its diff can reach: vitest's module graph, the files that read the changed paths, root
+# test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed into as few
+# jobs as their measured time needs. Every job keeps its services and checks; the plan's summary says
+# which run it is and why. A selected run is partial: main is proven whole by the batch and the nightly.
+#
 # The hosted runners are one pool for the whole organisation, so each matrix bounds how many of its
 # jobs run at once (max-parallel): three suite shards, one alone file, one SQLite shard.
 #
@@ -42,25 +50,52 @@ jobs:
   plan:
     name: suite · plan
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
-    timeout-minutes: 5
+    timeout-minutes: 20
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
       alone: ${{ steps.plan.outputs.alone }}
       sqlite: ${{ steps.plan.outputs.sqlite }}
     steps:
+      # The merge commit and both its parents: a maintainer's pull request runs what its diff can reach.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22.23.3
 
+      # Whole for the nightly, dispatch, a batch branch, a fork, a bot and a harness change; selected for
+      # the rest (.github/scripts/ci-select.mjs). Any fault here leaves the run whole.
+      - name: Whole suite or a selection
+        id: scope
+        continue-on-error: true
+        run: node .github/scripts/ci-select.mjs scope >> "$GITHUB_OUTPUT"
+
+      - name: Install the locked dependency tree
+        if: steps.scope.outputs.scope == 'selected'
+        continue-on-error: true
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: The tests this change can reach
+        id: select
+        if: steps.scope.outputs.scope == 'selected'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: node .github/scripts/ci-select.mjs select --out "$RUNNER_TEMP/ci-select.json"
+
       - name: The shards, and the files that run alone
         id: plan
+        env:
+          SCOPE: ${{ steps.scope.outputs.scope }}
+          SCOPE_WHY: ${{ steps.scope.outputs.why }}
+          SELECT: ${{ steps.select.outcome }}
         run: |
           set -euo pipefail
           node test/support/ci-shards.mjs --check
-          echo "shards=$(node test/support/ci-shards.mjs --indexes)" >> "$GITHUB_OUTPUT"
-          echo "sqlite=$(node test/support/ci-shards.mjs --sqlite-indexes)" >> "$GITHUB_OUTPUT"
+          shards=$(node test/support/ci-shards.mjs --indexes)
+          sqlite=$(node test/support/ci-shards.mjs --sqlite-indexes)
           # The glob form: a bare 'apps/*/test' pathspec matches no file under it, and an empty list
           # here would skip these files everywhere. The shard map's own walk must agree with it.
           rc=0
@@ -69,19 +104,25 @@ jobs:
           alone=$(printf '%s' "$files" | node -e 'const t=require("fs").readFileSync(0,"utf8");process.stdout.write(JSON.stringify(t.split("\n").filter(Boolean).sort()))')
           walk=$(node test/support/ci-shards.mjs --alone)
           if [ "$alone" != "$walk" ]; then echo "::error::git grep and the shard map disagree on the files that run alone"; exit 1; fi
-          echo "alone=$alone" >> "$GITHUB_OUTPUT"
           printf 'alone:\n%s\n' "$files"
+          # The selected plan when the selector finished, the whole run otherwise; it says which and why.
+          node .github/scripts/ci-select.mjs outputs --indexes "$shards" --sqlite-indexes "$sqlite" --alone "$alone" \
+            --scope "$SCOPE" --scope-why "$SCOPE_WHY" --select-outcome "$SELECT" --plan "$RUNNER_TEMP/ci-select.json" > "$RUNNER_TEMP/plan.out"
+          cat "$RUNNER_TEMP/plan.out" >> "$GITHUB_OUTPUT"
+          grep -E '^(scope|why)=' "$RUNNER_TEMP/plan.out"
 
   suite:
     name: suite (${{ matrix.shard }})
     needs: plan
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    if: needs.plan.outputs.shards != '[]'
     timeout-minutes: 40
     strategy:
       fail-fast: false
       max-parallel: 3
+      # Whole: {shard} for each map shard. Selected: {shard, files, dovecot}, the plan's own packing.
       matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
     # Every image by digest, the same ones docker-compose.yml runs: Postgres from our mirror
     # (deploy/selfhost/images.lock), GreenMail and Dovecot as Docker Hub serves them.
     services:
@@ -111,6 +152,8 @@ jobs:
       TF_REQUIRE_GREENMAIL: "1"
       TF_REQUIRE_RUSTFS: "1"
       SHARD: ${{ matrix.shard }}
+      FILES: ${{ matrix.files }}
+      DOVECOT: ${{ matrix.dovecot }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -166,7 +209,13 @@ jobs:
 
       - name: Does this shard dial Dovecot
         id: dovecot
-        run: echo "needed=$(node test/support/ci-shards.mjs --needs-dovecot "$SHARD")" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          if [ -n "$FILES" ]; then
+            if [ "$DOVECOT" = yes ]; then echo "needed=yes"; else echo "needed=no"; fi >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=$(node test/support/ci-shards.mjs --needs-dovecot "$SHARD")" >> "$GITHUB_OUTPUT"
+          fi
 
       # Dovecot is the CONDSTORE server. It reads its configuration from the checkout, which a
       # service container starts before, so it is started here and only where a file dials it.
@@ -202,7 +251,11 @@ jobs:
           TF_REQUIRE_DOVECOT: ${{ steps.dovecot.outputs.needed == 'yes' && '1' || '' }}
         run: |
           set -euo pipefail
-          list=$(node test/support/ci-shards.mjs --shard "$SHARD")
+          if [ -n "$FILES" ]; then
+            list=$FILES
+          else
+            list=$(node test/support/ci-shards.mjs --shard "$SHARD")
+          fi
           mapfile -t files <<< "$list"
           echo "shard $SHARD runs ${#files[@]} file(s)"
           mkdir -p build
@@ -212,10 +265,19 @@ jobs:
       # read back: every file the shard named ran, and nothing else did.
       - name: Every file of the shard ran
         if: always()
-        run: node test/support/ci-shards.mjs --verify-report "$SHARD" "build/ci-suite-$SHARD.json"
+        run: |
+          set -euo pipefail
+          if [ -n "$FILES" ]; then
+            mkdir -p build
+            printf '%s\n' "$FILES" > "build/ci-list-$SHARD.txt"
+            node test/support/ci-shards.mjs --verify-list "selected shard $SHARD" "build/ci-list-$SHARD.txt" "build/ci-suite-$SHARD.json"
+          else
+            node test/support/ci-shards.mjs --verify-report "$SHARD" "build/ci-suite-$SHARD.json"
+          fi
 
+      # A whole run's only: a selected shard is not the map's, and its durations would mislead a pack.
       - name: Keep the per-file durations for the next pack
-        if: always()
+        if: always() && env.FILES == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: suite-durations-${{ matrix.shard }}
@@ -302,12 +364,14 @@ jobs:
     name: suite · sqlite (${{ matrix.shard }})
     needs: plan
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    if: needs.plan.outputs.sqlite != '[]'
     timeout-minutes: 20
     strategy:
       fail-fast: false
       max-parallel: 1
+      # Whole: {shard} for each map shard. Selected: {shard, files}, the plan's own packing.
       matrix:
-        shard: ${{ fromJSON(needs.plan.outputs.sqlite) }}
+        include: ${{ fromJSON(needs.plan.outputs.sqlite) }}
     services:
       postgres:
         image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
@@ -334,6 +398,7 @@ jobs:
       TF_REQUIRE_PG: "1"
       TF_REQUIRE_GREENMAIL: "1"
       SHARD: ${{ matrix.shard }}
+      FILES: ${{ matrix.files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -373,17 +438,29 @@ jobs:
       - name: Test on SQLite, the second store the schema runs on, shard ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          list=$(node test/support/ci-shards.mjs --sqlite-shard "$SHARD" build/sqlite-files.json)
+          if [ -n "$FILES" ]; then
+            list=$FILES
+          else
+            list=$(node test/support/ci-shards.mjs --sqlite-shard "$SHARD" build/sqlite-files.json)
+          fi
           mapfile -t files <<< "$list"
           echo "sqlite shard $SHARD runs ${#files[@]} file(s)"
           npx vitest run --config vitest.sqlite.config.ts --reporter=default --reporter=json --outputFile="build/ci-sqlite-$SHARD.json" "${files[@]}"
 
       - name: Every file of the SQLite shard ran
         if: always()
-        run: node test/support/ci-shards.mjs --verify-sqlite-report "$SHARD" build/sqlite-files.json "build/ci-sqlite-$SHARD.json"
+        run: |
+          set -euo pipefail
+          if [ -n "$FILES" ]; then
+            mkdir -p build
+            printf '%s\n' "$FILES" > "build/ci-sqlite-list-$SHARD.txt"
+            node test/support/ci-shards.mjs --verify-list "selected sqlite shard $SHARD" "build/ci-sqlite-list-$SHARD.txt" "build/ci-sqlite-$SHARD.json"
+          else
+            node test/support/ci-shards.mjs --verify-sqlite-report "$SHARD" build/sqlite-files.json "build/ci-sqlite-$SHARD.json"
+          fi
 
       - name: Keep the per-file durations for the next pack
-        if: always()
+        if: always() && env.FILES == ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: sqlite-durations-${{ matrix.shard }}

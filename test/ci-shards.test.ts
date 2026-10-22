@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, dovecotPinned, hashShard, readMap, readSqliteMap,
-  shardFiles, sqliteShardFiles, testFiles, verifyReport, verifySqliteReport,
+  ALONE_MARKER, SERVICE_GATE_PREFIX, SHARDS, SQLITE_SHARDS, aloneFiles, checkMap, checkSqliteMap, costsFrom, dovecotPinned, hashShard, readMap, readSqliteMap,
+  shardFiles, sqliteShardFiles, testFiles, verifyList, verifyReport, verifySqliteReport,
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
 import { publicRel } from "./support/public-root.mjs";
@@ -288,6 +288,109 @@ describe("the suite workflow", () => {
     expect(plan).toContain(`git grep -l '${ALONE_MARKER}' -- ':(glob)apps/*/test/**' ':(glob)packages/*/test/**'`);
     expect(plan).toContain("node test/support/ci-shards.mjs --alone");
     expect(plan).toContain("node test/support/ci-shards.mjs --check");
+  });
+});
+
+type PlanStep = Step & { id?: string; if?: string; "continue-on-error"?: boolean; "timeout-minutes"?: number; with?: Record<string, unknown> };
+type FullJob = Omit<Job, "steps"> & { if?: string; strategy?: { matrix?: Record<string, unknown> }; steps: PlanStep[]; "timeout-minutes"?: number };
+
+/**
+ * A PULL REQUEST'S SELECTED RUN (.github/scripts/ci-select.mjs). The plan job decides whole or selected,
+ * and every job keeps its whole arm on the map verbs: a selected job gets its files through `env` only,
+ * reads its report back against them, and uploads no durations. The three checks the ruleset requires run
+ * on every pull request.
+ */
+function selectionProblems(text: string): string[] {
+  const wf = yaml.load(text) as { jobs: Record<string, FullJob> };
+  const problems: string[] = [];
+  const plan = wf.jobs.plan!.steps;
+  const at = (re: RegExp) => plan.findIndex((s) => re.test(s.run ?? ""));
+  const checkout = plan.find((s) => (s.uses ?? "").startsWith("actions/checkout@"));
+  if (checkout?.with?.["fetch-depth"] !== 2 || checkout?.with?.["persist-credentials"] !== false) problems.push("PLAN_CHECKOUT the plan does not check out the merge commit's parents without credentials");
+  const scope = at(/node \.github\/scripts\/ci-select\.mjs scope\b/);
+  const install = at(/npm ci\b/);
+  const sel = at(/node \.github\/scripts\/ci-select\.mjs select\b/);
+  const out = at(/node \.github\/scripts\/ci-select\.mjs outputs\b/);
+  if (scope < 0 || sel < 0 || out < 0 || install < 0 || !(scope < install && install < sel && sel < out)) problems.push("PLAN_ORDER the plan does not run scope, install, select, outputs in that order");
+  else {
+    if (plan[scope]!["continue-on-error"] !== true || plan[sel]!["continue-on-error"] !== true || plan[install]!["continue-on-error"] !== true) problems.push("PLAN_FAULT a selector fault can fail the plan job");
+    if (!plan[sel]!["timeout-minutes"]) problems.push("PLAN_FAULT the select step has no timeout of its own");
+    for (const i of [install, sel]) if (plan[i]!.if !== "steps.scope.outputs.scope == 'selected'") problems.push(`PLAN_SCOPE "${plan[i]!.name}" runs on a whole run`);
+    if (!/--indexes "\$shards"/.test(plan[out]!.run ?? "") || !/--select-outcome "\$SELECT"/.test(plan[out]!.run ?? "")) problems.push("PLAN_OUTPUTS the outputs step is not handed the whole run and the select outcome");
+  }
+  for (const id of ["suite", "alone", "sqlite"]) {
+    const job = wf.jobs[id]!;
+    const key = id === "alone" ? "alone" : id === "suite" ? "shards" : "sqlite";
+    if (job.if !== `needs.plan.outputs.${key} != '[]'`) problems.push(`MATRIX ${id} does not skip an empty plan`);
+  }
+  for (const id of ["suite", "sqlite"]) {
+    const job = wf.jobs[id]!;
+    const key = id === "suite" ? "shards" : "sqlite";
+    if (job.strategy?.matrix?.include !== `\${{ fromJSON(needs.plan.outputs.${key}) }}`) problems.push(`MATRIX ${id} does not take its jobs from the plan`);
+    if (job.env?.FILES !== "${{ matrix.files }}") problems.push(`ENV_ONLY ${id} does not take its files through env`);
+    const runs = job.steps.map((s) => s.run ?? "").join("\n");
+    if (!runs.includes("--verify-list")) problems.push(`VERIFY ${id} does not read a selected report back`);
+    for (const s of job.steps.filter((x) => (x.uses ?? "").startsWith("actions/upload-artifact@"))) {
+      if (s.if !== "always() && env.FILES == ''") problems.push(`DURATIONS ${id} uploads a selected run's durations`);
+    }
+  }
+  if (wf.jobs.suite!.env?.DOVECOT !== "${{ matrix.dovecot }}") problems.push("ENV_ONLY suite does not take Dovecot through env");
+  for (const [id, job] of Object.entries(wf.jobs)) {
+    for (const s of job.steps) if ((s.run ?? "").includes("${{")) problems.push(`ENV_ONLY ${id}: "${s.name ?? s.uses}" interpolates an expression into its run text`);
+  }
+  for (const id of ["plan", "typecheck", "webapp-build"]) if (wf.jobs[id]!.if !== undefined) problems.push(`REQUIRED ${id} does not run on every pull request`);
+  return problems;
+}
+
+describe("a pull request's selected run", () => {
+  it("is admitted: the plan decides, every job keeps its whole arm, and the required checks always run", () => {
+    expect(selectionProblems(workflowText)).toEqual([]);
+    const wf = yaml.load(workflowText) as { jobs: Record<string, FullJob> };
+    expect(wf.jobs.plan!["timeout-minutes"]).toBe(20);
+    // The whole arms are the map's verbs (the files each job runs when no plan hands them any).
+    const suite = wf.jobs.suite!.steps.map((s) => s.run ?? "").join("\n");
+    expect(suite).toMatch(/if \[ -n "\$FILES" \]; then\n\s+list=\$FILES\n\s*else\n\s+list=\$\(node test\/support\/ci-shards\.mjs --shard "\$SHARD"\)/);
+    expect(suite).toContain("node test/support/ci-shards.mjs --needs-dovecot \"$SHARD\"");
+  });
+
+  it("refuses each planted fault by name", () => {
+    const planted: Array<[string, string, RegExp]> = [
+      ["credentials kept", workflowText.replace("          persist-credentials: false\n", ""), /^PLAN_CHECKOUT /],
+      ["a select step that fails the plan", workflowText.replace("        id: select\n        if: steps.scope.outputs.scope == 'selected'\n        continue-on-error: true\n", "        id: select\n        if: steps.scope.outputs.scope == 'selected'\n"), /^PLAN_FAULT a selector fault/],
+      ["install on a whole run", workflowText.replace("      - name: Install the locked dependency tree\n        if: steps.scope.outputs.scope == 'selected'\n", "      - name: Install the locked dependency tree\n"), /^PLAN_SCOPE /],
+      ["a matrix of its own", workflowText.replace("include: ${{ fromJSON(needs.plan.outputs.sqlite) }}", "shard: ${{ fromJSON(needs.plan.outputs.sqlite) }}"), /^MATRIX sqlite does not take/],
+      ["files in the run text", workflowText.replace("            list=$FILES\n", "            list=\"${{ matrix.files }}\"\n"), /^ENV_ONLY suite: /],
+      ["a selected report not read back", workflowText.replace(/--verify-list "selected sqlite shard \$SHARD"/, "--verify-sqlite-report \"$SHARD\""), /^VERIFY sqlite /],
+      ["selected durations uploaded", workflowText.replace("        if: always() && env.FILES == ''\n", "        if: always()\n"), /^DURATIONS suite /],
+      ["a required check skipped", workflowText.replace("    name: typecheck\n", "    name: typecheck\n    if: needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
+    ];
+    for (const [what, text, want] of planted) {
+      expect(text, what).not.toBe(workflowText);
+      expect(selectionProblems(text), what).toEqual([expect.stringMatching(want)]);
+    }
+  });
+
+  it("reads a selected report back against the handed list, and writes costs from a whole run's reports", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ci-shards-list-"));
+    try {
+      const files = testFiles(ROOT).filter((f) => f.startsWith("test/")).slice(0, 3);
+      writeFileSync(join(dir, "list.txt"), `${files.join("\n")}\n`);
+      const row = (f: string, prefix = ROOT) => ({ name: join(prefix, f), startTime: 0, endTime: 1 });
+      writeFileSync(join(dir, "ok.json"), JSON.stringify({ testResults: files.map((f) => row(f)) }));
+      writeFileSync(join(dir, "short.json"), JSON.stringify({ testResults: files.slice(1).map((f) => row(f)) }));
+      const cli = (...args: string[]) => spawnSync(process.execPath, [join(ROOT, "test/support/ci-shards.mjs"), ...args], { encoding: "utf8" });
+      expect(cli("--verify-list", "selected shard 0", join(dir, "list.txt"), join(dir, "ok.json")).status).toBe(0);
+      const short = cli("--verify-list", "selected shard 0", join(dir, "list.txt"), join(dir, "short.json"));
+      expect(short.status).toBe(1);
+      expect(short.stderr).toContain(`ci-shards: MISSING ${files[0]} was handed to selected shard 0 and did not run`);
+      expect(verifyList(files.slice(1), { testResults: files.map((f) => row(f)) }).extra).toEqual([files[0]]);
+      // Costs: rows named by another checkout's path, read as this tree's files; sqlite reports apart.
+      const runner = "/home/runner/_work/ohmail/ohmail";
+      const suite = { testResults: [{ ...row(files[0]!, runner), startTime: 0, endTime: 2000 }, { ...row(files[1]!, runner), startTime: 2500, endTime: 3000 }, row("gone/x.test.ts", runner)] };
+      const sqlite = { testResults: [{ ...row(files[2]!, runner), startTime: 0, endTime: 700 }] };
+      const costs = costsFrom(ROOT, [{ path: "a/ci-suite-3.json", report: suite }, { path: "b/ci-sqlite-1.json", report: sqlite }], "123");
+      expect(costs).toEqual({ measuredAt: "123", suite: { [files[0]!]: 2000, [files[1]!]: 1000 }, sqlite: { [files[2]!]: 700 } });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 

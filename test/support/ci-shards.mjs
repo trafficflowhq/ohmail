@@ -10,7 +10,9 @@
  * (--desktop), on the desktop's own install. Both verify verbs also refuse a report in which the service
  * gate skipped a file for a missing test service (SERVICE_GATE_PREFIX).
  * The SQLite run has its own map, ci-shards-sqlite.json (--pack-sqlite, --sqlite-indexes, --sqlite-shard N
- * <list>, --verify-sqlite-report N <list> <json>; see SQLITE_MAP below).
+ * <list>, --verify-sqlite-report N <list> <json>; see SQLITE_MAP below). A pull request's selected run
+ * (.github/scripts/ci-select.mjs) hands each job its files: --verify-list <label> <list> <json> reads the
+ * report back against them, and --costs --measured-at <run> <json>... writes the costs it packs by.
  */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -233,6 +235,42 @@ export function measuredCosts(root, reports) {
   return cost;
 }
 
+/* ── A PULL REQUEST'S SELECTED RUN (.github/scripts/ci-select.mjs) ─────────────────────────────────
+ * The plan hands each selected job its files; --verify-list reads the report back against that list,
+ * and --costs writes the per-file costs the selector packs by (test/support/ci-costs.json). */
+export const COSTS = "test/support/ci-costs.json";
+
+/** A report against the files a selected job was handed. */
+export function verifyList(want, report, root = ROOT) {
+  const asked = new Set(want);
+  const ran = new Set(report.testResults.map((r) => relative(root, r.name).split("\\").join("/")));
+  return { missing: [...asked].filter((f) => !ran.has(f)), extra: [...ran].filter((f) => !asked.has(f)), gated: gatedFiles(report, root) };
+}
+
+/** The test file a report row names, whatever checkout ran it: the longest path suffix that is one here. */
+export function treeFile(name, known) {
+  const parts = String(name).split("\\").join("/").split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const rel = parts.slice(i).join("/");
+    if (known.has(rel)) return rel;
+  }
+  return null;
+}
+
+/** Per-file costs from one whole run's reports: `ci-sqlite-*.json` are the SQLite run's, the rest the suite's. */
+export function costsFrom(root, named, measuredAt) {
+  const known = new Set(testFiles(root));
+  const out = { measuredAt, suite: {}, sqlite: {} };
+  for (const { path, report } of named) {
+    const rows = report.testResults.map((r) => ({ ...r, name: treeFile(r.name, known) })).filter((r) => r.name !== null);
+    const cost = measuredCosts(root, [{ testResults: rows.map((r) => ({ ...r, name: join(root, r.name) })) }]);
+    const into = /(^|\/)ci-sqlite-[^/]*\.json$/.test(path.split("\\").join("/")) ? out.sqlite : out.suite;
+    for (const [f, ms] of cost) into[f] = Math.round(ms);
+  }
+  for (const k of ["suite", "sqlite"]) out[k] = Object.fromEntries(Object.entries(out[k]).sort(([a], [b]) => (a < b ? -1 : 1)));
+  return out;
+}
+
 /** Longest-first greedy into SHARDS bins over the measured files; the Dovecot files are one item. */
 export function pack(root, cost, measuredAt) {
   const files = testFiles(root);
@@ -325,6 +363,29 @@ function main(argv) {
     process.stdout.write(`REPORT shard=${n} results=${report.testResults.length} missing=${missing.length} extra=${extra.length} gated=${gated.length}\n`);
     return missing.length || extra.length || gated.length ? 1 : 0;
   }
+  if (cmd === "--verify-list") {
+    const [label, listPath, reportPath] = rest;
+    if (!label || !listPath || !reportPath) throw new Error("--verify-list takes a label, the handed list and the run's JSON report");
+    const want = readFileSync(listPath, "utf8").split("\n").filter(Boolean);
+    if (!want.length) throw new Error(`--verify-list: ${label} was handed no file`);
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    const { missing, extra, gated } = verifyList(want, report);
+    for (const f of missing) process.stderr.write(`ci-shards: MISSING ${f} was handed to ${label} and did not run\n`);
+    for (const f of extra) process.stderr.write(`ci-shards: EXTRA ${f} ran in ${label} without being handed to it\n`);
+    for (const g of gated) process.stderr.write(`ci-shards: GATED ${g} — a service this job must start was missing\n`);
+    process.stdout.write(`REPORT ${label} results=${report.testResults.length} missing=${missing.length} extra=${extra.length} gated=${gated.length}\n`);
+    return missing.length || extra.length || gated.length ? 1 : 0;
+  }
+  if (cmd === "--costs") {
+    const at = rest.indexOf("--measured-at");
+    if (at < 0 || !rest[at + 1]) throw new Error("--costs takes --measured-at <the whole run's id>");
+    const inputs = rest.filter((a, i) => i !== at && i !== at + 1);
+    if (!inputs.length) throw new Error("--costs takes the whole run's suite and sqlite vitest JSON reports");
+    const costs = costsFrom(ROOT, inputs.map((p) => ({ path: p, report: JSON.parse(readFileSync(p, "utf8")) })), rest[at + 1]);
+    writeFileSync(join(ROOT, COSTS), `${JSON.stringify(costs, null, 1)}\n`);
+    process.stdout.write(`COSTS suite=${Object.keys(costs.suite).length} sqlite=${Object.keys(costs.sqlite).length} measured at ${costs.measuredAt}\n`);
+    return 0;
+  }
   if (cmd === "--desktop") {
     const files = desktopFiles();
     if (!files.length) throw new Error("--desktop: no desktop test imports the desktop's vite config or carries the desktop-install marker");
@@ -345,7 +406,7 @@ function main(argv) {
     process.stdout.write(`CHECK stale=${problems.filter((p) => p.startsWith("STALE")).length} problems=${problems.length}\n`);
     return problems.length ? 1 : 0;
   }
-  process.stderr.write("ci-shards: --pack <json>... [--measured-at <sha>] | --pack-sqlite <json>... [--measured-at <sha>] | --sqlite-indexes | --sqlite-shard N <list-json> | --verify-sqlite-report N <list-json> <json> | --shard N | --needs-dovecot N | --indexes | --alone | --desktop | --check | --verify-report N|desktop <json>\n");
+  process.stderr.write("ci-shards: --pack <json>... [--measured-at <sha>] | --pack-sqlite <json>... [--measured-at <sha>] | --sqlite-indexes | --sqlite-shard N <list-json> | --verify-sqlite-report N <list-json> <json> | --shard N | --needs-dovecot N | --indexes | --alone | --desktop | --check | --verify-report N|desktop <json> | --verify-list <label> <list> <json> | --costs --measured-at <run> <json>...\n");
   return 2;
 }
 
