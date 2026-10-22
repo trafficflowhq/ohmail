@@ -308,7 +308,7 @@ export type SidecarImapConfig = Omit<ImapConfig, "auth"> & { auth: { user: strin
  * would be an answer about whichever one the shell happened to ask about last.
  */
 export type {
-  CredentialBlock, CredentialState, FirstSyncState, MailboxConnectionState, OrganizerState,
+  CredentialBlock, CredentialState, DialAnswer, FirstSyncState, MailboxConnectionState, OrganizerState,
 } from "./roster.js";
 
 /**
@@ -753,6 +753,13 @@ export interface Sidecar {
    * predicates this file uses ({@link credentialsRefused}).
    */
   start(): Promise<LaunchReport>;
+  /**
+   * {@link start}, with the seed's dial answered as well: every mailbox is started once, `report`
+   * is what `start()` would have answered (the same loop and the same `mailbox_start_failed`
+   * lines), and `seedDial` is the seed's login — opened, refused or not tried — or `null` with no
+   * seed. The phone's Connect judges a typed password on that answer; `main.ts` keeps `start()`.
+   */
+  startAnswering(): { report: Promise<LaunchReport>; seedDial: Promise<DialAnswer | null> };
   /**
    * Whether this install is currently this mailbox's organizer, and if not, who is.
    *
@@ -2592,6 +2599,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * pointing at a runtime that has been detached.
      */
     const seedRuntime = (): LocalMailboxRuntime | undefined => runtimes.seed(address);
+    /** What a launch could not open, logged per mailbox: `start()`'s and `startAnswering()`'s one loop. */
+    const launchReport = (
+      all: readonly LocalMailboxRuntime[], runs: readonly PromiseSettledResult<void>[],
+    ): LaunchReport => {
+      const failures: { mailboxId: string; err: unknown }[] = [];
+      runs.forEach((r, i) => {
+        if (r.status !== "rejected") return;
+        // A first drain that ended on one of our ceilings fails the launch: name which.
+        const ceiling = isImapBoundExceeded(r.reason) ? r.reason : null;
+        log("mailbox_start_failed", {
+          err: r.reason, ceiling: ceiling?.bound ?? null, ceilingLimit: ceiling?.limit ?? null,
+        });
+        failures.push({ mailboxId: all[i]?.mailboxId ?? "", err: r.reason });
+      });
+      return { failures };
+    };
     /** The roster row for an id, or null. Used once, by the boot writes, before any runtime exists. */
     const runtimeRosterRow = (rows: readonly LocalRosterRow[], id: string): LocalRosterRow | null =>
       rows.find((r) => r.id === id) ?? null;
@@ -7781,28 +7804,33 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /**
        * START THIS MAILBOX AND ANSWER AT THE DIAL — for a caller a person is waiting on. `start()`
        * settles after the first drain, which is minutes on a large mailbox; a sign-in or TLS
-       * refusal arrives at the login, so that is when this answers. The drain carries on behind
-       * it, and a start that dials nothing (no usable password) answers `not-dialled`.
+       * refusal arrives at the login, so that is when `dial` answers. The drain carries on behind
+       * it, and a start that dials nothing (no usable password) answers `not-dialled`. `started` is
+       * the start itself, for a caller that reports it as `start()` does.
        */
-      const launch = (): Promise<DialAnswer> => new Promise<DialAnswer>((resolve) => {
+      const startAnswering = (): { dial: Promise<DialAnswer>; started: Promise<void> } => {
         let answered = false;
+        let resolveDial: (a: DialAnswer) => void = () => {};
+        const dial = new Promise<DialAnswer>((resolve) => { resolveDial = resolve; });
         const answer = (a: DialAnswer): void => {
           if (answered) return;
           answered = true;
           onDialled = null;
-          resolve(a);
+          resolveDial(a);
         };
         onDialled = () => answer({ outcome: "dialled" });
         /* The skip is over: `start()` sets it again if this launch has no password either. */
         launchSkipped = false;
-        rt.start().then(
-          () => answer({ outcome: "not-dialled" }),
-          (err: unknown) => {
-            log("mailbox_start_failed", { err });
-            answer({ outcome: "failed", err });
-          },
-        );
-      });
+        const started = rt.start();
+        started.then(() => answer({ outcome: "not-dialled" }), (err: unknown) => answer({ outcome: "failed", err }));
+        return { dial, started };
+      };
+
+      const launch = (): Promise<DialAnswer> => {
+        const { dial, started } = startAnswering();
+        started.catch((err: unknown) => { log("mailbox_start_failed", { err }); });
+        return dial;
+      };
 
       const rt: LocalMailboxRuntime = {
         mailboxId: mb.id,
@@ -7987,6 +8015,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           return null;
         },
         launch,
+        startAnswering,
         async start() {
           // ── A PASSWORD THAT IS THERE AND CANNOT BE USED IS AN OUTAGE ──────────────────────
           //
@@ -10349,18 +10378,18 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            belongs to. Reading `runtimes.all()` again afterwards would be a different list — a
            mailbox can be detached while its own launch is in flight. */
         const all = runtimes.all();
-        const runs = await Promise.allSettled(all.map((r) => r.start()));
-        const failures: { mailboxId: string; err: unknown }[] = [];
-        runs.forEach((r, i) => {
-          if (r.status !== "rejected") return;
-          // A first drain that ended on one of our ceilings fails the launch: name which.
-          const ceiling = isImapBoundExceeded(r.reason) ? r.reason : null;
-          log("mailbox_start_failed", {
-            err: r.reason, ceiling: ceiling?.bound ?? null, ceilingLimit: ceiling?.limit ?? null,
-          });
-          failures.push({ mailboxId: all[i]?.mailboxId ?? "", err: r.reason });
-        });
-        return { failures };
+        return launchReport(all, await Promise.allSettled(all.map((r) => r.start())));
+      },
+      /* THE SAME LAUNCH, and the seed's dial beside it — see {@link Sidecar.startAnswering}. */
+      startAnswering() {
+        const all = runtimes.all();
+        const answering = all.map((r) => r.startAnswering());
+        const seed = seedRuntime();
+        const at = seed === undefined ? -1 : all.indexOf(seed);
+        return {
+          report: Promise.allSettled(answering.map((a) => a.started)).then((runs) => launchReport(all, runs)),
+          seedDial: at === -1 ? Promise.resolve(null) : answering[at]!.dial,
+        };
       },
       async stop() {
         // The INSTALL is going down, which is what the account-scoped passes yield on. Each

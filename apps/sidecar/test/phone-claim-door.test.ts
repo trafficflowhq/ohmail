@@ -219,8 +219,10 @@ function claimable(meta: MemoryMeta): () => MailboxAdapter {
   }) as unknown as MailboxAdapter;
 }
 
+type AdapterFactory = NonNullable<Parameters<typeof startPhoneEngine>[0]["adapterFactory"]>;
+
 function deps(exec: PhoneSqlExecutor, over: Record<string, unknown> = {}): Parameters<typeof startPhoneEngine>[0] {
-  return {
+  const made = {
     exec,
     imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
     machineName: "ohmail on a phone",
@@ -231,6 +233,14 @@ function deps(exec: PhoneSqlExecutor, over: Record<string, unknown> = {}): Param
     }) as unknown as MailboxAdapter,
     ...over,
   } as Parameters<typeof startPhoneEngine>[0];
+  /* EVERY DOUBLE HERE SIGNS IN: Connect opens a mailbox only over a login, and these
+     cases are about the claim door, not the dial. One that brings its own `connect` keeps it. */
+  const make = made.adapterFactory as AdapterFactory;
+  const signedIn: AdapterFactory = (...args) => {
+    const adapter = make(...args);
+    return "connect" in adapter ? adapter : Object.assign(adapter, { connect: async (): Promise<void> => undefined });
+  };
+  return { ...made, adapterFactory: signedIn };
 }
 
 const EXPECTED_DIALECT = process.env.OHMAIL_EXPECT_DIALECT;
@@ -255,8 +265,8 @@ const soleMailbox = (engine: PhoneEngine): string => {
  * `organizeHere` refuses a claim-back with no password anywhere — 422 `credential_needed`, and
  * rightly: *"a stamp on a mailbox whose stored login no longer works is an action that looks like
  * it worked and leaves the mailbox quarantined"*. This composition's launch never seals one (the
- * adapter is a double that cannot complete a dial), so the row is seeded. Its content is never
- * read by anything here — the check is on the ROW's existence.
+ * adapter is a double that signs in and can do nothing after it), so the row is seeded. Its
+ * content is never read by anything here — the check is on the ROW's existence.
  */
 const seedCredential = (exec: { direct: (sql: string, p?: unknown[]) => unknown[] }, id: string): void => {
   exec.direct(
@@ -1074,7 +1084,7 @@ describe.runIf(ON_DEVICE_STORE)("the person's two verbs, on the engine's own doo
     await expect(live.stopOrganizing()).resolves.toBe("released");
     /* THE ROW IS WHAT THIS CASE IS ABOUT, and the door's word is now a narrower statement than the
        one it used to make: `claimed` means the forced cycle TOOK the claim, and this composition's
-       adapter cannot complete a dial (`deps`), so no cycle here can take one. The press is admitted
+       adapter can do nothing past its sign-in (`deps`), so no cycle here can take one. The press is admitted
        all the same — which is the step-up question this case asks — and the two stamps below are
        where that is read. A `claimed` here would mean the door had gone back to reporting a start
        it never made. */
@@ -1655,13 +1665,21 @@ describe.runIf(ON_DEVICE_STORE)("the look the press pays for runs under a clock"
     listClaims: () => Promise<RawClaimMessage[]>,
   ): Promise<{ id: string; lines: string[] }> => {
     const lines: string[] = [];
+    /* THE LAUNCH'S OWN LOOK DOES NOT LAND, as on the dial that never signed in which this block was
+       written against: Connect now signs in first, and a launch reaching this look
+       would wait out its bound before the case began. The press's look is the one measured. */
+    let launched = false;
     live = await startPhoneEngine(deps(exec, {
       logSink: (line: string) => { lines.push(line); },
       adapterFactory: () => ({
         close: async () => undefined,
-        leasePeekIo: () => ({ listClaims }),
+        leasePeekIo: () => ({
+          listClaims: () => (launched ? listClaims()
+            : Promise.reject(new LeaseUnavailableError("ohmail/_meta could not be read", { op: "list_claims" }))),
+        }),
       }) as unknown as MailboxAdapter,
     }));
+    launched = true;
     const id = soleMailbox(live);
     unlookedAt(exec, id);
     return { id, lines };

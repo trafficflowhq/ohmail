@@ -158,8 +158,11 @@ const FIELD_OF: Readonly<Partial<Record<RefusalKey, ServerField>>> = {
   serverSettingsHostHeld: "imapHost",
   serverSettingsHostHeldUnnamed: "imapHost",
   standaloneNoPort: "imapPort",
-  /* The certificate is the server's: the host name is the field that fixes a mismatch. */
+  /* The certificate is the server's: the host name is the field that fixes a mismatch. An
+     untrusted, expired or not-yet-valid one is fixed by whoever runs the server: beside the verb. */
   standaloneCertificateRefused: "imapHost",
+  standaloneCertificateName: "imapHost",
+  standaloneImapUnreachable: "imapHost",
   standaloneNoSmtpHost: "smtpHost",
   standaloneNoSmtpPort: "smtpPort",
   standaloneSmtpSignInRefused: "smtpHost",

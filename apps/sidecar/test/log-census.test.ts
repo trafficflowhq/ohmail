@@ -1289,6 +1289,11 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      judged on no answer at all. */
   mailbox_open_submission_refused: "info",
   mailbox_open_submission_probe_failed: "error",
+  /* THE INCOMING SERVER WAS NOT SIGNED IN TO AT CONNECT (`mobile.ts`): a dial that
+     failed but not on a refused password or encryption, or no login inside the bound. `info` on
+     `mailbox_open_refused`'s rule — the consequence; the dial's failure is `mailbox_start_failed`.
+     The verdict word and the error's class, nothing else. */
+  mailbox_open_unreachable: "info",
   /* AND THE CLEARING ITSELF COULD NOT BE DONE. `error` by its name and rightly: the next press
      dials the refused credential again, which is a mailbox that cannot be opened until the person
      enters the password once more. `err` + `reason`, no host and no mailbox. */

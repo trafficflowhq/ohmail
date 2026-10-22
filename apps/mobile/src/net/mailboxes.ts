@@ -540,7 +540,12 @@ export async function changeServerSettings(
 export interface ServerChangeError {
   code?: unknown;
   message?: unknown;
-  details?: { transport?: unknown; reason?: unknown; holder?: { name?: unknown; kind?: unknown } | null };
+  details?: {
+    transport?: unknown; reason?: unknown;
+    /** Why a `tls` probe refused: `tls_unavailable` is a server with no TLS, every other kind a certificate. */
+    tls?: { kind?: unknown } | null;
+    holder?: { name?: unknown; kind?: unknown } | null;
+  };
 }
 
 /**
@@ -559,7 +564,12 @@ export function serverChangeRefusal(status: number, error: ServerChangeError | u
   if (error?.code === "mailbox_probe_failed" && d !== undefined) {
     const out = d.transport === "smtp";
     if (d.reason === "auth") return refuse(out ? "standaloneSmtpSignInRefused" : "standaloneSignInRefused");
-    if (d.reason === "tls") return refuse(out ? "standaloneSmtpNoEncryption" : "standaloneNoEncryption");
+    if (d.reason === "tls" && out) return refuse("standaloneSmtpNoEncryption");
+    /* A certificate the probe refused is encrypted: only a server offering no TLS at all is "no
+       encryption" (the desktop's `tls_unavailable`); a `tls` with no detail is its certificate sentence. */
+    if (d.reason === "tls") {
+      return refuse(d.tls?.kind === "tls_unavailable" ? "standaloneNoEncryption" : "standaloneCertificateRefused");
+    }
     return refuse(out ? "standaloneSmtpUnreachable" : "serverSettingsImapUnreachable");
   }
   const said = error?.message;

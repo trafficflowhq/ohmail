@@ -218,8 +218,9 @@ function deps(exec: PhoneSqlExecutor, over: Record<string, unknown> = {}): Param
     machineName: "Pixel 9",
     installId: "install-marker-abc",
     /* No socket is opened anywhere in this file. The double is the same shape the sidecar's own
-       boot suites use, and its presence is what routes the submission probe through a double too. */
-    adapterFactory: () => ({ close: async () => undefined }) as unknown as MailboxAdapter,
+       boot suites use, and its presence is what routes the submission probe through a double too.
+       It signs in, which Connect needs before it opens a mailbox, and no more. */
+    adapterFactory: () => ({ connect: async () => undefined, close: async () => undefined }) as unknown as MailboxAdapter,
     ...over,
   } as Parameters<typeof startPhoneEngine>[0];
 }

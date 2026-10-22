@@ -549,12 +549,45 @@ export function rearmImapflowReader(source, version) {
   if (at !== 1) throw new Error(`imapflow's reader guard matched ${at} times, not once; the phone's re-arm was not applied.`);
   return source.replace(IMAPFLOW_REARM_ANCHOR, IMAPFLOW_REARM_WITH);
 }
+
+/**
+ * AND ITS CLOSE DEFERRED BEHIND A PENDING CONNECT, IN THIS BUNDLE ONLY. A failed
+ * STARTTLS upgrade calls `closeAfter()` before its rejection travels up to `connect()`. With the
+ * phone's microtask `setImmediate` the close ran first and rejected the connect with `Unexpected
+ * close`, dropping the certificate's reason. While the first connect is pending the close waits for
+ * a timer turn instead; otherwise nothing changes. Same version pin and anchor rule as the re-arm.
+ */
+export const IMAPFLOW_CLOSE_MARKER = "Close deferred behind the pending connect";
+const IMAPFLOW_CLOSE_ANCHOR = `    closeAfter() {
+        setImmediate(() => this.close());
+    }`;
+const IMAPFLOW_CLOSE_WITH = `    closeAfter() {
+        if (typeof this.initialReject === 'function') {
+            this.log.trace({ msg: '${IMAPFLOW_CLOSE_MARKER}', cid: this.id });
+            setTimeout(() => this.close(), 0);
+            return;
+        }
+        setImmediate(() => this.close());
+    }`;
+export function deferImapflowCloseBehindConnect(source, version) {
+  if (version !== IMAPFLOW_REARM_VERSION) {
+    throw new Error(`imapflow ${version} is not the ${IMAPFLOW_REARM_VERSION} the phone's deferred close was written against; re-read closeAfter and move the anchor.`);
+  }
+  const at = source.split(IMAPFLOW_CLOSE_ANCHOR).length - 1;
+  if (at !== 1) throw new Error(`imapflow's closeAfter matched ${at} times, not once; the phone's deferred close was not applied.`);
+  return source.replace(IMAPFLOW_CLOSE_ANCHOR, IMAPFLOW_CLOSE_WITH);
+}
+
 const imapflowReaderPlugin = {
   name: "ohmail-phone-imapflow-reader",
   setup(build) {
     build.onLoad({ filter: /[\\/]imapflow[\\/]lib[\\/]imap-flow\.js$/ }, (args) => {
       const pkg = JSON.parse(readFileSync(join(dirname(args.path), "..", "package.json"), "utf8"));
-      return { contents: rearmImapflowReader(readFileSync(args.path, "utf8"), pkg.version), loader: "js" };
+      const source = readFileSync(args.path, "utf8");
+      return {
+        contents: deferImapflowCloseBehindConnect(rearmImapflowReader(source, pkg.version), pkg.version),
+        loader: "js",
+      };
     });
   },
 };

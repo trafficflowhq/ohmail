@@ -86,11 +86,15 @@ empty result is a refusal.
 
 **5. A failed upgrade left a live cleartext socket.** The caller has already sent STARTTLS and
 believes the next byte is encrypted, so anything written afterwards goes out in the clear. A failed
-upgrade now closes the connection. Alongside it: the receiver's pause moved inside the `try` (giving
-up used to leave it paused for the life of the process — a connection open, silent, and never
-delivering again), flow-control `resume()` defers while an upgrade is in flight, and plaintext
-still sitting UNREAD ON THE SOCKET when the upgrade begins is treated as injected and refuses the
-upgrade.
+upgrade now closes the connection, and the close carries why: the failure and every cause under it,
+behind the literal `the TLS upgrade failed: `, which the library's listener emits as an `error` before
+the `close`. Thrown instead, it reached the module's catch and was sent after the close, to a
+JavaScript socket that stops listening at a close (`Socket.js` `_setDisconnected`), so a certificate
+the phone refused read as a connection that had simply closed. Alongside it: the receiver's pause
+moved inside the `try` (giving up used to leave it paused for the life of the process — a connection
+open, silent, and never delivering again), flow-control `resume()` defers while an upgrade is in
+flight, and plaintext still sitting UNREAD ON THE SOCKET when the upgrade begins is treated as
+injected and refuses the upgrade.
 
 That last one is narrower than it first read here, and the boundary is worth stating exactly:
 `available()` reports what the socket still holds, so it says nothing about bytes that have already
@@ -117,6 +121,13 @@ STARTTLS confirmation reads the peer certificate to know the handshake finished.
 read by its type: RSA keeps its three fields, EC reports its size and the NIST curve names node's
 `tls` reports, any other key reports neither. A guard in the development workspace runs the method
 on a JVM over RSA, the three NIST curves and Ed25519, and again with upstream's cast put back.
+
+**9. A refused implicit-TLS handshake lost its reason.** `TcpSocketModule.connect`'s catch sends a
+failed dial to JavaScript as the exception's message alone, and for a chain refused under a trusted
+root (an expired certificate, or one not valid yet) that message is no more than `Chain validation
+failed`; the reason is only in the causes. So a certificate the phone refused on 993 read as a
+server it could not reach. The handshake's failure now closes the socket and is thrown with every
+cause in its message, behind the literal `the TLS handshake failed: `, as §5 does for the upgrade.
 
 **How to verify a build actually carries this, and why that needs saying.** The package manager keeps
 more than one copy of a patched module in its store, and Android autolinking compiled a copy the

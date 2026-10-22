@@ -311,7 +311,7 @@ index 1e0622fb26819507088c6b2147a407e23fe3d25f..159fe31173d3c5f56bfa30549c17eee0
  
      private static String getFingerprint(X509Certificate cert, String algorithm) throws Exception {
 diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
-index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5dcf167077 100644
+index 75115700e46138a43b5c63c36bee88016bd6129e..b86afc1c08eb55024f1bef49e3443fcbe9026472 100644
 --- a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
 +++ b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
 @@ -11,11 +11,13 @@ import java.io.IOException;
@@ -385,7 +385,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
          // Get the addresses
          final String localAddress = options.hasKey("localAddress") ? options.getString("localAddress") : "0.0.0.0";
          final InetAddress localInetAddress = InetAddress.getByName(localAddress);
-@@ -67,17 +98,149 @@ class TcpSocketClient extends TcpSocket {
+@@ -67,17 +98,184 @@ class TcpSocketClient extends TcpSocket {
          socket.bind(new InetSocketAddress(localInetAddress, localPort));
          final int connectTimeout = options.hasKey("connectTimeout") ? options.getInt("connectTimeout") : 0; 
          socket.connect(new InetSocketAddress(remoteInetAddress, port), connectTimeout);
@@ -396,7 +396,14 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
 +            SSLSocket secure = (SSLSocket) ssf.createSocket(socket, peerName, port, true);
 +            secure.setUseClientMode(true);
 +            applyTlsFloor(secure, tlsOptions);
-+            secure.startHandshake();
++            try {
++                secure.startHandshake();
++            } catch (final Exception e) {
++                // The module's catch sends the message alone, and a chain refused under a trusted
++                // root says no more than "Chain validation failed": the reason is in the causes.
++                try { socket.close(); } catch (final IOException ignored) { /* already gone */ }
++                throw handshakeFailure(e);
++            }
 +            socket = secure;
 +        }
 +        // Only now: the poll bounds the RECEIVE LOOP, and a handshake is not one.
@@ -422,6 +429,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
 +        final String name = peerNameFrom(tlsOptions, peerName);
 +        if (name == null) throw new IOException("startTLS without a peer name to verify against");
 +        boolean upgraded = false;
++        Exception failure = null;
 +        try {
 +            // Inside the try, so a receiver that will not quiesce still reaches the `finally` that
 +            // un-pauses it. Outside, giving up left the reader paused for the life of the process:
@@ -448,19 +456,46 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
 +            sslSocket.setSoTimeout(RECEIVE_POLL_MS);
 +            socket = sslSocket;
 +            upgraded = true;
++        } catch (final Exception e) {
++            // NOT RETHROWN: the module's catch would send it as an `error` after the close below,
++            // and the JavaScript socket stops listening at a close. The close carries it instead.
++            failure = e;
 +        } finally {
 +            if (!upgraded) {
 +                // A FAILED UPGRADE CLOSES THE CONNECTION. Leaving it open leaves a writable
 +                // CLEARTEXT socket that the session was about to trust — the caller has already
 +                // sent STARTTLS and believes the next byte is encrypted, so anything written after
-+                // this point goes out in the clear, credentials included.
++                // this point goes out in the clear, credentials included. The close says why, and
++                // the listener emits that `error` before the `close`.
 +                closed = true;
 +                try { socket.close(); } catch (final IOException ignored) { /* already gone */ }
-+                receiverListener.onClose(getId(), null);
++                receiverListener.onClose(getId(), failure == null ? null : upgradeFailure(failure));
 +            } else if (receiverTask != null) {
 +                receiverTask.resumeFromUpgrade(socket);
 +            }
 +        }
++    }
++
++    /**
++     * Why the upgrade failed, with every cause under it: the handshake's own message can be no more
++     * than "Chain validation failed", and the certificate's reason is in the cause.
++     */
++    private static IOException upgradeFailure(final Exception failure) {
++        return withCauses("the TLS upgrade failed: ", failure);
++    }
++
++    /** The same for the implicit-TLS dial's handshake, which the module reports by message alone. */
++    private static IOException handshakeFailure(final Exception failure) {
++        return withCauses("the TLS handshake failed: ", failure);
++    }
++
++    private static IOException withCauses(final String said, final Exception failure) {
++        final StringBuilder line = new StringBuilder(said).append(failure);
++        Throwable cause = failure.getCause();
++        for (int hops = 0; cause != null && hops < 8; hops++, cause = cause.getCause()) {
++            line.append("; caused by ").append(cause);
++        }
++        return new IOException(line.toString(), failure);
 +    }
 +
 +    /** The name a certificate is checked against: the caller's `servername`, else the dial's. */
@@ -541,7 +576,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
      }
  
      private boolean containsKey(ReadableArray array, String key) {
-@@ -114,19 +277,17 @@ class TcpSocketClient extends TcpSocket {
+@@ -114,19 +312,17 @@ class TcpSocketClient extends TcpSocket {
          final String certAlias = tlsOptions.hasKey("certAlias") ? tlsOptions.getString("certAlias") : "";
          final KeystoreInfo keystoreInfo = new KeystoreInfo(keystoreName, caAlias, certAlias, keyAlias);
  
@@ -572,7 +607,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
          } else {
              ssf = (customTlsCa != null)
                      ? SSLCertificateHelper.createCustomTrustedSocketFactory(
-@@ -223,7 +384,10 @@ class TcpSocketClient extends TcpSocket {
+@@ -223,7 +419,10 @@ class TcpSocketClient extends TcpSocket {
          }
      }
  
@@ -583,7 +618,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
          if (receiverTask != null) {
              receiverTask.resume();
          }
-@@ -238,7 +402,22 @@ class TcpSocketClient extends TcpSocket {
+@@ -238,7 +437,22 @@ class TcpSocketClient extends TcpSocket {
  
          private final TcpSocketClient clientSocket;
          private final TcpEventListener receiverListener;
@@ -607,7 +642,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
  
          public TcpReceiverTask(TcpSocketClient clientSocket, TcpEventListener receiverListener) {
              this.clientSocket = clientSocket;
-@@ -247,14 +426,18 @@ class TcpSocketClient extends TcpSocket {
+@@ -247,14 +461,18 @@ class TcpSocketClient extends TcpSocket {
  
          /**
           * An infinite loop to block and read data from the socket.
@@ -629,7 +664,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
              if (socket == null) {
                  return;
              }
-@@ -263,8 +446,28 @@ class TcpSocketClient extends TcpSocket {
+@@ -263,8 +481,28 @@ class TcpSocketClient extends TcpSocket {
              try {
                  BufferedInputStream in = new BufferedInputStream(socket.getInputStream());
                  while (!socket.isClosed()) {
@@ -660,7 +695,7 @@ index 75115700e46138a43b5c63c36bee88016bd6129e..22a5af34acd00a4203587ae2ca119e5d
                      if (bufferCount > 0) {
                          receiverListener.onData(socketId, Arrays.copyOfRange(buffer, 0, bufferCount));
                      } else if (bufferCount == -1) {
-@@ -280,18 +483,61 @@ class TcpSocketClient extends TcpSocket {
+@@ -280,18 +518,61 @@ class TcpSocketClient extends TcpSocket {
          }
  
          public synchronized void pause() {

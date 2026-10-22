@@ -39,8 +39,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
-  BUNDLE, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO, builtCopiesIn,
-  selectedExportTargets, workspaceExportTargets,
+  BUNDLE, IMAPFLOW_CLOSE_MARKER, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO,
+  builtCopiesIn, selectedExportTargets, workspaceExportTargets,
 } from "../scripts/bundle-engine.mjs";
 import { requiresIn } from "../scripts/verify-phone-engine-repro.mjs";
 
@@ -251,6 +251,14 @@ describe("the phone engine bundle contains no door and no desktop store", () => 
   it("carries imapflow's re-armed reader, once", () => {
     const bundled = readFileSync(BUNDLE, "utf8");
     expect(bundled.split(IMAPFLOW_REARM_MARKER).length - 1).toBe(1);
+  });
+
+  /* AND ITS CLOSE DEFERRED BEHIND A PENDING CONNECT, for the same scheduler: a refused upgrade's
+     reason reaches `connect()` (`imapflow-close-behind-connect.test.ts`). */
+  it("carries imapflow's deferred close, once", () => {
+    expect(IMAPFLOW_CLOSE_MARKER, "the bundler names no deferred close").toBeTypeOf("string");
+    const bundled = readFileSync(BUNDLE, "utf8");
+    expect(bundled.split(IMAPFLOW_CLOSE_MARKER).length - 1).toBe(1);
   });
 });
 

@@ -42,11 +42,43 @@ function withNameOrNoSni(options) {
  * an outage: "Reconnecting…" for ever over a certificate nothing would accept. Only the certificate
  * class is stamped — a refused or timed-out TCP connect before the handshake is still an outage.
  * Android names the Java exception; iOS names the Secure Transport code; node (the suite's stand-in)
- * says "certificate".
+ * says "certificate". Android's implicit-TLS dial may say only "Chain validation failed", Conscrypt's
+ * words for a chain refused under a trusted root (expired, not valid yet), when the transport
+ * patch's causes are not in the message.
  */
 const CERTIFICATE_REFUSAL =
-  /certificat|CertPath|trust anchor|SSLPeerUnverified|Hostname \S+ not verified|kCFStreamErrorDomainSSL error -98(?:07|08|12|13|14|15|43)\b|errSSL(?:XCertChainInvalid|NoRootCert|UnknownRootCert|CertExpired|CertNotYetValid|HostNameMismatch)/i;
+  /certificat|CertPath|trust anchor|Chain validation failed|SSLPeerUnverified|Hostname \S+ not verified|kCFStreamErrorDomainSSL error -98(?:07|08|12|13|14|15|43)\b|errSSL(?:XCertChainInvalid|NoRootCert|UnknownRootCert|CertExpired|CertNotYetValid|HostNameMismatch)/i;
 const CERTIFICATE_CODE = /CERT|SELF_SIGNED|UNABLE_TO_(?:GET_ISSUER|VERIFY)/;
+
+/**
+ * WHICH CERTIFICATE REFUSAL, in the desktop probe's words (`imap-probe.ts`), so Connect can say what
+ * the desktop says: `certificateKind`, read only after the match above, and absent where no pattern
+ * reads the platform's message. Self-signed is `untrusted`: neither platform tells the two apart.
+ * Node's codes are the desktop's table, pinned by `certificate-refusal-named.test.ts`.
+ */
+const CERTIFICATE_KIND_BY_CODE = {
+  ERR_TLS_CERT_ALTNAME_INVALID: "hostname_mismatch",
+  CERT_HAS_EXPIRED: "expired",
+  CERT_NOT_YET_VALID: "not_yet_valid",
+  DEPTH_ZERO_SELF_SIGNED_CERT: "untrusted",
+  SELF_SIGNED_CERT_IN_CHAIN: "untrusted",
+  UNABLE_TO_VERIFY_LEAF_SIGNATURE: "untrusted",
+  UNABLE_TO_GET_ISSUER_CERT_LOCALLY: "untrusted",
+};
+const CERTIFICATE_KIND_BY_MESSAGE = [
+  /* Android (OkHttp's words, and the platform's under endpoint identification), iOS -9843, node. */
+  ["hostname_mismatch", /Hostname \S+ not verified|subjectAltName|errSSLHostNameMismatch|kCFStreamErrorDomainSSL error -9843\b|does not match certificate's altnames/i],
+  /* Android names the cause (`upgradeFailure`, `handshakeFailure` in the transport patch); iOS -9814 and -9815; node. */
+  ["expired", /CertificateExpiredException|errSSLCertExpired|kCFStreamErrorDomainSSL error -9814\b|certificate has expired/i],
+  ["not_yet_valid", /CertificateNotYetValidException|errSSLCertNotYetValid|kCFStreamErrorDomainSSL error -9815\b|certificate is not yet valid/i],
+  ["untrusted", /trust anchor for certification path not found|errSSL(?:XCertChainInvalid|NoRootCert|UnknownRootCert)|kCFStreamErrorDomainSSL error -98(?:07|12|13)\b|unable to get local issuer certificate|unable to verify the first certificate|self[- ]signed certificate/i],
+];
+
+function certificateKindOf(message, code) {
+  if (Object.prototype.hasOwnProperty.call(CERTIFICATE_KIND_BY_CODE, code)) return CERTIFICATE_KIND_BY_CODE[code];
+  const found = CERTIFICATE_KIND_BY_MESSAGE.find(([, re]) => re.test(message));
+  return found ? found[0] : null;
+}
 
 function handshakeRefusal(err) {
   const message = err instanceof Error ? err.message : String(err);
@@ -55,6 +87,8 @@ function handshakeRefusal(err) {
   const e = err instanceof Error ? err : new Error(message);
   e.tlsFailed = true;
   e.certificateRefused = true;
+  const kind = certificateKindOf(message, code);
+  if (kind !== null) e.certificateKind = kind;
   return e;
 }
 

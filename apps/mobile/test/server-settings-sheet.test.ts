@@ -82,18 +82,33 @@ describe("changeServerSettings — the request", () => {
 });
 
 describe("a refused change is worded for the field it is about", () => {
-  const probe = (transport: string, reason: string) =>
-    serverChangeRefusal(422, { code: "mailbox_probe_failed", message: "x", details: { transport, reason } });
+  const probe = (transport: string, reason: string, tls?: { kind: string }) =>
+    serverChangeRefusal(422, {
+      code: "mailbox_probe_failed", message: "x", details: { transport, reason, ...(tls !== undefined ? { tls } : {}) },
+    });
 
   it("each probe answer has its sentence and its field", () => {
     expect(probe("smtp", "auth").say).toBe("standaloneSmtpSignInRefused");
     expect(probe("smtp", "tls").say).toBe("standaloneSmtpNoEncryption");
     expect(probe("smtp", "connect").say).toBe("standaloneSmtpUnreachable");
     expect(probe("imap", "auth").say).toBe("standaloneSignInRefused");
-    expect(probe("imap", "tls").say).toBe("standaloneNoEncryption");
+    // The probe's `tls` with no detail is the desktop's certificate sentence (`PROBE_REFUSAL.tls`).
+    expect(probe("imap", "tls").say).toBe("standaloneCertificateRefused");
     expect(probe("imap", "timeout").say).toBe("serverSettingsImapUnreachable");
     expect(refusalField(probe("imap", "connect"))).toBe("imapHost");
     expect(refusalField(probe("smtp", "connect"))).toBe("smtpHost");
+  });
+
+  /* Once the phone's dial says the certificate, the change sheet must not call it
+     "no encrypted connection" — only a server offering no TLS at all is that. */
+  it("a certificate the probe refused is the certificate's sentence, on the host field", () => {
+    for (const kind of ["generic", "untrusted", "self_signed", "hostname_mismatch", "expired", "not_yet_valid"]) {
+      expect(probe("imap", "tls", { kind }).say, kind).toBe("standaloneCertificateRefused");
+      expect(refusalField(probe("imap", "tls", { kind })), kind).toBe("imapHost");
+    }
+    // CONTROL: no TLS and no STARTTLS is still "no encryption", and the outgoing half is unchanged.
+    expect(probe("imap", "tls", { kind: "tls_unavailable" }).say).toBe("standaloneNoEncryption");
+    expect(probe("smtp", "tls", { kind: "untrusted" }).say).toBe("standaloneSmtpNoEncryption");
   });
 
   it("a new host on a phone that organizes names the way through", () => {

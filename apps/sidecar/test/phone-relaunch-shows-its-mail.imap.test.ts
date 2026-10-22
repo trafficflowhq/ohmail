@@ -173,14 +173,15 @@ interface PhoneOnDisk { dir: string; file: string; installId: string; accountId:
  * THE FIRST CONNECT, as the door press does it, and — unless `drain` is false — one session over it
  * that takes the mail in: a Yes for SENDER (a rule, so their letters are Ohbox rows) and the pulls
  * that bring the letters and the rule into the mirror. `letters: false` is an empty mailbox whose
- * first pass finished; `drain: false` a first connect whose server was unreachable — the password
- * is sealed and the store holds nothing.
+ * first pass finished; `drain: false` a first connect whose first pass was never recorded — the
+ * password is sealed and the store holds nothing. Connect signs in before it opens a mailbox, so
+ * that store is made the way a kill mid-way through the first pass leaves it.
  */
 async function firstConnect(o: { drain: boolean; letters?: boolean }): Promise<PhoneOnDisk> {
   const dir = mkdtempSync(join(tmpdir(), "ohmail-phone-relaunch-"));
   dirs.push(dir);
   const user = `relaunch-${randomUUID()}@trafficflow.test`;
-  const relay = new Relay({ host: HOST, port: o.drain ? PORT : 1 });
+  const relay = new Relay({ host: HOST, port: PORT });
   await relay.open();
   relays.push(relay);
   const installId = `install-${randomUUID()}`;
@@ -240,6 +241,11 @@ async function firstConnect(o: { drain: boolean; letters?: boolean }): Promise<P
     boot.store.close();
   }
   await engine.stop();
+  if (!o.drain) {
+    const after = dialectSeam(nodeExecutor(file));
+    await after.run("update mailboxes set last_sync_at = null", []);
+    await after.close();
+  }
   return { dir, file, installId, accountId, relay, user };
 }
 

@@ -9,7 +9,28 @@ import tls from "node:tls";
  * pause from ANY of them pauses that shared receiver, and a STARTTLS upgrade announces nothing —
  * its peer certificate answers only once the handshake is done.
  */
-interface Conn { raw: net.Socket; paused: boolean; held: Buffer[]; sockets: Set<PlatformSocket>; pauses: number }
+interface Conn {
+  raw: net.Socket; paused: boolean; held: Buffer[]; sockets: Set<PlatformSocket>; pauses: number;
+  readonly options: DoubleOptions;
+}
+
+/**
+ * HOW THE PLATFORM ENDS A REFUSED UPGRADE, when a case asks. Absent, the double behaves as before.
+ *
+ * `unregisterOnClose`: the library's JavaScript socket drops every native listener on `close`
+ * (react-native-tcp-socket 6.4.2 `Socket.js` `_setDisconnected`), so an event after it is unheard.
+ * `refusedUpgrade`: the order a refused handshake's two events arrive in — `close-first` is Android
+ * before the transport patch carried the reason, `error-first` is iOS and the patched Android.
+ * `say`: the platform's own words for node's refusal.
+ * `refusedDial`: the platform's words for a refused implicit-TLS handshake, reported the way
+ * Android's module reports a failed `connect`: the `error` alone, no `close` after it.
+ */
+export interface DoubleOptions {
+  unregisterOnClose?: boolean;
+  refusedUpgrade?: "close-first" | "error-first";
+  say?: (err: Error) => string;
+  refusedDial?: (err: Error) => string;
+}
 
 export class PlatformSocket extends EventEmitter {
   _paused = false;
@@ -55,10 +76,32 @@ function dispatch(conn: Conn, b: Buffer): void {
   for (const s of [...conn.sockets]) s.deliver(b);
 }
 
+/** A native event to every socket registered on the connection; a `close` unregisters where asked. */
+function report(conn: Conn, event: "error" | "close", payload: unknown): void {
+  for (const s of [...conn.sockets]) {
+    if (event === "close" && conn.options.unregisterOnClose === true) conn.sockets.delete(s);
+    s.emit(event, payload);
+  }
+}
+
 function wire(conn: Conn, raw: net.Socket): void {
   raw.on("data", (b: Buffer) => dispatch(conn, b));
-  raw.on("error", (e) => { for (const s of [...conn.sockets]) s.emit("error", e.message); });
-  raw.on("close", () => { for (const s of [...conn.sockets]) s.emit("close", false); });
+  raw.on("error", (e) => report(conn, "error", e.message));
+  raw.on("close", () => report(conn, "close", false));
+}
+
+/**
+ * `wire`, for an implicit-TLS dial whose refusal is said as Android says a failed `connect`:
+ * `TcpSocketModule.connect`'s catch sends the failure's message as `error`, and the socket is
+ * already closed when the library's destroy reaches it, so no `close` follows. After the
+ * handshake the connection reports as `wire` does.
+ */
+function wireRefusingDial(conn: Conn, raw: net.Socket, words: (err: Error) => string): void {
+  let secured = false;
+  raw.once("secureConnect", () => { secured = true; });
+  raw.on("data", (b: Buffer) => dispatch(conn, b));
+  raw.on("error", (e: Error) => report(conn, "error", secured ? e.message : words(e)));
+  raw.on("close", () => { if (secured) report(conn, "close", false); });
 }
 
 /** The TLS socket an upgrade hands back: the SAME connection, a second JavaScript socket on it. */
@@ -66,26 +109,42 @@ class UpgradedSocket extends PlatformSocket {
   private readonly done: Promise<object>;
   constructor(under: PlatformSocket, options: { servername?: string; ca?: string }, ca: string) {
     super(under.conn);
-    const plain = under.conn.raw;
+    const conn = under.conn;
+    const plain = conn.raw;
     plain.removeAllListeners("data");
+    const order = conn.options.refusedUpgrade;
+    /* The upgrade's end is reported once, by the platform's rule, so the plain socket says nothing. */
+    if (order !== undefined) { plain.removeAllListeners("error"); plain.removeAllListeners("close"); }
     const secure = tls.connect({ socket: plain, servername: options.servername ?? "localhost", ca, rejectUnauthorized: true });
-    under.conn.raw = secure;
+    conn.raw = secure;
     this.done = new Promise((resolve) => {
       secure.once("secureConnect", () => resolve(secure.getPeerCertificate() as object));
       secure.once("error", () => resolve({}));
     });
-    wire(under.conn, secure);
+    if (order === undefined) { wire(conn, secure); return; }
+    let secured = false;
+    secure.once("secureConnect", () => { secured = true; wire(conn, secure); });
+    secure.once("error", (e: Error) => {
+      if (secured) return;
+      const said = conn.options.say ? conn.options.say(e) : e.message;
+      if (order === "close-first") { report(conn, "close", false); report(conn, "error", said); }
+      else { report(conn, "error", said); report(conn, "close", true); }
+      plain.destroy();
+    });
   }
   override getPeerCertificate(): Promise<object> { return this.done; }
 }
 
-/** The module the shims `require`, bound to a test CA. `conns` is every connection it opened. */
-export function platformDouble(ca: string): { module: object; conns: Conn[] } {
+/**
+ * The module the shims `require`, bound to a test CA. `conns` is every connection it opened.
+ * `options` is read at each connection, so a case may change it between dials.
+ */
+export function platformDouble(ca: string, options: DoubleOptions = {}): { module: object; conns: Conn[] } {
   const conns: Conn[] = [];
-  const open = (raw: net.Socket): PlatformSocket => {
-    const conn: Conn = { raw, paused: false, held: [], sockets: new Set(), pauses: 0 };
+  const open = (raw: net.Socket, wireIt: (conn: Conn, raw: net.Socket) => void = wire): PlatformSocket => {
+    const conn: Conn = { raw, paused: false, held: [], sockets: new Set(), pauses: 0, options: { ...options } };
     conns.push(conn);
-    wire(conn, raw);
+    wireIt(conn, raw);
     return new PlatformSocket(conn);
   };
   return {
@@ -98,7 +157,8 @@ export function platformDouble(ca: string): { module: object; conns: Conn[] } {
       },
       connectTLS: (o: { host: string; port: number; servername?: string }) => {
         const raw = tls.connect({ host: o.host, port: o.port, servername: o.servername ?? "localhost", ca, rejectUnauthorized: true });
-        const s = open(raw);
+        const words = options.refusedDial;
+        const s = open(raw, words === undefined ? wire : (conn, r) => wireRefusingDial(conn, r, words));
         raw.once("secureConnect", () => { s.emit("connect"); s.emit("secureConnect"); });
         return s;
       },

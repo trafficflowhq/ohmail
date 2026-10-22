@@ -43,7 +43,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BUNDLE, TYPES, buildPhoneEngine } from "../scripts/bundle-engine.mjs";
@@ -113,6 +113,59 @@ function sqlExecutor(): { all: unknown; run: unknown; batch: unknown; close: unk
   };
 }
 
+/**
+ * THIS FILE'S RIG: A SERVER THAT SIGNS THE START IN, AND THEN IS GONE.
+ *
+ * The cases were written against a bundle dialling a port nothing answers. Connect now opens a
+ * mailbox only over a login, so the start signs in once to a listener this file
+ * owns, which is closed before the case goes on: every later dial meets the dead port the cases
+ * reason about. It answers what the sign-in needs and nothing else: the connect's own LIST once,
+ * and no later one, so no look at `ohmail/_meta` ever lands, as on the dead port.
+ */
+function signsInOnce(): Promise<{ port: number; close(): Promise<void> }> {
+  const open = new Set<Socket>();
+  const srv = createServer((sock) => {
+    open.add(sock);
+    sock.on("close", () => open.delete(sock));
+    sock.on("error", () => undefined);
+    const write = (s: string): void => { if (!sock.destroyed) sock.write(s); };
+    let listed = false;
+    let buf = "";
+    sock.on("data", (d: Buffer) => {
+      buf += d.toString("utf8");
+      let i: number;
+      while ((i = buf.indexOf("\r\n")) >= 0) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const [tag, cmd, ...args] = line.split(" ");
+        const c = (cmd ?? "").toUpperCase();
+        if (c === "CAPABILITY") write(`* CAPABILITY IMAP4rev1\r\n${tag} OK done\r\n`);
+        else if (c === "LOGIN") write(`${tag} OK signed in\r\n`);
+        // imapflow's delimiter probe: the delimiter alone, or it becomes every LIST's prefix.
+        else if (c === "LIST" && args.join(" ") === `"" ""`) write(`* LIST (\\Noselect) "/" ""\r\n${tag} OK done\r\n`);
+        else if (c === "LIST" && !listed) { listed = true; write(`* LIST (\\HasNoChildren) "/" "INBOX"\r\n${tag} OK done\r\n`); }
+        else if (c === "LOGOUT") write(`* BYE\r\n${tag} OK\r\n`);
+        else write(`${tag} NO not on this rig\r\n`);
+      }
+    });
+    write("* OK the rig\r\n");
+  });
+  return new Promise((resolve) => srv.listen(0, "127.0.0.1", () => resolve({
+    port: (srv.address() as { port: number }).port,
+    close: () => new Promise<void>((done) => { for (const s of open) s.destroy(); srv.close(() => done()); }),
+  })));
+}
+
+/** `startPhoneEngine` over {@link signsInOnce}: signed in, and the server gone when this returns. */
+async function overADeadPort<T>(
+  start: (d: unknown) => Promise<T>, deps: Record<string, unknown> & { imap: Record<string, unknown> },
+): Promise<{ engine: T; port: number }> {
+  const rig = await signsInOnce();
+  try {
+    return { engine: await start({ ...deps, imap: { ...deps.imap, port: rig.port } }), port: rig.port };
+  } finally { await rig.close(); }
+}
+
 let live: { stop(): Promise<void> } | null = null;
 let listener: Server | null = null;
 afterEach(async () => {
@@ -153,9 +206,9 @@ describe("the engine bundle a phone would ship", () => {
     await buildPhoneEngine();
     const mod = loadArtifact();
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{ handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void> }>;
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "a@b.test", pass: "pw" } },
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
     live = engine;
@@ -192,9 +245,9 @@ describe("the engine bundle a phone would ship", () => {
         releaseRequestedAt: string | null;
       }> };
     }>;
-    const engine = await start({
+    const { engine, port } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "a@b.test", pass: "pw" } },
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
     live = engine;
@@ -265,7 +318,7 @@ describe("the engine bundle a phone would ship", () => {
     expect(["released", "not_organizing", "refused"]).toContain(await engine.stopOrganizing());
     /* AND WHERE THE SERVERS ARE, as the seal recorded them: Settings' server sheet reads this and
        nothing else, so a bundle without it offers a sheet with nothing to edit. */
-    expect(await engine.serverSettings()).toEqual({ imap: { host: "127.0.0.1", port: 1, secure: false }, smtp: null });
+    expect(await engine.serverSettings()).toEqual({ imap: { host: "127.0.0.1", port, secure: false }, smtp: null });
   }, 60_000);
 
   /**
@@ -287,9 +340,9 @@ describe("the engine bundle a phone would ship", () => {
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{
       handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
     }>;
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "roster@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "roster@b.test", pass: "pw" } },
       address: "roster@b.test",
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
@@ -326,7 +379,7 @@ describe("the engine bundle a phone would ship", () => {
    * and both are the same fact: the consent is recorded and nothing took a second claim.
    *
    * What is asserted is therefore the property rather than the status: neither press is REFUSED,
-   * and the engine's own claim state is not moved by either — the lease is the worker's to take.
+   * and neither makes the engine organize the mailbox — the lease is the worker's to take.
    * The app's duty to tell 200-already apart from a fresh 202 is asserted against a fake door in
    * `standalone-adopt.test.ts`, where that answer is reachable.
    */
@@ -337,9 +390,9 @@ describe("the engine bundle a phone would ship", () => {
       handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
     }>;
     const exec = sqlExecutor();
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec,
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "consent@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "consent@b.test", pass: "pw" } },
       address: "consent@b.test",
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
@@ -366,23 +419,22 @@ describe("the engine bundle a phone would ship", () => {
       "update mailboxes set organizer_state = 'stopped' where id = ?", [id],
     );
 
-    /* THE STATE BEFORE, so "no second claim" is a comparison and not an assertion about nothing. */
-    const before = JSON.stringify((engine as unknown as {
+    const organizing = (): boolean => Object.values((engine as unknown as {
       runtimes(): { organizer: Record<string, { organizing: boolean }> };
-    }).runtimes().organizer);
+    }).runtimes().organizer).some((s) => s.organizing);
+    expect(organizing(), "the premise: nothing organizes the mailbox before the press").toBe(false);
 
     const first = await organizeHere(session, id);
     expect(first, "the engine's own door refused the consent").toEqual({ kind: "authorized" });
+    expect(organizing(), "the consent press organized the mailbox itself").toBe(false);
     /* THE SECOND PRESS, which every relaunch makes. Not refused — see the note above for why the
        status it answers depends on whether the engine has claimed yet. */
     const second = await organizeHere(session, id);
     expect(second.kind, "a relaunch's press was refused").not.toBe("refused");
     /* AND NEITHER PRESS TOOK A CLAIM. The route writes a stamp and returns; the lease is the
-       gated cycle's, which is what keeps one organizer per mailbox. */
-    const after = JSON.stringify((engine as unknown as {
-      runtimes(): { organizer: Record<string, { organizing: boolean }> };
-    }).runtimes().organizer);
-    expect(after, "the consent press moved the engine's own claim state").toBe(before);
+       gated cycle's, which is what keeps one organizer per mailbox and which this rig never runs.
+       The consent does move the INSTRUCTION (`claimed`), on its own clock: it entitles the gate. */
+    expect(organizing(), "a second press organized the mailbox").toBe(false);
   }, 60_000);
 
   /**
@@ -406,9 +458,9 @@ describe("the engine bundle a phone would ship", () => {
       handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
     }>;
     const exec = sqlExecutor();
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec,
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "unread@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "unread@b.test", pass: "pw" } },
       address: "unread@b.test",
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
@@ -455,13 +507,13 @@ describe("the engine bundle a phone would ship", () => {
     const mod = loadArtifact();
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{ stop(): Promise<void> }>;
     const lines: string[] = [];
-    live = await start({
+    live = (await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "logs@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "logs@b.test", pass: "pw" } },
       address: "logs@b.test",
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
       logSink: (line: string) => { lines.push(line); },
-    });
+    })).engine;
 
     expect(lines.length, "the artifact's engine wrote nothing at all").toBeGreaterThan(0);
     const parsed = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -501,9 +553,9 @@ describe("the engine bundle a phone would ship", () => {
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{
       handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
     }>;
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "body@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "body@b.test", pass: "pw" } },
       address: "body@b.test",
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
@@ -554,14 +606,16 @@ describe("the engine bundle a phone would ship", () => {
     await buildPhoneEngine();
     const mod = loadArtifact();
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{ stop(): Promise<void> }>;
-    live = await start({
+    const opened = start({
       exec: sqlExecutor(),
       imap: { host: "127.0.0.1", port, secure: false, auth: { user: "a@b.test", pass: "pw" } },
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
-    });
+    }).then((engine) => { live = engine; return null; }, (err: unknown) => err);
 
     const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20_000));
     expect(await Promise.race([dialled, timeout]), "a booted phone engine opens its mailbox connection").toBe(true);
+    /* AND A SERVER THAT HUNG UP SIGNED NOBODY IN, so Connect refuses rather than opening it. */
+    expect(((await opened) as { incomingUnreachable?: unknown } | null)?.incomingUnreachable).toBe("unreachable");
   }, 30_000);
 });
 /**
@@ -617,9 +671,9 @@ describe("the AI settings door, out of the artifact a phone would ship", () => {
     const start = mod.startPhoneEngine as (d: unknown) => Promise<{
       handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
     }>;
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "a@b.test", pass: "pw" } },
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
     });
     live = engine;
@@ -682,9 +736,9 @@ describe("the artifact's logger carries the phone's own field names", () => {
     const start = mod.startPhoneEngine as (d: unknown) => Promise<
       { log(e: string, d: Record<string, unknown>): void; stop(): Promise<void> }>;
     const lines: string[] = [];
-    const engine = await start({
+    const { engine } = await overADeadPort(start, {
       exec: sqlExecutor(),
-      imap: { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw" } },
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "a@b.test", pass: "pw" } },
       machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
       logSink: (line: string) => { lines.push(line); },
     });

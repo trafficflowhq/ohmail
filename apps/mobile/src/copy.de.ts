@@ -204,8 +204,20 @@ export const DE: Deck = {
     "Dein Mailserver hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
   standaloneNoEncryption:
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
+  /* Ein abgelehntes Zertifikat in den Worten der Web-App (`mailboxes.probe_tls*`), nach dem Grund. */
   standaloneCertificateRefused:
-    "Dieses Handy hat das Zertifikat deines Mailservers nicht akzeptiert, ohmail hat also abgebrochen, bevor das Passwort rausging. Prüf mit deinem Anbieter den Namen des Eingangsservers.",
+    "Das Zertifikat dieses Mailservers wurde abgelehnt, wir haben also abgebrochen, bevor das Passwort rausging. Prüf den IMAP-Server und ob dieser Port TLS erwartet.",
+  standaloneCertificateUntrusted:
+    "Das Zertifikat dieses Servers stammt nicht von einer vertrauenswürdigen Stelle, wir haben also abgebrochen, bevor das Passwort rausging. Bitte den Betreiber, ein Zertifikat einer öffentlichen Zertifizierungsstelle einzurichten.",
+  standaloneCertificateName:
+    "Das Zertifikat dieses Mailservers passt nicht zum eingegebenen Server, wir haben also abgebrochen, bevor das Passwort rausging. Frag deinen Anbieter nach dem richtigen IMAP-Server.",
+  standaloneCertificateExpired:
+    "Das Zertifikat dieses Servers ist abgelaufen, wir haben also abgebrochen, bevor das Passwort rausging. Bitte den Betreiber des Servers, es zu erneuern.",
+  standaloneCertificateNotYetValid:
+    "Das Zertifikat dieses Servers gilt noch nicht, wir haben also abgebrochen, bevor das Passwort rausging. Frag den Betreiber des Servers.",
+  /* Der Eingangsserver, bei dem Verbinden sich nicht anmelden konnte. */
+  standaloneImapUnreachable:
+    "ohmail hat deinen Eingangsserver (IMAP) unter dieser Adresse und diesem Port nicht erreicht. Prüf beides und versuch es erneut. Es wurde nichts gespeichert.",
   /* Auch der Ausgangsserver wird beim Verbinden gewählt, und jede seiner drei Antworten nennt ihn. */
   standaloneSmtpSignInRefused:
     "Dein Ausgangsserver (SMTP) hat diese Adresse und dieses Passwort nicht akzeptiert. Prüf ihn und versuch es erneut. Es wurde nichts gespeichert.",

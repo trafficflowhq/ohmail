@@ -345,8 +345,21 @@ const TABLE = {
     "Your mail server would not accept that address and password. Check them and try again — nothing has been saved.",
   standaloneNoEncryption:
     "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
+  /* A refused certificate in the desktop's own words (`mailbox-service.ts`), by why where the phone
+     could tell; the first is the generic one. None takes an argument, so none carries the password. */
   standaloneCertificateRefused:
-    "This phone would not accept your mail server's certificate, so ohmail stopped before sending your password. Check the incoming server's name with your provider.",
+    "That mail server's certificate was refused, so we stopped before sending the password. Check the IMAP host, and whether the port expects TLS.",
+  standaloneCertificateUntrusted:
+    "That mail server's certificate is not issued by a trusted authority, so we stopped before sending the password. Ask whoever runs the server to install a certificate from a public authority.",
+  standaloneCertificateName:
+    "That mail server's certificate does not match the host you entered, so we stopped before sending the password. Check the IMAP host with your provider.",
+  standaloneCertificateExpired:
+    "That mail server's certificate has expired, so we stopped before sending the password. Ask whoever runs the server to renew it.",
+  standaloneCertificateNotYetValid:
+    "That mail server's certificate is not valid yet, so we stopped before sending the password. Check with whoever runs the server.",
+  /* The incoming server Connect could not sign in to: the address and port, never the password. */
+  standaloneImapUnreachable:
+    "ohmail could not reach your incoming server (IMAP) at that address and port. Check both and try again — nothing has been saved.",
   /* The outgoing server is dialled at Connect too, and each of its three answers names it. */
   standaloneSmtpSignInRefused:
     "Your outgoing server (SMTP) would not accept that address and password. Check it and try again — nothing has been saved.",

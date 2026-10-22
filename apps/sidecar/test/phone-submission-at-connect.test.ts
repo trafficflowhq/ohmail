@@ -83,6 +83,20 @@ function transportsIn(file: string): string[] {
   } finally { raw.close(); }
 }
 
+/** When the store's mailboxes last finished a sync, on a fresh handle; `null` for never. */
+function lastSyncIn(file: string): unknown[] {
+  const raw = new sqlite.DatabaseSync(file);
+  try {
+    return (raw.prepare("select last_sync_at from mailboxes").all() as { last_sync_at: unknown }[]).map((r) => r.last_sync_at);
+  } finally { raw.close(); }
+}
+
+/** The store as a first sync that never finished leaves it: nothing to paint at a relaunch. */
+function neverSynced(file: string): void {
+  const raw = new sqlite.DatabaseSync(file);
+  try { raw.exec("update mailboxes set last_sync_at = null"); } finally { raw.close(); }
+}
+
 /** An in-memory `ohmail/_meta`, just enough for the gate to take a claim. */
 class MetaFolder implements LeaseIo {
   private nextUid = 1;
@@ -201,12 +215,39 @@ describe.runIf(ON_DEVICE_STORE)("the phone's Connect dials the outgoing server",
     expect(transportsIn(file)).toEqual([]);
   }, 30_000);
 
-  it("ADMITS an outage: neither server reachable is the offline state, not a wrong setting", async () => {
+  /* Connect opens a mailbox only over a login: the incoming server nothing answers
+     on is refused before the outgoing one is asked, and what was sealed goes with the refusal. */
+  it("REFUSES an incoming server nothing answers on, asks the outgoing one nothing, and discards the seal", async () => {
     const file = storeFile();
-    const engine = await connect(file, { dial: refusing("ECONNREFUSED"), incomingDown: true });
-    open.push(engine);
-    expect(engine.accountId).not.toBe("");
+    const dialled: unknown[] = [];
+    const err = await connect(file, { dial: refusing("ECONNREFUSED"), incomingDown: true, dialled })
+      .then((engine) => { open.push(engine); return null; }, (e: unknown) => e);
+    expect((err as { incomingUnreachable?: unknown } | null)?.incomingUnreachable, "an unreachable server opened a mailbox")
+      .toBe("unreachable");
+    expect((err as { submissionRefused?: unknown }).submissionRefused, "worded about the outgoing server").toBeUndefined();
+    expect(dialled, "the outgoing server was asked after the incoming one could not be reached").toEqual([]);
+    expect(transportsIn(file), "nothing sealed is left to win over the next press").toEqual([]);
   }, 30_000);
+
+  it("CONTROL — a relaunch still opens over an outage, on a store holding mail and on one that never synced", async () => {
+    const file = storeFile();
+    const engine = await connect(file, { dial: async () => ({ maxMessageBytes: null }) });
+    await engine.stop();
+    expect(lastSyncIn(file).some((at) => at !== null), "the first launch's drain stamped the mailbox").toBe(true);
+    const held = await startPhoneEngineFromSealed({
+      exec: nodeExecutor(file), ...IDENTITY, adapterFactory: incoming({ unreachable: true }),
+    });
+    expect(held.kind, "a store holding mail opens over an outage").toBe("started");
+    if (held.kind === "started") await held.engine.stop();
+    expect(transportsIn(file), "the relaunch kept its seal").toEqual(["imap", "smtp"]);
+
+    neverSynced(file);
+    const empty = await startPhoneEngineFromSealed({
+      exec: nodeExecutor(file), ...IDENTITY, adapterFactory: incoming({ unreachable: true }),
+    });
+    expect(empty.kind, "an empty store opens over an outage").toBe("started");
+    if (empty.kind === "started") open.push(empty.engine);
+  }, 60_000);
 
   it("ADMITS the ordinary case, keeps both credentials, and a relaunch does not dial it again", async () => {
     const file = storeFile();

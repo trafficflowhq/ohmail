@@ -19,6 +19,7 @@
  * drains through it and the mirror actually holds mail at the end. A test that asserted "the fetch
  * seam was set to the right function" would pass over a composition that never used it.
  */
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -36,7 +37,12 @@ import {
   type LocalEngineDoor,
   type MobileEngineDeps,
 } from "../src/engine/boot";
-import { sayRefusal } from "../src/refusal";
+import { DE } from "../src/copy.de";
+import { EN } from "../src/copy.en";
+import { certificateKindOf, incomingUnreachable, openStandaloneMailbox } from "../src/engine/standalone-door";
+import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
+import { refuse, sayRefusal } from "../src/refusal";
+import { EMPTY_STANDALONE, refusalField } from "../src/ui/standalone-form";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -332,4 +338,108 @@ describe("the paired door, unchanged — the regression this file exists to catc
     expect(seen.some((s) => s.url.includes("/auth/session"))).toBe(true);
     boot.store.close();
   }, 60_000);
+});
+
+/* ── Connect's refusals, in the order a person needs them ─────────────────────────────────────── */
+
+describe("the fourth door's refusals, worded and ranked", () => {
+  const SECRET = "door-arms-password-password";
+  const form = { ...EMPTY_STANDALONE, address: "someone@example.test", password: SECRET,
+                 imapHost: "imap.example.test", imapPort: "993", imapTls: true };
+  const pressWith = (thrown: unknown) => openStandaloneMailbox(form, {
+    startEngine: (async () => { throw thrown; }) as never,
+    platform: async () => ({ kind: "ready" as const, exec: {}, keks: {} }),
+    machineName: () => "ohmail on a phone",
+    installId: async () => "door-arms-case",
+  });
+  const said = async (thrown: unknown): Promise<string | null> => {
+    const out = await pressWith(thrown);
+    return out.ok ? null : out.reason.say;
+  };
+  /** What the TLS shim stamps on a handshake the platform refused (`shims/tls.js`). */
+  const certificate = (kind?: string) => Object.assign(new Error("the platform refused the certificate"),
+    { tlsFailed: true, certificateRefused: true, ...(kind !== undefined ? { certificateKind: kind } : {}) });
+  /** What the composition throws when the incoming server did not answer (`mobile.ts`). */
+  const unanswered = (why: string) => Object.assign(new Error(`the incoming server could not be reached (${why})`),
+    { incomingUnreachable: why });
+
+  afterEach(() => { resetLocaleRegisterForTests(); });
+
+  it("names each kind of certificate refusal, and the generic one where the platform said no more", async () => {
+    for (const [kind, key] of [
+      ["untrusted", "standaloneCertificateUntrusted"],
+      ["hostname_mismatch", "standaloneCertificateName"],
+      ["expired", "standaloneCertificateExpired"],
+      ["not_yet_valid", "standaloneCertificateNotYetValid"],
+      [undefined, "standaloneCertificateRefused"],
+      ["a kind this build has never heard of", "standaloneCertificateRefused"],
+    ] as const) {
+      expect(await said(certificate(kind)), String(kind)).toBe(key);
+    }
+  });
+
+  it("names an incoming server it could not reach, whether it refused or never answered", async () => {
+    expect(await said(unanswered("unreachable"))).toBe("standaloneImapUnreachable");
+    expect(await said(unanswered("timeout"))).toBe("standaloneImapUnreachable");
+    // CONTROL: an error carrying nothing of the kind is still the engine's own words.
+    expect(await said(new Error("something else entirely"))).toBe("standaloneRefused");
+  });
+
+  it("reads the kind and the unreachable answer through a wrapping cause, and nothing else as either", () => {
+    expect(certificateKindOf(new Error("wrapped", { cause: certificate("expired") }))).toBe("expired");
+    expect(incomingUnreachable(new Error("wrapped", { cause: unanswered("timeout") }))).toBe("timeout");
+    expect(certificateKindOf(certificate())).toBeNull();
+    expect(certificateKindOf(Object.assign(new Error("x"), { certificateKind: "vanilla" }))).toBeNull();
+    expect(incomingUnreachable(Object.assign(new Error("x"), { incomingUnreachable: "elsewhere" }))).toBeNull();
+    expect(incomingUnreachable(new Error("ECONNREFUSED"))).toBeNull();
+  });
+
+  it("ranks them: the outgoing server, the sign-in, the certificate, encryption, an unreachable server, the rest", async () => {
+    const everything = Object.assign(certificate("untrusted"), { submissionRefused: "auth", authenticationFailed: true, incomingUnreachable: "unreachable" });
+    expect(await said(everything)).toBe("standaloneSmtpSignInRefused");
+    expect(await said(Object.assign(certificate("untrusted"), { authenticationFailed: true }))).toBe("standaloneSignInRefused");
+    expect(await said(Object.assign(certificate("expired"), { incomingUnreachable: "timeout" }))).toBe("standaloneCertificateExpired");
+    expect(await said(Object.assign(new Error("no STARTTLS"), { tlsFailed: true, incomingUnreachable: "timeout" }))).toBe("standaloneNoEncryption");
+    expect(await said(unanswered("unreachable"))).toBe("standaloneImapUnreachable");
+  });
+
+  it("puts the password in none of them, in either language", async () => {
+    for (const thrown of [certificate("untrusted"), certificate("hostname_mismatch"), certificate("expired"),
+      certificate("not_yet_valid"), certificate(), unanswered("unreachable")]) {
+      const out = await pressWith(thrown);
+      expect(out.ok).toBe(false);
+      if (out.ok) continue;
+      for (const lang of ["en", "de"] as const) {
+        setActiveLocale(lang);
+        expect(sayRefusal(out.reason), `${out.reason.say} in ${lang}`).not.toContain(SECRET);
+      }
+      expect(JSON.stringify(out.reason)).not.toContain(SECRET);
+    }
+  });
+
+  it("wears the incoming server's field for a host to fix, and the verb's line for the server's own certificate", () => {
+    expect(refusalField(refuse("standaloneImapUnreachable"))).toBe("imapHost");
+    expect(refusalField(refuse("standaloneCertificateName"))).toBe("imapHost");
+    expect(refusalField(refuse("standaloneCertificateRefused"))).toBe("imapHost");
+    expect(refusalField(refuse("standaloneCertificateUntrusted"))).toBeNull();
+    expect(refusalField(refuse("standaloneCertificateExpired"))).toBeNull();
+    expect(refusalField(refuse("standaloneCertificateNotYetValid"))).toBeNull();
+  });
+
+  it("says the desktop's sentences, and the web catalogue's German", () => {
+    const de = (JSON.parse(readFileSync(new URL("../../webapp/messages/de.json", import.meta.url), "utf8")) as {
+      mailboxes: Record<string, string>;
+    }).mailboxes;
+    const stopped = "so we stopped before sending the password.";
+    expect(EN.standaloneCertificateUntrusted).toBe(`That mail server's certificate is not issued by a trusted authority, ${stopped} Ask whoever runs the server to install a certificate from a public authority.`);
+    expect(EN.standaloneCertificateName).toBe(`That mail server's certificate does not match the host you entered, ${stopped} Check the IMAP host with your provider.`);
+    expect(EN.standaloneCertificateExpired).toBe(`That mail server's certificate has expired, ${stopped} Ask whoever runs the server to renew it.`);
+    expect(EN.standaloneCertificateNotYetValid).toBe(`That mail server's certificate is not valid yet, ${stopped} Check with whoever runs the server.`);
+    expect(EN.standaloneCertificateRefused).toBe(`That mail server's certificate was refused, ${stopped} Check the IMAP host, and whether the port expects TLS.`);
+    expect(DE.standaloneCertificateUntrusted).toBe(de.probe_tls_untrusted);
+    expect(DE.standaloneCertificateExpired).toBe(de.probe_tls_expired);
+    expect(DE.standaloneCertificateNotYetValid).toBe(de.probe_tls_not_yet_valid);
+    expect(DE.standaloneCertificateRefused).toBe(de.probe_tls);
+    for (const deck of [EN, DE]) expect(deck.standaloneImapUnreachable).toContain("IMAP");
+  });
 });

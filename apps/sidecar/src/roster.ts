@@ -513,9 +513,15 @@ export interface LocalMailboxRuntime {
    * Start this mailbox and answer once its login has opened or been refused — not after the
    * first drain, which is what `start()` waits for. `launch: true` on
    * {@link credentialReplaced} routes a runtime whose start was skipped for want of a password
-   * through here; `null` from that call is every other arm.
+   * through here; `null` from that call is every other arm. It is {@link startAnswering}'s `dial`.
    */
   launch(): Promise<DialAnswer>;
+  /**
+   * ONE START, ANSWERED TWICE: `dial` once the login has opened, been refused or not been tried,
+   * and `started` as {@link start} settles. For a caller that must judge the dial while keeping
+   * `start()`'s own report — the phone's Connect, which opens a mailbox only over a login.
+   */
+  startAnswering(): { dial: Promise<DialAnswer>; started: Promise<void> };
 }
 
 /** Where a mailbox is about to be dialled — the proved server, login and password. */

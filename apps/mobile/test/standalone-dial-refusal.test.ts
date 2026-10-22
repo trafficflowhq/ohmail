@@ -193,9 +193,9 @@ function fields(host: string, port: number): StandaloneFields {
            imapHost: host, imapPort: String(port), imapTls: false };
 }
 
-/** The door, driven exactly as `app/standalone.tsx` drives it. */
+/** The door, driven exactly as `app/standalone.tsx` drives it. `lines` collects the engine's log. */
 async function press(
-  host: string, port: number, s: Store, o: { implicitTls?: boolean } = {},
+  host: string, port: number, s: Store, o: { implicitTls?: boolean; lines?: string[] } = {},
 ): ReturnType<typeof openStandaloneMailbox> {
   await buildPhoneEngine();
   const mod = loadArtifact();
@@ -208,6 +208,7 @@ async function press(
     platform: async () => ({ kind: "ready" as const, exec: s.exec, keks: { 1: "a".repeat(64) } }),
     machineName: () => "ohmail on a phone",
     installId: async () => "refusal-case",
+    ...(o.lines !== undefined ? { logSink: (line: string) => { o.lines!.push(line); } } : {}),
   });
 }
 
@@ -281,25 +282,35 @@ describe("the fourth door, when the mail server says no", () => {
     expect(tls.imapBytes(), "nothing, and so no password, crossed the refused handshake").toBe(0);
     expect(outcome.ok, "the door does not report an opened mailbox").toBe(false);
     if (outcome.ok) return;
-    expect(outcome.reason.say).toBe("standaloneCertificateRefused");
+    /* Self-signed, which neither platform tells apart from an unknown authority: the desktop's
+       "not issued by a trusted authority". */
+    expect(outcome.reason.say).toBe("standaloneCertificateUntrusted");
     expect(sayRefusal(outcome.reason)).not.toContain(PASSWORD);
     expect(s.closed(), "the refused launch let go of the store").toBeGreaterThan(0);
   }, 60_000);
 
-  it("ADMITS an OUTAGE: nothing listening is not a refusal, and the engine is handed back", async () => {
-    /* A port nothing is on. The dial fails with ECONNREFUSED, which carries neither flag — so the
-       mailbox is unreachable and the app keeps its mirror and its poll, which is what offline means
-       in this mode. Without this control the refusal rule could be "refuse whenever the dial
-       failed", and a train tunnel would read as a wrong password. */
+  it("REFUSES an incoming server nothing answers on: named, the seal discarded, the store let go", async () => {
+    /* A port nothing is on. Connect opens a mailbox only over a login, as the desktop's does: an
+       engine handed back here was an Ohbox saying "Reconnecting…" about a mailbox that never
+       opened. The sentence names the address and port, never the password, and is
+       not the sign-in's — a train tunnel must not read as a wrong password. The relaunch still
+       opens over an outage (`phone-submission-at-connect.test.ts`). */
     const fake = await fakeImap();
     const port = fake.port;
     await fake.close();
     const s = store();
-    const outcome = await press("127.0.0.1", port, s);
+    const lines: string[] = [];
+    const outcome = await press("127.0.0.1", port, s, { lines });
 
-    expect(outcome.ok, "an unreachable server is not a refused mailbox").toBe(true);
-    if (!outcome.ok) return;
-    live = outcome.door as unknown as { stop(): Promise<void> };
-    expect(s.closed(), "an outage keeps its store").toBe(0);
+    if (outcome.ok) live = outcome.door as unknown as { stop(): Promise<void> };
+    expect(outcome.ok, "an unreachable server opened a mailbox").toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason.say).toBe("standaloneImapUnreachable");
+    expect(sayRefusal(outcome.reason)).not.toContain(PASSWORD);
+    expect(JSON.stringify(outcome.reason)).not.toContain(PASSWORD);
+    expect(lines.some((l) => l.includes("mailbox_open_unreachable"))).toBe(true);
+    expect(lines.some((l) => l.includes("mailbox_open_seal_discarded")), "the password it sealed was kept").toBe(true);
+    expect(lines.join("\n"), "the password reached the log").not.toContain(PASSWORD);
+    expect(s.closed(), "the refused launch let go of the store").toBeGreaterThan(0);
   }, 60_000);
 });

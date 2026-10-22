@@ -46,6 +46,7 @@ import {
   tlsRefused,
   type AdapterDialContext,
   type CredentialState,
+  type DialAnswer,
   type OrganizerState,
   type MailboxConnectionState,
   type SidecarConfig,
@@ -950,10 +951,27 @@ class SubmissionRefusedError extends Error {
 }
 
 /**
+ * THE INCOMING SERVER DID NOT LET CONNECT SIGN IN — its sibling, with an `incomingUnreachable`
+ * property the app reads: `unreachable` is a dial that failed for any reason but a refused
+ * password or encryption, `timeout` a login with no answer inside the bounded wait. No `cause`:
+ * the sentence is decided here, and the original error is in the log line, not in the refusal.
+ */
+type IncomingUnreachable = "unreachable" | "timeout";
+
+class IncomingUnreachableError extends Error {
+  readonly incomingUnreachable: IncomingUnreachable;
+  constructor(why: IncomingUnreachable) {
+    super(`the incoming server could not be signed in to at Connect (${why})`);
+    this.name = "IncomingUnreachableError";
+    this.incomingUnreachable = why;
+  }
+}
+
+/**
  * WHICH SUBMISSION ANSWERS REFUSE A CONNECT. A server that answered and said no (sign-in,
  * encryption) always does. Not reaching it refuses only where the INCOMING server answered this
  * launch: the network was up, so the address or port is wrong. Where the incoming server could not
- * be reached either, it is the one outage the door already admits, not a wrong setting.
+ * be reached either, the outgoing server is not the news — Connect refuses on the incoming one.
  */
 export function submissionRefusalOf(
   verdict: MailboxProbeVerdict, incomingAnswered: boolean,
@@ -1138,17 +1156,24 @@ async function composePhoneEngine(
    * shape this closes). And a launch the server answered NO is not handed back as an engine: this
    * was `void sidecar.start().catch(...)` whose catch was UNREACHABLE (`start()` settles with
    * `allSettled`). So the launch is awaited and bounded (unless {@link opensAtOnce}), and two outcomes
-   * refuse — the sign-in and the encrypted way in (the engine STOPS); an OUTAGE is not a refusal.
+   * refuse — the sign-in and the encrypted way in (the engine STOPS). An OUTAGE refuses only a
+   * configured start, which must prove a login (below); a relaunch opens over one.
    */
   /* MERGED THE WAY `imapFlowOptions` MERGES IT — `timeouts` on a config is PARTIAL, and a caller
      that overrode only `socketMs` would otherwise leave the two halves of this bound undefined. */
   const timeouts = { ...DEFAULT_NET_TIMEOUTS, ...(dial.timeouts ?? WORKER_NET_TIMEOUTS) };
-  const launched = sidecar.start().then(
+  /* EVERY MAILBOX STARTED ONCE, ANSWERING TWICE: the report `start()` builds, and the seed's dial. */
+  const answering = sidecar.startAnswering();
+  const launched = answering.report.then(
     (report) => report.failures,
     // `start()` does not reject per mailbox; an assembly-level throw is still a launch failure and
     // is classified by the same two predicates rather than swallowed here.
     (err: unknown) => [{ mailboxId: "", err }],
   );
+  const seedDial = answering.seedDial.catch((err: unknown): DialAnswer => ({ outcome: "failed", err }));
+  /* The seed's dial as it stands, for the moment the bounded wait ends; `undefined` is no answer yet. */
+  let seedDialNow: DialAnswer | null | undefined;
+  void seedDial.then((a) => { seedDialNow = a; });
   const bounded = opensAtOnce ? null : await Promise.race([
     launched,
     new Promise<null>((resolve) => {
@@ -1156,6 +1181,8 @@ async function composePhoneEngine(
       (t as unknown as { unref?: () => void }).unref?.();
     }),
   ]);
+  /* A report in hand means every start settled, so the seed's dial has answered too. */
+  const seedAnswer = bounded === null ? seedDialNow : await seedDial;
   /**
    * A refused launch does not leave the credential it sealed on the way in. `attachLocal` seals the
    * supplied password at ATTACH, before anything dials, so a first press with the wrong password —
@@ -1183,8 +1210,7 @@ async function composePhoneEngine(
     });
   };
 
-  const answered = (bounded ?? []).find((f) => credentialsRefused(f.err) || tlsRefused(f.err));
-  if (answered !== undefined) {
+  const refuseAnswered = async (answered: { mailboxId: string; err: unknown }): Promise<never> => {
     log("mailbox_open_refused", {
       err: answered.err,
       mailboxId: answered.mailboxId,
@@ -1200,6 +1226,38 @@ async function composePhoneEngine(
     // and its cause chain, so the caller classifies it with the same predicates this file used
     // rather than being handed a verdict it cannot check. No password is in it.
     throw answered.err;
+  };
+  const answered = (bounded ?? []).find((f) => credentialsRefused(f.err) || tlsRefused(f.err));
+  if (answered !== undefined) await refuseAnswered(answered);
+
+  /**
+   * AND A TYPED PASSWORD OPENS A MAILBOX ONLY OVER A LOGIN. The seed's dial is read
+   * where the bounded wait ended, so a launch that succeeds is answered exactly when it was before.
+   * A refused sign-in or encryption is the refusal above, from the dial; any other failed dial, or
+   * a login with no answer yet, is a server Connect could not sign in to — the desktop's Connect
+   * refuses the same. Measured before: a certificate the phone refused came back as an outage,
+   * the door opened the mailbox, and the Ohbox said "Reconnecting…" over a server that saw no login.
+   */
+  const seedFailed = seedAnswer !== undefined && seedAnswer !== null && seedAnswer.outcome === "failed"
+    ? seedAnswer : null;
+  if (suppliedPassword && seedFailed !== null && (credentialsRefused(seedFailed.err) || tlsRefused(seedFailed.err))) {
+    await refuseAnswered({ mailboxId: sidecar.world.mailboxId, err: seedFailed.err });
+  }
+  if (suppliedPassword && (seedAnswer === undefined || seedFailed !== null)) {
+    const why: IncomingUnreachable = seedFailed === null ? "timeout" : "unreachable";
+    log("mailbox_open_unreachable", {
+      /* `undefined` for no answer, which the logger leaves out. */
+      err: seedFailed?.err,
+      verdict: why,
+      reason: "the incoming server was not signed in to at Connect, so no engine is handed back and "
+        + "the form names the incoming server rather than opening a mailbox that never opened",
+    });
+    await removeRefusedSeal(
+      "the incoming server could not be signed in to, so the password it had just sealed is "
+        + "removed and the next press composes from the form again",
+    );
+    await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
+    throw new IncomingUnreachableError(why);
   }
 
   /**
@@ -1211,6 +1269,7 @@ async function composePhoneEngine(
    * that never authenticated. So the unusable row is removed and the launch refuses; pressing Connect
    * again seals the form. Reachable independently: a keystore that minted a new ring leaves a row
    * this install cannot open. A start with NO password of its own is untouched (that is the relaunch).
+   * The seed's `not-dialled` (or no seed at all) is the same state, whatever the store answers.
    */
   if (suppliedPassword) {
     const credential = await sidecar.credentialState().then(
@@ -1219,7 +1278,7 @@ async function composePhoneEngine(
          `ready`, which would make this guard decorative. */
       (): CredentialState => "unreadable",
     );
-    if (credential !== "ready") {
+    if (credential !== "ready" || seedAnswer === null || seedAnswer?.outcome === "not-dialled") {
       log("mailbox_open_no_login", {
         state: credential,
         reason: "this launch supplied a password and the store answered with a credential it "
@@ -1241,7 +1300,8 @@ async function composePhoneEngine(
    * seed's submission row is written from this config at boot without a dial, so a port nobody
    * could reach left the form as connected and the first send was where it failed. Only where
    * THIS start supplied a password and names an outgoing server; a refusal discards the seal and
-   * stops the engine exactly as an incoming refusal does. See {@link submissionRefusalOf}.
+   * stops the engine exactly as an incoming refusal does. See {@link submissionRefusalOf}: by here
+   * the incoming server has signed in, so an outgoing one nothing answers on is a wrong setting.
    */
   const outgoing = imap?.smtp;
   if (suppliedPassword && outgoing !== undefined && outgoing.host.trim() !== "") {
@@ -1255,7 +1315,7 @@ async function composePhoneEngine(
       log("mailbox_open_submission_probe_failed", { err, reason: "the outgoing server could not be asked" });
       return { verdict: "refuse", code: "unknown" };
     });
-    const refused = submissionRefusalOf(verdict, bounded !== null && bounded.length === 0);
+    const refused = submissionRefusalOf(verdict, seedAnswer?.outcome === "dialled");
     if (refused !== null) {
       log("mailbox_open_submission_refused", {
         verdict: refused,

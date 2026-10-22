@@ -447,6 +447,44 @@ export function submissionRefused(err: unknown): "auth" | "tls" | "unreachable" 
   return null;
 }
 
+/** Which certificate refusal the TLS shim read (`certificateKind`), in the desktop probe's words. */
+export type CertificateKind = "untrusted" | "hostname_mismatch" | "expired" | "not_yet_valid";
+const CERTIFICATE_KINDS: ReadonlySet<unknown> = new Set(["untrusted", "hostname_mismatch", "expired", "not_yet_valid"]);
+
+/** The shim's `certificateKind`, read like the flags (cause walk, hop bound); `null` where it said none. */
+export function certificateKindOf(err: unknown): CertificateKind | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const kind = (e as Record<string, unknown>).certificateKind;
+    if (CERTIFICATE_KINDS.has(kind)) return kind as CertificateKind;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/**
+ * THE INCOMING SERVER CONNECT COULD NOT SIGN IN TO — the engine's `incomingUnreachable` property:
+ * a dial that failed for a reason other than a refused password or encryption, or no answer in time.
+ */
+export function incomingUnreachable(err: unknown): "unreachable" | "timeout" | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const why = (e as Record<string, unknown>).incomingUnreachable;
+    if (why === "unreachable" || why === "timeout") return why;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** A refused certificate's sentence by kind — the desktop's (`mailbox-service.ts`); none read is the generic one. */
+function certificateRefusal(kind: CertificateKind | null): Refusal {
+  switch (kind) {
+    case "untrusted": return refuse("standaloneCertificateUntrusted");
+    case "hostname_mismatch": return refuse("standaloneCertificateName");
+    case "expired": return refuse("standaloneCertificateExpired");
+    case "not_yet_valid": return refuse("standaloneCertificateNotYetValid");
+    default: return refuse("standaloneCertificateRefused");
+  }
+}
+
 /**
  * Open it. Two refusals before the engine is asked anything, and after that the engine's own.
  *
@@ -496,9 +534,12 @@ export async function openStandaloneMailbox(
     if (outgoing === "tls") return { ok: false, reason: refuse("standaloneSmtpNoEncryption") };
     if (outgoing === "unreachable") return { ok: false, reason: refuse("standaloneSmtpUnreachable") };
     if (signInRefused(err)) return { ok: false, reason: refuse("standaloneSignInRefused") };
-    /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false. */
-    if (certificateRefused(err)) return { ok: false, reason: refuse("standaloneCertificateRefused") };
+    /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false.
+       By kind where the platform said which, as the desktop says it. */
+    if (certificateRefused(err)) return { ok: false, reason: certificateRefusal(certificateKindOf(err)) };
     if (encryptionRefused(err)) return { ok: false, reason: refuse("standaloneNoEncryption") };
+    /* A server Connect could not sign in to: the address and port, never the password's sentence. */
+    if (incomingUnreachable(err) !== null) return { ok: false, reason: refuse("standaloneImapUnreachable") };
     /* `faultDetail`, never `String(err)`: it words a fault THIS APP authored (a store fault
        becomes a keyed refusal, rendered in the reader's language at the moment it is shown) and
        quotes anybody else's verbatim. The password is in neither — it is not in any argument this
