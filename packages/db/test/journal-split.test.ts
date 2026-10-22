@@ -3054,6 +3054,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0158_mailboxes_gap_strangers": [
     "61575c84e175babb",   // ADD COLUMN IF NOT EXISTS mailboxes.gap_strangers integer
   ],
+  // THE READER'S PRESS ORDERING — one nullable timestamptz on rules, IF NOT EXISTS: no default, no
+  // index, no DML (NULL is a row no reader press settled on unchanged since).
+  "0159_rules_settled_press_at": [
+    "3dddc21898e441c4",   // ADD COLUMN IF NOT EXISTS rules.settled_press_at timestamptz
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4041,12 +4046,14 @@ describe("the two journals are well-formed", () => {
   // 0156_routing_decisions_sender_reason's.
   // 158 → 159 for `0158_mailboxes_gap_strangers`: its `when` (1791602600062) is strictly above
   // 0157_messages_sender_date's.
+  // 159 → 160 for `0159_rules_settled_press_at`: its `when` (1791602600063) is strictly above
+  // 0158_mailboxes_gap_strangers's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 159], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 160], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

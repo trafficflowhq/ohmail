@@ -1,0 +1,3 @@
+### A rule change no longer waits on a mailbox you removed
+
+When you change or remove a rule on a device that does not organize your mail, the Rules page shows the change once every computer still organizing your mailboxes has made it. It used to keep showing the old rule until you made the change again if you removed or switched off one of those mailboxes before its computer answered, or if that computer's answer reached this device only after this device had stopped waiting for it. One case still needs the change made again: if you changed the same rule a second time and the second change showed first, the first one is not added afterwards. On the desktop, the phone and ohmail Cloud.

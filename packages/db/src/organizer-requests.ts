@@ -28,7 +28,11 @@ import { ruleMatchKey } from "./screener-apply.js";
 export const REQUEST_STATES = ["pending", "sent", "applied", "expired", "refused"] as const;
 export type RequestState = (typeof REQUEST_STATES)[number];
 
-/** A state a row will never leave. What the Screener list may stop excluding a sender for. */
+/**
+ * A state a row will never leave. What the Screener list may stop excluding a sender for. One
+ * exception: an `expired` rule leg still takes a late answer that finishes it (applied, or a
+ * delete refused `no_such_rule`); every other kind's expiry is final.
+ */
 export const TERMINAL_REQUEST_STATES = ["applied", "expired", "refused"] as const;
 
 export interface OrganizerRequestRow {
@@ -161,6 +165,23 @@ export async function listPressLegs(
       ne(mailboxes.status, "disabled"),
     ));
   return rows.map((x) => toRow(x.r));
+}
+
+/**
+ * The account's rule legs decided after `after`, every mailbox, each with whether its mailbox is
+ * live: the later presses the belt checks before settling an older one.
+ */
+export async function listLaterRuleLegs(
+  tx: Tx, accountId: string, after: Date,
+): Promise<Array<OrganizerRequestRow & { live: boolean }>> {
+  const rows = await tx.select({ r: organizerRequests, status: mailboxes.status }).from(organizerRequests)
+    .innerJoin(mailboxes, and(eq(mailboxes.id, organizerRequests.mailboxId), eq(mailboxes.accountId, organizerRequests.accountId)))
+    .where(and(
+      eq(organizerRequests.accountId, accountId),
+      inArray(organizerRequests.kind, ["rule.create", "rule.update", "rule.delete"]),
+      gt(organizerRequests.decidedAt, after),
+    ));
+  return rows.map((x) => ({ ...toRow(x.r), live: x.status !== "disabled" }));
 }
 
 /**
@@ -300,12 +321,13 @@ export async function markRequestsSent(tx: Tx, ids: readonly string[], sentAt: D
  * absence reported success for decisions that were thrown away. The evidence is now a signed ack
  * (`AckRecord`), and this function only records what that ack said. `from` exists for the ROLE
  * FLIP: an install that becomes the organizer settles its own leftover `pending` rows by applying
- * them directly — never `sent`, so they move `pending` → `applied`. Every other caller leaves the
- * default and gets the guarded `sent` → `applied` transition.
+ * them directly — never `sent`, so they move `pending` → `applied`. `expired` is a rule leg's late
+ * answer ({@link listExpiredRuleLegs}). Every other caller leaves the default and gets the guarded
+ * `sent` → `applied` transition.
  */
 export async function markRequestsApplied(
   tx: Tx, ids: readonly string[], resolvedAt: Date,
-  opts: { from?: "sent" | "pending" } = {},
+  opts: { from?: "sent" | "pending" | "expired" } = {},
 ): Promise<void> {
   if (ids.length === 0) return;
   await tx.update(organizerRequests)
@@ -322,19 +344,22 @@ export async function markRequestsApplied(
  * The reason is stored so the person can be told something better than "it did not happen" —
  * `pendingDecisions[]` carries it to the client. A `null` reason is a refusal whose named cause
  * this build does not recognise (a newer organizer's vocabulary), which is still a refusal and
- * must still leave the queue.
+ * must still leave the queue. `from: "expired"` is a rule delete's late `no_such_rule`, which
+ * finishes its leg.
  */
 export async function markRequestsRefused(
   tx: Tx, ids: readonly string[], reason: string | null, resolvedAt: Date,
+  opts: { from?: "sent" | "expired" } = {},
 ): Promise<void> {
   if (ids.length === 0) return;
   await tx.update(organizerRequests)
     .set({ state: "refused", resolvedAt, refusedReason: reason })
-    .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, "sent")));
+    .where(and(inArray(organizerRequests.id, [...ids]), eq(organizerRequests.state, opts.from ?? "sent")));
 }
 
 /**
- * `sent` → `expired`: still in the mailbox past the window. Nobody is organizing.
+ * `sent` → `expired`: still in the mailbox past the window. Nobody is organizing. Final for every
+ * kind but a rule leg, whose late answer may still finish it ({@link listExpiredRuleLegs}).
  *
  * `from` exists for the same reason {@link markRequestsApplied}'s does, and closes a row that
  * would otherwise be IMMORTAL: a `pending` row is one this install could never hand over — it
@@ -375,6 +400,45 @@ export async function listStaleSentRequests(
 
 /** A mailbox row id is a uuid; any other string names no row, and Postgres refuses it as a bind. */
 const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const RULE_KINDS = ["rule.create", "rule.update", "rule.delete"];
+
+/**
+ * The `expired` rule legs on one mailbox among `ids`: the rows a verified ack read this cycle
+ * answers after the reader stopped waiting. Rule kinds only; any other kind's expiry is final.
+ */
+export async function listExpiredRuleLegs(
+  tx: Tx, accountId: string, mailboxId: string, ids: Iterable<string>,
+): Promise<OrganizerRequestRow[]> {
+  const asked = [...new Set([...ids].filter((id) => ROW_ID.test(id)))];
+  if (asked.length === 0) return [];
+  const rows = await tx.select().from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.accountId, accountId),
+      eq(organizerRequests.mailboxId, mailboxId),
+      eq(organizerRequests.state, "expired"),
+      inArray(organizerRequests.kind, RULE_KINDS),
+      inArray(organizerRequests.id, asked),
+    ));
+  return rows.map(toRow);
+}
+
+/**
+ * Every rule leg on one mailbox that has not finished (not `applied`, and not a delete refused
+ * `no_such_rule`), oldest press first: what a leaving mailbox asks the belt about.
+ */
+export async function listUnfinishedRuleLegs(tx: Tx, accountId: string, mailboxId: string): Promise<OrganizerRequestRow[]> {
+  const rows = await tx.select().from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.accountId, accountId),
+      eq(organizerRequests.mailboxId, mailboxId),
+      ne(organizerRequests.state, "applied"),
+      inArray(organizerRequests.kind, RULE_KINDS),
+    ))
+    .orderBy(asc(organizerRequests.decidedAt), asc(organizerRequests.createdAt), asc(organizerRequests.id));
+  return rows.map(toRow)
+    .filter((r) => !(r.kind === "rule.delete" && r.state === "refused" && r.refusedReason === "no_such_rule"));
+}
 
 /**
  * Which of `ids` are mailbox rows THIS store holds — any account, removed rows included. The

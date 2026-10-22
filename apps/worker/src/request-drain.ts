@@ -6,7 +6,7 @@ import {
   applyRuleRequest, validateRulePayload, settleReaderRuleRows, ruleKeyIsOwnAddress, OwnAddressesPerPass, type RuleRefusal,
   readIdempotencyKey, IDEMPOTENCY_TTL_MS, readAccountErasedAt,
   listPendingRequests, listSentRequests, markRequestsSent, markRequestsApplied,
-  listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld,
+  listStaleSentRequests, markRequestsExpired, markRequestsRefused, mailboxRowsHeld, listExpiredRuleLegs,
   type Tx,
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -1390,7 +1390,17 @@ export async function driveOutstandingRequests(
     }
   }
 
-  const sent = await db.transaction((tx) => listSentRequests(tx, rt.mailboxId));
+  const sentRows = await db.transaction((tx) => listSentRequests(tx, rt.mailboxId));
+  /* A RULE LEG THIS READER EXPIRED, ANSWERED SINCE: an ack outranks the clock. Read only for the
+     verified acks naming no sent row, and merged into one list in press order: a late create
+     settled after a later Remove would bring the rule back. */
+  const sentIds = new Set(sentRows.map((r) => r.id));
+  const lateAsked = [...ackById.keys()].filter((id) => !sentIds.has(id));
+  const late = lateAsked.length === 0 ? []
+    : await db.transaction((tx) => listExpiredRuleLegs(tx, rt.accountId, rt.mailboxId, lateAsked));
+  const lateIds = new Set(late.map((r) => r.id));
+  const sent = [...sentRows, ...late].sort((a, b) => a.decidedAt.getTime() - b.decidedAt.getTime()
+    || a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   if (sent.length === 0) {
     if (sentCount > 0) {
       log("outstanding_requests_driven", {
@@ -1409,6 +1419,14 @@ export async function driveOutstandingRequests(
 
   for (const row of sent) {
     const outcome = readerOutcomeFor({ ack: ackById.get(row.id) ?? null, sentAt: row.sentAt, now });
+    if (lateIds.has(row.id)) {
+      // Only an answer that finishes the leg moves an expired one; any other stays expired.
+      if (outcome.next === "applied") appliedIds.push(row.id);
+      else if (outcome.next === "refused" && outcome.reason === "no_such_rule" && row.kind === "rule.delete") {
+        refusedRows.push({ id: row.id, reason: outcome.reason });
+      }
+      continue;
+    }
     if (outcome.next === "applied") appliedIds.push(row.id);
     else if (outcome.next === "refused") refusedRows.push({ id: row.id, reason: outcome.reason });
     else if (outcome.next === "expired") expiredIds.push(row.id);
@@ -1421,7 +1439,8 @@ export async function driveOutstandingRequests(
     // key) — unless the person wrote the row again after deciding it (`settleReaderRuleRows`).
     const appliedRules = sent.filter((r) => appliedIds.includes(r.id) && r.kind.startsWith("rule."));
     await db.transaction(async (tx) => {
-      await markRequestsApplied(tx, appliedIds, now);
+      await markRequestsApplied(tx, appliedIds.filter((id) => !lateIds.has(id)), now);
+      await markRequestsApplied(tx, appliedIds.filter((id) => lateIds.has(id)), now, { from: "expired" });
       for (const r of appliedRules) {
         const out = await settleReaderRuleRows(tx, rt.accountId, r);
         if (out.skipped) skipped.push({ requestId: r.id, reason: out.skipped });
@@ -1433,7 +1452,7 @@ export async function driveOutstandingRequests(
        It can be the press's last leg to answer, so the belt is asked here too, in the same unit. */
     const row = r.reason === "no_such_rule" ? sent.find((s) => s.id === r.id && s.kind === "rule.delete") : undefined;
     await db.transaction(async (tx) => {
-      await markRequestsRefused(tx, [r.id], r.reason, now);
+      await markRequestsRefused(tx, [r.id], r.reason, now, { from: lateIds.has(r.id) ? "expired" : "sent" });
       if (!row) return;
       const out = await settleReaderRuleRows(tx, rt.accountId, row);
       if (out.skipped) skipped.push({ requestId: r.id, reason: out.skipped });
@@ -1446,6 +1465,8 @@ export async function driveOutstandingRequests(
     log("outstanding_requests_driven", {
       mailboxId: rt.mailboxId, accountId: rt.accountId,
       sent: sentCount, applied: appliedIds.length, refused: refusedRows.length, expired: expiredIds.length,
+      // Of the applied and refused: expired rule legs a late answer finished.
+      late: appliedIds.filter((id) => lateIds.has(id)).length + refusedRows.filter((r) => lateIds.has(r.id)).length,
     });
   }
 

@@ -1,17 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { carryDialect } from "@trafficflow/db/dialect";
 import {
   accounts, accountSettings, accountSyncState, approvals, changeLog, folderState, graduations, learningSignals, mailboxFolders, mailboxes, messageBodies,
-  messageInstances, messages, routingDecisions, rules, applyScreenerDecision,
-  SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
+  messageInstances, messages, organizerRequests, routingDecisions, rules, applyScreenerDecision,
+  ACCOUNT_RULE_KEY_LOCK_CLASS, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
+import { StaticKeyProvider } from "@trafficflow/core";
+import { makeTestDb } from "@trafficflow/db/testing";
+import {
+  deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
+} from "@trafficflow/core/adapters/organizer-lease";
+import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { Logger } from "@trafficflow/core/mail";
-import { ApprovalService, LearningService, MessageService, RulesService, deleteAccount, resetScreeningState, type ServiceContext } from "@trafficflow/services";
+import { ApprovalService, LearningService, MailboxService, MessageService, RulesService, deleteAccount, resetScreeningState, type ServiceContext } from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { runSyncCycle } from "../src/sync.js";
@@ -729,4 +736,195 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       expect(await w.state(), "the person's pause did not stand").toMatchObject({ graduated: false, enabled: false, stamped: true });
     }, 60_000);
   }
+
+  /* ── A MAILBOX LEAVING ASKS THE BELT: THE RULE-KEY LOCK BEFORE THE MAILBOX ROW ─────────────
+     A reader with two held mailboxes, A and B, and Ann's rule. The leaving doors (removal, the
+     disabling PATCH) take the account fence, the rule-key lock, then the mailbox row, and ask the
+     belt for the presses the leaving mailbox's legs held back. With the rule-key lock after the
+     mailbox row, the press and the removal deadlocked (40P01). */
+  describe("a mailbox leaving asks the belt", () => {
+    // Each case opens several pools; they close with it, not at the file's end.
+    afterEach(async () => {
+      const done = clients.filter((c) => c !== base);
+      clients.splice(0, clients.length, base);
+      for (const c of done) await c.close().catch(() => {});
+    });
+    const mbxSvc = new MailboxService({ keyProvider: StaticKeyProvider.fromSecret(Buffer.alloc(32, 7), 1), allowance: async () => {} });
+
+    function sharedMeta() {
+      const store = new Map<number, string>();
+      let next = 1;
+      const list = async (): Promise<MetaRecordsList> => {
+        const records: RawMetaMessage[] = [...store.entries()].map(([ref, raw]) => ({ ref, raw }));
+        return { records, count: records.length, bytes: records.reduce((n, r) => n + r.raw.length, 0) };
+      };
+      return {
+        reader: { listMetaRecords: list, async append(raw: string) { store.set(next++, raw); } } as RequestReaderIo,
+        organizer: {
+          listMetaRecords: list, uidValidity: () => 7_000,
+          async ack(raw: string) { store.set(next++, raw); },
+          async remove(refs: readonly unknown[]) { for (const r of refs) if (typeof r === "number") store.delete(r); },
+        } as RequestOrganizerIo,
+      };
+    }
+
+    async function leaveWorld(prefix: string) {
+      const accountId = randomUUID();
+      const tag = accountId.slice(0, 8);
+      await base.db.insert(accounts).values({ id: accountId, name: `${prefix}-${tag}` });
+      await base.db.insert(accountSyncState).values({ accountId, nextSeq: 0n }).onConflictDoNothing();
+      const held: Array<{ id: string; address: string; key: NonNullable<ReturnType<typeof deriveRequestKey>>; meta: ReturnType<typeof sharedMeta> }> = [];
+      for (const n of ["a", "b"]) {
+        const address = `${prefix}-${n}-${tag}@example.test`;
+        const [mb] = await base.db.insert(mailboxes).values({
+          accountId, provider: "imap", address, status: "connected", organizerRole: "reader", organizerState: "held",
+          organizedByCapabilities: "requests,rules", organizedByKind: "local", organizedByName: `laptop-${n}`,
+        }).returning();
+        held.push({ id: mb!.id, address, key: deriveRequestKey({ auth: { user: address, pass: tag }, address })!, meta: sharedMeta() });
+      }
+      const [rule] = await base.db.insert(rules).values({
+        accountId, kind: "sender", match: `ann-${tag}@shop.example`, destination: NEWS, priority: 0, enabled: true,
+        provenance: "manual", updatedAt: WROTE,
+      }).returning({ id: rules.id });
+      const ctxOn = (db: unknown, name: string): ServiceContext =>
+        ({ db, accountId, userId: null, now: () => new Date(), requestId: name }) as unknown as ServiceContext;
+      const readerCycle = (db: unknown, i: number) => driveOutstandingRequests(db as never, {
+        mailboxId: held[i]!.id, accountId, installId: "reader-install",
+        adapter: { requestReaderIo: () => held[i]!.meta.reader } as unknown as MailboxAdapter, requestKey: held[i]!.key,
+      }, { installId: "reader-install", kind: "local" }, new Date(), () => undefined);
+      const ruleRows = async () => base.db.select({ id: rules.id }).from(rules).where(eq(rules.accountId, accountId));
+      const deletes = async () => (await base.db.select().from(changeLog)
+        .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "rule"), eq(changeLog.op, "delete")))).length;
+      const legStates = async () => (await base.db.select({ m: organizerRequests.mailboxId, s: organizerRequests.state })
+        .from(organizerRequests).where(eq(organizerRequests.accountId, accountId)))
+        .map((r) => `${r.m === held[0]!.id ? "A" : "B"}:${r.s}`).sort();
+      return { accountId, tag, held, ruleId: rule!.id, ctxOn, readerCycle, ruleRows, deletes, legStates };
+    }
+    type LeaveWorld = Awaited<ReturnType<typeof leaveWorld>>;
+
+    /** A connection whose first rule-key lock statement parks its transaction right after it is taken. */
+    function parkedAtTheRuleKey(name: string) {
+      const o = open(name);
+      let parked!: () => void;
+      const isParked = new Promise<void>((r) => { parked = r; });
+      let resume!: () => void;
+      const resumed = new Promise<void>((r) => { resume = r; });
+      const db = o.db as unknown as { transaction: (cb: (tx: unknown) => Promise<unknown>, cfg?: unknown) => Promise<unknown> };
+      const real = db.transaction.bind(db);
+      let done = false;
+      db.transaction = (cb, cfg) => real(async (tx) => {
+        const t = tx as { execute: (q: SQL) => Promise<unknown> };
+        const exec = t.execute.bind(t);
+        t.execute = async (q: SQL) => {
+          const out = await exec(q);
+          const chunks = (q as unknown as { queryChunks?: unknown[] }).queryChunks ?? [];
+          const text = chunks.map((c) => (c && typeof c === "object" && "value" in c ? String((c as { value: unknown }).value) : "")).join("");
+          if (!done && text.includes("pg_advisory_xact_lock") && chunks.includes(ACCOUNT_RULE_KEY_LOCK_CLASS)) {
+            done = true;
+            parked();
+            await resumed;
+          }
+          return out;
+        };
+        return cb(tx);
+      }, cfg);
+      return { db: o.db, isParked, resume };
+    }
+
+    type Run = (db: unknown) => Promise<unknown>;
+    /** `first` parks after its rule-key lock, `second` starts until it waits, then both go. */
+    async function parkedRace(first: [string, Run], second: [string, Run]): Promise<string[]> {
+      const settle = (p: Promise<unknown>): Promise<string> => p.then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
+      const p = parkedAtTheRuleKey(first[0]);
+      const a = settle(first[1](p.db));
+      if (!(await Promise.race([p.isParked.then(() => true), a.then(() => false)]))) return [await a, "took no rule-key lock"];
+      const b = settle(second[1](open(second[0]).db));
+      await untilWaiting(second[0]);
+      p.resume();
+      return Promise.all([a, b]);
+    }
+
+    const press = (w: LeaveWorld): Run => (db) => new RulesService().remove(w.ctxOn(db, "press"), w.ruleId);
+    const removal = (w: LeaveWorld, i: number): Run => (db) => mbxSvc.delete(w.ctxOn(db, "removal"), w.held[i]!.id);
+    const disabling = (w: LeaveWorld, i: number): Run => (db) => mbxSvc.update(w.ctxOn(db, "disable"), w.held[i]!.id, { status: "disabled" });
+
+    for (const [door, leave] of [["removal", removal], ["disabling PATCH", disabling]] as const) {
+      for (const first of ["press", "leave"] as const) {
+        it(`a rule press and the ${door} of one of its holders, the ${first} first: both commit`, async () => {
+          const w = await leaveWorld("lo-lv");
+          const p: [string, Run] = [`lo-lv-press-${w.tag}`, press(w)];
+          const l: [string, Run] = [`lo-lv-leave-${w.tag}`, leave(w, 1)];
+          const codes = first === "press" ? await parkedRace(p, l) : await parkedRace(l, p);
+          expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+          // The press reached A; B left before or after it. A has not answered: the row stays.
+          expect(await w.ruleRows()).toHaveLength(1);
+        }, 60_000);
+      }
+    }
+
+    for (const first of ["ack", "removal"] as const) {
+      it(`the reader's ack of A and the removal of B (the last unanswered leg), the ${first} first: both commit, one delete`, async () => {
+        const w = await leaveWorld("lo-ak");
+        await new RulesService().remove(w.ctxOn(base.db, "press"), w.ruleId);
+        await w.readerCycle(base.db, 0);
+        await w.readerCycle(base.db, 1);
+        expect(await w.legStates()).toEqual(["A:sent", "B:sent"]);
+        // Holder A applies the removal and acknowledges it.
+        const laptop = await makeTestDb();
+        await laptop.insert(mailboxes).values({ id: w.held[0]!.id, accountId: w.accountId, provider: "imap", address: w.held[0]!.address });
+        await laptop.insert(rules).values({ accountId: w.accountId, kind: "sender", match: `ann-${w.tag}@shop.example`, destination: NEWS, priority: 0, enabled: true, provenance: "manual" });
+        await applyMetaRequests(laptop, {
+          mailboxId: w.held[0]!.id, accountId: w.accountId, installId: "laptop-a",
+          adapter: { requestOrganizerIo: () => w.held[0]!.meta.organizer } as unknown as MailboxAdapter, requestKey: w.held[0]!.key,
+        }, new Date(), () => undefined);
+        const ackName = `lo-ak-ack-${w.tag}`;
+        const removeName = `lo-ak-rm-${w.tag}`;
+        // The ack parks after its rule-key lock, holding A's request row; the removal parks on B's row.
+        const codes = first === "ack"
+          ? await parkedRace([ackName, (db) => w.readerCycle(db, 0)], [removeName, removal(w, 1)])
+          : await race(sql`select 1 from mailboxes where id = ${w.held[1]!.id} for update`,
+            [removeName, () => removal(w, 1)(open(removeName).db)], [ackName, () => w.readerCycle(open(ackName).db, 0)]);
+        expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+        expect(await w.ruleRows(), "the press stalled").toEqual([]);
+        expect(await w.deletes()).toBe(1);
+      }, 60_000);
+    }
+
+    for (const first of [0, 1]) {
+      it(`two holders removed at once, each the other's last leg, ${first === 0 ? "A" : "B"} first: both commit and the row goes once`, async () => {
+        const w = await leaveWorld("lo-two");
+        await new RulesService().remove(w.ctxOn(base.db, "press"), w.ruleId);
+        const codes = await parkedRace([`lo-two-1-${w.tag}`, removal(w, first)], [`lo-two-2-${w.tag}`, removal(w, 1 - first)]);
+        expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+        expect(await w.ruleRows()).toEqual([]);
+        expect(await w.deletes()).toBe(1);
+      }, 60_000);
+    }
+
+    it("the account row held FOR SHARE does not block a disabling PATCH, and does block a rename", async () => {
+      const w = await leaveWorld("lo-sh");
+      const gate = open(`lo-sh-gate-${w.tag}`);
+      let held!: () => void;
+      const holding = new Promise<void>((r) => { held = r; });
+      let release!: () => void;
+      const released = new Promise<void>((r) => { release = r; });
+      const gated = gate.db.transaction(async (tx) => {
+        await tx.execute(sql`select 1 from accounts where id = ${w.accountId} for share`);
+        held();
+        await released;
+        throw new Error("gate rolled back");
+      }).catch(() => undefined);
+      await holding;
+      const timeout = new Promise<string>((r) => setTimeout(() => r("blocked"), 10_000));
+      const disable = disabling(w, 1)(open(`lo-sh-off-${w.tag}`).db).then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
+      expect(await Promise.race([disable, timeout]), "the disabling PATCH waited on the shared account row").toBe("ok");
+      const renameName = `lo-sh-rn-${w.tag}`;
+      const rename = mbxSvc.update(w.ctxOn(open(renameName).db, "rename"), w.held[0]!.id, { displayName: "Work" })
+        .then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
+      await untilWaiting(renameName);
+      release();
+      await gated;
+      expect(await rename).toBe("ok");
+    }, 60_000);
+  });
 });

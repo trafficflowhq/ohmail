@@ -388,7 +388,10 @@ function expr(n: ts.Node, states: States, cx: Ctx): States {
       return s;
     }
     const name = callName(n);
-    const hit = name ? resolveCall(name, cx.file) : null;
+    // A method is reached through `this` or a name: `createHash(…).update(…)` calls no method `update`.
+    const recv = ts.isPropertyAccessExpression(n.expression) ? n.expression.expression : null;
+    const followable = recv === null || recv.kind === ts.SyntaxKind.ThisKeyword || ts.isIdentifier(recv);
+    const hit = name && followable ? resolveCall(name, cx.file) : null;
     if (hit?.decl.body && !cx.stack.includes(name) && cx.stack.length < 10) {
       return fn(hit.decl.body, s, { ...cx, file: hit.file, stack: [...cx.stack, name], off: falseFlags(n) });
     }
@@ -620,6 +623,9 @@ const EXPECTED: ReadonlyArray<{ file: string; fn?: string; closure?: string; tak
   { file: "packages/services/src/rules-service.ts", fn: "update", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "packages/services/src/rules-service.ts", fn: "remove", takes: [ACCOUNT, RULE_KEY, COUNTER] },
   { file: "apps/worker/src/request-drain.ts", closure: "ruleHandler", takes: [ACCOUNT, RULE_KEY, COUNTER] },
+  // A mailbox leaving (removed or switched off) asks the belt for the presses its legs held back.
+  { file: "packages/services/src/mailbox-service.ts", fn: "delete", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
+  { file: "packages/services/src/mailbox-service.ts", fn: "update", takes: [ACCOUNT, RULE_KEY, MAILBOX_X, COUNTER] },
   // The profile import at both doors, and the HEY import.
   { file: "packages/services/src/profile-import-service.ts", fn: "apply", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
   { file: "apps/worker/src/profile.ts", fn: "answerImportAsk", takes: [ACCOUNT, RULE_KEY, IMPORT, MAILBOX_X, CONTACTS, FOLDER_STATE, COUNTER] },
@@ -922,6 +928,7 @@ const DOOR_FILES = new Set(["packages/db/src/rule-key.ts", "packages/db/src/lear
 const RULES_WRITES_OUTSIDE: Readonly<Record<string, string>> = {
   "packages/db/src/request-apply.ts#reconcileRuleCreate": "a travelled create, after the key's converge",
   "packages/db/src/request-apply.ts#applyRuleRequest": "a travelled edit or removal, under the rule-key lock",
+  "packages/db/src/request-apply.ts#settleReaderRuleRows": "the reader belt's press stamp on a create the row already held, under the rule-key lock",
   "packages/db/src/inferred-press-repair.ts#applyInferredPressRepair": "the one-time repair of an inferred press's provenance",
   "packages/services/src/rules-service.ts#update": "the person's edit of the row they pressed, after the key's converge",
   "packages/services/src/rules-service.ts#remove": "the person's removal of every row under the key",
@@ -1027,6 +1034,28 @@ describe("the derivation's and the new refusals' own controls", () => {
       .toEqual(["the change-log counter (recordRuleDelta) taken after the graduation row"]);
     expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => { await lockAccountRuleKeys(tx, a); await tx.update(rulesTbl).set({}); await recordRuleDelta(tx, a, ids, "update"); await tx.update(graduations).set({}); }); }`),
       "the door's order is admitted").toEqual([]);
+  });
+
+  it("a method is followed through `this` or a name, never through a builder chain's same-named call", () => {
+    const method = `class S { async update(o) { await o.tx.insert(contacts).values({}); }`;
+    expect(plant(`${method} async f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await upsertDesired(tx, r, "INBOX", now); createHash("sha256").update(\`x\`); }); } }`),
+    "a hash's update is no call of S.update").toEqual([]);
+    expect(plant(`${method} } async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await upsertDesired(tx, r, "INBOX", now); await this.update({ tx }); }); }`))
+      .toEqual(["contacts (.insert(contacts)) taken after held folder_state rows"]);
+    expect(plant(`${method} } async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await upsertDesired(tx, r, "INBOX", now); await svc.update({ tx }); }); }`))
+      .toEqual(["contacts (.insert(contacts)) taken after held folder_state rows"]);
+  });
+
+  it("a mailbox row taken through a helper before the rule-key lock is refused", () => {
+    const helper = `async function lockMailboxRow(tx, d, a, id) { await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).limit(1)); }`;
+    expect(plant(`${helper} async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockMailboxRow(tx, d, a, id); await lockAccountRuleKeys(tx, a); }); }`))
+      .toEqual(["the rule-key lock (lockAccountRuleKeys) taken after a mailbox row FOR UPDATE"]);
+    expect(plant(`${helper} async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(tx, a); await lockMailboxRow(tx, d, a, id); }); }`)).toEqual([]);
   });
 
   it("held folder_state after a graduation row is refused", () => {

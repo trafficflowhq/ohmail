@@ -841,6 +841,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0158_mailboxes_gap_strangers — the gap offer's stranger count. LOUD: every mailbox read
   // names the column. Deploy order migration → API → worker.
   ["mailboxes", "gap_strangers"],
+  // mail 0159_rules_settled_press_at — the reader belt's press stamp. LOUD, on 0050's whole-row
+  // argument: `materializeRule`, the `/sync` page and `drizzle-repo.ts#listRules` all
+  // `select().from(rules)`, so an API ahead of the migration 42703s the rules surface and a worker
+  // stops filing mail. Deploy order migration → API → worker.
+  ["rules", "settled_press_at"],
 ] as const;
 
 /**
@@ -1247,7 +1252,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0158_mailboxes_gap_strangers";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0159_rules_settled_press_at";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

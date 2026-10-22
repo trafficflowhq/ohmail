@@ -506,5 +506,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"gap_strangers\" integer;"
     ]
+  },
+  {
+    "name": "0159_rules_settled_press_at.sql",
+    "statements": [
+      "ALTER TABLE \"rules\" ADD COLUMN \"settled_press_at\" integer;"
+    ]
   }
 ] as const;

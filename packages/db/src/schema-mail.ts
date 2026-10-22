@@ -1047,6 +1047,14 @@ export const rules = pgTable("rules", {
    * LAST, for the reason above.
    */
   personDecidedAt: timestamp("person_decided_at", { withTimezone: true }),
+  /**
+   * THE LAST READER PRESS SETTLED ON THIS ROW WITHOUT WRITING IT (mail 0159) — the press's
+   * `decidedAt`. A reader's create that finds the row already as it asks changes nothing, so
+   * `updated_at` cannot order an older press the belt settles later (at a leave) below it; this
+   * does. Written only by the belt (`settleReaderRuleRows`) and read only by its ordering; on no
+   * DTO, no document and no delta. NULL is the resting state, no backfill. LAST, for the reason above.
+   */
+  settledPressAt: timestamp("settled_press_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

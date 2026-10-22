@@ -860,6 +860,9 @@ describe("the baseline cutoff is frozen", () => {
       // The gap offer's stranger count: one nullable ADD COLUMN IF NOT EXISTS on mailboxes, no
       // default, no data. Safe over any history.
       "0158_mailboxes_gap_strangers",
+      // The reader's press ordering: one nullable ADD COLUMN IF NOT EXISTS on rules, no default, no
+      // data. Safe over any history.
+      "0159_rules_settled_press_at",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

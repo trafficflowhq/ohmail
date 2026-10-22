@@ -1,11 +1,14 @@
-import { and, asc, desc, eq, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, notInArray, sql, type SQL } from "drizzle-orm";
 import {
   ACCOUNT_RULE_KEY_LOCK_CLASS, accountSettings, awayResponders, folderState, mailboxes, messages, organizerRequests,
   rules as rulesTbl,
 } from "./schema-mail.js";
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
-import { insertOrganizerRequest, listPressLegs, TERMINAL_REQUEST_STATES } from "./organizer-requests.js";
+import {
+  insertOrganizerRequest, listLaterRuleLegs, listPressLegs, listUnfinishedRuleLegs, TERMINAL_REQUEST_STATES,
+  type OrganizerRequestRow,
+} from "./organizer-requests.js";
 import { accountWritesHere } from "./organizer-role.js";
 import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-floor.js";
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
@@ -1128,7 +1131,7 @@ export async function applyRuleRequest(
 /** Why the belt left a request's answer unapplied — logged once per request by the caller. */
 export type ReaderSettleSkip =
   | "unreadable_payload" | "no_decided_at" | "press_unfinished" | "no_row_stamp" | "newer_local_write"
-  | "removed_after";
+  | "newer_settled_press" | "removed_after";
 
 /** One leg of a press, as {@link pressSettled} reads it. */
 export interface PressLeg {
@@ -1142,11 +1145,49 @@ export interface PressLeg {
  * nothing under the key, already holds there. `expired`, `pending`, `sent` and every other refusal
  * mean the press did not land on that mailbox, and the reader's row keeps saying what still runs
  * there. No legs is not a press. A mailbox refused at the press, or disabled since, has no leg.
+ * `legLeft`, passed only by {@link settlePressesLeavingMailbox}: a press whose every holder left
+ * while its leg there was still awaited is settled, as nothing still runs the old state.
  */
-export function pressSettled(op: ValidatedRuleRequest["op"], legs: readonly PressLeg[]): boolean {
-  const finished = (l: PressLeg): boolean => l.state === "applied"
-    || (op === "delete" && l.state === "refused" && l.refusedReason === "no_such_rule");
-  return legs.length > 0 && legs.every(finished);
+export function pressSettled(
+  op: ValidatedRuleRequest["op"], legs: readonly PressLeg[], opts: { legLeft?: boolean } = {},
+): boolean {
+  return (legs.length > 0 || opts.legLeft === true) && legs.every((l) => legFinished(op, l));
+}
+
+function legFinished(op: ValidatedRuleRequest["op"], l: PressLeg): boolean {
+  return l.state === "applied" || (op === "delete" && l.state === "refused" && l.refusedReason === "no_such_rule");
+}
+
+const IN_FLIGHT = new Set(["pending", "sent"]);
+
+/**
+ * A LATER PRESS UNDER THE KEY HAS SETTLED. Asked only for an older create that finds no row: a
+ * later Remove that settled left no row to stamp, and the create settling now would bring the rule
+ * back. Every other order is read off the row: a later press that wrote it stamped it at its own
+ * `decidedAt` (`newer_local_write`), and a later create that found it already as asked left its
+ * `decidedAt` in `settled_press_at` (`newer_settled_press`). Skipping any older press once a later
+ * one settled threw away the older one's fields (a folder, then a priority, both answered in one
+ * cycle). Settled: every leg finished or on a mailbox that left, and at least one finished or left
+ * in flight (what the leave settles). Returns `delete` when a later Remove settled, else the op of
+ * another settled later press, or null.
+ */
+async function laterPressSettled(tx: Tx, accountId: string, key: RuleKey, after: Date): Promise<ValidatedRuleRequest["op"] | null> {
+  const presses = new Map<string, { op: ValidatedRuleRequest["op"]; legs: Array<PressLeg & { live: boolean }> }>();
+  for (const l of await listLaterRuleLegs(tx, accountId, after)) {
+    const v = validateRulePayload(l.kind, l.payload);
+    if (v === null || !sameKey(v.key, key)) continue;
+    const id = `${l.kind}|${l.decidedAt.getTime()}`;
+    const p = presses.get(id) ?? { op: v.op, legs: [] };
+    p.legs.push(l);
+    presses.set(id, p);
+  }
+  let found: ValidatedRuleRequest["op"] | null = null;
+  for (const { op, legs } of presses.values()) {
+    const settled = legs.every((l) => legFinished(op, l) || !l.live)
+      && legs.some((l) => legFinished(op, l) || IN_FLIGHT.has(l.state));
+    if (settled && found !== "delete") found = op;
+  }
+  return found;
 }
 
 function sameKey(a: RuleKey, b: RuleKey): boolean {
@@ -1161,11 +1202,14 @@ function sameKey(a: RuleKey, b: RuleKey): boolean {
  * under the key. Called on an applied ack and on a delete refused `no_such_rule`, in the unit that
  * records it, with the organizer's apply at `decidedAt`. The rule-key lock precedes the leg read.
  * THE GUARD: any row under the key written at or after `decidedAt` is the person's later hand and
- * stands. A CREATE inserts only where its press wrote no row here.
+ * stands, and so does a row that a press decided at or after it settled on without writing (THE
+ * PRESS STAMP, below). A CREATE inserts only where its press wrote no row here, and never once a
+ * later Remove under the key has settled: the Remove left no row to stamp.
  */
 export async function settleReaderRuleRows(
   tx: Tx, accountId: string, request: { kind: string; payload: unknown; decidedAt: Date | null },
-): Promise<{ settled: boolean; skipped?: ReaderSettleSkip }> {
+  opts: { legLeft?: boolean } = {},
+): Promise<{ settled: boolean; skipped?: ReaderSettleSkip; lastSeq?: bigint | null }> {
   const v = validateRulePayload(request.kind, request.payload);
   if (v === null) return { settled: false, skipped: "unreadable_payload" };
   const at = request.decidedAt;
@@ -1175,17 +1219,82 @@ export async function settleReaderRuleRows(
   await dialect(tx).advisoryLock(tx, ACCOUNT_RULE_KEY_LOCK_CLASS, accountId);
   const legs = (await listPressLegs(tx, accountId, request.kind, at))
     .filter((l) => { const lv = validateRulePayload(l.kind, l.payload); return lv !== null && sameKey(lv.key, v.key); });
-  if (!pressSettled(v.op, legs)) return { settled: false, skipped: "press_unfinished" };
+  if (!pressSettled(v.op, legs, opts)) return { settled: false, skipped: "press_unfinished" };
   const rows = await findRulesByKey(tx, accountId, v.key, { lock: true });
   if (rows.some((r) => !(r.updatedAt instanceof Date))) return { settled: false, skipped: "no_row_stamp" };
   if (rows.some((r) => r.updatedAt!.getTime() >= at.getTime())) return { settled: false, skipped: "newer_local_write" };
+  // A later press that settled on the row without writing it: THE PRESS STAMP, below.
+  if (rows.length > 0) {
+    const [stamped] = await tx.select({ id: rulesTbl.id }).from(rulesTbl).where(and(
+      eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, rows.map((r) => r.id)),
+      gte(rulesTbl.settledPressAt, at),
+    )).limit(1);
+    if (stamped) return { settled: false, skipped: "newer_settled_press" };
+  }
   if (v.op === "create" && rows.length === 0 && await accountWritesHere(tx, accountId)) {
     return { settled: false, skipped: "removed_after" };
   }
+  if (v.op === "create" && rows.length === 0 && await laterPressSettled(tx, accountId, v.key, at) === "delete") return { settled: false, skipped: "removed_after" };
   const bare: ValidatedRuleRequest = v.op === "delete" ? v
     : v.op === "create" ? { ...v, applyRetro: false }
       : { ...v, applyRetro: false, retroAsked: false };
-  return { settled: (await applyRuleRequest(tx, { accountId, payload: bare, now: at })).applied };
+  const out = await applyRuleRequest(tx, { accountId, payload: bare, now: at });
+  if (!out.applied) return { settled: false };
+  /* THE PRESS STAMP. A create the row already held wrote nothing, so `updated_at` cannot order an
+     older press settled after it (at a leave) below it, and an older edit or Remove would be
+     applied over the rule every holder now runs. The press's `decidedAt` goes on the row instead,
+     in the one column only this function writes and reads: `updated_at`, the rules surface, the
+     gap pass's rule age, the settings document and the deltas stay exactly as they were. */
+  if (out.op === "unchanged") {
+    await tx.update(rulesTbl).set({ settledPressAt: at })
+      .where(and(eq(rulesTbl.id, out.ruleId), eq(rulesTbl.accountId, accountId)));
+  }
+  return { settled: true, lastSeq: out.lastSeq };
+}
+
+/** What one leave asked of the belt: distinct presses asked, settled, the last delta's seq, the skips. */
+export interface LeavingSettle {
+  asked: number;
+  settled: number;
+  lastSeq: bigint | null;
+  skipped: Array<{ requestId: string; reason: ReaderSettleSkip }>;
+}
+
+/**
+ * A MAILBOX LEAVES (removed or switched off): each distinct press with an unfinished rule leg on it
+ * is asked of the belt once, oldest first. Oldest first, as the ack path settles: a create asked
+ * after a later Remove would bring the rule back. `legLeft` only for a press whose leg here was
+ * still awaited (`pending`/`sent`): an expired press nobody runs is not applied by a leave. A
+ * mailbox organized here asks nothing. PRECONDITION: the caller took the account's rule-key lock
+ * before the mailbox row, and wrote the row `disabled` in this transaction. Legs are left as they
+ * are, so a mailbox re-enabled within the day still delivers them.
+ */
+export async function settlePressesLeavingMailbox(
+  tx: Tx, input: { accountId: string; mailboxId: string },
+): Promise<LeavingSettle> {
+  const out: LeavingSettle = { asked: 0, settled: 0, lastSeq: null, skipped: [] };
+  // A mailbox organized here waits on no reader leg: its rows are this install's own writes.
+  const [m] = await tx.select({ role: mailboxes.organizerRole }).from(mailboxes)
+    .where(and(eq(mailboxes.id, input.mailboxId), eq(mailboxes.accountId, input.accountId))).limit(1);
+  if (m?.role === "organizer") return out;
+  const presses = new Map<string, { leg: OrganizerRequestRow; inFlight: boolean }>();
+  for (const leg of await listUnfinishedRuleLegs(tx, input.accountId, input.mailboxId)) {
+    const v = validateRulePayload(leg.kind, leg.payload);
+    const press = JSON.stringify([leg.kind, leg.decidedAt.getTime(), v?.key ?? leg.id]);
+    const p = presses.get(press) ?? { leg, inFlight: false };
+    p.inFlight ||= IN_FLIGHT.has(leg.state);
+    presses.set(press, p);
+  }
+  for (const { leg, inFlight } of presses.values()) {
+    out.asked += 1;
+    const r = await settleReaderRuleRows(tx, input.accountId, leg, { legLeft: inFlight });
+    if (r.settled) {
+      out.settled += 1;
+      if (r.lastSeq != null) out.lastSeq = r.lastSeq;
+    }
+    if (r.skipped) out.skipped.push({ requestId: leg.id, reason: r.skipped });
+  }
+  return out;
 }
 
 /**

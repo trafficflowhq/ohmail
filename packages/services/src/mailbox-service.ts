@@ -8,7 +8,7 @@ import {
   isOrganizerRole, isOrganizerKind, isOrganizerState,
   hasCapability, CAPABILITY_REQUESTS,
   standDownMemory, mailboxCountsAsOwn,
-  closeRemovedMailboxAppointments,
+  closeRemovedMailboxAppointments, lockAccountRuleKeys, settlePressesLeavingMailbox,
   filingDue, filingDeferred, filingStuck, ourOutstandingFiling, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   OrganizedElsewhereError, auditAction, auditLog,
@@ -29,7 +29,7 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 /* The head of the mailbox lock order, imported as a STATEMENT rather than reached through the
  * gate: which policy a host installed decides whether the gate runs, and the lock order may not
  * depend on that. */
-import { lockAccountRow } from "./account-lock.js";
+import { lockAccountRow, lockMailboxRow } from "./account-lock.js";
 import { ownedMessages } from "./message-service.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
@@ -1759,8 +1759,14 @@ export class MailboxService {
     return asTx(ctx).transaction(async (tx) => {
       // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
       // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
-      // the allowance gate is reached is decided by rows this transaction has not read yet.
-      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
+      // the allowance gate is reached is decided by rows this transaction has not read yet. SHARED
+      // for a disable: it reaches no gate and takes the counter (see `lockAccountRow`).
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId,
+        patch.status === "disabled" ? "share" : "update");
+      // The rule-key lock before the mailbox row, every rules writer's order; unconditional, so the
+      // census can match it to the leave's belt ask below.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
+      await lockMailboxRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, id);
       // `FOR UPDATE`, and it is the fix for a race between two concurrent PATCHes.
       // Without it a credentials-only PATCH took NO lock at all — it writes `mailbox_credentials`
       // and never touches the `mailboxes` row — so it could read a row as 'connected', have the
@@ -1854,6 +1860,11 @@ export class MailboxService {
           { row: "already-there", signedOutAt: signedOutBefore });
       }
 
+      // A switched-off mailbox leaves the presses its rule legs held back: the belt is asked, last.
+      if (patch.status === "disabled" && current.status !== "disabled") {
+        await settlePressesLeavingMailbox(bridgeTx(tx), { accountId: ctx.accountId, mailboxId: id });
+      }
+
       const [row] = await tx.select().from(mailboxes)
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId))).limit(1);
       // NO-CREDENTIAL-REPORT: a context derived onto the transaction's handle, and it is safe
@@ -1911,6 +1922,9 @@ export class MailboxService {
       if (opts.erase) {
         await dialect(ctx.db).advisoryLock(tx, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, ctx.accountId);
       }
+      // The rule-key lock before the mailbox row, every rules writer's order: the belt is asked below.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
+      await lockMailboxRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, id);
       const row = await this.ownedRowOn(tx, ctx, id, { forUpdate: true }); // 404 if not owned
       /* ── THE SECOND CONFIRMATION, CHECKED AGAINST THE ROW AND NOT AGAINST A FLAG ────────
        *
@@ -1979,6 +1993,8 @@ export class MailboxService {
       })
         .where(and(eq(mailboxes.id, id), eq(mailboxes.accountId, ctx.accountId)));
       await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, id));
+      // The presses its rule legs held back are asked of the belt, before the counter below.
+      const left = await settlePressesLeavingMailbox(bridgeTx(tx), { accountId: ctx.accountId, mailboxId: id });
       // And the appointments this removal orphans, in the same transaction. A removal deletes the
       // credentials, so there is no longer a submission server — and until now nothing closed the
       // row: `send_at` stayed in the future and Drafts said "Sends Tue 14:50" for a time that had
@@ -1988,9 +2004,11 @@ export class MailboxService {
       // them: no credentials, a live appointment). THROWS: a half-happened removal is worse than
       // one that can be retried. ITS SEQ IS THE ANSWER: dropping it left a bare 204 with no
       // `X-Sync-Seq` to wait for — every write advances the sequence it echoes.
-      const { seq } = await closeRemovedMailboxAppointments(tx, {
+      const closed = await closeRemovedMailboxAppointments(tx, {
         accountId: ctx.accountId, mailboxId: id, now: ctx.now(),
       });
+      // The highest seq this transaction wrote: the close's, else the belt's last rule delta.
+      const seq = closed.seq ?? left.lastSeq;
       if (!opts.erase) return { seq };
       /* THE STAMP, LAST and inside this transaction, with the tombstone and the credentials: from
        * its commit every writer is fenced off the mailbox. The sweep itself is the worker's

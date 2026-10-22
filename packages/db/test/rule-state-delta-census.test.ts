@@ -46,9 +46,11 @@ const RULES_TABLE = new Set(["rules", "rulesTbl"]);
  * Columns no client can see. `RuleDTO` carries kind, match, destination, priority, provenance,
  * enabled, the two extra terms, the stats and the backlog pass's asked/finished stamps; the walk's
  * cursor and its counter are the organizer's own bookkeeping and ship to nobody. `updatedAt`
- * rides along with whatever moved and is never the whole of a write on its own.
+ * rides along with whatever moved and is never the whole of a write on its own. `settledPressAt`
+ * (mail 0159) is the reader belt's own ordering stamp, written where nothing a client reads moved
+ * and on no DTO (`settled-press-stamp-census.test.ts` holds it to that one writer).
  */
-const INVISIBLE_COLUMNS = new Set(["retroCursor", "retroMoved", "updatedAt"]);
+const INVISIBLE_COLUMNS = new Set(["retroCursor", "retroMoved", "updatedAt", "settledPressAt"]);
 
 /**
  * Write sites that deliberately file NO delta, each with the reason.
@@ -282,11 +284,13 @@ describe("rule 1 — every rule-state write site files a delta", () => {
     expect(new Set(WRITES.map((w) => w.verb))).toEqual(new Set(["insert", "update", "delete"]));
   });
 
-  it("classifies the retro-only updates as invisible, and nothing else", () => {
-    // The walk's cursor and counter only; the finished stamp is on `RuleDTO` and files a delta.
+  it("classifies the retro-only updates and the belt's press stamp as invisible, and nothing else", () => {
+    // The walk's cursor and counter, and the reader belt's press stamp; the finished stamp is on
+    // `RuleDTO` and files a delta.
     expect(WRITES.filter((w) => !w.visible).map(key).sort()).toEqual([
       "apps/worker/src/mailboxes.ts#clearOwedRetroFences",
       "apps/worker/src/rule-retro.ts#ruleRetroPass",
+      "packages/db/src/request-apply.ts#settleReaderRuleRows",
     ]);
   });
 

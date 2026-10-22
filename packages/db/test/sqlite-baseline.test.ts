@@ -194,6 +194,8 @@ describe("the SQLite journal, applied", () => {
       "0157_messages_sender_date.sql",
       // The gap offer's stranger count, the pg column's twin.
       "0158_mailboxes_gap_strangers.sql",
+      // The reader's press ordering on rules, the pg column's twin.
+      "0159_rules_settled_press_at.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -316,6 +318,8 @@ describe("the SQLite journal, applied", () => {
       "0157_messages_sender_date.sql",
       // The gap offer's stranger count, the pg column's twin.
       "0158_mailboxes_gap_strangers.sql",
+      // The reader's press ordering on rules, the pg column's twin.
+      "0159_rules_settled_press_at.sql",
     ]);
   });
 

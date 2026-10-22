@@ -925,6 +925,9 @@ export const rules = sqliteTable("rules", {
   releaseHeldAt: integer("release_held_at", { mode: "timestamp_ms" }),
   // Mail 0128: when a person made this decision — the automatic unsubscribe pass's licence. LAST.
   personDecidedAt: integer("person_decided_at", { mode: "timestamp_ms" }),
+  // Mail 0159: the last reader press the belt settled on this row without writing it; see the pg
+  // twin. Written and read by `settleReaderRuleRows` alone. LAST.
+  settledPressAt: integer("settled_press_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

@@ -78,12 +78,25 @@ describe.skipIf(!PG_UP)("the belt against a concurrent local write (real Postgre
     expect(out).toEqual({ settled: false, skipped: "newer_local_write" });
   }, 60_000);
 
+  it("an older edit settled after a later create that found the row as it asks stands down", async () => {
+    const { accountId } = await seed();
+    const [mb] = await dbA.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+    const create = { kind: "rule.create", payload: { key: KEYED, destination: "reads" }, decidedAt: at(5) };
+    await dbA.insert(organizerRequests).values({ accountId, mailboxId: mb!.id, ...create, state: "applied" });
+    const belt = (r: typeof create | { kind: string; payload: unknown; decidedAt: Date }) =>
+      (dbA as unknown as Tx).transaction((tx) => settleReaderRuleRows(tx, accountId, r));
+    expect(await belt(create)).toEqual({ settled: true, lastSeq: null });
+    const out = await belt({ kind: "rule.update", payload: { key: KEYED, set: { destination: "receipts" } }, decidedAt: at(1) });
+    expect(out).toEqual({ settled: false, skipped: "newer_settled_press" });
+    expect(await destinationOf(accountId), "the older edit was applied over the later create").toEqual(["ohmail/News"]);
+  }, 60_000);
+
   it("CONTROL: with no concurrent write, the ack settles", async () => {
     const { accountId } = await seed();
     const out = await (dbA as unknown as Tx).transaction((tx) => settleReaderRuleRows(tx, accountId, {
       kind: "rule.update", payload: { key: KEYED, set: { destination: "receipts" } }, decidedAt: at(1),
     }));
-    expect(out).toEqual({ settled: true });
+    expect(out).toEqual({ settled: true, lastSeq: expect.any(BigInt) });
     expect(await destinationOf(accountId)).toEqual(["ohmail/Receipts"]);
   }, 60_000);
 });

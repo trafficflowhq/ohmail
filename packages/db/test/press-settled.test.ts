@@ -35,4 +35,12 @@ describe("pressSettled", () => {
     expect(pressSettled("delete", [absent, absent])).toBe(true);
     expect(pressSettled("delete", [])).toBe(false);
   });
+  it("at a leave, a press whose every holder left settles; an unfinished live leg still holds it", () => {
+    for (const op of ["create", "update", "delete"] as const) {
+      expect(pressSettled(op, [], { legLeft: true })).toBe(true);
+      expect(pressSettled(op, [], { legLeft: false })).toBe(false);
+      expect(pressSettled(op, [applied], { legLeft: true })).toBe(true);
+      for (const other of [sent, pending, expired, stale]) expect(pressSettled(op, [applied, other], { legLeft: true })).toBe(false);
+    }
+  });
 });

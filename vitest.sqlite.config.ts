@@ -335,6 +335,10 @@ export default defineConfig({
       "apps/worker/test/rule-create-wire.test.ts",
       "apps/worker/test/reader-rule-rows-settle-on-the-ack.test.ts",
       "apps/worker/test/rule-removed-on-the-other-computer.test.ts",
+      // The belt's every leg, the leaving doors and the late answer: the phone and the desktop
+      // settle a reader's press over this store too.
+      "apps/worker/test/rule-press-settles-on-every-leg.test.ts",
+      "packages/db/test/settle-presses-leaving-mailbox.test.ts",
       // THE PHONE'S COMPOSITION ROOT. Here rather than in the default project because it composes
       // the whole engine over the DEVICE store, so it needs the schema substitution this project
       // performs — under the default one its first statement dies with `no such function:

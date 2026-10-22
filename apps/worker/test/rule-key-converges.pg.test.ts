@@ -131,7 +131,7 @@ describe.skipIf(!PG_UP)("the rule key on a real server", () => {
     expect(await rowsOf(accountId)).toHaveLength(1);
     await dbA.update(organizerRequests).set({ state: "applied" })
       .where(and(eq(organizerRequests.id, leg1), eq(organizerRequests.accountId, accountId)));
-    expect(await settle()).toEqual({ settled: true });
+    expect(await settle()).toEqual({ settled: true, lastSeq: expect.any(BigInt) });
     expect(await rowsOf(accountId)).toHaveLength(0);
   }, 60_000);
 });

@@ -111,7 +111,7 @@ export {
 export {
   REQUEST_STATES, TERMINAL_REQUEST_STATES, REFUSAL_VISIBLE_FOR_MS, insertOrganizerRequest, insertOrganizerRequestSet, listPendingRequests,
   listSentRequests, listPressLegs, listOutstandingForAccount, markRequestsSent, markRequestsApplied,
-  markRequestsExpired, markRequestsRefused, listStaleSentRequests, mailboxRowsHeld,
+  markRequestsExpired, markRequestsRefused, listStaleSentRequests, mailboxRowsHeld, listExpiredRuleLegs, listUnfinishedRuleLegs,
   listProfileRequestsNaming, PROFILE_REQUESTS_READ_MAX, listRequestsForSurface, WAITING_REQUESTS_READ_MAX,
   type RequestState, type OrganizerRequestRow, type OutstandingMatch,
 } from "./organizer-requests.js";
@@ -211,7 +211,8 @@ export {
   AWAY_PILES,
   validateProfileUpdatePayload, applyProfileUpdate,
   RULE_TERM_MAX, RULE_MATCH_MAX, RULE_PRIORITY_MAX, validateRulePayload, ruleCreatePayload, applyRuleRequest, settleReaderRuleRows,
-  reconcileRuleCreate, pressSettled, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
+  reconcileRuleCreate, pressSettled, settlePressesLeavingMailbox, type RuleCreateOutcome, type PressLeg, type ReaderSettleSkip,
+  type LeavingSettle,
   type ValidatedMovePayload, type MoveRefusal,
   type ApplyMessageMoveInput, type ApplyMessageMoveResult,
   type ValidatedProfileUpdate, type ProfileAwayUpdate, type ProfileScreeningUpdate,
