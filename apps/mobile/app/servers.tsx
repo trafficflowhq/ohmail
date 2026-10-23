@@ -260,6 +260,17 @@ function ProfileRow({ profile, active, onForgetFailed }: {
     }
     if (wasLast) router.replace("/welcome");
   };
+  /* ── THIS PHONE'S OWN MAILBOX ASKS FIRST WHILE IT HOLDS UNSENT DRAFTS ────────
+     The forget deletes the whole store, and an unsent draft is on no server. A known zero keeps
+     the single press; a count, or a count nobody can read, opens the confirm below the row. A
+     pairing's Forget is unchanged: its drafts are on its server. */
+  const [asking, setAsking] = useState<{ drafts: number | null } | null>(null);
+  const pressRemove = () => {
+    if (!here) { void forget(); return; }
+    const drafts = conn.unsentDraftsHere(profile.id);
+    if (drafts === 0) { void forget(); return; }
+    setAsking({ drafts });
+  };
   return (
     <View style={{ marginHorizontal: 8 }}>
       <TapRow
@@ -296,12 +307,28 @@ function ProfileRow({ profile, active, onForgetFailed }: {
         <Button
           label={here ? Copy.serversStopHere : Copy.serversForget}
           variant="quiet"
-          onPress={() => void forget()}
+          onPress={pressRemove}
         />
         {/* The row press already re-pairs, and a gesture with no name is invisible to a screen
             reader — the verb is spelled out, the same word the panel above uses. */}
         {needsPair ? <Button label={Copy.pairAgain} variant="quiet" onPress={() => router.push("/scan")} /> : null}
       </View>
+      {asking !== null ? (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 10, gap: 8 }}>
+          <Txt variant="hint" tone="ink2">
+            {asking.drafts === null ? Copy.serversStopHereDraftsUnknown : Copy.serversStopHereDrafts(asking.drafts)}
+          </Txt>
+          {/* The safe answer first; the forget only on this second, explicit press. */}
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button label={Copy.serversStopHereKeep} onPress={() => setAsking(null)} />
+            <Button
+              label={Copy.serversStopHereDelete}
+              variant="quiet"
+              onPress={() => { setAsking(null); void forget(); }}
+            />
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }

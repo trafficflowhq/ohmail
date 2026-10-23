@@ -15,8 +15,8 @@ import {
   approvals, attachments, awayReplies, awayResponderSent, changeLog, drafts, flagState, folderOps, folderState,
   junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
-  outboundSendFingerprints, outboundSends, routingDecisions, sessions, tags, threadNotes, threads,
-  trackerEvents, unsubscribeExamined, unsubscribeRecords,
+  outboundSendFingerprints, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions, sessions, tags,
+  threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -1664,12 +1664,24 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
 
   it("THE WHOLE MAILBOX GOES — every table the schema ties to it reads back empty", async () => {
     /* The seed is the oracle: every owed table holds a row before the press, so an empty read
-       after it is a delete that ran. A one-mailbox install, so every row there is this one's. */
+       after it is a delete that ran. A one-mailbox install, so every row there is this one's.
+       EXCEPT THE UNSENT DRAFT: its words are on no server, so it stays, with its
+       send and that send's content claim. A `sent` draft and its send are seeded too, and go. */
     const meta = new MemoryMeta();
     const { sidecar } = await boot([41, 42], meta);
     await agree(sidecar);
     await sidecar.syncUntilQuiet();
     await seedEveryOwedTable(sidecar);
+    const { accountId, mailboxId } = sidecar.world;
+    const [sentDraft] = await sidecar.db.insert(drafts).values({
+      accountId, mailboxId, subject: "already sent", status: "sent",
+    }).returning();
+    const [sentSend] = await sidecar.db.insert(outboundSends).values({
+      accountId, draftId: sentDraft!.id, idempotencyKey: randomUUID(), mintedMessageId: "<s@y>", status: "sent",
+    }).returning();
+    await sidecar.db.insert(outboundSendFingerprints).values({
+      accountId, mailboxId, fingerprint: "ef".repeat(32), sendId: sentSend!.id,
+    });
     const owed = tablesTheRemovalOwes();
     const before = await countsOf(sidecar, owed);
     expect(owed.filter((t) => before[t] === 0), "the seed missed a table").toEqual([]);
@@ -1678,9 +1690,89 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
 
     const after = await countsOf(sidecar, owed);
     expect(
-      owed.filter((t) => after[t] !== 0).map((t) => `${t}: ${after[t]}`),
-      "the removed mailbox's rows are still on disk",
-    ).toEqual([]);
+      Object.fromEntries(owed.filter((t) => after[t] !== 0).map((t) => [t, after[t]])),
+      "the removal left more than the unsent draft and its send, or took them",
+    ).toEqual({ drafts: 1, outbound_sends: 1, outbound_send_fingerprints: 1 });
+    expect((await sidecar.db.select().from(drafts).where(eq(drafts.id, sentDraft!.id))).length,
+      "a sent draft stayed; its words are in the server's Sent folder").toBe(0);
+  });
+
+  it("THE UNSENT DRAFTS STAY — on this computer, in Drafts, and the window is told after the receipt", async () => {
+    /* A removal took every draft of the mailbox, words no server holds. Four drafts:
+       a plain one, a reply to a message here with a pending send and its claim, a scheduled one,
+       and a sent one. The first three stay (the scheduled one back in Drafts with the removal's
+       sentence); the sent one goes. Mutation: pass `unsentDrafts: "delete"` from the wipe and the
+       first assertion reads []. */
+    const meta = new MemoryMeta();
+    const { sidecar } = await boot([41], meta);
+    await agree(sidecar);
+    await sidecar.syncUntilQuiet();
+    const { accountId, mailboxId } = sidecar.world;
+    const [thread] = await sidecar.db.insert(threads).values({ accountId }).returning();
+    const original = await plantMessage(sidecar, mailboxId, thread!.id);
+    const [plain] = await sidecar.db.insert(drafts).values({
+      accountId, mailboxId, subject: "plain", body: "words nobody else has",
+    }).returning();
+    const [reply] = await sidecar.db.insert(drafts).values({
+      accountId, mailboxId, threadId: thread!.id, inReplyToMessageId: original, subject: "Re: Glaze order",
+      body: "the reply",
+    }).returning();
+    const [pending] = await sidecar.db.insert(outboundSends).values({
+      accountId, draftId: reply!.id, idempotencyKey: randomUUID(), mintedMessageId: "<p@y>",
+    }).returning();
+    await sidecar.db.insert(outboundSendFingerprints).values({
+      accountId, mailboxId, fingerprint: "ab".repeat(32), sendId: pending!.id,
+    });
+    const [scheduled] = await sidecar.db.insert(drafts).values({
+      accountId, mailboxId, subject: "later", status: "scheduled",
+      sendAt: new Date(Date.now() + 3_600_000), sendKey: randomUUID(),
+    }).returning();
+    const [sent] = await sidecar.db.insert(drafts).values({
+      accountId, mailboxId, subject: "gone out", status: "sent",
+    }).returning();
+    const keptIds = [plain!.id, reply!.id, scheduled!.id].sort();
+
+    await forget(sidecar);
+
+    const rows = await sidecar.db.select().from(drafts).where(eq(drafts.mailboxId, mailboxId));
+    expect(rows.map((r) => r.id).sort(), "the removal took unsent drafts").toEqual(keptIds);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    expect(byId.get(plain!.id)?.body).toBe("words nobody else has");
+    expect(byId.get(reply!.id)?.inReplyToMessageId, "the reply still points at a removed message").toBeNull();
+    expect(byId.get(reply!.id)?.threadId, "the reply still points at a conversation that is gone").toBeNull();
+    expect(byId.get(scheduled!.id)?.status).toBe("draft");
+    expect(byId.get(scheduled!.id)?.sendError).toBe(REMOVED_MAILBOX_SEND_SENTENCE);
+    expect((await sidecar.db.select().from(drafts).where(eq(drafts.id, sent!.id))).length).toBe(0);
+    const sends = await sidecar.db.select({ id: outboundSends.id }).from(outboundSends)
+      .where(eq(outboundSends.id, pending!.id));
+    expect(sends.length, "a kept draft's send record was deleted").toBe(1);
+
+    /* THE ORDER ON THE LOG: thread deletes, then the receipt, then one `draft` update per kept draft. */
+    const log = (await sidecar.db.select().from(changeLog).where(eq(changeLog.accountId, accountId)))
+      .sort((a, b) => Number(a.seq) - Number(b.seq));
+    const receipt = log.find((r) => r.entityType === "mailbox" && r.entityId === mailboxId && r.op === "delete");
+    expect(receipt, "the removal wrote no receipt").toBeDefined();
+    const threadDelete = log.find((r) => r.entityType === "thread" && r.entityId === thread!.id && r.op === "delete");
+    expect(Number(threadDelete!.seq)).toBeLessThan(Number(receipt!.seq));
+    const after = log.filter((r) => Number(r.seq) > Number(receipt!.seq) && r.entityType === "draft");
+    expect(after.every((r) => r.op === "update"), "a kept draft was announced as something else").toBe(true);
+    expect([...new Set(after.map((r) => r.entityId))].sort(),
+      "the window is not told exactly the drafts that stayed").toEqual(keptIds);
+  });
+
+  it("CONTROL: a removal with no drafts writes no draft rows after its receipt", async () => {
+    const meta = new MemoryMeta();
+    const { sidecar } = await boot([41, 42], meta);
+    await agree(sidecar);
+    await sidecar.syncUntilQuiet();
+    const { accountId, mailboxId } = sidecar.world;
+
+    await forget(sidecar);
+
+    const log = await sidecar.db.select().from(changeLog).where(eq(changeLog.accountId, accountId));
+    const receipt = log.find((r) => r.entityType === "mailbox" && r.entityId === mailboxId && r.op === "delete");
+    expect(receipt).toBeDefined();
+    expect(log.filter((r) => r.entityType === "draft" && Number(r.seq) > Number(receipt!.seq))).toEqual([]);
   });
 
   it("A SHARED CONVERSATION STAYS — only a thread no other mailbox is in goes", async () => {
@@ -1731,6 +1823,9 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
     const receipt = log.find((r) => r.entityType === "mailbox" && r.entityId === mailboxId);
     expect(receipt, "the removal wrote no receipt").toBeDefined();
     for (const r of threadDeletes) expect(Number(r.seq)).toBeLessThan(Number(receipt!.seq));
+    /* The sibling reply lost its thread, so the window is told that too, after the receipt. */
+    expect(log.filter((r) => r.entityType === "draft" && r.entityId === reply!.id
+      && Number(r.seq) > Number(receipt!.seq)), "the window keeps a link the store cleared").toHaveLength(1);
   });
 });
 

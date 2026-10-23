@@ -254,7 +254,8 @@ export function domainMatchedFrom(
 /**
  * Fresh compose — the user's pick if it is still a real choice, else the derived default. A stored
  * pick is REVALIDATED, not trusted: the mailbox it names can be disconnected, and replaying it
- * collects a 409. The fallback is silent on purpose (a compose has no promised sender). The
+ * collects a 409. The fallback is silent for an id this account does not hold, and SAID for a
+ * mailbox it holds that can no longer send (`substituted`; a reopened draft has a sender). The
  * recipient gets a vote only while nobody has picked: the gate is `picked === null` — the FIELD's
  * state — so once set, no later To edit moves the sender; a reopened draft arrives set from its
  * row, deliberately not re-derived (a pre-rule draft keeps its stale sender — the smaller, visible
@@ -270,7 +271,17 @@ export function resolveComposeFrom(
   const kept = picked === null ? null : options.find((o) => o.id === picked && o.sendable) ?? null;
   if (kept) return resting(options, kept);
   const derived = defaultFrom(options);
-  if (picked !== null) return resting(options, derived);
+  if (picked !== null) {
+    /* A KNOWN pick that cannot send — a reopened draft of a removed mailbox, which the removal
+       keeps. The same address on another row is the same identity, taken silently;
+       anything else is a substitution and is said. An unknown id stays the silent fallback. */
+    const refused = options.find((o) => o.id === picked) ?? null;
+    if (refused === null) return resting(options, derived);
+    const same = options.find((o) => o.sendable && foldAddress(o.address) === foldAddress(refused.address));
+    if (same) return resting(options, same);
+    if (derived === null) return resting(options, null);
+    return { ...resting(options, derived), substituted: true, substitutedFrom: refused.address };
+  }
   const matched = domainMatchedFrom(
     options,
     parseRecipients(recipientLine).addresses.map((a) => a.address),

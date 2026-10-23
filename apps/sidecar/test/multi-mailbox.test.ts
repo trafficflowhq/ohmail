@@ -14,7 +14,7 @@ import {
   accounts, changeLog, drafts, mailboxCredentials, mailboxes, messages, messageStates,
 } from "@trafficflow/db";
 import { ScheduleService } from "@trafficflow/services/mail";
-import { HttpAdapter, OhmailEngine, type EngineMessage } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, draftsList, type EngineMessage } from "@ohmail/client-engine";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { openLocalDb } from "../src/db.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -683,9 +683,9 @@ describe("one install, two mailboxes", () => {
     const draftsOf = (mailboxId: string): number => engine.read()
       .list<{ mailboxId: string }>("draft").filter((d) => d.mailboxId === mailboxId).length;
 
-    /* A DRAFT ON EACH, through the window's own verb. Drafts are mailbox-keyed and the wipe takes
-       them, so an unsent reply in the removed mailbox is part of the same question — and the one
-       in the mailbox that stays is what proves the cascade is scoped. */
+    /* A DRAFT ON EACH, through the window's own verb. Drafts are mailbox-keyed, but unsent words
+       are on no server, so the removal keeps them: the one on the removed mailbox
+       must still be in the window afterwards, and the one on the mailbox that stays is untouched. */
     for (const id of [dto.id, s.world.mailboxId]) {
       await engine.mutate({
         kind: "draft_save", draftId: null, mailboxId: id, subject: "later",
@@ -719,7 +719,10 @@ describe("one install, two mailboxes", () => {
       "the window still renders the removed mailbox's messages").toEqual([]);
     expect(bodiesOf(dto.id),
       "the removed mailbox's message text is still cached in the window").toBe(0);
-    expect(draftsOf(dto.id), "the removed mailbox's unsent draft is still in the window").toBe(0);
+    /* THE UNSENT DRAFT STAYS — in the window's mirror, with its words, and in the Drafts list. */
+    expect(draftsOf(dto.id), "the removed mailbox's unsent draft left the window").toBe(1);
+    const kept = draftsList(engine.read()).filter((d) => d.mailboxId === dto.id);
+    expect(kept.map((d) => d.body), "the kept draft is not in Drafts with its words").toEqual(["the words"]);
     expect(engine.receivedMessages(),
       "the received count still counts the removed mailbox's mail").toBe(countBefore - 2);
 
@@ -737,6 +740,58 @@ describe("one install, two mailboxes", () => {
       "the window still holds the removed mailbox's conversations").toEqual([]);
     expect(keptThreads.filter((t) => !live.has(t)),
       "removing one mailbox took another's conversations").toEqual([]);
+  });
+
+  it("a kept draft of a removed mailbox, saved the way the paired phone saves it, keeps its new words", async () => {
+    /*
+     * The paired phone saves an opened draft naming the row's own mailbox. Every mailboxId used
+     * to count as a move, so the removed mailbox's refusal rolled the save back and the words
+     * typed on the phone went nowhere. A save naming the row's own mailbox is no move; a move TO
+     * the removed mailbox is still refused.
+     */
+    const a = makeWorld(SEED_USER, HOST_A, [11]);
+    const b = makeWorld(SECOND_USER, HOST_B, [21]);
+    const { s } = await boot([a, b]);
+    const dto = (await (await add(s, secondBody())).json()) as { id: string };
+    await agree(s, s.world.mailboxId);
+    await agree(s, dto.id);
+    await s.syncUntilQuiet();
+
+    const phone = clientEngine(s);
+    await phone.start();
+    const to = [{ name: null, address: "you@example.test" }];
+    const make = async (mailboxId: string) => (await phone.mutate({
+      kind: "draft_save", draftId: null, mailboxId, subject: "plan", body: "the words", to, cc: [], bcc: [],
+    })).entityId!;
+    const onB = await make(dto.id);
+    const onA = await make(s.world.mailboxId);
+    await phone.syncOnce();
+
+    expect((await remove(s, dto.id)).status).toBe(200);
+    await phone.syncOnce();
+    expect(phone.read().get<{ mailboxId: string }>("draft", onB)?.mailboxId,
+      "the precondition: the phone still holds the kept draft on the removed mailbox").toBe(dto.id);
+
+    const saved = await phone.mutate({
+      kind: "draft_save", draftId: onB, mailboxId: dto.id, subject: "plan",
+      body: "the words, and more typed on the phone", to, cc: [], bcc: [],
+    });
+    expect(saved.status, `the phone's save was refused: ${saved.error?.message ?? ""}`).toBe("confirmed");
+    const [row] = await s.db.select({ body: drafts.body, mailboxId: drafts.mailboxId })
+      .from(drafts).where(eq(drafts.id, onB));
+    expect(row).toEqual({ body: "the words, and more typed on the phone", mailboxId: dto.id });
+    await phone.syncOnce();
+    expect(phone.read().get<{ body: string }>("draft", onB)?.body).toBe("the words, and more typed on the phone");
+
+    /* A MOVE onto the removed mailbox is still refused, and writes nothing. */
+    const moved = await phone.mutate({
+      kind: "draft_save", draftId: onA, mailboxId: dto.id, subject: "plan", body: "moved", to, cc: [], bcc: [],
+    });
+    expect(moved.status).toBe("rolled_back");
+    expect(moved.error?.code).toBe("validation_failed");
+    const [stays] = await s.db.select({ body: drafts.body, mailboxId: drafts.mailboxId })
+      .from(drafts).where(eq(drafts.id, onA));
+    expect(stays).toEqual({ body: "the words", mailboxId: s.world.mailboxId });
   });
 
   it("re-adding a removed mailbox leaves ONE copy of its mail, not two", async () => {

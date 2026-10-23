@@ -2038,7 +2038,8 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
          mailbox fact; this takes the MAIL. Unconditionally `true`: a receipt for a mailbox this
          mirror never held deletes nothing and still has to be recorded on the local log, because
          the window's mirror may hold rows this database no longer does. */
-      await deleteMailboxRows(tx, ch.id);
+      // The hosted erasure deleted the drafts too, so this copy takes them all.
+      await deleteMailboxRows(tx, ch.id, { unsentDrafts: "delete" });
       return true;
     }
     case "message": {

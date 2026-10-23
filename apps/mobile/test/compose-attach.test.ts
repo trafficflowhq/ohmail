@@ -176,7 +176,7 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
        so it carries no flag. */
     expect(COMPOSER).toContain("w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)");
     expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId)');
-    expect(COMPOSER).toContain("w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)");
+    expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)");
   });
 
   it("a Send that lacks only content stays pressable and the press earns the sentence", () => {
@@ -194,9 +194,11 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
 
   it("the cap on screen is the cap the admit rule refuses against, from the shared bound", () => {
     // The cap is read from the mailbox this composer SENDS FROM — an opened draft's own, the
-    // parent's for a reply or forward, the engine's compose-from fallback for a mail with no parent.
+    // parent's for a reply or forward, the engine's compose-from fallback for a mail with no parent,
+    // or the sender standing in for a draft's mailbox that cannot send (`compose-sender.ts`).
     expect(COMPOSER).toContain("const mailboxId = draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;");
-    expect(COMPOSER).toContain('const attachCap = phoneAttachCap(w.mailboxes.rows, mailboxId ?? "")');
+    expect(COMPOSER).toContain("const sendFrom = sender?.sendFrom ?? mailboxId;");
+    expect(COMPOSER).toContain('const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "")');
     expect(COMPOSER).toContain("{Copy.attachCap(sizeLabel(attachCap))}");
     // Admitted AFTER the shrink (`compose-attach-shrinks-photos.test.ts`), against the same cap.
     expect(COMPOSER).toContain("admitPicked(attachments, picked, attachCap)");

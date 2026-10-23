@@ -93,7 +93,8 @@ import {
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
 import { usePrefs } from "../state/store";
 import { afterWithdraw, cancelAct } from "./send-cancel";
-import { keepAct, unmountKeep, worthKeeping } from "./compose-keep";
+import { autosaveKeep, keepAct, unmountKeep, worthKeeping } from "./compose-keep";
+import { composeSenderOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
 import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
 import { ComposeCopies } from "./ComposeCopies";
@@ -1258,10 +1259,16 @@ export function ComposeSheet({
      would derive anyway, made explicit), the engine's `sendingMailboxId` for a parent-less
      mail. `null` only where this phone has mirrored nothing, and the send refuses by name. */
   const mailboxId = draft?.mailboxId ?? m?.mailboxId ?? w.mailboxes.sendingId;
+  /* A NEW MAIL OPENED FROM DRAFTS whose mailbox cannot send (kept from a removed one) leaves from
+     one that can, said under From (`compose-sender.ts`); its keeps still name its own. */
+  const sender = fresh && draft !== undefined
+    ? composeSenderOf({ bound: mailboxId, fallback: w.mailboxes.sendingId, known: w.mailboxes.known, rows: w.mailboxes.rows })
+    : null;
+  const sendFrom = sender?.sendFrom ?? mailboxId;
   /* The sending address, only where the phone has read the mailbox list — `null` is "not
      asked yet", which states nothing rather than a guessed address. */
-  const fromAddress = w.mailboxes.rows.find((r) => r.id === mailboxId)?.address ?? null;
-  const attachCap = phoneAttachCap(w.mailboxes.rows, mailboxId ?? "");
+  const fromAddress = w.mailboxes.rows.find((r) => r.id === sendFrom)?.address ?? null;
+  const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "");
   const { pictureQuality } = usePrefs();
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
@@ -1321,13 +1328,13 @@ export function ComposeSheet({
   useEffect(() => {
     if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen) return;
     const timer = setTimeout(() => {
-      saved.current = onScreen;
-      /* A forward draft is saved as a forward of its original, never as a new mail. */
-      void w.actions.draftKeep({
+      /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
+         A forward draft is saved as a forward of its original, never as a new mail. */
+      void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
         mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
         mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
         rebind: setDraftId,
-      });
+      }));
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
     // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
@@ -1540,7 +1547,7 @@ export function ComposeSheet({
     const asNew = sendAsNew.current;
     sendAsNew.current = false;
     const toRow = async (draftId: string | null) => fresh
-      ? await w.actions.sendNew(mailboxId, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
+      ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
@@ -1679,6 +1686,11 @@ export function ComposeSheet({
           {fresh && fromAddress !== null ? (
             <Txt variant="caption" tone="ink3">
               {Copy.composeFrom(fromAddress)}
+            </Txt>
+          ) : null}
+          {sender?.substituted && fromAddress !== null ? (
+            <Txt variant="caption" tone="ink3" accessibilityLiveRegion="polite">
+              {sender.was !== null ? Copy.composeFromSubstituted(sender.was) : Copy.composeFromSubstitutedUnknown}
             </Txt>
           ) : null}
           {mode === "replyAll" && m?.replyAllHead && m.replyAllHead.cc !== "" ? (

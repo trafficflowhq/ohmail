@@ -137,6 +137,29 @@ describe("the pick is a mailbox id, and only a mailbox id", () => {
     const options = optionsFromFacts([OLD, fact({ ...NEW, status: "disabled" })]);
     expect(resolveComposeFrom(options, "new").mailboxId).toBe("old");
   });
+
+  /* A removed mailbox's drafts stay, so reopening one whose mailbox cannot send is
+     the ordinary path now. The fallback is SAID, and the same address on another row is no change. */
+  it("SAYS it substituted when the picked mailbox can no longer send, naming the address it replaced", () => {
+    const options = optionsFromFacts([OLD, fact({ ...NEW, status: "disabled" })]);
+    expect(resolveComposeFrom(options, "new")).toMatchObject({
+      mailboxId: "old", substituted: true, substitutedFrom: "new@example.test",
+    });
+  });
+
+  it("takes the SAME ADDRESS on another row silently — a re-added mailbox is the same identity", () => {
+    const again = fact({ id: "new-again", address: "New@Example.test ", createdAt: "2026-02-01T00:00:00.000Z" });
+    const options = optionsFromFacts([OLD, fact({ ...NEW, status: "disabled" }), again]);
+    expect(resolveComposeFrom(options, "new")).toMatchObject({
+      mailboxId: "new-again", substituted: false, substitutedFrom: null,
+    });
+  });
+
+  it("CONTROL: an unknown pick and no pick are unchanged — no substitution is claimed", () => {
+    const options = optionsFromFacts([OLD, NEW]);
+    expect(resolveComposeFrom(options, "nobody")).toMatchObject({ mailboxId: "old", substituted: false });
+    expect(resolveComposeFrom(options, null)).toMatchObject({ mailboxId: "old", substituted: false });
+  });
 });
 
 /**
@@ -1026,6 +1049,42 @@ describe("ACCEPTANCE: the pick survives closing and reopening the draft", () => 
       (fromControl() as HTMLSelectElement).value,
       "reopening the draft silently reverted the sender to the derived default",
     ).toBe(LICHTGRAT);
+  });
+});
+
+describe("ACCEPTANCE: a reopened draft whose mailbox is gone says where it will send from", () => {
+  it("names the disconnected address on screen, and Send carries the substitute", async () => {
+    await mountShell(TWO_CONNECTED);
+    await goCompose();
+    await setValue(fromControl()!, window.HTMLSelectElement.prototype, LICHTGRAT, "change");
+    await typeRich(composeEditor(), "Halb fertig.");
+    for (const root of roots) await act(async () => { root.unmount(); });
+    roots = [];
+    host?.remove();
+    host = null;
+
+    /* The picked mailbox is removed: still on the roster as `disabled`, and a third address exists
+       so the From line stays a selector. */
+    await mountShell([
+      { ...TWO_CONNECTED[0]!, status: "disabled" },
+      TWO_CONNECTED[1]!,
+      fact({ id: "wolke", address: "mila@wolkenmail.example", createdAt: "2026-05-01T00:00:00.000Z" }),
+    ]);
+    await goCompose();
+    expect((fromControl() as HTMLSelectElement).value).toBe(MILABRUNNER);
+    const hint = host!.querySelector<HTMLElement>(".compose-from-hint[role='status']");
+    expect(hint, "the sender changed and nothing said so").not.toBeNull();
+    expect(hint!.textContent).toContain("mila@lichtgrat.example");
+
+    const to = host!.querySelector<HTMLInputElement>("#compose-to")!;
+    await setValue(to, window.HTMLInputElement.prototype, "someone@example.test", "input");
+    const send = [...host!.querySelectorAll<HTMLButtonElement>(".send-row button")]
+      .find((b) => buttonLabel(b) === "Send")!;
+    await act(async () => { send.click(); });
+    const sent = dispatched.filter((m) => m.kind === "mail_send");
+    expect(sent).toHaveLength(1);
+    expect((sent[0] as { mailboxId?: string }).mailboxId, "Send did not carry the substitute it named")
+      .toBe(MILABRUNNER);
   });
 });
 

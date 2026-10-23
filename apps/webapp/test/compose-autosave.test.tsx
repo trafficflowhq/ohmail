@@ -91,17 +91,18 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let seen: ReturnType<typeof useComposeAutosave>;
 
-function Harness({ engine, fields, mailboxId, active }: {
+function Harness({ engine, fields, mailboxId, active, keepRowMailbox }: {
   engine: OhmailEngine;
   fields: ComposeFields;
   mailboxId: string | null;
   active: boolean;
+  keepRowMailbox?: boolean;
 }) {
-  seen = useComposeAutosave({ engine, fields, mailboxId, active });
+  seen = useComposeAutosave({ engine, fields, mailboxId, active, keepRowMailbox });
   return null;
 }
 
-interface Opts { mailboxId?: string | null; active?: boolean }
+interface Opts { mailboxId?: string | null; active?: boolean; keepRowMailbox?: boolean }
 
 /* `"mailboxId" in opts` and NOT `opts.mailboxId ?? "mb-1"` — `null` is the case under test (no
    mailbox to send from) and `??` treats it as "not supplied", which silently handed the test a
@@ -111,6 +112,7 @@ const propsOf = (engine: OhmailEngine, fields: ComposeFields, opts: Opts) => ({
   fields,
   mailboxId: "mailboxId" in opts ? (opts.mailboxId ?? null) : "mb-1",
   active: opts.active ?? true,
+  keepRowMailbox: opts.keepRowMailbox ?? false,
 });
 
 async function mount(engine: OhmailEngine, fields: ComposeFields, opts: Opts = {}): Promise<void> {
@@ -393,6 +395,44 @@ describe("send, adopt and discard", () => {
     await rerender(engine, typed({ fromMailboxId: "mb-2" }), { mailboxId: "mb-2" });
     await settle();
     expect(sent, "an unchanged pick was re-written").toHaveLength(0);
+  });
+
+  /* A kept draft of a removed mailbox reopens on a SUBSTITUTE sender. Autosave
+     must not move the row to it; only Send (or a pick) does. Mutation: ignore `keepRowMailbox`
+     in the hook and the first update carries "mb-2". */
+  it("a SUBSTITUTED sender never re-homes an existing row", async () => {
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, typed());
+    await settle();
+    expect(seen.draftId).toBe("srv-1");
+    sent.length = 0;
+
+    await rerender(engine, typed({ body: "Are we still on? Yes." }), { mailboxId: "mb-2", keepRowMailbox: true });
+    await settle();
+    expect(sent, "the edit was not saved").toHaveLength(1);
+    const put = sent[0]!;
+    expect(put.kind === "draft_save" && put.draftId).toBe("srv-1");
+    expect(put.kind === "draft_save" && "mailboxId" in put, "autosave moved the row to the substitute")
+      .toBe(false);
+
+    sent.length = 0;
+    await rerender(engine, typed({ body: "Are we still on? Yes." }), { mailboxId: "mb-2", keepRowMailbox: true });
+    await settle();
+    expect(sent, "the substitute alone counted as a change").toHaveLength(0);
+  });
+
+  it("…but a CREATE under a substitute still carries it — there is no row to keep", async () => {
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, typed(), { mailboxId: "mb-2", keepRowMailbox: true });
+    await settle();
+    const create = sent.find((m) => m.kind === "draft_save" && m.draftId === null);
+    expect(create && create.kind === "draft_save" && create.mailboxId, "a create lost its sender").toBe("mb-2");
+  });
+
+  it("the shell passes the substitution to the hook", async () => {
+    const { readFileSync } = await import("node:fs");
+    const shell = readFileSync(`${process.cwd()}/apps/webapp/app/shell/shell-compose.ts`, "utf8");
+    expect(shell).toContain("keepRowMailbox: composeFrom.substituted,");
   });
 
   /**

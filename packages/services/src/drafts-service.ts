@@ -341,7 +341,18 @@ export class DraftsService {
     // is on the UPDATE itself (below), so a row that a concurrent send has already flipped
     // to `sending` cannot have its identity rewritten between a read and a write here.
     const movesMailbox = patch.mailboxId !== undefined;
-    if (movesMailbox) set.mailboxId = await this.validMailbox(ctx, patch.mailboxId);
+    /* A save naming the row's OWN mailbox is no move: a draft kept from a removed mailbox stays
+       editable from every client (`reserve` still refuses to send it). The refusal waits for the
+       locked row, below, and stands only when the named mailbox is another one. */
+    let refusedMove: ServiceError | null = null;
+    if (movesMailbox) {
+      try {
+        set.mailboxId = await this.validMailbox(ctx, patch.mailboxId);
+      } catch (e) {
+        if (!(e instanceof ServiceError) || typeof patch.mailboxId !== "string" || patch.mailboxId === "") throw e;
+        refusedMove = e;
+      }
+    }
     if (patch.subject !== undefined) set.subject = this.validSubject(patch.subject);
     const rich = this.richBody(patch.html, patch.body);
     if (rich) {
@@ -397,10 +408,11 @@ export class DraftsService {
        */
       const [locked] = await dialect(ctx.db).forUpdate(tx.select({
         id: drafts.id, inReplyToMessageId: drafts.inReplyToMessageId,
-        forwardOfMessageId: drafts.forwardOfMessageId, sendAt: drafts.sendAt,
+        forwardOfMessageId: drafts.forwardOfMessageId, sendAt: drafts.sendAt, mailboxId: drafts.mailboxId,
       }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
+      if (refusedMove && locked?.mailboxId !== patch.mailboxId) throw refusedMove;
       if (locked) {
         // THE PAIR THE ROW WILL HOLD, read under its lock: a patch naming one side over a row
         // holding the other is the same refusal as naming both, never the CHECK's 500.

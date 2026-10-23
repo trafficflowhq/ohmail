@@ -162,6 +162,29 @@ let logoutReply: () => Promise<{ state: string; mode?: string | null }> =
 /** The engine states the pane published upward — the gate's `onStatus`. */
 let published: { state: string; mode?: string | null }[] = [];
 
+/**
+ * THE WINDOW'S MIRROR, for the cases that count unsent drafts. `null` leaves the
+ * real hook, which answers `null` here (no provider): every other case renders as before.
+ */
+let DRAFTS: Array<{ id: string; mailboxId: string; status: string }> | null = null;
+vi.mock("../../webapp/app/shell/engine", async () => {
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/engine")>(
+    "../../webapp/app/shell/engine",
+  );
+  return {
+    ...real,
+    useEngineOrNull: () => {
+      const live = real.useEngineOrNull();
+      if (DRAFTS === null) return live;
+      const drafts = DRAFTS;
+      return {
+        read: () => ({ list: (type: string) => (type === "draft" ? drafts : []) }),
+        syncOnce: async () => undefined,
+      } as never;
+    },
+  };
+});
+
 vi.mock("../src/bridge-fetch.js", async () => {
   /* THE WHOLE MODULE, then the overrides. A factory that NAMES its exports leaves every
      other one `undefined`, so the day a consumer here starts importing one the rig fails as
@@ -327,6 +350,7 @@ function buttonExactly(el: HTMLElement, label: string): HTMLButtonElement | null
 
 beforeEach(() => {
   FACTS = [MAILBOX];
+  DRAFTS = null;
   MIRRORED = 0;
   shellCommands = [];
   published = [];
@@ -974,6 +998,56 @@ describe("the desktop mailbox pane on the standalone door", () => {
     expect(items).toHaveLength(6);
     expect(items[5]).toContain("only mailbox on this computer");
     expect(items[5]).toContain("returns to its setup screen");
+  });
+
+  /* ── UNSENT DRAFTS ARE NAMED, AND THEY STAY ────────────────────────────────
+     The removal used to delete them silently under "Your mail server keeps every message"; they
+     are on no server. Now they stay in Drafts on this computer, and the panel says how many.
+     Mutation: drop the bullet and the first case reads five items. */
+  it("NAMES THE UNSENT DRAFTS that stay, counting only this mailbox's and never a sent one", async () => {
+    FACTS = [MAILBOX, { ...MAILBOX, id: "mbx-2", address: "second@example.test" }];
+    DRAFTS = [
+      { id: "d1", mailboxId: "mbx-1", status: "draft" },
+      { id: "d2", mailboxId: "mbx-1", status: "scheduled" },
+      { id: "d3", mailboxId: "mbx-1", status: "sent" },
+      { id: "d4", mailboxId: "mbx-2", status: "draft" },
+    ];
+    const el = await render("local");
+    await act(async () => { rowRemove(el, "someone@example.test").click(); });
+    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(6);
+    expect(items[5]).toContain("2 unsent drafts stay in Drafts on this computer");
+    expect(items[5]).toContain("on no mail server");
+    expect(items[5], "the two-mailbox panel promised the last-mailbox sentence").not.toContain("add a mailbox");
+  });
+
+  it("…ON THE LAST MAILBOX, says they come back once a mailbox is added", async () => {
+    DRAFTS = [{ id: "d1", mailboxId: "mbx-1", status: "unverified" }];
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(7);
+    expect(items[5]).toContain("1 unsent draft stays in Drafts on this computer");
+    expect(items[5]).toContain("once you add a mailbox");
+    expect(items[6]).toContain("only mailbox on this computer");
+  });
+
+  it("the drafts sentences exist in English and German, with the count", async () => {
+    const de = (await import("../../webapp/messages/de.json")).default as { mailboxes: Record<string, string> };
+    for (const key of ["removeDraftsKept", "removeDraftsKeptLast"]) {
+      for (const catalogue of [messages.mailboxes as Record<string, string>, de.mailboxes]) {
+        expect(catalogue[key], key).toContain("#");
+      }
+    }
+  });
+
+  it("CONTROL: with no unsent drafts the panel is unchanged", async () => {
+    DRAFTS = [{ id: "d3", mailboxId: "mbx-1", status: "sent" }];
+    const el = await render("local");
+    await act(async () => { buttonExactly(el, "Remove")!.click(); });
+    const items = [...el.querySelectorAll(".mbx-remove-list li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(6);
+    expect(el.textContent ?? "").not.toContain("unsent draft");
   });
 
   it("THE FIRST BULLET SAYS WHAT THIS INSTALL ACTUALLY DID — 'reads', on a reader", async () => {

@@ -1304,6 +1304,9 @@ export function useShellCompose({
     engine,
     fields: compose,
     mailboxId: composeMailbox,
+    /* A reopened draft whose mailbox cannot send resolves to a substitute; autosave leaves the
+       row's own mailbox alone, and Send (or a pick) writes the new one. */
+    keepRowMailbox: composeFrom.substituted,
     active: route.view === "compose",
     /* THE PRESS-BEFORE-FIRST-SAVE RACE, CLOSED FROM THE WRITE SIDE. While a send of this surface's
        message is on the wire, the armed save must not CREATE a row: the send that carried none

@@ -410,6 +410,8 @@ export {
   // compose surfaces and autosave read the shipped rule rather than each testing for null.
   draftBodyKnown,
   scheduledSendsList,
+  // The drafts a mailbox removal keeps and names.
+  unsentDraftsOf,
   HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS,
   rulesList,
   rulesAsRun,

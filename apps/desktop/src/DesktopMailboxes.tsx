@@ -22,6 +22,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
+import { unsentDraftsOf } from "@ohmail/client-engine";
 import { storageRowSentence } from "./storage-row-sentence.js";
 import {
   Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
@@ -959,6 +960,10 @@ export function DesktopMailboxes(
   const [removing, setRemoving] = useState<MailboxFacts | null>(null);
   /** True while the DELETE is in flight, so the destructive button cannot be pressed twice. */
   const [removeBusy, setRemoveBusy] = useState(false);
+  /** The unsent drafts the removal in question keeps — the confirmation names them. */
+  const removingDrafts = removing !== null && engine !== null
+    ? unsentDraftsOf(engine.read(), removing.id).length
+    : 0;
   /**
    * WHICH MAILBOX IS BEING SIGNED IN AGAIN, or `null` when none is — the mailbox itself for
    * {@link removing}'s reason: the sheet names the address, and a row that leaves `facts`
@@ -2458,6 +2463,13 @@ export function DesktopMailboxes(
                 {/* No keep-or-erase choice on this door: the store is both server and mirror, so
                     the removal IS the erase of this computer's copy (`local-mirror.ts`). */}
                 <li>{t("removeCopyLocal")}</li>
+                {/* ── THE UNSENT DRAFTS, NAMED ───────────────────────────────
+                    Their words are on no server, so the removal keeps them in Drafts here
+                    (`local-mirror.ts#deleteMailboxRows`). Counted from the window's mirror;
+                    absent at zero. Discard on each draft is the way to delete one. */}
+                {removingDrafts > 0 ? (
+                  <li>{t(isLastLive(shown) ? "removeDraftsKeptLast" : "removeDraftsKept", { count: removingDrafts })}</li>
+                ) : null}
                 {/* ── AND THE SIXTH, ON THE LAST MAILBOX ONLY ────────────────────────────────
                     Removing the only mailbox leaves nothing for this install to open, so the
                     pane signs the door out afterwards and the app returns to the setup screen.

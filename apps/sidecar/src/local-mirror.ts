@@ -6,10 +6,11 @@
  * see. Measured without it: the credential went, the mail stayed, and re-connecting the address
  * inserted a SECOND row, after which the feed served both rows' copies of every message. Children
  * first (nothing cascades); `local-mirror-census.test.ts` derives the tables from the schema. Left:
- * the tombstone and the account's own rows; a thread goes once no other mailbox is in it.
+ * the tombstone and the account's own rows; a thread goes once no other mailbox is in it. And on
+ * this door the UNSENT DRAFTS, with their sends: their words are on no server.
  */
 
-import { and, asc, eq, exists, inArray, isNotNull, ne, notExists, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   approvals, attachments, awayReplies, awayResponderSent,
@@ -29,7 +30,8 @@ import type { LocalDb } from "./db.js";
  * Exported for the census test alone — the wipe itself uses the drizzle objects below, because a
  * string list that drove the deletes would be a second spelling of the schema and would not
  * typecheck against it. This is the list a reader checks, and the test checks it against the FK
- * graph rather than against a copy of itself.
+ * graph rather than against a copy of itself. `drafts` and the two send tables are emptied whole
+ * only on the Cloud door; the standalone removal takes their `sent` rows and keeps the rest.
  */
 export const WIPED_TABLES: readonly string[] = [
   "outbound_send_fingerprints",
@@ -65,9 +67,12 @@ export const WIPED_TABLES: readonly string[] = [
 /** How many exclusive threads one statement names — bounded, like every id list here. */
 const THREAD_PAGE = 500;
 
+/** How many kept drafts one `recordChanges` call announces — under PGlite's bind cap. */
+const DRAFT_PAGE = 1000;
+
 /**
- * Delete everything this install mirrored for one mailbox, and SAY SO in the change log so the
- * window's own mirror drops it too. Idempotent; safe on an empty store.
+ * Delete everything this install mirrored for one mailbox except its unsent drafts, and SAY SO in
+ * the change log so the window's own mirror drops it too. Idempotent; safe on an empty store.
  *
  * NOT a transaction, and that is a decision. The caller has already committed the tombstone and
  * the credential deletion, so a failure part-way here — or a close that shuts the store under it —
@@ -86,7 +91,9 @@ export async function wipeLocalMirror(
   await db.transaction(async (tx) => {
     await announceExclusiveThreads(tx as unknown as LedgerTx, accountId, mailboxId);
   });
-  await deleteMailboxRows(db, mailboxId);
+  /* Sibling drafts whose reply, forward or thread link the walk clears, read while they stand. */
+  const unlinked = await draftsLinkedInto(db, mailboxId);
+  await deleteMailboxRows(db, mailboxId, { unsentDrafts: "keep" });
 
   /* ── THE RECEIPT, AND IT IS PART OF THE WIPE RATHER THAN BESIDE IT ──
    * On this door the local database is BOTH server and mirror — but the WINDOW is not this
@@ -98,9 +105,38 @@ export async function wipeLocalMirror(
    * the counter's row lock and refuses an autocommit handle, and a transaction is what makes the
    * wake fire at COMMIT rather than for a row that rolled back.
    */
+  /* ── AND THE DRAFTS IT KEPT, ANNOUNCED AFTER IT ──
+   * Unsent words are on no server, so the walk leaves them. The window's cascade
+   * takes every draft naming the mailbox at or below the receipt's seq, so each kept draft, and
+   * each sibling whose link the walk cleared, is re-sent as a `draft` update in the same
+   * transaction, after the receipt. */
   await db.transaction(async (tx) => {
     await recordMailboxRemoved(tx as unknown as LedgerTx, accountId, mailboxId);
+    const kept = (await (tx as unknown as Tx).select({ id: drafts.id }).from(drafts)
+      .where(eq(drafts.mailboxId, mailboxId))).map((r) => r.id);
+    const ids = [...new Set([...kept, ...unlinked])];
+    for (let i = 0; i < ids.length; i += DRAFT_PAGE) {
+      await recordChanges(tx as unknown as LedgerTx, ids.slice(i, i + DRAFT_PAGE).map((id) => ({
+        accountId, entityType: "draft" as const, entityId: id, op: "update" as const, meta: null,
+      })));
+    }
   });
+}
+
+/** Drafts of OTHER mailboxes replying to, forwarding, or in an exclusive thread of this one. */
+async function draftsLinkedInto(db: Tx, mailboxId: string): Promise<string[]> {
+  const ownMessages = db.select({ id: messages.id }).from(messages)
+    .where(eq(messages.mailboxId, mailboxId));
+  const ownThreads = db.select({ id: threads.id }).from(threads).where(onlyThisMailbox(db, mailboxId));
+  const rows = await db.select({ id: drafts.id }).from(drafts).where(and(
+    ne(drafts.mailboxId, mailboxId),
+    or(
+      and(isNotNull(drafts.inReplyToMessageId), inArray(drafts.inReplyToMessageId, ownMessages)),
+      and(isNotNull(drafts.forwardOfMessageId), inArray(drafts.forwardOfMessageId, ownMessages)),
+      and(isNotNull(drafts.threadId), inArray(drafts.threadId, ownThreads)),
+    ),
+  ));
+  return rows.map((r) => r.id);
 }
 
 /**
@@ -110,25 +146,49 @@ export async function wipeLocalMirror(
  * would drift the moment a table is added; `local-mirror-census.test.ts` reads {@link WIPED_TABLES}
  * against the FK graph and so covers both callers. Takes the generic query runner rather than
  * {@link LocalDb}: the standalone door hands the top-level handle, the Cloud door the page's
- * transaction handle, and the statements are identical.
+ * transaction handle, and the statements are identical. `unsentDrafts` is the one difference, and
+ * required so no caller picks it by default: `"keep"` on the standalone removal, `"delete"` where
+ * the hosted erasure already took the drafts.
  */
-export async function deleteMailboxRows(db: Tx, mailboxId: string): Promise<void> {
+export async function deleteMailboxRows(
+  db: Tx, mailboxId: string, opts: { unsentDrafts: "keep" | "delete" },
+): Promise<void> {
   /** The mailbox's own messages, as a subquery — never a list of ids read into memory. */
   const ownMessages = db.select({ id: messages.id }).from(messages)
     .where(eq(messages.mailboxId, mailboxId));
-  const ownDrafts = db.select({ id: drafts.id }).from(drafts)
-    .where(eq(drafts.mailboxId, mailboxId));
 
   // ── DRAFTS FIRST, AND WHAT THEY POINT AT ──────────────────────────────────────────────────
+  /* `delete` (the Cloud door: the hosted erasure took them) takes every draft. `keep` (the
+     standalone removal) takes only `sent` drafts, whose words are in the server's
+     Sent folder: an unsent draft is on no server, so it stays with its sends and their claims. */
+  const goneDrafts = db.select({ id: drafts.id }).from(drafts).where(
+    opts.unsentDrafts === "delete"
+      ? eq(drafts.mailboxId, mailboxId)
+      : and(eq(drafts.mailboxId, mailboxId), eq(drafts.status, "sent")),
+  );
   /* A send whose draft is already gone is reached only through this mailbox's content claim;
      the claims go with it (they cascade from the send, and are deleted by key for a store that
      does not enforce the cascade). */
-  await db.delete(outboundSends).where(inArray(outboundSends.id,
-    db.select({ id: outboundSendFingerprints.sendId }).from(outboundSendFingerprints)
-      .where(eq(outboundSendFingerprints.mailboxId, mailboxId))));
-  await db.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.mailboxId, mailboxId));
-  await db.delete(outboundSends).where(inArray(outboundSends.draftId, ownDrafts));
-  await db.delete(drafts).where(eq(drafts.mailboxId, mailboxId));
+  const claimed = db.select({ id: outboundSendFingerprints.sendId }).from(outboundSendFingerprints)
+    .where(eq(outboundSendFingerprints.mailboxId, mailboxId));
+  if (opts.unsentDrafts === "delete") {
+    await db.delete(outboundSends).where(inArray(outboundSends.id, claimed));
+    await db.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.mailboxId, mailboxId));
+  } else {
+    await db.delete(outboundSends).where(and(
+      inArray(outboundSends.id, claimed),
+      or(isNull(outboundSends.draftId), inArray(outboundSends.draftId, goneDrafts)),
+    ));
+    await db.delete(outboundSendFingerprints).where(and(
+      eq(outboundSendFingerprints.mailboxId, mailboxId),
+      notExists(db.select({ one: sql`1` }).from(outboundSends)
+        .where(eq(outboundSends.id, outboundSendFingerprints.sendId))),
+    ));
+  }
+  await db.delete(outboundSends).where(inArray(outboundSends.draftId, goneDrafts));
+  await db.delete(drafts).where(opts.unsentDrafts === "delete"
+    ? eq(drafts.mailboxId, mailboxId)
+    : and(eq(drafts.mailboxId, mailboxId), eq(drafts.status, "sent")));
   /* A draft in ANOTHER mailbox replying to a message in THIS one. Nullable, so the reply loses its
      thread rather than the draft being destroyed — a person's unsent words are not this
      removal's to take. This was written as "unreachable on a one-mailbox install and cheap", true
@@ -245,12 +305,13 @@ export async function announceExclusiveThreads(
 }
 
 /**
- * DOES THIS INSTALL STILL HOLD ANYTHING OF A MAILBOX — a message, a folder or a draft. The start
- * asks it of every removed mailbox, to finish a wipe a close or a crash cut short: the walk deletes
- * the drafts first, the folders after the messages' children and the messages last, so a wipe cut
- * anywhere leaves one of the three (a mailbox that ever synced has its folders). Three `limit(1)`
- * reads, the first two on an index that leads with the mailbox; asked at every start, so it stays
- * that cheap.
+ * DOES THIS INSTALL STILL HOLD ANYTHING OF A MAILBOX THE WIPE TAKES — a message, a folder or a
+ * SENT draft. The start asks it of every removed mailbox, to finish a wipe a close or a crash cut
+ * short: the walk deletes the sent drafts first, the folders after the messages' children and the
+ * messages last, so a wipe cut anywhere leaves one of the three (a mailbox that ever synced has its
+ * folders). An unsent draft is not one: the wipe keeps it, and counting it would re-wipe at every
+ * start. Three `limit(1)` reads, the first two on an index that leads with the mailbox; asked at
+ * every start, so it stays that cheap.
  */
 export async function mirrorRowsRemain(db: LocalDb, mailboxId: string): Promise<boolean> {
   const message = await db.select({ id: messages.id }).from(messages)
@@ -260,7 +321,7 @@ export async function mirrorRowsRemain(db: LocalDb, mailboxId: string): Promise<
     .where(eq(mailboxFolders.mailboxId, mailboxId)).limit(1);
   if (folder.length > 0) return true;
   const draft = await db.select({ id: drafts.id }).from(drafts)
-    .where(eq(drafts.mailboxId, mailboxId)).limit(1);
+    .where(and(eq(drafts.mailboxId, mailboxId), eq(drafts.status, "sent"))).limit(1);
   return draft.length > 0;
 }
 

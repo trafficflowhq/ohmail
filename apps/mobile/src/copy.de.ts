@@ -260,6 +260,13 @@ export const DE: Deck = {
      nichts über den Augenblick — siehe die englische Fassung. */
   serversOrganizedHere: "Das Postfach, das dieses Handy selbst geöffnet hat.",
   serversStopHere: "Beenden und entfernen",
+  serversStopHereDrafts: (n: number) => n === 1
+    ? "Beim Entfernen wird der nicht gesendete Entwurf auf diesem Handy gelöscht. Kein Mailserver hat ihn."
+    : `Beim Entfernen werden die ${n} nicht gesendeten Entwürfe auf diesem Handy gelöscht. Kein Mailserver hat sie.`,
+  serversStopHereDraftsUnknown:
+    "Beim Entfernen werden alle nicht gesendeten Entwürfe auf diesem Handy gelöscht. Kein Mailserver hat sie.",
+  serversStopHereKeep: "Postfach behalten",
+  serversStopHereDelete: "Entfernen und Entwürfe löschen",
   serversForget: "Vergessen",
   serversForgetNote:
     "Vergessen löscht die Kopplung und die Mails, die dieses Handy kopiert hatte. Über die Geräteliste des Servers lässt sie sich auch dort widerrufen. Wer ein Postfach auf dem Server selbst entfernt, kann dort auch die Kopie seiner Mails bei ohmail löschen.",
@@ -1426,6 +1433,8 @@ export const DE: Deck = {
   composeBodyPlaceholder: "Schreib deine Nachricht…",
   composeToPlaceholder: "name@beispiel.de, …",
   composeFrom: (address: string) => `Von ${address}`,
+  composeFromSubstituted: (was: string) => `${was} ist getrennt, daher geht diese Nachricht von der Adresse oben raus.`,
+  composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",
   composeSent: "Gesendet.",
   composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
   composeKept: "In den Entwürfen behalten.",

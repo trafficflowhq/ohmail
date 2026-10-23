@@ -10,7 +10,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppState, Platform } from "react-native";
-import { classifyWindowSyncFailure } from "@ohmail/client-engine";
+import { classifyWindowSyncFailure, unsentDraftsOf } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { faultDetail, refuse, type Refusal, type RefusalArg } from "../refusal";
 import { LOCAL_ENGINE_ORIGIN, mirrorExists, mirrorOwnerKey } from "../engine/boot";
@@ -131,6 +131,12 @@ export interface Connection {
    * device and why, and the deletion stays owed so the next launch retries it.
    */
   forget(profileId: string): Promise<Attempt>;
+  /**
+   * How many unsent drafts the live session on this profile holds, or `null` when no live session
+   * is on it. Forgetting this phone's own mailbox deletes its store, and those drafts are on no
+   * server, so the Servers screen asks before it.
+   */
+  unsentDraftsHere(profileId: string): number | null;
   /** End the session without forgetting the pairing. The mirror stays on disk — that is the point. */
   disconnect(): Promise<void>;
   /**
@@ -794,6 +800,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
             ? { ok: true }
             : { ok: false, reason: refuse("forgetClaimStands", CLAIM_LAPSES_AFTER_MINUTES) };
         }),
+      unsentDraftsHere: (profileId) => {
+        const at = live.now();
+        if (at.k !== "live" || at.session.profile.id !== profileId) return null;
+        return unsentDraftsOf(at.session.engine.read()).length;
+      },
       disconnect: () =>
         gate.run(async () => {
           { const at = live.now(); if (at.k === "live") teardown(at.session); }

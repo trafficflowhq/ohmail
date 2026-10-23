@@ -2272,6 +2272,15 @@ export function draftsList(reader: EntityReader, now: Date = new Date()): Engine
 }
 
 /**
+ * THE DRAFTS NO SERVER HOLDS — every status but `sent`, scheduled ones included (a removal returns
+ * them to Drafts). What a mailbox removal keeps and its confirmation counts.
+ */
+export function unsentDraftsOf(reader: EntityReader, mailboxId?: string): EngineDraft[] {
+  return reader.list<EngineDraft>("draft")
+    .filter((d) => d.status !== "sent" && (mailboxId === undefined || d.mailboxId === mailboxId));
+}
+
+/**
  * DOES THIS MIRROR HOLD THE DRAFT'S TEXT — the one rule, so no surface writes a second one. `false` for `null` and
  * for a row from a page that carried no `body` key at all, which is the same fact and reaches a reader as `undefined`
  * past a type that promises otherwise (`applyToRecords` stores the DTO verbatim). `true` for the empty string: a

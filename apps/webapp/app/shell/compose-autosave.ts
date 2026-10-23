@@ -296,6 +296,12 @@ export function useComposeAutosave(opts: {
   fields: ComposeFields;
   /** The resolved sending mailbox — a create with no mailbox is refused by the server. */
   mailboxId: string | null;
+  /**
+   * `mailboxId` is a SUBSTITUTE for the row's own mailbox, which can no longer send (a removed
+   * mailbox keeps its drafts). An existing row keeps its mailbox: only Send or a pick moves it.
+   * A create still carries the substitute, since there is no row to keep.
+   */
+  keepRowMailbox?: boolean;
   active: boolean;
   /**
    * IS A SEND OF THIS SURFACE'S MESSAGE ON THE WIRE RIGHT NOW?
@@ -676,6 +682,9 @@ export function useComposeAutosave(opts: {
      flush. `fieldsRef` above holds the form; these hold the rest. */
   const mailboxRef = useRef(mailboxId);
   mailboxRef.current = mailboxId;
+  const keepRowMailbox = opts.keepRowMailbox ?? false;
+  const keepRowMailboxRef = useRef(keepRowMailbox);
+  keepRowMailboxRef.current = keepRowMailbox;
   const draftIdRef = useRef(draftId);
   draftIdRef.current = draftId;
   const sendInFlightRef = useRef(sendInFlight);
@@ -693,8 +702,9 @@ export function useComposeAutosave(opts: {
    */
   const writeNow = useCallback(async (asNew = false): Promise<ComposeFlush> => {
     const f = fieldsRef.current;
-    const mailbox = mailboxRef.current;
     const row = asNew ? null : draftIdRef.current;
+    // A substitute sender is written on a create only — see `keepRowMailbox`.
+    const mailbox = row !== null && keepRowMailboxRef.current ? null : mailboxRef.current;
     if (!worthSaving(f)) return { kind: "nothing" };
     const signature = signatureOf(f);
     // THE MESSAGE THIS SURFACE LET GO OF, UNCHANGED SINCE — see `abandonedAt`.
@@ -854,7 +864,7 @@ export function useComposeAutosave(opts: {
     if (!worthSaving(fields)) return;
     const signature = signatureOf(fields);
     const mailboxMoved =
-      draftId !== null && mailboxId !== null &&
+      draftId !== null && mailboxId !== null && !keepRowMailbox &&
       savedMailbox.current !== null && mailboxId !== savedMailbox.current;
     if (signature === saved.current && !mailboxMoved) return;
     /* Whether to ARM, asked over the same refusals {@link writeNow} asks again when it fires:
@@ -869,7 +879,7 @@ export function useComposeAutosave(opts: {
     const timer = window.setTimeout(() => { void writeNow(); }, AUTOSAVE_DELAY_MS);
     return () => window.clearTimeout(timer);
     // `elsewhereAt`: a row let go of at mount changes no other input, and its words wait on this.
-  }, [engine, fields, mailboxId, active, draftId, sendInFlight, writeNow, elsewhereAt]);
+  }, [engine, fields, mailboxId, keepRowMailbox, active, draftId, sendInFlight, writeNow, elsewhereAt]);
 
   /**
    * THE BELT ON EVERY CLOSE PATH NO DOOR CAN INTERCEPT — the rail, a `g` jump, the browser's

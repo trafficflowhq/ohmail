@@ -256,12 +256,19 @@ describe("removing a mailbox from this computer", () => {
       accountId, mailboxId: s.world.mailboxId, threadId: own, inReplyToMessageId: goneOwn!.id,
       subject: "Re: from the other mailbox",
     }).returning();
+    /* The removed mailbox's own unsent draft stays with its send; its SENT one goes. */
     const [goneDraft] = await s.db.insert(drafts).values({ accountId, mailboxId: dto.id, subject: "gone's own" }).returning();
+    const [sentDraft] = await s.db.insert(drafts).values({
+      accountId, mailboxId: dto.id, subject: "gone's sent", status: "sent",
+    }).returning();
     const [keptSend] = await s.db.insert(outboundSends).values({
       accountId, draftId: reply!.id, idempotencyKey: randomUUID(), mintedMessageId: "<k@y>",
     }).returning();
-    const [goneSend] = await s.db.insert(outboundSends).values({
+    const [unsentSend] = await s.db.insert(outboundSends).values({
       accountId, draftId: goneDraft!.id, idempotencyKey: randomUUID(), mintedMessageId: "<g@y>",
+    }).returning();
+    const [goneSend] = await s.db.insert(outboundSends).values({
+      accountId, draftId: sentDraft!.id, idempotencyKey: randomUUID(), mintedMessageId: "<h@y>", status: "sent",
     }).returning();
 
     expect((await remove(s, dto.id)).status).toBe(200);
@@ -270,10 +277,13 @@ describe("removing a mailbox from this computer", () => {
     expect(words?.subject, "a reply drafted in the other mailbox was deleted").toBe("Re: from the other mailbox");
     expect(words?.inReplyToMessageId, "the reply still points at a removed message").toBeNull();
     expect(words?.threadId, "the reply still points at a conversation that is gone").toBeNull();
-    expect((await s.db.select().from(drafts).where(eq(drafts.id, goneDraft!.id))).length).toBe(0);
+    expect((await s.db.select().from(drafts).where(eq(drafts.id, goneDraft!.id))).length,
+      "the removed mailbox's unsent draft was deleted").toBe(1);
+    expect((await s.db.select().from(drafts).where(eq(drafts.id, sentDraft!.id))).length).toBe(0);
     const sends = (await s.db.select({ id: outboundSends.id }).from(outboundSends)).map((r) => r.id);
     expect(sends, "the other mailbox's send record was taken").toContain(keptSend!.id);
-    expect(sends, "the removed mailbox's send record stayed").not.toContain(goneSend!.id);
+    expect(sends, "a kept draft's send record was taken").toContain(unsentSend!.id);
+    expect(sends, "the removed mailbox's sent draft's send record stayed").not.toContain(goneSend!.id);
     const threadIds = (await s.db.select({ id: threads.id }).from(threads)).map((r) => r.id);
     expect(threadIds).toContain(shared!.id);
     expect(threadIds).not.toContain(own);

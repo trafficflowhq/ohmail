@@ -44,3 +44,16 @@ export function keepAct(o: {
 export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: boolean }): "keep" | "nothing" {
   return o.phase === "idle" && o.worth && !o.keeping ? "keep" : "nothing";
 }
+
+/**
+ * THE AUTOSAVE MARKS THE SCREEN SAVED ONLY ONCE ITS KEEP ANSWERED `kept`. Marked before, a refused
+ * keep (a removed mailbox, a refused edit) left the close nothing worth keeping, and the sheet
+ * closed over words no row held. `onScreen` is what the keep carried, not what is there now.
+ */
+export async function autosaveKeep(
+  saved: { current: string | null },
+  onScreen: string,
+  keep: () => Promise<"kept" | "refused">,
+): Promise<void> {
+  if ((await keep()) === "kept") saved.current = onScreen;
+}

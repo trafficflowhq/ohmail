@@ -810,6 +810,9 @@ export abstract class BaseMirrorStore implements MirrorStore {
       if (typeof owner !== "string") continue;
       const seq = removed.get(owner);
       if (seq === undefined) continue;
+      /* WRITTEN AFTER THE RECEIPT — a draft the standalone removal keeps is re-sent at a later seq
+         (`local-mirror.ts#wipeLocalMirror`), maybe in this same page. Seq 0 rows still go. */
+      if (rec.seq > seq) continue;
       if (rec.type === "message") goneMessages.add(rec.id);
       tombstone(rec, seq);
     }

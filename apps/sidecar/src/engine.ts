@@ -10248,11 +10248,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 reason: claimReleased
                   ? "a person removed this mailbox from this machine; its credentials are "
                     + "deleted, its pending appointments are closed, its organizer claim is "
-                    + "released, this install's copy of its mail is deleted and nothing was "
-                    + "deleted from the mail server"
+                    + "released, this install's copy of its mail is deleted (its unsent drafts "
+                    + "stay in Drafts here) and nothing was deleted from the mail server"
                   : "a person removed this mailbox from this machine; its credentials are "
                     + "deleted, its pending appointments are closed, this install's copy of its "
-                    + "mail is deleted and nothing was deleted from the mail server — but its "
+                    + "mail is deleted (its unsent drafts stay in Drafts here) and nothing was "
+                    + "deleted from the mail server — but its "
                     + "organizer claim could not be taken out of ohmail/_meta, so the claim "
                     + "stands until it goes stale and another install connecting this mailbox "
                     + "waits that long before it may organize it",

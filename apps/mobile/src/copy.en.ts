@@ -412,6 +412,14 @@ const TABLE = {
      be the overstatement `no-host-census.test.ts` §4 refuses. */
   serversOrganizedHere: "The mailbox this phone opened itself.",
   serversStopHere: "Stop and remove",
+  /* Removing this phone's own mailbox deletes its store, and unsent drafts are on
+     no server — so the press names them and asks; `Unknown` where the count cannot be read. */
+  serversStopHereDrafts: (n: number) => n === 1
+    ? "Removing it deletes the unsent draft on this phone. No mail server has it."
+    : `Removing it deletes the ${n} unsent drafts on this phone. No mail server has them.`,
+  serversStopHereDraftsUnknown: "Removing it deletes any unsent drafts on this phone. No mail server has them.",
+  serversStopHereKeep: "Keep the mailbox",
+  serversStopHereDelete: "Remove and delete drafts",
   serversForget: "Forget",
   // CLAIMS ARE CONTRACTS. This sentence used to stop at "removes the pairing", and that was the
   // whole truth: forget closed a database handle and left the mail on the phone for ever. Now it
@@ -2107,6 +2115,9 @@ const TABLE = {
   composeBodyPlaceholder: "Write your message…",
   composeToPlaceholder: "name@example.org, …",
   composeFrom: (address: string) => `From ${address}`,
+  /** A draft kept from a removed mailbox leaves from another one (`compose-sender.ts`). */
+  composeFromSubstituted: (was: string) => `${was} is disconnected, so this message sends from the address above.`,
+  composeFromSubstitutedUnknown: "The address this draft was written from is disconnected, so it sends from the address above.",
   composeSent: "Sent.",
   composeEarlierWent: "This message had already been sent. Your newer text was not sent as a second copy.",
   /* A CLOSED COMPOSER KEEPS ITS TEXT. The pill's Undo discards the draft it just kept. */

@@ -51,6 +51,8 @@ import { useFocusFollows } from "../shell/focus-follows";
  * in a third, and there is exactly one compose form on screen.
  */
 const MATCH_HINT_ID = "compose-from-match";
+/** The line saying a reopened draft's own mailbox can no longer send (`from.substituted`). */
+const SUB_HINT_ID = "compose-from-substituted";
 
 /**
  * The custom picker's floor above "now", and the evening preset's usefulness bar. Three
@@ -683,7 +685,8 @@ export function ComposeView({
                       className="c-input"
                       value={from.mailboxId ?? ""}
                       disabled={inFlight}
-                      aria-describedby={from.domainMatched ? MATCH_HINT_ID : undefined}
+                      aria-describedby={from.domainMatched ? MATCH_HINT_ID
+                        : from.substituted && from.substitutedFrom ? SUB_HINT_ID : undefined}
                       onChange={(e) => onFields({ ...fields, fromMailboxId: e.target.value })}
                     >
                       {/* The VALUE is the mailbox id and the LABEL is the address a human reads —
@@ -699,7 +702,8 @@ export function ComposeView({
                   <output
                     id="compose-from"
                     className="c-static"
-                    aria-describedby={from.domainMatched ? MATCH_HINT_ID : undefined}
+                    aria-describedby={from.domainMatched ? MATCH_HINT_ID
+                        : from.substituted && from.substitutedFrom ? SUB_HINT_ID : undefined}
                   >
                     {displayAddress(from.address)}
                   </output>
@@ -717,6 +721,13 @@ export function ComposeView({
                 {from.domainMatched ? (
                   <span id={MATCH_HINT_ID} className="compose-from-hint" role="status">
                     {t("fromMatched")}
+                  </span>
+                ) : null}
+                {/* A reopened draft whose own mailbox cannot send (a removed mailbox keeps its
+                    drafts): the substitute is said, as a reply says it (`InlineReply`). */}
+                {from.substituted && from.substitutedFrom ? (
+                  <span id={SUB_HINT_ID} className="compose-from-hint" role="status">
+                    {t("fromSubstituted", { was: displayAddress(from.substitutedFrom) })}
                   </span>
                 ) : null}
               </div>

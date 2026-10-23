@@ -84,3 +84,35 @@ describe("POST /drafts refuses a disabled mailbox", () => {
     await expect(svc.create(ctx, { mailboxId: randomUUID() })).rejects.toMatchObject({ httpStatus: 400 });
   });
 });
+
+describe("PUT /drafts/:id: naming the row's own disabled mailbox is no move", () => {
+  /* A draft kept from a removed mailbox is saved by the paired phone naming its own mailbox; every
+     mailboxId used to count as a move, and the refusal rolled the new words back. */
+  it("a save naming the row's own disabled mailbox takes the words and keeps the mailbox", async () => {
+    const { db, ctx, mk } = await setup();
+    const mbId = await mk("connected");
+    const { draft } = await svc.create(ctx, { mailboxId: mbId, subject: "plan", body: "the words" });
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, mbId));
+
+    const out = await svc.update(ctx, draft.id, { mailboxId: mbId, body: "the words, and more" });
+    expect(out.draft).toMatchObject({ body: "the words, and more", mailboxId: mbId });
+  });
+
+  it("a MOVE onto a disabled mailbox is still 400, and the row keeps its words and mailbox", async () => {
+    const { db, ctx, mk } = await setup();
+    const from = await mk("connected");
+    const gone = await mk("disabled");
+    const { draft } = await svc.create(ctx, { mailboxId: from, subject: "plan", body: "the words" });
+
+    const err = await svc.update(ctx, draft.id, { mailboxId: gone, body: "moved" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ httpStatus: 400, code: "validation_failed" });
+    const [row] = await db.select({ body: drafts.body, mailboxId: drafts.mailboxId }).from(drafts).where(eq(drafts.id, draft.id));
+    expect(row).toEqual({ body: "the words", mailboxId: from });
+  });
+
+  it("a foreign mailbox id on an update is still 400", async () => {
+    const { ctx, mk } = await setup();
+    const { draft } = await svc.create(ctx, { mailboxId: await mk("connected"), subject: "plan" });
+    await expect(svc.update(ctx, draft.id, { mailboxId: randomUUID(), body: "x" })).rejects.toMatchObject({ httpStatus: 400 });
+  });
+});

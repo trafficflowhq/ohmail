@@ -179,3 +179,44 @@ describe("a mailbox removal receipt cascades through the mirror", () => {
       .toEqual(["m-kept-1", "m-kept-2"]);
   });
 });
+
+describe("a draft the removal keeps is announced after its receipt, and survives it", () => {
+  /* The standalone removal keeps unsent drafts and re-sends each as a `draft` update
+     AFTER the receipt. Mutation: drop the `rec.seq > seq` guard in `cascadeMailboxRemoval` and the
+     same-page case reads []. */
+  const keptDraft = (seq: number): SyncChange =>
+    change("draft", "d-gone", "update", seq, { id: "d-gone", mailboxId: GONE, subject: "later", body: "kept words" });
+
+  it("a draft re-sent at receipt+1 in the SAME page survives the cascade", async () => {
+    const store = await seeded();
+    await store.applyResponse({
+      changes: { creates: [], updates: [keptDraft(21)], moves: [], deletes: [receipt(20)] },
+      cursor: "21", hasMore: false, serverTime: iso(),
+    });
+    expect(idsOf(store, "draft"), "the kept draft was taken by the receipt it follows").toEqual(["d-gone", "d-kept"]);
+    expect(idsOf(store, "message"), "the receipt took nothing else").toEqual(["m-kept-1"]);
+  });
+
+  it("…and in the NEXT page it comes back over the receipt's tombstone", async () => {
+    const store = await seeded();
+    await store.applyResponse({
+      changes: { creates: [], updates: [], moves: [], deletes: [receipt(20)] },
+      cursor: "20", hasMore: true, serverTime: iso(),
+    });
+    expect(idsOf(store, "draft")).toEqual(["d-kept"]);
+    await store.applyResponse({
+      changes: { creates: [], updates: [keptDraft(21)], moves: [], deletes: [] },
+      cursor: "21", hasMore: false, serverTime: iso(),
+    });
+    expect(idsOf(store, "draft")).toEqual(["d-gone", "d-kept"]);
+  });
+
+  it("CONTROL: a draft written at or below the receipt's seq in the same page still goes", async () => {
+    const store = await seeded();
+    await store.applyResponse({
+      changes: { creates: [], updates: [keptDraft(19)], moves: [], deletes: [receipt(20)] },
+      cursor: "20", hasMore: false, serverTime: iso(),
+    });
+    expect(idsOf(store, "draft")).toEqual(["d-kept"]);
+  });
+});

@@ -7,7 +7,7 @@ import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { changeLog, mailboxCredentials, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
+import { changeLog, drafts, mailboxCredentials, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { STORE_GENERATION_FILE, openLocalDb, type LocalDb } from "../src/db.js";
 import type { StdioHost } from "../src/host.js";
@@ -318,6 +318,43 @@ describe("a mailbox removal and the app's own close", () => {
     expect(held.folders).toBe(0);
     expect(held.receipts, "the window was never told").toBe(1);
     expect(next.lines.some((l) => l.event === "local_mirror_wipe_finished" && l.detail.mailboxId === rig.mailboxId)).toBe(true);
+  });
+
+  /** One unsent draft on the mailbox, written as the window's verb writes it. */
+  const plantDraft = async (rig: Rig): Promise<string> => {
+    const [d] = await rig.sidecar.db.insert(drafts).values({
+      accountId: rig.sidecar.world.accountId, mailboxId: rig.mailboxId, subject: "unsent", body: "on no server",
+    }).returning({ id: drafts.id });
+    return d!.id;
+  };
+  const draftsOn = async (db: LocalDb, mailboxId: string): Promise<string[]> =>
+    (await db.select({ id: drafts.id }).from(drafts).where(eq(drafts.mailboxId, mailboxId))).map((r) => r.id);
+
+  it("a wipe cut off by the close and finished at the next start keeps the unsent drafts", async () => {
+    const rig = await organizing();
+    const draft = await plantDraft(rig);
+    wipes.refuse = 1;
+    expect(await remove(rig)).toEqual({ status: 503, code: "local_mirror_not_cleared" });
+    await rig.sidecar.stop();
+    rig.stopped.value = true;
+
+    const next = await boot(rig.dataDir);
+    expect((await heldFor(next.sidecar.db, rig.mailboxId)).messages, "premise: the start finished the wipe").toBe(0);
+    expect(await draftsOn(next.sidecar.db, rig.mailboxId), "the start's wipe took the unsent draft").toEqual([draft]);
+  });
+
+  it("a start after a finished removal that kept drafts writes no second receipt", async () => {
+    /* Mutation: count any draft in `mirrorRowsRemain` again and this start re-wipes for ever. */
+    const rig = await organizing();
+    const draft = await plantDraft(rig);
+    expect(await remove(rig)).toEqual({ status: 200, code: null });
+    await rig.sidecar.stop();
+    rig.stopped.value = true;
+
+    const next = await boot(rig.dataDir);
+    expect((await heldFor(next.sidecar.db, rig.mailboxId)).receipts, "the start wiped a finished removal again").toBe(1);
+    expect(next.lines.some((l) => l.event === "local_mirror_wipe_finished")).toBe(false);
+    expect(await draftsOn(next.sidecar.db, rig.mailboxId)).toEqual([draft]);
   });
 
   it("a mailbox an older build removed with its mail left under it is cleared at the next start; a paused or switched-off one keeps its mail", async () => {

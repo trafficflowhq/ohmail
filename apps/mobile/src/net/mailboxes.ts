@@ -95,9 +95,10 @@ export interface PhoneMailbox {
    */
   organizerState: "held" | "stopped" | null;
   /**
-   * The mailbox's lifecycle status, raw. Read by {@link junkFolderSaid} and nothing else on this
-   * phone: `"disabled"` is another install's mailbox, and this app must not speak for it. `null`
-   * where the wire named none, which every caller treats as "not disabled".
+   * The mailbox's lifecycle status, raw. Read by {@link junkFolderSaid}: `"disabled"` is another
+   * install's mailbox, and this app must not speak for it; and by `compose-sender.ts`, since the
+   * server sends from no `disabled` row. `null` where the wire named none, which every caller
+   * treats as "not disabled".
    */
   status: string | null;
   /**

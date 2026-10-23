@@ -1128,7 +1128,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           const rows = await tx.select({ id: mailboxes.id }).from(mailboxes)
             .where(eq(mailboxes.accountId, world.accountId));
           for (const row of rows) {
-            await deleteMailboxRows(tx as unknown as Tx, row.id);
+            await deleteMailboxRows(tx as unknown as Tx, row.id, { unsentDrafts: "delete" });
             await recordMailboxRemoved(tx as unknown as LedgerTx, world.accountId, row.id);
           }
           mailboxesRemoved = rows.length;
