@@ -721,7 +721,9 @@ describe("one install, two mailboxes", () => {
       "the removed mailbox's message text is still cached in the window").toBe(0);
     /* THE UNSENT DRAFT STAYS — in the window's mirror, with its words, and in the Drafts list. */
     expect(draftsOf(dto.id), "the removed mailbox's unsent draft left the window").toBe(1);
-    const kept = draftsList(engine.read()).filter((d) => d.mailboxId === dto.id);
+    /* The draft was written on the wall clock a moment ago; list Drafts at that same moment. */
+    const listedAt = new Date();
+    const kept = draftsList(engine.read(), listedAt).filter((d) => d.mailboxId === dto.id);
     expect(kept.map((d) => d.body), "the kept draft is not in Drafts with its words").toEqual(["the words"]);
     expect(engine.receivedMessages(),
       "the received count still counts the removed mailbox's mail").toBe(countBefore - 2);
