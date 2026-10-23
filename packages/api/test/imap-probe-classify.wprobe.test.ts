@@ -179,3 +179,30 @@ describe("the probe's classifier, specimen by specimen", () => {
     expect(probeAdmissionKey("acct-2", "mila@example.test")).not.toBe(key);
   });
 });
+
+/**
+ * GOOGLE'S REFUSAL, NAMED — only with the host, only on `auth`. The two callers that pass no host
+ * (`mailbox-self-check.ts`, `mail-server-refusal.ts`) and every other host get today's verdict.
+ */
+describe("verdictFor with a host: Google's sub-kind on `auth` only", () => {
+  const appPassword = { authenticationFailed: true, serverResponseCode: "ALERT", responseText: "Application-specific password required: https://support.google.com/accounts/answer/185833 (Failure)" };
+  const webAlert = { authenticationFailed: true, serverResponseCode: "WEBALERT", responseText: "Web login required." };
+
+  it("a Google host: the hint rides the auth refusal", () => {
+    expect(verdictFor(appPassword, "imap.gmail.com")).toEqual({ verdict: "refuse", code: "auth", authHint: "app_password_required" });
+    expect(verdictFor(webAlert, "imap.gmail.com")).toEqual({ verdict: "refuse", code: "auth", authHint: "web_login" });
+  });
+
+  it("no host, or another host: the verdict of before, byte for byte", () => {
+    for (const err of [appPassword, webAlert]) {
+      expect(verdictFor(err)).toEqual({ verdict: "refuse", code: "auth" });
+      expect(verdictFor(err, "imap.example.test")).toEqual({ verdict: "refuse", code: "auth" });
+    }
+  });
+
+  it("a Google host that throttles or cannot be reached carries no hint", () => {
+    expect(verdictFor({ authenticationFailed: true, serverResponseCode: "THROTTLED" }, "imap.gmail.com"))
+      .toEqual(verdictFor({ authenticationFailed: true, serverResponseCode: "THROTTLED" }));
+    expect(verdictFor({ authenticationFailed: true, code: "ECONNREFUSED" }, "imap.gmail.com")).toEqual({ verdict: "refuse", code: "connect" });
+  });
+});

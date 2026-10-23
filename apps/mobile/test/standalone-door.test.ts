@@ -24,6 +24,8 @@ import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  AUTH_HINTS,
+  authHintPreset,
   encodeSeqCursor,
   type SqlExecutor,
   type SqlRow,
@@ -39,10 +41,10 @@ import {
 } from "../src/engine/boot";
 import { DE } from "../src/copy.de";
 import { EN } from "../src/copy.en";
-import { certificateKindOf, incomingUnreachable, openStandaloneMailbox } from "../src/engine/standalone-door";
+import { authHintOf, certificateKindOf, incomingUnreachable, openStandaloneMailbox } from "../src/engine/standalone-door";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { refuse, sayRefusal } from "../src/refusal";
-import { EMPTY_STANDALONE, refusalField } from "../src/ui/standalone-form";
+import { EMPTY_STANDALONE, refusalField, refusalLinks } from "../src/ui/standalone-form";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
@@ -338,6 +340,67 @@ describe("the paired door, unchanged — the regression this file exists to catc
     expect(seen.some((s) => s.url.includes("/auth/session"))).toBe(true);
     boot.store.close();
   }, 60_000);
+});
+
+/* ── A provider that says why it refused the sign-in ───────────────────────────────────────────── */
+
+describe("a refused sign-in the engine stamped with why", () => {
+  const SECRET = "hinted-door-password-value";
+  const preset = authHintPreset();
+  const form = { ...EMPTY_STANDALONE, address: "someone@example.test", password: SECRET,
+                 imapHost: preset.imap.host, imapPort: "993", imapTls: true };
+  const pressWith = (thrown: unknown) => openStandaloneMailbox(form, {
+    startEngine: (async () => { throw thrown; }) as never,
+    platform: async () => ({ kind: "ready" as const, exec: {}, keks: {} }),
+    machineName: () => "ohmail on a phone",
+    installId: async () => "hinted-case",
+  });
+  /** imapflow's refused login, as the engine rethrows it with its stamp (`mobile.ts`). */
+  const refused = (stamp: Record<string, unknown> = {}) =>
+    Object.assign(new Error("Command failed"), { authenticationFailed: true, ...stamp });
+  const catalogue = (lang: "en" | "de"): Record<string, string> =>
+    (JSON.parse(readFileSync(new URL(`../../webapp/messages/${lang}.json`, import.meta.url), "utf8")) as {
+      mailboxes: Record<string, string>;
+    }).mailboxes;
+  /* The deck key for each hint, in `AUTH_HINTS`' order. */
+  const KEYS: Record<string, string> = Object.fromEntries(AUTH_HINTS.map((h, i) => [h, [
+    "standaloneAuthAppOnly", "standaloneAuthWebLogin", "standaloneAuthImapDisabled", "standaloneAuthInvalid",
+  ][i]!]));
+
+  afterEach(() => { resetLocaleRegisterForTests(); });
+
+  for (const [hint, key] of Object.entries(KEYS)) {
+    it(`${hint}: its own sentence, the web's words in both languages, and never the password`, async () => {
+      const out = await pressWith(refused({ authHint: hint }));
+      expect(out.ok).toBe(false);
+      if (out.ok) return;
+      expect(out.reason.say).toBe(key);
+      for (const lang of ["en", "de"] as const) {
+        setActiveLocale(lang);
+        // The web catalogue's key is spelled from the table's id: no provider word in this tree.
+        expect(sayRefusal(out.reason), lang).toBe(catalogue(lang)[`probe_auth_${preset.id}_${hint}`]);
+        expect(sayRefusal(out.reason), lang).not.toContain(SECRET);
+      }
+      expect(JSON.stringify(out.reason)).not.toContain(SECRET);
+      const links = refusalLinks(out.reason);
+      expect(links === null ? [] : links.map((l) => l.url))
+        .toEqual(hint === "app_password_required" || hint === "invalid" ? [preset.prereqUrl, preset.helpUrl] : []);
+    });
+  }
+
+  it("found through a wrapping cause", async () => {
+    const out = await pressWith(new Error("wrapped", { cause: refused({ authHint: "web_login" }) }));
+    expect(out.ok ? null : out.reason.say).toBe("standaloneAuthWebLogin");
+    expect(authHintOf(new Error("wrapped", { cause: refused({ authHint: "invalid" }) }))).toBe("invalid");
+  });
+
+  it("control: no stamp, or a word outside the set, is the generic refusal", async () => {
+    for (const thrown of [refused(), refused({ authHint: "constructor" }), refused({ authHint: 7 })]) {
+      const out = await pressWith(thrown);
+      expect(out.ok ? null : out.reason.say).toBe("standaloneSignInRefused");
+      expect(out.ok ? null : refusalLinks(out.reason)).toBeNull();
+    }
+  });
 });
 
 /* ── Connect's refusals, in the order a person needs them ─────────────────────────────────────── */

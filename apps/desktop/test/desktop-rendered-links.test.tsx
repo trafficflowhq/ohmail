@@ -387,13 +387,13 @@ describe("the wiring, from source", () => {
     );
   });
 
-  it("the shell's own links are the provider help pages, verbatim and in URL.href form", () => {
+  it("the shell's own links are the provider help and prerequisite pages, verbatim and in URL.href form", () => {
     const rs = source("apps/desktop/src-tauri/src/rendered_links.rs");
     const list = /pub const OWN_LINKS: \[&str; (\d+)\] = \[([\s\S]*?)\];/.exec(rs);
     expect(list, "OWN_LINKS has stopped matching this reader").not.toBeNull();
     const own = [...list![2]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
     expect(Number(list![1])).toBe(own.length);
-    const help = PROVIDERS.flatMap((p) => (p.helpUrl ? [p.helpUrl] : []));
+    const help = PROVIDERS.flatMap((p) => [p.helpUrl, p.prereqUrl].filter((u): u is string => u !== undefined));
     expect(help.length).toBeGreaterThan(5);
     expect([...own].sort()).toEqual([...help].sort());
     for (const u of own) expect(new URL(u).href, u).toBe(u);

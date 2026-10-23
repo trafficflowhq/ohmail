@@ -845,13 +845,19 @@ export {
 /* The provider presets every connect surface reads. A leaf that imports nothing — see its header
    for why the phone is the reason it lives here. */
 export {
+  AUTH_HINTS,
   PROVIDERS,
+  appPasswordPresetFor,
+  asAuthHint,
+  authHintPreset,
+  authHintWantsLinks,
   hostsFor,
   portMeansImplicitTls,
   presetForAddress,
   providerById,
   providerLabel,
   serverGuessFor,
+  type AuthHint,
   type ProviderPreset,
   type ServerGuess,
 } from "./providers.js";

@@ -127,10 +127,11 @@ mailbox. The ceremony is identical to the VPS guide's:
 
 ## Connecting your first mailbox
 
-Sign in and add a mailbox: your address, your provider's IMAP server, and
-your password or app password. The provider notes in
+Sign in and add a mailbox: pick your provider (Gmail fills in the servers),
+then your address and your password or app password. The provider notes in
 [VPS.md, step 7](./VPS.md#7-connect-your-first-mailbox) apply unchanged —
-Gmail wants an app password; Microsoft 365 needs a one-time app
+Gmail takes only an App Password, which Google offers once 2-Step
+Verification is on ([connect-gmail.md](../connect-gmail.md)); Microsoft 365 needs a one-time app
 registration on the Microsoft side, either your own (`MS_OAUTH_*`) or a
 public one driven by the device-code flow (`MS_DEVICE_CLIENT_ID`, which
 needs no redirect URI and no secret). Those lines also go in

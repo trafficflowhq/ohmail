@@ -24,8 +24,9 @@ import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useModalGate } from "./modal-gate";
 import { useFocusFollows } from "./focus-follows";
-import { PROVIDERS, hostsFor, providerById, providerLabel, type ProviderPreset } from "./providers";
-import { isLocalServerHost, probeCopyKey, refusalTransport } from "./local-server-host";
+import { PROVIDERS, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel, type AuthHint, type ProviderPreset } from "./providers";
+import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "./local-server-host";
+import { ProviderHelpLinks, ProviderNote } from "./ProviderPicker";
 import { noPortProbeKey } from "./no-port-sentence";
 import { PlaintextConsent } from "./PlaintextConsent";
 import {
@@ -899,7 +900,11 @@ export function FirstRun({
   const [smtpPort, setSmtpPort] = useState(String(PROVIDERS[0]!.smtp.port));
   const [verdict, setVerdict] = useState<
     | null | { ok: FirstRunProbeOk }
-    | { reason: string | null; message: string | null; localServer: boolean; transport: "imap" | "smtp" }
+    | {
+      reason: string | null; message: string | null; localServer: boolean; transport: "imap" | "smtp";
+      /** Why Google refused the sign-in (`details.authHint`), or `null`. */
+      authHint: AuthHint | null;
+    }
   >(null);
   const [testing, setTesting] = useState(false);
   /* A Test a server on this computer is still holding — kept beyond this form, see `heldLocalTests`. */
@@ -1023,6 +1028,7 @@ export function FirstRun({
       setVerdict({
         reason: host.probeReason(err), message: host.probeMessage(err),
         localServer: host.probeLocalServer?.(err) === true, transport: refusalTransport(err),
+        authHint: refusalAuthHint(err),
       });
     } finally {
       if (testSeq.current === mine) setTesting(false);
@@ -1448,6 +1454,9 @@ export function FirstRun({
                   description: p.manual ? tp("otherSub") : `${p.imap.host} · ${p.smtp.host}`,
                 }))}
               />
+              {/* THE PRESET'S NOTE, before the password: Gmail is pre-selected here, and a person
+                  who reads only "imap.gmail.com" types their Google password. The picker's own. */}
+              <ProviderNote key={preset.id} preset={preset} />
               <div className="set-fields">
                 <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
                   <TextField id={`${ids}-address`} type="email" autoComplete="email" value={address}
@@ -1538,9 +1547,11 @@ export function FirstRun({
                     const noPort = preset.manual ? null : noPortProbeKey(verdict.reason, false);
                     if (noPort) return tm(noPort, { field: "none" });
                     return verdict.reason
-                      ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport) as "probe_auth")
+                      ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport, verdict.authHint) as "probe_auth")
                       : verdict.message ?? tm("probe_unknown");
                   })()}
+                  hint={verdict.authHint && authHintWantsLinks(verdict.authHint)
+                    ? <ProviderHelpLinks preset={authHintPreset()} /> : undefined}
                 />
               ) : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}

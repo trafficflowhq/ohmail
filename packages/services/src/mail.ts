@@ -129,7 +129,7 @@ export {
 
 
 export {
-  MailboxService, makeMailboxService, mailboxService, decryptCredential, launchRefused,
+  MailboxService, makeMailboxService, mailboxService, decryptCredential, launchRefused, GOOGLE_AUTH_REFUSAL,
   type CreateMailboxBody, type UpdateMailboxBody, type TransportInput, type MailboxServiceDeps,
   // Cloud 0009 — the OAuth consent flow's write end. `connectOAuth` resolves its target row
   // by ADDRESS (the `id_token` claim), so these types carry no `mailboxId`.

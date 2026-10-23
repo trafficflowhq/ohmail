@@ -28,6 +28,17 @@ export interface ProviderPreset {
   helpUrl?: string;
   /** The label for {@link ProviderPreset.helpUrl}. */
   helpLabel?: string;
+  /** What must be on before the help page offers anything (Google: 2-Step Verification). */
+  prereqUrl?: string;
+  /** The label for {@link ProviderPreset.prereqUrl}. */
+  prereqLabel?: string;
+  /** The account the person signs in to the provider with, as its sentences name it ("Google"). */
+  account?: string;
+  /**
+   * `true` ⇒ a refused sign-in on this provider's hosts arrives with an `authHint` ({@link AUTH_HINTS}),
+   * and the surfaces say its own sentence and links rather than the generic one.
+   */
+  authHints?: true;
   /** `true` ⇒ the host/port fields are shown and required (the generic IMAP entry). */
   manual?: boolean;
 }
@@ -39,10 +50,16 @@ export const PROVIDERS: ProviderPreset[] = [
     imap: { host: "imap.gmail.com", port: 993, secure: true },
     smtp: { host: "smtp.gmail.com", port: 465, secure: true },
     note:
-      "Gmail requires an App Password, and App Passwords require 2-Step Verification to be on. " +
-      "Create one for “Mail”, then paste the 16-character password here — not your Google password.",
+      "Gmail signs in only with an App Password, not your Google password. Turn on 2-Step " +
+      "Verification first, or the App Passwords page says it is not available. Give the App Password " +
+      "any name, then paste its 16 letters here, with or without the spaces. Some work, school and " +
+      "Advanced Protection accounts cannot create App Passwords; ohmail cannot connect those yet.",
     helpUrl: "https://myaccount.google.com/apppasswords",
     helpLabel: "Google App Passwords",
+    prereqUrl: "https://myaccount.google.com/signinoptions/twosv",
+    prereqLabel: "Turn on 2-Step Verification",
+    account: "Google",
+    authHints: true,
   },
   {
     id: "microsoft",
@@ -135,6 +152,21 @@ export const PROVIDERS: ProviderPreset[] = [
     manual: true,
   },
 ];
+
+/**
+ * WHY A PROVIDER REFUSED A SIGN-IN — the engine's closed set (`googleAuthHint`, core), mirrored here
+ * because this package may not import core. A root census holds the two lists equal.
+ */
+export const AUTH_HINTS = ["app_password_required", "web_login", "imap_disabled", "invalid"] as const;
+export type AuthHint = (typeof AUTH_HINTS)[number];
+
+/** A refusal's `authHint`, if it is one of {@link AUTH_HINTS}; anything else is no hint. */
+export const asAuthHint = (value: unknown): AuthHint | null =>
+  typeof value === "string" && (AUTH_HINTS as readonly string[]).includes(value) ? value as AuthHint : null;
+
+/** The kinds that are about the password, and so show the App Password links. */
+export const authHintWantsLinks = (hint: AuthHint): boolean =>
+  hint === "app_password_required" || hint === "invalid";
 
 export const providerById = (id: string): ProviderPreset =>
   PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[PROVIDERS.length - 1]!;
@@ -238,6 +270,20 @@ export const presetForAddress = (address: string): ProviderPreset | null => {
   if (domain === null) return null;
   const row = PRESET_DOMAINS.find((entry) => entry.domains.includes(domain));
   return row ? providerById(row.id) : null;
+};
+
+/** The one preset whose refused sign-ins carry an `authHint`. */
+export const authHintPreset = (): ProviderPreset => PROVIDERS.find((p) => p.authHints === true)!;
+
+/**
+ * THE APP-PASSWORD PRESET A MAILBOX IS ON, by where it dials first: an exact match on a preset's
+ * IMAP host (a Google Workspace address on its own domain dials imap.gmail.com), else the address.
+ * `null` for the generic entry and for no match. For the note and the re-entry hint only.
+ */
+export const appPasswordPresetFor = (address: string, imapHost?: string | null): ProviderPreset | null => {
+  const host = (imapHost ?? "").trim().toLowerCase().replace(/\.$/, "");
+  const byHost = host === "" ? undefined : PROVIDERS.find((p) => !p.manual && p.imap.host === host);
+  return byHost ?? presetForAddress(address);
 };
 
 /** A form's server fields as strings, which is what every one of these surfaces holds them as. */

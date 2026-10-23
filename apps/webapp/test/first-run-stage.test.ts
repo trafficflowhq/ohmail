@@ -489,8 +489,8 @@ describe("each promise is rendered on the step that makes it", () => {
 
   it("the failure verdicts are the mailbox pane's `probe_*`, not a second set", () => {
     // Through the chooser the pane uses too (`probe_<reason>`, or its `_local` twin for a server on
-    // this computer): one key family and one function for both surfaces.
-    expect(stepBody('{step === "mailbox"')).toMatch(/tm\(probeCopyKey\(verdict\.reason, verdict\.localServer, verdict\.transport\)/);
+    // this computer, or Google's `probe_auth_gmail_<hint>`): one key family and one function for both surfaces.
+    expect(stepBody('{step === "mailbox"')).toMatch(/tm\(probeCopyKey\(verdict\.reason, verdict\.localServer, verdict\.transport, verdict\.authHint\)/);
   });
 
   it("`elsewhereChoiceHereWhy` is on the ELSEWHERE screen, naming the holder", () => {
@@ -590,7 +590,7 @@ describe("the mailbox pane can test a connection before it pays for a step-up", 
   it("and the pane's OWN failure vocabulary, because the refusal is the create's", () => {
     // The service throws the same `probeRefused` on the test and on the create, so the fourteen
     // `probe_*` lines already cover both. An unknown member falls back to the server's sentence.
-    expect(pane).toMatch(/t\(`probe_\$\{probeBad\.reason\}`/);
+    expect(pane).toMatch(/t\(probeCopyKey\(probeBad\.reason, false, probeBad\.transport, probeBad\.authHint\)/);
     expect(pane).toMatch(/: probeBad\.message/);
   });
 

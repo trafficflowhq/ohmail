@@ -37,7 +37,7 @@ import { DEFAULT_NET_TIMEOUTS, WORKER_NET_TIMEOUTS } from "@trafficflow/core/ada
    — one ceiling per KIND of read, never a second number written here. `adapters/imap` re-exports
    `imap-bounds.ts` whole, so this is the leaf the line above already imports. */
 import {
-  ImapDeadline, IMAP_META_DEADLINE_MS, isImapBoundExceeded,
+  ImapDeadline, IMAP_META_DEADLINE_MS, isImapBoundExceeded, googleAuthHint,
 } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
@@ -1227,7 +1227,12 @@ async function composePhoneEngine(
     await sidecar.stop().catch(() => { /* nothing to keep: the launch is being refused */ });
     // THE ORIGINAL ERROR, rethrown. It carries imapflow's own `authenticationFailed`/`tlsFailed`
     // and its cause chain, so the caller classifies it with the same predicates this file used
-    // rather than being handed a verdict it cannot check. No password is in it.
+    // rather than being handed a verdict it cannot check. No password is in it. A Google host's
+    // refused sign-in is stamped with why (`authHint`, a closed word), never with its text.
+    const authHint = credentialsRefused(answered.err) ? googleAuthHint(answered.err, imap?.host) : null;
+    if (authHint !== null && typeof answered.err === "object" && answered.err !== null) {
+      try { (answered.err as { authHint?: string }).authHint = authHint; } catch { /* a frozen error keeps its flags */ }
+    }
     throw answered.err;
   };
   const answered = (bounded ?? []).find((f) => credentialsRefused(f.err) || tlsRefused(f.err));

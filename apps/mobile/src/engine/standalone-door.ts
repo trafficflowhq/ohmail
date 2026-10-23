@@ -8,7 +8,7 @@
  * password passes through into `imap.auth.pass` and nowhere else — no log, no refusal
  * argument, no mirror; only the engine may keep it, sealed under `kek.ts`'s key ring.
  */
-import { portMeansImplicitTls } from "@ohmail/client-engine";
+import { asAuthHint, authHintPreset, portMeansImplicitTls, type AuthHint } from "@ohmail/client-engine";
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { EngineLogSink } from "./engine-log";
@@ -462,6 +462,32 @@ export function certificateKindOf(err: unknown): CertificateKind | null {
 }
 
 /**
+ * WHY THE PROVIDER REFUSED THE SIGN-IN — the engine's `authHint` stamp (a closed word, on a refused
+ * sign-in at a host whose provider says why), read like the flags (cause walk, hop bound); `null`
+ * where it stamped none or a word outside the set.
+ */
+export function authHintOf(err: unknown): AuthHint | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const hint = asAuthHint((e as Record<string, unknown>).authHint);
+    if (hint !== null) return hint;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+/** A hinted refusal's sentence, its provider's names from the table and never from this file. */
+function authHintRefusal(hint: AuthHint): Refusal {
+  const preset = authHintPreset();
+  const account = preset.account ?? preset.label;
+  switch (hint) {
+    case "app_password_required": return refuse("standaloneAuthAppOnly", preset.label, account);
+    case "invalid": return refuse("standaloneAuthInvalid", preset.label, account);
+    case "web_login": return refuse("standaloneAuthWebLogin", preset.label, account);
+    case "imap_disabled": return refuse("standaloneAuthImapDisabled", preset.label, account);
+  }
+}
+
+/**
  * THE INCOMING SERVER CONNECT COULD NOT SIGN IN TO — the engine's `incomingUnreachable` property:
  * a dial that failed for a reason other than a refused password or encryption, or no answer in time.
  */
@@ -533,7 +559,11 @@ export async function openStandaloneMailbox(
     if (outgoing === "auth") return { ok: false, reason: refuse("standaloneSmtpSignInRefused") };
     if (outgoing === "tls") return { ok: false, reason: refuse("standaloneSmtpNoEncryption") };
     if (outgoing === "unreachable") return { ok: false, reason: refuse("standaloneSmtpUnreachable") };
-    if (signInRefused(err)) return { ok: false, reason: refuse("standaloneSignInRefused") };
+    if (signInRefused(err)) {
+      /* The provider said why (`authHint`): its own sentence; else the generic one. */
+      const hint = authHintOf(err);
+      return { ok: false, reason: hint !== null ? authHintRefusal(hint) : refuse("standaloneSignInRefused") };
+    }
     /* Before the encryption arm: a refused certificate is encrypted, and "try port 993" is false.
        By kind where the platform said which, as the desktop says it. */
     if (certificateRefused(err)) return { ok: false, reason: certificateRefusal(certificateKindOf(err)) };

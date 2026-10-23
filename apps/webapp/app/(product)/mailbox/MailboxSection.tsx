@@ -29,7 +29,7 @@
  * no node and keeps the shared shell's fixture list.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   Button, SettingsActions, SettingsBanner, SettingsNote, SettingsRow, SettingsSection,
@@ -57,8 +57,12 @@ import {
   OAUTH_REASONS, beginOAuthReturn, noOAuthOutcome, oauthOutcome, subscribeOAuthOutcome,
   rememberOAuthOwner,
 } from "./oauth-return";
-import { hostsFor, providerById, providerLabel, type ProviderPreset } from "../../shell/providers";
-import { ProviderPicker } from "../../shell/ProviderPicker";
+import {
+  appPasswordPresetFor, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel,
+  type AuthHint, type ProviderPreset,
+} from "../../shell/providers";
+import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
+import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
 import {
   noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
@@ -117,6 +121,14 @@ interface EditForm {
   allowInsecure: boolean;
   /** The SMTP server's own opt-in, on the same rule. */
   allowInsecureSmtp: boolean;
+}
+
+/**
+ * DOES THIS MAILBOX SIGN IN WITH A GOOGLE APP PASSWORD — its stored preset, else its address. A
+ * refused password on it is said as an App Password ended by a Google password change.
+ */
+function signsInWithAppPassword(m: { provider: string; address: string }): boolean {
+  return providerById(m.provider).authHints === true || appPasswordPresetFor(m.address)?.authHints === true;
 }
 
 const emptyEdit = (): EditForm => ({
@@ -512,6 +524,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   const [parked, setParked] = useState<{ run: () => Promise<void>; back: Stage } | null>(null);
   const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Why Google refused the last connect or edit, when it said: its links ride that sentence. */
+  const [authHelp, setAuthHelp] = useState<AuthHint | null>(null);
   /**
    * The server said `tls_unavailable`: the ONLY state in which the plaintext opt-in renders.
    * Never set from anything the user typed — a checkbox that exists before the server has
@@ -1442,7 +1456,10 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
    */
   const probeErrorCopy = (err: unknown, reason: string): string => {
     const tls = probeTlsOf(err);
-    if (!tls || reason !== "tls") return t(`probe_${reason}`);
+    const hint = reason === "auth" ? refusalAuthHint(err) : null;
+    setAuthHelp(hint);
+    // Google's refused sign-in says why (`probe_auth_gmail_*`); every other reason, its own line.
+    if (!tls || reason !== "tls") return t(probeCopyKey(reason, false, refusalTransport(err), hint));
     const protocol = tls.transport === "smtp" ? "SMTP" : "IMAP";
     if (tls.kind === "tls_unavailable") {
       // A line for THIS protocol, only where the server said the host is on a private network.
@@ -1472,6 +1489,11 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     const key = keys[tls.kind];
     return key ? t(key) : t("probe_tls");
   };
+
+  /** Google's App Password links, under its sentence while that sentence is the one shown. */
+  const authLinksFor = (shown: string): ReactNode =>
+    authHelp !== null && authHintWantsLinks(authHelp) && shown === t(probeCopyKey("auth", false, "imap", authHelp))
+      ? <ProviderHelpLinks preset={authHintPreset()} /> : null;
 
   /**
    * Apply a canonical-host suggestion to the CONNECT form. The failing transport's field always
@@ -1931,6 +1953,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
   const [probeBad, setProbeBad] = useState<{
     reason: string | null; message: string; noPort: ReturnType<typeof noPortProbeSentence>;
+    /** Why Google refused the test's sign-in, or `null`. */
+    authHint?: AuthHint | null; transport?: "imap" | "smtp";
     /** A server with no TLS at all: the connect form's own sentence, never "certificate refused". */
     said?: string;
   } | null>(null);
@@ -1995,6 +2019,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
       const noTls = probeTlsOf(err)?.kind === "tls_unavailable";
       setProbeBad({
         reason: probeReasonOf(err), message: messageOf(err),
+        authHint: refusalAuthHint(err), transport: refusalTransport(err),
         // Opens this protocol's consent line where the server offers one, as the connect does.
         ...(noTls ? { said: probeErrorCopy(err, "tls") } : {}),
         // This verdict never rendered TLS kinds, so every certificate refusal takes the generic no-port sentence.
@@ -2313,7 +2338,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                 <span className="mbx-bad" title={errorTitle(m, now, t)}>
                   {(() => {
                     const errSaid = mailboxErrorKey(m.errorCode ?? null, m.errorDetail, m.storeRefusals,
-                      (r) => storeRefusalsFigure(r, (figure) => t("storeRefusalsFloor", { count: figure })));
+                      (r) => storeRefusalsFigure(r, (figure) => t("storeRefusalsFloor", { count: figure })),
+                      undefined, { appPassword: signsInWithAppPassword(m) });
                     return t(errSaid.key, errSaid.values);
                   })()}
                 </span>
@@ -2509,6 +2535,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
       ) : null}
 
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
+      {error ? authLinksFor(error) : null}
       {/* A factor came back after the prompt's Cancel and its write was thrown away. Not an alert —
           the person got what they asked for — but it must be SAID: the pane they return to looks
           exactly like one where nothing was ever started. */}
@@ -2761,8 +2788,10 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
               headline={probeBad.said ?? (probeBad.noPort
                 ? t(probeBad.noPort.key, { field: probeBad.noPort.field })
                 : probeBad.reason
-                  ? t(`probe_${probeBad.reason}` as "probe_auth")
+                  ? t(probeCopyKey(probeBad.reason, false, probeBad.transport, probeBad.authHint) as "probe_auth")
                   : probeBad.message)}
+              hint={probeBad.reason === "auth" && probeBad.transport !== "smtp" && probeBad.authHint
+                && authHintWantsLinks(probeBad.authHint) ? <ProviderHelpLinks preset={authHintPreset()} /> : undefined}
             />
           ) : null}
         </form>
@@ -2799,7 +2828,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
           <h3 className="acct-sub">{t("editTitle", { address: displayAddress(editing.address) })}</h3>
           {/* Says what an untouched field does, because a blank host box next to a working mailbox
               reads as "this will be erased" unless it says otherwise. */}
-          <p className="acct-fine">{t("editIntro")}</p>
+          <p className="acct-fine">{t(signsInWithAppPassword(editing) ? "editIntro_gmail" : "editIntro")}</p>
 
           <label className="join-label" htmlFor="mb-edit-pass">{t("passwordLabel")}</label>
           <input

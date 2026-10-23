@@ -75,6 +75,7 @@ import { SQLITE_JOURNAL } from "@ohmail/db-mail/sqlite-journal";
 import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap";
 import { startEngineVitals } from "../src/vitals.js";
+import { loadRefusals, type ProviderRefusal } from "../../../packages/core/test/adapters/_providershape.js";
 
 /* `node:sqlite` through `createRequire` for the reason the other suites state: this bundler's
    builtin list predates it, and a static import resolves the bare name to a package that is not
@@ -899,6 +900,34 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
          launch that dialled nothing. */
       expect(dial.connects, "the second press never opened a connection").toBeGreaterThan(0);
       expect(dial.configs[0]?.auth).toMatchObject({ user: ADDRESS, pass: TYPED });
+    }, 120_000);
+
+    /**
+     * GOOGLE'S REFUSED SIGN-IN IS STAMPED WITH WHY. The rethrown error carries `authHint`, a closed
+     * word the phone's door words in its own language; each corpus shape (`gmail.refusals.json`,
+     * synthetic) is thrown the way imapflow throws it. Control: the same throw from another host.
+     */
+    it("stamps authHint on a Google host's refused sign-in, and nowhere else", async () => {
+      const throwing = (r: ProviderRefusal) => ((cfg: ImapConfig) => ({
+        connect: async (): Promise<void> => {
+          throw Object.assign(new Error("Command failed"), {
+            authenticationFailed: true, serverResponseCode: r.code ?? undefined, responseText: r.text, host: cfg.host,
+          });
+        },
+        close: async (): Promise<void> => undefined,
+      })) as unknown as (cfg: ImapConfig) => MailboxAdapter;
+      for (const r of loadRefusals("gmail").refusals) {
+        for (const [host, hint] of [["imap.gmail.com", r.hint], ["imap.invalid", undefined]] as const) {
+          const err = await startPhoneEngine(deps(nodeExecutor(recorder(), onDisk()), {
+            adapterFactory: throwing(r),
+            imap: { host, port: 993, secure: true, auth: { user: ADDRESS, pass: "refused" } },
+            address: ADDRESS,
+            keks: RING,
+          })).then(() => null, (e: unknown) => e as { authHint?: unknown; authenticationFailed?: unknown });
+          expect(err?.authenticationFailed, `${r.case} on ${host}`).toBe(true);
+          expect(err?.authHint, `${r.case} on ${host}`).toBe(hint);
+        }
+      }
     }, 120_000);
 
     it("REFUSES a supplied-password launch whose stored row it cannot use, rather than handing back an engine", async () => {

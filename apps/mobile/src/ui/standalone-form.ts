@@ -9,7 +9,8 @@
  * carries it to the engine once — never logged, stamped into a refusal, or stored.
  */
 import {
-  holderIsLive, organizerSituation, portMeansImplicitTls, serverGuessFor, standingOf,
+  appPasswordPresetFor, authHintPreset, holderIsLive, organizerSituation, portMeansImplicitTls, serverGuessFor,
+  standingOf, type ProviderPreset,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 /* TYPE ONLY, so the session's module state does not travel into every consumer of this module.
@@ -140,6 +141,67 @@ export function setImapTls(fields: StandaloneFields, on: boolean): StandaloneFie
  */
 export function mayConnect(fields: StandaloneFields): boolean {
   return fields.address.trim().length > 0 && fields.password.length > 0;
+}
+
+/** A provider page the person may open, by their own press. The address is the table's, never this app's. */
+export interface ProviderLink {
+  readonly label: string;
+  readonly url: string;
+}
+
+/** A preset's links, its prerequisite first (2-Step Verification), then its App Passwords page. */
+function linksOf(preset: ProviderPreset): readonly ProviderLink[] {
+  const account = preset.account ?? preset.label;
+  return [
+    ...(preset.prereqUrl ? [{ label: Copy.standalonePrereqLink, url: preset.prereqUrl }] : []),
+    ...(preset.helpUrl ? [{ label: Copy.standaloneProviderHelpLink(account), url: preset.helpUrl }] : []),
+  ];
+}
+
+/**
+ * THE APP PASSWORD NOTE, BEFORE THE PRESS. A mailbox whose provider takes only an App Password (by
+ * its typed incoming host, else its address) is told so under the password field, with the two
+ * pages, before Connect: the field otherwise invites the account's own password, which can never
+ * work. `null` for every other mailbox. The sentence's names are the table's.
+ */
+export function appPasswordNote(
+  fields: Pick<StandaloneFields, "address" | "imapHost">,
+): { readonly text: string; readonly links: readonly ProviderLink[] } | null {
+  const preset = appPasswordPresetFor(fields.address, fields.imapHost);
+  if (preset === null || preset.authHints !== true) return null;
+  return { text: Copy.standaloneProviderNote(preset.label, preset.account ?? preset.label), links: linksOf(preset) };
+}
+
+/** The App Password provider this phone's mailbox is on, by its address, or `null`. */
+function appPasswordProvider(address: string): { provider: string; account: string } | null {
+  const preset = appPasswordPresetFor(address);
+  return preset !== null && preset.authHints === true
+    ? { provider: preset.label, account: preset.account ?? preset.label } : null;
+}
+
+/**
+ * SIGN IN AGAIN, SAID FOR THE MAILBOX IT IS ON. A changed account password ends every App Password,
+ * so on such a mailbox the sheet asks for a new App Password, not "the new password", which invites
+ * the account's own.
+ */
+export function signInAgainSaid(address: string): { readonly lead: string; readonly field: string } {
+  const on = appPasswordProvider(address);
+  return on === null
+    ? { lead: Copy.signInAgainLead, field: Copy.signInAgainField }
+    : { lead: Copy.signInAgainLeadProvider(on.provider, on.account), field: Copy.signInAgainFieldProvider };
+}
+
+/** The connection line on this phone's own mailbox: a refused sign-in on an App Password mailbox says so. */
+export function connectionLineHere(address: string, said: string): string {
+  const on = appPasswordProvider(address);
+  return said === Copy.connectionSignInRefused && on !== null
+    ? Copy.connectionSignInRefusedProvider(on.provider, on.account) : said;
+}
+
+/** The links a refusal carries: the App Password pages under a refused password the provider named. */
+export function refusalLinks(r: Refusal): readonly ProviderLink[] | null {
+  return r.say === "standaloneAuthAppOnly" || r.say === "standaloneAuthInvalid"
+    ? linksOf(authHintPreset()) : null;
 }
 
 /** The four server fields a refusal can be worn by. */

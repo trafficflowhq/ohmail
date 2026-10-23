@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/core/mail";
 import {
   ImapAdapter, ImapConnectionClosedError, WORKER_NET_TIMEOUTS, WriteDeclinedError, buildImapAuth,
-  isImapBoundExceeded, loopbackHarnessReason, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
+  isImapBoundExceeded, loopbackHarnessReason, googleAuthHint, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
   type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
 import { agreeSweepPass, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -3227,8 +3227,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           + "just stored was removed again, from the store and from this mailbox's memory, and "
           + "the press is answered with the refusal",
       });
-      // This engine dials every mailbox with the long wait, so a loopback host's refusal is said as its own.
-      throw launchRefused(refused, loopbackHarnessReason(rt.imap.host) !== null);
+      // This engine dials every mailbox with the long wait, so a loopback host's refusal is said as its own;
+      // Google's refused sign-in says why (`googleAuthHint`, its hosts only).
+      throw launchRefused(
+        refused, loopbackHarnessReason(rt.imap.host) !== null,
+        refused === "auth" ? googleAuthHint(within.err, rt.imap.host) : null,
+      );
     };
 
     /**

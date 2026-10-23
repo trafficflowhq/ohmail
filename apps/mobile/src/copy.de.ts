@@ -202,6 +202,30 @@ export const DE: Deck = {
   standaloneNoSmtpPort: "Der SMTP-Port ist eine ganze Zahl von 1 bis 65535.",
   standaloneSignInRefused:
     "Dein Mailserver hat diese Adresse und dieses Passwort nicht akzeptiert. Prüfe beides und versuche es erneut — es wurde nichts gespeichert.",
+  /* Die Absage eines Anbieters, der sagt warum; Namen aus der Anbietertabelle. Wort für Wort `mailboxes.probe_auth_<id>_*`. */
+  standaloneAuthAppOnly: (provider: string, account: string) =>
+    `${account} hat dein ${account}-Passwort abgelehnt: ${provider} meldet sich nur mit einem App-Passwort an. `
+    + "Schalte die Bestätigung in zwei Schritten ein, erstell dann ein App-Passwort mit einem beliebigen Namen und "
+    + "füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Arbeits-, Schul- und Advanced-Protection-Konten, "
+    + "die keines erstellen können, lassen sich noch nicht verbinden.",
+  standaloneAuthInvalid: (provider: string, account: string) =>
+    `${account} hat dieses Passwort nicht akzeptiert. ${provider} braucht ein App-Passwort, nicht dein `
+    + `${account}-Passwort: Erstell eines und füg hier seine 16 Buchstaben ein. Wenn du dein ${account}-Passwort `
+    + "änderst, enden alle App-Passwörter, danach brauchst du also ein neues.",
+  standaloneAuthWebLogin: (provider: string, account: string) =>
+    `${account} möchte diese Anmeldung zuerst in einem Webbrowser bestätigt haben. Melde dich einmal im Browser bei `
+    + `${provider} an und versuch es dann hier erneut. Das Passwort kann richtig sein.`,
+  standaloneAuthImapDisabled: (_provider: string, account: string) =>
+    `${account} meldet, dass IMAP für dieses Konto ausgeschaltet ist. Eine Administratorin oder ein Administrator `
+    + `schaltet es in der ${account} Admin-Konsole ein; versuch es danach erneut. Das Passwort kann richtig sein.`,
+  standaloneProviderNote: (provider: string, account: string) =>
+    `${provider} meldet sich nur mit einem App-Passwort an, nicht mit deinem ${account}-Passwort. Schalte zuerst die `
+    + "Bestätigung in zwei Schritten ein, sonst sagt die Seite App-Passwörter, dass sie nicht verfügbar sind. Gib dem "
+    + "App-Passwort einen beliebigen Namen und füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Manche "
+    + "Arbeits-, Schul- und Advanced-Protection-Konten können keine App-Passwörter erstellen; die kann ohmail noch "
+    + "nicht verbinden.",
+  standaloneProviderHelpLink: (account: string) => `${account} App-Passwörter`,
+  standalonePrereqLink: "Bestätigung in zwei Schritten einschalten",
   standaloneNoEncryption:
     "Dein Mailserver bietet auf diesem Port keine verschlüsselte Verbindung, und ohmail sendet dein Passwort nicht im Klartext. Versuche Port 993 in den Servereinstellungen.",
   /* Ein abgelehntes Zertifikat in den Worten der Web-App (`mailboxes.probe_tls*`), nach dem Grund. */
@@ -1814,6 +1838,13 @@ export const DE: Deck = {
   signInAgainLead:
     "Hast du das Passwort dieses Postfachs bei deinem Anbieter geändert? Gib ohmail das neue. Die Mails, die schon auf diesem Handy sind, bleiben, wo sie sind.",
   signInAgainField: "Neues Passwort",
+  signInAgainLeadProvider: (_provider: string, account: string) =>
+    `Hast du dein ${account}-Passwort geändert? Das beendet alle App-Passwörter: Erstell ein neues App-Passwort `
+    + "und gib es ohmail hier. Die Mails, die schon auf diesem Handy sind, bleiben, wo sie sind.",
+  signInAgainFieldProvider: "Neues App-Passwort",
+  connectionSignInRefusedProvider: (provider: string, account: string) =>
+    `${account} hat die Anmeldung abgelehnt. ${provider} braucht ein App-Passwort, und wenn du dein `
+    + `${account}-Passwort änderst, enden alle App-Passwörter: Erstell ein neues und wähl „Erneut anmelden“.`,
   signInAgainHint: "Wird auf diesem Handy versiegelt und nur an den eigenen Server dieses Postfachs gesendet.",
   signInAgainSave: "Speichern und anmelden",
   signInAgainSaving: "Anmeldung läuft…",

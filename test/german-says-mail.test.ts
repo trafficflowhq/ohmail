@@ -56,12 +56,19 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "providerPicker.note_yahoo": "the Yahoo account's security page and its password",
   "providerPicker.note_infomaniak": "the Infomaniak account's two-factor setting",
   "providerPicker.help_yahoo": "the name of Yahoo's own account security page",
+  "providerPicker.note_gmail": "Google accounts that cannot create App Passwords",
+  "mailboxes.probe_auth_gmail_app_password_required": "Google accounts that cannot create App Passwords",
+  "mailboxes.probe_auth_gmail_imap_disabled": "the Google account IMAP is turned off for",
 };
 
 /** The phone's twins of the two forwarded-mail sentences above. */
 const THIRD_PARTY_KONTO_PHONE = [
   "ohmail hat diese Nachricht als Kontobestätigung erkannt.",
   "ohmail hat diese Nachricht als Sicherheitswarnung zu einem Konto erkannt.",
+  /* The provider's accounts (the web's `note_gmail`, `probe_auth_gmail_*`), pieces of their templates. */
+  "füg hier seine 16 Buchstaben ein, mit oder ohne Leerzeichen. Arbeits-, Schul- und Advanced-Protection-Konten, ",
+  " meldet, dass IMAP für dieses Konto ausgeschaltet ist. Eine Administratorin oder ein Administrator ",
+  "Arbeits-, Schul- und Advanced-Protection-Konten können keine App-Passwörter erstellen; die kann ohmail noch ",
 ];
 
 /* Empty since the signup copy change landed: it rewrote the three join lines and the signup screens' Konto. */

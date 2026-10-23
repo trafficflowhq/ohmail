@@ -143,18 +143,58 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
       {selected ? (
         // Keyed by provider so switching re-runs the rise — the panel visibly answers
         // the click rather than silently swapping its text.
-        <div className="pvp-note" id={noteId} key={selected.id}>
-          {/* The preset's note and help label in the screen's language: the catalogue's
-              `note_<id>` and `help_<id>`, whose English is held equal to the engine table's. */}
-          <p>{note ?? t(`note_${selected.id}` as Parameters<typeof t>[0])}</p>
-          {showHelp && selected.helpUrl ? (
-            <a href={selected.helpUrl} target="_blank" rel="noreferrer noopener">
-              {t(`help_${selected.id}` as Parameters<typeof t>[0])}
-              <Icon name="open" size={11} />
-            </a>
-          ) : null}
-        </div>
+        <ProviderNote key={selected.id} preset={selected} id={noteId} note={note} showHelp={showHelp} />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * THE PRESET'S NOTE, on its own: what to fetch from the provider before typing a password. Drawn by the
+ * picker and by every surface that shows a chosen provider without it (FirstRun's guided choice), so a
+ * Gmail user reads "App Password, not your Google password" before the first press wherever they are.
+ * The preset's note and links in the screen's language: the catalogue's `note_<id>`, `help_<id>` and
+ * `prereq_<id>`, whose English is held equal to the engine table's.
+ */
+export function ProviderNote({ preset, id, note, showHelp = true }: {
+  preset: ProviderPreset;
+  id?: string;
+  /** See {@link ProviderPicker}'s `note`. */
+  note?: string;
+  /** See {@link ProviderPicker}'s `showHelp`; also drops the prerequisite link. */
+  showHelp?: boolean;
+}) {
+  const t = useTranslations("providerPicker");
+  return (
+    <div className="pvp-note" id={id}>
+      <p>{note ?? t(`note_${preset.id}` as Parameters<typeof t>[0])}</p>
+      {showHelp ? <ProviderHelpLinks preset={preset} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The preset's own links — its prerequisite first (Google: 2-Step Verification), then its App
+ * Passwords page — as anchors, opened only by the person's own click. Phrasing content, so it sits in
+ * a refusal's hint line as well as in the note. Nothing for a preset with neither.
+ */
+export function ProviderHelpLinks({ preset }: { preset: ProviderPreset }) {
+  const t = useTranslations("providerPicker");
+  if (!preset.helpUrl && !preset.prereqUrl) return null;
+  return (
+    <span className="pvp-links">
+      {preset.prereqUrl ? (
+        <a href={preset.prereqUrl} target="_blank" rel="noreferrer noopener">
+          {t(`prereq_${preset.id}` as Parameters<typeof t>[0])}
+          <Icon name="open" size={11} />
+        </a>
+      ) : null}
+      {preset.helpUrl ? (
+        <a href={preset.helpUrl} target="_blank" rel="noreferrer noopener">
+          {t(`help_${preset.id}` as Parameters<typeof t>[0])}
+          <Icon name="open" size={11} />
+        </a>
+      ) : null}
+    </span>
   );
 }

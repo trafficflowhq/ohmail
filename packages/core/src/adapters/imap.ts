@@ -65,6 +65,7 @@ import {
   type MimeStructure,
 } from "../mail.js";
 import { structureOf } from "./imap-structure.js";
+import { googleAppPassword } from "./google-auth.js";
 import {
   WATCHED_FOLDERS, OHMAIL_FOLDERS, DEFAULT_NET_TIMEOUTS, DEFAULT_SENT_SCAN_MESSAGES,
   DEFAULT_SENT_HISTORY_MESSAGES,
@@ -132,6 +133,8 @@ export * from "./imap-bounds.js";
 // The shared credential→auth builder lives beside the adapter and is reached through the same
 // entrypoint every dialer already imports, so no site has to reinvent the `authType` branch.
 export * from "./imap-auth.js";
+// …and Google's sign-in refusal hint and its App Password rule, pure, for the probe and both engines.
+export * from "./google-auth.js";
 
 /** ref === `${uidvalidity}:${uid}` */
 export function makeRef(uidValidity: bigint | number | string, uid: number): string { return `${uidValidity}:${uid}`; }
@@ -326,7 +329,8 @@ export function imapFlowOptions(
      * runs against the name, only the dialled address is fixed.
      */
     ...(pin ? { tls: { ...floor.tls, lookup: pinnedLookup(pin) } } : {}),
-    auth: config.auth, qresync: true, logger: opts.logger ? undefined : false,
+    // A Google App Password pasted in its four groups is dialled joined (`googleAppPassword`).
+    auth: googleDialAuth(config.host, config.auth), qresync: true, logger: opts.logger ? undefined : false,
     /* THE ONLY WAY TO SEE THE SERVER TALK WITHOUT WAITING FOR A COMMAND TO FINISH.
        `on("response")` fires only for TAGGED responses (`imap-flow.js:704-718`), i.e. command
        completion, so a 45-second FETCH emits nothing until its last line; `emitLogs` emits one
@@ -357,6 +361,16 @@ export function imapFlowOptions(
  */
 function dialPin(pin: readonly string[] | undefined): readonly string[] | undefined {
   return pin !== undefined && pin.length > 0 ? pin : undefined;
+}
+
+/**
+ * The wire auth for a host: a password auth on a Google host goes through {@link googleAppPassword},
+ * every other auth is returned as it came, the same object. One dial, one spelling: never both.
+ */
+function googleDialAuth<A extends { user: string; pass?: string } | { user: string; accessToken: string }>(host: string, auth: A): A {
+  if (!("pass" in auth) || typeof auth.pass !== "string") return auth;
+  const pass = googleAppPassword(host, auth.pass);
+  return pass === auth.pass ? auth : { ...auth, pass };
 }
 
 /** Is this the OAuth2 (callback-carrying) auth member? */
@@ -402,7 +416,7 @@ export function smtpTransportOptions(config: ImapConfig): SMTPTransport.Options 
     ...smtpTlsFloor(smtp.host, smtp.secure, smtp.allowInsecure === true).options,
     // The pinned `localhost` keeps its name for the certificate, as the floor's own pin does.
     ...(named ? { servername: "localhost" } : {}),
-    auth: smtp.auth,
+    auth: smtp.auth ? googleDialAuth(smtp.host, smtp.auth) : smtp.auth,
     connectionTimeout: t.connectionMs, greetingTimeout: t.greetingMs, socketTimeout: t.socketMs,
     // A send passes bytes, so no field may name a file or URL (nodemailer-transport-access-census).
     disableFileAccess: true,
@@ -657,8 +671,8 @@ export async function learnSmtpMaxSize(input: {
  * `serviceClient`, `generateToken` refuses locally, no request reaches any token endpoint, and
  * the refusal surfaces as `EAUTH` → `auth_refused`: the honest answer.
  */
-function loginAuth(auth: SmtpSizeDialAuth): Parameters<SMTPConnection["login"]>[0] {
-  if ("pass" in auth) return { user: auth.user, pass: auth.pass };
+function loginAuth(auth: SmtpSizeDialAuth, host: string): Parameters<SMTPConnection["login"]>[0] {
+  if ("pass" in auth) return { user: auth.user, pass: googleAppPassword(host, auth.pass) };
   const oauth2 = new XOAuth2({ user: auth.user, accessToken: auth.accessToken });
   return {
     type: "OAUTH2", user: auth.user, method: "XOAUTH2", oauth2,
@@ -730,7 +744,7 @@ export async function verifySmtpLogin(
       // would refuse a submission endpoint that works.
       const allowsAuth = (connection as unknown as { allowsAuth?: boolean }).allowsAuth !== false;
       if (!allowsAuth) return settleOk();
-      connection.login(loginAuth(smtp.auth), (err) => {
+      connection.login(loginAuth(smtp.auth, smtp.host), (err) => {
         if (err) return settleErr(err);
         settleOk();
       });

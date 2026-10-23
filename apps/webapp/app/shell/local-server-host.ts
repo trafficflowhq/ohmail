@@ -1,3 +1,5 @@
+import { asAuthHint, type AuthHint } from "./providers";
+
 /**
  * IS THIS HOST THIS COMPUTER? The client's copy of `loopbackHarnessReason` (core `imap-types.ts`):
  * 127.0.0.0/8, ::1 (`[::1]` too, which the engine dials at ::1) and the exact name `localhost`,
@@ -34,10 +36,25 @@ export function refusalTransport(err: unknown): "imap" | "smtp" {
 }
 
 /**
- * The `mailboxes.probe_*` key: a local server's own sentence for `auth`, and for `timeout` on the
- * incoming leg only — the two-minute wait is that leg's; the submission leg keeps its 20 s.
+ * WHY GOOGLE REFUSED THE SIGN-IN (`details.authHint`, stamped by the service on an incoming `auth`
+ * refusal from one of its hosts), or `null`. Structural like the two above; a word outside the
+ * closed set is no hint, so an older or newer server degrades to the generic sentence.
  */
-export function probeCopyKey(reason: string, localServer: boolean, transport: "imap" | "smtp" = "imap"): string {
+export function refusalAuthHint(err: unknown): AuthHint | null {
+  const e = err as { code?: unknown; details?: unknown } | null | undefined;
+  if (typeof e !== "object" || e === null || e.code !== "mailbox_probe_failed") return null;
+  return asAuthHint((e.details as { authHint?: unknown } | null | undefined)?.authHint);
+}
+
+/**
+ * The `mailboxes.probe_*` key: a local server's own sentence for `auth`, and for `timeout` on the
+ * incoming leg only — the two-minute wait is that leg's; the submission leg keeps its 20 s. Google's
+ * refused sign-in says its own (`probe_auth_gmail_<hint>`), the incoming leg only.
+ */
+export function probeCopyKey(
+  reason: string, localServer: boolean, transport: "imap" | "smtp" = "imap", authHint?: AuthHint | null,
+): string {
+  if (reason === "auth" && transport === "imap" && !localServer && authHint) return `probe_auth_gmail_${authHint}`;
   const own = reason === "auth" || (reason === "timeout" && transport === "imap");
   return localServer && own ? `probe_${reason}_local` : `probe_${reason}`;
 }

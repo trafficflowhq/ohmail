@@ -30,9 +30,10 @@ import {
   messageOf, webauthnAvailable,
   type MailboxDTO,
 } from "../../api-client";
-import { hostsFor, providerById, type ProviderPreset } from "../../shell/providers";
+import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint, type ProviderPreset } from "../../shell/providers";
 import { displayAddress } from "../../shell/idn";
-import { ProviderPicker } from "../../shell/ProviderPicker";
+import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
+import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
 import { QrCode } from "../../shell/QrCode";
 import { addressSuggestion } from "./address-hint";
 import { noPortProbeSentence, plaintextOfferOf, probeReasonOf } from "../../shell/probe-refusal";
@@ -197,6 +198,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
    */
   const [offer, setOffer] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
   const [plain, setPlain] = useState<{ imap: boolean; smtp: boolean }>({ imap: false, smtp: false });
+  /** Why Google refused the last connect, when it said: the App Password links ride its sentence. */
+  const [authHelp, setAuthHelp] = useState<AuthHint | null>(null);
   const retireConsent = (): void => {
     setOffer({ imap: false, smtp: false });
     setPlain({ imap: false, smtp: false });
@@ -705,7 +708,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     if (said) return tm(said.key, { field: said.field });
     // The reasons whose sentence names no port: the Settings pane's own lines, in the reader's language.
     const reason = probeReasonOf(err);
-    if (reason === "auth" || reason === "storage" || reason === "sync" || reason === "unknown") return tm(`probe_${reason}`);
+    // Google's refused sign-in says why (`probe_auth_gmail_*`); every other auth, the pane's own line.
+    const hint = reason === "auth" ? refusalAuthHint(err) : null;
+    setAuthHelp(hint);
+    if (reason === "auth") return tm(probeCopyKey(reason, false, refusalTransport(err), hint) as "probe_auth");
+    if (reason === "storage" || reason === "sync" || reason === "unknown") return tm(`probe_${reason}`);
     return null;
   };
 
@@ -756,8 +763,15 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
 
   /* The mailbox step's refusal sits beside Connect, and is brought into view and focused. */
   const mailboxRefusalAt = useRefusalAtThePress<HTMLParagraphElement>(step === "mailbox" ? error : null);
+  /* The App Password links under Google's sentence, while that sentence is the one on screen. */
+  const authLinks = authHelp !== null && authHintWantsLinks(authHelp)
+    && error === tm(probeCopyKey("auth", false, "imap", authHelp) as "probe_auth")
+    ? <ProviderHelpLinks preset={authHintPreset()} /> : null;
   const mailboxRefusal = error ? (
-    <p ref={mailboxRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
+    <>
+      <p ref={mailboxRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
+      {authLinks}
+    </>
   ) : null;
   const suggestedAddress = step === "account" ? addressSuggestion(email.trim()) : null;
 

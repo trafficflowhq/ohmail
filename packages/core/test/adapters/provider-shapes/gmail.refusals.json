@@ -1,0 +1,51 @@
+{
+  "kind": "ohmail-provider-refusals",
+  "version": 1,
+  "provider": "gmail",
+  "presetId": "gmail",
+  "source": {
+    "kind": "synthetic",
+    "from": [
+      "GMAIL-SETUP-AUDIT 2026-10-23: the tagged NO a Google sign-in is believed to answer, per refusal; the wording is Google's as published in help threads, not a recording"
+    ],
+    "owed": "GMAIL-LIVE-UNTESTED"
+  },
+  "refusals": [
+    {
+      "case": "google_password",
+      "status": "NO",
+      "code": "ALERT",
+      "text": "Application-specific password required: https://support.google.com/accounts/answer/185833 (Failure)",
+      "hint": "app_password_required"
+    },
+    {
+      "case": "webalert",
+      "status": "NO",
+      "code": "WEBALERT",
+      "codeArg": "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=synthetic",
+      "text": "Web login required.",
+      "hint": "web_login"
+    },
+    {
+      "case": "web_browser",
+      "status": "NO",
+      "code": "ALERT",
+      "text": "Please log in via your web browser: https://support.google.com/mail/accounts/answer/78754 (Failure)",
+      "hint": "web_login"
+    },
+    {
+      "case": "imap_disabled",
+      "status": "NO",
+      "code": "ALERT",
+      "text": "Your account is not enabled for IMAP use. Please visit your Gmail settings page and enable your account for IMAP access. (Failure)",
+      "hint": "imap_disabled"
+    },
+    {
+      "case": "invalid_credentials",
+      "status": "NO",
+      "code": "AUTHENTICATIONFAILED",
+      "text": "Invalid credentials (Failure)",
+      "hint": "invalid"
+    }
+  ]
+}

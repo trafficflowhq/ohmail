@@ -33,6 +33,7 @@ describe("the catalogue carries every preset's note and help label", () => {
     for (const p of PROVIDERS) {
       expect(pp(en)[`note_${p.id}`], p.id).toBe(p.note);
       if (p.helpUrl) expect(pp(en)[`help_${p.id}`], p.id).toBe(p.helpLabel);
+      if (p.prereqUrl) expect(pp(en)[`prereq_${p.id}`], p.id).toBe(p.prereqLabel);
     }
   });
 
@@ -45,20 +46,39 @@ describe("the catalogue carries every preset's note and help label", () => {
         expect(pp(de)[`help_${p.id}`], p.id).toBeTruthy();
         expect(pp(de)[`help_${p.id}`], p.id).not.toBe(p.helpLabel);
       }
+      if (p.prereqUrl) {
+        expect(pp(de)[`prereq_${p.id}`], p.id).toBeTruthy();
+        expect(pp(de)[`prereq_${p.id}`], p.id).not.toBe(p.prereqLabel);
+      }
     }
   });
 
   it("no key for a preset the table does not have", () => {
     const ids = new Set(PROVIDERS.map((p) => p.id));
     for (const m of [en, de]) {
-      for (const key of Object.keys(pp(m)).filter((k) => /^(note|help)_/.test(k))) {
-        expect(ids.has(key.replace(/^(note|help)_/, "")), key).toBe(true);
+      for (const key of Object.keys(pp(m)).filter((k) => /^(note|help|prereq)_/.test(k))) {
+        expect(ids.has(key.replace(/^(note|help|prereq)_/, "")), key).toBe(true);
       }
     }
   });
 });
 
 describe("the picker says it in German", () => {
+  it("Gmail selected: the German note and both German links, prerequisite first", async () => {
+    const { ProviderPicker } = await import("../app/shell/ProviderPicker.js");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(React.createElement(NextIntlClientProvider, {
+        locale: "de", messages: de, timeZone: "UTC",
+        children: React.createElement(ProviderPicker, { value: "gmail", onChange: () => {} }),
+      }));
+    });
+    expect(host.textContent ?? "").toContain(pp(de).note_gmail);
+    expect([...host.querySelectorAll(".pvp-note a")].map((a) => a.textContent)).toEqual([pp(de).prereq_gmail, pp(de).help_gmail]);
+  });
+
   it("GMX selected: the German note and the German help label", async () => {
     const { ProviderPicker } = await import("../app/shell/ProviderPicker.js");
     host = document.createElement("div");

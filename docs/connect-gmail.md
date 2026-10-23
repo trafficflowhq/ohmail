@@ -11,7 +11,7 @@ create for ohmail and can revoke at any time.
    [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
    Give it any name, for example `ohmail`. Google shows 16 letters.
 3. **In ohmail**, choose Gmail, enter your Gmail address, and paste the 16
-   letters as the password (without the spaces), not your Google password.
+   letters as the password (with or without the spaces), not your Google password.
 
 The same works for Google Workspace on your own domain: choose Gmail and use
 your full work address.

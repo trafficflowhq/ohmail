@@ -39,11 +39,11 @@ pub const SURFACE_ID_MAX: usize = 64;
 
 /// THE SHELL'S OWN LINKS: the constant addresses the window draws as links that no message
 /// supplied — each mail provider's app-password help page (`helpUrl` in
-/// `packages/client-engine/src/providers.ts`, shown by the door chooser's provider picker), in
-/// `URL.href` form. `desktop-rendered-links.test.tsx` holds this list equal to that file's. The web
+/// `packages/client-engine/src/providers.ts`, shown by the door chooser's provider picker) and the
+/// page that must be on before it (`prereqUrl`: Google's 2-Step Verification), in `URL.href` form. `desktop-rendered-links.test.tsx` holds this list equal to that file's. The web
 /// client's self-host guide is not here: the desktop window draws no link to it, and a
 /// `github.com/trafficflowhq` address in the binary is one `build.yml`'s first-party list refuses.
-pub const OWN_LINKS: [&str; 7] = [
+pub const OWN_LINKS: [&str; 8] = [
     "https://myaccount.google.com/apppasswords",
     "https://support.microsoft.com/account-billing/manage-app-passwords-for-two-step-verification-d6dc8c6d-4bf7-4851-ad95-6d07799387e9",
     "https://account.apple.com/account/manage",
@@ -51,6 +51,7 @@ pub const OWN_LINKS: [&str; 7] = [
     "https://app.fastmail.com/settings/security/apppasswords",
     "https://support.gmx.com/pop-imap/imap/index.html",
     "https://www.infomaniak.com/en/support/faq/2224",
+    "https://myaccount.google.com/signinoptions/twosv",
 ];
 
 /// The sentence a window hears for an address that is not a link on screen, in

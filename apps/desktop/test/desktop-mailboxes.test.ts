@@ -4459,6 +4459,27 @@ describe("the row takes a new password without the mailbox being removed", () =>
     expect(named(el, copy.signInAgainAction!)).toHaveLength(1);
   });
 
+  it("a Google mailbox's refusal says a changed Google password ends its App Password, and asks for a new one", async () => {
+    // Joined at run time: the address is the preset's domain, and no address literal sits in the tree.
+    FACTS = [{ ...MAILBOX, address: ["mila", "gmail.com"].join("@") }];
+    bridgeReply = () => reach({ signInRefused: true });
+    const el = await render("local");
+    expect(el.textContent).toContain(copy.desktopStateSignInRefused_gmail!);
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    expect(el.textContent).toContain(copy.signInAgainWhy_gmail!);
+    expect(el.textContent).toContain(copy.signInAgainPassword_gmail!);
+  });
+
+  it("control: another mailbox's refusal and form say what they said", async () => {
+    FACTS = [MAILBOX];
+    bridgeReply = () => reach({ signInRefused: true });
+    const el = await render("local");
+    expect(el.textContent).not.toContain(copy.desktopStateSignInRefused_gmail!);
+    await act(async () => { named(el, copy.signInAgainAction!)[0]!.click(); });
+    expect(el.textContent).toContain(copy.signInAgainWhy!);
+    expect(el.textContent).not.toContain(copy.signInAgainWhy_gmail!);
+  });
+
   it("offers it before the refusal too, because the password changes first", async () => {
     /* A person changes the password at the provider and THEN the server starts refusing. A
        control that appeared only after the refusal would arrive a sync too late. */

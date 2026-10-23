@@ -343,6 +343,30 @@ const TABLE = {
   standaloneNoSmtpPort: "The SMTP port is a whole number from 1 to 65535.",
   standaloneSignInRefused:
     "Your mail server would not accept that address and password. Check them and try again — nothing has been saved.",
+  /* A provider whose refused sign-in says why (`authHint`): its name and its account's come from the
+     provider table, never from this deck. The web's `mailboxes.probe_auth_<id>_*`, word for word. */
+  standaloneAuthAppOnly: (provider: string, account: string) =>
+    `${account} refused your ${account} password: ${provider} signs in only with an App Password. Turn on 2-Step `
+    + "Verification, then create an App Password with any name and paste its 16 letters here, with or without the "
+    + "spaces. Work, school and Advanced Protection accounts that cannot create one cannot connect yet.",
+  standaloneAuthInvalid: (provider: string, account: string) =>
+    `${account} did not accept that password. ${provider} needs an App Password, not your ${account} password: `
+    + `create one and paste its 16 letters here. Changing your ${account} password ends every App Password, so a `
+    + "new one is needed after that.",
+  standaloneAuthWebLogin: (provider: string, account: string) =>
+    `${account} wants this sign-in confirmed in a web browser first. Sign in to ${provider} in a browser once, `
+    + "then try again here. The password may be right.",
+  standaloneAuthImapDisabled: (_provider: string, account: string) =>
+    `${account} says IMAP is turned off for this account. An administrator turns it on in the ${account} Admin `
+    + "console; then try again. The password may be right.",
+  /* The provider's note before the press, and its two links, from the table (the web's `note_<id>`). */
+  standaloneProviderNote: (provider: string, account: string) =>
+    `${provider} signs in only with an App Password, not your ${account} password. Turn on 2-Step Verification `
+    + "first, or the App Passwords page says it is not available. Give the App Password any name, then paste its "
+    + "16 letters here, with or without the spaces. Some work, school and Advanced Protection accounts cannot "
+    + "create App Passwords; ohmail cannot connect those yet.",
+  standaloneProviderHelpLink: (account: string) => `${account} App Passwords`,
+  standalonePrereqLink: "Turn on 2-Step Verification",
   standaloneNoEncryption:
     "Your mail server offers no encrypted connection on that port, and ohmail will not send your password in the clear. Try port 993 in Server settings.",
   /* A refused certificate in the desktop's own words (`mailbox-service.ts`), by why where the phone
@@ -2704,6 +2728,15 @@ const TABLE = {
   signInAgainLead:
     "Changed this mailbox's password at your provider? Give ohmail the new one. The mail already on this phone stays where it is.",
   signInAgainField: "New password",
+  /* The same, on a mailbox whose provider takes only an App Password: a changed account password
+     ends every App Password, so the new one is an App Password. Names from the provider table. */
+  signInAgainLeadProvider: (_provider: string, account: string) =>
+    `Changed your ${account} password? That ends every App Password: create a new App Password and give it to `
+    + "ohmail here. The mail already on this phone stays where it is.",
+  signInAgainFieldProvider: "New App Password",
+  connectionSignInRefusedProvider: (provider: string, account: string) =>
+    `${account} refused the sign-in. ${provider} needs an App Password, and changing your ${account} password ends `
+    + "every App Password: create a new one and choose Sign in again.",
   signInAgainHint: "Sealed on this phone and sent only to this mailbox's own server.",
   signInAgainSave: "Save and sign in",
   signInAgainSaving: "Signing in…",

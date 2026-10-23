@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { resolveCname as dnsResolveCname } from "node:dns/promises";
 import { type MailboxErrorCode } from "@trafficflow/db";
 import {
-  ImapAdapter, buildImapAuth, loopbackHarnessReason, verifySmtpLogin,
-  type ImapConfig, type NetTimeouts, type SmtpLoginProof,
+  ImapAdapter, buildImapAuth, googleAuthHint, loopbackHarnessReason, verifySmtpLogin,
+  type GoogleAuthHint, type ImapConfig, type NetTimeouts, type SmtpLoginProof,
 } from "@trafficflow/core/adapters/imap";
 import { MAIL_DIAL_PORTS, MAX_PINNED_ADDRESSES, MailDialRefusal, clearMailDial } from "@trafficflow/core/net";
 import {
@@ -150,8 +150,11 @@ export function probeHostGuardFor(deps: ApiDeps): ProbeHostGuard {
 export type ImapProbeVerdict =
   | { verdict: "ok"; proven?: ProvenEndpoint; folders?: number }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
-  /** `localServer`: refused by a server on this computer, dialled under the local wait. */
-  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true };
+  /**
+   * `localServer`: refused by a server on this computer, dialled under the local wait. `authHint`:
+   * why Google refused the sign-in, on an `auth` refusal from one of its hosts only.
+   */
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true; authHint?: GoogleAuthHint };
 
 /**
  * What the probe is asked to try — a union, because there are two kinds of credential. `pass` is
@@ -281,7 +284,12 @@ class ProbeDeadlineExceeded extends Error {
  * close-before-release ordering). Dialling by hand compiles, classifies correctly, and silently
  * has none of them.
  */
-export function verdictFor(err: unknown): ImapProbeVerdict {
+export function verdictFor(err: unknown, host?: string): ImapProbeVerdict {
+  // Google's reason, closed and on its hosts only; never the server's text. No host, no hint.
+  const auth = (): ImapProbeVerdict => {
+    const authHint = host === undefined ? null : googleAuthHint(err, host);
+    return authHint === null ? { verdict: "refuse", code: "auth" } : { verdict: "refuse", code: "auth", authHint };
+  };
   // ── ABOVE THE FLAG: what the server, or the socket, NAMED. ──────────────────────────────
   const server = responseCodeOf(err);
   if (SERVER_BUSY_RESPONSE_CODES.has(server)) return { verdict: "store_unverified", code: "connect" };
@@ -307,17 +315,17 @@ export function verdictFor(err: unknown): ImapProbeVerdict {
   }
 
   // ── THE FLAG: "the LOGIN command did not succeed", and nothing above it explained why. ──
-  if ((err as ErrorShape | null)?.authenticationFailed === true) return { verdict: "refuse", code: "auth" };
+  if ((err as ErrorShape | null)?.authenticationFailed === true) return auth();
 
   // ── BELOW THE FLAG: reachable only for a throw that carried no flag at all. ─────────────
   if (server === "AUTHENTICATIONFAILED" || server === "AUTHORIZATIONFAILED") {
-    return { verdict: "refuse", code: "auth" };
+    return auth();
   }
   const message = typeof (err as ErrorShape | null)?.message === "string"
     ? String((err as ErrorShape).message) : "";
   if (/\b(authentication|login|credentials|password)\b.*\b(fail|refus|reject|invalid|denied)/i.test(message)
     || /\b(invalid|incorrect)\b.*\b(credentials|password|login)\b/i.test(message)) {
-    return { verdict: "refuse", code: "auth" };
+    return auth();
   }
 
   // A throw nobody can name is NOT permission to store. The message says we could not tell,
@@ -756,7 +764,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
 
         if (isStarttlsUnavailable(r.err)) { starttlsAbsent = true; continue; }
 
-        const v = verdictFor(r.err);
+        const v = verdictFor(r.err, input.imap.host);
         // Contact was made and the server declined to serve RIGHT NOW — positive evidence for
         // exactly this combination, so it is the one stored. No later rung could learn more.
         if (v.verdict === "store_unverified") {
@@ -804,7 +812,7 @@ export function makeImapProbe(deps: ApiDeps, opts: ImapProbeOptions = {}): (i: I
           return { verdict: "ok", proven: { host: input.imap.host, port, secure: false, insecure: true } };
         }
         if (!r.timedOut) {
-          const v = verdictFor(r.err);
+          const v = verdictFor(r.err, input.imap.host);
           if (v.verdict === "store_unverified") {
             return { ...v, proven: { host: input.imap.host, port, secure: false, insecure: true } };
           }

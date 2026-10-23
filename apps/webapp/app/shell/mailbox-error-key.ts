@@ -46,10 +46,16 @@ export function mailboxErrorKey(
   figure?: (r: StoreRefusals) => string,
   /** The engine's own reading: the server behind this `auth`/`timeout` is on this computer. */
   localServer?: boolean,
+  /**
+   * `appPassword`: the mailbox signs in with a Google App Password, so a refused password is said
+   * as one (changing the Google password ends every App Password) rather than as any password.
+   */
+  opts: { appPassword?: boolean } = {},
 ): ErrorSentence {
   const detail = errorDetail ? DETAIL_KEYS.get(errorDetail) : undefined;
   if (detail) return { key: detail };
   if (localServer === true && (errorCode === "auth" || errorCode === "timeout")) return { key: `err_${errorCode}_local` };
+  if (errorCode === "auth" && opts.appPassword === true) return { key: "err_auth_gmail" };
   if (errorCode === "storage" && refusals && refusals.count > 0 && figure) {
     const values = { count: figure(refusals), n: refusals.count };
     const capped = !refusals.exact || refusals.retrying < refusals.count;

@@ -139,3 +139,35 @@ export async function replayStatusOfMissing(shape: ProviderShape, path: string, 
   };
   return statusCommand(conn, path, query);
 }
+
+/**
+ * A PROVIDER'S SIGN-IN REFUSALS: `provider-shapes/<name>.refusals.json`, the tagged NO per case and
+ * the hint `googleAuthHint` must read from it. `synthetic` until a real mailbox recorded one (`owed`
+ * names the row). `code` and `text` are kept apart, the bracket never inside the text.
+ */
+export interface ProviderRefusal {
+  case: string; status: "NO"; code: string | null; codeArg?: string; text: string; hint: string;
+}
+export interface ProviderRefusals {
+  kind: "ohmail-provider-refusals"; version: 1; provider: string; presetId: string;
+  source: { kind: "synthetic" | "recorded"; from: string[]; owed?: string };
+  refusals: ProviderRefusal[];
+}
+
+export function loadRefusals(name: string): ProviderRefusals {
+  const r = JSON.parse(readFileSync(join(CORPUS_DIR, `${name}.refusals.json`), "utf8")) as ProviderRefusals;
+  if (r.kind !== "ohmail-provider-refusals" || r.version !== 1) throw new Error(`${name}: not v1 provider refusals`);
+  if (!r.source.from.length || (r.source.kind === "synthetic" && !r.source.owed)) {
+    throw new Error(`${name}: refusals name their source, and a synthetic set the row that owes a recording`);
+  }
+  for (const x of r.refusals) {
+    if (/[[\]]/.test(x.text)) throw new Error(`${name}/${x.case}: a bracket inside the text`);
+  }
+  return r;
+}
+
+/** The tagged line a refusal answers with. */
+export function refusalLine(tag: string, r: ProviderRefusal): string {
+  const code = r.code === null ? "" : ` [${r.code}${r.codeArg ? ` ${r.codeArg}` : ""}]`;
+  return `${tag} ${r.status}${code} ${r.text}`;
+}

@@ -4414,7 +4414,13 @@ input.set-tag-input {
   line-height: 1.6;
   color: var(--ink2);
 }
-.pvp-note a {
+.pvp-links {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 16px;
+}
+.pvp-note a,
+.pvp-links a {
   display: inline-flex;
   align-items: center;
   gap: 5px;

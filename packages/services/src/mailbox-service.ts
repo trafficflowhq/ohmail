@@ -419,8 +419,11 @@ export type MailboxProbeVerdict =
     folders?: number;
   }
   | { verdict: "store_unverified"; code: MailboxErrorCode; proven?: ProvenEndpoint }
-  /** `localServer`: the desktop door's probe dialled a server on this computer under its long wait. */
-  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true };
+  /**
+   * `localServer`: the desktop door's probe dialled a server on this computer under its long wait.
+   * `authHint`: why Google refused the sign-in ({@link GOOGLE_AUTH_REFUSAL}), on `auth` only.
+   */
+  | { verdict: "refuse"; code: MailboxErrorCode; tls?: ProbeTlsDetail; localServer?: true; authHint?: GoogleAuthHint };
 
 /**
  * The SMTP sibling of {@link MailboxProbeInput} — same discipline (plaintext password, so the
@@ -671,12 +674,41 @@ const LOCAL_PROBE_REFUSAL: Partial<Record<MailboxErrorCode, string>> = {
     + "finish what its own window asks for, then test again.",
 };
 
+/**
+ * Why Google refused a sign-in: core's `GoogleAuthHint`, spelled here because this module may not
+ * import the IMAP adapter (`mailbox-takeover.no-imap.test.ts`); `test/gmail-setup-copy.test.ts`
+ * holds the two lists equal.
+ */
+export type GoogleAuthHint = "app_password_required" | "web_login" | "imap_disabled" | "invalid";
+
+/**
+ * GOOGLE'S REFUSED SIGN-IN, by why (`googleAuthHint`, core). Gmail takes only an App Password, so
+ * each sentence says how to get one or why the password may be right; none quotes the server. The
+ * webapp's `probe_auth_gmail_*` and the phone's English are held equal to these.
+ */
+export const GOOGLE_AUTH_REFUSAL: Record<GoogleAuthHint, string> = {
+  app_password_required: "Google refused your Google password: Gmail signs in only with an App Password. "
+    + "Turn on 2-Step Verification, then create an App Password with any name and paste its 16 letters here, "
+    + "with or without the spaces. Work, school and Advanced Protection accounts that cannot create one "
+    + "cannot connect yet.",
+  invalid: "Google did not accept that password. Gmail needs an App Password, not your Google password: "
+    + "create one and paste its 16 letters here. Changing your Google password ends every App Password, "
+    + "so a new one is needed after that.",
+  web_login: "Google wants this sign-in confirmed in a web browser first. Sign in to Gmail in a browser "
+    + "once, then try again here. The password may be right.",
+  imap_disabled: "Google says IMAP is turned off for this account. An administrator turns it on in the "
+    + "Google Admin console; then try again. The password may be right.",
+};
+
 const probeRefused = (
   code: MailboxErrorCode, tls?: ProbeTlsDetail, transport: ProbeTransport = "imap", localServer = false,
+  authHint?: GoogleAuthHint,
 ): ServiceError => {
   const r = PROBE_REFUSAL[code];
+  const google = code === "auth" && transport === "imap" && !localServer && authHint !== undefined
+    && Object.hasOwn(GOOGLE_AUTH_REFUSAL, authHint) ? GOOGLE_AUTH_REFUSAL[authHint] : undefined;
   let message = code === "tls" && tls ? tlsRefusalMessage(tls, transport)
-    : (localServer ? LOCAL_PROBE_REFUSAL[code] : undefined) ?? r.message;
+    : google ?? (localServer ? LOCAL_PROBE_REFUSAL[code] : undefined) ?? r.message;
   // The base sentences were written for the connect (IMAP) flow; an SMTP refusal must not tell
   // the user to check an IMAP field that is fine.
   if (transport === "smtp" && !(code === "tls" && tls)) {
@@ -686,7 +718,10 @@ const probeRefused = (
   }
   return new ServiceError(
     "mailbox_probe_failed", r.status, message,
-    { reason: code, transport, ...(tls ? { tls } : {}), ...(localServer ? { localServer: true } : {}) },
+    {
+      reason: code, transport, ...(tls ? { tls } : {}), ...(localServer ? { localServer: true } : {}),
+      ...(google !== undefined ? { authHint } : {}),
+    },
     r.retryable,
   );
 };
@@ -696,8 +731,8 @@ const probeRefused = (
  * probe before it — the local door's "Sign in again" on a mailbox that never dialled. One sentence
  * per cause, so the field shows what a refused probe would have shown.
  */
-export const launchRefused = (code: "auth" | "tls", localServer = false): ServiceError =>
-  probeRefused(code, undefined, "imap", localServer);
+export const launchRefused = (code: "auth" | "tls", localServer = false, authHint?: GoogleAuthHint | null): ServiceError =>
+  probeRefused(code, undefined, "imap", localServer, authHint ?? undefined);
 
 /**
  * A credential write reached a write path with no probe to try it with.
@@ -1294,7 +1329,9 @@ export class MailboxService {
       },
     });
 
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
+    if (verdict.verdict === "refuse") {
+      throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true, verdict.authHint);
+    }
     // `store_unverified` is reported as a FAILURE here — the one place this method parts company
     // with `create`. There, the verdict means "the server was reached and declined to serve right
     // now" — positive evidence about host, port and TLS, none about the password — so the
@@ -1428,7 +1465,9 @@ export class MailboxService {
           allowInsecure: body.imap.allowInsecure === true ? true : undefined,
         },
       });
-      if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
+      if (verdict.verdict === "refuse") {
+        throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true, verdict.authHint);
+      }
       // WHAT IS STORED IS WHAT WAS PROVED. The ladder may have succeeded on a different
       // port/TLS mode than the body carried (or the body carried none), and storing the
       // body's guess would hand the worker a config nobody tried. A probe fake that answers
@@ -2796,7 +2835,9 @@ export class MailboxService {
         allowInsecure: patch.imap?.allowInsecure === true ? true : undefined,
       },
     });
-    if (verdict.verdict === "refuse") throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true);
+    if (verdict.verdict === "refuse") {
+      throw probeRefused(verdict.code, verdict.tls, "imap", verdict.localServer === true, verdict.authHint);
+    }
     /**
      * The PROVEN combination overrides the merge, exactly as on create — see
      * {@link mergedTransportMeta}, which is where that arithmetic lives now so the in-transaction

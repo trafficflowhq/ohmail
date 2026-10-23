@@ -15,9 +15,10 @@ import { Button } from "@ohmail/ui";
    still both USES it (the client door) and re-exports it (DesktopDevices imports it from here). */
 import { shortPin } from "@ohmail/client-engine";
 
-import { ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
+import { ProviderHelpLinks, ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
-import { hostsFor, providerById } from "../../webapp/app/shell/providers";
+import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint } from "../../webapp/app/shell/providers";
+import { refusalAuthHint } from "../../webapp/app/shell/local-server-host";
 import {
   EMPTY_LOCAL,
   NO_CONSENT,
@@ -220,6 +221,8 @@ export function DoorChooser({
    * the answer that offered it. The card holds the ticks and retires both on a server change.
    */
   const [plainOffer, setPlainOffer] = useState<DoorConsent>(NO_CONSENT);
+  /** Why Google refused the last press, with the sentence it came with: the links ride that sentence. */
+  const [authHelp, setAuthHelp] = useState<{ problem: string; hint: AuthHint } | null>(null);
 
   /* One attempt at a time, and the result travels up whole. A door attempt restarts the engine
      and can take tens of seconds on a first run, so a second press while the first is in flight
@@ -236,6 +239,8 @@ export function DoorChooser({
       setSuggestion(result.suggestion ?? null);
       const offered = result.engineRefusal ? localPlaintextOffer(result.engineRefusal) : null;
       if (offered !== null) setPlainOffer({ ...NO_CONSENT, [offered]: true });
+      const hint = result.engineRefusal ? refusalAuthHint(result.engineRefusal) : null;
+      setAuthHelp(hint !== null && result.problem ? { problem: result.problem, hint } : null);
       if (result.switchAccount) setMustSwitch(true);
       if (!result.problem) onEntered(result);
     } finally {
@@ -639,6 +644,7 @@ export function DoorChooser({
             busy={busy}
             problem={problem}
             suggestion={suggestion}
+            authLinks={authHelp !== null && authHelp.problem === problem && authHintWantsLinks(authHelp.hint)}
             offer={plainOffer}
             onRetireOffer={() => setPlainOffer(NO_CONSENT)}
             onBack={() => { setProblem(null); setSuggestion(null); setPlainOffer(NO_CONSENT); setStep("doors"); }}
@@ -850,6 +856,7 @@ function LocalDoor({
   busy,
   problem,
   suggestion,
+  authLinks = false,
   offer,
   onRetireOffer,
   onBack,
@@ -860,6 +867,8 @@ function LocalDoor({
   problem: string | null;
   /** The host the last refusal named, or null. Offered as a press when there is a field for it. */
   suggestion: HostSuggestion | null;
+  /** Google refused the password: its App Password links under the refusal. */
+  authLinks?: boolean;
   /** The plaintext lines the last refusal offered (the Add form's consent), per transport. */
   offer: DoorConsent;
   /** A server changed: the offer is about the old one and goes, with the ticks. */
@@ -1015,6 +1024,7 @@ function LocalDoor({
             }
           : {})}
       />
+      {problem && authLinks ? <ProviderHelpLinks preset={authHintPreset()} /> : null}
       <div className="join-actions">
         <Button variant="primary" type="submit" disabled={busy}>
           {busy ? DOOR_COPY.localOpening : DOOR_COPY.localOpen}

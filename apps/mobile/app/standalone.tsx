@@ -9,7 +9,7 @@
  * and a rule written inside a component is a rule no test can drive.
  */
 import { useCallback, useRef, useState } from "react";
-import { Platform, TextInput, View } from "react-native";
+import { Linking, Platform, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../src/copy";
 import { refuse, sayRefusal, type Refusal } from "../src/refusal";
@@ -30,16 +30,19 @@ import { NotifyPermission } from "../src/ui/NotifyPermission";
 import { useNotifyPermission } from "../src/ui/useNotifyPermission";
 import {
   EMPTY_STANDALONE,
+  appPasswordNote,
   focusTargetFor,
   limitationLines,
   mayConnect,
   portFieldSaid,
   refusalField,
+  refusalLinks,
   refusalNamesServerFields,
   setImapTls,
   setImapPort,
   setTyped,
   withAddress,
+  type ProviderLink,
   type StandaloneFields,
   type StandaloneStep,
 } from "../src/ui/standalone-form";
@@ -128,6 +131,8 @@ function Credentials() {
 
   const start = phoneEngineStart();
   const ready = mayConnect(fields) && phase.k !== "opening";
+  /* The provider's App Password note, from the typed address or incoming host; null for every other mailbox. */
+  const note = appPasswordNote(fields);
   /* THE NOTIFICATION ASK, held here so the sheet renders over this screen — see the call below
      for the moment it runs, which is after the mailbox is open and not before the dial. */
   const notify = useNotifyPermission();
@@ -302,6 +307,13 @@ function Credentials() {
             },
           }}
         />
+        {/* A provider that takes only an App Password says so here, before the first press. */}
+        {note !== null ? (
+          <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+            <Txt variant="caption" tone="ink2">{note.text}</Txt>
+            <ProviderLinks links={note.links} />
+          </View>
+        ) : null}
 
         {/* ── SERVER SETTINGS, PRE-FILLED FROM THE ADDRESS ────────────────────────────────────
             A disclosure rather than a nine-field form: behind a recognised domain these are facts
@@ -382,6 +394,11 @@ function Credentials() {
             {sayRefusal(phase.reason)}
           </Txt>
         ) : null}
+        {phase.k === "failed" && refusalLinks(phase.reason) !== null ? (
+          <View style={{ paddingHorizontal: 16 }}>
+            <ProviderLinks links={refusalLinks(phase.reason)!} />
+          </View>
+        ) : null}
 
         <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
           <Button
@@ -395,6 +412,25 @@ function Credentials() {
       <NotifyPermission open={notify.open} onAnswer={notify.answer} />
       <View style={{ height: 32 }} />
     </Scroller>
+  );
+}
+
+/** A provider's pages, each opened in the system browser by the person's own press. */
+function ProviderLinks({ links }: { links: readonly ProviderLink[] }) {
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 16 }}>
+      {links.map((link) => (
+        <Tap
+          key={link.url}
+          onPress={() => { void Linking.openURL(link.url).catch(() => undefined); }}
+          accessibilityRole="link"
+          accessibilityLabel={link.label}
+          style={{ paddingVertical: 8 }}
+        >
+          <Txt variant="settingsLabel" tone="accent">{link.label}</Txt>
+        </Tap>
+      ))}
+    </View>
   );
 }
 

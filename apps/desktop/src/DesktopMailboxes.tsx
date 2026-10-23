@@ -22,7 +22,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { unsentDraftsOf } from "@ohmail/client-engine";
+import { appPasswordPresetFor, unsentDraftsOf } from "@ohmail/client-engine";
 import { storageRowSentence } from "./storage-row-sentence.js";
 import {
   Button, Gloss, SettingsActions, SettingsField, SettingsNote, SettingsRow, SettingsSection,
@@ -254,6 +254,11 @@ export function reachStale(slice: Pick<MailboxReachSlice, "at">, now: number): b
  * `err.name` and not the constructor: an `AbortError` is a plain `Error` whose NAME carries the
  * fact, which is the shape the bridge produces for the one call it bounds.
  */
+/** A Google mailbox by its address: its refused password is an App Password, ended by a Google password change. */
+function signsInWithAppPassword(address: string): boolean {
+  return appPasswordPresetFor(address)?.authHints === true;
+}
+
 function describeThrown(err: unknown): string {
   const text = err instanceof Error ? `${err.name}: ${err.message}` : `${typeof err}: ${String(err)}`;
   return text.length > 240 ? `${text.slice(0, 240)}\u2026` : text;
@@ -1551,7 +1556,10 @@ export function DesktopMailboxes(
        answer to the same question and the generic one would send somebody to check a network
        that is working perfectly. */
     if (r?.signInRefused) {
-      return say(t(r.localServer ? "desktopStateSignInRefusedLocal" : "desktopStateSignInRefused"));
+      /* A Google App Password ends with a Google password change: said so, on a Google mailbox. */
+      const refusedKey = r.localServer ? "desktopStateSignInRefusedLocal"
+        : signsInWithAppPassword(m.address) ? "desktopStateSignInRefused_gmail" : "desktopStateSignInRefused";
+      return say(t(refusedKey));
     }
     /* NOTHING WAS DIALLED: the consented server's name left the person's own network. */
     if (r?.plaintextRefused) return say(t("desktopStatePlaintextRefused"));
@@ -2324,7 +2332,8 @@ export function DesktopMailboxes(
             >
               <h3 className="acct-sub">{t("signInAgainTitle", { address: shown.address })}</h3>
               <p className="acct-fine">
-                {serverAsk?.id === shown.id ? t("signInAgainAskWhy") : t("signInAgainWhy")}
+                {serverAsk?.id === shown.id ? t("signInAgainAskWhy")
+                  : t(signsInWithAppPassword(shown.address) ? "signInAgainWhy_gmail" : "signInAgainWhy")}
               </p>
               {/* A consent is about one server: an edit of the asked-for server retires the offer and
                   the tick, as the setup stage does (`FirstRun.tsx`'s `retireConsent`). */}
@@ -2385,7 +2394,7 @@ export function DesktopMailboxes(
               ) : null}
               <SettingsField
                 htmlFor="mbx-new-password"
-                label={t("signInAgainPassword")}
+                label={t(signsInWithAppPassword(shown.address) ? "signInAgainPassword_gmail" : "signInAgainPassword")}
                 hint={serverAsk?.id === shown.id ? t("signInAgainAskHint") : t("signInAgainHint")}
               >
                 <input

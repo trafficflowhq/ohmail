@@ -6,6 +6,7 @@ import type {
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { eq } from "drizzle-orm";
 import { mailboxCredentials, mailboxes } from "@trafficflow/db";
+import { GOOGLE_AUTH_REFUSAL } from "@trafficflow/services/mail";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
@@ -205,7 +206,7 @@ describe("Sign in again on a mailbox with no stored password", () => {
    * and nothing kept on the mailbox row (mail 0127 is newer than that build).
    */
   async function signedOutTwo(
-    wire: Wire = newWire(), opts: { earlier?: boolean } = {},
+    wire: Wire = newWire(), opts: { earlier?: boolean; twoHost?: string } = {},
   ): Promise<{ c: Booted; id1: string; id2: string; wire: Wire; dataDir: string }> {
     const dataDir = await freshDataDir("ohmail-bare-signin-");
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
@@ -216,7 +217,7 @@ describe("Sign in again on a mailbox with no stored password", () => {
       method: "POST", headers: auth(a),
       body: JSON.stringify({
         provider: "imap", address: TWO.user,
-        imap: { host: TWO.host, port: 993, secure: true, user: TWO.user, pass: TWO.pass },
+        imap: { host: opts.twoHost ?? TWO.host, port: 993, secure: true, user: TWO.user, pass: TWO.pass },
         smtp: { host: "smtp.two.invalid", port: 465, secure: true, pass: TWO.pass },
       }),
     }));
@@ -327,10 +328,26 @@ describe("Sign in again on a mailbox with no stored password", () => {
     wire.script.set(TWO.user, ["ok", "auth"]);
     const res = await press(c, id2, TWO.pass);
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("mailbox_probe_failed");
+    const error = ((await res.json()) as { error: { code: string; details: Record<string, unknown> } }).error;
+    expect(error.code).toBe("mailbox_probe_failed");
+    // Control for the Google case below: another host's refusal carries no hint.
+    expect(error.details).toEqual({ reason: "auth", transport: "imap" });
     expect(await rowsOf(c, id2), "the refused seal was left to win over the next press").toEqual([]);
     expect(count(c, "local_mailbox_launch_refused")).toBe(1);
     expect(await keptOf(c, id2)).toMatchObject({ imap: { host: TWO.host } });
+  });
+
+  it("a launch Google refuses says Google's sentence, with the hint", async () => {
+    const wire = newWire();
+    const { c, id2 } = await signedOutTwo(wire, { twoHost: "imap.gmail.com" });
+    wire.script.set(TWO.user, ["ok", "auth"]);
+    const res = await press(c, id2, TWO.pass);
+    expect(res.status).toBe(400);
+    const error = ((await res.json()) as { error: { code: string; message: string; details: Record<string, unknown> } }).error;
+    expect(error.code).toBe("mailbox_probe_failed");
+    expect(error.details).toEqual({ reason: "auth", transport: "imap", authHint: "invalid" });
+    expect(error.message).toBe(GOOGLE_AUTH_REFUSAL.invalid);
+    expect(count(c, "local_mailbox_launch_refused")).toBe(1);
   });
 
   it("an outage at the launch is an outage, not a refusal", async () => {

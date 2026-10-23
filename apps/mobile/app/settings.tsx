@@ -52,6 +52,8 @@ import {
   claimNoteLine,
   type PhoneClaim,
   maySignInAgain,
+  connectionLineHere,
+  signInAgainSaid,
   mayStartHere,
   mayStopHere,
   portFieldSaid,
@@ -639,7 +641,9 @@ function ThisPhonePanel() {
                     still the organizer of a mailbox whose server it cannot dial, and a panel
                     that showed only the first read `Organizing` through a measured outage. */}
                 {outage === null ? null : (
-                  <Txt variant="note" tone="ink2" accessibilityRole="alert">{outage}</Txt>
+                  <Txt variant="note" tone="ink2" accessibilityRole="alert">
+                    {row.key === HERE_CARD ? connectionLineHere(row.address, outage) : outage}
+                  </Txt>
                 )}
                 {/* THE MAIL, NOT THE LINK — see `unreadable` above. */}
                 {unreadable === null ? null : (
@@ -877,12 +881,12 @@ function ThisPhonePanel() {
       {resupplying ? (
         <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own">
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
-            {Copy.signInAgainLead}
+            {signInAgainSaid(here?.address ?? "").lead}
           </Txt>
           <Field
             value={newPassword}
             onChange={setNewPassword}
-            label={Copy.signInAgainField}
+            label={signInAgainSaid(here?.address ?? "").field}
             hint={Copy.signInAgainHint}
             secret
             revealLabels={{

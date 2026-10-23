@@ -236,12 +236,14 @@ address, and the privacy notice your install owes them is yours to write.
 
 ## 7. Connect your first mailbox
 
-Sign in and add a mailbox: the address, the IMAP server, and the password.
-Plain facts about providers:
+Sign in and add a mailbox: pick your provider (Gmail and the other named
+ones fill in the servers), then the address and the password. Plain facts
+about providers:
 
 - Most providers work with the address and either your password or an "app
-  password" — Gmail and several others require an app password for IMAP,
-  generated in the provider's own security settings.
+  password", generated in the provider's own security settings. Gmail takes
+  only an App Password, and Google offers one once 2-Step Verification is on:
+  [connect-gmail.md](../connect-gmail.md) has the steps.
 - **Microsoft 365 / Exchange Online** signs in with OAuth instead of a
   password, and needs a one-time app registration on the Microsoft side.
   Skip this entirely unless you have such a mailbox. There are two ways in

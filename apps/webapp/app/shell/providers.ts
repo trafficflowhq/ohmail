@@ -11,13 +11,19 @@
  * here, by this path.
  */
 export {
+  AUTH_HINTS,
   PROVIDERS,
+  appPasswordPresetFor,
+  asAuthHint,
+  authHintPreset,
+  authHintWantsLinks,
   hostsFor,
   portMeansImplicitTls,
   presetForAddress,
   providerById,
   providerLabel,
   serverGuessFor,
+  type AuthHint,
   type ProviderPreset,
   type ServerGuess,
 } from "@ohmail/client-engine";
