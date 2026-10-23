@@ -121,7 +121,7 @@ export interface ProjectionInputs {
   openOffMirror: World["store"]["open"];
   actions: WorldActions;
   /** Told the presented reader and its options each run — the verbs that ask about the lists read them. */
-  onPresented(pres: EntityReader, options: ConsentOptions): void;
+  onPresented(pres: EntityReader, options: ConsentOptions, unrouted?: EntityReader): void;
 }
 
 export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">;
@@ -176,7 +176,7 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       };
     });
     const { base, pres } = presented;
-    inp.onPresented(pres, presented.options);
+    inp.onPresented(pres, presented.options, presented.world.reader);
     const openHeld = engine.openRowHeld();
     const screener = () => kept("screener", [pres, v, inp.scopes, inp.screenerServer, inp.leavingWaiting, inp.relayed], () => {
       const s = liveScreener(pres, v, inp.scopes, waitingOnScreen(inp.screenerServer, inp.leavingWaiting));

@@ -151,6 +151,8 @@ export interface RetroCandidateRow {
   physicalFolder?: string;
   /** The `message_states` row, or absent/null for a message with none. */
   triage?: { state: string } | null;
+  /** The wire's `placeDecided` (`folder_state.decided_at` set): a person or the gate placed it. */
+  placeDecided?: boolean;
 }
 
 /**
@@ -169,6 +171,16 @@ export function retroPassWouldMove(row: RetroCandidateRow, destination: string):
   // the idempotency clause must read it as already-there, not as mail to move.
   if (canonicalDestination(filed) === canonicalDestination(destination)) return false;
   return (row.triage?.state ?? "none") === "none";
+}
+
+/**
+ * …AND THE WALK'S OWN CLAUSE 7 ON TOP (`rule-retro.ts`, `decided_at`): a place somebody decided is
+ * never a rule's to change, unless the letter waits at the gate. For code that models the walk
+ * over a rule's backlog; an explicit instruction keeps {@link retroPassWouldMove}.
+ */
+export function retroWalkWouldMove(row: RetroCandidateRow, destination: string): boolean {
+  if (!retroPassWouldMove(row, destination)) return false;
+  return row.placeDecided !== true || (row.physicalFolder ?? row.folder) === GATE_FOLDER;
 }
 
 /**

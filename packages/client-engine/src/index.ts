@@ -114,7 +114,7 @@ export { owaInvitationStub, type OwaInvitationStub } from "@trafficflow/core/ics
  * question and the fifty they move stay a subset of what the worker's pass would move. Here
  * because this package is the one both of them compile; the phone reaches core only through it.
  */
-export { retroPassWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
+export { retroPassWouldMove, retroWalkWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
 
 /**
  * WHETHER SOMEBODY STILL ORGANIZES A MAILBOX — a named holder whose lease has not lapsed. The
@@ -576,6 +576,10 @@ export {
 export { ROUTING_JOURNAL_TYPE } from "./types.js";
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
+export {
+  LANDING_HOLD_MS, createLandingHold,
+  type LandingHold, type LandingHoldEntry, type LandingHoldRow, type LandingPlaces, type LandingSettle,
+} from "./landing-hold.js";
 
 // Send + Done — the composer's second send action, as one rule every surface reads: whether it
 // is offered at all, what the release is, and that it runs only after an accepted send.
@@ -949,6 +953,7 @@ export {
   landingOfMoves,
   planScreenCommit,
   pressForecast,
+  PRESS_VISIBLE_ROWS,
   readerWithEffects,
   ruleFingerprint,
   rulesInPlay,

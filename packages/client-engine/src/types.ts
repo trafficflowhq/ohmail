@@ -1136,8 +1136,10 @@ export type EngineMutation =
    * MOVE. `from`: applied only while the letter is still in that folder — a Screener card's move by
    * id, so a press replayed after the person filed the letter elsewhere leaves it there (the server
    * answers `stale_press`, read as superseded). Absent: unconditional, every other move.
+   * `pressRule`: the move of a press that also writes the sender's rule, so the server does not
+   * count it against the route that press rewrites. Older servers ignore it.
    */
-  | { kind: "move"; messageId: string; folder: Folder; from?: Folder }
+  | { kind: "move"; messageId: string; folder: Folder; from?: Folder; pressRule?: true }
   /**
    * DELETE — the message rides to the provider's native `\Trash` on the server (never an
    * expunge) and leaves the mirror's living views everywhere (`DELETE /messages/:id`, mail

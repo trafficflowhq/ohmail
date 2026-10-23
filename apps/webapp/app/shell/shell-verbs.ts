@@ -22,6 +22,7 @@ import {
   landingOfMoves,
   pressForecast,
   pressGained,
+  PRESS_VISIBLE_ROWS,
   ruleFingerprint,
   rulesInPlay,
   rulesList,
@@ -348,20 +349,21 @@ export function useShellVerbs({
       }
       toast(text);
     };
+    /* THE FORECAST, ONCE: what the list will show at the place, and the letter the press was made
+       on, which the press files itself on every path (`movesAtLanding`). */
+    const forecast = press?.forecast ?? screeningForecast(messageId, address, dest, scope, makeRule, applyRetro);
+    const seedMove = forecast?.[press?.resolution ?? "keep"].seedMove ?? null;
     // Nothing to write and nothing to move: said as before, with no window for nothing.
-    if (path === "window" && !demo && (plan.mutations.length > 0 || resolutionExtras(press).length > 0)) {
+    if (path === "window" && !demo && (plan.mutations.length > 0 || resolutionExtras(press).length > 0 || seedMove)) {
       holdScreenPress({
         messageId, sender, dest, scope, makeRule, applyRetro, address, press, plan, who, place, sayVerdict,
-        before, gained: () => pressGained(before, shownNow()),
+        before, gained: () => pressGained(before, shownNow()), forecast,
       });
       return;
     }
     /* THE MOVES THE LIST WILL SHOW AT THE PLACE, and no others (`movesAtLanding`): a row a rule of
        theirs keeps elsewhere stays where it is, as the step said before the press. */
-    const pressMoves = movesAtLanding(
-      plan, press?.forecast ?? screeningForecast(messageId, address, dest, scope, makeRule, applyRetro),
-      press?.resolution ?? "keep",
-    );
+    const pressMoves = movesAtLanding(plan, forecast, press?.resolution ?? "keep");
     if (plan.mutations.length === 0 && pressMoves.length === 0) { say("toastAlready"); return; }
     /* A SENDER AT THE GATE IS DECIDED THROUGH THE SCREENER'S DOOR — its delayed commit and its
        Undo, as the list's own decision is. Not a step that removes rules: that writes more than
@@ -369,14 +371,16 @@ export function useShellVerbs({
     const gateRow = path === "decide" && resolutionExtras(press).length === 0
       ? screener.waiting.find((r) => r.id === sender.scopes[scope].representativeId)
       : undefined;
+    /* Under a decide the letter pressed on, outside its bag, moves once the decision stands. */
+    const decided = plan.ruleState === "promoted";
     if (gateRow) {
-      screener.decide(gateRow, dest, { read: false, scope, applyRetro });
+      screener.decide(gateRow, dest, { read: false, scope, applyRetro, ...(decided && seedMove ? { seedMove } : {}) });
       return;
     }
     /* THROUGH `fileAndRefresh`, LIKE EVERY OTHER FILING DISPATCH. This one has not been since it
        shipped: the mail moved and the filing strip's count stayed stale until its next poll, up to
        thirty seconds later. Both Move arms already go through it. */
-    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m)))
+    void dispatchScreeningChange(plan, pressMoves, (m) => fileAndRefresh(engine.mutate(m)), pressMoves.length, decided)
       .then((key) => { if (key !== null) say(key); });
   });
 
@@ -398,7 +402,7 @@ export function useShellVerbs({
     return pressForecast({
       reader: read, options: shellConsentOptions(consent, nowAt(), ownAddresses, firstImportDoneAt),
       subject: sender.scopes[scope].messages, scope, match: ruleMatchOf(sender, scope),
-      wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: nowAt(),
+      wanted: FOLDER_OF_VIEW[dest], makeRule, applyRetro, now: nowAt(), seedId: messageId,
       ...(decide?.kind === "screener_decide" ? { decide } : {}),
     });
   });
@@ -430,13 +434,21 @@ export function useShellVerbs({
     sayVerdict: (v: Exclude<StayVerdict, { key: "none" }>) => void;
     /** The rows the list showed at the place before the press, and what it has gained since. */
     before: readonly string[]; gained: () => number;
+    forecast: PressForecast | null;
   }): void => {
     const resolution = p.press?.resolution ?? "keep";
-    const forecast = p.press?.forecast
-      ?? screeningForecast(p.messageId, p.address, p.dest, p.scope, p.makeRule, p.applyRetro);
+    const forecast = p.forecast;
     const landing = new Set(forecast ? forecast[resolution].landing : []);
-    // Only the rows the list will show at the place move: under "keep" a kept row stays put.
+    // The letter pressed on moves now; under "keep" a kept row stays put.
     const moves = movesAtLanding(p.plan, forecast, resolution);
+    const moving = new Set(moves.map((mu) => mu.messageId));
+    /* THE REST OF THE LANDING IS HELD AT THE PLACE while the walk files it, newest first and
+       capped: the letters the press moves are drawn there by their own moves. */
+    const held = p.sender.scopes[p.scope].messages
+      .filter((m) => landing.has(m.id) && !moving.has(m.id))
+      .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))
+      .slice(0, PRESS_VISIBLE_ROWS)
+      .map((m) => m.id);
     const pre = engine.verbRead();
     const inverses = moves.flatMap((mu) => inverseMutations(pre, mu));
     const settled = moves.map((mu) => fileAndRefresh(engine.mutate(mu)));
@@ -445,15 +457,15 @@ export function useShellVerbs({
     const sentence = pressSentence(p, forecast, resolution, shown);
     const opened = routing.holdScreen({
       id: crypto.randomUUID(), seedId: p.messageId, address: p.sender.address, dest: p.dest,
-      messageIds: [...landing], note: { sender: p.who, place: p.place, count: moves.length },
+      messageIds: held, note: { sender: p.who, place: p.place, count: moves.length },
       makeRule: p.makeRule, applyRetro: p.applyRetro, resolution,
       shown: shown.map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), moves: settled,
       after: (o) => {
         // Replaced by a newer press about this sender: that press says the sentence.
         if (o.worst === "superseded") return;
         if (o.worst === "rolled_back") {
-          // A rule press moves nothing before its answer (`movesAtLanding`), so this says no move away.
-          toast(refusedAsOwnAddress(o.results) ? t("screening.toastOwnAddress")
+          // The own-address sentence never stands over a letter the press moved.
+          toast(moves.length === 0 && refusedAsOwnAddress(o.results) ? t("screening.toastOwnAddress")
             : t("screening.toastRuleFailed", { sender: p.who, place: p.place, count: p.gained() }));
           return;
         }

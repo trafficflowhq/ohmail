@@ -1002,6 +1002,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * ON SCREEN and not about the raw mirror's folders.
    */
   const presentedNow = useRef<EntityReader | null>(null);
+  /* The same lists without the held presses' overlay: a press's read-back reads it. */
+  const unroutedNow = useRef<EntityReader | null>(null);
   /** When the mailbox facts were last read — a ref, so an unchanged answer rebuilds no projection. */
   const mailboxesReadAt = useRef<number | null>(null);
   const readMailboxesAt = useCallback(() => mailboxesReadAt.current, []);
@@ -1365,6 +1367,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* A GETTER for the same reason, and the fallback is the raw mirror for the one render
            before the world memo below has run — see `LiveDeps.presented`. */
         presented: () => presentedNow.current ?? engine.read(),
+        unrouted: () => unroutedNow.current ?? presentedNow.current ?? engine.read(),
         presentedOptions: () => presentedOptionsNow.current ?? presentedOptions(new Date()),
         /* THE CACHED QUEUE, RECONCILED AT THE DECIDE. `setScreenerServer` is `useState`'s own
            setter and identity-stable, and the update is FUNCTIONAL — this facade is built once
@@ -1704,8 +1707,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
       mailboxes, ownAddresses: addressesNow.current, mailboxesReadAt: readMailboxesAt,
       walker, searchWalker, openOffMirror, actions,
-      onPresented: (pres, options) => {
+      onPresented: (pres, options, unrouted) => {
         presentedNow.current = pres;
+        unroutedNow.current = unrouted ?? pres;
         presentedOptionsNow.current = options;
       },
     });

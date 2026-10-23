@@ -2035,6 +2035,16 @@ export function withPullKick(
         return res;
       } };
     }
+    /* A RULE WRITTEN HERE RINGS EVERY RUNTIME: the retro walk runs at the start of each drain, so
+       the mail a sheet press asked to file is not left to the idle poll. A 202 (another install
+       organizes) or a refusal rings nothing. */
+    if ((r.method === "POST" && r.pattern === "/rules") || (r.method === "PATCH" && r.pattern === "/rules/:id")) {
+      return { ...r, handler: async (req, deps, params) => {
+        const res = await r.handler(req, deps, params);
+        if (res.status === 200 || res.status === 201) for (const rt of runtimesFor()) rt.ring();
+        return res;
+      } };
+    }
     /* THE GAP PRESS (mail 0151) RINGS ITS OWN MAILBOX: the organizer's next drain files the set. */
     if (r.method === "POST" && r.pattern === "/mailboxes/:id/gap-letters") {
       return { ...r, handler: async (req, deps, params) => {

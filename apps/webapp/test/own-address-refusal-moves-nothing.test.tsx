@@ -10,11 +10,12 @@ import en from "../messages/en.json";
 
 /**
  * NO OWN-ADDRESS SENTENCE STANDS OVER MAIL THAT MOVED (REVIEW-026 HIGH-1). The sender sheet's press
- * that writes a rule moves nothing before its answer (`movesAtLanding`: a rule's backlog is the
- * server pass's), so when the server refuses that rule as being about the account's own address the
- * mail is where it was and the sentence says only that. Only a press with the rule switched off
- * moves mail here, and it asks the server for no rule (the control). The shell is the shipped one
- * over a real engine; the adapter echoes moves and refuses every rule write with `own_address`.
+ * that writes a rule moves only the letter it was made on (`movesAtLanding`: the rest of a rule's
+ * backlog is the server pass's), so when the server refuses that rule as being about the account's
+ * own address the letter stays filed and the sentence says the rule failed over mail that moved,
+ * never the own-address sentence alone. A press with the rule switched off moves the mail and asks
+ * the server for no rule (the control). The shell is the shipped one over a real engine; the adapter
+ * echoes moves and refuses every rule write with `own_address`.
  */
 const ME = "walker@example.invalid";
 const FRIEND = "friend@example.invalid";
@@ -91,12 +92,13 @@ beforeEach(() => { installShellEnv(); process.env.NEXT_PUBLIC_API_BASE = ""; });
 afterEach(async () => { await teardownShellEnv(); process.env.NEXT_PUBLIC_API_BASE = "/api"; });
 
 describe("a sender-sheet press the server refuses as being about our own address", () => {
-  it("moved nothing before the answer, and says the own-address sentence over mail where it was", async () => {
+  it("moved only the letter pressed on, and never says the own-address sentence over it", async () => {
     wire.length = 0;
-    expect(await press("reads")).toEqual({ mid: "INBOX", end: "INBOX" });
-    expect(wire.filter((k) => k === "move")).toEqual([]);
+    expect(await press("reads")).toEqual({ mid: "ohmail/News", end: "ohmail/News" });
+    expect(wire.filter((k) => k === "move")).toEqual(["move"]);
     expect(wire.some((k) => k.startsWith("rule_"))).toBe(true);
-    expect(toasts().some((t) => t.includes(en.screening.toastOwnAddress))).toBe(true);
+    expect(toasts().some((t) => t.includes(en.screening.toastOwnAddress))).toBe(false);
+    expect(toasts().some((t) => t.includes("but the rule couldn't be made")), toasts().join(" | ")).toBe(true);
   });
 
   it("CONTROL: with the rule switched off the press moves the mail and asks for no rule", async () => {

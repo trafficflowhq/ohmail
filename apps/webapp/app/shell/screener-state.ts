@@ -141,6 +141,8 @@ export interface DecideOptions {
    * second answer. Absent, the decide carries none, as every press from the list always has.
    */
   applyRetro?: boolean;
+  /** A sheet press's letter outside the decide's bag: moved once the decision stands. */
+  seedMove?: Extract<EngineMutation, { kind: "move" }>;
 }
 
 /**
@@ -172,6 +174,8 @@ interface PendingEntry {
   quiet: boolean;
   /** The sheet's past-mail answer, when the press came from the sheet — {@link DecideOptions}. */
   applyRetro?: boolean;
+  /** The sheet's letter outside the bag — {@link DecideOptions}. */
+  seedMove?: Extract<EngineMutation, { kind: "move" }>;
   /** The Undo capsule this decision is offered under, shared by a bulk's rows (`commit` ends it). */
   offer?: { ids: readonly string[]; ends: AbortController };
   /**
@@ -1106,6 +1110,7 @@ export function useScreenerState(
     heldIds: entry.sender.derived === true && entry.read ? heldMessageIds(entry.sender) : [],
     from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
     ...(entry.applyRetro !== undefined ? { applyRetro: entry.applyRetro } : {}),
+    ...(entry.seedMove ? { seed: { id: entry.seedMove.messageId, folder: entry.seedMove.folder, from: entry.seedMove.from ?? null } } : {}),
     // A card press: the INBOX letters its scope shows, the domain's other senders' included (`reachOf`).
     ...(entry.applyRetro === undefined && entry.sender.derived === true
       ? { inboxIds: reachOf(entry.sender, entry.scope).inboxIds }
@@ -1167,6 +1172,13 @@ export function useScreenerState(
     const cardMoves: Array<Extract<EngineMutation, { kind: "move" }>> = cardTo === FOLDER_OF_VIEW.ohbox
       ? []
       : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox }));
+    /* A SHEET PRESS'S LETTER OUTSIDE THE BAG, while it is still where it was pressed: marked as the
+       press's (`pressRule`), which writes the sender's rule through the decision. */
+    const seedMoves: Array<Extract<EngineMutation, { kind: "move" }>> = (d.seed ? [d.seed] : [])
+      .filter((x) => { const m = engine.read().get<EngineMessage>("message", x.id); return m !== undefined && (x.from === null || m.folder === x.from); })
+      .map((x) => ({
+        kind: "move" as const, messageId: x.id, folder: x.folder as Folder, ...(x.from !== null ? { from: x.from as Folder } : {}), pressRule: true as const,
+      }));
 
     // Where is the representative, actually? Read the RAW mirror. The queue
     // is built from the projected reader, in which an active-undecided
@@ -1229,8 +1241,9 @@ export function useScreenerState(
         // A wait keeps the sender out as an answer does: the decision still stands.
         settleOnward(pressVerdict(res).kind !== "refused");
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
-        // The card's INBOX letters, by id, once the decision stands: refused or replaced, none moves.
-        if (res.status !== "superseded") for (const mv of cardMoves) void engine.mutate(mv);
+        // The card's INBOX letters and the sheet's letter, by id, once the decision stands: refused
+        // or replaced, none moves.
+        if (res.status !== "superseded") for (const mv of [...cardMoves, ...seedMoves]) void engine.mutate(mv);
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
          * applying it: nothing moved, no rule written, the mail still in
@@ -1264,11 +1277,12 @@ export function useScreenerState(
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
-        // A card press moves the INBOX letters it showed; a sheet's backlog is the server pass's.
-        void dispatchScreeningChange(plan, cardMoves, (m) => engine.mutate(m).then((r) => {
+        // A card press moves the INBOX letters it showed, a sheet press its own letter; a sheet's
+        // backlog is the server pass's. Beside a decide they wait for its answer.
+        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(m).then((r) => {
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
           return r;
-        }), card ? cardFiled.length : 0, card).then((key) => {
+        }), card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
           done();
           // Replaced by a newer press about this sender: that press says the sentence.
           if (key === null) return;
@@ -1388,6 +1402,7 @@ export function useScreenerState(
       scope: opts.scope,
       quiet: opts.quiet === true,
       ...(opts.applyRetro !== undefined ? { applyRetro: opts.applyRetro } : {}),
+      ...(opts.seedMove ? { seedMove: opts.seedMove } : {}),
       at: Date.now(),
       outTimer: setTimeout(() => {
         s.out.delete(id);

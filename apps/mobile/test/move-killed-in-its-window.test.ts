@@ -122,7 +122,7 @@ describe("a Move killed inside its window", () => {
     } finally { fake.server.close(); }
   }, 60_000);
 
-  it("from the sender sheet, is made at the next launch and said once", async () => {
+  it("from the sender sheet, its rule is made at the next launch; the letter moved at the press, so the launch is quiet", async () => {
     const { fake, origin } = await server([ruleDto("r-mara", "sender", MARA.address, "INBOX")]);
     const disk = sqlWorld();
     try {
@@ -130,12 +130,15 @@ describe("a Move killed inside its window", () => {
       expect(await first.actions.screenSender("m1", "reads", "sender")).toBe(true);
       await settle();
       expect(writes(fake, "/rules"), "the rule left inside the undo window").toEqual([]);
+      expect(writes(fake, "/messages/m1/move"), "the letter did not move at the press").toEqual(["POST /messages/m1/move"]);
       kill();
 
       const next = await launch(disk, origin);
-      await next.firstSaid;
+      for (let i = 0; i < 200 && writes(fake, "/rules").length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+      await settle();
       expect(writes(fake, "/rules"), "the sheet's press was not made once").toHaveLength(1);
-      expect(next.said, "the launch did not say it once").toEqual([SAID]);
+      expect(writes(fake, "/messages/m1/move"), "the launch moved the letter again").toHaveLength(1);
+      expect(next.said, "the launch finished a press whose letter had already moved").toEqual([]);
       next.close();
     } finally { fake.server.close(); }
   }, 60_000);

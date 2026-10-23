@@ -1,4 +1,4 @@
-import { canonicalDestination, isOrganizedFolder, retroPassWouldMove } from "@trafficflow/core/destinations";
+import { canonicalDestination, isOrganizedFolder, retroPassWouldMove, retroWalkWouldMove } from "@trafficflow/core/destinations";
 import { heldMovesOnPress } from "@trafficflow/core/sender-headers";
 import { outrankCoveringDomains } from "./address-rank.js";
 import { heldCheckOf } from "./held-check.js";
@@ -147,8 +147,20 @@ export interface PressInput {
   applyRetro: boolean;
   /** A subject still waiting at the gate: the decide replaces the ladder. */
   decide?: Extract<EngineMutation, { kind: "screener_decide" }>;
+  /** The letter the press was made on: it moves itself at the press ({@link PressOutcomeForecast.seedMove}). */
+  seedId?: string;
   now: Date;
 }
+
+/**
+ * HOW MANY OF A PRESS'S ROWS IT NAMES ITSELF, newest first: the moves a no-rule press makes and the
+ * rows a rule press holds at the place while the walk files them. Past what a screen shows, one more
+ * buys nothing visible.
+ */
+export const PRESS_VISIBLE_ROWS = 50;
+
+/** A sheet press's move of one letter. */
+export type Move = Extract<EngineMutation, { kind: "move" }>;
 
 export interface PressOutcomeForecast {
   /** Rows the list would show at `wanted`. */
@@ -159,6 +171,14 @@ export interface PressOutcomeForecast {
   moves: Array<Extract<EngineMutation, { kind: "move" }>>;
   /** Where the list would show each of the subject's rows (`null` = History). */
   places: ReadonlyMap<string, Folder | null>;
+  /**
+   * THE LETTER THE PRESS WAS MADE ON, FILED BY THE PRESS ITSELF — on either switch position, the
+   * Move strip's rule for the letter the person's hand is on. `null` when the router would keep it
+   * elsewhere (a kept term rule, a domain rule the press does not outrank), when it is already
+   * there, when the subject is a recipient chip's, or when it waits at the gate under a decide (the
+   * decide's held bag). Under a decide it is sent once the decision stands.
+   */
+  seedMove: Move | null;
 }
 
 export interface PressForecast {
@@ -205,12 +225,13 @@ interface Simulated {
   after: EntityReader;
   placeOf: ReadonlyMap<string, Folder | null>;
   landing: string[];
+  seedMove: Move | null;
 }
 
 function outcomeOf(s: Simulated, subject: readonly EngineMessage[]): PressOutcomeForecast {
   const places = new Map<string, Folder | null>();
   for (const m of subject) places.set(m.id, s.placeOf.get(m.id) ?? null);
-  return { landing: s.landing, writes: s.writes, moves: s.moves, places };
+  return { landing: s.landing, writes: s.writes, moves: s.moves, places, seedMove: s.seedMove };
 }
 
 function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulated {
@@ -226,13 +247,19 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
   const ruled = reader;
   // The partition's own index, per mailbox: the router's place on a read mailbox is the organizer's.
   const index = consentIndex(rulesList(ruled), mailboxProfiles(ruled));
-  const reach = input.applyRetro || (!input.makeRule && !input.decide);
+  const ruling = input.makeRule || input.decide !== undefined;
+  const reach = input.applyRetro || !ruling;
+  // A rule's backlog is the walk's, so its rows are the walk's own set; a move-only press is the instruction.
+  const wouldMove = ruling ? retroWalkWouldMove : retroPassWouldMove;
   const moves: Array<Extract<EngineMutation, { kind: "move" }>> = [];
   const moved: MutationEffect[] = [];
+  const seed = seedMoveOf(input, ruled, index);
+  if (seed) moved.push({ type: "message", id: seed.move.messageId, entity: seed.entity });
   for (const m of input.subject) {
+    if (seed && m.id === seed.move.messageId) continue;
     const now = ruled.get<EngineMessage>("message", m.id) ?? m;
-    if (!reach || !retroPassWouldMove(now, input.wanted)) continue;
-    const placed = input.makeRule || input.decide ? messagePlacement(index, now, ruled) : null;
+    if (!reach || !wouldMove(now, input.wanted)) continue;
+    const placed = ruling ? messagePlacement(index, now, ruled) : null;
     // The router's place is not knowable without the text: the row stays at its folder, unmoved.
     if (placed?.undecided) continue;
     const to = (placed?.rule?.destination ?? input.wanted) as Folder;
@@ -240,14 +267,58 @@ function simulate(input: PressInput, writes: readonly EngineMutation[]): Simulat
     moves.push({ kind: "move", messageId: m.id, folder: to });
     moved.push({ type: "message", id: m.id, entity: { ...now, folder: to } });
   }
-  const after = readerWithEffects(ruled, moved);
-  const placeOf = consentPartition(after, input.options).placeOf;
   const place = canonicalDestination(input.wanted);
+  const at = (placeOf: ReadonlyMap<string, Folder | null>, id: string): boolean => {
+    const p = placeOf.get(id);
+    return p != null && canonicalDestination(p) === place;
+  };
+  let placeOf = consentPartition(readerWithEffects(ruled, moved), input.options).placeOf;
+  let seedMove = seed?.move ?? null;
+  // A seed the list would still show elsewhere is not moved: the press files only what lands.
+  if (seedMove && !at(placeOf, seedMove.messageId)) {
+    seedMove = null;
+    placeOf = consentPartition(readerWithEffects(ruled, moved.slice(1)), input.options).placeOf;
+  }
   const landing = input.subject
-    .filter((m) => isOrganizedFolder(m.physicalFolder ?? m.folder))
-    .filter((m) => { const p = placeOf.get(m.id); return p != null && canonicalDestination(p) === place; })
+    .filter((m) => (seedMove !== null && m.id === seedMove.messageId) || isOrganizedFolder(m.physicalFolder ?? m.folder))
+    .filter((m) => at(placeOf, m.id))
     .map((m) => m.id);
-  return { writes: sent, moves, after: ruled, placeOf, landing };
+  return { writes: sent, moves, after: ruled, placeOf, landing, seedMove };
+}
+
+/**
+ * THE SEED'S OWN MOVE, before the switch is read: the letter the press was made on is filed by
+ * the press (`planMoveToPlace`'s named move), never left to the walk. Its decided place, a triage
+ * state or a folder of the person's own do not stop it; a rule the router files it by elsewhere does.
+ */
+function seedMoveOf(
+  input: PressInput, ruled: EntityReader, index: ReturnType<typeof consentIndex>,
+): { move: Move; entity: EngineMessage } | null {
+  if (input.seedId === undefined) return null;
+  const row = input.subject.find((m) => m.id === input.seedId);
+  if (!row) return null;
+  // A letter at the gate is in the decide's own bag: the decision files it.
+  const pressedIn = (row.physicalFolder ?? row.folder) as Folder;
+  if (input.decide && pressedIn === FOLDER_OF_VIEW.screener) return null;
+  const now = ruled.get<EngineMessage>("message", row.id) ?? row;
+  const ruling = input.makeRule || input.decide !== undefined;
+  let to = input.wanted;
+  if (ruling) {
+    const placed = messagePlacement(index, now, ruled);
+    if (placed.undecided) return null;
+    if (placed.rule) {
+      if (canonicalDestination(placed.rule.destination) !== canonicalDestination(input.wanted)) return null;
+      to = placed.rule.destination as Folder;
+    }
+  }
+  if (canonicalDestination(to) === canonicalDestination(now.physicalFolder ?? now.folder)) return null;
+  // A rule press rewrites the route itself: its move is no override of it (`pressRule`). Under a
+  // decide the move waits for the decision, so it applies only where it was pressed (`from`).
+  const move: Move = {
+    kind: "move", messageId: row.id, folder: to,
+    ...(input.decide ? { from: pressedIn } : {}), ...(ruling ? { pressRule: true as const } : {}),
+  };
+  return { move, entity: { ...now, folder: to } };
 }
 
 /**

@@ -11,11 +11,17 @@ import type { EngineMessage, Folder } from "./types.js";
  * the place it answers is a promise; `physicalFolder` still says where the mail is. The base
  * reader comes back unwrapped when nothing is held, so memos keep their inputs.
  */
-export function presentAt(base: EntityReader, places: ReadonlyMap<string, Folder>): EntityReader {
+export function presentAt(
+  base: EntityReader, places: ReadonlyMap<string, Folder>,
+  /** Each row's filed folder at the press: a row filed elsewhere since is shown where it is now. */
+  from?: ReadonlyMap<string, string>,
+): EntityReader {
   if (places.size === 0) return base;
   const project = (m: EngineMessage): EngineMessage => {
     const place = places.get(m.id);
     if (place === undefined || place === m.folder) return m;
+    const was = from?.get(m.id);
+    if (was !== undefined && (m.physicalFolder ?? m.folder) !== was) return m;
     return { ...m, folder: place, physicalFolder: m.physicalFolder ?? m.folder };
   };
   return {

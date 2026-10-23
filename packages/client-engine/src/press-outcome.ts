@@ -1,5 +1,5 @@
 import {
-  LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroPassWouldMove,
+  LEGACY_NEWS_FOLDER, canonicalDestination, isOrganizedFolder, retroWalkWouldMove,
 } from "@trafficflow/core/destinations";
 import { RESERVED_FOLDER_LEAF, isSentFolderPath } from "@trafficflow/core/folder-name";
 import { authScreens } from "@trafficflow/core/sender-headers";
@@ -96,7 +96,7 @@ export function pressOutcome(input: {
     const by = placed.undecided === null ? placed.rule : null;
     const ruled = placed.undecided ?? (by !== null && canonicalDestination(by.destination) !== place ? by : null);
     const cause: PressStayCause = placed.undecided !== null ? "undecided" : ruled !== null ? causeOf(ruled)
-      : input.retro && retroPassWouldMove(m, input.wanted) ? "moving" : "kept";
+      : input.retro && retroWalkWouldMove(m, input.wanted) ? "moving" : "kept";
     add(cause, where, m.id, ruled);
   }
   return { at: atPlace.length, shown: atPlace, away: [...groups.values()] };

@@ -308,6 +308,7 @@ export function useShellDispatch({
     send: (m) => fileAndRefresh(engine.mutate(m)),
     toast,
     enabled: !demo,
+    subscribe: (listener) => engine.subscribe(listener),
     copy: useMemo(() => ({
       gone: t("screening.toastRuleSeedGone"),
       expired: (count: number) => t("screening.toastRuleExpired", { count }),

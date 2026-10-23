@@ -243,6 +243,8 @@ export interface MoveBody {
   folder: string;
   /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
   from?: string;
+  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites. */
+  pressRule?: boolean;
 }
 
 /** Idempotency handle the route threads in when an `Idempotency-Key` is present. */
@@ -1439,8 +1441,10 @@ export class MessageService {
        * sits in the arrival folder, and asking about that folder asks about nothing. `null`
        * desired means nothing ever filed it, and a person's first placement contradicts no
        * route. A demotion it owes runs after the commit, through the one door that records the
-       * rule's delta: this transaction writes no `rules` row and ends at the graduation's. */
-      const override = desired === null || desired === folder ? null : await recordRouteOverride(
+       * rule's delta: this transaction writes no `rules` row and ends at the graduation's.
+       * A press that also writes the sender's rule (`pressRule`) rewrites the route itself, so its
+       * move is not counted against it: that count switched the rule off under the PATCH. */
+      const override = desired === null || desired === folder || body.pressRule === true ? null : await recordRouteOverride(
         bridgeTx(tx), ctx.accountId, {
           ...senderPatternFromAddress(msg.fromAddress),
           filedTo: desired,

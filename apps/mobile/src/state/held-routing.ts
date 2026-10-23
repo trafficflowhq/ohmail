@@ -10,6 +10,7 @@
  */
 import {
   FOLDER_OF_VIEW,
+  createLandingHold,
   createRoutingWindow,
   presentAt,
   routingIntentsKey,
@@ -18,6 +19,8 @@ import {
   type EngineMutation,
   type EntityReader,
   type Folder,
+  type LandingHoldRow,
+  type MutationStatus,
   type AnyRoutingIntent,
   type DecideIntent,
   type MutationResult,
@@ -72,6 +75,16 @@ const listeners = new Set<() => void>();
 let snapshot: ReadonlyMap<string, Folder> = new Map();
 /** Presses whose record has not landed yet: no frame shows them until it has. */
 const landing = new Set<string>();
+/**
+ * A SHEET PRESS'S LANDING, HELD PAST ITS WINDOW (`landing-hold.ts`): the rows the rule's walk will
+ * file stay at the place until filed, the walk reads done, the write is refused or undone, or the TTL.
+ */
+const landingHold = createLandingHold();
+/** A hold changed: a NEW snapshot, so the projection re-derives. */
+function heldChanged(): void {
+  snapshot = new Map(snapshot);
+  for (const cb of listeners) cb();
+}
 
 /**
  * A MOVE THAT DECIDES NO RULE SHOWS NO HELD PLACE: its letter's own move draws it, once the record
@@ -155,6 +168,7 @@ export function openRoutingSession(deps: RoutingSessionDeps): void {
 /** Commit every open window and forget the session's. */
 export function closeRoutingSession(): void {
   if (!live) return;
+  for (const p of live.pending()) landingHold.drop(routingSubject(p));
   live.flush();
   live = null;
   liveDoor = null;
@@ -218,12 +232,45 @@ const afters = new Map<string, { after: (a: ScreenCommitAnswer) => void; changed
  */
 export async function holdScreenRouting(
   intent: ScreenIntent | DecideIntent, after: (a: ScreenCommitAnswer) => void,
+  /** A sheet press's other landed rows, at their filed folders, held at the place past the window. */
+  held?: readonly LandingHoldRow[],
 ): Promise<PhoneRoutingHold> {
   if (!live) return { held: false, superseded: false, sent: false };
   afters.set(intent.id, { after, changed: [] });
+  const place = FOLDER_OF_VIEW[intent.dest];
+  if (held && place) {
+    landingHold.hold({ pressId: intent.id, subject: routingSubject(intent), place, rows: held, at: intent.at });
+  }
   const out = await holdRouting(intent);
-  if (!out.held && !out.sent) afters.delete(intent.id);
+  if (!out.held && !out.sent) { afters.delete(intent.id); landingHold.drop(routingSubject(intent)); }
+  if (held) heldChanged();
   return out;
+}
+
+/** The worst answer of a commit, as the web's `worstStatus` reads it. */
+function worstOf(answers: readonly (MutationResult | null)[]): MutationStatus | null {
+  if (answers.length === 0) return null;
+  const said = answers.filter((a) => a?.status !== "superseded");
+  if (said.length === 0) return "superseded";
+  if (said.some((a) => a === null || a.status === "rolled_back")) return "rolled_back";
+  if (said.some((a) => a!.status === "awaiting_organizer")) return "awaiting_organizer";
+  if (said.some((a) => a!.status === "queued")) return "queued";
+  return "confirmed";
+}
+
+/** The rules a commit wrote; `null` where a create's id is not known. */
+function ruleIdsOf(mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[]): string[] | null {
+  const ids: string[] = [];
+  for (let i = 0; i < mutations.length; i++) {
+    const m = mutations[i]!;
+    if (m.kind === "rule_update") ids.push(m.ruleId);
+    else if (m.kind === "rule_create") {
+      const id = answers[i]?.entityId;
+      if (!id) return null;
+      ids.push(id);
+    }
+  }
+  return ids;
 }
 
 /** The commit planner's shown rules that changed inside the window, noted for the follow-up. */
@@ -234,6 +281,10 @@ export function noteScreenChanged(pressId: string, changed: readonly string[]): 
 
 /** Hand a committed sheet press its answer — `false` for a press with nobody left to tell. */
 export function answerScreenPress(pressId: string, mutations: readonly EngineMutation[], answers: readonly (MutationResult | null)[]): boolean {
+  if (landingHold.size() > 0) {
+    landingHold.settle(pressId, { worst: worstOf(answers), ruleIds: ruleIdsOf(mutations, answers) });
+    heldChanged();
+  }
   const held = afters.get(pressId);
   afters.delete(pressId);
   if (!held) return false;
@@ -243,6 +294,7 @@ export function answerScreenPress(pressId: string, mutations: readonly EngineMut
 
 /** Take the press on this subject back. `false` where no window was open — nothing held is not an undo. */
 export function undoRouting(subject: string): boolean {
+  if (landingHold.size() > 0) { landingHold.drop(subject); heldChanged(); }
   return live ? live.undo(subject) : false;
 }
 
@@ -288,7 +340,12 @@ export function flushRouting(): void {
  * what re-derives the world.
  */
 export function routingReader(
-  base: EntityReader, places: ReadonlyMap<string, Folder>,
+  base: EntityReader, places: ReadonlyMap<string, Folder>, now: number = Date.now(),
 ): EntityReader {
-  return presentAt(base, places);
+  /* …AND A COMMITTED PRESS'S LANDING, re-read over this projection: a row filed or moved since the
+     press is shown where it is (`presentAt`'s from-guard). */
+  if (landingHold.size() === 0) return presentAt(base, places);
+  const held = landingHold.placesFor(base, now);
+  for (const [id, f] of places) { held.places.set(id, f); held.from.delete(id); }
+  return presentAt(base, held.places, held.from);
 }

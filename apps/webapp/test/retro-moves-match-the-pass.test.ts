@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
+  pressForecast,
   retroPassWouldMove,
   type EngineMessage,
   type Folder,
@@ -23,6 +24,7 @@ import {
   RETRO_DESTINATION,
   RETRO_FIXTURE,
   RETRO_MOVES,
+  RETRO_PRESS_MOVES,
   RETRO_ORDER_FIXTURE,
   RETRO_ORDER_MOVES,
   RETRO_SENDER,
@@ -62,6 +64,7 @@ function row(r: RetroFixtureRow): EngineMessage {
     labels: [],
     remoteContent: "none",
     updatedAt: r.date,
+    ...(r.placeDecided ? { placeDecided: true as const } : {}),
   };
 }
 
@@ -104,7 +107,7 @@ describe("a rule's past mail is the pass's to move, and the press moves none of 
 
   it("a bare move — the person's own instruction — moves exactly the predicate's rows", async () => {
     const moved = new Set(movedBy(await planOf(RETRO_FIXTURE, false)));
-    expect([...moved].sort()).toEqual([...RETRO_MOVES].sort());
+    expect([...moved].sort()).toEqual([...RETRO_PRESS_MOVES].sort());
     for (const r of RETRO_FIXTURE) {
       expect(
         moved.has(r.id),
@@ -113,6 +116,34 @@ describe("a rule's past mail is the pass's to move, and the press moves none of 
     }
     expect(moved.size).toBeGreaterThan(0);
     expect(moved.size).toBeLessThan(RETRO_FIXTURE.length);
+  });
+
+  /* RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX: the letter pressed on is the press's own to file, and
+     it is the only one; the forecast lands the walk's own set, a decided row in neither half. */
+  it("over the forecast, a rule press moves the letter it was made on and nothing else", async () => {
+    const store = await mirror(RETRO_FIXTURE);
+    for (const applyRetro of [true, false]) {
+      const s = senderScreening(store, "r-inbox", RETRO_SENDER.address)!;
+      const plan = planScreeningChange(s, "reads", "sender", true, applyRetro);
+      const forecast = pressForecast({
+        reader: store, options: { now: new Date("2026-08-21T09:00:00.000Z") }, subject: s.scopes.sender.messages,
+        scope: "sender", match: RETRO_SENDER.address, wanted: RETRO_DESTINATION as Folder, makeRule: true,
+        applyRetro, now: new Date("2026-08-21T09:00:00.000Z"), seedId: "r-inbox",
+      });
+      expect(movesAtLanding(plan, forecast).map((m) => m.messageId), `switch ${applyRetro}`).toEqual(["r-inbox"]);
+      expect(forecast.keep.moves.map((m) => m.messageId), "the decided row is not the walk's").not.toContain("r-decided");
+      expect(forecast.keep.landing).not.toContain("r-decided");
+      expect(plan.matched).toBe(RETRO_MOVES.length);
+    }
+    // The control: the same press seeded on the decided row moves it — the person's hand is on it.
+    const s = senderScreening(store, "r-decided", RETRO_SENDER.address)!;
+    const forecast = pressForecast({
+      reader: store, options: { now: new Date("2026-08-21T09:00:00.000Z") }, subject: s.scopes.sender.messages,
+      scope: "sender", match: RETRO_SENDER.address, wanted: RETRO_DESTINATION as Folder, makeRule: true,
+      applyRetro: true, now: new Date("2026-08-21T09:00:00.000Z"), seedId: "r-decided",
+    });
+    expect(forecast.keep.seedMove?.messageId).toBe("r-decided");
+    expect(forecast.keep.landing).toContain("r-decided");
   });
 
   it("keeps the NEWEST fifty when fifty-one are eligible for a bare move", async () => {

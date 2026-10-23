@@ -1485,7 +1485,10 @@ export class HttpAdapter implements EngineAdapter {
     switch (m.kind) {
       case "move": {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
-          body: { folder: m.folder, ...(m.from !== undefined ? { from: m.from } : {}) },
+          body: {
+            folder: m.folder, ...(m.from !== undefined ? { from: m.from } : {}),
+            ...(m.pressRule === true ? { pressRule: true } : {}),
+          },
           idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);

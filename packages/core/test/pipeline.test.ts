@@ -110,17 +110,17 @@ describe("processChange (two-phase: plan → commit → reconcile)", () => {
     expect(d.adapter.moves[0].to).toBe("ohmail/Screener");
   });
 
-  it("keeps a sensitive OTP in the priority Imbox and sets the never-flags (over a Feed rule)", async () => {
+  it("files a sensitive OTP where the person's own rule says, and still sets the never-flags (a manual News rule)", async () => {
     const d = makeDeps();
-    // Even a rule that would send this sender to the Feed must not override sensitivity.
+    // The person filed this sender to News by hand: their rule wins over the sensitivity lift.
     d.repo.rules = [{
       id: "r1", kind: "domain", match: "bank.example", destination: "ohmail/News",
       effect: "allow", priority: 10, provenance: "manual", enabled: true,
     }];
     const raw = eml({ from: "no-reply@bank.example", subject: "Your verification code", body: "Your one-time code is 483920." });
     const res = await processChange(createChange("INBOX", raw), d);
-    expect(res.action).toEqual({ type: "none" });     // desired = INBOX, arrived in INBOX
-    expect(d.adapter.moves).toEqual([]);
+    expect(res.action).toEqual({ type: "move", to: "ohmail/News" });
+    expect(d.adapter.moves.map((m: { to: string }) => m.to)).toEqual(["ohmail/News"]);
     const stored = await d.repo.findByDedupKey("mb-1", await dedupKeyFor(raw));
     expect(d.repo.rows.get(stored!.id)!.input.flags)
       .toEqual({ no_ai: true, no_forward: true, no_kb: true, priority: true });
@@ -131,6 +131,24 @@ describe("processChange (two-phase: plan → commit → reconcile)", () => {
     expect(d.repo.bodies.get(stored!.id)!.text).toContain("483920");
     expect(d.repo.bodies.get(stored!.id)!.text).not.toContain("[REDACTED]");
   });
+
+  for (const provenance of ["promoted", "seeded-from-sent"] as const) {
+    it(`keeps a sensitive OTP in the priority Imbox over a rule ohmail inferred (${provenance})`, async () => {
+      const d = makeDeps();
+      // Only a rule the person authored outranks the lift: an inferred one never pulls a code out.
+      d.repo.rules = [{
+        id: "r1", kind: "domain", match: "bank.example", destination: "ohmail/News",
+        effect: "allow", priority: 10, provenance, enabled: true,
+      }];
+      const raw = eml({ from: "no-reply@bank.example", subject: "Your verification code", body: "Your one-time code is 483920." });
+      const res = await processChange(createChange("INBOX", raw), d);
+      expect(res.action).toEqual({ type: "none" });     // desired = INBOX, arrived in INBOX
+      expect(d.adapter.moves).toEqual([]);
+      const stored = await d.repo.findByDedupKey("mb-1", await dedupKeyFor(raw));
+      expect(d.repo.rows.get(stored!.id)!.input.flags)
+        .toEqual({ no_ai: true, no_forward: true, no_kb: true, priority: true });
+    });
+  }
 
   /**
    * The consent boundary, against the signal the SENDER controls.

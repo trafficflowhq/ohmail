@@ -296,6 +296,9 @@ export function SenderMenu({
   const sharedDomain = sender.domain !== "" && isSharedProviderDomain(sender.domain);
   const canScope = sender.domain !== "" && !sharedDomain;
   const subject = sender.scopes[scope];
+  /* A rule press files the letter it was made on now (`seedMove`), so the footer says so; a contact
+     chip's subject holds no such letter and keeps the sentence that nothing here moves. */
+  const seedSays = subject.messages.some((m) => m.id === state.messageId) ? "" : "Chip";
   const inPlay = rulesFor?.(scope) ?? null;
   /* THE ROWS A FINISHED PASS LEFT ELSEWHERE, AND WHY. Asked only when the rule deciding the subject
      was asked for its backlog and the pass has finished; while it runs, a row elsewhere is on its
@@ -738,11 +741,11 @@ export function SenderMenu({
           : makeRule
             ? applyRetro
               ? scope === "domain"
-                ? t("footWillRuleRetroDomain", { domain: whichDomain })
-                : t("footWillRuleRetro", { sender: who })
+                ? t(`footWillRuleRetroDomain${seedSays}`, { domain: whichDomain })
+                : t(`footWillRuleRetro${seedSays}`, { sender: who })
               : scope === "domain"
-                ? t("footWillRuleDomain", { domain: whichDomain })
-                : t("footWillRule", { sender: who })
+                ? t(`footWillRuleDomain${seedSays}`, { domain: whichDomain })
+                : t(`footWillRule${seedSays}`, { sender: who })
             : t("footNoRule")}
       </div>}
     </div>

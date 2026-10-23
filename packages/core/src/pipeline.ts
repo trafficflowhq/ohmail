@@ -1326,9 +1326,19 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
        reading is a heuristic over text; this is a lookup that says what the failed message WAS.
        And the text it would be reading is the user's own out-of-office message, so a code-shaped
        false positive in it costs nothing to file as a receipt. */
+    /* THE PERSON'S OWN RULE OUTRANKS THE SENSITIVITY LIFT: a sender they filed by hand (a manual or
+       migrated allow rule, or one their own Screener decision promoted) files there, codes
+       included, as the retro walk files it. Every other answer (header, policy, the AI, the gate,
+       a rule ohmail inferred) keeps the lift to INBOX. */
+    const authoredRule = decision.source === "rule" && decision.destination !== null && !deniedByConsent
+      ? rules.find((r) => r.id === decision.matchedRuleId)
+      : undefined;
+    const authored = authoredRule !== undefined
+      && (authoredRule.provenance === "manual" || authoredRule.provenance === "migrated"
+        || (authoredRule.provenance === "promoted" && authoredRule.personDecided === true));
     let desired: string = fileBounceAsReceipt
       ? "ohmail/Receipts"
-      : (sensitivity.sensitive && !deniedByConsent) || admitBounce
+      : (sensitivity.sensitive && !deniedByConsent && !authored) || admitBounce
         ? "INBOX"
         : preBaselineBacklog || heldForImport
           ? change.locator.folder
