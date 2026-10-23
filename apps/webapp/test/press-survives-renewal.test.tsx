@@ -451,3 +451,83 @@ describe("a plain api() call over a renewal fault", () => {
     resetSessionTruthForTests();
   });
 });
+
+// ── a press the outbox's ceiling ended while its renewal was out ─────────────────────────────
+
+/* A SLOW LINK AFTER A WAKE: the press is refused late and its renewal lands past the press's
+   75 s ceiling, after the engine ended that attempt and moved on (a newer press about the same
+   field, or a Discard). The server commits the older key 0.2 s slower, so an older press sent
+   again beside the newer one lands last. Mutation watched red: the re-send without its check. */
+describe("a press the outbox's ceiling ended while its renewal was out", () => {
+  let pace = { refusalMs: 20_000, renewalMs: 60_000 };
+  let committed: string | null = null;
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const onM1 = (url: string) => /^\/api\/messages\/m1\/(move|triage)$/.test(url);
+  const pressesUnder = (key: string) => sent.filter((s) => onM1(s.url) && s.headers["idempotency-key"] === key);
+  const move = (folder: string) => ({ kind: "move", messageId: "m1", folder }) as unknown as EngineMutation;
+  const triage = (state: string) => ({ kind: "triage_set", messageId: "m1", state }) as unknown as EngineMutation;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    committed = null;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/auth/refresh") await wait(pace.renewalMs);
+      else if (onM1(url) && lapsed) await wait(pace.refusalMs);
+      else if (onM1(url)) {
+        const older = sent.find((s) => onM1(s.url))?.headers["idempotency-key"];
+        await wait(older === lowered(init)["idempotency-key"] ? 2_200 : 2_000);
+        const body = JSON.parse(String(init?.body)) as { folder?: string; state?: string };
+        committed = body.folder ?? body.state ?? null;
+      }
+      return serve(url, init);
+    }) as typeof fetch;
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  for (const [older, newer, last] of [
+    [move("ohmail/Archive"), move("INBOX"), "INBOX"],
+    [triage("set_aside"), triage("none"), "none"],
+  ] as const) {
+    it(`${older.kind}: the ended press is not sent again beside the newer one, which stays the last word`, async () => {
+      pace = { refusalMs: 20_000, renewalMs: 60_000 };
+      const engine = await liveEngine();
+      lapsed = true;
+      const first = engine.mutate(older);
+      await vi.advanceTimersByTimeAsync(3_000);
+      const second = engine.mutate(newer);
+      await vi.advanceTimersByTimeAsync(200_000);
+      const [a] = await Promise.all([first, second]);
+      expect(pressesUnder(a.key), "the press the ceiling ended was sent again when the renewal landed").toHaveLength(1);
+      expect(committed, "the older press landed over the newer one").toBe(last);
+    });
+  }
+
+  it("CONTROL: a renewal that lands inside the ceiling still sends the press again, and the newer one after it", async () => {
+    pace = { refusalMs: 20_000, renewalMs: 30_000 };
+    const engine = await liveEngine();
+    lapsed = true;
+    const first = engine.mutate(move("ohmail/Archive"));
+    await vi.advanceTimersByTimeAsync(3_000);
+    const second = engine.mutate(move("INBOX"));
+    await vi.advanceTimersByTimeAsync(200_000);
+    const [a] = await Promise.all([first, second]);
+    expect(pressesUnder(a.key), "a press the engine still waited on was dropped after its renewal").toHaveLength(2);
+    expect(committed).toBe("INBOX");
+  });
+
+  it("Discard after the ceiling is true: the press it withdrew is never sent when the renewal lands", async () => {
+    pace = { refusalMs: 2_000, renewalMs: 74_000 };
+    const engine = await liveEngine();
+    lapsed = true;
+    void engine.mutate(PARK);
+    await vi.advanceTimersByTimeAsync(70_000);
+    void engine.syncOnce().catch(() => undefined); // a drain waits on the same renewal past the ceiling
+    await vi.advanceTimersByTimeAsync(5_500);
+    const [row] = engine.queuedChanges();
+    expect(await engine.withdrawQueued(row!.key), "Discard did not withdraw the waiting press").toBe("withdrawn");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pressesUnder(row!.key), "the withdrawn press reached the server when the renewal landed").toHaveLength(1);
+    expect(committed).toBeNull();
+  });
+});

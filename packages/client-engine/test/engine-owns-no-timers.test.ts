@@ -10,8 +10,9 @@ import { lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../sc
  * THE ENGINE OWNS NO TIMERS (`apps/webapp/app/shell/engine.tsx`'s claim, VERIFY-026 HIGH 3). A timer
  * inside the engine outlives every surface that drops it: nothing outside can stop it, and it keeps
  * the mirror and its reads alive. Cadence belongs to the surfaces (the web scheduler's tick, the
- * phone's drain round). Read in one pass with comments and literals blanked; the one admitted timer
- * is the replay deadline, cleared when its race settles. Planted fixtures prove both directions.
+ * phone's drain round). Read in one pass with comments and literals blanked; the admitted timers are
+ * deadlines on one request each (the replay's, the hold's ceiling, the drain's belt), each cleared
+ * when its race settles. Planted fixtures prove both directions.
  */
 const ENGINE = fileURLToPath(new URL("../src/engine.ts", import.meta.url));
 const CADENCES = ["../../../apps/webapp/app/shell/sync-scheduler.ts", "../../../apps/mobile/src/net/drain.ts"]
@@ -20,6 +21,10 @@ const CADENCES = ["../../../apps/webapp/app/shell/sync-scheduler.ts", "../../../
 const ADMITTED: Record<string, string> = {
   "timer = setTimeout(() => { timedOut = true; resolve({ r: null }); }, this.replayDeadlineMs);":
     "the replay deadline: raced against one replay and cleared in the same function when it settles",
+  "const ceilingTimer = setTimeout(() => end(), this.holdCeilingMs);":
+    "the hold's ceiling: raced against one write's request and cleared in the same function when it settles",
+  "timer = setTimeout(() => reject(noAnswerWithin(this.drainCeilingMs)), this.drainCeilingMs);":
+    "the drain's belt: raced against one page read and cleared in the same function when it settles",
 };
 
 function timersIn(src: string): string[] {

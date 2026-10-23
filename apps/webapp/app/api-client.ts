@@ -798,6 +798,9 @@ async function transported(
   }
   if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
   void first.body?.cancel().catch(() => undefined);
+  // A caller that gave up meanwhile (the outbox ends a write at its ceiling) is sent nothing more,
+  // whatever the fetch below does with an aborted signal.
+  if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
   return fetch(url, withFreshCsrf(init));
 }
 

@@ -120,6 +120,14 @@ export interface HttpAdapterOptions {
    * (`engine-config.ts`).
    */
   mayAsk?: () => boolean;
+  /**
+   * A DEADLINE ON THE DRAIN'S TWO READS, `GET /sync` and `GET /sync/snapshot`: the answer within
+   * `answerMs`, then its body within `bodyMs`. Either one aborts the request and rejects with a
+   * retryable `timeout`, which the drive reports as a failed drain. Absent, nothing changes: the
+   * browser opts in (`engine-config.ts`), the desktop bridge bounds its own requests, and the
+   * engine's `DRAIN_REQUEST_CEILING_MS` is the belt for every door.
+   */
+  syncDeadlines?: { answerMs: number; bodyMs: number };
 }
 
 /** The zone this runtime names for itself, or `null` where it cannot name one. */
@@ -226,6 +234,21 @@ export const PULL_RING_TIMEOUT_MS = 8_000;
 
 /** How long a Cancel's question to the server may take before it is `unreachable` (asked again later). */
 export const WITHDRAW_SEND_TIMEOUT_MS = 12_000;
+
+/**
+ * HOW LONG `GET /sync` AND `GET /sync/snapshot` MAY TAKE TO ANSWER, on a door that asks for a bound
+ * ({@link HttpAdapterOptions.syncDeadlines}). A request sent over a connection that died silently
+ * (sleep, a network change) never answers, and the drive awaiting it held every later drain and
+ * outbox replay until a reload. 30 s covers a cold start and the `db_busy` retries (two 5 s waits).
+ */
+export const SYNC_ANSWER_TIMEOUT_MS = 30_000;
+
+/**
+ * How long an answered drain page's BODY may take to arrive, counted from the answer: a dense backlog
+ * page (2000 rows, a megabyte or two) can take longer than {@link SYNC_ANSWER_TIMEOUT_MS} on a slow
+ * link, while a dead connection never answers at all.
+ */
+export const SYNC_BODY_TIMEOUT_MS = 60_000;
 
 /**
  * How long the client waits for `GET /messages/:id/body` — the same silence
@@ -346,6 +369,8 @@ export class HttpAdapter implements EngineAdapter {
   private readonly stageAttachments: boolean;
   /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
   private readonly mayAsk: () => boolean;
+  /** See {@link HttpAdapterOptions.syncDeadlines}. `null` unless a host asked for them. */
+  private readonly syncDeadlines: { answerMs: number; bodyMs: number } | null;
   /** Highest X-Sync-Seq observed across mutations — converged once the /sync cursor reaches it. */
   lastSyncSeq: number | null = null;
   /**
@@ -449,6 +474,7 @@ export class HttpAdapter implements EngineAdapter {
       this.reportSearchPhases = (record: WindowSearchPhases): Promise<void> => sink(record);
     }
     this.mayAsk = opts.mayAsk ?? (() => true);
+    this.syncDeadlines = opts.syncDeadlines ?? null;
   }
 
   /** See {@link HttpAdapterOptions.syncFailureSink}; assigned in the constructor when one was given. */
@@ -465,16 +491,18 @@ export class HttpAdapter implements EngineAdapter {
    * `signal` is OPTIONAL AND UNSET BY DEFAULT, and that is the blast-radius decision. This method is shared by every
    * call the client makes — sync drains, bodies, search, the byte fetches, and every mutation. A deadline installed
    * HERE would bound all of them at one number, and they do not deserve one number: a `/sync` drain legitimately runs
-   * longer than a list read, a mutation aborted mid-flight is ambiguous in a way a GET never is (`POST /rules` has no
-   * server-side idempotency claim — see `rule_create` below — so abort-then-retry writes a second rule), and the two
-   * `cost: "connection"` byte routes hold a slot in `imap-admission` that a CLIENT giving up does not hand back, so a
-   * deadline there plus the retry it invites double-counts against the per-mailbox cap and produces a `mailbox_busy`
-   * the user caused. So the mechanism is here and the POLICY is at the call site.
+   * longer than a list read, a mutation aborted mid-flight is ambiguous in a way a GET never is (the outbox bounds how
+   * long one holds the others instead, `OUTBOX_HOLD_CEILING_MS`, aborts the write it ends there so nothing more of it
+   * leaves, and replays it under its key, which every write route honours; a send, whose files may still be
+   * uploading, is left to its own request), and the two
+   * `cost: "connection"` byte routes hold a slot in `imap-admission` that a CLIENT giving up
+   * does not hand back, so a deadline there plus the retry it invites double-counts against the per-mailbox cap and
+   * produces a `mailbox_busy` the user caused. So the mechanism is here and the POLICY is at the call site.
    */
 
   /**
-   * Exactly one caller passes a signal today: {@link HttpAdapter.listAttachments}, via {@link
-   * HttpAdapter.withDeadline}.
+   * The callers that pass a signal: the bounded reads, through {@link HttpAdapter.withDeadline}, the drain's two
+   * reads, through {@link HttpAdapter.underSyncDeadlines}, and every write but a send, with the engine's own.
    */
   private async request(
     method: string, path: string,
@@ -514,8 +542,9 @@ export class HttpAdapter implements EngineAdapter {
       });
     } catch (err) {
       // Network failure — safe to retry with the SAME Idempotency-Key (§1.6). An abort raised by
-      // `withDeadline` also lands here, as an `AbortError`; it becomes the LOSING branch of that
-      // race and is swallowed there, so this classification never reaches a surface.
+      // `withDeadline` (or by the engine's ceiling on a write) also lands here, as an `AbortError`;
+      // it becomes the LOSING branch of that race and is swallowed there, so this classification
+      // never reaches a surface.
       throw new MutationRejectedError(`network failure: ${String(err)}`, { code: "network", retryable: true });
     }
   }
@@ -610,10 +639,52 @@ export class HttpAdapter implements EngineAdapter {
     const q = new URLSearchParams({ since: params.since });
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.types && params.types.length > 0) q.set("types", params.types.join(","));
-    const res = await this.request("GET", `/sync?${q.toString()}`);
-    if (res.status === 410) throw new CursorExpiredError();
-    if (!res.ok) throw await this.rejectionOf(res);
-    return (await res.json()) as SyncResponse;
+    return this.underSyncDeadlines(async (signal, answered) => {
+      const res = await this.request("GET", `/sync?${q.toString()}`, signal ? { signal } : {});
+      answered();
+      if (res.status === 410) throw new CursorExpiredError();
+      if (!res.ok) throw await this.rejectionOf(res);
+      return (await res.json()) as SyncResponse;
+    });
+  }
+
+  /**
+   * ONE DRAIN READ UNDER {@link HttpAdapterOptions.syncDeadlines}: one controller and one timer, armed
+   * at `answerMs` and re-armed at `bodyMs` when `run` says the answer arrived. Either firing rejects
+   * with a retryable `timeout` and aborts the request — the rejection first, so a transport that
+   * rejects at once on abort cannot win the race with an AbortError. The loser is swallowed, as in
+   * {@link withDeadline}. Without the option the read runs as it always did.
+   */
+  private async underSyncDeadlines<T>(
+    run: (signal: AbortSignal | undefined, answered: () => void) => Promise<T>,
+  ): Promise<T> {
+    const d = this.syncDeadlines;
+    if (d === null) return run(undefined, () => {});
+    const Ctor = (globalThis as { AbortController?: typeof AbortController }).AbortController;
+    const controller = Ctor ? new Ctor() : null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let over = false;
+    let fail!: (err: MutationRejectedError) => void;
+    const deadline = new Promise<never>((_resolve, reject) => { fail = reject; });
+    const arm = (ms: number): void => {
+      // Never re-armed once the race is over: an answer landing as the deadline fired leaves no timer.
+      if (over) return;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        over = true;
+        fail(new MutationRejectedError(`ohmail did not answer within ${ms} ms`, { code: "timeout", retryable: true }));
+        controller?.abort();
+      }, ms);
+    };
+    arm(d.answerMs);
+    const attempt = run(controller?.signal, () => arm(d.bodyMs));
+    attempt.catch(() => { /* the loser of the race has no reader — see `withDeadline` */ });
+    try {
+      return await Promise.race([attempt, deadline]);
+    } finally {
+      over = true;
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   /**
@@ -671,9 +742,12 @@ export class HttpAdapter implements EngineAdapter {
     // ordinary walk, which carries the same rows a few pages later and still converges.
     if (params.phase) q.set("phase", params.phase);
     const qs = q.toString();
-    const res = await this.request("GET", qs ? `/sync/snapshot?${qs}` : "/sync/snapshot");
-    if (!res.ok) throw await this.rejectionOf(res);
-    const wire = (await res.json()) as Partial<SyncSnapshotPage>;
+    const wire = await this.underSyncDeadlines(async (signal, answered) => {
+      const res = await this.request("GET", qs ? `/sync/snapshot?${qs}` : "/sync/snapshot", signal ? { signal } : {});
+      answered();
+      if (!res.ok) throw await this.rejectionOf(res);
+      return (await res.json()) as Partial<SyncSnapshotPage>;
+    });
     const asOfSeq = Number(wire.asOfSeq);
     if (!Number.isFinite(asOfSeq) || asOfSeq < 0) {
       throw new MutationRejectedError("snapshot response carried no usable asOfSeq", {
@@ -1400,16 +1474,19 @@ export class HttpAdapter implements EngineAdapter {
     opts: {
       idempotencyKey: string; createAttempted?: boolean;
       createdRow?: CreatedDraftRow; onDraftRow?: (row: CreatedDraftRow) => Promise<void>;
-      pressAgeMs?: number;
+      pressAgeMs?: number; signal?: AbortSignal;
     },
   ): Promise<MutationAnswer> {
     /* The state verbs' press age, beside their key; `undefined` sends no header (every other kind). */
     const age = opts.pressAgeMs === undefined ? {} : { pressAgeMs: opts.pressAgeMs };
+    /* The attempt's own signal, on every request it makes: the engine aborts it when it ends the
+       attempt, and nothing more of it leaves. A send is given none. */
+    const sig = opts.signal === undefined ? {} : { signal: opts.signal };
     switch (m.kind) {
       case "move": {
         const res = await this.request("POST", `/messages/${m.messageId}/move`, {
           body: { folder: m.folder, ...(m.from !== undefined ? { from: m.from } : {}) },
-          idempotencyKey: opts.idempotencyKey, ...age,
+          idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1428,7 +1505,7 @@ export class HttpAdapter implements EngineAdapter {
 
       case "message_delete": {
         const res = await this.request("DELETE", `/messages/${m.messageId}`, {
-          idempotencyKey: opts.idempotencyKey, ...age,
+          idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1450,7 +1527,7 @@ export class HttpAdapter implements EngineAdapter {
       case "triage_set": {
         const res = await this.request("POST", `/messages/${m.messageId}/triage`, {
           body: { state: m.state, ...(m.bubbleUpAt ? { bubbleUpAt: m.bubbleUpAt } : {}) },
-          idempotencyKey: opts.idempotencyKey, ...age,
+          idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         // The triage endpoint returns the MessageStateDTO without an X-Sync-Seq
@@ -1474,7 +1551,7 @@ export class HttpAdapter implements EngineAdapter {
             // client that cannot ask keeps the server's default rather than silently declining.
             ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
           },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         // Response is { messageId, appliedFolder, createdRuleId, createdRule, retargetedRules } — the rules are
@@ -1540,7 +1617,7 @@ export class HttpAdapter implements EngineAdapter {
         let stale: MutationRejectedError | null = null;
         let applied = 0;
         for (const id of m.messageIds ?? []) {
-          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" }, ...age });
+          const res = await this.request("PATCH", `/messages/${id}`, { body: { unread: false, via: "glance" }, ...age, ...sig });
           if (!res.ok) {
             const rejection = await this.rejectionOf(res);
             if (rejection.code === "stale_press") { stale = rejection; continue; }
@@ -1573,7 +1650,7 @@ export class HttpAdapter implements EngineAdapter {
         // answering pins exactly as before.
         const res = await this.request("PATCH", "/messages", {
           body: { ids: m.messageIds, unread: m.unread, ...(m.via ? { via: m.via } : {}), ...(m.openRead ? { openRead: true } : {}) },
-          idempotencyKey: opts.idempotencyKey, ...age,
+          idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };
@@ -1606,7 +1683,7 @@ export class HttpAdapter implements EngineAdapter {
             // TAG-OR-CREATE: the name the user typed, plus the id to mint it under, so the
             // optimistic paint and the stored row agree. An existing name wins over the id.
             : { tagId: m.tagId, name: m.createName, assigned: m.assigned },
-          idempotencyKey: opts.idempotencyKey, ...age,
+          idempotencyKey: opts.idempotencyKey, ...sig, ...age,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         return { changes: [], seq: this.noteSeq(res) };
@@ -1630,7 +1707,7 @@ export class HttpAdapter implements EngineAdapter {
       case "tag_create": {
         const res = await this.request("POST", "/tags", {
           body: m.hue === undefined ? { name: m.name } : { name: m.name, hue: m.hue },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1644,7 +1721,7 @@ export class HttpAdapter implements EngineAdapter {
       case "tag_rename": {
         const res = await this.request("PATCH", `/tags/${encodeURIComponent(m.tagId)}`, {
           body: { name: m.name },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1663,7 +1740,7 @@ export class HttpAdapter implements EngineAdapter {
       case "tag_recolor": {
         const res = await this.request("PATCH", `/tags/${encodeURIComponent(m.tagId)}`, {
           body: { hue: m.hue },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1685,7 +1762,7 @@ export class HttpAdapter implements EngineAdapter {
        */
       case "tag_delete": {
         const res = await this.request("DELETE", `/tags/${encodeURIComponent(m.tagId)}`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1704,7 +1781,7 @@ export class HttpAdapter implements EngineAdapter {
       case "folder_create": {
         const res = await this.request("POST", "/folders", {
           body: { mailboxId: m.mailboxId, name: m.name },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1718,7 +1795,7 @@ export class HttpAdapter implements EngineAdapter {
       case "folder_rename": {
         const res = await this.request("PATCH", `/folders/${encodeURIComponent(m.folderId)}`, {
           body: { name: m.name },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1736,7 +1813,7 @@ export class HttpAdapter implements EngineAdapter {
        */
       case "folder_delete": {
         const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1755,7 +1832,7 @@ export class HttpAdapter implements EngineAdapter {
        */
       case "folder_op_dismiss": {
         const res = await this.request("DELETE", `/folders/${encodeURIComponent(m.folderId)}/op`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1793,7 +1870,7 @@ export class HttpAdapter implements EngineAdapter {
        */
       case "rule_delete": {
         const res = await this.request("DELETE", `/rules/${encodeURIComponent(m.ruleId)}`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
@@ -1821,7 +1898,7 @@ export class HttpAdapter implements EngineAdapter {
             ...(m.keepProvenance === true ? { keepProvenance: true } : {}),
             ...(m.keepProvenance === true && m.restoreProvenance !== undefined ? { restoreProvenance: m.restoreProvenance } : {}),
           },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1878,7 +1955,7 @@ export class HttpAdapter implements EngineAdapter {
             // not been updated on the server's own default rather than silently declining.
             applyRetro: m.applyRetro ?? true,
           },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -1938,7 +2015,7 @@ export class HttpAdapter implements EngineAdapter {
               ...(m.forwardOfMessageId ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
               ...fields,
             },
-            idempotencyKey: opts.idempotencyKey,
+            idempotencyKey: opts.idempotencyKey, ...sig,
           });
           if (!res.ok) throw await this.rejectionOf(res);
           const seq = this.noteSeq(res);
@@ -1986,7 +2063,7 @@ export class HttpAdapter implements EngineAdapter {
             // Absent leaves the row's own (the server's patch rule); `null` clears it.
             ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
           },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -2014,7 +2091,7 @@ export class HttpAdapter implements EngineAdapter {
        */
       case "draft_discard": {
         const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
         if (!res.ok) throw await this.rejectionOf(res);
@@ -2063,7 +2140,7 @@ export class HttpAdapter implements EngineAdapter {
       case "draft_resolve": {
         const res = await this.request("POST", `/drafts/${encodeURIComponent(m.draftId)}/resolve`, {
           body: { outcome: m.outcome },
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);
@@ -2079,7 +2156,7 @@ export class HttpAdapter implements EngineAdapter {
 
       case "draft_schedule_cancel": {
         const res = await this.request("DELETE", `/drafts/${encodeURIComponent(m.draftId)}/schedule`, {
-          idempotencyKey: opts.idempotencyKey,
+          idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (!res.ok) throw await this.rejectionOf(res);
         const seq = this.noteSeq(res);

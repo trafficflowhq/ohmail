@@ -7,8 +7,12 @@
  * `bootEngine` over the loopback server; the chrome is read as source (no RN renderer here).
  */
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, OUTBOX_HOLD_CEILING_MS, type EngineMutation,
+} from "@ohmail/client-engine";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { BearerManagerRN } from "../src/net/bearer";
 import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";
 import { EN } from "../src/copy.en";
@@ -107,6 +111,66 @@ describe("a draft discard that could not reach the account, on the phone", () =>
     const live = await scene();
     expect(await live.actions.retryQueued("no-such-entry")).toBeNull();
     live.close();
+  });
+});
+
+/* THE ROTATION OUTLASTS THE OUTBOX'S CEILING. A discard meets a lapsed access token and the bearer
+   holds it until its rotation lands, which has no deadline. Past the ceiling the discard is back on
+   the queue and the strip offers Discard; once the rotation lands the bearer must not send it, since
+   DELETE /drafts/:id is for good. The real bearer and HTTP adapter over a fake server, the phone's
+   host-owned replay. Mutation watched red: the replay without its check. */
+describe("a discard the bearer holds across a rotation past the outbox's ceiling", () => {
+  it("Discard is true: the rotation's replay never deletes the draft the person kept", async () => {
+    const origin = "https://phone.test";
+    let honoured: string | null = "acc-1";
+    let land!: () => void;
+    const landed = new Promise<void>((r) => { land = r; });
+    let deletes = 0;
+    let deleted = false;
+    const answer = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    const fetchImpl = async (url: string, init?: unknown): Promise<Response> => {
+      const i = (init ?? {}) as { method?: string; headers?: Record<string, string> };
+      if (url.endsWith("/auth/refresh")) {
+        await landed;
+        honoured = "acc-2";
+        return answer(200, { tokens: { accessToken: "acc-2", refreshToken: "ref-2" } });
+      }
+      if (i.method === "DELETE") deletes += 1;
+      if (i.headers?.authorization !== `Bearer ${honoured}`) {
+        return answer(401, { error: { code: "unauthorized", message: "authentication required" } });
+      }
+      if (i.method === "DELETE") { deleted = true; return new Response(null, { status: 204 }); }
+      if (!url.includes("/sync?")) return answer(404, { error: { code: "not_found", message: "no route" } });
+      const creates = [{ type: "draft", id: "d-1", op: "create", seq: 1, updatedAt: draftRow.updatedAt, entity: draftRow }];
+      return answer(200, { changes: { creates, updates: [], moves: [], deletes: [] }, cursor: "1", hasMore: false, serverTime: draftRow.updatedAt });
+    };
+    const bearer = new BearerManagerRN({
+      origin, accessToken: "acc-1", refreshToken: "ref-1", fetchImpl,
+      vault: { save: async () => "landed", clear: async () => "landed", armAttempt: async () => "landed" },
+    });
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = new OhmailEngine({
+      adapter: new HttpAdapter({ baseUrl: origin, fetch: bearer.fetch, headers: () => bearer.headers(), getCookie: () => null }),
+      store, outboxAutoReplay: false,
+    });
+    await engine.start();
+    vi.useFakeTimers();
+    try {
+      honoured = null; // the access token lapsed: only the rotation's answer is honoured now
+      const press = engine.mutate({ kind: "draft_discard", draftId: "d-1" } as EngineMutation);
+      await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS + 5_000);
+      const { key } = await press;
+      expect(engine.queuedDiscards().map((q) => q.key), "the discard the ceiling ended is not listed").toEqual([key]);
+      expect(await engine.withdrawQueued(key), "Discard did not withdraw the waiting discard").toBe("withdrawn");
+      land();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(deletes, "the rotation's replay sent the discard the person withdrew").toBe(1);
+      expect(deleted, "the draft the person kept was deleted on the server").toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

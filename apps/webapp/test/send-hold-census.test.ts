@@ -254,11 +254,12 @@ describe("the send hold is answered in one place, and every write site asks", ()
 
     expect(
       code(engine).filter((l) => /this\.lateResults\.set\(/.test(l)).length,
-      "the engine writes a late result somewhere this census has not read. Five writers are named: the dispatch "
+      "the engine writes a late result somewhere this census has not read. Six writers are named: the dispatch "
       + "that timed out while a caller was waiting, the boot replay, whose answer used to be discarded, a withdrawn "
-      + "press handing over the confirmation that waited for it, a Cancel's ending as the server decided it, and "
-      + "the owed Cancels a drive asks. A sixth is an answer the drain cannot reach.",
-    ).toBe(5);
+      + "press handing over the confirmation that waited for it, a Cancel's ending as the server decided it, "
+      + "the owed Cancels a drive asks, and the hung change a Try again ended and sent ahead of the press "
+      + "(`dispatchEndedFirst`). A seventh is an answer the drain cannot reach.",
+    ).toBe(6);
     expect(
       code(engine).filter((l) => /this\.lateResults\.delete\(/.test(l)).length,
       "the map is emptied in more than one place; `flushPending` is destructive, so the second "

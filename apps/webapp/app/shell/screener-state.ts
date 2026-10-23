@@ -10,7 +10,7 @@
  * presented-only rep routes past the gate through the sender sheet's `planScreeningChange`/`dispatchScreeningChange`
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
@@ -48,6 +48,7 @@ import {
   type ScreenerSenderDTO,
   type ScreenerWaitingSenderDTO,
   type UnsubscribeClaim,
+  type AbandonedMutation,
   domainOfAddress,
   ruleMatchKey,
   unsubscribeClaim,
@@ -85,6 +86,23 @@ import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
 import type { UndoToastFn } from "./undo-door";
 import type { ReleasePressInput } from "./routing-undo";
+import { givenUpRowIds } from "./screener-given-up";
+
+/**
+ * ONE SUBSCRIBER PER ENGINE for the abandoned list ({@link givenUpRowIds}): a module-level closure
+ * over the engine alone, so React keeps one subscription across renders and nothing here pins a
+ * render's frame (`render-scope-census.test.ts`).
+ */
+const ABANDONED_SUBSCRIBERS = new WeakMap<OhmailEngine, (cb: () => void) => () => void>();
+function abandonedSubscriber(engine: OhmailEngine): (cb: () => void) => () => void {
+  let subscribe = ABANDONED_SUBSCRIBERS.get(engine);
+  if (subscribe === undefined) {
+    subscribe = (cb) => engine.subscribe(cb);
+    ABANDONED_SUBSCRIBERS.set(engine, subscribe);
+  }
+  return subscribe;
+}
+const NO_ABANDONED: readonly AbandonedMutation[] = [];
 
 /**
  * THE SHELL'S ROUTING WINDOW, for the release presses — the one Move's rule change is held in
@@ -356,7 +374,8 @@ export interface ScreenerState {
    * So a refusal is a STATE, not an absence: the row returns carrying it, it survives the toast, and is
    * cleared when the row is decided again. The release verbs (`allowScreened`, both `notSpam` halves)
    * carried the identical defect with no undo window; they report through the same mark, keyed so a
-   * PARTIAL release still marks the row that comes back (`refusalKeys`).
+   * PARTIAL release still marks the row that comes back (`refusalKeys`). A decision the outbox gave
+   * up on after it was queued carries the same mark while its record stands (`screener-given-up.ts`).
    */
   refused: (id: string) => boolean;
   /** Commit every pending decision now (route/segment changes). */
@@ -711,6 +730,9 @@ export function useScreenerState(
     [queueReader, version, locale, ownAddresses, queueSettled],
   );
   const s = store.current;
+  /* THE DECISIONS THE OUTBOX GAVE UP ON, so the row a given-up decision returns to says so — see
+     {@link givenUpRowIds}. Read off the engine's own list, never a copy kept here. */
+  const abandonedNow = useSyncExternalStore(abandonedSubscriber(engine), () => engine.abandoned(), () => NO_ABANDONED);
 
   /* THE QUEUE PAST ITS FIRST PAGE — asked a page per press, held here and never in the mirror.
      Keyed to the first page's `ask`: a new first page restarts the walk from its own cursor. */
@@ -2127,6 +2149,10 @@ export function useScreenerState(
         && !pinnedKeys.has(senderKey(x.from.address)))
       .map((x) => ({ sender: x, pinned: false })),
   ];
+  /* Every row `refused` may be asked about. Empty unless something was given up on, which is rare. */
+  const givenUp = givenUpRowIds(abandonedNow, abandonedNow.length === 0
+    ? []
+    : [...waiting, ...segments.screenedOut, ...spam.map((r) => r.sender)]);
 
   /**
    * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing. ONE sentence for all
@@ -2325,7 +2351,9 @@ export function useScreenerState(
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
-    refused: (id) => s.refused.has(id),
+    // The wire refused this row's decision, or the outbox gave it up: either way it did not land. A
+    // row decided again says nothing about the old decision while the new one is in its window.
+    refused: (id) => s.refused.has(id) || (givenUp.has(id) && !s.pending.has(id)),
     bodyStall,
     /**
      * THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split is the point rather

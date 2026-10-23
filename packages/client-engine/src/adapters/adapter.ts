@@ -353,6 +353,12 @@ export interface EngineAdapter {
        * press instant — a state verb's `x-ohmail-press-age`. Absent for every other kind.
        */
       pressAgeMs?: number;
+      /**
+       * Aborted when the engine ends this attempt and puts the change back on its queue (its hold
+       * ceiling, or a person's Try again past the API's limit): nothing more of it may leave, a
+       * transport's re-send after a renewal included. Never given for a send.
+       */
+      signal?: AbortSignal;
     },
   ): Promise<MutationAnswer>;
   /**

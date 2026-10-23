@@ -3389,6 +3389,8 @@
     "unsavedSendAlreadyWent": "Diese Nachricht wurde bereits gesendet. Sie wurde nicht nochmal gesendet.",
     "unsavedPendingCount": "{count, plural, one {# \u00c4nderung ist noch nicht durch} other {# \u00c4nderungen sind noch nicht durch}}",
     "unsavedQueuedWhy": "Dieser Browser konnte deinen Account nicht erreichen. Er versucht es weiter.",
+    "unsavedQueuedWaiting": "Noch nicht gesendet. Dieser Browser sendet es, sobald er kann.",
+    "unsavedQueuedServerWhy": "Der Server hat es nicht angenommen und keinen Grund genannt. Dieser Browser versucht es weiter.",
     "keptSessionEnded": "Die Sitzung in diesem Browser ist beendet. Die Änderung bleibt erhalten und wird gesendet, sobald du dich wieder anmeldest.",
     "keptAccountSwitched": "In einem anderen Tab hat sich ein anderer Account angemeldet. Die Änderung bleibt erhalten und wird gesendet, sobald dieser Account wieder angemeldet ist.",
     "unsavedSuperseded": "Inzwischen wurde eine neuere \u00c4nderung am selben Objekt gespeichert, daher kann diese nicht wiederholt werden.",
