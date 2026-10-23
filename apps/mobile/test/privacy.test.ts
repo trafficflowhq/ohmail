@@ -558,6 +558,13 @@ const ENGINE_IMPORTERS = new Set([
    */
   "src/mail/frame-tree.ts",
   /**
+   * THE QUOTED-HISTORY DETECTOR'S DOOR — a named consumer of the shared detector
+   * (`quoted-history.ts`, pure: lines or a tree in, a range out) and the sanitizer's attribute
+   * list, which it hands the body renderer and the sanitizer. No connection; the pattern scan above
+   * holds it to that.
+   */
+  "src/mail/quoted-tree.ts",
+  /**
    * THE COMPOSER'S ATTACH RULES — a named consumer of the ONE SHARED ATTACH BOUND, nothing else.
    *
    * It takes `composeAttachCap` (a pure function over two numbers — the same rule the webapp

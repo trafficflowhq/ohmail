@@ -1,0 +1,40 @@
+{
+  "id": "53",
+  "file": "53-inline-interleaved-plain.eml",
+  "shape": "inline-interleaved-plain",
+  "description": "mutt, plain text only: answers typed BETWEEN quoted lines (quote, answer, quote, answer, quote, answer, signature)",
+  "client": "mutt",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Elif Testa"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "Yes, the first truck can be there at 7:15.",
+      "Understood, I moved that delivery to November 19.",
+      "Yes, I will send it 48 hours before arrival."
+    ],
+    "trailingTail": null
+  },
+  "notes": "The quoted lines are the questions being answered; folding any of them makes the answers unreadable."
+}

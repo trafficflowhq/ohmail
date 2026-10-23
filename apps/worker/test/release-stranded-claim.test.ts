@@ -4,14 +4,16 @@ import { eq } from "drizzle-orm";
 import { accounts, mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
+import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import {
-  formatClaim, META_RECORDS_MAX_PER_FETCH, MetaEnumRefusedError, META_ENUM_RECORDS_MAX,
+  formatClaim, META_FOLDER, META_RECORDS_MAX_PER_FETCH, MetaEnumRefusedError, META_ENUM_RECORDS_MAX,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { startWorker } from "../src/index.js";
 import { prepareIsolatedDb, truncateAll } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet, FakeMetaFolder } from "./_fakeadapter.js";
 import { markMailboxReleased } from "../src/mailboxes.js";
+import { releaseMailboxClaim } from "../src/lease.js";
 
 /**
  * ═══ GIVING UP A CLAIM THIS INSTALL LEFT BEHIND — THROUGH THE REAL SERVICE ══════════════════
@@ -735,4 +737,24 @@ describe("a claim this install left behind can be given up", () => {
     expect(row.organizerReleasedAt, "the row records a release that was cancelled").toBeNull();
   }, 30_000);
 
+});
+
+/* ══ A RELEASE NAMES EVERY NONCE THIS INSTALL MINTED HERE ════════════════════════════════════
+ * A bad network leaves several claims of ours that we never heard back about. Naming only the
+ * acknowledged nonce and one pending one left the others standing as "another copy of this
+ * install", live for a whole window, after the person's stop. */
+describe("a release takes every claim this install wrote", () => {
+  it("names the acknowledged nonce and every minted one, and leaves nothing of ours", async () => {
+    const meta = new FakeMetaFolder();
+    for (const nonce of ["n1", "n2", "n3"]) {
+      await meta.appendClaim(formatClaim({
+        authorizedAt: null, capabilities: [], installId: INSTALL, kind: "cloud", displayName: "Cloud",
+        heartbeat: new Date(), claimedAt: new Date(Date.now() - 60_000), nonce,
+      }));
+    }
+    const adapter = { leaseIo: () => meta } as unknown as MailboxAdapter;
+    const removed = await releaseMailboxClaim(adapter, INSTALL, randomUUID(), "n1", { mintedNonces: ["n2", "n3"] });
+    expect(removed, "a claim a lost answer left was not released").toBe(3);
+    expect(meta.messages, `${META_FOLDER} still holds a claim nobody is behind`).toEqual([]);
+  });
 });

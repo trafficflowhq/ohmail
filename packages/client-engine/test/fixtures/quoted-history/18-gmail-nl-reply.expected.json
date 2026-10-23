@@ -1,0 +1,43 @@
+{
+  "id": "18",
+  "file": "18-gmail-nl-reply.eml",
+  "shape": "gmail-nl-reply",
+  "description": "Gmail web, Dutch: 'Op do 22 okt 2026 om 09:14 schreef Name <address>:'",
+  "client": "gmail",
+  "ui_language": "nl",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Sanne Proef"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Beste Sanne,",
+      "visibleLastLine": "Voorbeeld Installaties BV",
+      "historyStartLine": "Op wo 14 okt 2026 om 13:10 schreef Sanne Proef <sanne.proef@example.net>:",
+      "historyStartLineNormalized": "Op wo 14 okt 2026 om 13:10 schreef Sanne Proef <sanne.proef@example.net>:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "Op wo 14 okt 2026 om 13:10 schreef Sanne Proef <sanne.proef@example.net>:",
+      "visibleFirstText": "Beste Sanne,",
+      "visibleLastText": "Voorbeeld Installaties BV"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

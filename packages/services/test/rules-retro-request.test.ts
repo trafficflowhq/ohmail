@@ -174,3 +174,32 @@ describe("a RETARGET asks again, because the destination changed", () => {
     expect(stored.retroDoneAt, "the opt-out must work on the retarget path too").toEqual(done);
   });
 });
+
+describe("a DECLINED edit of a rule still walking its backlog ends the walk", () => {
+  /* "The rest of their mail here stays where it is": a walk left owed (parked behind a mailbox this
+     install only reads) would otherwise re-arm later and file that rest by the edited rule. */
+  const PARKED = "ffffffff-ffff-ffff-0000-000000000001";
+  const owed = async (body: Record<string, unknown>) => {
+    const { db, ctx } = await world();
+    const { rule } = await createRule(ctx, { ...BODY, ...body });
+    await db.update(rules).set({ retroCursor: PARKED, retroMoved: 3 }).where(eq(rules.id, rule.id));
+    return { db, ctx, id: rule.id };
+  };
+
+  it("on a retarget", async () => {
+    const { db, ctx, id } = await owed({});
+    await updateRule(ctx, id, { destination: "ohmail/Receipts", applyRetro: false });
+
+    const stored = await row(db, id);
+    expect(stored.retroDoneAt, "a declined retarget left the walk owed").toEqual(NOW);
+    expect(stored.retroCursor).toBe(PARKED);
+    expect(stored.retroMoved).toBe(3);
+  });
+
+  it("on a term edit", async () => {
+    const { db, ctx, id } = await owed({ subjectContains: "invoice" });
+    await updateRule(ctx, id, { subjectContains: "receipt", applyRetro: false });
+
+    expect((await row(db, id)).retroDoneAt, "a declined term edit left the walk owed").toEqual(NOW);
+  });
+});

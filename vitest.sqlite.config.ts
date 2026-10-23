@@ -485,6 +485,8 @@ export default defineConfig({
       // message through the same pass (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS); the phone's
       // build leaves the repair out (apps/mobile/test/phone-engine-leaves-out-blank-repair.test.ts).
       "apps/worker/test/blank-repair.test.ts",
+      // A Restore pressed before the delete's move landed cancels it, composed with the pass.
+      "apps/worker/test/restore-before-the-delete-lands.test.ts",
       // THE UNSUBSCRIBE DRAIN'S TWO MEMORIES (mail 0116), as STATEMENTS. The mark's insert takes
       // an `ON CONFLICT DO NOTHING` on a primary key and the cursor's an `ON CONFLICT DO UPDATE`
       // reading `excluded`, and `cursor_at` is a timestamp column the two stores spell

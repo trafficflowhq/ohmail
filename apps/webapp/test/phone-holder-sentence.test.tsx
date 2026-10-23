@@ -294,6 +294,7 @@ const heldBy = (
     lastPassSeconds: null,
     who: { ...who, mailboxId: who.mailboxId ?? "mbx-1", since: who.since ?? null },
     asOf: null,
+    mailboxes: 1, first: null, reasonsDiffer: false,
   },
 });
 

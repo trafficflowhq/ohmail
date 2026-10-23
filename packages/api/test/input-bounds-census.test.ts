@@ -40,6 +40,7 @@ import { MAX_BODY_CONTAINS_CHARS, MAX_SUBJECT_CONTAINS_CHARS } from "../../servi
 import { MAX_SUGGEST_SENDERS } from "../../services/src/screener-service.js";
 import { HELD_RELEASE_GROUPS_MAX } from "../../services/src/held-release-service.js";
 import { AUTO_FILED_PAGE_MAX } from "../../services/src/auto-filed-service.js";
+import { FILINGS_FOLDER_MAX_CHARS, FILINGS_PRESS_MAX } from "../../services/src/mailbox-filings.js";
 import {
   OHBOX_UNSCREENED_GROUPS_MAX, OHBOX_UNSCREENED_MESSAGES_MAX,
 } from "../../services/src/ohbox-unscreened-service.js";
@@ -301,6 +302,9 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The self-check: no body, no query, nothing on the wire but the id. What it asks the provider
   // is one STATUS per stored folder row, capped at `MAILBOX_CHECK_FOLDERS_MAX` and a whole-read budget.
   "GET /mailboxes/:id/self-check",
+  // The waiting filings: no body, no query, nothing on the wire but the id. The answer is one
+  // grouped read over the mailbox's own waiting rows, at most 101 (folder, class) pairs.
+  "GET /mailboxes/:id/filings",
   "GET /mailboxes/:id/profile-import",
   "GET /mailboxes/oauth/microsoft/availability",
   // The held-release summary: the caller writes nothing at all — no body, no query, not even
@@ -616,6 +620,10 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   },
   // The gap offer's answer: a boolean and two counts compared with the row's own integers, no more.
   "POST /mailboxes/:id/gap-letters": { scalarsOnly: true },
+  // The two presses on waiting filings: a folder name (at most FILINGS_FOLDER_MAX_CHARS, compared
+  // verbatim) and an instant; each press touches at most FILINGS_PRESS_MAX rows.
+  "POST /mailboxes/:id/filings/retry": { bounds: [FILINGS_FOLDER_MAX_CHARS, FILINGS_PRESS_MAX] },
+  "POST /mailboxes/:id/filings/leave": { bounds: [FILINGS_FOLDER_MAX_CHARS, FILINGS_PRESS_MAX] },
   "POST /mailboxes/:id/profile-import/decline": { scalarsOnly: true },
   "POST /mailboxes/:id/profile-import/replace": { scalarsOnly: true },
   // RENAMED from `POST /mailboxes/:id/takeover` and MOVED OUT of PATH_PARAMS_ONLY in the same
@@ -1857,6 +1865,8 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // before it still points at the legacy folder. Two module constants, so the predicate is
   // two elements wide whatever the account holds.
   "message-service.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 1 },
+  "mailbox-filings.ts :: [NEWS_FOLDER, LEGACY_NEWS_FOLDER]": { origin: "constant", count: 2 },
+  "mailbox-filings.ts :: target": { origin: { subquery: "the press's own waiting rows of the caller's mailbox, LIMIT FILINGS_PRESS_MAX" }, count: 2 },
   // The four triage states the Ohbox holds out of "New for you", inside `newForYouFilters`'
   // correlated NOT EXISTS. A module constant of the closed `TriageState` union, four elements
   // wide whatever the account holds and whatever a caller sends: the predicate is about the

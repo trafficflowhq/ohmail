@@ -221,6 +221,25 @@ describe("applyScreenerDecision", () => {
     expect(unarmed?.retroRequestedAt, "the decline must reach the rule").toBeNull();
   });
 
+  it("a re-decide that moves an owed rule with past mail declined ends its walk", async () => {
+    const db = await makeTestDb();
+    const decide = async (appliedFolder: string, applyRetro: boolean, now: Date) => {
+      const { messageId } = await seedHeldMessage(db, { fromAddress: "owed@example.com" });
+      return db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+        accountId: ACCT, scope: "sender", address: "owed@example.com", appliedFolder, decision: "yes",
+        triggeringActionId: `screener:${messageId}`, now, applyRetro, decidedBy: "person", overExisting: "converge",
+      }));
+    };
+    const { createdRuleId } = await decide("INBOX", true, NOW);
+    const later = new Date(NOW.getTime() + 60_000);
+    await decide("ohmail/News", false, later);
+
+    const [rule] = await db.select().from(rules).where(eq(rules.id, createdRuleId!));
+    expect(rule?.destination).toBe("ohmail/News");
+    expect(rule?.retroRequestedAt).toEqual(NOW);
+    expect(rule?.retroDoneAt, "the declined re-decide left the walk owed").toEqual(later);
+  });
+
   it("no/sender to ohmail/Screened: mark-read fires, no contact added", async () => {
     const db = await makeTestDb();
     const { mailboxId, messageId } = await seedHeldMessage(db, { fromAddress: "spammer@example.com", unread: true });

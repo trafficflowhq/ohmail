@@ -54,10 +54,12 @@ import type { ShellDispatch } from "./shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
 import type { ShellVerbs } from "./shell-verbs";
 import { degradeSentence } from "./screening-degrade";
+import { isKeptPile } from "./kept-piles";
 import { useStableCallback } from "./stable-callback";
 import { useSwitchEnd } from "./ui-vitals";
 import { currentZone, leaveRailAfterGoTo, setRailSummon } from "./zone-nav";
 import { settingsPanes, type WiredPanes } from "../views/settings-panes";
+import { queryVisible } from "./visible-dom";
 
 /**
  * The stable name of a Reply Run entry: the message it stands for, or its title when it has
@@ -420,7 +422,7 @@ export function useShellKeys({
     const rail = document.querySelector(".rail");
     const el = document.activeElement;
     if (rail && el instanceof HTMLElement && rail.contains(el)) {
-      const row = document.querySelector<HTMLElement>(".view .row.sel");
+      const row = queryVisible<HTMLElement>(".view .row.sel");
       if (row) row.focus();
       else el.blur();
     }
@@ -675,7 +677,7 @@ export function useShellKeys({
         if (!focused) return;
         openSenderMenu(
           focused.id,
-          document.querySelector<HTMLElement>(`.view .row[data-id="${CSS.escape(focused.id)}"]`),
+          queryVisible<HTMLElement>(`.view .row[data-id="${CSS.escape(focused.id)}"]`),
         );
       },
     },
@@ -759,7 +761,7 @@ export function useShellKeys({
       run: () => {
         if (!focused) return;
         if (barPanel?.panel === "delete" && barPanel.messageId === focused.id) {
-          document.querySelector<HTMLButtonElement>(".abar-delete .abar-danger")?.click();
+          queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")?.click();
         } else {
           setBarPanel({ messageId: focused.id, panel: "delete" });
         }
@@ -1413,6 +1415,8 @@ export function useShellKeys({
       : route.view === "folder" && !openFolder
         ? "ohbox"
         : route.view;
+  /** The route is on one of the three piles — the group News and Receipts are kept alive in. */
+  const inPiles = effectiveView === "ohbox" || isKeptPile(effectiveView);
 
   /**
    * THE SWITCH MARK ENDS AT THE VIEW THE PRESS ASKED FOR, ON SCREEN — the other end of
@@ -1458,6 +1462,7 @@ export function useShellKeys({
     activeRailId,
     commands,
     effectiveView,
+    inPiles,
     mobileTitle,
     narrowNow,
     paletteRef,

@@ -204,8 +204,9 @@ export async function completeFiling(
   // not touch `desired_folder`), so parking leaves a message with no instance, no tombstone
   // (`deleted_at IS NULL`) and no exemption — the reaper's victim (`ruleRetroPass` and friends store
   // `desired === observed`/`reconciled`, un-exempt and absent from `listPendingFolderStates`). Hence CLAIM
-  // FIRST, PARK SECOND on the spam path. The DELETE park keeps the old order: the API already tombstoned
-  // that row, and the reaper's first filter is `deleted_at IS NULL`, so a delete park is unreachable by it.
+  // FIRST, PARK SECOND on the spam path, and on the delete path too: a Restore pressed during the move
+  // cancels the delete and clears the tombstone, so a delete park that lost its claim would hand a live
+  // letter's only watched copy to the reaper.
   const spamPark = p.desiredFolder === SPAM_PILE && physical !== SPAM_PILE;
   if (spamPark) {
     const claimed = await settle(r, accountId, p, physical, {
@@ -221,6 +222,14 @@ export async function completeFiling(
     return false;
   }
 
+  // The delete park's converged write, the claim. A delete writes the trash path verbatim, so desired
+  // and observed agree and there is no husk. A miss keeps the instance: the newer desire moves it back.
+  const claimed = await settle(r, accountId, p, physical, {
+    observedFolder: physical,
+    lastSetBy: "us",
+    ...(p.desiredFolder === physical ? {} : { satisfiedBy: physical }),
+  });
+  if (!claimed) return true;
   // The park — see the header. `forgetInstanceAt` on the locator just written removes the
   // instance we cannot ever verify and promotes a surviving watched copy exactly as an observed
   // expunge would.
@@ -245,13 +254,5 @@ export async function completeFiling(
     await settle(r, accountId, p, physical, { observedFolder: promoted.folder, lastSetBy: "us" });
     return true;
   }
-  // The delete park's converged write. Reachable only for a Trash desire now — the spam path
-  // returned above — so there is no husk here and no `satisfiedBy`: a delete writes the trash path
-  // verbatim, which makes desired and observed equal.
-  await settle(r, accountId, p, physical, {
-    observedFolder: physical,
-    lastSetBy: "us",
-    ...(p.desiredFolder === physical ? {} : { satisfiedBy: physical }),
-  });
   return false;
 }

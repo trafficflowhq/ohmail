@@ -13,6 +13,9 @@ import { parseDocument } from "htmlparser2";
 import { Element, Text, type AnyNode, type ChildNode } from "domhandler";
 import {
   BLANK_GIF,
+  quotedHistoryCut,
+  quotedHistoryOfHtml,
+  type QuotedAt,
   cidOfSrc,
   CID_URL,
   declaresPixelAttrs,
@@ -26,6 +29,7 @@ import {
   REMOTE_URL,
   SAFE_HREF,
 } from "@ohmail/client-engine";
+import { DROP_CONTENT, phoneQuotedTree, sheetText } from "./quoted-tree";
 
 /** One blocked remote reference — the web's `BlockedAsset` shape, minted by the same rules. */
 export interface PhoneBlockedAsset {
@@ -53,6 +57,8 @@ export interface PhoneSanitizedMail {
   links: string[];
   /** The html part was past {@link MAIL_MAX_HTML_CHARS} and was not rendered at all. */
   oversize?: boolean;
+  /** Asked with {@link PhoneSanitizeOptions.fold}: the quoted history this document leaves out, or null. */
+  history?: { at: QuotedAt } | null;
 }
 
 export interface PhoneSanitizeOptions {
@@ -62,21 +68,15 @@ export interface PhoneSanitizeOptions {
   resolvedRemote?: ReadonlyMap<string, string>;
   /** The account's own switch (mail 0072): a classified beacon may resolve like any picture. */
   loadPixels?: boolean;
+  /**
+   * Leave the quoted history out (the shared detector's range): the document, its blocked list, its
+   * parts and its links are then the folded document's own. Off, the output is unchanged.
+   */
+  fold?: boolean;
 }
 
 /** The scheme the document's links carry instead of their targets. */
 export const PHONE_LINK_SCHEME = "ohmail-link:";
-
-/**
- * Tags whose CONTENT goes with them when the tag is refused — DOMPurify's `FORBID_CONTENTS`
- * default, which the web executes implicitly. Every other refused tag keeps its children
- * (a `<picture>` is dropped, the `<img>` inside it survives).
- */
-const DROP_CONTENT = new Set([
-  "annotation-xml", "audio", "desc", "foreignobject", "head", "iframe", "math", "mi", "mn",
-  "mo", "ms", "mtext", "noembed", "noframes", "noscript", "optgroup", "option", "plaintext",
-  "script", "svg", "template", "title", "video", "xmp",
-]);
 
 /** The void elements among the allowed tags — serialized self-closed, never with an end tag. */
 const VOID_TAGS = new Set(["area", "br", "col", "hr", "img", "wbr"]);
@@ -299,7 +299,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
    * Depth first over an explicit stack, in the order the recursion had, so a message nested
    * thousands deep costs heap and not the call stack (2,000 nested `<b>` overflowed the reader's).
    */
-  const walk = (nodes: readonly ChildNode[]): void => {
+  const walk = (nodes: readonly ChildNode[], skip: ReadonlySet<AnyNode>): void => {
     const stack: Array<{ nodes: readonly ChildNode[]; at: number; close: string | null }> = [{ nodes, at: 0, close: null }];
     while (stack.length > 0) {
       const top = stack[stack.length - 1]!;
@@ -309,6 +309,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
         continue;
       }
       const n = top.nodes[top.at++]!;
+      if (skip.has(n)) continue;
       if (n instanceof Text) {
         out.push(escText(n.data));
         continue;
@@ -341,7 +342,14 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
     return null;
   };
   const body = findBody(doc.children);
-  walk(body ? body.children : doc.children);
+  const root: AnyNode = body ?? doc;
+  // The folded document: the history's nodes are never walked, so nothing in them is emitted,
+  // counted, fetched or linked.
+  const range = opts.fold === true ? quotedHistoryOfHtml(root, phoneQuotedTree, { sheets: headStyles.map(sheetText) }) : null;
+  const skip = new Set<AnyNode>(range === null ? [] : quotedHistoryCut(root, phoneQuotedTree, range).history);
+  walk(body ? body.children : doc.children, skip);
 
-  return { html: out.join(""), blocked, sheets, cids, links };
+  const mail: PhoneSanitizedMail = { html: out.join(""), blocked, sheets, cids, links };
+  if (opts.fold === true) mail.history = range === null || skip.size === 0 ? null : { at: range.at };
+  return mail;
 }

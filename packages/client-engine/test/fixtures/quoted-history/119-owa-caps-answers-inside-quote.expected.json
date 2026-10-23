@@ -1,0 +1,40 @@
+{
+  "id": "119",
+  "file": "119-owa-caps-answers-inside-quote.eml",
+  "shape": "owa-caps-answers-inside-quote",
+  "description": "Outlook on the web, German: lead 'siehe unten.', the answers JA, 5000 CHF, 14:00 in red under the questions below the divRplyFwdMsg block",
+  "client": "owa",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "JA",
+      "5000 CHF",
+      "14:00"
+    ],
+    "trailingTail": null
+  }
+}

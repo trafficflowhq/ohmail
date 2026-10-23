@@ -1,0 +1,38 @@
+{
+  "id": "59",
+  "file": "59-html-only-outlook-de-reply.eml",
+  "shape": "html-only-outlook-de-reply",
+  "description": "HTML only (no text/plain part), Outlook German, two levels, base64",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": null,
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Guten Tag zusammen,",
+      "visibleLastText": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "mailparser derives textBody from the HTML here; the HTML is the only source for the split."
+}

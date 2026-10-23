@@ -1,0 +1,43 @@
+{
+  "id": "86",
+  "file": "86-r42-gmail-en-forward-note.eml",
+  "shape": "r42-gmail-en-forward-note",
+  "description": "Gmail, English: a forward with a note, '---------- Forwarded message ---------' inside div.gmail_quote, no blockquote",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Jonas Sample"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Samir, see the invitation below. Shall we take a stand together?",
+      "visibleLastLine": "Samir, see the invitation below. Shall we take a stand together?",
+      "historyStartLine": "---------- Forwarded message ---------",
+      "historyStartLineNormalized": "---------- Forwarded message ---------"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "---------- Forwarded message ---------",
+      "visibleFirstText": "Samir, see the invitation below. Shall we take a stand together?",
+      "visibleLastText": "Samir, see the invitation below. Shall we take a stand together?"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

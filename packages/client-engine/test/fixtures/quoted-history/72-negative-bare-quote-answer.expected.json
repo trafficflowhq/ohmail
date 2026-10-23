@@ -1,0 +1,35 @@
+{
+  "id": "72",
+  "file": "72-negative-bare-quote-answer.eml",
+  "shape": "negative-bare-quote-answer",
+  "description": "A bare '>' question at the top, the answer below it, no attribution",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Can you make it on Thursday at 10?",
+      "visibleLastLine": "Ana",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": null,
+    "inlineAnswers": [
+      "Yes, Thursday at 10 works. I will bring the drafts."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

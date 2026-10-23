@@ -467,6 +467,20 @@ describe("the reply head opens into editable recipients", () => {
     expect(labels).toContain("Bcc");
   });
 
+  it("Enter on the head opens the rows with focus IN the To field, never on the list row", async () => {
+    await mountShell();
+    const head = reply().querySelector<HTMLButtonElement>(".reply-head-btn")!;
+    await act(async () => { head.focus(); });
+    // The browser's own activation: the keydown, then the click it fires when nothing prevented it.
+    const press = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => { head.dispatchEvent(press); });
+    if (!press.defaultPrevented) await act(async () => { head.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(reply().querySelector(".reply-rcpt"), "the rows did not open").not.toBeNull();
+    expect(document.activeElement).toBe(rowInput("To"));
+    expect(document.activeElement?.closest(".row[data-id]")).toBeNull();
+  });
+
   it("an edited envelope reaches the adapter: recipients added, Bcc typed, all on the mutation", async () => {
     const { FixturesAdapter } = await import("@ohmail/client-engine");
     const seen: Array<Record<string, unknown>> = [];

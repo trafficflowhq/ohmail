@@ -10,7 +10,7 @@ import { writeDoorOf, type LeasePermit, type MailboxWriteAuthority } from "../sr
 export const FIXTURE_LEASE: LeasePermit = {
   async check(): Promise<void> { /* held for the life of the test */ },
   names: {
-    installId: "fixture", mailboxId: "fixture", uidValidity: null, nonce: null, pendingNonce: null,
+    installId: "fixture", mailboxId: "fixture", uidValidity: null, nonce: null, mintedNonces: [],
     issuedAt: new Date(0),
   },
   verifiedAt: new Date(0), reads: 1, probes: 0, writesSinceRead: 0, revoked: false,

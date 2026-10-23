@@ -13,6 +13,7 @@
 import {
   FOLDER_OF_VIEW,
   retroPassWouldMove,
+  retroWalkWouldMove,
   rulesList,
   senderKey,
   type EngineMessage,
@@ -357,6 +358,8 @@ export function planSubjectRule(
   // same question `sender-screening.ts` asks. On `folder !== wanted` alone this sheet moved mail
   // out of the person's own folders and mail they had set aside.
   const misplaced = matching.filter((m) => retroPassWouldMove(m, wanted));
+  // A new rule's count is the walk's own set: a place somebody decided is never the rule's to move.
+  const walked = matching.filter((m) => retroWalkWouldMove(m, wanted));
 
   // A term the SERVER would refuse writes NOTHING — no rule and no moves: dispatching moves
   // beside a 400 would re-file mail for a rule that was never written. `MAX_SUBJECT_TERM_CHARS`
@@ -390,7 +393,7 @@ export function planSubjectRule(
     field,
     destination,
     matched: matching.length,
-    outOfPlace: misplaced.length,
+    outOfPlace: already ? misplaced.length : walked.length,
     already,
   };
 }

@@ -1,0 +1,43 @@
+{
+  "id": "31",
+  "file": "31-thunderbird-de-bottom-post.eml",
+  "shape": "thunderbird-de-bottom-post",
+  "description": "Thunderbird, German, BOTTOM-posted: 'Am 22.10.26 um 09:14 schrieb Name:' + quote first, the new text and signature below it",
+  "client": "thunderbird_bottom",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "leading",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Am 18.10.26 um 10:50 schrieb Ana Example:",
+      "historyStartLineNormalized": "Am 18.10.26 um 10:50 schrieb Ana Example:"
+    },
+    "html": {
+      "historyStartSelector": "div.moz-cite-prefix",
+      "attributionBefore": null,
+      "historyStartText": "Am 18.10.26 um 10:50 schrieb Ana Example:",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "History LEADS the body. A fold that only looks at the trailing run must leave this message alone and must never hide the reply below the quote."
+}

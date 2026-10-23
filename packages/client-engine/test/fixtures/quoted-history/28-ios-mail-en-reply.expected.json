@@ -1,0 +1,43 @@
+{
+  "id": "28",
+  "file": "28-ios-mail-en-reply.eml",
+  "shape": "ios-mail-en-reply",
+  "description": "iOS Mail, English: 'Sent from my iPhone', the attribution in its OWN blockquote type=cite, the quoted message in a SIBLING blockquote",
+  "client": "ios",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Sent from my iPhone",
+      "historyStartLine": "> On Oct 18, 2026, at 07:12, David Placeholder <david.placeholder@example.com> wrote:",
+      "historyStartLineNormalized": "On Oct 18, 2026, at 07:12, David Placeholder <david.placeholder@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "On Oct 18, 2026, at 07:12, David Placeholder <david.placeholder@example.com> wrote:",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Sent from my iPhone"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

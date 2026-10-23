@@ -182,7 +182,7 @@ describe("the reader wires the anchor", () => {
   const reader = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageReader.tsx", import.meta.url)), "utf8"));
   it("every scroll report goes through the anchor's reached offset; no requested offset is stood on", () => {
     expect(reader).toMatch(/onScroll = \(e: NativeSyntheticEvent<NativeScrollEvent>\) => anchor\.reached\(e\.nativeEvent\.contentOffset\.y\)/);
-    expect(reader).toMatch(/onContentSizeChange=\{\(_w, h\) => \{ box\.current\.content = h; anchor\.layout\(\); \}\}/);
+    expect(reader).toMatch(/onContentSizeChange=\{\(cw, h\) => \{ box\.current\.content = h; widthSeen\("content", cw\); anchor\.layout\(\); \}\}/);
     expect(reader).not.toMatch(/scrollTo\(\{ y, animated: false \}\);\s*stand\(y\)/);
   });
   it("a member's top starts at its text: the body's margin stands above the marker, not under it", () => {

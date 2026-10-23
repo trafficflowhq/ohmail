@@ -443,10 +443,12 @@ export function mayStartHere(claim: PhoneClaim): boolean {
 /**
  * WHY THIS PHONE KEEPS NO APPOINTMENT, in the state it is in: organizing its own mailbox it does
  * so only while ohmail runs, and reading one it organizes nothing — the install that organizes it
- * is the one that can keep a later send. `holder` is the named organizer when this phone reads.
+ * is the one that can keep a later send. `holder` is the named organizer when this phone reads,
+ * `null` only where this phone organizes it, and unnamed where nothing does (`NOBODY_ORGANIZES`).
  */
 export function scheduledNotHereSentence(holder: { name: string; stopped?: boolean } | null): string {
   if (holder === null) return Copy.scheduledNotOnThisPhone;
+  if (holder.name.trim() === "") return Copy.phoneStateNotOrganized;
   return holder.stopped ? Copy.scheduledReaderHereStopped(holder.name) : Copy.scheduledReaderHere(holder.name);
 }
 

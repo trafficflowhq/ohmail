@@ -489,6 +489,18 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
 });
 
 describe("Reads: the same two guards, on the view that shares the machinery", () => {
+  /* The stream opens one screen of cards (`stream-window.ts`), sized by the window's height where
+     nothing lays out; this emulator stands every card at 80px in a 600px port, so it is handed a
+     screen tall enough to open with all twenty, as the browser's lookahead would mount them. */
+  let innerHeight: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 20 * 220 });
+  });
+  afterEach(() => {
+    if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
+    else delete (window as unknown as { innerHeight?: number }).innerHeight;
+  });
   it("a jump from another view marks NOTHING", async () => {
     await mountReads(TWENTY, { jump: "r15" });
     await settle();

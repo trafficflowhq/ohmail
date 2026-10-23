@@ -151,7 +151,7 @@ describe("a handover mid-scan stops the losing cycle within a page, on a real se
         seized = true;
         const out = await readMailboxLease({
           adapter: laptop.adapter, self: laptop.self, mailboxId, now: new Date(),
-          hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+          hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
         });
         expect(out.organize, "the laptop's own gate must take the mailbox").toBe(true);
       },

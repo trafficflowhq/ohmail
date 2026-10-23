@@ -59,7 +59,7 @@ describe("the permit's age: one reading, two clocks", () => {
   it("an adopted look is aged from its own instant, on the monotonic clock too", async () => {
     const clock = new PermitClock(10_000_000);
     const meta = new FakeMetaFolder();
-    const outcome = await readMailboxLease({ adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: clock.now() });
+    const outcome = await readMailboxLease({ adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: clock.now(), onNonceMinted: () => undefined });
     if (!outcome.organize) throw new Error("an empty folder organizes");
     const at = clock.now();
     clock.advance(30_000);

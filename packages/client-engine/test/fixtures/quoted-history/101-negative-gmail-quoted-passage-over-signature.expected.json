@@ -1,0 +1,43 @@
+{
+  "id": "101",
+  "file": "101-negative-gmail-quoted-passage-over-signature.eml",
+  "shape": "negative-gmail-quoted-passage-over-signature",
+  "description": "Gmail, English: the writer quotes a contract paragraph with the quote button, a signature below; no attribution",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 0,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Ben,",
+      "visibleLastLine": "Projektleitung Haustechnik",
+      "historyStartLine": "> The supplier shall deliver within 30 days of the order.",
+      "historyStartLineNormalized": "The supplier shall deliver within 30 days of the order."
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Projektleitung Haustechnik"
+    },
+    "inlineAnswers": [
+      "The supplier shall deliver within 30 days of the order."
+    ],
+    "trailingTail": null
+  }
+}

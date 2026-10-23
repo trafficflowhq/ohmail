@@ -430,6 +430,18 @@ describe("the rule toggle", () => {
 });
 
 describe("the footer keeps telling the truth", () => {
+  it("a contact chip's sheet moves no letter, so it promises none moves", async () => {
+    const { el } = await render([
+      msg("a", "one@x.example", "INBOX"),
+      msg("b", "two@x.example", "INBOX"),
+    ], "a", { address: "two@x.example" });
+    const foot = () => el.querySelector(".sm-foot")!.textContent!;
+    expect(foot()).not.toContain("This message moves there now");
+    expect(foot()).toContain("Future mail from two@x.example files there too");
+    await click(el.querySelector(".sm-retro"));
+    expect(foot()).toContain("Mail already here stays where it is");
+  });
+
   it("promises a rule for the whole domain only when the domain is waiting", async () => {
     const { el } = await render([
       msg("a", "one@x.example", "ohmail/Screener"),
@@ -453,7 +465,9 @@ describe("the footer keeps telling the truth", () => {
   it("says future mail follows AND that the rule reaches mail already here, by default", async () => {
     const { el } = await render([msg("a", "one@x.example", "INBOX")], "a");
     const foot = () => el.querySelector(".sm-foot")!.textContent!;
-    expect(foot()).toContain("Future mail from one@x.example files there too");
+    // The press files the letter it was made on now: said before the press, not promised to stay.
+    expect(foot()).toContain("This message moves there now, and future mail from one@x.example files there too");
+    expect(foot()).toContain("applies the rule to the rest of the mail it has already filed for you");
     // The half with no undo. The sentence NARROWED in 0.19 — "the mail already in your mailbox"
     // claimed more than the pass reaches, which only reconsiders the six folders ohmail organizes
     // (`rule-retro.ts#selectCandidates`), never a customer's own folders or their Sent.
@@ -492,7 +506,7 @@ describe("the footer keeps telling the truth", () => {
     ], "a");
     await click(byText(el, ".sm-scope button", "Everyone at x.example"));
     expect(el.querySelector(".sm-foot")!.textContent)
-      .toContain("Future mail from anyone at x.example files there too");
+      .toContain("This message moves there now, and future mail from anyone at x.example files there too");
   });
 
   /**
@@ -549,7 +563,9 @@ describe("the past-mail option", () => {
     // just said not to. 0.19.1 asks for the claim instead: the retroactive half is withdrawn AND
     // the sentence that replaces it states what the switch decided.
     expect(foot, "the past-mail claim must go with the option").not.toContain("applies the rule");
-    expect(foot, "…and the off state says what it does").toContain("Mail already here stays where it is");
+    expect(foot, "…and the off state says what it does").toContain("The rest of their mail here stays where it is");
+    expect(foot, "the letter pressed on moves, and the sheet says so").toContain("This message moves there now");
+    expect(foot, "a promise the press breaks").not.toContain("Mail already here stays where it is");
 
     await click(byText(el, "li", "News"));
     expect(onChoose).toHaveBeenCalledWith("reads", "sender", true, false);

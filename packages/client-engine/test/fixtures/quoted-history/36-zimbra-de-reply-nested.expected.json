@@ -1,0 +1,44 @@
+{
+  "id": "36",
+  "file": "36-zimbra-de-reply-nested.eml",
+  "shape": "zimbra-de-reply-nested",
+  "description": "Zimbra, German: hr#zwchr data-marker=__DIVIDER__, __HEADERS__ (Von/An/Gesendet/Betreff), __QUOTED_TEXT__; text '----- Ursprüngliche Mail -----' then '> ' lines; two levels",
+  "client": "zimbra",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Guten Tag zusammen,",
+      "visibleLastLine": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin",
+      "historyStartLine": "----- Ursprüngliche Mail -----",
+      "historyStartLineNormalized": "----- Ursprüngliche Mail -----"
+    },
+    "html": {
+      "historyStartSelector": "hr#zwchr",
+      "attributionBefore": null,
+      "historyStartText": "Von: \"Ben Sample\" <ben.sample@example.org>",
+      "visibleFirstText": "Guten Tag zusammen,",
+      "visibleLastText": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

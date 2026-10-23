@@ -4,6 +4,7 @@
  * own label and note; these cases hold which arms draw and which verb they carry.
  */
 import { describe, expect, it, vi } from "vitest";
+import { MemoryMirrorStore, OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 
 import { DECKS } from "../src/copy";
 import { DE } from "../src/copy.de";
@@ -11,7 +12,10 @@ import { EN } from "../src/copy.en";
 import { answerGapLetters, readMailboxes } from "../src/net/mailboxes";
 import { CLAIM_LAPSES_AFTER_MINUTES } from "../src/engine/standalone-door";
 import { gapOffersOf, organizerStripOf } from "../src/ui/organizer-strip";
-import { claimHere } from "../src/ui/standalone-form";
+import { claimHere, scheduledNotHereSentence } from "../src/ui/standalone-form";
+import { createProjector, type ProjectionInputs } from "../src/state/world-projection";
+import { SCREENING_UNSUPPLIED, phoneBannerLines, type WorldActions } from "../src/state/live";
+import type { PhoneMailbox } from "../src/net/mailboxes";
 
 const facts = { stoppedHere: false, late: false, os: "android" } as const;
 const here = (over: Partial<Parameters<typeof claimHere>[0]> = {}) => ({
@@ -151,5 +155,77 @@ describe("the gap offer's strangers on the phone (mail 0158)", () => {
     expect(DE.gapBoth(2, 1, "a@b.test")).toMatch(/^2 Mails für deine Regeln und 1 von einem Absender, über den du nie entschieden hast,/);
     expect(typeof EN.gapScreen).toBe("string");
     expect(typeof DE.gapScreen).toBe("string");
+  });
+});
+
+/* ONE HOLDER FOR ONE PHONE: the banner, the sender sheet and the send-later sentence read the
+   projection, and on a standalone world it follows the card. The rows can name this phone's own
+   lapsed claim ("ohmail on a phone"); a free card is nothing organizing, never this phone. */
+describe("a standalone world names the holder its card names", () => {
+  const row = {
+    id: "mb", address: "me@example.test", organizerRole: "reader", organizeConsentedAt: "2026-10-24T00:00:00.000Z",
+    organizedBy: { kind: "mobile", name: "ohmail on a phone" }, organizedByThisInstall: false,
+    organizerState: "held", status: "connected", junkFolder: null, smtpMaxSizeBytes: null, firstSyncStopFolder: null,
+  } as unknown as PhoneMailbox;
+  const adapter = {
+    sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "c", hasMore: false, serverTime: new Date().toISOString() }),
+    mutate: async () => ({ ok: true as const, changes: [] }),
+    screenerWaiting: async () => ({ items: [], nextCursor: null, total: 0, inFlight: [] }),
+  } as unknown as EngineAdapter;
+  const organizerOf = (over: Partial<ProjectionInputs>) => createProjector().project({
+    engine: new OhmailEngine({ adapter, store: new MemoryMirrorStore(), storePolicy: { mode: "full" } }),
+    worldKey: "rig", standalone: true, bearer: null, images: "direct" as never, zone: "Europe/Zurich",
+    locale: "en", now: new Date(), foldersOn: false, foldersPending: false, foldersStorable: true, walker: null,
+    searchWalker: null, openOffMirror: () => undefined, scopes: {}, leavingWaiting: [], heldDeletes: new Set<string>(),
+    heldPlaces: new Map() as never, ownAddresses: ["me@example.test"], posture: SCREENING_UNSUPPLIED,
+    actions: {} as WorldActions, onPresented: () => undefined, account: () => ({ name: "rig", email: "" }),
+    setFoldersEnabled: async () => true, folderSummary: async () => null, rememberResurfaceTime: () => undefined,
+    signatures: null, resurfaceTime: null, screenerServer: null, relayed: null, mailboxesReadAt: () => null,
+    mailboxes: [row], ...over,
+  } as unknown as ProjectionInputs).mailboxes.organizer;
+
+  it("this phone's own tenure, and a card not read yet, read as this phone organizing", () => {
+    expect(organizerOf({ standaloneClaim: claimHere(here({ organizing: true })) }), "ours on the card").toBeNull();
+    expect(organizerOf({ standaloneClaim: claimHere(here(), "idle", true) }), "handed back").toBeNull();
+    expect(organizerOf({ standaloneClaim: null }), "a card not read yet").toBeNull();
+  });
+
+  it("a free card with a stopped holder says nothing organizes the mailbox, and names the holder", () => {
+    const stopped = { name: "Mila's laptop", standDownReason: "organized_elsewhere:local", holderState: "stopped" as const };
+    const o = organizerOf({
+      standaloneClaim: claimHere(here({ heldBy: stopped }), "idle", false), standaloneHolder: stopped,
+      mailboxes: [{ ...row, organizedBy: { kind: "local", name: stopped.name }, organizerState: "stopped" }],
+    });
+    expect(o).toEqual({ name: "Mila's laptop", kind: "local", stopped: true });
+    expect(scheduledNotHereSentence(o)).not.toBe(EN.scheduledNotOnThisPhone);
+    expect(scheduledNotHereSentence(o)).toBe(EN.scheduledReaderHereStopped("Mila's laptop"));
+    expect(phoneBannerLines(o!)).toEqual({ head: EN.phoneStateNotOrganized, why: EN.phoneBannerStopped("Mila's laptop") });
+  });
+
+  it("…and names nobody where that claim is this phone's own, or where nothing holds the mailbox", () => {
+    const own = { name: "ohmail on a phone", standDownReason: null, holderState: "stopped" as const };
+    const ownLapsed = organizerOf({
+      standaloneClaim: claimHere(here({ heldBy: own }), "idle", false), standaloneHolder: own,
+      mailboxes: [{ ...row, organizedByThisInstall: true, organizerState: "stopped" }],
+    });
+    const nobody = organizerOf({
+      standaloneClaim: claimHere(here(), "idle", false), standaloneHolder: null,
+      mailboxes: [{ ...row, organizedBy: null, organizerState: null }],
+    });
+    for (const o of [ownLapsed, nobody]) {
+      expect(scheduledNotHereSentence(o)).toBe(EN.phoneStateNotOrganized);
+      expect(o && phoneBannerLines(o)).toEqual({ head: EN.phoneStateNotOrganized, why: EN.waitingNotYetHint });
+    }
+  });
+
+  it("…and with another holder on the card it carries the card's name", () => {
+    const theirs = claimHere(here({
+      heldBy: { name: "ohmail on a phone", standDownReason: "organized_elsewhere:mobile", holderState: "held" },
+    }));
+    expect(organizerOf({ standaloneClaim: theirs })).toEqual({ name: "ohmail on a phone", kind: "mobile", stopped: false });
+  });
+
+  it("CONTROL: a paired world still names the holder its rows name", () => {
+    expect(organizerOf({ standalone: false })).toEqual({ name: "ohmail on a phone", kind: "mobile", stopped: false });
   });
 });

@@ -872,6 +872,9 @@ describe("the baseline cutoff is frozen", () => {
       // The send's offer state: one ADD COLUMN IF NOT EXISTS with a constant default, no data. Safe
       // over any history.
       "0162_outbound_sends_offer_state",
+      // A new filing's schedule reset: a trigger function and a trigger created only where
+      // missing, no data. Safe over any history.
+      "0163_folder_state_fresh_intent",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

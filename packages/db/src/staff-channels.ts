@@ -124,6 +124,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "screener.correspondent_admitted", "screener.correspondent_rule_retired",
   // ── a delivery report let through at ingest (`pipeline.ts`): it cited the account's own Sent copy ─
   "screener.bounce_admitted",
+  // ── Settings → Mailboxes' two presses on waiting filings (`packages/services/src/mailbox-filings.ts`) ─
+  "filing.retry", "filing.leave",
 ];
 
 const AUDIT_LOG_ACTION_SET: ReadonlySet<string> = new Set(AUDIT_LOG_ACTIONS);

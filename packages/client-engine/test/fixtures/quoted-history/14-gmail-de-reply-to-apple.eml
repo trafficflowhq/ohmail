@@ -1,0 +1,44 @@
+From: Ben Sample <ben.sample@example.org>
+To: Ana Example <ana.example@example.com>
+Subject: =?utf-8?B?UmU6IFdhcnR1bmcgTMO8ZnR1bmdzYW5sYWdlIDIuIE9H?=
+Date: Wed, 14 Oct 2026 12:33:05 +0200
+Message-ID: <beabb8d101035bc54516@mail.example.org>
+In-Reply-To: <bdea6ff2476305db8c84@mail.example.com>
+References: <bdea6ff2476305db8c84@mail.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+	boundary="000000000000fcd8d8ff123c"
+
+--000000000000fcd8d8ff123c
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hallo Frau Example,
+
+vielen Dank für das Angebot. Können wir die Begehung auf Dienstag, 3. November, legen?
+
+Frau Muster aus der Haustechnik wäre dann ebenfalls dabei.
+
+-- 
+Beste Grüße
+Ben Sample
+Lindenhof Beispiel AG | Facility Management
+
+Am Mi., 14. Okt. 2026 um 09:30 Uhr schrieb Ana Example <ana.example@example.com>:
+
+> Hallo Herr Sample,
+>
+> anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.
+>
+> Die Preise gelten bis zum 30. November 2026.
+>
+> Freundliche Grüße
+> Ana Example
+> Projektleitung Haustechnik
+> Northwind Example GmbH · Musterstraße 12 · 10115 Berlin
+--000000000000fcd8d8ff123c
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<div dir="ltr"><div>Hallo Frau Example,</div><div><br></div><div>vielen Dank für das Angebot. Können wir die Begehung auf Dienstag, 3. November, legen?</div><div><br></div><div>Frau Muster aus der Haustechnik wäre dann ebenfalls dabei.</div><div><br></div><span class="gmail_signature_prefix">-- </span><br><div dir="ltr" class="gmail_signature" data-smartmail="gmail_signature"><div dir="ltr">Beste Grüße<br>Ben Sample<br>Lindenhof Beispiel AG | Facility Management</div></div></div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">Am Mi., 14. Okt. 2026 um 09:30 Uhr schrieb Ana Example &lt;ana.example@example.com&gt;:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"><div>Hallo Herr Sample,</div><div><br></div><div>anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.</div><div><br></div><div>Die Preise gelten bis zum 30. November 2026.</div><div><br></div><div>Freundliche Grüße</div><div>Ana Example</div><div>Projektleitung Haustechnik</div><div>Northwind Example GmbH · Musterstraße 12 · 10115 Berlin</div></blockquote></div>
+--000000000000fcd8d8ff123c--

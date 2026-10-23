@@ -25,7 +25,7 @@ vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
   return { ...real, useMailboxFacts: () => FACTS };
 });
 
-const { MailboxSelfCheck, selfCheckSentence } = await import("../../webapp/app/shell/MailboxSelfCheck");
+const { MailboxSelfCheck, selfCheckPressSentence, selfCheckSentence } = await import("../../webapp/app/shell/MailboxSelfCheck");
 const { checkMailboxHere, selfChecksThisSession } = await import("../src/local-self-check.js");
 const { writeDesktopDiagnostics } = await import("../src/local-diagnostics.js");
 
@@ -212,5 +212,12 @@ describe("selfCheckSentence — every arm against the catalogue", () => {
     const s = say(Array.from({ length: 8 }, (_, i) => ({ folder: `box-${i}`, k: "server_more", server: 2, mirror: 1 })));
     expect(s.startsWith("8 folders differ from your mail server: box-0 (1 more message on the server)")).toBe(true);
     expect(s.endsWith("box-5 (1 more message on the server), and 2 more.")).toBe(true);
+  });
+
+  it("says the filings that still wait, beside a reading in step", () => {
+    const check = readSelfCheck({ mailboxId: "m1", folders: [{ folder: "INBOX", k: "in_step", server: 1, mirror: 1 }] })!;
+    expect(selfCheckPressSentence(t, { k: "read", check }, 6))
+      .toBe("In step with your mail server. 6 messages are still waiting to be filed on your mail server.");
+    expect(selfCheckPressSentence(t, { k: "read", check }, 0)).toBe("In step with your mail server.");
   });
 });

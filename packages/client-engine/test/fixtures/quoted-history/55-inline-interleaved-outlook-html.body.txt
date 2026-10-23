@@ -1,0 +1,30 @@
+Hallo Herr Sample,
+
+meine Antworten finden Sie unten in Blau.
+
+Freundliche Grüße
+Ana Example
+Projektleitung Haustechnik
+Northwind Example GmbH · Musterstraße 12 · 10115 Berlin
+
+Von: Ben Sample <ben.sample@example.org>
+Gesendet: Mittwoch, 21. Oktober 2026 09:12
+An: Ana Example <ana.example@example.com>
+Betreff: Fragen zur Begehung
+
+Hallo Frau Example,
+
+drei Punkte vor der Begehung:
+
+1. Ist die Filterreinigung im Angebot enthalten?
+[AE] Ja, die Filterreinigung ist Position 3 im Angebot.
+
+2. Brauchen Ihre Techniker einen Schlüssel für den Technikraum?
+[AE] Ja, bitte am Empfang hinterlegen, wir holen ihn um 9:15 Uhr ab.
+
+3. Können Sie uns das Wartungsprotokoll digital schicken?
+[AE] Ja, Sie erhalten das Protokoll am selben Tag als PDF.
+
+Beste Grüße
+Ben Sample
+Lindenhof Beispiel AG | Facility Management

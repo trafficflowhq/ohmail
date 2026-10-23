@@ -1,0 +1,36 @@
+{
+  "id": "71",
+  "file": "71-negative-comments-announced-at-end.eml",
+  "shape": "negative-comments-announced-at-end",
+  "description": "A lead announcing 'my comments are at the end', a pasted header block, the comments below it",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Ana,",
+      "visibleLastLine": "2. Carla is out until Monday.",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": null,
+    "inlineAnswers": [
+      "1. The figures are from September, not final.",
+      "2. Carla is out until Monday."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

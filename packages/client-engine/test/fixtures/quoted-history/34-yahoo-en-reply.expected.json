@@ -1,0 +1,43 @@
+{
+  "id": "34",
+  "file": "34-yahoo-en-reply.eml",
+  "shape": "yahoo-en-reply",
+  "description": "Yahoo Mail, English: div.yahoo_quoted; text/plain history is NOT '>'-quoted, only indented by spaces under an indented attribution",
+  "client": "yahoo",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "    On Monday, October 19, 2026 at 8:20:00 AM GMT+2, David Placeholder <david.placeholder@example.com> wrote:",
+      "historyStartLineNormalized": "On Monday, October 19, 2026 at 8:20:00 AM GMT+2, David Placeholder <david.placeholder@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.yahoo_quoted",
+      "attributionBefore": null,
+      "historyStartText": "On Monday, October 19, 2026 at 8:20:00 AM GMT+2, David Placeholder <david.placeholder@example.com> wrote:",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Harbourline Example Inc."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

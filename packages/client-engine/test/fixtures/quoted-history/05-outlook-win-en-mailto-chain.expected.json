@@ -1,0 +1,44 @@
+{
+  "id": "05",
+  "file": "05-outlook-win-en-mailto-chain.eml",
+  "shape": "outlook-win-en-mailto-chain",
+  "description": "Outlook 2010-2013 style, English: 'From: Name [mailto:address]', Sent: '... 9:14 AM', two levels, windows-1252",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "windows-1252",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "From: Elif Testa [mailto:elif.testa@example.net]",
+      "historyStartLineNormalized": "From: Elif Testa [mailto:elif.testa@example.net]"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: Elif Testa [mailto:elif.testa@example.net]",
+      "visibleFirstText": "Hi Elif,",
+      "visibleLastText": "Logistics Coordinator, Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

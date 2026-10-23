@@ -31,7 +31,7 @@ import {
   unansweredFrameHeight,
   type FrameHeight,
 } from "../mail/frame-height";
-import { fetchRemoteImages, imagesSeenBy } from "../mail/remote-images";
+import { fetchRemoteImages, imagesSeenBy, pictureBudget, type PictureBudget } from "../mail/remote-images";
 import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
 import { sanitizeMailHtmlPhone } from "../mail/sanitize";
 import {
@@ -50,6 +50,7 @@ import { blockedNotice } from "../mail/notice";
 import { Sheet, SheetRow } from "./Sheet";
 import { Txt } from "./base";
 import { BodyPages } from "./BodyPages";
+import { HistoryFold } from "./HistoryFold";
 
 interface Drawn {
   id: string;
@@ -80,11 +81,15 @@ function useFrameCount(plan: FramePlan | null, id: string, html: string, setDraw
   return plan === null ? null : frameReadingOf(plan, counted);
 }
 
-export function MailBodyFrame({ m, onShowAsText, onFinal }: {
+export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, onHistory }: {
   m: WorldMail;
   onShowAsText: () => void;
   /** The drawn height is the document's now (or the text fallback's), or not any more. */
   onFinal?: (final: boolean) => void;
+  /** The quoted history is open: the frame draws the whole document. */
+  historyOpen?: boolean;
+  /** Where this document's quoted history sits (the reader draws the row), or null when it has none here. */
+  onHistory?: (at: "trailing" | "leading" | null) => void;
 }) {
   const t = useTheme();
   const w = useWorld();
@@ -99,20 +104,27 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
   // width re-measures at the seed's size above a spacer holding the old height; the settle is armed
   // only by a seed-size reading at that width, and a frame no reading answers reads as text.
   const { width: windowWidth } = useWindowDimensions();
-  const sized = frameHeightFor(frameHeight, m.id, windowWidth, rememberedFrameHeight(m.id));
+  const html = m.html ?? "";
+  // THE QUOTED HISTORY FOLDS OUT OF THE DOCUMENT (the shared detector, `sanitize.ts`'s `fold`): folded,
+  // every document below is the cut one, and the frame's height, its remembered height and its drawn
+  // document are keyed on the fold state, so a folded state never draws the whole document.
+  const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true }), [html]);
+  const history = folded.history ?? null;
+  const folding = history !== null && !historyOpen;
+  const frameId = folding ? `${m.id}#folded` : m.id;
+  const sized = frameHeightFor(frameHeight, frameId, windowWidth, rememberedFrameHeight(frameId));
   const update = (f: (s: FrameHeight) => FrameHeight) =>
-    setFrameHeight((prev) => f(frameHeightFor(prev, m.id, windowWidth, rememberedFrameHeight(m.id))));
+    setFrameHeight((prev) => f(frameHeightFor(prev, frameId, windowWidth, rememberedFrameHeight(frameId))));
   useEffect(() => {
     if (frameHeight !== null) rememberFrameHeight(frameHeight);
   }, [frameHeight]);
   const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(settleDelayMs(sized, Date.now()), () => update(settleFrameHeight)), [settleKey]);
-  const awaiting = loadedFor === m.id && !sized.answered && sized.text === null ? `${sized.key}@${sized.width}` : null;
+  const awaiting = loadedFor === frameId && !sized.answered && sized.text === null ? `${sized.key}@${sized.width}` : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);
 
-  const html = m.html ?? "";
   // A marked sender's pictures wait for the press whatever the stored flag says (`Mail.senderCheck`).
   const imagesWanted = (m.loadedRemoteContent === true && m.senderCheck === undefined) || asked === m.id;
   const resolvedRemote = remote?.id === m.id ? remote.map : undefined;
@@ -125,8 +137,11 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
   // class, `src/mail/frame-ceiling.ts`) is refused without being built, and the sanitize below never
   // writes it.
   const ceiling = useMemo(() => phoneFrameCeiling(), []);
-  const bare = useMemo(() => sanitizeMailHtmlPhone(html, {}), [html]);
-  const pictures = useMemo(() => ({ inlineImages: m.inlineImages, resolvedRemote }), [m.inlineImages, resolvedRemote]);
+  const bare = useMemo(() => (folding ? folded : sanitizeMailHtmlPhone(html, {})), [folding, folded, html]);
+  const pictures = useMemo(
+    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding }),
+    [m.inlineImages, resolvedRemote, folding],
+  );
   const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
   const drawnChars = useMemo(
     () => (pictured ? drawnLength(html, pictures, bare, theme) : null),
@@ -148,8 +163,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
     [current, drawnChars, sanitized.oversize, ceiling],
   );
   const [drawn, setDrawn] = useState<Drawn | null>(null);
-  const reading = useFrameCount(plan, m.id, html, setDrawn);
-  const kept = drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;
+  const reading = useFrameCount(plan, frameId, html, setDrawn);
+  const kept = drawn !== null && drawn.id === frameId && drawn.html === html ? drawn.doc : null;
   // A PICTURED STATE REFUSED WITH NOTHING KEPT FALLS BACK TO THE BARE DOCUMENT, NEVER TO TEXT: a remount
   // after Show as text finds its pictures already minted, so no bare document was drawn first. The same
   // html with no picture is counted, and once it fits it is the kept document (the images sentence).
@@ -158,7 +173,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
     () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null),
     [needBare, bare, theme, ceiling],
   );
-  const bareReading = useFrameCount(barePlan, m.id, html, setDrawn);
+  const bareReading = useFrameCount(barePlan, frameId, html, setDrawn);
 
   // The document's own unresolved `cid:` references — the engine fetches THIS message's parts,
   // bounded, and the minted map re-renders this memo through the world.
@@ -172,29 +187,38 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
   // The consented remote fetch — through the door's proxy, or this phone on the standalone door;
   // minted to `data:`, so the document never gains network. A press the server would not record
   // hands the button back with a sentence.
+  // Only the pictures this document names and the phone does not hold yet: opening a folded history
+  // asks for its own pictures, never again for the ones already drawn.
   const pictureUrls = useMemo(
-    () => sanitized.blocked.filter((b) => !b.pixel).map((b) => b.url),
-    [sanitized.blocked],
+    () => sanitized.blocked.filter((b) => !b.pixel && resolvedRemote?.has(b.url) !== true).map((b) => b.url),
+    [sanitized.blocked, resolvedRemote],
   );
   const route = w.images;
+  // ONE BUDGET PER MESSAGE across every pass (the engine's inline-image ceilings): a url is asked for
+  // once, minted or failed, and the press is recorded once.
+  const spent = useRef<{ id: string; tried: Set<string>; budget: PictureBudget; recorded: boolean } | null>(null);
+  if (spent.current?.id !== m.id) spent.current = { id: m.id, tried: new Set(), budget: pictureBudget(), recorded: false };
+  const untried = pictureUrls.filter((u) => !spent.current!.tried.has(u));
+  const asking = untried.join("\n");
   useEffect(() => {
-    if (!imagesWanted || resolvedRemote !== undefined || pictureUrls.length === 0) return;
-    let alive = true;
-    const consented = m.loadedRemoteContent === true;
-    void fetchRemoteImages(route, m.id, pictureUrls, { consented }).then((got) => {
-      if (!alive) return;
+    const log = spent.current!;
+    const urls = untried.filter((u) => !log.tried.has(u));
+    if (!imagesWanted || urls.length === 0 || log.budget.parts <= 0 || log.budget.bytes <= 0) return;
+    for (const u of urls) log.tried.add(u);
+    const consented = m.loadedRemoteContent === true || log.recorded;
+    void fetchRemoteImages(route, m.id, urls, { consented, budget: log.budget }).then((got) => {
+      if (spent.current !== log) return;
       if (got.consentRefused) {
+        for (const u of urls) log.tried.delete(u);
         setAsked(null);
         setRefusedFor(m.id);
         return;
       }
-      setRemote({ id: m.id, map: got.minted });
+      log.recorded = true;
+      setRemote((was) => ({ id: m.id, map: was?.id === m.id ? new Map([...was.map, ...got.minted]) : got.minted }));
     });
-    return () => {
-      alive = false;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imagesWanted, resolvedRemote === undefined, pictureUrls.length === 0, m.id]);
+  }, [imagesWanted, asking, m.id]);
 
   const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);
   // The read rule takes this frame's top, and the end marker under it, only once its height is the document's.
@@ -202,6 +226,12 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
   const finalTo = useRef(onFinal);
   finalTo.current = onFinal;
   useEffect(() => { finalTo.current?.(final); }, [final]);
+  // The reader draws the history row beside the frame; the text fallback folds its own text.
+  const asText = shows.show === "text" || sized.text !== null;
+  const historyTo = useRef(onHistory);
+  historyTo.current = onHistory;
+  const historyAt = asText || history === null ? null : history.at;
+  useEffect(() => { historyTo.current?.(historyAt); }, [historyAt]);
   if (shows.show === "text" || sized.text !== null) {
     // The size fallback states its reason — a bare plain-text render reads as a bug.
     return (
@@ -209,7 +239,9 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
         <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
           {Copy.mailOversize}
         </Txt>
-        <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+        <HistoryFold foldKey={m.id} html={html}>
+          <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+        </HistoryFold>
       </View>
     );
   }
@@ -263,7 +295,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
         <WebView
           // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
           // recycled frame from showing the previous message during the swap.
-          key={m.id}
+          key={frameId}
           source={{ html: doc }}
           originWhitelist={ALL_ORIGINS}
           javaScriptEnabled={false}
@@ -284,7 +316,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal }: {
             const at = Date.now();
             update((s) => nextFrameHeight(s, reported, view, at));
           }}
-          onLoadEnd={() => setLoadedFor(m.id)}
+          onLoadEnd={() => setLoadedFor(frameId)}
           style={{ height, backgroundColor: t.c.canvas }}
           accessibilityLabel={Copy.mailFrameLabel}
         />

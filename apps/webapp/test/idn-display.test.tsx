@@ -404,7 +404,7 @@ describe("ACCEPTANCE: a list row", () => {
           locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
           children: h(StreamCardMemo, {
             m, now: new Date("2026-08-02T09:00:00.000Z"),
-            current: false, expanded: false, unread: false,
+            current: false, expanded: false, viewer: true, unread: false,
             bodyText: "body", bodyState: "full" as const, bodyHtml: null, bodyLoadedRemote: false,
             loadingLabel: "…", failedLabel: "!", withheldKey: "withheld", onReask: () => {},
             onSelect: () => {}, onToggle: () => {},

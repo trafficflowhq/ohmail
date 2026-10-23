@@ -1,0 +1,17 @@
+> Begin forwarded message:
+>
+> From: David Placeholder <david.placeholder@example.com>
+> Subject: Q4 shipping schedule
+> Date: 17 October 2026 at 13:05:00 CEST
+> To: Elif Testa <elif.testa@example.net>
+>
+> Hi Elif,
+>
+> Attached is the draft shipping schedule for Q4. The first container leaves Rotterdam on November 9.
+>
+> Could you confirm the delivery windows for your two warehouses?
+>
+> -- 
+> Best regards,
+> David Placeholder
+> Logistics Coordinator, Brightwater Samples Ltd

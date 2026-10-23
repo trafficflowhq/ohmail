@@ -12,6 +12,7 @@ import {
 } from "@trafficflow/core/diagnostics";
 
 import { useMailboxFacts } from "./MailStateProvider";
+import type { MailboxFacts } from "./mail-state";
 
 /** What one press answered. `failed` is the request itself — nothing was read. */
 export type SelfCheckPress = { k: "rest" } | { k: "busy" } | { k: "read"; check: SelfCheck } | { k: "failed" };
@@ -54,12 +55,22 @@ export function selfCheckSentence(t: Say, check: SelfCheck): string {
   }
 }
 
-/** The press's sentence — the reading's, or the lead while nothing has been asked. */
-export function selfCheckPressSentence(t: Say, p: SelfCheckPress): string | null {
-  if (p.k === "read") return selfCheckSentence(t, p.check);
+/**
+ * The press's sentence — the reading's, or the lead while nothing has been asked. A reading counts
+ * folders, not filings, so the filings still waiting on the mail server are said beside it.
+ */
+export function selfCheckPressSentence(t: Say, p: SelfCheckPress, waiting = 0): string | null {
+  if (p.k === "read") {
+    const said = selfCheckSentence(t, p.check);
+    return waiting > 0 ? `${said} ${t("selfCheckWaiting", { count: waiting })}` : said;
+  }
   if (p.k === "failed") return t("selfCheckFailed");
   return null;
 }
+
+/** This mailbox's filings that wait on the mail server, from the facts the page polls. */
+const waitingOf = (m: MailboxFacts): number =>
+  m.filing ? m.filing.due + m.filing.deferred : (m.pendingMoves ?? 0);
 
 export function MailboxSelfCheck({ check }: { check: (mailboxId: string) => Promise<unknown> }) {
   const t = useTranslations("mailboxes") as unknown as Say;
@@ -83,7 +94,7 @@ export function MailboxSelfCheck({ check }: { check: (mailboxId: string) => Prom
       <SettingsSubhead>{t("selfCheckTitle")}</SettingsSubhead>
       {rows.map((m) => {
         const p = press[m.id] ?? { k: "rest" };
-        const sentence = selfCheckPressSentence(t, p);
+        const sentence = selfCheckPressSentence(t, p, waitingOf(m));
         return (
           <SettingsRow
             key={m.id}

@@ -1,0 +1,43 @@
+{
+  "id": "46",
+  "file": "46-roundcube-de-reply.eml",
+  "shape": "roundcube-de-reply",
+  "description": "Roundcube, German: p#reply-intro 'Am 22.10.2026 09:14, schrieb Name:' before a blue-bordered blockquote type=cite, format=flowed text",
+  "client": "roundcube",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Am 21.10.2026 09:55, schrieb Ana Example:",
+      "historyStartLineNormalized": "Am 21.10.2026 09:55, schrieb Ana Example:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": "Am 21.10.2026 09:55, schrieb Ana Example:",
+      "historyStartText": "Hallo Herr Sample,",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

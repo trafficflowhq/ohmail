@@ -47,7 +47,7 @@ export { invitationWithoutEventWhere, itipReplyHeaderWhere } from "./calendar-fa
 // why they are composed rather than shared as one query. Reaches `schema-mail.js` alone.
 export {
   dueNow, deferredUntilLater, ourOutstandingFiling, outstandingFilingsOf, OUTSTANDING_FILING_WHERE,
-  filingDue, filingDeferred, filingStuck, FILING_STUCK_MS, FILING_STUCK_ATTEMPTS,
+  filingDue, filingDeferred, filingStuck, filingWaiting, FILING_STUCK_MS, FILING_STUCK_ATTEMPTS,
   FILING_REFUSAL_CLASSES, isFilingRefusalClass, type FilingRefusalClass,
 } from "./folder-state-pending.js";
 
@@ -223,7 +223,7 @@ export {
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
 export {
-  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance,
+  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, endOwedWalk,
   type ConvergedKey, type FoundRule, type KeyWriteResult, type RuleRowWrite,
 } from "./rule-key.js";
 

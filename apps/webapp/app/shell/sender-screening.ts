@@ -20,7 +20,9 @@ import {
   mailboxProfiles,
   oneRowPerKey,
   pressOverTwins,
+  PRESS_VISIBLE_ROWS,
   retroPassWouldMove,
+  retroWalkWouldMove,
   ruleTwins,
   rulesList,
   senderKey,
@@ -93,7 +95,7 @@ export const RETRO_DEFAULT_ON = true;
  * (see `planScreeningChange`). Each move is its own request on the account's write lock, so past
  * what a screen can show one buys nothing visible; uncapped, a domain scope fired thousands.
  */
-export const RETRO_VISIBLE_MOVES = 50;
+export const RETRO_VISIBLE_MOVES = PRESS_VISIBLE_ROWS;
 
 /** One scope's worth of facts. The sheet renders whichever the user has chosen. */
 export interface ScreeningSubject {
@@ -571,6 +573,10 @@ export function planScreeningChange(
   // `retargeted` as before, `already` through the re-arm above, and `promoted` through the decide.
   // `none` writes no rule, so there is nothing to apply.
   const retro = applyRetro && ruleState !== "none";
+  // With a rule in force the count is the walk's own set (a decided place is never its to move).
+  const walked = ruleState === "none" ? outOfPlace : subject.messages.filter(
+    (m) => retroWalkWouldMove(m, wanted) && !movedByDecide.has(m.id),
+  );
   return {
     mutations,
     ruleMutations,
@@ -583,31 +589,38 @@ export function planScreeningChange(
     moved: movedByDecide.size,
     // What the sheet states before the click: how much of this subject's mail is out of place.
     // `movedByDecide` is included because the decide relocates it too.
-    matched: outOfPlace.length + movedByDecide.size,
+    matched: walked.length + movedByDecide.size,
     senders: subject.senders,
     retro,
     unsubscribes: promoted && DECISION_OF_DEST[dest] === "no",
   };
 }
 
-/** What {@link movesAtLanding} reads of a forecast: the rows each answer lands at the place. */
-export type LandingForecast = Readonly<Record<PressResolution, { readonly landing: readonly string[] }>>;
+/** What {@link movesAtLanding} reads of a forecast: the rows each answer lands at the place, and the seed's move. */
+export type LandingForecast = Readonly<Record<PressResolution, {
+  readonly landing: readonly string[];
+  readonly seedMove?: PressMove | null;
+}>>;
 
 /**
  * THE ONE DOOR A PRESS'S MOVES LEAVE BY: the no-rule press's out-of-place rows that its forecast
- * lands at the place, newest first, capped at {@link RETRO_VISIBLE_MOVES}. A rule's backlog is
- * the server pass's, so a plan with a rule in force moves nothing here. `forecast === null` is
- * the demo's arm only: its lists are not partitioned, so every candidate lands.
+ * lands at the place, newest first, capped at {@link RETRO_VISIBLE_MOVES}, and on every rule state
+ * the letter the press was made on (the forecast's `seedMove`). The rest of a rule's backlog is the
+ * server's walk, so nothing else moves here with a rule in force. `forecast === null` is the demo's
+ * arm only: its lists are not partitioned, so every candidate lands.
  */
 export function movesAtLanding(
   plan: ScreeningPlan, forecast: LandingForecast | null, resolution: PressResolution = "keep",
 ): PressMove[] {
-  if (plan.ruleState !== "none") return [];
+  const seed = forecast?.[resolution].seedMove ?? null;
+  if (plan.ruleState !== "none") return seed ? [seed] : [];
   const landing = forecast === null ? null : new Set(forecast[resolution].landing);
-  return plan.outOfPlace
+  const out: PressMove[] = plan.outOfPlace
     .filter((m) => landing === null || landing.has(m.id))
     .slice(0, RETRO_VISIBLE_MOVES)
     .map((m) => ({ kind: "move", messageId: m.id, folder: plan.wanted }));
+  if (seed && !out.some((m) => m.messageId === seed.messageId)) out.unshift(seed);
+  return out;
 }
 
 /** The answer the sheet's step gave, and the forecast it was given over. */
@@ -663,7 +676,9 @@ export interface RoutingSplit {
 }
 
 export function splitRoutingPlan(plan: ScreeningPlan, moves: readonly PressMove[]): RoutingSplit {
-  return { mail: [...moves], routing: [...plan.mutations] };
+  // A press that writes the sender's rule rewrites the route: its moves are no override of it.
+  const ruled = plan.mutations.some((m) => m.kind === "rule_create" || m.kind === "rule_update");
+  return { mail: moves.map((m) => (ruled ? { ...m, pressRule: true as const } : m)), routing: [...plan.mutations] };
 }
 
 /**
@@ -705,6 +720,8 @@ export function screeningToast(
       // With the past-mail option on it re-arms that rule for the backlog, so the sentence names
       // the thing that just happened rather than only the thing that already had.
       // Over a rule ohmail inferred the press is not "already": it made the rule the person's.
+      // The letter it was made on moved, and the rest stays: said so, not "already there".
+      if (!plan.retro && moved > 0) return "toastRuledMoved";
       if (plan.claimed === true) return plan.retro ? "toastClaimedRetro" : "toastClaimed";
       return plan.retro ? "toastAlreadyRuledRetro" : "toastAlreadyRuled";
     /**

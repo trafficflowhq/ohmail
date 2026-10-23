@@ -35,6 +35,7 @@ import { useRowCursorPlacer } from "./cursor-placer";
 import { deleteKeyBindings } from "./delete-undo";
 import { useMessageChrome, type MessageChrome } from "./message-chrome";
 import type { MessageAction } from "./MessagePane";
+import { queryVisible } from "./visible-dom";
 
 export interface MessageVerbsInput {
   /**
@@ -83,7 +84,7 @@ export interface MessageVerbsInput {
 
 /** The row a verb should anchor its menu to, or null when the window has not mounted it. */
 function anchorFor(scope: string, id: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`${scope} .row[data-id="${CSS.escape(id)}"]`);
+  return queryVisible<HTMLElement>(`${scope} .row[data-id="${CSS.escape(id)}"]`);
 }
 
 /**
@@ -277,7 +278,7 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       run: () => {
         if (!shown || !setBarPanel) return;
         if (barPanel?.panel === "delete" && barPanel.messageId === shown.id) {
-          document.querySelector<HTMLButtonElement>(".abar-delete .abar-danger")?.click();
+          queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")?.click();
         } else {
           setBarPanel({ messageId: shown.id, panel: "delete" });
         }

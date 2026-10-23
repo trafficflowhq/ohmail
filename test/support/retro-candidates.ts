@@ -33,6 +33,8 @@ export interface RetroFixtureRow {
   date: string;
   /** What this row is here to say. */
   why: string;
+  /** The wire's `placeDecided`: a person placed it (the walk's clause 7). */
+  placeDecided?: boolean;
 }
 
 export const RETRO_FIXTURE: readonly RetroFixtureRow[] = [
@@ -62,12 +64,17 @@ export const RETRO_FIXTURE: readonly RetroFixtureRow[] = [
     why: "muted is a state too" },
   { id: "r-resurfaced", folder: "INBOX", triage: "resurfaced", date: "2026-08-08T09:00:00.000Z",
     why: "the wire state the narrower client type used not to admit" },
+  { id: "r-decided", folder: "INBOX", triage: null, date: "2026-08-07T09:00:00.000Z", placeDecided: true,
+    why: "placed by the person (decided_at): the walk never moves it; a press that is the instruction does" },
 ];
 
 /** The ids the pass would move, newest first — hand-named, and the predicate is read against it. */
 export const RETRO_MOVES: readonly string[] = [
   "r-inbox", "r-screened", "r-quarantine", "r-receipts", "r-state-none",
 ];
+
+/** …and what a press that IS the instruction moves: a decided place does not stop the person's own move. */
+export const RETRO_PRESS_MOVES: readonly string[] = [...RETRO_MOVES, "r-decided"];
 
 /**
  * A subject big enough to slice: 51 candidates, so the fifty that move name an ORDER.

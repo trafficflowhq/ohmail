@@ -1,0 +1,19 @@
+From: Example Weekly <news@example.com>
+To: Ben Sample <ben.sample@example.org>
+Subject: Example Weekly
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <neg68@mail.example.org>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><head><style>.wrap{max-width:600px}</style></head><body>
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff">
+<tr><td style="padding:24px"><h1>Example Weekly</h1><p>This week: how teams answer mail faster.</p></td></tr>
+<tr><td style="padding:24px">
+<div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p><b>From:</b> Support Desk &lt;desk@example.com&gt;<br><b>Sent:</b> Monday, October 19, 2026 9:00 AM<br><b>To:</b> A Customer &lt;customer@example.org&gt;<br><b>Subject:</b> Your ticket is solved</p></div>
+<p>A reply card like this one is what our template builder draws for you.</p>
+</td></tr>
+<tr><td style="padding:24px"><p>Read more on our blog.</p><p>Example Weekly, 1 Sample Lane, Exampleville</p></td></tr>
+</table></td></tr></table></body></html>

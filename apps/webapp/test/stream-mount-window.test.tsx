@@ -10,9 +10,12 @@ import { ReceiptsView } from "../app/views/ReceiptsView";
 import { KeymapProvider } from "../app/shell/keymap";
 import {
   STREAM_CARD_ESTIMATE_PX,
-  STREAM_MOUNT_INITIAL,
   STREAM_WINDOW_MAX,
+  openingCount,
 } from "../app/shell/stream-window";
+
+/** The opening window jsdom gets: the window's height stands in for the column (no layout). */
+const OPENING = (): number => openingCount(window.innerHeight);
 
 /**
  * THE READING STREAM IS A SLIDING WINDOW, NOT A PILE AND NOT A PREFIX.
@@ -175,19 +178,41 @@ describe("the reading stream is a sliding window", () => {
     ["News", reads],
     ["Receipts", receipts],
   ] as const) {
-    it(`${name}: a switch mounts the opening window at ${N}, not ${N}`, async () => {
+    it(`${name}: a switch mounts one screen of cards at ${N}, not ${N}`, async () => {
       const host = await mount(render(N));
       const idx = cardIndices(host);
-      // The load-bearing assertion — mapping the whole pile again makes this the pile's length.
-      expect(idx.length).toBe(STREAM_MOUNT_INITIAL);
-      expect(idx).toEqual(Array.from({ length: STREAM_MOUNT_INITIAL }, (_, i) => i));
+      // The load-bearing assertion — mapping the whole pile again makes this the pile's length,
+      // and the old sixty-card opening run several screens of it.
+      expect(idx.length).toBe(OPENING());
+      expect(idx.length).toBeLessThanOrEqual(Math.ceil(window.innerHeight / STREAM_CARD_ESTIMATE_PX) + 2);
+      expect(idx).toEqual(Array.from({ length: OPENING() }, (_, i) => i));
+    });
+
+    it(`${name}: under a Text size zoom the opening screen is counted in CSS px`, async () => {
+      document.documentElement.style.setProperty("--ui-zoom", "2");
+      try {
+        const host = await mount(render(N));
+        expect(cardIndices(host).length).toBe(openingCount(window.innerHeight / 2));
+        expect(openingCount(window.innerHeight / 2)).toBeLessThan(OPENING());
+      } finally {
+        document.documentElement.style.removeProperty("--ui-zoom");
+      }
     });
 
     it(`${name}: a short pile mounts whole, with no spacers`, async () => {
-      const host = await mount(render(24));
-      expect(cardIndices(host).length).toBe(24);
+      const short = OPENING() - 1;
+      const host = await mount(render(short));
+      expect(cardIndices(host).length).toBe(short);
       expect(host.querySelector(".stream [data-stream-tail]")).toBeNull();
       expect(host.querySelector(".stream [data-stream-head]")).toBeNull();
+    });
+
+    it(`${name}: a pile past one screen reserves the rest as height, not cards`, async () => {
+      const host = await mount(render(24));
+      expect(cardIndices(host).length).toBe(OPENING());
+      expect(host.querySelector(".stream [data-stream-head]")).toBeNull();
+      const tail = host.querySelector<HTMLElement>(".stream [data-stream-tail]");
+      expect(tail?.style.height).toBe(`${(24 - OPENING()) * STREAM_CARD_ESTIMATE_PX}px`);
     });
 
     it(`${name}: a jump beyond the window REPOSITIONS it around the target`, async () => {
@@ -246,7 +271,7 @@ describe("the reading stream is a sliding window", () => {
     expect(cardIndices(big)).toContain(N - 1);
     expect(big.querySelector(".stream .tail-row")).not.toBeNull();
 
-    const small = await mount(reads(12));
+    const small = await mount(reads(OPENING() - 1));
     expect(small.querySelector(".stream .tail-row")).not.toBeNull();
   });
 });
@@ -288,8 +313,8 @@ describe("the window under a pile that changes size", () => {
     // must widen to the opening size — a window pinned at two cards is a mailbox that looks
     // two messages long.
     await paint(N);
-    expect(cardIndices(host).length).toBe(STREAM_MOUNT_INITIAL);
-    expect(cardIndices(host)).toEqual(Array.from({ length: STREAM_MOUNT_INITIAL }, (_, i) => i));
+    expect(cardIndices(host).length).toBe(OPENING());
+    expect(cardIndices(host)).toEqual(Array.from({ length: OPENING() }, (_, i) => i));
   });
 });
 

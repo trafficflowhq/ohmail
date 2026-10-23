@@ -798,6 +798,9 @@ async function transported(
   }
   if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
   void first.body?.cancel().catch(() => undefined);
+  // A caller that gave up meanwhile (the outbox ends a write at its ceiling) is sent nothing more,
+  // whatever the fetch below does with an aborted signal.
+  if (init?.signal?.aborted) throw init.signal.reason ?? new DOMException("The operation was aborted.", "AbortError");
   return fetch(url, withFreshCsrf(init));
 }
 
@@ -2020,6 +2023,17 @@ export const mailboxes = {
    * (`shell/MailboxSelfCheck.tsx`), so it is typed `unknown` here.
    */
   selfCheck: (id: string) => api<unknown>(`/mailboxes/${encodeURIComponent(id)}/self-check`),
+
+  /**
+   * THE FILINGS THAT WAIT on one mailbox, and the two presses on them (Settings → Mailboxes). The
+   * read is counts, folder names, instants and classes, narrowed by the pane
+   * (`shell/MailboxFilings.tsx`); neither press moves mail.
+   */
+  filings: (id: string) => api<unknown>(`/mailboxes/${encodeURIComponent(id)}/filings`),
+  retryFilings: (id: string, folder: string) =>
+    api<{ reset: number; skipped: number }>(`/mailboxes/${encodeURIComponent(id)}/filings/retry`, { method: "POST", body: { folder } }),
+  leaveFilings: (id: string, folder: string, through: string) =>
+    api<{ settled: number; remaining: number }>(`/mailboxes/${encodeURIComponent(id)}/filings/leave`, { method: "POST", body: { folder, through } }),
 
   /**
    * Ask Cloud to organize a mailbox it stood down from. It authorizes ONE attempt and does not win anything: the

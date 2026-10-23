@@ -1,0 +1,32 @@
+From: Ana Example <ana.example@example.com>
+To: Clara Muster <clara.muster@example.org>
+Subject: Fwd: Site visit
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh98@mail.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="qh2-qh98"
+
+--qh2-qh98
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+
+
+Sent from my iPhone
+
+Begin forwarded message:
+
+> From: Ben Sample <ben.sample@example.org>
+> Subject: Site visit
+> Date: 22 October 2026 at 09:14:05 CEST
+> To: Ana Example <ana.example@example.com>
+> 
+> Hi Ana,
+> the site visit moves to Tuesday, 3 November.
+> Ben
+--qh2-qh98
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><head><meta http-equiv="content-type" content="text/html; charset=utf-8"></head><body dir="auto"><div dir="ltr"><br></div><div dir="ltr">Sent from my iPhone</div><div dir="ltr"><br><blockquote type="cite">Begin forwarded message:<br><br></blockquote></div><blockquote type="cite"><div dir="ltr"><b>From:</b> Ben Sample &lt;ben.sample@example.org&gt;<br><b>Subject:</b> Site visit<br><b>Date:</b> 22 October 2026 at 09:14:05 CEST<br><b>To:</b> Ana Example &lt;ana.example@example.com&gt;<br></div></blockquote><blockquote type="cite"><div dir="ltr">Hi Ana,<br>the site visit moves to Tuesday, 3 November.<br>Ben</div></blockquote></body></html>
+--qh2-qh98--

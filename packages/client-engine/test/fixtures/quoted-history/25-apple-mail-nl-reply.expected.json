@@ -1,0 +1,43 @@
+{
+  "id": "25",
+  "file": "25-apple-mail-nl-reply.eml",
+  "shape": "apple-mail-nl-reply",
+  "description": "Apple Mail, Dutch: 'Op 22 okt 2026 om 09:14 heeft Name <address> het volgende geschreven:' (no 'schreef')",
+  "client": "apple",
+  "ui_language": "nl",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Sanne Proef"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Beste Sanne,",
+      "visibleLastLine": "Voorbeeld Installaties BV",
+      "historyStartLine": "> Op 17 okt 2026 om 10:30 heeft Sanne Proef <sanne.proef@example.net> het volgende geschreven:",
+      "historyStartLineNormalized": "Op 17 okt 2026 om 10:30 heeft Sanne Proef <sanne.proef@example.net> het volgende geschreven:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Op 17 okt 2026 om 10:30 heeft Sanne Proef <sanne.proef@example.net> het volgende geschreven:",
+      "visibleFirstText": "Beste Sanne,",
+      "visibleLastText": "Voorbeeld Installaties BV"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

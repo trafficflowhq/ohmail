@@ -2,7 +2,8 @@
  * WHETHER AN OPEN READER HOLDS A SHEET OR A COMPOSER. Folding or unfolding moves the reader
  * between the pushed route and the pane, which remounts it; while a sheet or a composer is open on
  * it the move waits and fires when the last one closes, so nothing typed is lost and no sheet
- * closes by itself. Renderer-free: a set of holder tokens and its listeners.
+ * closes by itself. Search holds it too: a result opened from Search stays over it, so Back returns
+ * to the query. Renderer-free: a set of holder tokens and its listeners.
  */
 const holders = new Set<symbol>();
 const listeners = new Set<() => void>();

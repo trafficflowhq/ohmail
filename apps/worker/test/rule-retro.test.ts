@@ -6,8 +6,8 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accounts, approvals, applyScreenerDecision, auditLog, changeLog, contacts, drafts, folderState,
-  mailboxes, messageStates, messages, rules, threads, type Tx,
+  accounts, applyRuleRequest, approvals, applyScreenerDecision, auditLog, changeLog, contacts, drafts, folderState,
+  mailboxes, messageStates, messages, reconcileRuleCreate, rules, threads, type Tx,
 } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { ruleRetroPass } from "../src/rule-retro.js";
@@ -101,12 +101,15 @@ async function seedMessage(
 /** A rule the user just made, with the retroactive apply requested — the DEFAULT path. */
 async function seedRule(
   w: World,
-  opts: { kind?: string; match: string; destination: string; retro?: boolean; enabled?: boolean },
+  opts: {
+    kind?: string; match: string; destination: string; retro?: boolean; enabled?: boolean; subjectContains?: string;
+  },
 ): Promise<string> {
   const [r] = await w.db.insert(rules).values({
     accountId: w.accountId,
     kind: opts.kind ?? "sender",
     match: opts.match,
+    ...(opts.subjectContains ? { subjectContains: opts.subjectContains } : {}),
     destination: opts.destination,
     provenance: "manual",
     enabled: opts.enabled ?? true,
@@ -588,6 +591,103 @@ describe("it re-evaluates, it does not invert", () => {
   });
 });
 
+describe("a walk carries out only its own rule", () => {
+  /* The reader's "→ News" press makes a sender rule with past mail OFF ("the rest of their mail here
+     stays where it is"). A later rule on the same sender with a subject term and past mail ON walks
+     the sender's letters; the untermed ones are decided by the first rule, whose backlog the person
+     declined, and must stay where they are. */
+  const PIET = "piet@x.invalid";
+  const TERM = "refile check";
+
+  it("a term rule's walk leaves the sender's other letters where they are", async () => {
+    const w = await newWorld();
+    const termed = await seedMessage(w, { from: PIET, subject: `News ${TERM}` });
+    const other = await seedMessage(w, { from: PIET, subject: "Re: Draft agenda for Tuesday" });
+    await seedRule(w, { match: PIET, destination: "ohmail/Receipts", retro: false });
+    await seedRule(w, { match: PIET, subjectContains: TERM, destination: READS });
+
+    const out = await run(w);
+
+    expect(await desiredOf(w, termed), "the term rule's own letter was not filed").toBe(READS);
+    expect(await desiredOf(w, other), "a declined backlog was filed by another rule's walk").toBe(OHBOX);
+    expect(out.moved).toBe(1);
+    expect(await movesFor(w, other)).toHaveLength(0);
+  });
+
+  it("with a mailbox this install only reads, later cycles still leave them", async () => {
+    const w = await newWorld();
+    await addMailbox(w, "reader");
+    const termed = await seedMessage(w, { from: PIET, subject: `News ${TERM}` });
+    const other = await seedMessage(w, { from: PIET, subject: "Re: Budget lines for Q4" });
+    await seedRule(w, { match: PIET, destination: "ohmail/Receipts", retro: false });
+    const termRule = await seedRule(w, { match: PIET, subjectContains: TERM, destination: READS });
+
+    await run(w);
+    // A letter arriving after the walk, and two more cycles with the rule still owed.
+    const later = await seedMessage(w, { from: PIET, subject: "Notes from the call" });
+    await run(w);
+    const third = await run(w);
+
+    expect(third.examined, "a finished walk re-walked the sender's mail every cycle").toBe(0);
+    expect(await desiredOf(w, termed)).toBe(READS);
+    expect(await desiredOf(w, other), "an owed walk filed a letter by another rule").toBe(OHBOX);
+    expect(await desiredOf(w, later), "an owed walk filed a later letter by another rule").toBe(OHBOX);
+    expect((await ruleRow(w, termRule)).retroDoneAt, "a reader is still outside the walk").toBeNull();
+  });
+});
+
+describe("a press with past mail off ends an owed walk", () => {
+  /* The rule's walk is parked behind a mailbox this install only reads. A later press on the sender
+     says the rest of their mail stays where it is; a walk re-armed afterwards must not file it. */
+  const PIET = "piet@x.invalid";
+  const key = { kind: "sender", match: PIET, subjectContains: null, bodyContains: null };
+  const inTx = <T>(w: World, f: (tx: Tx) => Promise<T>): Promise<T> =>
+    w.db.transaction(async (tx) => f(carryDialect(w.db, tx as object) as unknown as Tx));
+  const triggers: Record<string, (w: World, reader: string) => Promise<unknown>> = {
+    promotion: (w, reader) => clearOrganizerStandDown(w.db as never, reader, { now: new Date(NOW.getTime() + 60_000) }),
+    "reader disabled": (w, reader) => w.db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, reader)),
+  };
+
+  it.each(Object.keys(triggers))("a create over the rule leaves the rest in place after %s", async (trigger) => {
+    const w = await newWorld();
+    const reader = await addMailbox(w, "reader");
+    const first = await seedMessage(w, { from: PIET, folder: "ohmail/Screener" });
+    const ruleId = await seedRule(w, { match: PIET, destination: OHBOX });
+    expect((await run(w)).moved).toBe(1);
+    const rest = await seedMessage(w, { from: PIET, subject: "later" });
+
+    await inTx(w, (tx) => reconcileRuleCreate(tx, {
+      accountId: w.accountId, now: NOW,
+      create: { op: "create", key, destination: READS, enabled: true, applyRetro: false },
+    }));
+    await triggers[trigger]!(w, reader);
+    const out = await run(w);
+
+    expect((await ruleRow(w, ruleId)).destination).toBe(READS);
+    expect(out.moved, "a declined backlog was filed when the walk re-armed").toBe(0);
+    expect(await desiredOf(w, rest)).toBe(OHBOX);
+    expect(await desiredOf(w, first)).toBe(OHBOX);
+  });
+
+  it("a travelled re-point leaves what the walk filed after a promotion", async () => {
+    const w = await newWorld();
+    const reader = await addMailbox(w, "reader");
+    const letter = await seedMessage(w, { from: PIET });
+    await seedRule(w, { match: PIET, destination: READS });
+    expect((await run(w)).moved).toBe(1);
+
+    const res = await inTx(w, (tx) => applyRuleRequest(tx, {
+      accountId: w.accountId, now: NOW,
+      payload: { op: "update", key, set: { destination: "ohmail/Receipts" }, applyRetro: false, retroAsked: false },
+    }));
+    expect(res.applied).toBe(true);
+    await triggers.promotion!(w, reader);
+
+    expect((await run(w)).moved, "the re-pointed rule re-filed the walk's letters").toBe(0);
+    expect(await desiredOf(w, letter)).toBe(READS);
+  });
+});
+
 describe("the per-cycle write budget", () => {
   /**
    * THE CONSTANT IS ABOUT THE RECONCILER, NOT ABOUT THIS PASS, and this test says so where a
@@ -897,10 +997,62 @@ describe("a rule's backlog is finished PER MAILBOX, or it is not finished", () =
     expect(after.retroDoneAt,
       "the press was consumed for a mailbox this install cannot look at").toBeNull();
     expect(after.retroCursor,
-      "the cursor still fences off the mail below it — a promotion would honour a fraction").toBeNull();
+      "the walk's own fence was left standing over the mail below it").not.toBe(HIGH_ID);
 
-    // Still owed, and being owed is the only state a later promotion can honour.
-    expect((await run(w)).rules, "the rule stopped being owed").toBe(1);
+    // Still owed, and being owed is the only state a later promotion can honour; but the walk is
+    // finished for the mailbox we organize, so the next cycle does not walk it again.
+    const again = await run(w);
+    expect(again.rules, "the rule stopped being owed").toBe(1);
+    expect(again.examined, "a finished walk re-walked the organized mailbox's mail").toBe(0);
+  });
+
+  it("a parked walk re-armed by a promotion with nothing left to move is finished, not parked again", async () => {
+    const w = await newWorld();
+    const readerMb = await addMailbox(w, "reader");
+    await seedMessage(w, { from: "ruled@x.invalid", folder: OHBOX, lastSetBy: "us" });
+    const ruleId = await seedRule(w, { match: "ruled@x.invalid", destination: READS });
+    expect((await run(w)).moved).toBe(1);
+
+    await w.db.update(mailboxes).set({ organizerRole: "organizer" }).where(eq(mailboxes.id, readerMb));
+    const after = await run(w);
+
+    expect(after.completed, "the re-armed walk never finished").toBe(1);
+    expect((await ruleRow(w, ruleId)).retroDoneAt).not.toBeNull();
+    expect((await run(w)).rules, "a finished rule is still owed").toBe(0);
+  });
+
+  it("a PARTIAL promotion re-arms the finished walk while another mailbox is still a reader", async () => {
+    // Two readers; one comes under this install by a flip that only stamps `organizer_event_at`.
+    const w = await newWorld();
+    const promotedMb = await addMailbox(w, "reader");
+    await addMailbox(w, "reader");
+    await seedMessage(w, { from: "ruled@x.invalid", subject: "zz term", lastSetBy: "us", id: HIGH_ID });
+    const theirs = await seedMessage(w, {
+      from: "ruled@x.invalid", subject: "zz term", lastSetBy: "peer", id: LOW_ID, mailboxId: promotedMb,
+    });
+    // A letter the walk examines and keeps, so a re-walk shows in `examined`.
+    await seedMessage(w, { from: "ruled@x.invalid", subject: "other" });
+    const ruleId = await seedRule(w, { match: "ruled@x.invalid", subjectContains: "zz term", destination: READS });
+
+    expect((await run(w)).moved).toBe(1);
+    expect((await run(w)).examined, "the finished walk ran again before anything changed").toBe(0);
+
+    await w.db.update(mailboxes)
+      .set({ organizerRole: "organizer", organizerEventAt: new Date(NOW.getTime() + 60_000) })
+      .where(eq(mailboxes.id, promotedMb));
+    const promoted = await ruleRetroPass(
+      w.db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE },
+      new Date(NOW.getTime() + 120_000),
+    );
+
+    expect(promoted.moved, "the promoted mailbox's mail was never reconsidered").toBe(1);
+    expect(await desiredOf(w, theirs)).toBe(READS);
+    expect((await ruleRow(w, ruleId)).retroDoneAt, "a reader is still outside the walk").toBeNull();
+    const later = await ruleRetroPass(
+      w.db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE },
+      new Date(NOW.getTime() + 180_000),
+    );
+    expect(later.examined, "the same promotion re-armed the walk again").toBe(0);
   });
 
   it("PROMOTION honours the press for the mail BELOW the first walk's cursor", async () => {

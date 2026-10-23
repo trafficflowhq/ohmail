@@ -1,0 +1,42 @@
+{
+  "id": "47",
+  "file": "47-mutt-en-bottom-quote-chain.eml",
+  "shape": "mutt-en-bottom-quote-chain",
+  "description": "mutt, English, plain text only: 'On Thu, Oct 22, 2026 at 09:14:05AM +0200, Name wrote:' + '>' / '>>' quotes, '-- ' signature after the quote",
+  "client": "mutt",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing-before-signature",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Does the South warehouse need a pallet list in advance?",
+      "historyStartLine": "On Wed, Oct 21, 2026 at 02:08:05PM +0200, Elif Testa wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 21, 2026 at 02:08:05PM +0200, Elif Testa wrote:",
+      "signatureAfterHistory": [
+        "Best regards,",
+        "David Placeholder",
+        "Logistics Coordinator, Brightwater Samples Ltd"
+      ]
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "mutt places the signature after the quoted block; the history is the attribution + quote between the new text and the signature."
+}

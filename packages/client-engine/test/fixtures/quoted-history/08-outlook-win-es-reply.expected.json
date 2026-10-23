@@ -1,0 +1,43 @@
+{
+  "id": "08",
+  "file": "08-outlook-win-es-reply.eml",
+  "shape": "outlook-win-es-reply",
+  "description": "Outlook for Windows, Spanish: De:/Enviado el:/Para:/Asunto:, 'jueves, 22 de octubre de 2026 9:14', HTML base64",
+  "client": "outlook_win",
+  "ui_language": "es",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Pablo Muestra"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hola Pablo,",
+      "visibleLastLine": "Ejemplo Logística SL",
+      "historyStartLine": "De: Pablo Muestra <pablo.muestra@example.net>",
+      "historyStartLineNormalized": "De: Pablo Muestra <pablo.muestra@example.net>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "De: Pablo Muestra <pablo.muestra@example.net>",
+      "visibleFirstText": "Hola Pablo,",
+      "visibleLastText": "Ejemplo Logística SL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

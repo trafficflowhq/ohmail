@@ -1,0 +1,43 @@
+{
+  "id": "44",
+  "file": "44-samsung-email-en-reply.eml",
+  "shape": "samsung-email-en-reply",
+  "description": "Samsung Email (Android), English: 'Sent from my Galaxy', <!-- originalMessage --> div with '-------- Original message --------' and From/Date/To/Subject",
+  "client": "samsung",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Sent from my Galaxy",
+      "historyStartLine": "-------- Original message --------",
+      "historyStartLineNormalized": "-------- Original message --------"
+    },
+    "html": {
+      "historyStartSelector": "div[style=\"font-size:100%;color:#000000\"]",
+      "attributionBefore": null,
+      "historyStartText": "-------- Original message --------",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Sent from my Galaxy"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

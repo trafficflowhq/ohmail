@@ -1,0 +1,43 @@
+{
+  "id": "30",
+  "file": "30-thunderbird-en-top-reply.eml",
+  "shape": "thunderbird-en-top-reply",
+  "description": "Thunderbird, English, top-posted: div.moz-cite-prefix + blockquote type=cite cite=mid:..., format=flowed text with '-- ' signature above the quote",
+  "client": "thunderbird",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "On 18/10/2026 09:40, David Placeholder wrote:",
+      "historyStartLineNormalized": "On 18/10/2026 09:40, David Placeholder wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.moz-cite-prefix",
+      "attributionBefore": null,
+      "historyStartText": "On 18/10/2026 09:40, David Placeholder wrote:",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Harbourline Example Inc."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

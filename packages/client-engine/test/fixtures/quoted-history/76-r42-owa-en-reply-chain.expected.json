@@ -1,0 +1,45 @@
+{
+  "id": "76",
+  "file": "76-r42-owa-en-reply-chain.eml",
+  "shape": "r42-owa-en-reply-chain",
+  "description": "Outlook on the web, English: three divRplyFwdMsg hops, each under an hr, the originals unindented",
+  "client": "owa",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 3,
+  "authorsInHistory": [
+    "Jonas Sample",
+    "Noor Example",
+    "Jonas Sample"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "I can bring two extension cords and the spare clicker.",
+      "visibleLastLine": "Samir",
+      "historyStartLine": "________________________________",
+      "historyStartLineNormalized": "________________________________"
+    },
+    "html": {
+      "historyStartSelector": "#divRplyFwdMsg",
+      "attributionBefore": null,
+      "historyStartText": "From: Jonas Sample <jonas.sample@example.org>",
+      "visibleFirstText": "I can bring two extension cords and the spare clicker.",
+      "visibleLastText": "Samir"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

@@ -123,6 +123,12 @@ describe("move", () => {
     expect(inv).toEqual([{ kind: "move", messageId: "m1", folder: "INBOX" }]);
   });
 
+  it("a rule press's move is taken back as that press's (`pressRule`): no correction of the route", async () => {
+    const reader = await seeded([msg("m1")]);
+    expect(inverseMutations(reader, { kind: "move", messageId: "m1", folder: "ohmail/Receipts", pressRule: true }))
+      .toEqual([{ kind: "move", messageId: "m1", folder: "INBOX", pressRule: true }]);
+  });
+
   it("a move that changes nothing offers nothing", async () => {
     const reader = await seeded([msg("m1")]);
     expect(inverseMutations(reader, { kind: "move", messageId: "m1", folder: "INBOX" })).toEqual([]);

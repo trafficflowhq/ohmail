@@ -117,7 +117,7 @@ describe("the permit's baseline against a takeover that lands mid-stamp, on a re
     const hooked = withStampHook(a.adapter, async () => {
       const seized = await readMailboxLease({
         adapter: b.adapter, self: b.self, mailboxId, now: new Date(t0.getTime() + 1_000),
-        hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+        hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
       });
       seizedOk = seized.organize;
     });
@@ -182,7 +182,7 @@ describe("the permit's baseline against a takeover that lands mid-stamp, on a re
     const hooked = withStampHook(a.adapter, async () => {
       await readMailboxLease({
         adapter: b.adapter, self: b.self, mailboxId, now: new Date(t0.getTime() + 1_000),
-        hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+        hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
       });
     });
     await acquireLeasePermit({

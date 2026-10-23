@@ -75,6 +75,10 @@ class MetaWorld {
   private nextUid = 1;
   /** Set once the rival has taken the mailbox — the index in {@link wire} it happened at. */
   standDownAt: number | null = null;
+  /** The next claim APPEND commits and its answer is lost — a socket reset after the server took it. */
+  loseAnswer = false;
+  /** The next claim APPEND never reaches the server. */
+  dropNext = false;
 
   /** THE TAKEOVER, as the winning install's own gate leaves the folder: our claims expunged and
    *  the winner's claim standing, stamped with the press it rests on. */
@@ -102,6 +106,18 @@ class MetaWorld {
     }));
   }
 
+  /** A claim under `installId` and `nonce` that something renewed at `heartbeatMs`. */
+  plantClaim(installId: string, nonce: string, heartbeatMs: number): void {
+    this.claims.push({
+      ref: this.nextUid++,
+      raw: formatClaim({
+        authorizedAt: null, capabilities: ["requests"], installId, kind: "local",
+        displayName: "organizing host", heartbeat: new Date(heartbeatMs),
+        claimedAt: new Date(heartbeatMs - 60_000), nonce,
+      }),
+    });
+  }
+
   /** The claims standing in the folder right now, parsed. */
   liveClaims(): Array<{ installId: string; nonce: string }> {
     return this.claims
@@ -123,7 +139,9 @@ class MetaWorld {
     },
     appendClaim: async (raw: string): Promise<void> => {
       this.wire.push("claim:append");
+      if (this.dropNext) { this.dropNext = false; throw new Error("the socket closed before the APPEND reached the server"); }
       this.claims.push({ ref: this.nextUid++, raw });
+      if (this.loseAnswer) { this.loseAnswer = false; throw new Error("the socket closed before the APPEND was answered"); }
     },
     removeClaims: async (refs: readonly unknown[]): Promise<void> => {
       this.wire.push(`claim:remove(${refs.length})`);
@@ -211,6 +229,8 @@ function rigAdapter(rig: Rig): (cfg: ImapConfig) => MailboxAdapter {
   };
   const adapter: MailboxAdapter & Record<string, unknown> = {
     leaseIo: () => rig.meta.lease,
+    /* The reader's APPEND-less look, over the same folder: a stood-down install peeks every pass. */
+    leasePeekIo: () => ({ listClaims: rig.meta.lease.listClaims }),
     requestOrganizerIo: () => rig.meta.organizer,
     profileIo: () => rig.meta.profile,
     async connect(): Promise<void> {},
@@ -583,5 +603,72 @@ describe("a renewal this install performed is this install's own claim", () => {
     expect(settled.length, "the folder holds more than one claim of this install's").toBe(1);
     expect(settled[0]!.nonce, "the claim did not advance — the gate wrote nothing")
       .not.toBe(renewedNonce);
+  });
+
+  const freshRig = (): Rig => ({ meta: new MetaWorld(), armed: null, batched: false, cycles: 0, moves: 0 });
+  const roleOf = async (s: Sidecar): Promise<string> => {
+    const [row] = await s.db.select().from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId));
+    return row!.organizerRole;
+  };
+  /** One poll: a pass whose gate throws is a pass, the next one is the subject. */
+  const poll = async (s: Sidecar): Promise<void> => {
+    nowMs += 5_000;
+    await s.syncMailbox(s.world.mailboxId).catch(() => undefined);
+  };
+
+  it("the poll gate's renewal commits and loses its answer; the next pass still organizes", async () => {
+    const rig = freshRig();
+    const sidecar = await boot(rig);
+    expect(rig.meta.liveClaims().length, "the launch gate wrote no claim").toBe(1);
+    rig.meta.loseAnswer = true;
+    await poll(sidecar);
+    expect(rig.meta.loseAnswer, "the gate never appended on this pass").toBe(false);
+    expect(rig.meta.liveClaims().length, "the committed renewal is not in the folder").toBe(2);
+    await poll(sidecar);
+    expect({
+      organizing: sidecar.organizerState().organizing,
+      role: await roleOf(sidecar),
+      heldBy: sidecar.organizerState().heldBy,
+    }, "this install read its own committed renewal as another copy of itself")
+      .toEqual({ organizing: true, role: "organizer", heldBy: null });
+  });
+
+  it("a committed renewal whose answer was lost, then one that never landed: still organizing", async () => {
+    const rig = freshRig();
+    const sidecar = await boot(rig);
+    rig.meta.loseAnswer = true;
+    await poll(sidecar);
+    expect(rig.meta.liveClaims().length, "the committed renewal is not in the folder").toBe(2);
+    rig.meta.dropNext = true;
+    await poll(sidecar);
+    expect(rig.meta.dropNext, "the second pass never appended").toBe(false);
+    await poll(sidecar);
+    expect({ organizing: sidecar.organizerState().organizing, role: await roleOf(sidecar) },
+      "the attempt that never landed made this install forget the one that did")
+      .toEqual({ organizing: true, role: "organizer" });
+  });
+
+  it("a live claim under our id we never wrote stands us down; at its lapse we take it back, no press", async () => {
+    const rig = freshRig();
+    const sidecar = await boot(rig);
+    const ours = rig.meta.liveClaims()[0]!;
+    rig.meta.plantClaim(ours.installId, "sibling-nonce", nowMs + 1_000);
+    await poll(sidecar);
+    expect({ organizing: sidecar.organizerState().organizing, role: await roleOf(sidecar) },
+      "a live claim wearing our id under a nonce we never minted must still stand us down")
+      .toEqual({ organizing: false, role: "reader" });
+    // The sibling stops renewing; this rig's window is a day.
+    nowMs += 25 * 3600 * 1000;
+    await poll(sidecar);
+    await poll(sidecar);
+    const settled = rig.meta.liveClaims();
+    expect({
+      organizing: sidecar.organizerState().organizing,
+      role: await roleOf(sidecar),
+      claims: settled.length,
+      sibling: settled.some((c) => c.nonce === "sibling-nonce"),
+    }, "this install's own lapsed claim was never taken back").toEqual({
+      organizing: true, role: "organizer", claims: 1, sibling: false,
+    });
   });
 });

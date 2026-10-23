@@ -1,0 +1,36 @@
+{
+  "id": "41",
+  "file": "41-exchange-plain-es-mensaje-original.eml",
+  "shape": "exchange-plain-es-mensaje-original",
+  "description": "Plain text only, Spanish: '-----Mensaje original-----' / De: / Enviado el: / Para: / Asunto:, base64",
+  "client": "exchange_plain",
+  "ui_language": "es",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Pablo Muestra"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hola Pablo,",
+      "visibleLastLine": "Ejemplo Logística SL",
+      "historyStartLine": "-----Mensaje original-----",
+      "historyStartLineNormalized": "-----Mensaje original-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

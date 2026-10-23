@@ -1,0 +1,51 @@
+From: Ben Sample <ben.sample@example.org>
+To: Ana Example <ana.example@example.com>
+Subject: =?utf-8?B?QW50d29ydDogV2FydHVuZyBMw7xmdHVuZ3NhbmxhZ2UgMi4gT0c=?=
+Date: Tue, 20 Oct 2026 17:03:05 +0200
+Message-ID: <6b40f07cb77ba66db2e7@mail.example.org>
+In-Reply-To: <17eea43c1617daa9605c@mail.example.com>
+References: <17eea43c1617daa9605c@mail.example.com>
+X-Mailer: HCL Notes Release 12.0.2 November 03, 2022
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+	boundary="00000000000050f46cdeddf4"
+
+--00000000000050f46cdeddf4
+Content-Type: text/plain; charset="iso-8859-1"
+Content-Transfer-Encoding: 8bit
+
+Hallo Frau Example,
+
+vielen Dank für das Angebot. Können wir die Begehung auf Dienstag, 3. November, legen?
+
+Frau Muster aus der Haustechnik wäre dann ebenfalls dabei.
+
+Beste Grüße
+Ben Sample
+Lindenhof Beispiel AG | Facility Management
+
+
+
+Von:     "Ana Example" <ana.example@example.com>
+An:      "Ben Sample" <ben.sample@example.org>
+Datum:   20.10.2026 14:00
+Betreff: Wartung Lüftungsanlage 2. OG
+
+
+
+Hallo Herr Sample,
+
+anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.
+
+Die Preise gelten bis zum 30. November 2026.
+
+Freundliche Grüße
+Ana Example
+Projektleitung Haustechnik
+Northwind Example GmbH · Musterstraße 12 · 10115 Berlin
+--00000000000050f46cdeddf4
+Content-Type: text/html; charset="iso-8859-1"
+Content-Transfer-Encoding: 8bit
+
+<html><body><font size=2 face="sans-serif">Hallo Frau Example,</font><br><br><font size=2 face="sans-serif">vielen Dank für das Angebot. Können wir die Begehung auf Dienstag, 3. November, legen?</font><br><br><font size=2 face="sans-serif">Frau Muster aus der Haustechnik wäre dann ebenfalls dabei.</font><br><br><font size=2 face="sans-serif">Beste Grüße<br>Ben Sample<br>Lindenhof Beispiel AG | Facility Management</font><br><br><br><br><font size=1 color=#5f5f5f face="sans-serif">Von:        </font><font size=1 face="sans-serif">"Ana Example" &lt;ana.example@example.com&gt;</font><br><font size=1 color=#5f5f5f face="sans-serif">An:        </font><font size=1 face="sans-serif">"Ben Sample" &lt;ben.sample@example.org&gt;</font><br><font size=1 color=#5f5f5f face="sans-serif">Datum:        </font><font size=1 face="sans-serif">20.10.2026 14:00</font><br><font size=1 color=#5f5f5f face="sans-serif">Betreff:        </font><font size=1 face="sans-serif">Wartung Lüftungsanlage 2. OG</font><br><hr noshade><br><br><br><font size=2 face="sans-serif">Hallo Herr Sample,</font><br><br><font size=2 face="sans-serif">anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.</font><br><br><font size=2 face="sans-serif">Die Preise gelten bis zum 30. November 2026.</font><br><br><font size=2 face="sans-serif">Freundliche Grüße<br>Ana Example<br>Projektleitung Haustechnik<br>Northwind Example GmbH · Musterstraße 12 · 10115 Berlin</font><br></body></html>
+--00000000000050f46cdeddf4--

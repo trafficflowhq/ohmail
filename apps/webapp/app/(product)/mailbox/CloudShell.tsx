@@ -16,6 +16,7 @@ import {
 } from "../../api-client";
 import { readOwner } from "../../shell/owner-cookie";
 import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
+import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
 import { resolveOwnerOutcome } from "../session-outcome";
 import { SELF_HOST_BUILD } from "../../hello";
 import { AboutSection } from "./AboutSection";
@@ -58,6 +59,11 @@ import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
  */
 pendApiOwner(readOwner());
 beginOAuthReturn();
+
+/** Settings → Mailboxes' waiting filings, on the Cloud API. Module scope: one identity per load. */
+const filingsApi: MailboxFilingsApi = {
+  read: mailboxApi.filings, retry: mailboxApi.retryFilings, leave: mailboxApi.leaveFilings,
+};
 
 /**
  * The Cloud client's seam. `AppShell` is shared with `apps/desktop`, whose build does not bundle this
@@ -302,7 +308,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
            the wall (`AccessLock`) opens the same pane. */
         accountSection={<><PasswordSection /><AccountSection /></>}
         securitySection={<SecuritySection />}
-        mailboxSection={<><MailboxSection subscriptionPane={manageOffered} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
+        mailboxSection={<><MailboxSection subscriptionPane={manageOffered} /><MailboxFilings api={filingsApi} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>}
         /* UNCONDITIONAL, unlike the row below it: every host this shell runs on has an account
            and mounts `GET/PATCH /account/ai`, including a self-hosted server whose operator pays
            the model bill themselves. `AppShell` withholds it on the demo. */

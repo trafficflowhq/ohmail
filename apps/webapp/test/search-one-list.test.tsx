@@ -155,7 +155,7 @@ describe("Search pages the store", () => {
     expect(text()).toContain("news@axa.example");
     expect(text()).toContain("×28");
     expect(text()).not.toContain("local@device.example");
-    const facet = [...host.querySelectorAll(".facets li")].find((b) => (b.textContent ?? "").includes("news@axa.example")) as HTMLElement;
+    const facet = [...host.querySelectorAll(".facets button")].find((b) => (b.textContent ?? "").includes("news@axa.example")) as HTMLElement;
     await act(async () => { facet.click(); });
     await settle();
     expect(asked.filter((o) => o.parts === "page").map((o) => o.filters?.sender ?? null)).toEqual([null, "news@axa.example"]);

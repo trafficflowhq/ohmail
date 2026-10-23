@@ -105,7 +105,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // 185 -> 186 with `POST /auth/password`: the session is the subject and the body a
     // re-assertion, the position `POST /auth/step-up/totp` is relayed from.
     // 186 -> 187 with `GET /screener/waiting/count`, relayed like the decision count beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(187);
+    // 187 -> 190 with the waiting filings' read and its two presses, answered on the server that
+    // holds the rows, like the gap offer's answer beside them.
+    expect(RELAY_ALLOWLIST.length).toBe(190);
   });
 
   it("every pattern in the projection is a real route", () => {

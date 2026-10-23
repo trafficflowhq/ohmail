@@ -433,6 +433,15 @@ describe("the verbs beside it: Park and Answer later, undone after an open", () 
       expect(toastText()).toContain(messages.ohbox.toastUndone);
       expect(deletes()).toEqual([]);
     }, 30000);
+    it(`${verb} advances to the next row, and Undo still puts the row back in New, selected`, async () => {
+      const c = await dwellAndPress(k);
+      expect(selectedRow(c), "the verb did not advance").toBe("n1");
+      await clickUndo();
+      await waitFor(() => rowIds(c).includes("w8"), "the row to come back");
+      await sleep(400);
+      expect(where(c, "w8")).toBe(`${NEW}#0`);
+      expect(selectedRow(c)).toBe("w8");
+    }, 30000);
     it(`${verb}, CONTROL on a preview: back at the top of New`, async () => {
       const c = await pressAndUndo(1000, k, "preview");
       expect(where(c, "w8")).toBe(`${NEW}#0`);

@@ -504,16 +504,28 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
         };
       }
 
+      /* WHICH MAILBOX AND WHY, for the two arms below: the mailbox by its name (or "N mailboxes"),
+       * its own reason or "the reasons differ", and a link that opens that mailbox's block. A null
+       * class is its own state — a row nothing refused must not read as a refusal. */
+      const filingWhere = f && f.mailboxes > 1
+        ? t("filingMailboxes", { count: f.mailboxes })
+        : f?.first ? (f.first.displayName?.trim() || displayAddress(f.first.address)) : null;
+      const filingWhy = f?.reasonsDiffer ? t("filingReasonsDiffer") : t(`filingReason_${f?.reason ?? "none"}`);
+      const filingLink = f?.first
+        ? { ...settings, href: `${settings.href}?mailbox=${encodeURIComponent(f.first.id)}` }
+        : settings;
+
       /* STUCK. The one arm that WARNS, and it is data-driven: the oldest outstanding filing has
        * waited past what a rotation can account for, or the ladder has refused it twice. */
       if (f?.arm === "stuck") {
+        const minutes = f.waitedMinutes ?? 0;
         return {
           tone: "warn", role: "status", warn: true, busy: false,
-          title: t("filingStuck", { count: f.count, minutes: f.waitedMinutes ?? 0 }),
-          // No recorded refusal is its own state: a stuck row nothing refused (a host that did
-          // not answer writes nothing) must not read as the server refusing to say why.
-          detail: t("filingStuckWhy", { reason: t(`filingReason_${f.reason ?? "none"}`) }),
-          link: settings,
+          title: minutes >= 60
+            ? t("filingStuckHours", { count: f.count, hours: Math.floor(minutes / 60) })
+            : t("filingStuck", { count: f.count, minutes }),
+          detail: filingWhere === null ? filingWhy : t("filingStuckWhy", { where: filingWhere, reason: filingWhy }),
+          link: filingLink,
         };
       }
 
@@ -524,13 +536,14 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
           tone: "", role: "status", warn: false, busy: false,
           title: t("filingWaiting", { count: f.count }),
           detail: t("filingWaitingWhy", {
-            reason: t(`filingReason_${f.reason ?? "unknown"}`),
+            where: filingWhere ?? "—",
+            reason: filingWhy,
             // An unparseable or absent instant becomes an em dash rather than "Invalid Date" or
             // a dropped placeholder: the sentence still says a retry is scheduled, which is the
             // true part, and the clause that cannot be filled reads as missing.
             at: (f.nextAttemptAt && clockTime(f.nextAttemptAt)) || "—",
           }),
-          link: settings,
+          link: filingLink,
         };
       }
 

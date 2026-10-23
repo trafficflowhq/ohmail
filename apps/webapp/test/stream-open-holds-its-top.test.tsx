@@ -215,7 +215,7 @@ describe("StreamCardMemo tells the stream first", () => {
     const onToggle = (id: string, open: boolean) => { calls.push(`view ${id} ${open}`); };
     await act(async () => {
       const card = h(StreamCardMemo, {
-        m: message, now: new Date(ISO), current: false, expanded: false, unread: false,
+        m: message, now: new Date(ISO), current: false, expanded: false, viewer: true, unread: false,
         bodyText: "Two lines.\nOf text.", bodyState: "snippet", bodyHtml: null, bodyLoadedRemote: false,
         loadingLabel: "l", failedLabel: "f", withheldKey: "withheld", onReask: () => {},
         onSelect: () => {}, onToggle,

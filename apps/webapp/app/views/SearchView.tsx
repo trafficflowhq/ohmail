@@ -88,6 +88,9 @@ export const ARCHIVE_TIMEOUT_MS = STORE_ANSWER_TIMEOUT_MS;
 /** How near the end of the list (px) the next store page is asked for. */
 const PAGE_AHEAD_PX = 480;
 
+/** A `from:` or `in:` scope typed into the field. */
+const OPERATOR_WORD = /(^|\s)(from|in):\S/i;
+
 /** The store's facet for a folder path, as the device keys it: a view id, else the leaf. */
 const folderKeyOf = (folder: string): string =>
   (VIEW_OF_FOLDER as Record<string, string | undefined>)[folder] ?? folderLeaf(folder);
@@ -488,14 +491,26 @@ export function SearchView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, facets, merged, mergedSimilar, similarOn, t, storeReady, storeLength, rev]);
 
-  const onFacet = (groupTitle: string, label: string) => {
+  const facetOf = (groupTitle: string, label: string): { group: Filter["group"]; value: string } => {
     const group: Filter["group"] =
       groupTitle === t("facetFrom") ? "from" : groupTitle === t("facetFolder") ? "folder" : "refine";
-    // Labels arrive display-formatted: a folder maps back to its key, and — from the store's
-    // facets — to the stored path and sender address the store filters on.
+    // Labels arrive display-formatted: a folder maps back to its key.
     const value = group === "folder"
       ? (Object.entries(PLACE_LABEL).find(([, v]) => v === label)?.[0] ?? label)
       : label;
+    return { group, value };
+  };
+  const shownFacets: FacetGroup[] = filter === null ? facetGroups : facetGroups.map((g) => ({
+    ...g,
+    items: g.items.map((it) => {
+      const f = facetOf(g.title, it.label);
+      return { ...it, pressed: f.group === filter.group && f.value === filter.label };
+    }),
+  }));
+
+  const onFacet = (groupTitle: string, label: string) => {
+    const { group, value } = facetOf(groupTitle, label);
+    // From the store's facets, the stored path and sender address the store filters on.
     const raw = !facets ? undefined
       : group === "folder" ? Object.keys(facets.folder).find((p) => folderKeyOf(p) === value)
         : group === "from" ? facets.sender.find((x) => displayAddress(x.address) === label)?.address
@@ -847,6 +862,10 @@ export function SearchView({
             ariaLabel={t("aria")}
             autoFocus
           />
+          {/* Typed scopes are searched as words; say so rather than answer "0". */}
+          {OPERATOR_WORD.test(trimmed) ? (
+            <p className="results-head" data-testid="search-no-operators">{t("noOperators")}</p>
+          ) : null}
           {trimmed === "" ? null : isEgg ? (
             <div className="empty">
               <span className="glyph">🤍</span>
@@ -969,7 +988,7 @@ export function SearchView({
                     </>
                   ) : null}
                 </div>
-                <Facets groups={facetGroups} onPick={onFacet} />
+                <Facets groups={shownFacets} onPick={onFacet} />
               </div>
             </>
           )}

@@ -1,0 +1,43 @@
+{
+  "id": "45",
+  "file": "45-fastmail-en-reply.eml",
+  "shape": "fastmail-en-reply",
+  "description": "Fastmail, English: plain <div> attribution BEFORE blockquote#qt type=cite (the attribution is outside the quote element)",
+  "client": "fastmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "On Wed, 21 Oct 2026, at 08:45, David Placeholder wrote:",
+      "historyStartLineNormalized": "On Wed, 21 Oct 2026, at 08:45, David Placeholder wrote:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote#qt",
+      "attributionBefore": "On Wed, 21 Oct 2026, at 08:45, David Placeholder wrote:",
+      "historyStartText": "Hi Elif,",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Harbourline Example Inc."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

@@ -14,7 +14,7 @@ import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-f
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
-import { convergeRuleKey, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
+import { convergeRuleKey, endOwedWalk, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
 import { ruleKeyIsOwnAddress, type OwnAddressesPerPass } from "./own-mail.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
@@ -986,11 +986,11 @@ export async function reconcileRuleCreate(
       return { created: false, changed: false, ruleId: existing.id, lastSeq: twinSeqs[twinSeqs.length - 1] ?? null, collapsed };
     }
     /* The backlog re-opens on the update path's terms: only when the ROUTING moved, never for a
-       reorder or an on/off, and only if the request asked for the mail already filed. */
-    const retro: Partial<typeof rulesTbl.$inferInsert> =
-      diff.destination !== undefined && create.applyRetro
-        ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 }
-        : {};
+       reorder or an on/off, and only if the request asked for the mail already filed; moved with
+       past mail off, a walk still owed ends here. */
+    const retro: Record<string, unknown> = diff.destination === undefined ? {}
+      : create.applyRetro ? { retroRequestedAt: now, retroDoneAt: null, retroCursor: null, retroMoved: 0 }
+      : { retroDoneAt: endOwedWalk(tx, now) };
     // Flat, not nested: the delta below is this write's door and the census reads them together.
     await tx.update(rulesTbl)
       .set({ ...diff, ...retro, updatedAt: now })
@@ -1116,6 +1116,8 @@ export async function applyRuleRequest(
     set.retroDoneAt = null;
     set.retroCursor = null;
     set.retroMoved = 0;
+  } else if (retargeted) {
+    (set as Record<string, unknown>).retroDoneAt = endOwedWalk(tx, now);
   }
 
   // The person edited the one row they could see; its hidden twins collapse into it (the acting

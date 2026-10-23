@@ -10,6 +10,7 @@ import de from "../messages/de.json";
  */
 const KEYS = [
   "footRuleRetro", "footRuleRetroDomain", "footWillRuleRetro", "footWillRuleRetroDomain",
+  "footWillRuleRetroChip", "footWillRuleRetroDomainChip",
   "subjectConfirmFine", "bodyConfirmMore", "subjectConfirmMore", "rules.retargetExplainRetro",
 ] as const;
 

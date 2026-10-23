@@ -1,0 +1,43 @@
+{
+  "id": "21",
+  "file": "21-gmail-android-de-reply.eml",
+  "shape": "gmail-android-de-reply",
+  "description": "Gmail for Android, German: 'Name <address> schrieb am Do., 22. Okt. 2026, 09:14:' (name first), dir=auto",
+  "client": "gmail_android",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Frau Muster aus der Haustechnik wäre dann ebenfalls dabei.",
+      "historyStartLine": "Ana Example <ana.example@example.com> schrieb am Fr., 16. Okt. 2026, 07:40:",
+      "historyStartLineNormalized": "Ana Example <ana.example@example.com> schrieb am Fr., 16. Okt. 2026, 07:40:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "Ana Example <ana.example@example.com> schrieb am Fr., 16. Okt. 2026, 07:40:",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Frau Muster aus der Haustechnik wäre dann ebenfalls dabei."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

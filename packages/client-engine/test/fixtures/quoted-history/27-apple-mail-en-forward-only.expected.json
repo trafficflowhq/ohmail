@@ -1,0 +1,43 @@
+{
+  "id": "27",
+  "file": "27-apple-mail-en-forward-only.eml",
+  "shape": "apple-mail-en-forward-only",
+  "description": "Apple Mail, English: 'Begin forwarded message:' and nothing typed",
+  "client": "apple",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": true,
+    "text": {
+      "visibleFirstLine": null,
+      "visibleLastLine": null,
+      "historyStartLine": "> Begin forwarded message:",
+      "historyStartLineNormalized": "Begin forwarded message:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Begin forwarded message:",
+      "visibleFirstText": null,
+      "visibleLastText": null
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The forwarded message is the whole content."
+}

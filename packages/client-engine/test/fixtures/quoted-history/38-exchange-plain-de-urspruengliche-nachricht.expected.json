@@ -1,0 +1,37 @@
+{
+  "id": "38",
+  "file": "38-exchange-plain-de-urspruengliche-nachricht.eml",
+  "shape": "exchange-plain-de-urspruengliche-nachricht",
+  "description": "Plain text only, German: '-----Ursprüngliche Nachricht-----' / Von / Gesendet / An / Betreff, two levels, iso-8859-1",
+  "client": "exchange_plain",
+  "ui_language": "de",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "iso-8859-1",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Guten Tag zusammen,",
+      "visibleLastLine": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin",
+      "historyStartLine": "-----Ursprüngliche Nachricht-----",
+      "historyStartLineNormalized": "-----Ursprüngliche Nachricht-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

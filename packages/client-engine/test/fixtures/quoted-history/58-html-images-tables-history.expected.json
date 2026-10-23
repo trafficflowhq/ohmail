@@ -1,0 +1,45 @@
+{
+  "id": "58",
+  "file": "58-html-images-tables-history.eml",
+  "shape": "html-images-tables-history",
+  "description": "Outlook, English, multipart/related: the quoted message holds a bordered MsoNormalTable, an inline cid: logo (image/png part) and a remote image; text/plain has '[cid:...]' and tab-separated rows",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html",
+    "image/png (related, cid)"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "From: Elif Testa <elif.testa@example.net>",
+      "historyStartLineNormalized": "From: Elif Testa <elif.testa@example.net>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: Elif Testa <elif.testa@example.net>",
+      "visibleFirstText": "Hi Elif,",
+      "visibleLastText": "Logistics Coordinator, Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The table and both images belong to the history and fold with it; the cid part stays inline (not a file)."
+}

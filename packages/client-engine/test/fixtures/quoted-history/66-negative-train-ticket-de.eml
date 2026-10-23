@@ -1,0 +1,34 @@
+From: Beispiel Bahnreisen <tickets@example.com>
+To: Ben Sample <ben.sample@example.org>
+Subject: Gute Reise
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <neg66@mail.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_neg66_alt"
+
+--=_neg66_alt
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Ihre Reservierung ist bestätigt.
+
+Von: Zürich HB
+An: Bern
+Datum: Donnerstag, 22. Oktober 2026
+Abfahrt: 09:02, Gleis 31
+Ankunft: 09:58
+
+Auftrag: 7741-2208
+Preis: CHF 25.00
+
+Gute Reise wünscht
+Beispiel Bahnreisen AG
+--=_neg66_alt
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>Ihre Reservierung ist bestätigt.</p>
+<p><b>Von:</b> Zürich HB<br><b>An:</b> Bern<br><b>Datum:</b> Donnerstag, 22. Oktober 2026<br><b>Abfahrt:</b> 09:02, Gleis 31<br><b>Ankunft:</b> 09:58</p>
+<p>Auftrag: 7741-2208<br>Preis: CHF 25.00</p>
+<p>Gute Reise wünscht<br>Beispiel Bahnreisen AG</p></body></html>
+--=_neg66_alt--

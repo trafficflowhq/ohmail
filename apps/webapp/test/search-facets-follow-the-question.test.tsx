@@ -120,7 +120,7 @@ describe("the store's facet chips belong to the question on screen", () => {
     const door = await mounted(await engine());
     door.type!("alphaword");
     for (let i = 0; i < 300 && !(host.textContent ?? "").includes("firstsender"); i++) await sleep(5);
-    const chip = [...host.querySelectorAll(".facets li")].find((b) => (b.textContent ?? "").includes("firstsender")) as HTMLElement;
+    const chip = [...host.querySelectorAll(".facets button")].find((b) => (b.textContent ?? "").includes("firstsender")) as HTMLElement;
     expect(chip, "no chip to press").toBeTruthy();
     const t0 = performance.now();
     chip.click();
@@ -131,5 +131,39 @@ describe("the store's facet chips belong to the question on screen", () => {
     expect(count, "the pressed facet's count was never asked").toBeTruthy();
     expect(page!.at - t0, "the press waited the typing debounce").toBeLessThan(60);
     expect(count!.at - t0, "the press's count waited the typing hold").toBeLessThan(300);
+  });
+});
+
+describe("the facets are controls a keyboard reaches", () => {
+  const facet = () => [...host.querySelectorAll<HTMLElement>(".facets button")].find((b) => (b.textContent ?? "").includes("firstsender"));
+
+  it("each facet is a tabbable toggle button; the pressed one says so and a second press clears it", async () => {
+    const door = await mounted(await engine());
+    door.type!("alphaword");
+    for (let i = 0; i < 300 && !facet(); i++) await sleep(5);
+    const b = facet() as HTMLButtonElement;
+    expect(b, "the From facet is not a button").toBeTruthy();
+    expect(b.type).toBe("button");
+    expect(b.tabIndex).toBe(0);
+    expect(b.getAttribute("aria-pressed")).toBe("false");
+    b.click();
+    for (let i = 0; i < 200 && facet()?.getAttribute("aria-pressed") !== "true"; i++) await sleep(5);
+    expect(facet()!.getAttribute("aria-pressed"), "the active filter is not shown on its control").toBe("true");
+    expect(asked.some((a) => a.sender === "firstsender@x.test")).toBe(true);
+    facet()!.click();
+    for (let i = 0; i < 200 && facet()?.getAttribute("aria-pressed") !== "false"; i++) await sleep(5);
+    expect(facet()!.getAttribute("aria-pressed"), "a second press did not clear the filter").toBe("false");
+  });
+
+  it("a typed from: or in: says it is not a filter and points at the facets", async () => {
+    const door = await mounted(await engine());
+    door.type!("alphaword");
+    await sleep(30);
+    expect(host.querySelector("[data-testid=search-no-operators]")).toBeNull();
+    for (const q of ["from:firstsender alphaword", "alphaword in:inbox"]) {
+      door.type!(q);
+      for (let i = 0; i < 100 && !host.querySelector("[data-testid=search-no-operators]"); i++) await sleep(5);
+      expect(host.querySelector("[data-testid=search-no-operators]")?.textContent, q).toContain("not filters");
+    }
   });
 });

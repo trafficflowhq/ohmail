@@ -208,4 +208,35 @@ describe.skipIf(!AVAILABLE)("rule-retro over a subject rule", () => {
     const [after] = await db.select().from(rules).where(eq(rules.id, rule!.id));
     expect(after!.retroDoneAt, "a rule that matched nothing was left owed for ever").not.toBeNull();
   }, 120_000);
+
+  it("with a reader mailbox, the walk files only its term and is not re-walked each cycle", async () => {
+    // The reader's press made a sender rule with past mail OFF; the term rule's walk must not file
+    // the sender's other letters by it, on this cycle or any later one while the rule stays owed.
+    const w = await newWorld();
+    await db.insert(mailboxes).values({
+      accountId: w.accountId, provider: "imap", address: `r-${w.accountId.slice(0, 8)}@ohmail.test`,
+      organizerRole: "reader",
+    });
+    const alert = await seedMessage(w, `${TOKEN} nightly report`);
+    const invoice = await seedMessage(w, "Invoice 2026-08");
+    await db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: SENDER, destination: "ohmail/Receipts",
+      provenance: "manual", enabled: true,
+    });
+    const [narrow] = await db.insert(rules).values({
+      accountId: w.accountId, kind: "sender", match: SENDER, destination: READS,
+      provenance: "manual", enabled: true, subjectContains: TOKEN,
+      retroRequestedAt: new Date("2026-08-10T10:00:00Z"),
+    }).returning();
+
+    expect((await run(w)).moved).toBe(1);
+    const second = await run(w);
+
+    expect(second.examined, "the parked walk ran again").toBe(0);
+    expect(await desiredOf(alert)).toBe(READS);
+    expect(await desiredOf(invoice), "the declined sender rule's backlog was filed").toBe(OHBOX);
+    expect(await movesFor(w.accountId, invoice)).toHaveLength(0);
+    const [after] = await db.select().from(rules).where(eq(rules.id, narrow!.id));
+    expect(after!.retroDoneAt, "a reader is still outside the walk").toBeNull();
+  }, 120_000);
 });

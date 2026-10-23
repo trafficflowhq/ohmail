@@ -268,8 +268,12 @@ describe("leaving with an unsaved change asks", () => {
       const body = src.slice(src.indexOf(`export function ${verb}(`));
       const end = body.indexOf("\n}\n");
       const decl = body.slice(0, end);
-      expect(decl, verb).toMatch(/if \(heldBefore\(next, \(\) => \w+\([^)]*\)\)\) return;\n[\s\S]*window\.location\.hash = next;/);
+      // The write is the hash itself, or `navigate`, which writes it and tells the route at once.
+      expect(decl, verb).toMatch(/if \(heldBefore\(next, \(\) => \w+\([^)]*\)\)\) return;\n[\s\S]*(?:window\.location\.hash = next|navigate\(next\));/);
     }
+    const navigate = src.slice(src.indexOf("function navigate("));
+    expect(navigate.slice(0, navigate.indexOf("\n}\n")), "navigate no longer writes the hash first")
+      .toMatch(/^function navigate\(next: string\): void \{\n\s*window\.location\.hash = next;/);
   });
 
   it("CONTROL: an edit put back by hand is no change — nothing asks", async () => {

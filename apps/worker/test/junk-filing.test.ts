@@ -312,13 +312,31 @@ describe("junk-filing — the spam verdict files to native \\Junk", () => {
     expect(owesMore, "a re-opened row must re-kick the scheduler").toBe(true);
     expect(rec.moves).toEqual([{ from: "INBOX", to: TRASH }]);
     expect(rec.forgotten).toEqual([{ folder: TRASH, ref: "9:900" }]);
-    // PENDING, not converged: desired stays the trash path, observed is the survivor's folder,
-    // and there is no satisfiedBy — `reconcileStatusFor` reads this as a move still owed.
+    // Claimed at Trash first, then re-opened PENDING at the survivor's folder with no
+    // satisfiedBy — `reconcileStatusFor` reads that as a move still owed.
     expect(rec.folderStates).toEqual([{
+      messageId: "m4",
+      s: { expectDesiredFolder: TRASH, observedFolder: TRASH, lastSetBy: "us", physicalObservation: true },
+    }, {
       messageId: "m4",
       s: { expectDesiredFolder: TRASH, observedFolder: "ohmail/News", lastSetBy: "us", physicalObservation: true },
     }]);
     expect(rec.husks).toEqual([]);
+  });
+
+  it("a delete completion that lost its CAS does not park: the copy stays watched for the move back", async () => {
+    // A Restore cancelled the delete while its move was in flight. Parking here would forget the
+    // only watched copy of a live letter, and the reaper would take it.
+    const rec = fresh();
+    const { owesMore } = await reconcileMailbox(deps(rec, {
+      pending: [{ messageId: "m8", desiredFolder: TRASH, observedFolder: "INBOX", ref: "1:22" }],
+      special: { junkFolder: JUNK, trashFolder: TRASH },
+      casLost: true,
+    }));
+    expect(rec.moves).toEqual([{ from: "INBOX", to: TRASH }]);
+    expect(rec.forgotten, "nothing parked").toEqual([]);
+    expect(rec.audits.map((a) => a.action)).toContain("reconcile.move.superseded");
+    expect(owesMore, "the newer desire owes the move back").toBe(true);
   });
 
   it("a \\Sent survivor is NEVER re-opened onto: the completion converges, and owes nothing", async () => {

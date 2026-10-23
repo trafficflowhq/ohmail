@@ -1,0 +1,44 @@
+{
+  "id": "57",
+  "file": "57-calendar-reply-outlook-de.eml",
+  "shape": "calendar-reply-outlook-de",
+  "description": "Outlook, German: 'Angenommen:' meeting reply with a typed comment; multipart/alternative text/plain + text/html + text/calendar METHOD:REPLY; the quoted invitation header has Wann:/Wo: lines",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html",
+    "text/calendar"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The history is the invitation; the comment stays visible above it."
+}

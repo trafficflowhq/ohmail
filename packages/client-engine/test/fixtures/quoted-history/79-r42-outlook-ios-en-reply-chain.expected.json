@@ -1,0 +1,44 @@
+{
+  "id": "79",
+  "file": "79-r42-outlook-ios-en-reply-chain.eml",
+  "shape": "r42-outlook-ios-en-reply-chain",
+  "description": "Outlook for iOS, English: ms-outlook-mobile-reference-message hops with a border-top From/Date block, 'Get Outlook for iOS' under each note",
+  "client": "outlook_ios",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Noor Example",
+    "Samir Muster"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thanks, north gate it is.",
+      "visibleLastLine": "Get Outlook for iOS",
+      "historyStartLine": "________________________________",
+      "historyStartLineNormalized": "________________________________"
+    },
+    "html": {
+      "historyStartSelector": "#mail-editor-reference-message-container",
+      "attributionBefore": null,
+      "historyStartText": "From: Noor Example <noor.example@example.com>",
+      "visibleFirstText": "Thanks, north gate it is.",
+      "visibleLastText": "Get Outlook for iOS"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

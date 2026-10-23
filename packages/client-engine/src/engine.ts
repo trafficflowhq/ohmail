@@ -883,6 +883,11 @@ export interface QueuedChange {
   readonly id: string;
   readonly key: string;
   readonly mutation: EngineMutation;
+  /**
+   * What the verb's last attempt met, as the queue holds it: `null` before any answer (it waits its
+   * turn), absent from {@link OhmailEngine.queuedDiscards}. Set by {@link OhmailEngine.queuedChanges}.
+   */
+  readonly error?: { readonly code: string | null; readonly message: string; readonly status: number | null } | null;
 }
 
 const NO_QUEUED: readonly QueuedChange[] = Object.freeze([]);
@@ -1495,9 +1500,9 @@ export type ListTrashFn = (opts: { cursor?: string; limit?: number }) => Promise
  *
  * `restoreTo` is the folder the server decided on — which may not be the row's own `restoreTo`
  * if the origin folder disappeared between the page and the press — so the toast names THIS
- * value, not the one the row was rendered with. `pending` is always true and is carried rather
- * than assumed: the restore is a filing the mail server has not performed yet, and a surface
- * that treated the 200 as "done" would be claiming the mail is back.
+ * value, not the one the row was rendered with. `pending` is carried rather than assumed: true
+ * when the restore is a filing the mail server has not performed yet, false when it cancelled a
+ * delete the server never saw (the letter is back at once).
  */
 export interface RestoreFromTrashWire {
   restoreTo: string;
@@ -2025,6 +2030,10 @@ export interface EngineOptions {
    * shipped paths never pass it, so the one number below is the one every client uses.
    */
   outboxReplayDeadlineMs?: number;
+  /** Override {@link OUTBOX_HOLD_CEILING_MS}: a test seam like the one above, a positive number, never below it. */
+  outboxHoldCeilingMs?: number;
+  /** Override {@link DRAIN_REQUEST_CEILING_MS}: a test seam, a positive number only. */
+  drainRequestCeilingMs?: number;
   /**
    * WHO REPLAYS THE OUTBOX. `true` (the default, and the webapp's shape): the engine's own drives replay restored and
    * unowned entries before each drain — the webapp dispatches most verbs fire-and-forget and flushes only around
@@ -2068,6 +2077,55 @@ export interface EngineOptions {
  * stops the drive from waiting, never the verb from landing.
  */
 export const OUTBOX_REPLAY_DEADLINE_MS = 10_000;
+
+/**
+ * HOW LONG ONE WRITE MAY HOLD THE OUTBOX. A dispatch past {@link OUTBOX_REPLAY_DEADLINE_MS} becomes
+ * the order barrier ({@link OhmailEngine.outboxHold}), and it stood for as long as its request did:
+ * on a connection that died silently that was until a reload — every later change only queued, the
+ * replay skipped, Try again sent nothing. Past this, counted from the request's start, the attempt
+ * ends as a retryable `timeout` and goes back on the queue under its own key, first in line. Its
+ * request is aborted as it ends: a transport still holding it (a renewal that outlasted it) sends
+ * nothing more of it, beside a newer change or after a Discard. The
+ * server's own limit is 60 s (`maxDuration`), so a request unanswered here is not being worked on;
+ * every write route honours the key, and the replay is what a reload already did. A `timeout`
+ * spends none of the give-up ceiling.
+ *
+ * A SEND IS NOT ENDED HERE, only its barrier goes. Its request carries its files (inline, or staged
+ * to storage first), and on a slow uplink their upload alone outlasts this before the server reads
+ * a byte. The cut request was not stopped: it delivered while the replay uploaded everything again,
+ * cut in turn, or refused as a duplicate of a stored file and said "not sent". So the send's own
+ * request stays the one owner of its entry until it settles, as before this ceiling existed.
+ */
+export const OUTBOX_HOLD_CEILING_MS = 75_000;
+
+/**
+ * HOW OLD A HUNG WRITE MUST BE BEFORE A PERSON'S TRY AGAIN MAY END ITS WAIT: the server's own limit
+ * (`maxDuration`, 60 s), counted from the request's start. Younger, the server may still be working
+ * on it, and a newer change sent beside it could land first and be overwritten by it (a move, a read
+ * state, a draft's words). The press then waits its turn behind the barrier, which
+ * {@link OUTBOX_HOLD_CEILING_MS} bounds.
+ */
+export const OUTBOX_TRY_AGAIN_ENDS_HOLD_MS = 60_000;
+
+/**
+ * NO DRAIN PAGE IS AWAITED PAST THIS, WHATEVER THE DOOR. The drive holds the single-flight while it
+ * waits, so one page a dead connection never answered stopped every later drain and replay. The
+ * doors bound their own reads (the browser's `SYNC_ANSWER_TIMEOUT_MS` and `SYNC_BODY_TIMEOUT_MS`,
+ * the desktop bridge's request deadline); this is the belt for one that does not, set above them so
+ * it fires only there. It races and gives up; it cannot abort a request it did not open.
+ */
+export const DRAIN_REQUEST_CEILING_MS = 120_000;
+
+/** What a request past one of the two ceilings above ends as: retryable, and never the server's word. */
+function noAnswerWithin(ms: number): MutationRejectedError {
+  return new MutationRejectedError(`no answer within ${ms} ms`, { code: "timeout", retryable: true });
+}
+
+/** A write's own controller where the platform has one; without it the write goes out unsignalled. */
+function abortControllerOrNull(): AbortController | null {
+  const Ctor = (globalThis as { AbortController?: typeof AbortController }).AbortController;
+  return Ctor ? new Ctor() : null;
+}
 
 /**
  * How long without a search before the first key of the next one warms the way to the store
@@ -2563,6 +2621,8 @@ export class OhmailEngine {
   private abandonedCache: { v: number; out: AbandonedMutation[] } | null = null;
   /** See {@link OhmailEngine.queuedDiscards} — the previous snapshot, kept while it is still true. */
   private queuedDiscardsCache: readonly QueuedChange[] = NO_QUEUED;
+  /** See {@link OhmailEngine.queuedChanges}, kept the same way. */
+  private queuedChangesCache: readonly QueuedChange[] = NO_QUEUED;
   /**
    * OVERLAYS WHOSE ECHO HAS NOT BEEN APPLIED YET, overlay id → the {@link drainEpoch} captured when the mutation's
    * POST returned. An entry lands here when the post-confirm reconcile drain FAILED (or was deliberately deferred by
@@ -2628,11 +2688,25 @@ export class OhmailEngine {
   private storeLoaded = false;
   /** See {@link OUTBOX_REPLAY_DEADLINE_MS}; overridable only through the test seam. */
   private readonly replayDeadlineMs: number;
+  /** See {@link OUTBOX_HOLD_CEILING_MS} and {@link DRAIN_REQUEST_CEILING_MS}; overridable only through the seams. */
+  private readonly holdCeilingMs: number;
+  private readonly drainCeilingMs: number;
+  /** The entry whose timed-out attempt armed {@link outboxHold}; set and cleared with it. */
+  private holdOwner: string | null = null;
+  /** Lets {@link outboxHold} go before its owner settles: a send's ceiling, or a press on one. */
+  private holdRelease: (() => void) | null = null;
+  /**
+   * Each attempt on the wire, by entry id: when its request started, and what ends its wait as its
+   * ceiling would ({@link endHold}). A send's end lets its barrier go and nothing else.
+   */
+  private readonly endWait = new Map<string, { readonly since: number; readonly end: () => void }>();
   /**
    * THE GATE'S OWN STATE: THE ORDER BARRIER A TIMED-OUT DISPATCH LEAVES BEHIND: The still-in-flight dispatch, held
    * until it settles. While it stands, NO further outbox dispatch may start on ANY road, because the hung request may
    * yet commit and a verb dispatched behind it could land an older value after a newer one on the server. It clears
-   * itself on settle; a process death clears it the honest way — every still-owed verb is persisted and replays in
+   * itself on settle, at the latest at the attempt's {@link OUTBOX_HOLD_CEILING_MS} (a person's Try again past
+   * {@link OUTBOX_TRY_AGAIN_ENDS_HOLD_MS} ends it sooner, {@link endHold}); a send's lets go there while its request
+   * runs on; a process death clears it the honest way — every still-owed verb is persisted and replays in
    * order next boot. It used to be called `replayHold` and to have a short-lived twin, `replayActive`, which armed
    * for the whole of each attempt so that a fresh verb WAITED rather than queued.
    */
@@ -2641,7 +2715,7 @@ export class OhmailEngine {
    * The twin is gone: {@link outboxGate} is a promise chain, so joining it IS waiting out whatever is in flight, and
    * every dispatch on that chain is deadline-bounded — a waiter can no longer inherit a hung request's unboundedness,
    * which was the only reason the twin needed to exist separately. What is left is the one distinction that is real:
-   * a bounded wait you JOIN, and a hold that may stand for minutes, which a person pressing Send must never be made
+   * a bounded wait you JOIN, and a hold that may stand for most of a minute, which a person pressing Send must never be made
    * to sit through. The gate honours this before releasing a queued caller; `mutate` reads it synchronously first,
    * and queues the verb rather than joining at all.
    */
@@ -3119,6 +3193,11 @@ export class OhmailEngine {
     this.syncLimit = opts.syncLimit;
     this.staleResumeMs = opts.staleResumeMs ?? STALE_RESUME_MS;
     this.replayDeadlineMs = opts.outboxReplayDeadlineMs ?? OUTBOX_REPLAY_DEADLINE_MS;
+    const positive = (ms: number | undefined, fallback: number): number =>
+      typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : fallback;
+    // Never below the deadline it follows: a send's ceiling lets go of a hold, which exists only from there.
+    this.holdCeilingMs = Math.max(positive(opts.outboxHoldCeilingMs, OUTBOX_HOLD_CEILING_MS), this.replayDeadlineMs);
+    this.drainCeilingMs = positive(opts.drainRequestCeilingMs, DRAIN_REQUEST_CEILING_MS);
     this.autoReplayOn = opts.outboxAutoReplay !== false;
     this.transportIsUnreachable = opts.outboxTransportIsUnreachable === true;
     this.withdrawUnsupported = opts.onWithdrawUnsupported ?? null;
@@ -3834,6 +3913,24 @@ export class OhmailEngine {
     }
   }
 
+  /**
+   * ONE DRAIN PAGE, BELTED — see {@link DRAIN_REQUEST_CEILING_MS}. A race and nothing more: no signal
+   * reaches the request, and the loser's rejection is swallowed. The timeout is retryable, so the
+   * drive fails as a drain does and the scheduler counts it.
+   */
+  private async readCeiling<T>(read: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    read.catch(() => { /* the loser of the race has no reader */ });
+    const ceiling = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(noAnswerWithin(this.drainCeilingMs)), this.drainCeilingMs);
+    });
+    try {
+      return await Promise.race([read, ceiling]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+  }
+
   private async drain(owed: { rows: boolean }): Promise<void> {
     const publish = (): void => { owed.rows = false; this.notify(); };
     /**
@@ -3917,11 +4014,11 @@ export class OhmailEngine {
         const backlogLimit = this.syncLimit !== undefined
           ? this.syncLimit
           : drainPageLimit(staleResume || resumedIncomplete, undefined);
-        resp = await this.adapter.sync({
+        resp = await this.readCeiling(this.adapter.sync({
           since: this.store.getCursor(),
           ...(backlogLimit !== undefined ? { limit: backlogLimit } : {}),
           ...(this.types ? { types: this.types } : {}),
-        });
+        }));
       } catch (err) {
         if (err instanceof CursorExpiredError) {
           const at = this.now().getTime();
@@ -4213,11 +4310,11 @@ export class OhmailEngine {
     if (this.types && !this.types.includes("rule")) return;
     let since = "0";
     for (;;) {
-      const resp = await this.adapter.sync({
+      const resp = await this.readCeiling(this.adapter.sync({
         since,
         types: ["rule"],
         ...(this.syncLimit !== undefined ? { limit: this.syncLimit } : {}),
-      });
+      }));
       this.noteApplied(flattenResponse(resp));
       await this.store.applyChanges(flattenResponse(resp));
       await this.persistReceived();
@@ -4397,7 +4494,7 @@ export class OhmailEngine {
     if (!this.isStaleResume()) return;
     let page: SyncSnapshotPage;
     try {
-      page = await this.snapshotFn({});
+      page = await this.readCeiling(this.snapshotFn({}));
     } catch {
       return; // the delta drain that follows is the source of truth, and of error reporting
     }
@@ -4435,7 +4532,7 @@ export class OhmailEngine {
     for (;;) {
       let page: SyncSnapshotPage;
       try {
-        page = await snapshot({ phase: "tail", ...(cursor !== undefined ? { cursor } : {}) });
+        page = await this.readCeiling(snapshot({ phase: "tail", ...(cursor !== undefined ? { cursor } : {}) }));
       } catch {
         // NOT STAMPED. The delta drain that follows is the source of truth and of error
         // reporting; this mirror is owed the walk again on the next drain, which is the safe
@@ -4481,7 +4578,7 @@ export class OhmailEngine {
     for (;;) {
       let page: SyncSnapshotPage;
       try {
-        page = await snapshot(cursor !== undefined ? { cursor } : {});
+        page = await this.readCeiling(snapshot(cursor !== undefined ? { cursor } : {}));
       } catch {
         return wrote;
       }
@@ -4672,9 +4769,12 @@ export class OhmailEngine {
     for (;;) {
       let page: SyncSnapshotPage;
       try {
-        page = await snapshot(cursor !== undefined ? { cursor } : {});
+        page = await this.readCeiling(snapshot(cursor !== undefined ? { cursor } : {}));
       } catch (err) {
         if (applied) throw err; // unsound to fall back — see the note above
+        // A TIMEOUT SAYS NOTHING ABOUT THE ROUTE: latched, a dead connection would put this tab on
+        // the `since=0` replay for its life. The drive fails as a drain, and the next one asks again.
+        if (err instanceof MutationRejectedError && err.code === "timeout") throw err;
         this.snapshotUnavailable = true;
         return false; // nothing was written; `since=0` takes over
       }
@@ -7187,7 +7287,7 @@ export class OhmailEngine {
      * dispatches could be on the wire together; for the read verbs, whose supersession key is `null`, ordering IS the
      * contract (a newer unread landing before an older read leaves the server at the older value, silently). Joining
      * the chain is what "wait out whatever is in flight" means, bounded through {@link dispatchWithDeadline}. The
-     * hold is still read synchronously FIRST, deliberately: it may stand for minutes and a person pressing Send must
+     * hold is still read synchronously FIRST, deliberately: it may stand for most of a minute and a person pressing Send must
      * not sit through it — the verb waits in the QUEUE (expressed, painted, persisted) and the hold's settle chains
      * the drive.
      */
@@ -7269,8 +7369,8 @@ export class OhmailEngine {
      * everything ahead has settled. A hold can be armed in between — by the very dispatch this caller is queued
      * behind, which timed out with its request still in the air. So every body re-reads {@link outboxHold} at its
      * start, which is release time, and that is the "consult before release" the roads need. The gate deliberately
-     * does NOT `await` the hold on the caller's behalf. It stands for as long as a hung request does, which can be
-     * minutes, and the whole point of the deadline is that nobody is suspended past it: a fresh verb answers
+     * does NOT `await` the hold on the caller's behalf. It stands for as long as a hung request does, up to its
+     * {@link OUTBOX_HOLD_CEILING_MS}, and the whole point of the deadline is that nobody is suspended past it: a fresh verb answers
      * `queued`, a flush answers `queued` per entry, a drive skips its replay and goes on to drain.
      */
 
@@ -7341,6 +7441,53 @@ export class OhmailEngine {
     return { result, timedOut, held: false, owed };
   }
 
+  /**
+   * A PERSON'S TRY AGAIN ENDS THE WAIT ON A HUNG WRITE, once the server cannot still be working on it:
+   * its request older than {@link OUTBOX_TRY_AGAIN_ENDS_HOLD_MS}. The attempt then settles as its
+   * ceiling would settle it — a write back on the queue under its own key, a send only letting its
+   * barrier go ({@link OUTBOX_HOLD_CEILING_MS}) — and this waits for the barrier to go. Answers the
+   * entry whose wait it ended (`ended: null` when no barrier stood), or `null` while the barrier
+   * stands: the press waits its turn behind it, and the barrier's end starts the drive that sends it.
+   * Only a person's press does this; a new verb, a flush and a drive still queue behind the hold.
+   */
+  private async endHold(): Promise<{ readonly ended: string | null } | null> {
+    const hold = this.outboxHold;
+    if (hold === null) return { ended: null };
+    const owner = this.holdOwner;
+    const wire = owner === null ? undefined : this.endWait.get(owner);
+    if (owner === null || wire === undefined) return null;
+    if (this.now().getTime() - wire.since < OUTBOX_TRY_AGAIN_ENDS_HOLD_MS) return null;
+    wire.end();
+    await hold;
+    return { ended: owner };
+  }
+
+  /**
+   * THE CHANGE {@link endHold} PUT BACK GOES OUT BEFORE THE PRESS when it was made first — the queue's
+   * own order, inside the gate, so a newer change on the same field never lands ahead of the older
+   * one still owed. A send or a draft's first save stays with the surface that settles it, as on the
+   * drive. Its answer is kept as the drive's replay keeps one; the reconcile it owes is handed back
+   * to be issued off the lane. Call inside {@link outboxGate} only.
+   */
+  private async dispatchEndedFirst(ended: string | null, p: PendingMutation): Promise<"await" | "background" | null> {
+    if (ended === null || ended === p.id) return null;
+    const q = this.queue.find((x) => x.id === ended);
+    if (q === undefined || byAtN(q, p) > 0) return null;
+    if (q.restored !== true && OhmailEngine.ownerSettled(q.mutation)) return null;
+    if (this.takeTurn(q) === "gone") return null;
+    const out = await this.dispatchOnLane(q);
+    if (out.held) {
+      this.queue.push(q);
+      this.queue.sort(byAtN);
+      return null;
+    }
+    if (out.result !== null && out.result.status !== "queued" && out.result.status !== "superseded") {
+      this.lateResults.set(q.id, out.result);
+      this.notify();
+    }
+    return out.owed;
+  }
+
   /** Issue the drain a dispatch deferred. OFF THE LANE — see {@link dispatchOnLane}. */
   private settleReconcile(owed: "await" | "background" | null): Promise<void> {
     if (owed === "await") {
@@ -7397,15 +7544,37 @@ export class OhmailEngine {
        * result already travels. Nothing is re-dispatched: this is the answer to a request that did go out, arriving
        * after the deadline said it might not.
        */
-      const hold: Promise<void> = attempt.then(
-        // A superseded send has no reader: the newer press under its key answers for it.
-        (late) => { if (late.status !== "superseded") { this.lateResults.set(p.id, late); this.notify(); } },
-        () => undefined,
-      ).finally(() => {
-        if (this.outboxHold === hold) this.outboxHold = null;
+      /* THE BARRIER GOES WHEN THE ATTEMPT SETTLES, or earlier through `holdRelease` (a send's ceiling,
+         a press on it): its late answer is still kept when it comes, with the drain it owes. */
+      let release: () => void = () => {};
+      let releasedEarly = false;
+      const hold: Promise<void> = new Promise<void>((resolve) => { release = resolve; }).finally(() => {
+        if (this.outboxHold === hold) {
+          this.outboxHold = null;
+          this.holdOwner = null;
+          this.holdRelease = null;
+        }
         void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
       });
+      void attempt.then(
+        (late) => {
+          // A superseded send has no reader: the newer press under its key answers for it.
+          if (late.status === "superseded") return;
+          /* A `queued` late answer is no answer — the entry is back on the queue (its ceiling ended
+             it, or the wire failed) — and kept it was read as a verdict beside the real one. Except
+             for a live send or draft's first save: their surface re-arms its retry on it. */
+          if (late.status === "queued" && (p.restored === true || !OhmailEngine.ownerSettled(p.mutation))) return;
+          this.lateResults.set(p.id, late);
+          this.notify();
+        },
+        () => undefined,
+      ).then(() => {
+        if (releasedEarly) void this.syncFresh().catch(() => { /* the scheduler's cadence retries */ });
+        release();
+      });
       this.outboxHold = hold;
+      this.holdOwner = p.id;
+      this.holdRelease = () => { releasedEarly = true; release(); };
       return { result: null, timedOut: true };
     }
     return { result: raced.r, timedOut: false };
@@ -7849,7 +8018,23 @@ export class OhmailEngine {
      */
     if (this.abandonedLocally.delete(p.id)) this.localRefusalRev++;
 
-    const out = await this.outboxGate(() => this.dispatchOnLane(p));
+    /* The press ends a hold a hung write left once the server cannot still be working on it, and that
+       write goes first when it was made first; before that it waits its turn behind it, on the queue
+       as the held answer below — see {@link endHold}. */
+    let ended: string | null = null;
+    if (this.outboxHold) {
+      const gone = await this.endHold();
+      if (gone === null) {
+        this.queue.push(p);
+        return { id: p.id, key: p.key, status: "queued", seq: null };
+      }
+      ended = gone.ended;
+    }
+    const { ahead, out } = await this.outboxGate(async () => {
+      const first = await this.dispatchEndedFirst(ended, p);
+      return { ahead: first, out: await this.dispatchOnLane(p) };
+    });
+    if (ahead !== null) void this.settleReconcile("background");
     if (out.held) {
       /**
        * A hold was armed while this press waited its turn. Dispatching behind a request still on the wire is the
@@ -8384,7 +8569,14 @@ export class OhmailEngine {
           throw new MutationRejectedError("the outbox row could not be written before sending", { code: "network", retryable: true });
         }
       }
-      const outcome = await this.adapter.mutate(p.mutation, {
+      /* THE CEILING ON THIS ATTEMPT — see {@link OUTBOX_HOLD_CEILING_MS}. Armed as the call starts; when
+         it fires, or a person's Try again ends the wait ({@link endHold}), a write settles as a
+         retryable `timeout` and the branch below puts it back under its own key. Its request is
+         aborted then, before the queue owns it again: a transport holding it across a renewal must
+         not send it beside a newer change, or after a Discard. A send is never ended and carries
+         no signal: only its barrier goes, and this attempt settles on its own request's answer. */
+      const stop = p.mutation.kind === "mail_send" ? null : abortControllerOrNull();
+      const call = this.adapter.mutate(p.mutation, {
         idempotencyKey: p.key,
         ...pressAgeOf(p.mutation, p.at, this.now().getTime()),
         ...(p.createAttempted === true ? { createAttempted: true } : {}),
@@ -8392,7 +8584,33 @@ export class OhmailEngine {
           ...(p.createdRow !== undefined ? { createdRow: p.createdRow } : {}),
           onDraftRow: (row: CreatedDraftRow) => this.recordCreatedRow(p, row),
         } : {}),
+        ...(stop !== null ? { signal: stop.signal } : {}),
       });
+      call.catch(() => { /* the loser of the ceiling's race has no reader */ });
+      let ended = false;
+      let end: () => void = () => {};
+      const ceiling = new Promise<never>((_resolve, reject) => {
+        end = p.mutation.kind === "mail_send"
+          ? () => { if (this.holdOwner === p.id) this.holdRelease?.(); }
+          : () => {
+            if (ended) return;
+            ended = true;
+            // The rejection first, so a request that rejects at once on the abort cannot win the race.
+            reject(noAnswerWithin(this.holdCeilingMs));
+            stop?.abort();
+          };
+      });
+      const ceilingTimer = setTimeout(() => end(), this.holdCeilingMs);
+      const wire = { since: this.now().getTime(), end };
+      this.endWait.set(p.id, wire);
+      let outcome: Awaited<typeof call>;
+      try {
+        outcome = await Promise.race([call, ceiling]);
+      } finally {
+        ended = true;
+        clearTimeout(ceilingTimer);
+        if (this.endWait.get(p.id) === wire) this.endWait.delete(p.id);
+      }
       /**
        * THE 202 ARM, BEFORE ANYTHING ELSE IN THIS METHOD. Everything below settles: it applies an
        * echo, materialises a Sent copy, or drains and drops the overlay. A queued answer must
@@ -9038,6 +9256,33 @@ export class OhmailEngine {
   }
 
   /**
+   * EVERY CHANGE WAITING ON THE QUEUE, for the Unsaved changes panel — a person sees what has not
+   * gone through yet and why, not only the discards (a waiting Screener decision was listed nowhere).
+   * Two families are left to the surface that settles them: a send (its sending line) and a draft's
+   * first save (the composer). Each carries its last attempt's error, `null` before any answer. The
+   * previous array is kept while every index has the same id, key and error (`useSyncExternalStore`
+   * compares by identity); a read verb narrowed in place keeps its listed copy, whose kind is all a
+   * surface reads of it.
+   */
+  queuedChanges(): readonly QueuedChange[] {
+    const next = this.queue.filter((p) => !OhmailEngine.ownerSettled(p.mutation));
+    const prev = this.queuedChangesCache;
+    const same = (p: PendingMutation, q: QueuedChange): boolean =>
+      p.id === q.id && p.key === q.key && (p.lastError?.code ?? null) === (q.error?.code ?? null)
+      && (p.lastError?.message ?? null) === (q.error?.message ?? null);
+    if (next.length === prev.length && next.every((p, i) => same(p, prev[i]!))) return prev;
+    this.queuedChangesCache = next.length === 0
+      ? NO_QUEUED
+      : Object.freeze(next.map((p) => Object.freeze({
+        id: p.id, key: p.key, mutation: p.mutation,
+        error: p.lastError === undefined
+          ? null
+          : Object.freeze({ code: p.lastError.code, message: p.lastError.message, status: p.lastError.status }),
+      })));
+    return this.queuedChangesCache;
+  }
+
+  /**
    * CANCEL CANCELS — withdraw the queued verbs carrying this Idempotency-Key, each by its own
    * outbox row id. The key is marked in memory (read at the moment of sending, see {@link
    * dispatch}) and each row is marked on disk, so neither this session's flush nor a later boot
@@ -9201,14 +9446,28 @@ export class OhmailEngine {
     if (p === undefined) return null;
     const queued: MutationResult = { id: p.id, key: p.key, status: "queued", seq: null };
     if (p.waitIsServerNamed === true && (p.nextAt ?? 0) > this.now().getTime()) return queued;
-    const out = await this.outboxGate(async () => {
+    /* The press ends a hold a hung write left once the server cannot still be working on it, and that
+       write goes first; before that it waits its turn behind it, our own backoff yielding to the
+       press so the barrier's end sends it — see {@link endHold}. */
+    let ended: string | null = null;
+    if (this.outboxHold) {
+      const gone = await this.endHold();
+      if (gone === null) {
+        delete p.nextAt;
+        return queued;
+      }
+      ended = gone.ended;
+    }
+    const { ahead, out } = await this.outboxGate(async () => {
+      const first = await this.dispatchEndedFirst(ended, p);
       const at = this.queue.indexOf(p);
-      if (at < 0) return null; // a flush or a drive took it while this waited its turn
+      if (at < 0) return { ahead: first, out: null }; // a flush or a drive took it while this waited its turn
       this.queue.splice(at, 1);
       const o = await this.dispatchOnLane(p);
       if (o.held) this.queue.push(p);
-      return o;
+      return { ahead: first, out: o };
     });
+    if (ahead !== null) void this.settleReconcile("background");
     if (out === null) return null;
     if (out.held || out.timedOut || out.result === null) return queued;
     await this.settleReconcile(out.owed);
@@ -9522,7 +9781,7 @@ export class OhmailEngine {
   async flushPending(): Promise<MutationResult[]> {
     // THE HOLD IS READ BEFORE JOINING, exactly as `mutate` reads it, and for the same reason:
     // the gate WAITS OUT a standing hold before releasing, so a check inside the gated body
-    // could never see one and this method would sit for minutes instead of answering. Its
+    // could never see one and this method would sit out the hold instead of answering. Its
     // contract is to answer — `useMailSend.flush` re-arms its backoff only when a result says
     // the key is still queued, and an empty array reads as "nothing left".
     /**

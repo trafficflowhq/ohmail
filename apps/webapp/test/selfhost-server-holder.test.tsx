@@ -39,7 +39,7 @@ const heldByServer = (name: string | null): MailState => ({
   ...QUIET, key: "filing", count: 2, address: "someone@example.com",
   filing: {
     arm: "elsewhere", count: 2, deferred: 0, reason: null, nextAttemptAt: null, waitedMinutes: null,
-    lastPassSeconds: null, asOf: null,
+    lastPassSeconds: null, asOf: null, mailboxes: 1, first: null, reasonsDiffer: false,
     who: { kind: "cloud", name, stopped: false, mailboxId: "mbx-1", since: null },
   },
 });

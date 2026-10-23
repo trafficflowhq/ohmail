@@ -51,6 +51,7 @@ import type { TagPickerState } from "./TagPicker";
 import type { PaneId } from "../views/SettingsView";
 import type { ReadsChipState } from "../views/ReadsView";
 import { useDecisionReopensOncePerLaunch, type DecisionReopenInput } from "./decision-reopen";
+import { queryVisible } from "./visible-dom";
 
 /**
  * How long the located row stays marked, and how long we look for it.
@@ -377,7 +378,7 @@ export function useShellOpenState({
       setReaderFor(null);
       if (typing) {
         window.setTimeout(() => {
-          const surface = document.querySelector<HTMLElement>(".read-col .reply-editor .rte-surface");
+          const surface = queryVisible<HTMLElement>(".read-col .reply-editor .rte-surface");
           if (surface !== null && !surface.contains(document.activeElement)) surface.focus();
         }, 0);
       }
@@ -1194,8 +1195,8 @@ export function useShellOpenState({
       const row =
         typeof document === "undefined"
           ? null
-          : (document.querySelector(`.view .row[data-id="${CSS.escape(located)}"]`) ??
-             document.querySelector(`.view .row[data-ids~="${CSS.escape(located)}"]`));
+          : (queryVisible(`.view .row[data-id="${CSS.escape(located)}"]`) ??
+             queryVisible(`.view .row[data-ids~="${CSS.escape(located)}"]`));
       if (row) {
         done = true;
         found = row;
@@ -1301,7 +1302,7 @@ export function useShellOpenState({
     const lead = allOhbox[0];
     const leadRowId = route.view !== "ohbox" || lead == null || typeof document === "undefined"
       ? undefined
-      : document.querySelector<HTMLElement>(`.view .row[data-ids~="${CSS.escape(lead.id)}"]`)?.dataset.id;
+      : queryVisible<HTMLElement>(`.view .row[data-ids~="${CSS.escape(lead.id)}"]`)?.dataset.id;
     const leadTarget = leadRowId === undefined ? undefined : allOhbox.find((m) => m.id === leadRowId);
     const host: CursorHost =
       route.view === "ohbox"

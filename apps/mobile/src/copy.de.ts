@@ -1138,6 +1138,8 @@ export const DE: Deck = {
     `${count === 1 ? "1 liegt" : `${count} liegen`} in ${place}. Auf den Rest ihrer Mails im Postfach wendet ohmail die Regel gerade an.`,
   liveDecideFailed: (sender: string) =>
     `Diese Entscheidung ließ sich nicht speichern — ${sender} wartet weiter.`,
+  liveRuleFailedMoved: (place: string, target: string) =>
+    `${place} — diese Nachricht ist verschoben, aber die Regel ließ sich nicht anlegen. Für künftige Mails von ${target} ändert sich nichts.`,
   liveOwnAddress: "Das ist deine eigene Adresse. Regeln sortieren Mails von anderen.",
   liveDecideUndoLate: "Zu spät — diese Entscheidung ist schon raus.",
   undoReplaced: "Eine spätere Wahl für diesen Absender hat diese ersetzt, hier gibt es nichts rückgängig zu machen.",
@@ -1225,6 +1227,8 @@ export const DE: Deck = {
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",
   bodyShowMore: (percent: number) => `Mehr anzeigen (${percent} % angezeigt)`,
+  bodyHistoryShow: "Verlauf anzeigen",
+  bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
   mailOpenLinkTitle: "Diesen Link öffnen?",
@@ -1761,11 +1765,11 @@ export const DE: Deck = {
   unsavedKindRule: "Eine Regel-Änderung",
 
   screeningNote: (target: string) =>
-    `Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Mails, die schon hier sind, bleiben, wo sie sind.`,
+    `Diese Nachricht wird jetzt dorthin verschoben. Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Die übrigen Mails hier bleiben, wo sie sind.`,
   screeningNoteNobody:
     "Dieses Postfach wird von nichts organisiert, deshalb sortiert eine Regel von hier nichts davon ein, bis es wieder organisiert wird. In den Einstellungen steht, was jedes Postfach organisiert.",
   screeningNoteRetro: (target: string) =>
-    `Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Außerdem wendet ohmail die Regel auf die Mails an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst hier oder in einer anderen Mail-App einsortiert oder geparkt hast, bleiben unberührt.`,
+    `Diese Nachricht wird jetzt dorthin verschoben. Wird zur Regel: Künftige Mails von ${target} werden automatisch dorthin einsortiert. Außerdem wendet ohmail die Regel auf die übrigen Mails an, die es schon für dich einsortiert hat. Nachrichten, die du beantwortet, selbst hier oder in einer anderen Mail-App einsortiert oder geparkt hast, bleiben unberührt.`,
   screeningRetroToggle: "Auch die Mails verschieben, die schon im Postfach liegen",
   stayedReplied: (count: number, place: string) =>
     count === 1 ? `1 bleibt in ${place}: Du hast darauf geantwortet.` : `${count} bleiben in ${place}: Du hast darauf geantwortet.`,

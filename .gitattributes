@@ -22,3 +22,4 @@
 # `-text` means never convert, in either direction, on any platform. It is the
 # only correct setting for a file whose exact bytes are the thing under test.
 apps/desktop/test/fixtures/updater/* -text
+packages/client-engine/test/fixtures/quoted-history/* -text

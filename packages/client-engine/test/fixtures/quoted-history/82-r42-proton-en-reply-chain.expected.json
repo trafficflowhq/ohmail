@@ -1,0 +1,44 @@
+{
+  "id": "82",
+  "file": "82-r42-proton-en-reply-chain.eml",
+  "shape": "r42-proton-en-reply-chain",
+  "description": "Proton Mail, English: div.protonmail_quote around blockquote.protonmail_quote, nested twice, the Proton signature above",
+  "client": "proton",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Tobias Beispiel",
+    "Jonas Sample"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Great, 14 copies is enough.",
+      "visibleLastLine": "Great, 14 copies is enough.",
+      "historyStartLine": "On Friday, October 24th, 2026 at 03:21, Tobias Beispiel <tobias.beispiel@example.org> wrote:",
+      "historyStartLineNormalized": "On Friday, October 24th, 2026 at 03:21, Tobias Beispiel <tobias.beispiel@example.org> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.protonmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Friday, October 24th, 2026 at 03:21, Tobias Beispiel <tobias.beispiel@example.org> wrote:",
+      "visibleFirstText": "Great, 14 copies is enough.",
+      "visibleLastText": "Sent with Proton Mail secure email."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

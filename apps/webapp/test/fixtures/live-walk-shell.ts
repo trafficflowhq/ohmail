@@ -146,9 +146,11 @@ type Served = { id: string; date: string | null };
 let served = new Map<string, Served>();
 /** Rows only the store holds (older than any window), and bodies the body route answers. */
 let storeOnly: Served[] = [];
-let storeBodies: Record<string, string> = {};
+/** A served body: its text, or its text and html part. */
+type StoreBody = string | { text: string; html: string | null };
+let storeBodies: Record<string, StoreBody> = {};
 /** Put rows in the store that `/sync` never serves, with their bodies — History's reach. */
-export function answerStoreWith(rows: Served[], bodies: Record<string, string> = {}): void {
+export function answerStoreWith(rows: Served[], bodies: Record<string, StoreBody> = {}): void {
   storeOnly = rows;
   storeBodies = bodies;
 }
@@ -166,7 +168,9 @@ function storeAnswer(url: string): Response | null {
   const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   const body = /\/messages\/([^/?]+)\/body/.exec(url);
   if (body && storeBodies[decodeURIComponent(body[1]!)] !== undefined) {
-    return json({ text: storeBodies[decodeURIComponent(body[1]!)], html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null });
+    const b = storeBodies[decodeURIComponent(body[1]!)]!;
+    const [text, html] = typeof b === "string" ? [b, null] : [b.text, b.html];
+    return json({ text, html, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null });
   }
   const rows = [...served.values(), ...storeOnly.filter((m) => !served.has(m.id))].sort(newestFirst);
   if (url.includes("/messages/timeline")) {

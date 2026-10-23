@@ -182,6 +182,11 @@ export interface Route {
    * would be a third state both readers would have to know about.
    */
   firstRunMailboxId: string | null;
+  /**
+   * Which mailbox the Mailboxes pane opens at — `#/settings/mailboxes?mailbox=<id>`, the strip's
+   * link to a mailbox whose filings wait; `null` everywhere else. Read like {@link firstRunMailboxId}.
+   */
+  settingsMailboxId: string | null;
 }
 
 /**
@@ -244,19 +249,19 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
   // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
   if (raw.startsWith("folder/") && raw.slice(7)) {
-    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   // `#/address/<addr>` — everything from and to one correspondent. The tag branch's shape, with
   // the segment DECODED: see {@link Route.address} for why this one is escaped and the other two
   // are not. An address the mirror has no mail for falls back in the view (its empty state names
   // the address), never 404s here — exactly as an unknown tag or folder id does.
   if (raw.startsWith("address/") && raw.slice(8)) {
-    return withMsg({ view: "address", tagId: null, folderId: null, address: decodedAddress(raw.slice(8)), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "address", tagId: null, folderId: null, address: decodedAddress(raw.slice(8)), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -272,6 +277,7 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      settingsMailboxId: null,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
@@ -292,6 +298,7 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      settingsMailboxId: null,
     });
   }
   // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
@@ -312,6 +319,8 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      // The Mailboxes pane alone reads the query: the strip's link names the mailbox to open.
+      settingsMailboxId: sub === "mailboxes" ? firstRunMailboxOf(query) : null,
     };
   }
   // `#/first-run` — the setup stage, OVER whatever the shell would otherwise show. The view is
@@ -331,10 +340,11 @@ export function parseHash(hash: string): Route {
       firstRunAdd: raw === "first-run/add",
       // The one route that reads the query. See {@link Route.firstRunMailboxId}.
       firstRunMailboxId: firstRunMailboxOf(query),
+      settingsMailboxId: null,
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+  return withMsg({ view, tagId: null, folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
 }
 
 /**
@@ -374,8 +384,12 @@ export function canonicalHash(route: Route): string {
     return (route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`) + tail;
   // BOTH spellings are canonical for settings: bare (`settingsPane: null` — the pane is the
   // view's deep-link logic's to decide) and named. Only an UNKNOWN sub-path normalizes, to bare.
-  if (route.view === "settings")
-    return route.settingsPane === null ? "#/settings" : `#/settings/${route.settingsPane}`;
+  if (route.view === "settings") {
+    if (route.settingsPane === null) return "#/settings";
+    const named = route.settingsPane === "mailboxes" && route.settingsMailboxId !== null
+      ? `?mailbox=${encodeURIComponent(route.settingsMailboxId)}` : "";
+    return `#/settings/${route.settingsPane}${named}`;
+  }
   return `#/${route.view}${tail}`;
 }
 
@@ -395,12 +409,31 @@ export function normalizedHash(hash: string): string | null {
   return canonical === hash ? null : canonical;
 }
 
+/** The route store's subscribers, told at once when a verb below writes the hash ({@link navigate}). */
+const routeListeners = new Set<() => void>();
+
+/**
+ * WRITE THE HASH AND TELL THE ROUTE IN THE SAME TASK. The browser announces a fragment change with
+ * a `hashchange` it fires after the next frame (traced in Chromium: the event ran 16 ms after the
+ * key), so every press painted the view it was leaving for one more frame. The verbs write the hash
+ * and notify the route store at once, inside the press; the event that follows finds the route
+ * already read and renders nothing. A held pane was asked first (`heldBefore`), as before.
+ */
+function navigate(next: string): void {
+  window.location.hash = next;
+  for (const cb of [...routeListeners]) cb();
+}
+
 export function useHashRoute(): Route {
   const subscribe = useCallback((cb: () => void) => {
     /* A pane holding an unsaved change sees a Back press or a link BEFORE the route does. */
     const onChange = (e: Event): void => { if (!heldOnHashChange(e)) cb(); };
     window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
+    routeListeners.add(cb);
+    return () => {
+      window.removeEventListener("hashchange", onChange);
+      routeListeners.delete(cb);
+    };
   }, []);
   const hash = useSyncExternalStore(
     subscribe,
@@ -493,7 +526,7 @@ export function go(view: Exclude<ViewId, "tag" | "folder">): void {
      site per verb, and the end is the shell's (`useSwitchEnd`). Here rather than in the controls
      because the rail, the palette, the number keys and a deep link all arrive through these. */
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -534,14 +567,14 @@ export function goTag(tagId: string): void {
   const next = `#/tag/${tagId}`;
   if (heldBefore(next, () => goTag(tagId))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 export function goFolder(folderId: string): void {
   const next = `#/folder/${folderId}`;
   if (heldBefore(next, () => goFolder(folderId))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -556,14 +589,14 @@ export function goAddress(address: string): void {
   const next = addressHash(address);
   if (heldBefore(next, () => goAddress(address))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {
   const next = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
   if (heldBefore(next, () => goScreener(segment))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
@@ -571,7 +604,7 @@ export function goTriage(pile: TriagePileId): void {
   const next = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
   if (heldBefore(next, () => goTriage(pile))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -585,7 +618,7 @@ export function goTriage(pile: TriagePileId): void {
 export function goSettings(pane: PaneId): void {
   const next = `#/settings/${pane}`;
   if (heldBefore(next, () => goSettings(pane))) return;
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**

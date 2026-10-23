@@ -1,0 +1,36 @@
+{
+  "id": "97",
+  "file": "97-negative-invoice-letterhead-de.eml",
+  "shape": "negative-invoice-letterhead-de",
+  "description": "Plain text, German: an invoice whose letter head is a Von/An/Datum/Betreff block under a sentence",
+  "client": "synthetic",
+  "ui_language": "de",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 0,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Sehr geehrte Damen und Herren,",
+      "visibleLastLine": "Northwind Example GmbH",
+      "historyStartLine": "Von: Northwind Example GmbH",
+      "historyStartLineNormalized": "Von: Northwind Example GmbH"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "Wartung Lüftungsanlage 2. OG: CHF 1'240.00",
+      "Zahlbar bis 21.11.2026"
+    ],
+    "trailingTail": null
+  }
+}

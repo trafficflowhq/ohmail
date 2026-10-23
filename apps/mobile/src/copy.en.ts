@@ -1745,6 +1745,9 @@ const TABLE = {
     `${count === 1 ? "1 is" : `${count} are`} in ${place}. ohmail is applying the rule to the rest of their mail in your mailbox.`,
   liveDecideFailed: (sender: string) =>
     `That decision could not be saved — ${sender} is still waiting.`,
+  /* A sheet press whose letter moved, and whose rule the server refused or has not taken yet. */
+  liveRuleFailedMoved: (place: string, target: string) =>
+    `${place} — this message moved, but the rule couldn't be made. Future mail from ${target} is unchanged.`,
   /* A Screening press about one of the account's own addresses: refused here and by the server. */
   liveOwnAddress: "That's your own address. Rules sort mail from other people.",
   liveDecideUndoLate: "Too late to undo — that decision has already been sent.",
@@ -1849,6 +1852,9 @@ const TABLE = {
   mailShowOriginal: "Show original",
   /** The press under a body drawn a page at a time — the web's `bodyText.more`, word for word. */
   bodyShowMore: (percent: number) => `Show more (${percent}% shown)`,
+  /** The quoted-history toggle under a body — the web's `bodyText.show` / `bodyText.hide`, word for word. */
+  bodyHistoryShow: "Show history",
+  bodyHistoryHide: "Hide history",
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */
@@ -2641,16 +2647,17 @@ const TABLE = {
    * switch — and the switch gates the dispatch, so the OFF one is a statement about the code. The
    * verb in the ON one is "applies the rule to": the server's pass re-evaluates each message
    * through the rules, skips anything replied to, filed by the person here or in another mail app or set aside, and reaches only
-   * the mail ohmail itself filed. The phone moves none of it itself (THE-CLIENTS-FIFTY).
+   * the mail ohmail itself filed. The phone moves only the letter pressed on, now, on either answer
+   * (THE-CLIENTS-FIFTY), and both sentences say so first.
    */
   screeningNote: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically. Mail already here stays where it is.`,
+    `This message moves there now. It becomes a rule — future mail from ${target} files there automatically. The rest of their mail here stays where it is.`,
   /* In place of the two notes above and the decision's own, where nothing organizes any mailbox:
      nothing files by a rule until something organizes it. */
   screeningNoteNobody:
     "Nothing organizes this mailbox, so a rule made here files none of its mail until something does. Settings shows what organizes each mailbox.",
   screeningNoteRetro: (target: string) =>
-    `Becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the mail it has already filed for you. Messages you have replied to, filed yourself here or in another mail app, or set aside are left alone.`,
+    `This message moves there now. It becomes a rule — future mail from ${target} files there automatically, and ohmail applies the rule to the rest of the mail it has already filed for you. Messages you have replied to, filed yourself here or in another mail app, or set aside are left alone.`,
   screeningRetroToggle: "Also move the mail already in your mailbox",
   /**
    * WHY SOME OF THE SENDER'S MAIL STAYED once the rule's past-mail pass finished — the web sheet's

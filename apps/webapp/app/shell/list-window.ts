@@ -146,6 +146,8 @@ export interface ListWindow {
    */
   visibleStart: number;
   visibleEnd: number;
+  /** Back to the top before paint, the window with it: where a fresh mount opens (`visit.ts`). */
+  toTop: () => void;
 }
 
 export interface UseListWindowOptions {
@@ -273,6 +275,13 @@ export function useListWindow({
     (index: number): number => originAt.current + (prefix[Math.max(0, Math.min(count, index))] ?? 0),
     [prefix, count],
   );
+
+  const toTop = useCallback(() => {
+    const el = scrollerRef.current;
+    anchor.current = null;
+    if (el && el.scrollTop !== 0) el.scrollTop = 0;
+    setScrollTop(0);
+  }, [scrollerRef]);
 
   const height = viewport > 0 ? viewport : FALLBACK_VIEWPORT_PX;
   /** The last index that starts at or before `px` — the row under that line of the scroller. */
@@ -404,7 +413,7 @@ export function useListWindow({
   });
 
   if (!windowed) {
-    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, visibleStart, visibleEnd };
+    return { start: 0, end: count, padTop: 0, padBottom: 0, rowHeight: mean, origin, offsetOf, visibleStart, visibleEnd, toTop };
   }
 
   return {
@@ -417,5 +426,6 @@ export function useListWindow({
     offsetOf,
     visibleStart,
     visibleEnd,
+    toTop,
   };
 }

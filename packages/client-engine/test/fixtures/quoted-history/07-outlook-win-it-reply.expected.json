@@ -1,0 +1,44 @@
+{
+  "id": "07",
+  "file": "07-outlook-win-it-reply.eml",
+  "shape": "outlook-win-it-reply",
+  "description": "Outlook for Windows, Italian: Da:/Inviato:/A:/Oggetto:, subject prefix 'R:', two levels",
+  "client": "outlook_win",
+  "ui_language": "it",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Giulia Esempio",
+    "Marco Prova"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Gentile Giulia,",
+      "visibleLastLine": "Officine Campione SpA",
+      "historyStartLine": "Da: Giulia Esempio <giulia.esempio@example.org>",
+      "historyStartLineNormalized": "Da: Giulia Esempio <giulia.esempio@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Da: Giulia Esempio <giulia.esempio@example.org>",
+      "visibleFirstText": "Gentile Giulia,",
+      "visibleLastText": "Officine Campione SpA"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { RESUME_COOKIE, RESUME_ROUTE, resolveSurface } from "../app/session-gate.js";
-import { isRecoverable, mayRefreshFor, REFRESH_ENDPOINT, resumeSession } from "../app/session-refresh.js";
+import { isRecoverable, mayRefreshFor, REFRESH_ENDPOINT, RENEWAL_DEADLINE_MS, resumeSession } from "../app/session-refresh.js";
 import { OWN_PATHS, REFRESH_PATH } from "../next.config.mjs";
 
 /**
@@ -198,10 +198,14 @@ describe("the gate tells a lapsed session from a stranger", () => {
     }
   });
 
-  it("the splash's own refresh carries NO artificial timeout — it must outwait a cold start", () => {
+  it("the splash's own refresh carries no clamp shorter than the server's — it must outwait a cold start", () => {
     // The whole fix rests on the splash having a longer budget than the gate. If someone
     // ever clamps this fetch with AbortSignal.timeout, the cold-start path becomes
     // gate-timeout → splash-timeout → /login, which is WORSE than the landing it replaced.
+    // The one deadline it has, `RENEWAL_DEADLINE_MS`, is past the API's own 60 s limit, so a
+    // renewal the server is working on always answers first; it ends a request on a dead
+    // connection, as `unavailable`, and never a sign-in (`renewal-deadline.test.ts`).
+    expect(RENEWAL_DEADLINE_MS, "the renewal's deadline is shorter than the server's own limit").toBeGreaterThan(60_000);
     const src = read("../app/session-refresh.ts");
     expect(src).toMatch(/fetch\(REFRESH_ENDPOINT/);
     expect(src).not.toMatch(/AbortSignal\.timeout/);
@@ -220,13 +224,18 @@ describe("the gate tells a lapsed session from a stranger", () => {
      */
     const call = src.slice(src.indexOf("fetch(REFRESH_ENDPOINT"));
     const options = call.slice(0, call.indexOf("});") + 3);
-    // The request's ONE signal is the mint's: a sign-in that minted past this refresh aborts it.
-    // Nothing on a clock may reach it, which the behavioural case below measures as well.
+    // The request's ONE signal: a sign-in that minted past this refresh aborts it, and so does the
+    // request's own deadline, on the same controller and past the server's limit. No other clock
+    // may reach it, which the behavioural case below measures as well.
     expect(options.match(/signal[^,\n]*/g) ?? [], "the refresh request grew a clamp — a cold start becomes a sign-out")
       .toEqual(["signal: request.signal"]);
     expect([...src.matchAll(/inFlightRequest\??\.abort\(\)/g)].length, "something but a mint aborts the refresh")
       .toBe(1);
-    // …and the lock's deadline is the one CLOCK in the file, on the WAIT and nowhere else.
+    expect([...src.matchAll(/\brequest\.abort\(\)/g)].length, "something but the deadline aborts the refresh")
+      .toBe(1);
+    expect(src, "the deadline's abort is not the renewal's own deadline")
+      .toMatch(/setTimeout\(\(\) => \{ timedOut = true; request\.abort\(\); \}, RENEWAL_DEADLINE_MS\)/);
+    // …and the sign-in lock's deadline is on the WAIT and nowhere else.
     const lock = src.slice(src.indexOf("export async function withSessionCookieLock"));
     expect(lock.slice(0, lock.indexOf("\n}")), "the lock stopped bounding how long a ceremony queues")
       .toMatch(/signal: ctl\.signal/);
@@ -244,8 +253,9 @@ describe("the gate tells a lapsed session from a stranger", () => {
    * does not read the code.
    *
    * A refresh that takes longer than any plausible clamp must still SETTLE — the whole reason the
-   * request has no deadline is that a cold start must not become a sign-out. Sixty seconds is far
-   * past anything a clamp would be set to and far short of what a real cold start can be.
+   * request's deadline sits past the server's own limit is that a cold start must not become a
+   * sign-out. Sixty seconds is far past anything a clamp would be set to and far short of what a
+   * real cold start can be.
    */
   it("a refresh that takes a minute still lands — no clamp, however it is written", async () => {
     const g = globalThis as unknown as { document?: { cookie: string }; fetch?: typeof globalThis.fetch };

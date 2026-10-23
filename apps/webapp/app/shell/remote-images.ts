@@ -181,6 +181,24 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
   /** Read through a ref so the predicate is consulted at USE time, not at render time. */
   const mayReadRef = useRef(opts.mayRead);
   mayReadRef.current = opts.mayRead;
+  /**
+   * ONE ANSWER PER TASK. A newsletter names thirty pictures and a switch into News builds a few of
+   * them, so the predicate — the account cookie, read and parsed — was asked a hundred times inside
+   * one task that cannot change its answer. It is still asked at use time, once per task: the memo
+   * dies with the task (a microtask clears it), so the next render, the next fetch, asks again.
+   */
+  const mayMemo = useRef<{ v: boolean } | null>(null);
+  const mayNow = (): boolean => {
+    const may = mayReadRef.current;
+    if (!may) return true;
+    if (mayMemo.current) return mayMemo.current.v;
+    const v = may();
+    mayMemo.current = { v };
+    queueMicrotask(() => { mayMemo.current = null; });
+    return v;
+  };
+  const mayNowRef = useRef(mayNow);
+  mayNowRef.current = mayNow;
 
   /**
    * ONE FUNCTION PER MESSAGE: `MessageBody` re-sanitizes when its `imageProxy` changes identity,
@@ -197,8 +215,7 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
       // An empty `src` renders nothing and requests nothing, which is the right answer here:
       // there is no honest image to show for an account this window does not belong to, and a
       // broken-image icon would be a claim about the mail rather than about the session.
-      const may = mayReadRef.current;
-      if (may && !may()) return "";
+      if (!mayNowRef.current()) return "";
       return imageProxyUrl(API_BASE ?? "", window.location.origin, messageId, url);
     };
     proxies.current.set(messageId, proxy);

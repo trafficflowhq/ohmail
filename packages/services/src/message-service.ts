@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, notExists, or, sq
 import { randomUUID } from "node:crypto";
 import {
   assertOrganizerRole,
-  mailboxes, mailboxFolders, messages, folderState, messageBodies, messageStates, claimIdempotencyKey,
+  mailboxes, mailboxFolders, messages, messageInstances, folderState, messageBodies, messageStates, claimIdempotencyKey,
   recordChange, recordChanges, recordRouteOverride, demoteRoute, routeOverrideActionId,
   senderPatternFromAddress,
   upsertDesiredSeen, upsertDesiredSeenMany, ringFilingDoorbell,
@@ -243,6 +243,8 @@ export interface MoveBody {
   folder: string;
   /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
   from?: string;
+  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites. */
+  pressRule?: boolean;
 }
 
 /** Idempotency handle the route threads in when an `Idempotency-Key` is present. */
@@ -1439,8 +1441,10 @@ export class MessageService {
        * sits in the arrival folder, and asking about that folder asks about nothing. `null`
        * desired means nothing ever filed it, and a person's first placement contradicts no
        * route. A demotion it owes runs after the commit, through the one door that records the
-       * rule's delta: this transaction writes no `rules` row and ends at the graduation's. */
-      const override = desired === null || desired === folder ? null : await recordRouteOverride(
+       * rule's delta: this transaction writes no `rules` row and ends at the graduation's.
+       * A press that also writes the sender's rule (`pressRule`) rewrites the route itself, so its
+       * move is not counted against it: that count switched the rule off under the PATCH. */
+      const override = desired === null || desired === folder || body.pressRule === true ? null : await recordRouteOverride(
         bridgeTx(tx), ctx.accountId, {
           ...senderPatternFromAddress(msg.fromAddress),
           filedTo: desired,
@@ -1623,14 +1627,16 @@ export class MessageService {
    * writes the desired folder, pending, `us` — never `messages.deleted_at`. The message is IN the
    * provider's Trash; clearing the tombstone here would show mail in a pile while the server
    * still has it in Trash. Sequence: intent → the organizer's move → the passive read observes →
-   * `clearDeletedOnAdopt` un-deletes and re-emits the entity. Refusals: a READER restores nothing
-   * (asked FIRST); 409 `not_in_trash` for a row not in this mailbox's Trash path; a REPLAY is
-   * answered from the idempotency key.
+   * `clearDeletedOnAdopt` un-deletes and re-emits the entity. A delete whose move has NOT landed
+   * (observed still elsewhere, a watched copy on record) is CANCELLED instead: desired := observed,
+   * the tombstone cleared, one `update` change, `pending: false` — nothing is owed to the server.
+   * Refusals: a READER restores nothing (asked FIRST); 409 `not_in_trash` for a row not in this
+   * mailbox's Trash path; a REPLAY is answered from the idempotency key.
    */
   async restore(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<{ restoreTo: string; pending: true; seq: number }> {
+  ): Promise<{ restoreTo: string; pending: boolean; seq: number }> {
     let filed: string | null = null;
     const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
@@ -1649,6 +1655,37 @@ export class MessageService {
       const [mb] = await tx.select({ trashFolder: mailboxes.trashFolder }).from(mailboxes)
         .where(eq(mailboxes.id, msg.mailboxId)).limit(1);
       const trash = mb?.trashFolder ?? null;
+      /* THE UNLANDED DELETE IS CANCELLED, in one conditional write: the decision is the UPDATE,
+         so a park the worker commits first makes it miss and the landed path below runs. */
+      if (trash !== null) {
+        const now = ctx.now();
+        // scoped-by: msg was loaded by (id, accountId) above and the organizer just asserted
+        const [kept] = await tx.update(folderState).set({
+          desiredFolder: sql`${folderState.observedFolder}`, trashedFrom: null, lastSetBy: "us",
+          reconcileStatus: "reconciled", conflict: false, attempts: 0, nextAttemptAt: null, lastErrorClass: null,
+          decidedAt: decisionInstant(floor, now), updatedAt: now,
+        }).where(and(
+          eq(folderState.messageId, id), eq(folderState.desiredFolder, trash),
+          ne(folderState.observedFolder, trash), eq(folderState.reconcileStatus, "pending"),
+          sql`exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${id} and ${messageInstances.isPrimary})`,
+        )).returning({ at: folderState.observedFolder });
+        if (kept) {
+          await tx.update(messages).set({ deletedAt: null, updatedAt: now })
+            .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId)));
+          const seq = Number(await recordChange(tx, {
+            accountId: ctx.accountId, entityType: "message", entityId: id, op: "update", meta: null,
+          }));
+          const restoreTo = canonicalDestination(kept.at);
+          if (opts.idempotency) {
+            const claimed = await claimIdempotencyKey(tx, {
+              accountId: ctx.accountId, key: opts.idempotency.key, requestHash: opts.idempotency.requestHash,
+              responseStatus: 200, responseJson: { restoreTo, pending: false }, seq, now: ctx.now(),
+            });
+            if (!claimed) throw new IdempotencyRaceLost(ctx.accountId, opts.idempotency.key);
+          }
+          return { restoreTo, pending: false, seq };
+        }
+      }
       // scoped-by: msg was loaded by (id, accountId) above and the organizer just asserted
       const [fs] = await tx.select({
         desiredFolder: folderState.desiredFolder, trashedFrom: folderState.trashedFrom,

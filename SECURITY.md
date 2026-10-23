@@ -106,7 +106,7 @@ processes around it:**
   by the render check's offline audit); and its whole reach is a small named
   list of shell commands (`WINDOW_COMMANDS` in
   `apps/desktop/src-tauri/build.rs`). None of those commands takes a filesystem
-  path, one takes URLs, and none opens an address. `rendered_links` lets the
+  path, one takes URLs, and none opens an address. `rendered_links_batch` lets the
   window's renderers report the http(s) links they draw (a message's links, a
   draft's or a signature's, the Screener's unsubscribe link, the account page
   the service named); the shell keeps them in a bounded list and opens nothing

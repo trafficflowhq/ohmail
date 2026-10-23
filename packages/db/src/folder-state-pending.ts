@@ -17,7 +17,7 @@ import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
 /**
  * "This deferred mutation may be attempted again" — the due predicate every pending query shares
  * (mail 0058). `IS NULL` is the FIRST arm and not a convenience: NULL is what every row is born
- * with and what a fresh intent resets to, so comparing instants alone would hide every
+ * with and what a fresh intent resets to (mail 0163's trigger), so comparing instants alone would hide every
  * never-yet-refused mutation in the product. The instant comes from the APPLICATION clock,
  * matching the write side: one clock decides both when a mutation becomes due and when it was
  * deferred to, so database-vs-worker skew cannot stretch a deferral. `now` is a parameter with no
@@ -103,6 +103,18 @@ export function filingStuck(now: Date): SQL {
   return and(ourOutstandingFiling(), or(
     gte(folderState.attempts, FILING_STUCK_ATTEMPTS),
     lte(folderState.updatedAt, new Date(now.getTime() - FILING_STUCK_MS)),
+  ))!;
+}
+
+/**
+ * An outstanding filing of ours that WAITS: stuck by {@link filingStuck}'s rule, or deferred.
+ * What Settings → Mailboxes lists, retries and leaves: one predicate for the read and both presses.
+ */
+export function filingWaiting(now: Date): SQL {
+  return and(ourOutstandingFiling(), or(
+    gte(folderState.attempts, FILING_STUCK_ATTEMPTS),
+    lte(folderState.updatedAt, new Date(now.getTime() - FILING_STUCK_MS)),
+    deferredUntilLater(folderState.nextAttemptAt, now),
   ))!;
 }
 

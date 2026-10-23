@@ -60,7 +60,12 @@ const inputs = (filing: Partial<FilingFacts>): MailStateInputs => ({
 } as MailStateInputs);
 
 async function strip(filing: Partial<FilingFacts>, locale: "en" | "de" = "en"): Promise<string> {
-  current = deriveMailState(inputs(filing));
+  return (await stripOf([mailbox(filing)], locale)).text;
+}
+
+/** The strip over several mailboxes: its text and the link it offers. */
+async function stripOf(mbs: MailboxFacts[], locale: "en" | "de" = "en"): Promise<{ text: string; hrefs: string[] }> {
+  current = deriveMailState({ ...inputs({}), mailboxes: mbs });
   const { SyncBar } = await import("../app/shell/SyncBar.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -71,15 +76,21 @@ async function strip(filing: Partial<FilingFacts>, locale: "en" | "de" = "en"): 
       children: h(SyncBar, null),
     }));
   });
-  return container.textContent ?? "";
+  return {
+    text: container.textContent ?? "",
+    hrefs: [...container.querySelectorAll("a")].map((a) => a.getAttribute("href") ?? ""),
+  };
 }
+
+const named = (id: string, displayName: string | null, filing: Partial<FilingFacts>, address = `${id}@example.invalid`): MailboxFacts =>
+  ({ ...mailbox(filing), id, address, displayName });
 
 describe("the stuck filing sentence", () => {
   it("a filing nothing refused is not blamed on the mail server", async () => {
     const text = await strip({
       due: 1, oldestPendingAt: ago(75 * MIN), stuck: 1, stuckSince: ago(75 * MIN), stuckRefusalClass: null,
     });
-    expect(text).toContain("1 message has not been filed for 75 minutes");
+    expect(text).toContain("1 message has not been filed for 1 hour");
     expect(text, "a filing nothing refused was blamed on the server").not.toContain("would not say why");
     expect(text).not.toContain("refused");
     expect(text).toContain("no refusal is recorded");
@@ -89,7 +100,7 @@ describe("the stuck filing sentence", () => {
     const text = await strip({
       due: 2, oldestPendingAt: ago(62 * MIN), stuck: 1, stuckSince: ago(62 * MIN), stuckRefusalClass: null,
     });
-    expect(text, "the fresh move was counted as stuck").toContain("1 message has not been filed for 62 minutes");
+    expect(text, "the fresh move was counted as stuck").toContain("1 message has not been filed for 1 hour");
     expect(text).not.toContain("2 messages");
   });
 
@@ -122,7 +133,7 @@ describe("the stuck filing sentence", () => {
 
   it("CONTROL — an older server without the stuck fields keeps the old count", async () => {
     const text = await strip({ due: 2, oldestPendingAt: ago(62 * MIN) });
-    expect(text).toContain("2 messages have not been filed for 62 minutes");
+    expect(text).toContain("2 messages have not been filed for 1 hour");
     expect(text).toContain("no refusal is recorded");
   });
 
@@ -130,8 +141,73 @@ describe("the stuck filing sentence", () => {
     const text = await strip({
       due: 1, oldestPendingAt: ago(75 * MIN), stuck: 1, stuckSince: ago(75 * MIN), stuckRefusalClass: null,
     }, "de");
-    expect(text).toContain("1 Nachricht wurde seit 75 Minuten nicht einsortiert");
+    expect(text).toContain("1 Nachricht wurde seit 1 Stunde nicht einsortiert");
     expect(text).toContain("keine Ablehnung verzeichnet");
     expect(text).not.toContain("nennt keinen Grund");
+  });
+});
+
+/**
+ * THE STRIP NAMES THE MAILBOX AND ITS OWN REASON, AND SAYS NOTHING THE SERVER DID NOT SAY.
+ *
+ * Reported: "6 messages have not been filed for 345 minutes · your mail server refused it ·
+ * Settings → Mailboxes" while Settings looked fine. The six were on one mailbox, the class was the
+ * catch-all a dropped connection lands in, and the link opened the list, not the mailbox.
+ */
+describe("the stuck and waiting sentences name the mailbox and the reason on record", () => {
+  const reported = { due: 6, attempts: 1, oldestPendingAt: ago(345 * MIN), lastRefusalClass: "refused",
+    stuck: 6, stuckSince: ago(345 * MIN), stuckRefusalClass: "refused" };
+
+  it("the reported case: hours, the mailbox by name, neutral words, one link to that mailbox", async () => {
+    const r = await stripOf([named("mbx1", "Work", reported)]);
+    expect(r.text).toContain("6 messages have not been filed for 5 hours");
+    expect(r.text).toContain("Work · the last try did not go through");
+    expect(r.text).not.toContain("refused it");
+    expect(r.text.split("Settings → Mailboxes").length - 1, "the pane was named twice").toBe(1);
+    expect(r.hrefs).toEqual(["#/settings/mailboxes?mailbox=mbx1"]);
+  });
+
+  it("two mailboxes with different reasons say so, and link to the first", async () => {
+    const r = await stripOf([
+      named("mbx1", "Work", { due: 1, oldestPendingAt: ago(80 * MIN), stuck: 1, stuckSince: ago(80 * MIN), stuckRefusalClass: null }),
+      named("mbx2", "Home", {
+        deferred: 5, attempts: 3, oldestPendingAt: ago(30 * MIN), lastRefusalClass: "read_only",
+        nextAttemptAt: new Date(NOW + 3_600_000).toISOString(), stuck: 5, stuckSince: ago(30 * MIN), stuckRefusalClass: "read_only",
+      }),
+    ]);
+    expect(r.text).toContain("6 messages have not been filed for 1 hour");
+    expect(r.text).toContain("2 mailboxes · the reasons differ by mailbox");
+    expect(r.text).not.toContain("the folder will not take it");
+    expect(r.hrefs).toEqual(["#/settings/mailboxes?mailbox=mbx1"]);
+  });
+
+  it("two mailboxes with the same reason name it", async () => {
+    const full = { deferred: 1, attempts: 2, oldestPendingAt: ago(9 * MIN), lastRefusalClass: "over_quota",
+      nextAttemptAt: new Date(NOW + 600_000).toISOString(), stuck: 1, stuckSince: ago(9 * MIN), stuckRefusalClass: "over_quota" };
+    const r = await stripOf([named("mbx1", "Work", full), named("mbx2", "Home", full)]);
+    expect(r.text).toContain("2 mailboxes · the mailbox is full");
+  });
+
+  it("waiting: the mailbox, the reason and the next try, and no 'was refused'", async () => {
+    const r = await stripOf([named("mbx2", "Home", {
+      deferred: 2, attempts: 1, oldestPendingAt: ago(2 * MIN), lastRefusalClass: "no_such_folder",
+      nextAttemptAt: new Date(NOW + 3_600_000).toISOString(), stuck: 0, stuckSince: null, stuckRefusalClass: null,
+    })]);
+    expect(r.text).toContain("2 messages wait for the next try");
+    expect(r.text).toMatch(/Home · the folder is not there · next try at \d\d:\d\d/);
+    expect(r.text).not.toContain("was refused");
+    expect(r.hrefs).toEqual(["#/settings/mailboxes?mailbox=mbx2"]);
+  });
+
+  it("a mailbox with no display name is named by its address, decoded", async () => {
+    const r = await stripOf([named("mbx3", null, reported, "post@xn--bcher-kva.example")]);
+    expect(r.text).toContain("post@bücher.example · the last try did not go through");
+  });
+
+  it("is German in German", async () => {
+    const r = await stripOf([named("mbx1", "Work", reported)], "de");
+    expect(r.text).toContain("6 Nachrichten wurden seit 5 Stunden nicht einsortiert");
+    expect(r.text).toContain("Work · der letzte Versuch ging nicht durch");
+    expect(r.text).not.toContain("abgewiesen");
   });
 });

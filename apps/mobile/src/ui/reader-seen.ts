@@ -43,6 +43,8 @@ export interface PhoneThreadRead {
   onScroll: (offsetY: number) => void;
   /** Look again in the next frame (a read state or a body changed, the app came back). */
   poke: () => void;
+  /** Every panel laid out, top to bottom, the opened message (`openedId`) among them: the reader's place reads it. */
+  layout: (openedId: string) => { id: string; top: number; height: number }[];
   /** Where a panel's top sits in the scroll content, for a jump to it; `null` before its layout. */
   topOf: (id: string) => number | null;
   dispose: () => void;
@@ -110,11 +112,11 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     bodyY !== null && endY !== null
       ? { top: top + bodyY, bottom: top + Math.max(bodyY, Math.min(bodyY + lines(id), endY)) }
       : null;
+  const listed = (group: PhoneGroup) =>
+    [...members].filter(([, m]) => m.group === group).sort((a, b) => a[1].y - b[1].y);
   /** The panels in the order they are drawn: the members above, the opened message, the members below. */
   const panels = (): { panel: ThreadPanel; top: number; bottom: number }[] => {
     const out: { panel: ThreadPanel; top: number; bottom: number }[] = [];
-    const listed = (group: PhoneGroup) =>
-      [...members].filter(([, m]) => m.group === group).sort((a, b) => a[1].y - b[1].y);
     const push = ([id, m]: [string, Member]) => {
       const top = topOfMember(m);
       out.push({
@@ -198,6 +200,10 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     panelEnd: (id, ey) => { member(id).endY = ey; poke(); },
     onScroll: (offsetY) => { y = offsetY; poke(); },
     poke,
+    layout: (openedId) => {
+      const boxes = (group: PhoneGroup) => listed(group).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h }));
+      return [...boxes("above"), { id: openedId, top: offsets.padded + offsets.opened, height: end ?? 0 }, ...boxes("below")];
+    },
     topOf: (id) => {
       if (id === o.openedId()) return offsets.padded + offsets.opened;
       const m = members.get(id);

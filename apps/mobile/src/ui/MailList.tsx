@@ -85,6 +85,12 @@ export interface MailListProps<T> {
    * list then knows every row's place before it has laid out, so a scroll reaches any of them.
    */
   rowLayout?: RowLayout;
+  /**
+   * A list that answers a question (Search): each new value opens it at its top, and no row is held in
+   * place while the answer replaces itself. The hold anchored a row of the first paint, and the count
+   * line and the newest matches stood above the view.
+   */
+  topFor?: string;
 }
 
 interface CellRules {
@@ -152,12 +158,16 @@ export function MailList<T>({
   onRowFrame,
   scrollTo,
   rowLayout,
+  topFor,
 }: MailListProps<T>) {
   const t = useTheme();
   const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
   if (scrollTo) scrollTo.current = (y) => listRef.current?.getScrollResponder()?.scrollTo({ y, animated: false });
   const insets = useListInsets();
   const sections = useMemo(() => planSections(groups), [groups]);
+  useEffect(() => {
+    if (topFor !== undefined) listRef.current?.getScrollResponder()?.scrollTo({ y: 0, animated: false });
+  }, [topFor]);
 
   const [headH, setHeadH] = useState<number | null>(null);
   const [tailH, setTailH] = useState(0);
@@ -265,7 +275,7 @@ export function MailList<T>({
            the surface is one of them only once it has mounted. Handed `1` before that, the first
            ROW anchored and the head's later growth (the doorbell arriving) scrolled the title off
            on the fold AVD. Within TOP_HOLD of the top a change scrolls back to 0 as the belt. */
-        maintainVisibleContentPosition={{
+        maintainVisibleContentPosition={topFor !== undefined ? undefined : {
           minIndexForVisible: surfaceNode !== null ? 1 : 0,
           autoscrollToTopThreshold: TOP_HOLD,
         }}

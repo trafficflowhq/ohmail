@@ -1,0 +1,36 @@
+{
+  "id": "60",
+  "file": "60-outlook-plain-only-de-von-block.eml",
+  "shape": "outlook-plain-only-de-von-block",
+  "description": "Plain text only, Outlook German: the history is a bare 'Von:/Gesendet:/An:/Cc:/Betreff:' block after a blank line, no separator line, no '>'",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "iso-8859-1",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The plain-text form of the reported shape: only the label block marks the history."
+}

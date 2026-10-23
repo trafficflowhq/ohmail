@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { mailboxes, mailboxCredentials } from "@trafficflow/db";
+import { folderState, mailboxes, mailboxCredentials, messages } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/services";
 import { and, eq } from "drizzle-orm";
 import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js";
@@ -229,5 +229,62 @@ describe("mailbox mutations — the plan limit, as the client sees it", () => {
     expect(error.code).toBe("payment_required");
     // The distinction is the whole point of the taxonomy: an upgrade would not fix this one.
     expect(error.details).toMatchObject({ reason: "payment_required", accessReason: "payment_required" });
+  });
+});
+
+describe("the waiting filings of a mailbox — read, Try again now, Leave them where they are", () => {
+  const json = { "content-type": "application/json" };
+  async function world(emailVerified = true) {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, emailVerified });
+    const id = await seedMailbox(db, { accountId: s.accountId });
+    const [m] = await db.insert(messages).values({
+      accountId: s.accountId, mailboxId: id, dedupKey: "mid:<waits@example.test>", bodyHash: "waits",
+    }).returning();
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: "ohmail/Receipts", observedFolder: "ohmail/Reads", lastSetBy: "us",
+      updatedAt: new Date(FIXED_NOW.getTime() - 3_600_000), attempts: 1, lastErrorClass: "refused",
+    });
+    return { db, deps, s, id, messageId: m!.id };
+  }
+
+  it("GET answers counts and names, the presses answer 202 and 200 with the seq", async () => {
+    const { deps, s, id } = await world();
+    const read = await H(req("GET", `/mailboxes/${id}/filings`, { bearer: s.token }), deps);
+    expect(read.status).toBe(200);
+    const dto = await read.json();
+    expect(dto.groups).toHaveLength(1);
+    expect(dto.groups[0]).toMatchObject({ folder: "ohmail/Receipts", count: 1, at: "ohmail/Reads", reasons: [{ reason: "refused", count: 1 }] });
+    const retry = await H(req("POST", `/mailboxes/${id}/filings/retry`, { bearer: s.token, headers: json, body: body({ folder: "ohmail/Receipts" }) }), deps);
+    expect(retry.status).toBe(202);
+    expect(await retry.json()).toEqual({ reset: 1, skipped: 0 });
+    const leave = await H(req("POST", `/mailboxes/${id}/filings/leave`, {
+      bearer: s.token, headers: json, body: body({ folder: "ohmail/Receipts", through: dto.groups[0].through }),
+    }), deps);
+    expect(leave.status).toBe(200);
+    expect(await leave.json()).toEqual({ settled: 1, remaining: 0 });
+    expect(Number(leave.headers.get("X-Sync-Seq"))).toBeGreaterThan(0);
+  });
+
+  it("400 on a bad body, 404 across accounts", async () => {
+    const { db, deps, s, id } = await world();
+    const bad = await H(req("POST", `/mailboxes/${id}/filings/leave`, { bearer: s.token, headers: json, body: body({ folder: "ohmail/Receipts" }) }), deps);
+    expect(bad.status).toBe(400);
+    expect((await bad.json()).error.code).toBe("validation_failed");
+    expect((await H(req("POST", `/mailboxes/${id}/filings/retry`, { bearer: s.token, headers: json, body: body({ folder: 3 }) }), deps)).status).toBe(400);
+    const other = await seedSession(db, { now: FIXED_NOW, token: "other-filings" });
+    expect((await H(req("GET", `/mailboxes/${id}/filings`, { bearer: other.token }), deps)).status).toBe(404);
+    expect((await H(req("POST", `/mailboxes/${id}/filings/retry`, { bearer: other.token, headers: json, body: body({ folder: "ohmail/Receipts" }) }), deps)).status).toBe(404);
+  });
+
+  it("an unverified account may read them and may not press", async () => {
+    const { db, deps, s, id, messageId } = await world(false);
+    expect((await H(req("GET", `/mailboxes/${id}/filings`, { bearer: s.token }), deps)).status).toBe(200);
+    expect((await H(req("POST", `/mailboxes/${id}/filings/retry`, { bearer: s.token, headers: json, body: body({ folder: "ohmail/Receipts" }) }), deps)).status).toBe(403);
+    expect((await H(req("POST", `/mailboxes/${id}/filings/leave`, {
+      bearer: s.token, headers: json, body: body({ folder: "ohmail/Receipts", through: FIXED_NOW.toISOString() }),
+    }), deps)).status).toBe(403);
+    const [r] = await db.select().from(folderState).where(eq(folderState.messageId, messageId));
+    expect(r!.attempts).toBe(1);
   });
 });

@@ -1231,8 +1231,11 @@ export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // Mail 0160_folder_state_outstanding — the trigger function that keeps `outstanding_account_id`.
   // The prebuild adds the column and the index ahead of the migrator, so this is the marker that
   // says the migration itself ran: without it the column fills no further and the poll under-counts.
-  // The newest entry: the sentence about the tag moves with it.
   ["folder_state_outstanding_account", "NEW.outstanding_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
+  // Mail 0163_folder_state_fresh_intent — a new filing's schedule reset. Without it a message filed
+  // somewhere new keeps the old refusal's sleep and reason. The newest entry: the sentence about
+  // the tag moves with it.
+  ["folder_state_fresh_intent", "NEW.last_error_class := NULL"],
 ];
 
 /**
@@ -1270,7 +1273,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0162_outbound_sends_offer_state";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0163_folder_state_fresh_intent";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

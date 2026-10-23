@@ -115,11 +115,11 @@ const HOSTED_SUGGEST_MARKER = "SuggestRefused";
 /**
  * THE SHELL COMMANDS THIS BUNDLE CAN NAME. Each is armed from the window entry
  * (`src/main.tsx`); the served client's entry never arms them, and a phone page that could name
- * a shell command would be a page claiming a channel it does not have. `rendered_links` is how
+ * a shell command would be a page claiming a channel it does not have. `rendered_links_batch` is how
  * the window's renderers report the links they draw — the only addresses the shell's new-window
  * door opens besides its own — so a window bundle without it has links that will not open.
  */
-const SHELL_COMMAND_MARKERS = ["rendered_links", "save_attachment", "stage_attachment_preview"];
+const SHELL_COMMAND_MARKERS = ["rendered_links_batch", "save_attachment", "stage_attachment_preview"];
 
 /**
  * THE COMMANDS THE SHELL NO LONGER CARRIES, which no bundle may name. `open_external` handed the

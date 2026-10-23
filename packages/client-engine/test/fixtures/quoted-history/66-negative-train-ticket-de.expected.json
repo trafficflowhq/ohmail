@@ -1,0 +1,41 @@
+{
+  "id": "66",
+  "file": "66-negative-train-ticket-de.eml",
+  "shape": "negative-train-ticket-de",
+  "description": "A booking confirmation: Von:/An:/Datum: rows naming stations, no Subject label",
+  "client": "synthetic",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Ihre Reservierung ist bestätigt.",
+      "visibleLastLine": "Beispiel Bahnreisen AG",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Ihre Reservierung ist bestätigt.",
+      "visibleLastText": "Beispiel Bahnreisen AG"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

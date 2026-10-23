@@ -1,0 +1,35 @@
+Hallo Ben,
+
+danke, ich habe die Bestellung im System angelegt. Die Bestellnummer schicke ich dir gleich separat.
+
+Gruß
+Clara Muster
+
+Von: Ben Sample <ben.sample@example.org>
+Datum: Dienstag, 20. Oktober 2026 um 16:05
+An: Clara Muster <clara.muster@example.org>
+Betreff: WG: Wartung Lüftungsanlage 2. OG
+
+Hallo zusammen,
+
+danke für die Klärung. Ich leite das an die Buchhaltung weiter, damit die Bestellung heute noch rausgeht.
+
+Beste Grüße
+Ben Sample
+Lindenhof Beispiel AG | Facility Management
+
+Von: Ana Example <ana.example@example.com>
+Gesendet: Dienstag, 20. Oktober 2026 13:02
+An: Ben Sample <ben.sample@example.org>
+Betreff: Wartung Lüftungsanlage 2. OG
+
+Hallo Herr Sample,
+
+anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.
+
+Die Preise gelten bis zum 30. November 2026.
+
+Freundliche Grüße
+Ana Example
+Projektleitung Haustechnik
+Northwind Example GmbH · Musterstraße 12 · 10115 Berlin

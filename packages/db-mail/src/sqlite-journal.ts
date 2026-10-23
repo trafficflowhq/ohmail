@@ -534,5 +534,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"outbound_sends\" ADD COLUMN \"offer_state\" text NOT NULL DEFAULT 'unknown';"
     ]
+  },
+  {
+    "name": "0163_folder_state_fresh_intent.sql",
+    "statements": [
+      "CREATE TRIGGER IF NOT EXISTS folder_state_fresh_intent AFTER UPDATE OF desired_folder ON folder_state\n  WHEN NEW.\"desired_folder\" IS NOT OLD.\"desired_folder\"\nBEGIN\n  UPDATE folder_state SET attempts = 0, next_attempt_at = NULL, last_error_class = NULL\n   WHERE id = NEW.id AND (attempts <> 0 OR next_attempt_at IS NOT NULL OR last_error_class IS NOT NULL);\nEND;"
+    ]
   }
 ] as const;

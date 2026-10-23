@@ -1,0 +1,3 @@
+### Quoted history folds in every message of a thread
+
+Each message in a thread and the opened message now fold the earlier history they quote behind one "Show history" toggle, on desktop, web and the phone. This covers Outlook, Exchange, Yahoo, Lotus, Samsung, Zimbra, GMX, WEB.DE and mail.com histories that sit unquoted under a From/Von/De header block, Gmail and Thunderbird forwards, Apple Mail replies, mail laid out as HTML only, and long bodies. Answers written between the quoted lines (announced, coloured, highlighted or prefixed), comments under a pasted message, a body that is only a forward, and a signature, list footer or disclaimer below the quote stay visible, also where a message shows its text part. A folded history loads no pictures until it is opened.

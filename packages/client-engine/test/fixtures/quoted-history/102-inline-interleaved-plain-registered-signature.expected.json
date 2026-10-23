@@ -1,0 +1,39 @@
+{
+  "id": "102",
+  "file": "102-inline-interleaved-plain-registered-signature.eml",
+  "shape": "inline-interleaved-plain-registered-signature",
+  "description": "Fixture 53 (mutt, answers between quoted lines) with a company registration line in the signature",
+  "client": "mutt",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Elif Testa"
+  ],
+  "notes": "the registration line reads as a disclaimer; synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Brightwater Samples Ltd, registered in England and Wales, no. 01234567",
+      "historyStartLine": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "Yes, the first truck can be there at 7:15.",
+      "Understood, I moved that delivery to November 19.",
+      "Yes, I will send it 48 hours before arrival."
+    ],
+    "trailingTail": null
+  }
+}

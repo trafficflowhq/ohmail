@@ -13,7 +13,7 @@
  * rows. Scroll-past feeds per-message `\Seen` through `mark_seen` (the `justSeen` set is dedup, not state), and
  * LEAVING the view commits the waterline in one anchored `feed_mark_seen` via `onLeaveSeen`.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { countWhen, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
@@ -34,6 +34,8 @@ import type { AttachmentsChrome } from "../shell/attachments";
 import { useStreamWindow } from "../shell/stream-window";
 import { useKeyPanelOpensCard, useStreamBar } from "../shell/stream-bar";
 import { useBodyStamp } from "../shell/body-slice";
+import { useStreamNear } from "../shell/stream-near";
+import { afterPaint, useVisit } from "../shell/visit";
 
 export function ReceiptsView({
   settled,
@@ -152,8 +154,9 @@ export function ReceiptsView({
   const locale = useLocale();
   const streamRef = useRef<StreamHandle>(null);
   const listScrollerRef = useRef<HTMLDivElement>(null);
-  /** Dedup for the per-card sweep — a card marks itself once per visit. No longer any visual. */
-  const [justSeen, setJustSeen] = useState<Set<string>>(() => new Set());
+  /** Dedup for the per-card sweep — a card marks itself once per visit (`useVisit` below). A ref:
+   *  it is bookkeeping and draws nothing, so marking a card re-renders nothing. */
+  const justSeen = useRef<Set<string>>(new Set());
   /**
    * THE CARD WHOSE VERBS ARE SHOWING — the one the reader has EXPANDED, and never the one the
    * scroll-spy happens to have made `current`. Scrolling moves `current` (selection, the dwell
@@ -231,9 +234,41 @@ export function ReceiptsView({
     return m;
   }, [streamIds]);
   const pileIndexOf = useCallback((id: string) => pileIndex.get(id) ?? -1, [pileIndex]);
+  /** Are the cards drawn yet — see "the rows paint before the stream" below. */
+  const [streamArmed, setStreamArmed] = useState(false);
   const stream = useStreamWindow({
     ids: streamIds,
     getRoot: () => streamRef.current?.element() ?? null,
+    armed: streamArmed,
+  });
+  const mountedIds = useMemo(() => streamIds.slice(stream.start, stream.end), [streamIds, stream.start, stream.end]);
+  const openingIds = useMemo(() => streamIds.slice(0, stream.opening), [streamIds, stream.opening]);
+  /* The rows paint before the stream — `ReadsView`'s twin carries the reasoning. */
+  const cardsShown = useRef(false);
+  /* Viewers near the screen only, one more per frame — `stream-near.ts`. A signal: this stream
+     fetches nothing on it. */
+  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null);
+  const arming = useRef<() => void>(() => {});
+  useVisit(
+    () => {
+      justSeen.current = new Set();
+      // The list keeps its offset through the hide; the revisit opens it where a mount does.
+      win.toTop();
+      if (!streamArmed) {
+        arming.current = afterPaint(streamRef.current?.element() ?? null, () => {
+          startTransition(() => setStreamArmed(true));
+        });
+      }
+    },
+    () => {
+      arming.current();
+      if (!cardsShown.current) setStreamArmed(false);
+      stream.reset();
+      bar.endVisit();
+    },
+  );
+  useLayoutEffect(() => {
+    if (streamArmed && mountedIds.length > 0) cardsShown.current = true;
   });
   /* A scroll to a card that is not in the DOM is a silent no-op (`StreamShell.scrollTo`), so
      every jump extends the run first and scrolls AFTER the commit that mounted the target.
@@ -252,11 +287,12 @@ export function ReceiptsView({
       ?.click();
   }, []);
   useEffect(() => {
-    if (!pendingScroll) return;
+    // A stream not armed yet has no card to land on; the scroll waits for the arming.
+    if (!pendingScroll || !streamArmed) return;
     const { id, open } = pendingScroll;
     streamRef.current?.scrollTo(id, open ? () => openLandedCard(id) : undefined);
     setPendingScroll(null);
-  }, [pendingScroll, openLandedCard]);
+  }, [pendingScroll, openLandedCard, streamArmed]);
   /** The controlled close, through the card's own pill — see `ReadsView` for the full reasoning. */
   const closeRefs = useRef({ onClosed });
   closeRefs.current = { onClosed };
@@ -277,8 +313,8 @@ export function ReceiptsView({
 
   const seenMark = (id: string) => {
     const m = all.find((x) => x.id === id);
-    if (!m || !isUnread(m) || justSeen.has(id)) return;
-    setJustSeen((s) => new Set(s).add(id));
+    if (!m || !isUnread(m) || justSeen.current.has(id)) return;
+    justSeen.current.add(id);
     markSeen(id);
   };
 
@@ -442,6 +478,7 @@ export function ReceiptsView({
         now={now}
         current={current === m.id}
         expanded={bar.hasBar(m.id)}
+        viewer={near.near.has(m.id) || bar.hasBar(m.id) || current === m.id}
         /* Presented, exactly as the row below — see it for why `isUnread` still decides
            every ACT and every count in this view. */
         unread={presentsUnread(m)}
@@ -554,10 +591,12 @@ export function ReceiptsView({
         onSeen={seenMark}
         onLeave={onStreamLeave}
         pileIndexOf={pileIndexOf}
+        onApproach={near.onApproach}
         /* The MOUNTED slice is the key: a window move mounts new cards, and the seen observer
            re-scans on this value — without it a card mounted by a slide would never mark
-           itself seen. Keyed on the slice's own ids, not the pile's (see `ReadsView`). */
-        contentKey={`${stream.start}:${streamIds.slice(stream.start, stream.end).join(",")}`}
+           itself seen. Keyed on the slice's own ids, not the pile's, and on the arming (see
+           `ReadsView`). */
+        contentKey={`${streamArmed ? 1 : 0}:${stream.start}:${mountedIds.join(",")}`}
       >
         <div className="stream-top">
           <h1>{t("title")}</h1>
@@ -571,26 +610,30 @@ export function ReceiptsView({
         <div className="stream-hints">
           <ShortcutHint />
         </div>
-        {/* Reserved height above the window — same shape as `ReadsView`. */}
-        {stream.padTopPx > 0 ? (
-          <div aria-hidden data-stream-head style={{ height: stream.padTopPx }} />
+        {streamArmed ? (
+          <>
+            {/* Reserved height above the window — same shape as `ReadsView`. */}
+            {stream.padTopPx > 0 ? (
+              <div aria-hidden data-stream-head style={{ height: stream.padTopPx }} />
+            ) : null}
+            {all.slice(Math.min(stream.start, fresh), Math.min(stream.end, fresh)).map(card)}
+            {/* The line marks the fresh/seen junction in the stream, so it renders while that
+                junction is inside the mounted window — a junction drawn against the wrong
+                neighbours would lie. Same rule, same shape, as `ReadsView`. */}
+            {waterline && stream.start <= fresh && stream.end >= fresh ? (
+              <Waterline label={tr("waterline")} meta={wlMeta} />
+            ) : null}
+            {all.slice(Math.max(fresh, stream.start), Math.max(fresh, stream.end)).map(card)}
+            {/* The reserved height standing in for the unmounted tail. */}
+            {stream.padBottomPx > 0 ? (
+              <div aria-hidden data-stream-tail style={{ height: stream.padBottomPx }} />
+            ) : null}
+            {/* The end-of-pile line is a claim; it is made only while the pile's last card is
+                mounted above it. */}
+            {stream.end >= all.length && countWhen({ settled, count: all.length, pending: owed }, true)
+              ? <div className="tail-row">{t("tail")}</div> : null}
+          </>
         ) : null}
-        {all.slice(Math.min(stream.start, fresh), Math.min(stream.end, fresh)).map(card)}
-        {/* The line marks the fresh/seen junction in the stream, so it renders while that
-            junction is inside the mounted window — a junction drawn against the wrong
-            neighbours would lie. Same rule, same shape, as `ReadsView`. */}
-        {waterline && stream.start <= fresh && stream.end >= fresh ? (
-          <Waterline label={tr("waterline")} meta={wlMeta} />
-        ) : null}
-        {all.slice(Math.max(fresh, stream.start), Math.max(fresh, stream.end)).map(card)}
-        {/* The reserved height standing in for the unmounted tail. */}
-        {stream.padBottomPx > 0 ? (
-          <div aria-hidden data-stream-tail style={{ height: stream.padBottomPx }} />
-        ) : null}
-        {/* The end-of-pile line is a claim; it is made only while the pile's last card is
-            mounted above it. */}
-        {stream.end >= all.length && countWhen({ settled, count: all.length, pending: owed }, true)
-          ? <div className="tail-row">{t("tail")}</div> : null}
       </StreamShell>
     </section>
   );

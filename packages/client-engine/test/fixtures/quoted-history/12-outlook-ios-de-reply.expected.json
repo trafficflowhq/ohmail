@@ -1,0 +1,43 @@
+{
+  "id": "12",
+  "file": "12-outlook-ios-de-reply.eml",
+  "shape": "outlook-ios-de-reply",
+  "description": "Outlook for iOS, German: 'Outlook für iOS beziehen' line, #mail-editor-reference-message-container with a border-top reference header, underscore rule in text/plain",
+  "client": "outlook_ios",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Outlook für iOS beziehen",
+      "historyStartLine": "________________________________",
+      "historyStartLineNormalized": "________________________________"
+    },
+    "html": {
+      "historyStartSelector": "#mail-editor-reference-message-container",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Outlook für iOS beziehen"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

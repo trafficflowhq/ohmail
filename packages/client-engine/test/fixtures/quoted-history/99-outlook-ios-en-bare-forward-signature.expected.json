@@ -1,0 +1,43 @@
+{
+  "id": "99",
+  "file": "99-outlook-ios-en-bare-forward-signature.eml",
+  "shape": "outlook-ios-en-bare-forward-signature",
+  "description": "Outlook for iOS, English: a forward with nothing typed but 'Get Outlook for iOS'",
+  "client": "outlook_ios",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": true,
+    "text": {
+      "visibleFirstLine": "Get Outlook for iOS",
+      "visibleLastLine": "Ben",
+      "historyStartLine": "Get Outlook for iOS",
+      "historyStartLineNormalized": "Get Outlook for iOS"
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Get Outlook for iOS",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

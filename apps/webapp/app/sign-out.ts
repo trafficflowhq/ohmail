@@ -22,6 +22,7 @@ import {
 } from "./session-refresh";
 import { ERASED_KEY } from "./shell/account-erased";
 import { postSignedOut } from "./signed-out-signal";
+import { forgetMailDocs } from "./components/mail-doc-cache";
 
 /**
  * The one correct way to sign out of the web client. `POST /auth/refresh/logout` revokes the session
@@ -120,6 +121,8 @@ export async function forgetThisBrowser(
    * painting mail the next person at this browser would read. See `signed-out-signal.ts`.
    */
   postSignedOut(owner ?? null);
+  /* The sanitized documents this window kept per engine (`mail-doc-cache.ts`): mail, in memory. */
+  forgetMailDocs();
   /*
    * The wake registration goes first, before the id that names it is swept. This browser is the only party that knows
    * which push row is its own (the server's prune is device-scoped and a browser ceremony mints no device row), and

@@ -585,27 +585,40 @@ export interface LeaseSelf {
   /** The nonce of our last write this process, or `null` on a fresh start. */
   lastNonce: string | null;
   /**
-   * THE NONCE THIS PROCESS MINTED FOR A WRITE WHOSE OUTCOME IT NEVER LEARNED.
+   * EVERY NONCE THIS PROCESS MINTED FOR A CLAIM IN THIS MAILBOX'S FOLDER, newest last, at most
+   * {@link OWN_NONCES_MAX} ({@link withMinted}).
    *
-   * A renewal APPENDs and the answer is lost: the write committed, so the FOLDER's idea of this
-   * install moved while {@link lastNonce}, which only an answer updates, did not — and the next
-   * gate read our own claim as a clone's and stood the running install down. Recorded before the
-   * append, so a claim bearing either value is ours ({@link bearsOurNonce}). Memory-only exactly as
-   * `lastNonce` is and for its reason: a fresh process trusts its own id once, which is what keeps
-   * own-role resumption working. Nothing is persisted and no row gains a column.
+   * A renewal APPENDs and the answer is lost: the write committed while {@link lastNonce}, which
+   * only an answer moves, did not. One remembered value was not enough: a later attempt that never
+   * landed overwrote it, and the next gate read the committed claim as a clone's and stood the only
+   * install down. Recorded before each append and never cleared by an answer. Memory-only, as
+   * `lastNonce` is: a fresh process trusts its own id once, which keeps own-role resumption working.
    */
-  pendingNonce?: string | null;
+  mintedNonces?: readonly string[];
   /**
    * THIS PROCESS HAS SEEN ITS OWN CLOCK CORRECTED SINCE IT LAST WROTE — supplied by the caller,
    * because only a process can observe its own clock being set.
    *
    * Both stamps on a claim are immutable, so a record written under a wrong clock refuses for
-   * ever. A LAUNCH escapes that on `lastNonce === null`; this is the same arm made reachable while
-   * running. NOT `lastNonce = null`, which would re-enter {@link bearsOurNonce}'s "trust anything
-   * wearing my id" on a live install. One correction buys ONE renewal, never a standing exemption.
+   * ever. A LAUNCH escapes that on a record this process did not write; this is the same arm made
+   * reachable while running. NOT `lastNonce = null`, which would re-enter {@link bearsOurNonce}'s
+   * "trust anything wearing my id" on a live install. One correction buys ONE renewal, never more.
    */
   clockCorrected?: boolean;
   protocol?: number;
+}
+
+/** How many minted nonces a process remembers per mailbox ({@link LeaseSelf.mintedNonces}). */
+export const OWN_NONCES_MAX = 16;
+
+/**
+ * THE RING WITH ONE MORE NONCE, as a NEW array: a gate holding the previous one never sees it
+ * change under it. The oldest goes past {@link OWN_NONCES_MAX}; such an orphan reads as a sibling
+ * until it lapses, and is then this install's again ({@link decideLease}'s clone test).
+ */
+export function withMinted(ring: readonly string[] | undefined, nonce: string): string[] {
+  const next = [...(ring ?? []).filter((n) => n !== nonce), nonce];
+  return next.length > OWN_NONCES_MAX ? next.slice(next.length - OWN_NONCES_MAX) : next;
 }
 
 /**
@@ -613,12 +626,11 @@ export interface LeaseSelf {
  * fourth spelling is how they come to disagree about a single record.
  *
  * `lastNonce === null` is "trust anything wearing my id", the fresh-process arm, unchanged. With a
- * nonce armed it is the current one OR the pending one and NOTHING else: an unrecognised nonce is
- * never ours by default, which is the invariant inverted and would admit a real second organizer.
+ * nonce armed it is one this process wrote ({@link writtenByThisProcess}) and NOTHING else: an
+ * unrecognised nonce is never ours by default, which would admit a real second organizer.
  */
 export function bearsOurNonce(self: LeaseSelf, nonce: string): boolean {
-  if (self.lastNonce === null) return true;
-  return nonce === self.lastNonce || (self.pendingNonce != null && nonce === self.pendingNonce);
+  return self.lastNonce === null || writtenByThisProcess(self, nonce);
 }
 
 export type StandDownReason =
@@ -1007,12 +1019,12 @@ export function ownClockReading(
  * `bearsOurNonce` answers "may I treat this claim as mine", and with no armed nonce its answer is
  * yes: a fresh process trusts any claim wearing its id exactly once, which is what keeps own-role
  * resumption working. This asks the opposite question — "is this record evidence about the state I
- * am in now" — and with no armed nonce the honest answer is NO, because the record predates this
- * process's memory entirely.
+ * am in now" — and the answer is yes only for the nonce last acknowledged or one this process
+ * minted ({@link LeaseSelf.mintedNonces}); a record from before this process's memory is not.
  */
 export function writtenByThisProcess(self: LeaseSelf, nonce: string): boolean {
-  if (self.lastNonce === null) return false;
-  return nonce === self.lastNonce || (self.pendingNonce != null && nonce === self.pendingNonce);
+  return (self.lastNonce !== null && nonce === self.lastNonce)
+    || (self.mintedNonces?.includes(nonce) ?? false);
 }
 
 /**
@@ -1504,15 +1516,19 @@ export function decideLease(input: DecideLeaseInput): LeaseVerdict {
   /**
    * Is this claim OURS? The clone defence, unchanged in substance.
    *
-   * A claim bearing our install id whose nonce is not the one we wrote, and which is live, is
+   * A claim bearing our install id whose nonce is not one we wrote, and which is live, is
    * somebody else running a restored copy of us. `lastNonce` is memory-only, so a fresh process
    * trusts its own id exactly once — which is what keeps own-role resumption working after a
    * crash. The residual case of two clones starting simultaneously (both with a null nonce) is now
    * caught one cycle later by `compareStrength`'s total order, where it used to be a coin toss.
+   *
+   * LIVE BY RENEWAL, not by `election.live`: that set is relative to the folder, so a lone claim is
+   * live at any age and a copy nothing renews any more held its own install off for ever. A claim
+   * under our id that the folder shows nobody renewing is ours to resume (rule 3).
    */
   const isOurs = (c: OrganizerClaim): boolean => {
     if (c.installId !== self.installId) return false;
-    const clonedUs = !bearsOurNonce(self, c.nonce) && election.live.includes(c);
+    const clonedUs = !bearsOurNonce(self, c.nonce) && isClaimLive(c, election.clock, staleAfterMs);
     return !clonedUs;
   };
 
@@ -1672,6 +1688,30 @@ function reasonFor(c: OrganizerClaim): StandDownReason {
     : c.kind === "local" ? "organized_elsewhere:local"
       : c.kind === "mobile" ? "organized_elsewhere:mobile"
         : "organized_elsewhere:unknown";
+}
+
+/** The mailbox row's columns {@link resumesOwnClaim} reads, as every host's row names them. */
+export interface OwnClaimRow {
+  organizerRole: string;
+  organizeConsentedAt: Date | null;
+  organizedByInstallId: string | null;
+  organizerState: string | null;
+  organizerReleasedAt: Date | null;
+  releaseRequestedAt: Date | null;
+}
+
+/**
+ * MAY THIS READER TAKE ITS OWN CLAIM BACK WITHOUT A PRESS? — the row half of the self-race rule.
+ *
+ * Only when the holder the last look named is THIS install, that claim has stopped renewing, the
+ * person consented here and never stopped it (no release recorded, none asked). Then the gate runs
+ * with no takeover and rule 3 decides; a live claim under our id still stands us down there, and
+ * another install's stale claim never reaches this. A missing release column reads as a stop.
+ */
+export function resumesOwnClaim(row: OwnClaimRow, installId: string): boolean {
+  return row.organizerRole === "reader" && row.organizeConsentedAt != null
+    && row.organizedByInstallId === installId && row.organizerState === "stopped"
+    && row.organizerReleasedAt === null && row.releaseRequestedAt === null;
 }
 
 
@@ -2874,9 +2914,15 @@ export async function readMetaRecords(
     probe: { uid: number; recognised: (headerBlock: string) => boolean } | null;
   },
 ): Promise<MetaRecordsRead> {
+  /* A CONNECTION THAT DIED UNDER THE READ READ NOTHING: the STATUS failure is swallowed and imapflow's
+     FETCH yields nothing once the mailbox is gone, so the answer looks like an empty folder. */
+  const lookedAway = (): LeaseUnavailableError => new LeaseUnavailableError(
+    `the connection closed while ${META_FOLDER} was being read, so nothing was seen`, { op: "list_claims" },
+  );
   const count = await lastSequence(client, path, budget);
   if (count === undefined || count <= META_RECORDS_MAX_PER_FETCH) {
     const read = await readMetaFolderWindow(client, path, undefined, budget, { count });
+    if (connectionGone(client)) throw lookedAway();
     if (!read.truncated) {
       return {
         records: read.records.filter((r) => opts.keep(r.raw)),
@@ -2889,6 +2935,7 @@ export async function readMetaRecords(
     }
   }
   const listed = await enumerateMetaFolder(client, path, budget, { keep: opts.keep, probe: opts.probe });
+  if (connectionGone(client)) throw lookedAway();
   return {
     records: listed.records.map((r) => ({ ref: r.ref, raw: r.raw, internalDate: r.internalDate })),
     count: listed.count,
@@ -3524,7 +3571,7 @@ export interface LeaseGateInput {
    *
    * A caller's memory of its own identity moves with the WRITE, never with the ANSWER: a renewal
    * that commits and loses its response leaves this gate throwing and the caller on its previous
-   * nonce, which the next gate reads as a stranger's ({@link LeaseSelf.pendingNonce}). Called
+   * nonce, which the next gate reads as a stranger's ({@link LeaseSelf.mintedNonces}). Called
    * synchronously immediately before the APPEND, and returning nothing, so no arrangement of
    * failures leaves the folder carrying a nonce the caller was never told about.
    */
@@ -4043,9 +4090,10 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      a wall clock stepped back between them, left the superseded record "newest" and the defence
      read this install's own claim as a live clone — every claim expunged, no organizer left.
      `writtenByThisProcess`, never `bearsOurNonce`: with no armed nonce the latter admits every
-     record under our id and would hide a clone the next election is meant to see. */
+     record under our id and would hide a clone the next election is meant to see. Never the claim
+     just appended, which a caller's ring may already name. */
   const supersededOwn = (c: ClaimRecord): boolean =>
-    !isMalformed(c) && c.installId === self.installId && writtenByThisProcess(self, c.nonce);
+    !isMalformed(c) && c.installId === self.installId && c.nonce !== nonce && writtenByThisProcess(self, c.nonce);
   const confirmed = decideLease({
     self: { ...self, lastNonce: nonce },
     claims: verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c)),

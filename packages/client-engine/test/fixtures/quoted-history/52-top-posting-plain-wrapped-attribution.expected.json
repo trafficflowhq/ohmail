@@ -1,0 +1,36 @@
+{
+  "id": "52",
+  "file": "52-top-posting-plain-wrapped-attribution.eml",
+  "shape": "top-posting-plain-wrapped-attribution",
+  "description": "Gmail plain text only, top-posted: the attribution line is hard-wrapped across two lines ('... David Placeholder <' / 'address> wrote:') before the '>' quote",
+  "client": "gmail_wrapped",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "On Sat, Oct 10, 2026 at 9:00 AM David Placeholder <",
+      "historyStartLineNormalized": "On Sat, Oct 10, 2026 at 9:00 AM David Placeholder <"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "historyStartLine is the first of the two attribution lines."
+}

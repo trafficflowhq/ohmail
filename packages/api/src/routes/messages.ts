@@ -219,7 +219,8 @@ export const messageRoutes: Route[] = [
      * `POST /messages/:id/restore` — put a deleted message back (mail 0099); the other end of
      * `DELETE`. It writes desired state only — the `trashed_from` origin recorded at the delete,
      * resolved against live folders, INBOX fallback — and does not clear the tombstone: the
-     * mirror says the message is back when the server has it back. `cost: "work"`: rows plus a
+     * mirror says the message is back when the server has it back. A delete whose move has not
+     * landed is cancelled instead (tombstone cleared, `pending: false`). `cost: "work"`: rows plus a
      * queued IMAP move. `idempotent: true`, and the replaced argument was wrong about one caller:
      * a second press correctly meets 409 `not_in_trash`, but a replay of a lost response would
      * read as "Couldn't restore" about a restore already committed — the key tells them apart.

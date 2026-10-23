@@ -10,7 +10,7 @@
  * presented-only rep routes past the gate through the sender sheet's `planScreeningChange`/`dispatchScreeningChange`
  * (`rule_create` + `applyRetro`), awaited so the toast reflects what the server returned.
  */
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import {
   FOLDER_OF_VIEW,
@@ -48,6 +48,7 @@ import {
   type ScreenerSenderDTO,
   type ScreenerWaitingSenderDTO,
   type UnsubscribeClaim,
+  type AbandonedMutation,
   domainOfAddress,
   ruleMatchKey,
   unsubscribeClaim,
@@ -85,6 +86,23 @@ import { activeFormatZone } from "./locale";
 import { useAppLocale } from "./LocaleContext";
 import type { UndoToastFn } from "./undo-door";
 import type { ReleasePressInput } from "./routing-undo";
+import { givenUpRowIds } from "./screener-given-up";
+
+/**
+ * ONE SUBSCRIBER PER ENGINE for the abandoned list ({@link givenUpRowIds}): a module-level closure
+ * over the engine alone, so React keeps one subscription across renders and nothing here pins a
+ * render's frame (`render-scope-census.test.ts`).
+ */
+const ABANDONED_SUBSCRIBERS = new WeakMap<OhmailEngine, (cb: () => void) => () => void>();
+function abandonedSubscriber(engine: OhmailEngine): (cb: () => void) => () => void {
+  let subscribe = ABANDONED_SUBSCRIBERS.get(engine);
+  if (subscribe === undefined) {
+    subscribe = (cb) => engine.subscribe(cb);
+    ABANDONED_SUBSCRIBERS.set(engine, subscribe);
+  }
+  return subscribe;
+}
+const NO_ABANDONED: readonly AbandonedMutation[] = [];
 
 /**
  * THE SHELL'S ROUTING WINDOW, for the release presses — the one Move's rule change is held in
@@ -123,6 +141,8 @@ export interface DecideOptions {
    * second answer. Absent, the decide carries none, as every press from the list always has.
    */
   applyRetro?: boolean;
+  /** A sheet press's letter outside the decide's bag: moved once the decision stands. */
+  seedMove?: Extract<EngineMutation, { kind: "move" }>;
 }
 
 /**
@@ -154,6 +174,8 @@ interface PendingEntry {
   quiet: boolean;
   /** The sheet's past-mail answer, when the press came from the sheet — {@link DecideOptions}. */
   applyRetro?: boolean;
+  /** The sheet's letter outside the bag — {@link DecideOptions}. */
+  seedMove?: Extract<EngineMutation, { kind: "move" }>;
   /** The Undo capsule this decision is offered under, shared by a bulk's rows (`commit` ends it). */
   offer?: { ids: readonly string[]; ends: AbortController };
   /**
@@ -356,7 +378,8 @@ export interface ScreenerState {
    * So a refusal is a STATE, not an absence: the row returns carrying it, it survives the toast, and is
    * cleared when the row is decided again. The release verbs (`allowScreened`, both `notSpam` halves)
    * carried the identical defect with no undo window; they report through the same mark, keyed so a
-   * PARTIAL release still marks the row that comes back (`refusalKeys`).
+   * PARTIAL release still marks the row that comes back (`refusalKeys`). A decision the outbox gave
+   * up on after it was queued carries the same mark while its record stands (`screener-given-up.ts`).
    */
   refused: (id: string) => boolean;
   /** Commit every pending decision now (route/segment changes). */
@@ -711,6 +734,9 @@ export function useScreenerState(
     [queueReader, version, locale, ownAddresses, queueSettled],
   );
   const s = store.current;
+  /* THE DECISIONS THE OUTBOX GAVE UP ON, so the row a given-up decision returns to says so — see
+     {@link givenUpRowIds}. Read off the engine's own list, never a copy kept here. */
+  const abandonedNow = useSyncExternalStore(abandonedSubscriber(engine), () => engine.abandoned(), () => NO_ABANDONED);
 
   /* THE QUEUE PAST ITS FIRST PAGE — asked a page per press, held here and never in the mirror.
      Keyed to the first page's `ask`: a new first page restarts the walk from its own cursor. */
@@ -1084,6 +1110,7 @@ export function useScreenerState(
     heldIds: entry.sender.derived === true && entry.read ? heldMessageIds(entry.sender) : [],
     from: { name: entry.sender.from.name ?? null, address: entry.sender.from.address },
     ...(entry.applyRetro !== undefined ? { applyRetro: entry.applyRetro } : {}),
+    ...(entry.seedMove ? { seed: { id: entry.seedMove.messageId, folder: entry.seedMove.folder, from: entry.seedMove.from ?? null } } : {}),
     // A card press: the INBOX letters its scope shows, the domain's other senders' included (`reachOf`).
     ...(entry.applyRetro === undefined && entry.sender.derived === true
       ? { inboxIds: reachOf(entry.sender, entry.scope).inboxIds }
@@ -1145,6 +1172,13 @@ export function useScreenerState(
     const cardMoves: Array<Extract<EngineMutation, { kind: "move" }>> = cardTo === FOLDER_OF_VIEW.ohbox
       ? []
       : cardFiled.map((m) => ({ kind: "move" as const, messageId: m, folder: cardTo, from: FOLDER_OF_VIEW.ohbox }));
+    /* A SHEET PRESS'S LETTER OUTSIDE THE BAG, while it is still where it was pressed: marked as the
+       press's (`pressRule`), which writes the sender's rule through the decision. */
+    const seedMoves: Array<Extract<EngineMutation, { kind: "move" }>> = (d.seed ? [d.seed] : [])
+      .filter((x) => { const m = engine.read().get<EngineMessage>("message", x.id); return m !== undefined && (x.from === null || m.folder === x.from); })
+      .map((x) => ({
+        kind: "move" as const, messageId: x.id, folder: x.folder as Folder, ...(x.from !== null ? { from: x.from as Folder } : {}), pressRule: true as const,
+      }));
 
     // Where is the representative, actually? Read the RAW mirror. The queue
     // is built from the projected reader, in which an active-undecided
@@ -1207,8 +1241,9 @@ export function useScreenerState(
         // A wait keeps the sender out as an answer does: the decision still stands.
         settleOnward(pressVerdict(res).kind !== "refused");
         if (res.status === "rolled_back") { refuse(d, res.error); return; }
-        // The card's INBOX letters, by id, once the decision stands: refused or replaced, none moves.
-        if (res.status !== "superseded") for (const mv of cardMoves) void engine.mutate(mv);
+        // The card's INBOX letters and the sheet's letter, by id, once the decision stands: refused
+        // or replaced, none moves.
+        if (res.status !== "superseded") for (const mv of [...cardMoves, ...seedMoves]) void engine.mutate(mv);
         /* The organizer took it, and will carry it out later. `pendingWith`
          * is present only where the server queued the decision instead of
          * applying it: nothing moved, no rule written, the mail still in
@@ -1242,11 +1277,12 @@ export function useScreenerState(
         const subject = sender.scopes[d.scope].messages;
         const before = shownAt(subject, dest);
         let refused: Parameters<typeof organizerRefusalOf>[0] = undefined;
-        // A card press moves the INBOX letters it showed; a sheet's backlog is the server pass's.
-        void dispatchScreeningChange(plan, cardMoves, (m) => engine.mutate(m).then((r) => {
+        // A card press moves the INBOX letters it showed, a sheet press its own letter; a sheet's
+        // backlog is the server pass's. Beside a decide they wait for its answer.
+        void dispatchScreeningChange(plan, [...cardMoves, ...seedMoves], (m) => engine.mutate(m).then((r) => {
           if (r.status === "rolled_back" && refused === undefined) refused = r.error;
           return r;
-        }), card ? cardFiled.length : 0, card).then((key) => {
+        }), card ? cardFiled.length : seedMoves.length, card || plan.ruleState === "promoted").then((key) => {
           done();
           // Replaced by a newer press about this sender: that press says the sentence.
           if (key === null) return;
@@ -1366,6 +1402,7 @@ export function useScreenerState(
       scope: opts.scope,
       quiet: opts.quiet === true,
       ...(opts.applyRetro !== undefined ? { applyRetro: opts.applyRetro } : {}),
+      ...(opts.seedMove ? { seedMove: opts.seedMove } : {}),
       at: Date.now(),
       outTimer: setTimeout(() => {
         s.out.delete(id);
@@ -2127,6 +2164,10 @@ export function useScreenerState(
         && !pinnedKeys.has(senderKey(x.from.address)))
       .map((x) => ({ sender: x, pinned: false })),
   ];
+  /* Every row `refused` may be asked about. Empty unless something was given up on, which is rare. */
+  const givenUp = givenUpRowIds(abandonedNow, abandonedNow.length === 0
+    ? []
+    : [...waiting, ...segments.screenedOut, ...spam.map((r) => r.sender)]);
 
   /**
    * WHAT A DECIDING VERB DOES ON A MAILBOX THIS INSTALL DOES NOT ORGANIZE — say so, do nothing. ONE sentence for all
@@ -2325,7 +2366,9 @@ export function useScreenerState(
     screenedOut: segments.screenedOut,
     spam,
     isExiting: (id) => s.pending.has(id),
-    refused: (id) => s.refused.has(id),
+    // The wire refused this row's decision, or the outbox gave it up: either way it did not land. A
+    // row decided again says nothing about the old decision while the new one is in its window.
+    refused: (id) => s.refused.has(id) || (givenUp.has(id) && !s.pending.has(id)),
     bodyStall,
     /**
      * THE SEVEN VERBS THAT WRITE, every one behind a wall — but not the SAME wall, and the split is the point rather

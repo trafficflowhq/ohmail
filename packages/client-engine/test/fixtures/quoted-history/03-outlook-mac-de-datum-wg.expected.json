@@ -1,0 +1,44 @@
+{
+  "id": "03",
+  "file": "03-outlook-mac-de-datum-wg.eml",
+  "shape": "outlook-mac-de-datum-wg",
+  "description": "Outlook for Mac (new), German: body-colour header block (Von:/Datum: '... um HH:MM'/An:/Betreff: WG: ...) with no border and no quote bar, the forwarded message below it, and a further Outlook Von: block below that",
+  "client": "outlook_mac_new",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Ben,",
+      "visibleLastLine": "Clara Muster",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "#mail-editor-reference-message-container",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Clara Muster"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The reported shape (synthetic re-creation, nothing from the real message): nothing is indented or coloured, only the header labels mark the history."
+}

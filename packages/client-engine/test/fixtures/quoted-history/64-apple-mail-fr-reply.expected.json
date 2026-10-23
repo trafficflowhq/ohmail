@@ -1,0 +1,43 @@
+{
+  "id": "64",
+  "file": "64-apple-mail-fr-reply.eml",
+  "shape": "apple-mail-fr-reply",
+  "description": "Apple Mail, French: 'Le 22 oct. 2026 à 09:14, Name <address> a écrit :'",
+  "client": "apple",
+  "ui_language": "fr",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Léa Modèle"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Bonjour Léa,",
+      "visibleLastLine": "Atelier Exemple SARL",
+      "historyStartLine": "> Le 11 oct. 2026 à 14:00, Léa Modèle <lea.modele@example.org> a écrit :",
+      "historyStartLineNormalized": "Le 11 oct. 2026 à 14:00, Léa Modèle <lea.modele@example.org> a écrit :"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Le 11 oct. 2026 à 14:00, Léa Modèle <lea.modele@example.org> a écrit :",
+      "visibleFirstText": "Bonjour Léa,",
+      "visibleLastText": "Atelier Exemple SARL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

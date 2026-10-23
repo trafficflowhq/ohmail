@@ -1,0 +1,43 @@
+{
+  "id": "20",
+  "file": "20-gmail-de-forward-only.eml",
+  "shape": "gmail-de-forward-only",
+  "description": "Gmail web, German: a bare forward, nothing typed: '---------- Weitergeleitete Nachricht ---------' with Von:/Date:/Subject:/To: (Gmail mixes German and English labels)",
+  "client": "gmail",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": true,
+    "text": {
+      "visibleFirstLine": null,
+      "visibleLastLine": null,
+      "historyStartLine": "---------- Weitergeleitete Nachricht ---------",
+      "historyStartLineNormalized": "---------- Weitergeleitete Nachricht ---------"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "---------- Weitergeleitete Nachricht ---------",
+      "visibleFirstText": null,
+      "visibleLastText": null
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The forwarded message is the whole content: folding it would leave an empty pane."
+}

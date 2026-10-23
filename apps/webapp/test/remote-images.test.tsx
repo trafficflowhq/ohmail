@@ -1032,11 +1032,34 @@ describe("a picture the desktop fetched is never fetched again", () => {
     expect(c.proxyFor("m2")).not.toBe(c.proxyFor("m1"));
     expect(c.proxyFor("m1")(ICONS[0]!)).toContain("/api/img?");
     allowed = false;
+    // The answer is taken once per task (the next test); the next task asks again.
+    await Promise.resolve();
     expect(c.proxyFor("m1")(ICONS[0]!), "a cached proxy stopped asking mayRead").toBe("");
     allowed = true;
+    await Promise.resolve();
     for (let i = 0; i < 300; i += 1) c.proxyFor(`other-${i}`);
     expect(c.proxyFor("m1")(ICONS[0]!), "the bounded cache lost a working proxy")
       .toContain("/api/img?");
+  });
+
+  /**
+   * ONE ANSWER PER TASK. A newsletter names thirty pictures, each minted through the proxy in the
+   * one sanitize pass, and each used to read and parse the account cookie again. Mutations: drop the
+   * memo → thirty asks; never clear it → the second task's flip is not seen.
+   */
+  it("mayRead is asked once per task, however many pictures one pass mints", async () => {
+    let allowed = true;
+    let asked = 0;
+    const chrome = useChrome(undefined, () => { asked += 1; return allowed; });
+    await render(h(chrome.Probe));
+    const c = chrome.current!;
+    asked = 0;
+    for (let i = 0; i < 30; i += 1) expect(c.proxyFor(`m${i % 3}`)(`${ICONS[0]!}?n=${i}`)).toContain("/api/img?");
+    expect(asked, "the predicate was asked per picture").toBe(1);
+    allowed = false;
+    await Promise.resolve();
+    expect(c.proxyFor("m1")(ICONS[0]!), "the next task kept the last task's answer").toBe("");
+    expect(asked).toBe(2);
   });
 
   /**

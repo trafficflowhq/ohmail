@@ -224,6 +224,7 @@ import { useOrganizerLines } from "./organizer-lines";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
+import { isKeptPile, KeptPiles } from "./kept-piles";
 import { lazyView } from "./lazy-view";
 import { ViewFailCard } from "./ViewFailCard";
 import {
@@ -397,6 +398,18 @@ export function mirrorSuggestionOfEngine(engine: { read(): Parameters<typeof mir
  * not — the opposite of what the row appears to offer. One message is the one-element case
  * of the same rule, so there is one derivation and no branch.
  */
+/** One number per engine instance, for the kept piles' key: a new mailbox is a new mount. */
+const engineSerials = new WeakMap<object, number>();
+let engineSerialNext = 1;
+function engineSerialOf(engine: object): number {
+  let n = engineSerials.get(engine);
+  if (n === undefined) {
+    n = engineSerialNext++;
+    engineSerials.set(engine, n);
+  }
+  return n;
+}
+
 function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
   const lists = ids.map((id) => reader.get<EngineMessage>("message", id)?.labels ?? []);
   if (lists.length === 0) return [];
@@ -1951,7 +1964,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     activeRailId, commands, effectiveView, mobileTitle, narrowNow, paletteRef, pushTier, railGroupsWithHints, settingsSection,
-    railNow, railRef, readerRef, tagGroup,
+    inPiles, railNow, railRef, readerRef, tagGroup,
   } = useShellKeys({
     engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
@@ -2510,13 +2523,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 whole-tab "Application error". Keyed on `effectiveView` so navigating to another
                 pile — still reachable, because the rail survived — clears a failed view. */}
             <ViewBoundary
-              key={effectiveView}
+              /* AMONG THE PILES the key is the group's and the engine's (`kept-piles.tsx`): News and
+                 Receipts stay mounted while the reader moves between the three, each under a
+                 boundary of its own, and the Ohbox under its own too. Any other view, or another
+                 mailbox's engine, is a new key, which unmounts them. */
+              key={inPiles ? `piles:${engineSerialOf(engine)}` : effectiveView}
               onError={(error) => console.error("[view] render failed", effectiveView, error)}
               /* The card carries the build and the view, and can copy them with the error's
                  class — the facts a report needs, and nothing a message could leak. */
               fallback={(error) => <ViewFailCard view={effectiveView} error={error} />}
             >
             {effectiveView === "ohbox" ? (
+              <ViewBoundary
+                key="ohbox"
+                onError={(error) => console.error("[view] render failed", "ohbox", error)}
+                fallback={(error) => <ViewFailCard view="ohbox" error={error} />}
+              >
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
@@ -2646,9 +2668,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 older={older}
                 onMarkAllRead={markAllRead}
               />
+              </ViewBoundary>
             ) : null}
 
-            {effectiveView === "reads" ? (
+            {inPiles ? (
+              <KeptPiles
+                active={isKeptPile(effectiveView) ? effectiveView : null}
+                onError={(pile, error) => console.error("[view] render failed", pile, error)}
+                fallback={(pile, error) => <ViewFailCard view={pile} error={error} />}
+                piles={{
+                  reads: (
               <ReadsView
                 /* The pair every list states its counts and its emptiness from — see
                    `MailState.settled` and `MailState.owed`. */
@@ -2682,9 +2711,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />
-            ) : null}
-
-            {effectiveView === "receipts" ? (
+                  ),
+                  receipts: (
               <ReceiptsView
                 /* The pair every list states its counts and its emptiness from — see
                    `MailState.settled` and `MailState.owed`. */
@@ -2728,6 +2756,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
+              />
+                  ),
+                }}
               />
             ) : null}
 

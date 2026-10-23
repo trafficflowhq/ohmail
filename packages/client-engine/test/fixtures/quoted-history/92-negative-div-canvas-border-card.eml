@@ -1,0 +1,10 @@
+From: Example Helpdesk <news@example.com>
+To: Ana Example <ana.example@example.com>
+Subject: Example Helpdesk Weekly
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh92@mail.example.org>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><div style="max-width:600px;margin:0 auto;font-family:Arial,sans-serif"><h1>Example Helpdesk Weekly</h1><p>This week: how our support team answers your tickets.</p><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0 0 0"><p><b>From:</b> Support Desk &lt;desk@example.com&gt;<br><b>Sent:</b> Monday, October 19, 2026 9:00 AM<br><b>To:</b> A Customer &lt;customer@example.org&gt;<br><b>Subject:</b> Your ticket is solved</p></div><p>A reply card like this one is what our template builder draws for you.</p><p>Read the whole story on our blog.</p></div></body></html>

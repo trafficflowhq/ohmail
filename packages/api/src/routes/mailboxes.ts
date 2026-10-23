@@ -331,6 +331,43 @@ export const mailboxRoutes: Route[] = [
     },
   },
   {
+    method: "GET",
+    pattern: "/mailboxes/:id/filings",
+    relay: true,
+    // `read`: rows only — counts, folder names, instants and classes of the filings that wait.
+    cost: "read",
+    handler: async (req, deps, params) =>
+      jsonResponse(await mailbox(deps).readFilings(serviceContext(deps, req), params.id!)),
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/filings/retry",
+    relay: true,
+    // `work`, no step-up: it re-arms the schedule and rings the doorbell; the worker moves the mail.
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps, params) => {
+      const b = await readBody<Record<string, unknown>>(req);
+      const r = await mailbox(deps).retryFilings(serviceContext(deps, req), params.id!, { folder: b.folder });
+      return jsonResponse(r, { status: 202 });
+    },
+  },
+  {
+    method: "POST",
+    pattern: "/mailboxes/:id/filings/leave",
+    relay: true,
+    // `work`, no step-up: desired := observed with a move change row each, so it echoes the seq.
+    cost: "work",
+    replay: "guarded",
+    handler: async (req, deps, params) => {
+      const b = await readBody<Record<string, unknown>>(req);
+      const { seq, ...r } = await mailbox(deps).leaveFilings(
+        serviceContext(deps, req), params.id!, { folder: b.folder, through: b.through },
+      );
+      return jsonResponse(r, seq === null ? {} : { seq });
+    },
+  },
+  {
     method: "POST",
     // RENAMED from `/takeover` (mail 0083). "Takeover" was true of the only case that existed —
     // wresting a mailbox back from another install — and is false of the case that is now the

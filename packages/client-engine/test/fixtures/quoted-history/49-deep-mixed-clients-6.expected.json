@@ -1,0 +1,48 @@
+{
+  "id": "49",
+  "file": "49-deep-mixed-clients-6.eml",
+  "shape": "deep-mixed-clients-6",
+  "description": "Six levels, seven clients: Gmail (English UI) over Zimbra over Outlook Windows over Apple Mail over OWA (English UI, German content) over Outlook for Mac over Thunderbird; quote styles nest inside each other",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 6,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example",
+    "Ben Sample",
+    "Ana Example",
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Herr Sample,",
+      "visibleLastLine": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin",
+      "historyStartLine": "On Sun, Oct 11, 2026 at 1:27 PM Ben Sample <ben.sample@example.org> wrote:",
+      "historyStartLineNormalized": "On Sun, Oct 11, 2026 at 1:27 PM Ben Sample <ben.sample@example.org> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Sun, Oct 11, 2026 at 1:27 PM Ben Sample <ben.sample@example.org> wrote:",
+      "visibleFirstText": "Hallo Herr Sample,",
+      "visibleLastText": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Labels switch language mid-chain (From:/Sent: inside a German thread). The outermost marker is Gmail's; everything below it is one history."
+}

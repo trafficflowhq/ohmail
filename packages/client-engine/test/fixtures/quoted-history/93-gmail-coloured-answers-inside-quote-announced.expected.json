@@ -1,0 +1,39 @@
+{
+  "id": "93",
+  "file": "93-gmail-coloured-answers-inside-quote-announced.eml",
+  "shape": "gmail-coloured-answers-inside-quote-announced",
+  "description": "Gmail, English: the lead says the answers are below in red, and they are typed in red inside the quote",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "Yes, it is item 3 of the offer.",
+      "Yes, please leave it at the front desk."
+    ],
+    "trailingTail": null
+  }
+}

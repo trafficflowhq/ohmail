@@ -5,6 +5,8 @@ import {
   OhmailEngine,
   purgeLegacyMirror,
   sessionEndedResponse,
+  SYNC_ANSWER_TIMEOUT_MS,
+  SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
 import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
@@ -237,11 +239,17 @@ export function createEngine(
        * goes to the erased door, and the adapter is handed the dead session's refusal instead — the
        * 410 reads to it as a cursor expiry, whose remedy is a re-bootstrap against a gone account.
        */
+      /*
+       * `syncDeadlines` — A DRAIN READ ON A DEAD CONNECTION ENDS. Sent after sleep or a network
+       * change, a `/sync` or `/sync/snapshot` could wait for ever, and every later drain and replay
+       * with it; past the deadline it is a retryable `timeout` the scheduler counts as a failed drain.
+       */
       adapter: gate.guard(
         new HttpAdapter({
           baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
           headers: () => ({ ...ERASED_DECLARATION }),
           fetch: erasedAwareFetch(sessionFetch, sessionEndedResponse),
+          syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
         }),
       ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),

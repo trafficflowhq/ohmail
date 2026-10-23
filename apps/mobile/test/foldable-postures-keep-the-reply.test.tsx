@@ -12,7 +12,18 @@ import { derivePosture, type FoldFeature, type Posture } from "../src/ui/posture
 import { holdReader } from "../src/ui/reader-held";
 import { flushLayout, holdLayout, mount, styleOf } from "./_rendered-dom";
 
-vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+/* Android's system Back: the newest listener first, until one takes the press; none takes it, the app leaves. */
+const back = vi.hoisted(() => ({ subs: [] as (() => boolean)[] }));
+const pressBack = (): boolean => [...back.subs].reverse().some((fn) => fn());
+vi.mock("react-native", async () => ({
+  ...(await import("./_rendered-dom")).rnDom,
+  BackHandler: {
+    addEventListener: (_e: string, fn: () => boolean) => {
+      back.subs.push(fn);
+      return { remove: () => { back.subs = back.subs.filter((f) => f !== fn); } };
+    },
+  },
+}));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 16, left: 0, right: 0 }) }));
 const nav = vi.hoisted(() => ({
   push: [] as string[], replace: [] as string[], dismissTo: [] as string[], events: [] as string[],
@@ -249,5 +260,32 @@ describe("the pushed reader hands itself to the pane and draws nothing after (R4
     expect(nav.dismissTo).toEqual([]);
     expect(r.el.querySelector('[data-testid="reader"]')).not.toBeNull();
     r.unmount();
+  });
+});
+
+describe("system Back closes the reading pane before it leaves the app", () => {
+  it("on the inner screen: the first Back closes the open reader, the next one is the system's", () => {
+    setPose("inner");
+    const r = mount(<Pair tick={tick++} />);
+    expect(pressBack(), "Back with a reader open beside the list").toBe(true);
+    expect(nav.params.open, "the reader closed").toBe("");
+    r.render(<Pair tick={tick++} />);
+    expect(pressBack(), "nothing open: Back leaves").toBe(false);
+    r.unmount();
+  });
+
+  it("a screen over the pair (Search, a pushed route) answers Back itself; one pane leaves it to the pushed reader", () => {
+    setPose("inner");
+    nav.focused = false;
+    const r = mount(<Pair tick={tick++} />);
+    expect(pressBack()).toBe(false);
+    expect(nav.params.open, "the covered pair keeps its reading").toBe("m1");
+    r.unmount();
+    nav.focused = true;
+    nav.params = { open: "" };
+    setPose("outer");
+    const one = mount(<Pair tick={tick++} />);
+    expect(pressBack()).toBe(false);
+    one.unmount();
   });
 });

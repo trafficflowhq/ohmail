@@ -472,6 +472,8 @@ const READ = [
   "GET /kb/:id",
   "GET /mailboxes",
   "GET /mailboxes/:id",
+  // The waiting filings of the caller's own mailbox: one grouped read of stored rows, no dial.
+  "GET /mailboxes/:id/filings",
   /* Mail 0094 — the mirrored settings of a mailbox another install organizes. `read` on
      `GET /mailboxes/:id`'s exact terms, and NOT on `GET /mailboxes/:id/organizer`'s: that one is
      `connection` because it opens an IMAP socket to the user's provider, and the argument stated
@@ -947,7 +949,9 @@ describe("the route table declares what every handler causes", () => {
     // `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
     // 252 -> 253: `GET /screener/waiting/count`, the decide step's count, a `read`, so it joins
     // the exempt list above and this total together.
-    expect(apiRoutes).toHaveLength(253);
+    // 253 -> 256: the waiting filings — the GET is `read` and joins the exempt list above, the two
+    // presses are `work` and join the gated remainder.
+    expect(apiRoutes).toHaveLength(256);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1177,7 +1181,9 @@ describe("the route table declares what every handler causes", () => {
     // `UNAUTHENTICATED` grow by four each, the remainder does not move.
     // 252 -> 253 with the decide step's waiting count, a `read`: the total and `READ` grow by one
     // each, the remainder does not move.
-    expect(gated.length).toBe(253 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 253 -> 256 with the waiting filings: the GET joins `READ`, the two presses grow the
+    // remainder by two.
+    expect(gated.length).toBe(256 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { ACCOUNT_RULE_KEY_LOCK_CLASS, rules as rulesTbl } from "./schema-mail.js";
 import { recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
@@ -135,7 +135,8 @@ export async function convergeRuleKey(
 }
 
 /** A `rules` write under a key, minus the key columns {@link writeRuleUnderKey} owns. */
-export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "accountId" | "kind" | "match" | "subjectContains" | "bodyContains">;
+export type RuleRowWrite = Omit<Partial<typeof rulesTbl.$inferInsert>, "id" | "accountId" | "kind" | "match" | "subjectContains" | "bodyContains" | "retroDoneAt">
+  & { retroDoneAt?: Date | null | SQL };
 
 /** What {@link writeRuleUnderKey} did under the key. `lastSeq` is the last delta it recorded, if any. */
 export interface KeyWriteResult {
@@ -223,4 +224,13 @@ export function keptProvenance(own: string, inferred: "promoted"): string {
   const a = PROVENANCE_ORDER.indexOf(own);
   const b = PROVENANCE_ORDER.indexOf(inferred);
   return a !== -1 && a < b ? own : inferred;
+}
+
+/**
+ * `retro_done_at` for a press that moves a rule's routing without asking for past mail: a walk still
+ * owed ends now, so what it has not filed stays where it is; a finished or never-asked one keeps its value.
+ */
+export function endOwedWalk(tx: unknown, now: Date): SQL {
+  return sql`case when ${rulesTbl.retroRequestedAt} is not null and ${rulesTbl.retroDoneAt} is null
+    then ${dialect(tx).ts(now)} else ${rulesTbl.retroDoneAt} end`;
 }

@@ -239,8 +239,12 @@ export function StreamCard({
      * transition on collapse; this branch also runs under jsdom.
      */
     if (showViewer) {
-      void clip.offsetHeight;
-      clip.style.maxHeight = "";
+      // The pin's start registers only when there is a pin to transition from: a read here with
+      // no inline `max-height` was a forced layout per mounted viewer card, for nothing.
+      if (clip.style.maxHeight) {
+        void clip.offsetHeight;
+        clip.style.maxHeight = "";
+      }
       return;
     }
     const card = cardRef.current;

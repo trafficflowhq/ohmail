@@ -20,10 +20,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FOLDER_OF_VIEW,
+  LANDING_HOLD_MS,
+  createLandingHold,
   createRoutingWindow,
   planScreenCommit,
   routingIntentsKey,
   routingSubject,
+  type EngineMessage,
   type EngineMutation,
   type EntityReader,
   type Folder,
@@ -52,6 +55,7 @@ import {
 } from "./sender-screening";
 
 import { browserOffline, queuedWaitOf } from "./queued-sentence";
+import { writtenRuleIds } from "./press-verdict";
 
 export { UNDO_MS };
 
@@ -183,7 +187,12 @@ export interface RoutingUndoDeps {
   now?: () => number;
   /** `false` on a surface with no server to carry a rule to — the demo. */
   enabled?: boolean;
+  /** The engine's change feed: a committed press's held rows are re-read on each change. */
+  subscribe?: (listener: () => void) => () => void;
 }
+
+const samePlaces = (a: ReadonlyMap<string, Folder>, b: ReadonlyMap<string, Folder>): boolean =>
+  a.size === b.size && [...a].every(([id, f]) => b.get(id) === f);
 
 const NO_PLACES: ReadonlyMap<string, Folder> = new Map();
 
@@ -211,6 +220,24 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
   const screens = useRef(new Map<string, { changed: string[]; press?: ScreenPressInput }>());
   /** A release's in-memory half, by press id: whom its answer is handed back to. */
   const releases = useRef(new Map<string, ReleasePressInput["after"]>());
+  /**
+   * A SHEET PRESS'S LANDING, HELD PAST THE WINDOW: the rows its rule's walk will file stay at the
+   * place until they are filed, the walk reads done, the write is refused or undone, or the hold's
+   * TTL ends (`landing-hold.ts`). The window's own open set is shown beside it.
+   */
+  const landingHold = useMemo(() => createLandingHold(), []);
+  const openPlaces = useRef<ReadonlyMap<string, Folder>>(NO_PLACES);
+  const clock = (): number => (latest.current.now ?? Date.now)();
+  const recompute = useCallback((): void => {
+    const held = landingHold.size() === 0 ? null : landingHold.placesFor(latest.current.read(), clock()).places;
+    let next: ReadonlyMap<string, Folder> = openPlaces.current;
+    if (held && held.size > 0) {
+      const merged = new Map(held);
+      for (const [id, f] of openPlaces.current) merged.set(id, f);
+      next = merged;
+    }
+    setPlaces((prev) => (samePlaces(prev, next) ? prev : next.size === 0 ? NO_PLACES : next));
+  }, [landingHold]);
 
   /**
    * ONE COORDINATOR, ON ITS OWN CHANNEL. The journal is per ORIGIN, so a second tab's launch
@@ -271,6 +298,8 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
         const outcome: ScreenCommitOutcome = {
           worst: worstStatus(results), results, mutations, changed: held?.changed ?? [],
         };
+        landingHold.settle(i.id, { worst: outcome.worst, ruleIds: writtenRuleIds(mutations, results) });
+        recompute();
         if (held?.press?.after) { held.press.after(outcome); return; }
         // A replayed press has nobody to read its answer back to; a refusal is still said.
         if (outcome.worst === "rolled_back") latest.current.toast(latest.current.copy.gone);
@@ -305,9 +334,27 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
         if (!folder) continue;
         for (const id of i.messageIds) next.set(id, folder);
       }
-      setPlaces(next);
+      openPlaces.current = next;
+      recompute();
     },
   }), [coordinator]);
+
+  /* THE HELD ROWS ARE RE-READ ON EVERY ENGINE CHANGE, and once past the TTL: a row filed or moved
+     leaves, a walk read done returns the rest to where they are. Nothing to do while nothing is held. */
+  useEffect(() => {
+    // Read once, at mount: the engine is the shell's for its whole life.
+    const subscribe = latest.current.subscribe;
+    if (!subscribe) return undefined;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const reread = (): void => {
+      recompute();
+      if (timer === null && landingHold.size() > 0) {
+        timer = setTimeout(() => { timer = null; reread(); }, LANDING_HOLD_MS + 1000);
+      }
+    };
+    const off = subscribe(() => { if (landingHold.size() > 0) reread(); });
+    return () => { off(); if (timer !== null) clearTimeout(timer); };
+  }, [landingHold, recompute]);
 
   /**
    * LEAVING COMMITS, and the boot finishes what a killed tab started. `pagehide` rather than
@@ -354,9 +401,18 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
         at: (latest.current.now ?? Date.now)(),
       };
       screens.current.set(press.id, { changed: [], press });
+      const place = FOLDER_OF_VIEW[press.dest];
+      const read = latest.current.read();
+      landingHold.hold({
+        pressId: press.id, subject: routingSubject(intent), place: place!, at: intent.at,
+        rows: place ? press.messageIds.flatMap((id) => {
+          const m = read.get<EngineMessage>("message", id);
+          return m ? [{ id, from: m.physicalFolder ?? m.folder }] : [];
+        }) : [],
+      });
       const out = window_.open(intent);
       return out;
-    }, [window_]),
+    }, [window_, landingHold]),
     holdRelease: useCallback((press: ReleasePressInput): RoutingOpen => {
       const intent: ReleaseIntent = {
         v: 4,
@@ -394,7 +450,12 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
       if (!out.held) notes.current.delete(press.id);
       return out;
     }, [window_]),
-    undo: useCallback((subject: string) => window_.undo(subject), [window_]),
+    undo: useCallback((subject: string) => {
+      landingHold.drop(subject);
+      const out = window_.undo(subject);
+      recompute();
+      return out;
+    }, [window_, landingHold, recompute]),
     restart: useCallback((subject: string) => window_.restart(subject), [window_]),
   };
 }

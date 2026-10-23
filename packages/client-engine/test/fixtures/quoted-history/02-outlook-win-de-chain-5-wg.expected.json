@@ -1,0 +1,47 @@
+{
+  "id": "02",
+  "file": "02-outlook-win-de-chain-5-wg.eml",
+  "shape": "outlook-win-de-chain-5-wg",
+  "description": "Outlook for Windows, German: a WG: forward on top of a 5-level flat AW: chain; five border-top Von: blocks one after another, all at the same depth",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "iso-8859-1",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 5,
+  "authorsInHistory": [
+    "Ana Example",
+    "Ben Sample",
+    "Ana Example",
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo zusammen,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "visibleFirstText": "Hallo zusammen,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "History starts at the FIRST Von: block; every later Von: block is deeper history inside it. A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+}

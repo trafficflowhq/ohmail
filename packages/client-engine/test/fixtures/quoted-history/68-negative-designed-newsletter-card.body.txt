@@ -1,0 +1,14 @@
+EXAMPLE WEEKLY
+
+This week: how teams answer mail faster.
+
+From: Support Desk <desk@example.com>
+Sent: Monday, October 19, 2026 9:00 AM
+To: A Customer <customer@example.org>
+Subject: Your ticket is solved
+
+A reply card like this one is what our template builder draws for you.
+
+Read more on our blog.
+
+Example Weekly, 1 Sample Lane, Exampleville

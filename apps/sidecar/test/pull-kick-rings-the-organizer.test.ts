@@ -50,6 +50,30 @@ describe("withPullKick", () => {
     expect(rung).toEqual(["b", "a", "b"]);
   });
 
+  /* RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX: a rule written here wakes the walk at the next drain. */
+  it("a 200 or 201 on POST /rules and PATCH /rules/:id rings every runtime; a 202 or a 400 rings none", async () => {
+    const rung: string[] = [];
+    const runtimes = [{ ring: () => { rung.push("a"); } }, { ring: () => { rung.push("b"); } }];
+    const rule = (method: "POST" | "PATCH", status: number): Route => ({
+      ...answered(status), method, pattern: method === "POST" ? "/rules" : "/rules/:id",
+    });
+    const call = async (route: Route) =>
+      (await route.handler(new Request("http://local/rules", { method: route.method }), {} as never, { id: "r1" })).status;
+    for (const [method, status] of [["POST", 201], ["PATCH", 200]] as const) {
+      const [wrapped] = withPullKick([rule(method, status)], () => runtimes);
+      expect(await call(wrapped!)).toBe(status);
+    }
+    expect(rung).toEqual(["a", "b", "a", "b"]);
+    for (const [method, status] of [["POST", 202], ["PATCH", 202], ["POST", 400], ["PATCH", 404]] as const) {
+      const [wrapped] = withPullKick([rule(method, status)], () => runtimes);
+      expect(await call(wrapped!)).toBe(status);
+    }
+    expect(rung, "a deferred or refused rule write rang the organizer").toHaveLength(4);
+    // DELETE and GET pass through untouched.
+    const del = { ...rule("PATCH", 200), method: "DELETE" } as Route;
+    expect(withPullKick([del], () => runtimes)[0]).toBe(del);
+  });
+
   it("with no runtime it answers as the route did and rings nothing", async () => {
     const [wrapped] = withPullKick([answered(202)], () => []);
     expect(await press(wrapped!)).toBe(202);

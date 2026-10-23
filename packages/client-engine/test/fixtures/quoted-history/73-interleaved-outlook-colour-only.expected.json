@@ -1,0 +1,37 @@
+{
+  "id": "73",
+  "file": "73-interleaved-outlook-colour-only.eml",
+  "shape": "interleaved-outlook-colour-only",
+  "description": "Fixture 55's shape without the announcement: bold blue answers inside an Outlook history, html only",
+  "client": "synthetic",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Herr Sample,",
+      "visibleLastText": "Ben Sample"
+    },
+    "inlineAnswers": [
+      "Ja, die Filterreinigung ist Position 3 im Angebot.",
+      "Ja, bitte am Empfang hinterlegen."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

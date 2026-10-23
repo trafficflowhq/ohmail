@@ -1,0 +1,41 @@
+{
+  "id": "74",
+  "file": "74-outlook-chain-coloured-earlier-lead.eml",
+  "shape": "outlook-chain-coloured-earlier-lead",
+  "description": "Outlook 2010 chain: the earlier reply's lead is written in #1F497D under its From: block; the history still folds",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Elif",
+      "historyStartLine": "From: David Placeholder [mailto:david.placeholder@example.com]",
+      "historyStartLineNormalized": "From: David Placeholder [mailto:david.placeholder@example.com]"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #B5C4DF\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: David Placeholder [mailto:david.placeholder@example.com]",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Elif"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}
