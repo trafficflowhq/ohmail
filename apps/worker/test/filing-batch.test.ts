@@ -337,11 +337,11 @@ describe("reconcileFolders — filing is batched by (source → destination)", (
   });
 
   /**
-   * A row whose locator ALREADY names its destination goes to the per-message path. `moveMany`
-   * throws on a same-folder group by contract, and whatever `move` does with such a row — it has
-   * its own destination pre-check and its own adopt branch — is unchanged by this slice.
+   * A row whose locator ALREADY names its destination reaches neither the batch nor `move`: a move
+   * there finds the letter itself at the destination and expunges the only copy. It is completed
+   * where it is, with one audit row.
    */
-  it("never hands a same-folder group to the batch", async () => {
+  it("never hands a same-folder row to the batch or to move", async () => {
     const rec = blank();
     const pending: PendingFolderState[] = [{
       messageId: "already-there", desiredFolder: "ohmail/News", observedFolder: "INBOX",
@@ -349,7 +349,9 @@ describe("reconcileFolders — filing is batched by (source → destination)", (
     }];
     await run(repoOf(rec, pending), batchingAdapter(rec));
     expect(rec.batches).toEqual([]);
-    expect(rec.singles).toEqual([{ ref: "1:5", to: "ohmail/News" }]);
+    expect(rec.singles, "a same-folder row was sent to the server").toEqual([]);
+    expect(rec.folderStates).toEqual([{ messageId: "already-there", desired: "ohmail/News", observed: "ohmail/News" }]);
+    expect(rec.audits).toEqual([{ action: "reconcile.move.same_folder", messageId: "already-there" }]);
   });
 });
 

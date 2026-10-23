@@ -1,4 +1,4 @@
-import { UNMETERED_STORAGE_CAP, createLogger } from "@trafficflow/core/mail";
+import { LEGACY_NEWS_FOLDER, NEWS_FOLDER, UNMETERED_STORAGE_CAP, createLogger } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq, isNull } from "drizzle-orm";
@@ -12,7 +12,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter, type ImapCursor, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap-types";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
-import { runSyncCycle } from "../src/sync.js";
+import { reconcileMailbox, runSyncCycle } from "../src/sync.js";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
 import { greenmailPorts } from "./_greenmail-ports.js";
 
@@ -193,5 +193,81 @@ describe("a pending move before the folder walk, on a real server", () => {
     expect((await w.rowOf("arrives@x")).length, "the new letter was not ingested").toBe(1);
     expect(calls.indexOf("changesSince")).toBeLessThan(calls.indexOf("moveMany"));
     expect((await w.uidIn("ohmail.News", "pressed@x")).length).toBe(1);
+  }, 60_000);
+});
+
+/**
+ * ONE FOLDER ON THE SERVER, TWO NAMES IN THE ROW: the News pile's two spellings, or a letter already in
+ * its destination. Such a filing found the letter itself at the destination and expunged the only copy;
+ * it is a status repair now, with no command. The control still files across folders, once.
+ */
+describe.skipIf(!up)(`a filing whose source and destination are one folder on the server${SKIP}`, () => {
+  type Shape = { locator: string; observed: string; desired: string };
+  type Caps = { move?: boolean; uidplus?: boolean };
+  /** One letter in `path`, its row pending as `shape`, then one reconcile pass. */
+  async function filedOnce(path: string, shape: Shape, capabilityOverrides: Caps = {}) {
+    const user = `same-${randomUUID()}@trafficflow.test`;
+    const cfg: ImapConfig = { host: p.imapHost, port: p.imapPort, secure: false, auth: { user, pass: "test" } };
+    const adapter = new ImapAdapter(cfg, { capabilityOverrides });
+    await adapter.connect();
+    closers.push(() => adapter.close());
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: false, auth: cfg.auth, logger: false });
+    await c.connect();
+    closers.push(() => c.logout());
+    await c.append(path, eml("only@x", "only copy", user));
+    const uidsIn = async (at: string): Promise<number[]> => {
+      const l = await c.getMailboxLock(at);
+      return (await c.search({ header: { "message-id": "only@x" } }, { uid: true }).finally(() => l.release())) || [];
+    };
+    const l0 = await c.getMailboxLock(path);
+    const epoch = String((c.mailbox as { uidValidity: bigint }).uidValidity);
+    l0.release();
+    const [uid] = await uidsIn(path);
+    const locator = { folder: shape.locator, ref: `${epoch}:${uid}` };
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [a] = await db.insert(accounts).values({ name: "same-folder" }).returning();
+    const [mb] = await db.insert(mailboxes).values({ accountId: a!.id, provider: "imap", address: user }).returning();
+    const [m] = await db.insert(messages).values({
+      accountId: a!.id, mailboxId: mb!.id, messageIdHeader: "only@x", bodyHash: randomUUID(),
+      dedupKey: "mid:only@x", subject: "only copy", fromAddress: "anna@x.example", nativeLocator: locator,
+    }).returning();
+    await db.insert(folderState).values({
+      messageId: m!.id, desiredFolder: shape.desired, observedFolder: shape.observed,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false,
+    });
+    await reconcileMailbox({
+      repo: makeDrizzleRepo(db), adapter, accountId: a!.id, mailboxId: mb!.id, role: "organizer", signatures: null,
+      writeAuthority: FIXTURE_LEASE, storageCap: UNMETERED_STORAGE_CAP, trustedAuthservIds: new Set<string>(),
+    });
+    const state = async () => (await db.select().from(folderState).where(eq(folderState.messageId, m!.id)))[0]!;
+    const locatorNow = async () => (await db.select({ l: messages.nativeLocator }).from(messages).where(eq(messages.id, m!.id)))[0]!.l;
+    const actions = async () => (await db.select({ action: auditLog.action }).from(auditLog)
+      .where(eq(auditLog.accountId, a!.id))).map((r) => r.action);
+    return { uid, locator, uidsIn, state, locatorNow, actions };
+  }
+
+  const NEWS = "ohmail.News";
+  it.each([
+    ["the old name under the live epoch, filed to News", NEWS, { locator: LEGACY_NEWS_FOLDER, observed: LEGACY_NEWS_FOLDER, desired: NEWS_FOLDER }, {}],
+    ["the locator re-pointed, observed still the old name", NEWS, { locator: NEWS_FOLDER, observed: LEGACY_NEWS_FOLDER, desired: NEWS_FOLDER }, {}],
+    ["News filed to the old name", NEWS, { locator: NEWS_FOLDER, observed: NEWS_FOLDER, desired: LEGACY_NEWS_FOLDER }, {}],
+    ["the old name filed to News without MOVE or UIDPLUS", NEWS, { locator: LEGACY_NEWS_FOLDER, observed: LEGACY_NEWS_FOLDER, desired: NEWS_FOLDER }, { move: false, uidplus: false }],
+    ["the old name's locator, observed elsewhere", NEWS, { locator: LEGACY_NEWS_FOLDER, observed: "INBOX", desired: NEWS_FOLDER }, {}],
+    ["any folder: a letter already in Screened", "ohmail.Screened", { locator: "ohmail/Screened", observed: "INBOX", desired: "ohmail/Screened" }, {}],
+  ] as Array<[string, string, Shape, Caps]>)("%s: no command, the letter stays, the row is reconciled", async (_name, path, shape, caps) => {
+    const w = await filedOnce(path, shape, caps);
+    expect(await w.uidsIn(path), "the filing expunged the only copy").toEqual([w.uid]);
+    expect(await w.state()).toMatchObject({ desiredFolder: shape.desired, observedFolder: shape.desired, reconcileStatus: "reconciled" });
+    expect(await w.locatorNow(), "the locator was rewritten").toEqual(w.locator);
+    expect(await w.actions()).toEqual(["reconcile.move.same_folder"]);
+  }, 60_000);
+
+  it("CONTROL: the old name's locator filed to Receipts moves once", async () => {
+    const w = await filedOnce(NEWS, { locator: LEGACY_NEWS_FOLDER, observed: LEGACY_NEWS_FOLDER, desired: "ohmail/Receipts" });
+    expect(await w.uidsIn(NEWS)).toEqual([]);
+    expect(await w.uidsIn("ohmail.Receipts")).toHaveLength(1);
+    expect(await w.state()).toMatchObject({ observedFolder: "ohmail/Receipts", reconcileStatus: "reconciled" });
+    expect(await w.actions()).toEqual(["reconcile.move"]);
   }, 60_000);
 });

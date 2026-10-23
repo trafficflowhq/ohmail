@@ -1,11 +1,11 @@
 import {
-  planChange, commitChange, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
+  planChange, commitChange, canonicalDestination, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
   type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
   type CycleSignatures, type ImportHold, type Logger, type OhboxPolicy, type PlanSignatures, type ProcessResult,
   type StorageCap,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, MessageGoneError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
+  WATCHED_FOLDERS, MessageGoneError, SameFolderMoveError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
   epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
@@ -2112,6 +2112,37 @@ export const DELETE_EVIDENCE_PER_CYCLE = 500;
 const folderLabel = (folder: string): string => (isOrganizedFolder(folder) ? folder : "other");
 
 /**
+ * Do two canonical folder names address ONE folder on the server? The adapter's own resolver when it
+ * has one (both News spellings land on the folder the mailbox has), else the News alias table.
+ */
+function oneServerFolder(adapter: MailboxAdapter, a: string, b: string): boolean {
+  if (a === b) return true;
+  if (typeof adapter.toServerPath === "function") {
+    try { return adapter.toServerPath(a) === adapter.toServerPath(b); } catch { /* not connected: the table answers */ }
+  }
+  return canonicalDestination(a) === canonicalDestination(b);
+}
+
+/**
+ * A filing whose source and destination are one folder on the server is already where it was asked to
+ * be: a status repair and one audit row, never an IMAP command. A move there finds the letter itself at
+ * the destination and expunges the only copy. `physical` is where the letter is; under the junk mapping
+ * it is not the desire, so the completion is the satisfied shape the junk filing writes.
+ */
+async function settleSameFolder(deps: SyncDeps, p: PendingFolderState, physical: string): Promise<void> {
+  await fencedLiveGroup(deps, async (r) => {
+    const matched = await r.completeFolderState(p.messageId, {
+      expectDesiredFolder: p.desiredFolder, observedFolder: physical, lastSetBy: "us",
+      ...(physical === p.desiredFolder ? {} : { satisfiedBy: physical }),
+    });
+    if (!matched) return;
+    await r.recordAudit(deps.accountId, "reconcile.move.same_folder", {
+      messageId: p.messageId, from: p.nativeLocator, observed: p.observedFolder, to: physical,
+    }, null);
+  });
+}
+
+/**
  * Execute our intended moves, grouped by (source folder → destination) and filed in batches. Returns
  * whether the budget was reached with rows still pending, which the caller turns into a re-kick (see
  * {@link RECONCILE_MOVES_PER_CYCLE} and {@link MailboxAdapter.moveMany}). THE FALLBACK IS THE DESIGN,
@@ -2178,10 +2209,18 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
       }));
       continue;
     }
+    if (oneServerFolder(deps.adapter, p.observedFolder, p.desiredFolder)) {
+      await settleSameFolder(deps, p, p.desiredFolder);
+      continue;
+    }
     if (!p.nativeLocator) continue;
     const physical = physicalDestination(p.desiredFolder, special, {
       aiAuthored: aiAuthored.has(p.messageId),
     });
+    if (oneServerFolder(deps.adapter, p.nativeLocator.folder, physical)) {
+      await settleSameFolder(deps, p, physical);
+      continue;
+    }
     // `JSON.stringify` of the PAIR, not the two names joined by a separator. A folder name comes
     // from the mail server and may contain any character a delimiter could be chosen from, so a
     // joined key can collide across two different pairs — and the obvious unambiguous separator is
@@ -2291,7 +2330,7 @@ async function fileChunk(
   const toFolder = first.physical;
   // A locator already sitting at its destination is the per-message path's problem to reason
   // about, not a batch's: `moveMany` refuses a same-folder group outright.
-  if (srcFolder === toFolder) return null;
+  if (oneServerFolder(adapter, srcFolder, toFolder)) return null;
   // Two rows naming ONE locator would collapse to a single UID in the batch and both would be
   // told they landed at the same place. It cannot arise from one mailbox's data, and if it ever
   // does, the per-message path gives each row its own answer.
@@ -2527,6 +2566,10 @@ async function fileOne(
     // mailbox's new organizer's. A stand-down taken here used to fall through to the deferral
     // below: an audit row blaming the mail server, and the pass filing the rest of the page.
     rethrowRefusal(err);
+    if (err instanceof SameFolderMoveError) {
+      await settleSameFolder(deps, p, physical);
+      return false;
+    }
     if (err instanceof MessageGoneError) {
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see

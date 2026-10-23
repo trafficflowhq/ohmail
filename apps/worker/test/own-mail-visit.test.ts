@@ -65,9 +65,10 @@ describe("own mail in the organizer's visit", () => {
 
   it("own mail the old router filed at the gate is moved back once; a person's placement stays", async () => {
     const w = await world();
+    // In the gate folder, where the old router's move and the person's drag left them.
     w.fleet.behave(w.mb.id, { deliver: [
-      { from: w.me, subject: "a note", messageId: `self-${randomUUID()}@own.invalid` },
-      { from: "second@own-too.invalid", subject: "filed by hand", messageId: `self-${randomUUID()}@own.invalid` },
+      { from: w.me, subject: "a note", messageId: `self-${randomUUID()}@own.invalid`, folder: GATE },
+      { from: "second@own-too.invalid", subject: "filed by hand", messageId: `self-${randomUUID()}@own.invalid`, folder: GATE },
     ] });
     await w.cycle("reader");
     const ours = await w.rowOf(w.me);
@@ -89,7 +90,7 @@ describe("own mail in the organizer's visit", () => {
   it("own mail the previous organizer filed at the gate, met by this install as a reader, is moved back", async () => {
     const w = await world();
     w.fleet.behave(w.mb.id, { deliver: [
-      { from: w.me, subject: "a note", messageId: `self-${randomUUID()}@own.invalid` },
+      { from: w.me, subject: "a note", messageId: `self-${randomUUID()}@own.invalid`, folder: GATE },
     ] });
     await w.cycle("reader");
     // What a reader's first read records for mail another install filed in an organized folder.

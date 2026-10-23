@@ -1093,6 +1093,8 @@ export interface MailboxAdapter {
    * group. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string, door: WriteDoor): Promise<MoveManyResult>;
+  /** The server path a canonical folder name addresses; both News spellings resolve to one folder. Optional. */
+  toServerPath?(canonical: string): string;
   /* ── The USER-COMMANDED folder verbs (FOLDERS-SPEC.md stage 2) — executed only by the
    * worker's `folderOpsPass`, only from a recorded `folder_ops` command, under the organizer
    * lease. ohmail never creates, renames or deletes a folder on its own initiative. All four

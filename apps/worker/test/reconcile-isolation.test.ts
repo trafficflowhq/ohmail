@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { NativeLocator } from "@trafficflow/core";
 // The SAME module `sync.ts` imports it from — an `instanceof` against a second copy of the class
 // would answer false and this file would be testing nothing.
-import { MessageGoneError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { MessageGoneError, SameFolderMoveError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { reconcileMailbox } from "../src/sync.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -252,6 +252,17 @@ describe("reconcileFolders — a failure is isolated to its own message", () => 
     expect(rec.flagged).toEqual(["flag-a", "flag-b"]);
     expect(rec.audits.filter((a) => a.action === "reconcile.move.failed")).toHaveLength(0);
     expect(rec.deferredMoves, "a race is not a refusal — nothing to defer").toEqual([]);
+  });
+
+  it("a SameFolderMoveError completes the row where it is: no refusal, no deferral, one audit row", async () => {
+    const rec = await run(new SameFolderMoveError(LOC("INBOX", "1:10"), "ohmail/News"));
+
+    expect(rec.folderStates, "the row was left pending").toEqual(["stuck", "healthy"]);
+    expect(rec.moved, "the stuck row's locator was rewritten").toEqual(["healthy"]);
+    expect(rec.audits.filter((a) => a.action === "reconcile.move.same_folder").map((a) => a.payload))
+      .toMatchObject([{ messageId: "stuck", to: "ohmail/News" }]);
+    expect(rec.audits.filter((a) => a.action === "reconcile.move.failed")).toHaveLength(0);
+    expect(rec.deferredMoves, "a same-folder move is not a refusal").toEqual([]);
   });
 
   it("a HOST OUTAGE is not deferred: the row stays due so the backlog drains when it returns", async () => {

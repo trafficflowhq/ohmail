@@ -882,6 +882,19 @@ export class MoveVerifyError extends Error {
 }
 
 /**
+ * The source and the destination are ONE folder on the server (`toServerPath` of each): the two News
+ * spellings, or one name twice. Refused before any lock or command, because the destination look
+ * would find the message itself and the expunge would delete the only copy. Nothing was written.
+ */
+export class SameFolderMoveError extends Error {
+  readonly code = "EMOVESAMEFOLDER";
+  constructor(public locator: NativeLocator, public toFolder: string) {
+    super(`${locator.folder}#${locator.ref} is already in ${toFolder} on the server; nothing was moved`);
+    this.name = "SameFolderMoveError";
+  }
+}
+
+/**
  * The copy landed and the SOURCE did not go, so the move is half done and the mailbox holds the
  * message twice. Deliberately not {@link MoveVerifyError}, which means the new UID could not be
  * learned: this one knows exactly where the copy is and refuses to report a move as complete while
@@ -4643,10 +4656,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * Needed on UIDPLUS too: COPYUID says where a copy landed, not that none was made.
    */
   async move(locator: NativeLocator, toFolder: string, door: WriteDoor): Promise<NativeLocator> {
-    const caps = await this.capabilities();
-    const { uid } = parseRef(locator.ref);
     const srcPath = this.toServerPath(locator.folder);
     const dstPath = this.toServerPath(toFolder);
+    if (srcPath === dstPath) throw new SameFolderMoveError(locator, toFolder);
+    const caps = await this.capabilities();
+    const { uid } = parseRef(locator.ref);
 
     let messageId: string | null = null;
     let sourceFingerprint: string | null = null;
@@ -4807,9 +4821,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     if (locators.some((l) => l.folder !== srcFolder)) {
       throw new Error("moveMany: every locator must share one source folder");
     }
-    if (srcFolder === toFolder) {
-      throw new Error("moveMany: source and destination are the same folder");
-    }
+    const srcPath = this.toServerPath(srcFolder);
+    const dstPath = this.toServerPath(toFolder);
+    if (srcPath === dstPath) throw new SameFolderMoveError(locators[0]!, toFolder);
 
     const caps = await this.capabilities();
     // No atomic MOVE ⇒ a per-message COPY/EXPUNGE window. No UIDPLUS ⇒ no COPYUID, so the
@@ -4817,8 +4831,6 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // per-message path is the correct one and this refuses before touching anything.
     if (!caps.move || !caps.uidplus) return empty;
 
-    const srcPath = this.toServerPath(srcFolder);
-    const dstPath = this.toServerPath(toFolder);
     const wanted = new Map<number, NativeLocator>();
     for (const loc of locators) wanted.set(parseRef(loc.ref).uid, loc);
 

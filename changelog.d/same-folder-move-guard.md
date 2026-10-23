@@ -1,0 +1,3 @@
+### A letter filed into the folder it is already in is no longer deleted from your mail server
+
+Filing a letter into the folder it was already in made ohmail take the letter for its own copy at the destination and delete it from your mail server. It happened when one side of a filing named the News folder by its name before 0.22, ohmail/Reads, and the other by ohmail/News, which are one folder on the server, and when a filing named one folder twice. ohmail now records such a filing as done and sends the mail server nothing. This holds on ohmail Cloud, on your own server, in the desktop app and in the phone app.

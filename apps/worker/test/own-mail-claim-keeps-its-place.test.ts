@@ -41,8 +41,10 @@ async function world() {
       headers: [`Authentication-Results: ${AUTHSERV}; dmarc=fail header.from=own.invalid`],
     },
   };
-  const deliver = (mail: Array<{ from: string; subject: string; headers?: string[] }>) =>
-    fleet.behave(mb!.id, { deliver: mail.map((m) => ({ ...m, messageId: `omc-${randomUUID()}@own.invalid` })) });
+  const deliver = (mail: Array<{ from: string; subject: string; headers?: string[] }>, folder?: string) =>
+    fleet.behave(mb!.id, {
+      deliver: mail.map((m) => ({ ...m, ...(folder ? { folder } : {}), messageId: `omc-${randomUUID()}@own.invalid` })),
+    });
   const rowOf = async (subject: string) => {
     const [r] = await db.select({
       id: messages.id, desired: folderState.desiredFolder, check: messages.senderCheck, brand: messages.senderCheckBrand,
@@ -87,7 +89,8 @@ describe("own mail claiming a company, through the visit", () => {
 
     // The pre-fix router's filing, met by the organizer's first visit after a reader's ingest.
     const repair = await world();
-    repair.deliver(keys.map((k) => repair.own[k]));
+    // In the gate folder, where the pre-fix router's move left them.
+    repair.deliver(keys.map((k) => repair.own[k]), GATE);
     await repair.cycle("reader");
     for (const k of keys) await repair.fileAtGate(repair.own[k].subject);
     await repair.cycle();

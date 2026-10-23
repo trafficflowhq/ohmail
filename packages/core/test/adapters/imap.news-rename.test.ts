@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { ImapFlow } from "imapflow";
-import { ImapAdapter, parseRef } from "../../src/adapters/imap.js";
+import { ImapAdapter, SameFolderMoveError, parseRef } from "../../src/adapters/imap.js";
 import { NEWS_FOLDER, LEGACY_NEWS_FOLDER } from "../../src/types.js";
 import { greenmailConfig, eml, seedInbox } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
@@ -38,6 +38,23 @@ async function appendTo(cfg: ReturnType<typeof greenmailConfig>, path: string, n
     });
     for (let i = 0; i < n; i++) {
       await c.append(path, eml({ from: `sender-${tag}@x.example`, subject: `${tag} ${i}`, messageId: `${tag}-${i}@x` }));
+    }
+  } finally {
+    await c.logout();
+  }
+}
+
+/** `<uidValidity>:<uid>` of every message in a folder, read off the server. */
+async function refsIn(cfg: ReturnType<typeof greenmailConfig>, path: string): Promise<string[]> {
+  const c = await raw(cfg);
+  try {
+    const lock = await c.getMailboxLock(path);
+    try {
+      const epoch = String((c.mailbox as { uidValidity: bigint }).uidValidity);
+      const uids = await c.search({ all: true }, { uid: true });
+      return (uids || []).map((u) => `${epoch}:${u}`);
+    } finally {
+      lock.release();
     }
   } finally {
     await c.logout();
@@ -198,5 +215,25 @@ describe("the News rename on a live mailbox (GreenMail)", () => {
     const paths = await serverPaths(cfg);
     expect(paths.has("ohmail.Reads")).toBe(true);
     expect(paths.has("ohmail.News")).toBe(false);
+  });
+
+  it("ONE FOLDER, TWO NAMES: a move between the spellings is refused, with and without MOVE, and the letter stays", async () => {
+    const cfg = greenmailConfig();
+    await appendTo(cfg, "ohmail.News", 1, "sf");
+    const [ref] = await refsIn(cfg, "ohmail.News");
+    const asked = (p: Promise<unknown>) => p.then(() => "moved", (e: unknown) => e);
+    const outcomes: unknown[] = [];
+    for (const capabilityOverrides of [{}, { move: false, uidplus: false }]) {
+      const a = new ImapAdapter(cfg, { capabilityOverrides });
+      await a.connect();
+      outcomes.push(
+        await asked(a.move({ folder: LEGACY_NEWS_FOLDER, ref: ref! }, NEWS_FOLDER, FIXTURE_DOOR)),
+        await asked(a.move({ folder: NEWS_FOLDER, ref: ref! }, LEGACY_NEWS_FOLDER, FIXTURE_DOOR)),
+        await asked(a.moveMany([{ folder: LEGACY_NEWS_FOLDER, ref: ref! }], NEWS_FOLDER, FIXTURE_DOOR)),
+      );
+      await a.close();
+    }
+    expect(await refsIn(cfg, "ohmail.News"), "the move expunged the only copy").toEqual([ref]);
+    for (const o of outcomes) expect(o).toBeInstanceOf(SameFolderMoveError);
   });
 });

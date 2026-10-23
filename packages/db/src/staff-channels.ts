@@ -97,6 +97,7 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "move", "move_deferred", "move_superseded", "adopt_external", "adopt_superseded",
   // ── the worker's reconcile passes (`apps/worker/src/sync.ts`, `junk-*.ts`) ───────────────
   "reconcile.move", "reconcile.move.superseded", "reconcile.move.voided", "reconcile.move.failed",
+  "reconcile.move.same_folder",
   "reconcile.flags", "reconcile.flags.retired", "reconcile.flags.no_locator",
   "reconcile.flags.voided", "reconcile.flags.failed",
   "sync.message_skipped", "sweep.junk_filed",

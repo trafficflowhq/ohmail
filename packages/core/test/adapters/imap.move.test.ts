@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { ImapFlow } from "imapflow";
-import { ImapAdapter, MoveVerifyError, parseRef } from "../../src/adapters/imap.js";
+import { ImapAdapter, MoveVerifyError, SameFolderMoveError, parseRef } from "../../src/adapters/imap.js";
 import { greenmailConfig, eml, seedInbox } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
 
@@ -267,5 +267,24 @@ describe("ImapAdapter.move (GreenMail)", () => {
     const gone = await (async () => { const l = await c.getMailboxLock("INBOX"); try { return await c.search({ header: { "message-id": "move3@x" } }, { uid: true }); } finally { l.release(); } })();
     await c.logout();
     expect(Array.isArray(gone) ? gone.length : 1).toBe(0);
+  });
+
+  it("refuses a move into the folder the message is already in, and the letter stays where it is", async () => {
+    const cfg = greenmailConfig();
+    adapter = new ImapAdapter(cfg);
+    await adapter.connect();
+    const src = await seedInbox(cfg, "same1@x");
+    const at = { folder: "INBOX", ref: src.ref };
+    const asked = (p: Promise<unknown>) => p.then(() => "moved", (e: unknown) => e);
+    const outcomes = [
+      await asked(adapter.move(at, "INBOX", FIXTURE_DOOR)),
+      await asked(adapter.moveMany([at], "INBOX", FIXTURE_DOOR)),
+    ];
+    const c = await raw(cfg);
+    const l = await c.getMailboxLock("INBOX");
+    const here = await c.search({ header: { "message-id": "same1@x" } }, { uid: true }).finally(() => l.release());
+    await c.logout();
+    expect(here, "the move expunged the only copy").toEqual([src.uid]);
+    for (const o of outcomes) expect(o).toBeInstanceOf(SameFolderMoveError);
   });
 });
