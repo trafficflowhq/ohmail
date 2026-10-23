@@ -84,6 +84,7 @@ export function ComposeView({
   onCancel,
   discardKeeps = false,
   elsewhere = null,
+  saveRefused = false,
   onSendAsNew,
   resumed = false,
   onClose,
@@ -173,6 +174,8 @@ export function ComposeView({
    * ({@link onSendAsNew}) — for a sent one only once something was typed since, as it already went.
    */
   elsewhere?: ComposeElsewhere | null;
+  /** The account refused the last save — `useComposeAutosave`'s `saveRefused`. */
+  saveRefused?: boolean;
   /** Go on with what is on screen as a NEW letter, and send it. */
   onSendAsNew?: () => void;
   /** `true` when the plain compose door opened on a message left unfinished — see `composeResumed`. */
@@ -1208,7 +1211,10 @@ export function ComposeView({
                     size: formatFileSize(DRAFT_BODY_MAX_BYTES, activeFormatLocale()),
                   })}
                 </span>
-              ) : elsewhere !== null && !elsewhere.typedSince ? null : (
+              ) : elsewhere !== null && !elsewhere.typedSince ? null : draftNoteKey(fields, saveRefused) === "draftNotSaved" ? (
+                /* A REFUSED SAVE IS SAID, never "saved": Drafts does not hold what is on screen. */
+                <span className="send-note" role="status">{t("draftNotSaved")}</span>
+              ) : (
                 <span className="send-note">{t("draftNote")}</span>
               )}
             </div>

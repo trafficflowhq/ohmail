@@ -1321,6 +1321,7 @@
     "attachDuplicate": "Bereits angehängt: {filenames}",
     "draftNote": "Liegt nach einem Moment in deinen Entwürfen",
     "bodyTooLong": "Zu lang zum Speichern — höchstens {size}. Kürze die Nachricht, dann wird sie wieder gespeichert.",
+    "draftNotSaved": "Nicht in deinen Entwürfen — diese Fassung gibt es nur hier",
     "editorAria": "Nachrichtentext",
     "editorPlaceholder": "Schreib deine Nachricht …",
     "draftTag": "KI-Entwurf — nicht gesendet",

@@ -865,9 +865,10 @@ export function composePlan(
       body: fields.body,
       // ONE OR THE OTHER ON THE WIRE, and the adapter is what enforces it: `html` present
       // means `POST /drafts` carries the markup and no `body` at all, because a client that
-      // supplied its own plain part would be asserting what plaintext readers see. Omitted
-      // rather than sent as `""` so a plain compose produces the same request it always did.
-      ...(fields.html ? { html: fields.html } : {}),
+      // supplied its own plain part would be asserting what plaintext readers see. `null` when
+      // the editor holds no formatting: `Engine.enrich` drops it unless the row is formatted, so
+      // a plain compose produces the same request it always did.
+      html: fields.html ? fields.html : null,
       subject: fields.subject,
       // When anything is unparseable the mutation carries NO recipients at all — not the valid
       // subset — so a half-typed or mistyped address cannot leave a partial send on the wire.

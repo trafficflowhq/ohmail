@@ -82,6 +82,16 @@ describe("withSignature — the markup half rides beside the derived text", () =
     expect("html" in out).toBe(false);
   });
 
+  /* `html: null` is an editor whose formatting was removed. Appending to it gave
+     "null<p>…", and the server derives the plain text from the markup, so the words were lost. */
+  it("keeps html: null and an empty html as given — the text signature rides the body", () => {
+    for (const html of [null, ""]) {
+      const out = withSignature({ body: "hello", html }, "Best regards\nAnna", HTML["mb-one"]!);
+      expect(out.body).toBe("hello\n\nBest regards\nAnna");
+      expect(out.html).toBe(html);
+    }
+  });
+
   it("falls back to escaping the text when there is NO stored markup", () => {
     const out = withSignature({ ...rich }, "a <b> & c", null);
     expect(out.html).toBe(`<p>hello</p>${signatureHtml("a <b> & c")}`);

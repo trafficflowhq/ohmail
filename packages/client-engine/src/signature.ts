@@ -122,7 +122,7 @@ export function signatureHtml(sig: string): string {
  * argument existed and what the phone's two send arms still do — so the two-argument call is
  * byte-identical to the one it replaced.
  */
-export function withSignature<M extends { body: string; html?: string }>(
+export function withSignature<M extends { body: string; html?: string | null }>(
   m: M, sig: string | null, sigHtml?: string | null,
 ): M {
   if (sig === null) return m;
@@ -132,6 +132,8 @@ export function withSignature<M extends { body: string; html?: string }>(
   return {
     ...m,
     body: `${m.body}\n\n${sig}`,
-    ...(m.html !== undefined ? { html: m.html + tail } : {}),
+    // `null` or "" (no formatting) stays as given: appended to, it became "null<p>…" or an html
+    // part holding only the signature, and the server derives the plain text from the html.
+    ...(typeof m.html === "string" && m.html !== "" ? { html: m.html + tail } : {}),
   };
 }

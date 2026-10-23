@@ -4,9 +4,17 @@ import { DRAFT_REPLY_COST_CREDITS } from "../app/shell/draft-reply";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { OhmailEngine, type EngineMutation, type MutationResult } from "@ohmail/client-engine";
+import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
+import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
+import {
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type FetchLike, type MutationResult,
+} from "@ohmail/client-engine";
+import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
+import type { MailboxFacts } from "../app/shell/mail-state";
+import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
+import { withNodeBlobs } from "./fixtures/node-blobs";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -27,7 +35,8 @@ import { settleFirstPaint } from "./_first-paint.js";
  *
  * Driven through the whole shell on the demo world, because every one of these lives in the
  * WIRING and not in a component: what the editor emits, what the form does with it, what the
- * plan puts on the mutation, and who is allowed to write `triage_set`.
+ * plan puts on the mutation, and who is allowed to write `triage_set`. The byte-shape guard alone
+ * runs over the real API, because what it protects is the request.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 
@@ -38,6 +47,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 /** Every `api()` call the drafting control makes — the route, and the headers it carried. */
 const apiCalls: Array<{ path: string; init?: { method?: string; headers?: Record<string, string> } }> = [];
 let apiImpl: (path: string, init?: unknown) => Promise<unknown> = async () => ({});
+/** What `apiConfigured()` answers: on for the demo world, off over the real API (`wireShell`). */
+let cloudClient = true;
 
 vi.mock("../app/api-client", async () => {
   const actual = await vi.importActual<typeof import("../app/api-client")>("../app/api-client");
@@ -46,7 +57,7 @@ vi.mock("../app/api-client", async () => {
     // The demo world has no API, and `useDraftReply` correctly refuses to spend there. The
     // point of this file is the path a REAL account takes, so the one predicate that decides
     // it is overridden and everything above it stays the shipped code.
-    apiConfigured: () => true,
+    apiConfigured: () => cloudClient,
     api: (path: string, init?: unknown) => {
       apiCalls.push({ path, init: init as never });
       return apiImpl(path, init);
@@ -63,6 +74,7 @@ beforeEach(() => {
   dispatched = [];
   apiCalls.length = 0;
   apiImpl = async () => ({});
+  cloudClient = true;
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   Object.defineProperty(window, "matchMedia", {
     configurable: true, writable: true,
@@ -174,6 +186,91 @@ async function goCompose(): Promise<void> {
   await drain();
 }
 
+async function waitFor(p: () => boolean, what: string, timeout = 8000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (p()) return;
+    await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+  }
+  throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
+}
+
+/** A request the engine's HttpAdapter sent, as the API received it. */
+interface WireRequest { method: string; path: string; body: Record<string, unknown> | null }
+
+const consentTransport = {
+  foldersStorable: true,
+  state: async () => ({
+    seedConfirmedAt: "2026-09-01T00:00:00.000Z", screeningResetAt: null, dormancyDays: 90,
+    foldersEnabledAt: "2026-09-01T00:00:00.000Z",
+  }),
+  setAutoSuggest: async () => ({ autoSuggestAt: null }),
+  setDormancyDays: async () => ({}),
+  setBlockRemoteImages: async () => ({ blockRemoteImagesAt: null }),
+  setBlockTrackingPixels: async () => ({ loadTrackingPixelsAt: null }),
+  setBlockAutoUnsubscribe: async () => ({ blockAutoUnsubscribeAt: null }),
+  setFoldersEnabled: async () => ({ foldersEnabledAt: "2026-09-01T00:00:00.000Z" }),
+  setMailboxFoldersEnabled: async () => ({ folderMailboxesOff: {} }),
+  setMailboxSignature: async () => ({ signatures: {} }),
+};
+
+/**
+ * THE SAME SHELL OVER THE REAL API, for the byte-shape guard. The engine's HttpAdapter reaches
+ * `createApp(apiRoutes)` through a fetch that records every request, and the server's send adapter
+ * records what it delivers; the spy above still runs REAL_MUTATE. The shell's own Cloud client is
+ * off, as in `compose-formatting-cleared-sends.test.tsx`: the wire under test is the engine's.
+ */
+async function wireShell(): Promise<{ el: HTMLElement; wire: WireRequest[]; delivered: OutboundMessage[] }> {
+  cloudClient = false;
+  const delivered: OutboundMessage[] = [];
+  const sendAdapter: OpenSendAdapter = async () => ({
+    async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },
+    async messageInSent() { return false; },
+    async close() { /* nothing */ },
+  });
+  const { db, deps } = await withNodeBlobs(() => makeDeps(FIXED_NOW, {}, { sendAdapter }));
+  const s = await seedSession(db, { now: FIXED_NOW });
+  const address = "me@lichtgrat.example";
+  const mailboxId = await seedMailbox(db, { accountId: s.accountId, address });
+  const app = createApp(apiRoutes);
+  const wire: WireRequest[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    const raw = typeof init?.body === "string" ? init.body : null;
+    wire.push({
+      method: (init?.method ?? "GET").toUpperCase(), path: new URL(String(url)).pathname,
+      body: raw === null ? null : JSON.parse(raw) as Record<string, unknown>,
+    });
+    const headers = new Headers(init?.headers as HeadersInit | undefined);
+    headers.set("authorization", `Bearer ${s.token}`);
+    return app.handle(new Request(url, { ...init, headers }), { ...(deps as ApiDeps), session: null, idempotency: null });
+  };
+  const store = new MemoryMirrorStore();
+  await store.load();
+  const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch }), store });
+  const roster = [{
+    id: mailboxId, address, status: "connected", errorCode: null, disabledReason: null,
+    syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: "2026-09-09T08:59:00.000Z",
+    createdAt: "2026-09-01T00:00:00.000Z", organizerRole: "organizer" as const, organizedBy: null,
+    organizeConsentedAt: "2026-09-01T00:00:00.000Z",
+  } as MailboxFacts];
+  const { AppShell } = await import("../app/shell/AppShell.js");
+  const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  roots.push(root);
+  await act(async () => {
+    root.render(h(NextIntlClientProvider, {
+      locale: "en", messages, timeZone: "UTC",
+      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, {
+        children: h(AppShell as never, { demo: false, engine, consentTransport, mailboxFacts: async () => roster } as never),
+      }) }),
+    }));
+  });
+  await drain();
+  return { el: container, wire, delivered };
+}
+
 /* ══ 1. WHAT REACHES THE WIRE ═══════════════════════════════════════════════════════════ */
 
 describe("a message with no formatting in it leaves exactly as it always did", () => {
@@ -186,28 +283,59 @@ describe("a message with no formatting in it leaves exactly as it always did", (
      * INSTEAD of `body` — so every plain note in the product would silently become a
      * `multipart/alternative` whose plain part is the server's re-rendering of markup nobody
      * wrote. `RichEditor.emit` decides this by round-tripping the document through
-     * `richToHtml`; delete that comparison and this goes red on `["body","html",…]`.
+     * `richToHtml`; delete that comparison and this goes red on the mutation and on the wire.
+     *
+     * READ ON THE WIRE, because the request is what this protects. The shell may say `html: null`
+     * (the editor holds no formatting); `Engine.enrich` keeps that only for a row the mirror holds
+     * as formatted, so a plain note's requests stay what they always were. Two notes, so every
+     * request that writes one is read: sent after the pause saved it (`POST /drafts`, then Send's
+     * own `PUT /drafts/:id`), and sent at once (Send's own `POST /drafts`).
      */
-    const el = await shell();
-    await goCompose();
-    const to = el.querySelector<HTMLInputElement>("#compose-to")!;
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!
-        .set!.call(to, "someone@example.test");
-      to.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await act(async () => { typeInto(composeSurface(el), "Donnerstag passt.\n\nBis dann."); });
-    await clickText(el, "Send");
-    await drain();
+    const wire: WireRequest[] = [];
+    const delivered: OutboundMessage[] = [];
+    for (const [text, afterThePause] of [["Donnerstag passt.\n\nBis dann.", true], ["Kurz und gut.", false]] as const) {
+      for (const root of roots) await act(() => { root.unmount(); });
+      roots = [];
+      document.body.innerHTML = "";
+      const w = await wireShell();
+      await goCompose();
+      await waitFor(() => w.el.querySelector(".compose-editor .rte-surface") !== null, "the compose editor");
+      const to = w.el.querySelector<HTMLInputElement>("#compose-to")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!
+          .set!.call(to, "someone@example.test");
+        to.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => { typeInto(composeSurface(w.el), text); });
+      if (afterThePause) {
+        await waitFor(() => w.wire.some((r) => r.method === "POST" && r.path === "/drafts"), "the autosave", AUTOSAVE_DELAY_MS + 6000);
+      }
+      await clickText(w.el, "Send");
+      await waitFor(() => w.delivered.length === 1, "the delivery");
+      wire.push(...w.wire);
+      delivered.push(...w.delivered);
+    }
 
-    expect(sends(), "pressing Send dispatched no mail_send").toHaveLength(1);
-    const m = sends()[0]!;
-    expect(m.body).toBe("Donnerstag passt.\n\nBis dann.");
+    // The shell: no markup on any mutation that writes the message (`html: null` or no key).
+    expect(sends().map((m) => m.body), "pressing Send dispatched no mail_send")
+      .toEqual(["Donnerstag passt.\n\nBis dann.", "Kurz und gut."]);
+    const written = dispatched.filter((m) => m.kind === "draft_save" || m.kind === "mail_send");
+    expect(written.filter((m) => "html" in m && m.html != null), "a plain message reached the mutation as markup")
+      .toEqual([]);
+    // The wire: every save carries `body`, and no request carries an `html` key.
+    const saves = wire.filter((r) => (r.method === "POST" || r.method === "PUT") && /^\/drafts(\/[^/]+)?$/.test(r.path));
+    expect(saves.map((r) => `${r.method} ${r.path === "/drafts" ? r.path : "/drafts/:id"}`))
+      .toEqual(expect.arrayContaining(["POST /drafts", "PUT /drafts/:id"]));
+    for (const r of saves) expect(Object.keys(r.body ?? {}), `${r.method} ${r.path} carries no body`).toContain("body");
     expect(
-      Object.keys(m),
+      wire.filter((r) => r.body !== null && "html" in r.body).map((r) => `${r.method} ${r.path}`),
       "a plain message grew an `html` field, so it now leaves as multipart",
-    ).not.toContain("html");
-  });
+    ).toEqual([]);
+    // And what left is text alone.
+    expect(delivered.map((m) => [m.text, m.html ?? null])).toEqual([
+      ["Donnerstag passt.\n\nBis dann.", null], ["Kurz und gut.", null],
+    ]);
+  }, 60_000);
 
   it("reports every change in a burst, including the one that empties the editor", async () => {
     /**

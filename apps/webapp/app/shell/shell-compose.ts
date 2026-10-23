@@ -960,10 +960,13 @@ export function useShellCompose({
       envelope: edited ? { to: formatRecipientChips(d.to), cc: formatRecipientChips(d.cc), bcc: formatRecipientChips(d.bcc) } : null,
       fromId: parent !== null && d.mailboxId !== parent.mailboxId ? d.mailboxId : null,
     };
-    const body = rowWins ? { text, html: "" } : scratch!;
+    // The row's own markup seeds the editor and the baseline: a reply opened plain from a formatted
+    // row could not be saved or sent.
+    const rowHtml = typeof d.html === "string" ? d.html : "";
+    const body = rowWins ? { text, html: rowHtml } : scratch!;
     if (rowWins) writeReplyDraft(lane, body);
     if (rowWins || scratch!.text.trim() === text.trim()) {
-      replyAutosave.baseline(lane, { mailboxId: d.mailboxId, subject: d.subject, body: text, to: d.to, cc: d.cc, bcc: d.bcc });
+      replyAutosave.baseline(lane, { mailboxId: d.mailboxId, subject: d.subject, body: text, html: rowHtml, to: d.to, cc: d.cc, bcc: d.bcc });
     }
     return body;
   });
@@ -1183,7 +1186,7 @@ export function useShellCompose({
         // showed sits ABOVE the quoted history in what the recipient reads.
         withLaneRow(fwdRow, withSignature(forwardSend(parent, {
           body: replyBody.text,
-          ...(replyBody.html ? { html: replyBody.html } : {}),
+          html: replyBody.html ? replyBody.html : null,
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
           // same fallback (`InlineReply`), so the button and the wire agree everywhere the
           // facts are unreadable.
@@ -1225,7 +1228,7 @@ export function useShellCompose({
       // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
       // rendering of the same markup rather than this client's second opinion.
       body: replyBody.text,
-      ...(replyBody.html ? { html: replyBody.html } : {}),
+      html: replyBody.html ? replyBody.html : null,
       // OVERRIDE ENRICH ONLY TO CHANGE THE SENDER. `Engine.enrich` derives the parent's mailbox
       // (`engine.ts:1899`), so the ordinary reply attaches NOTHING and the envelope is unchanged
       // byte-for-byte. `mailboxId` rides only when the resolved sender is genuinely NOT the
@@ -1472,11 +1475,10 @@ export function useShellCompose({
         bcc: formatRecipientChips(d.bcc),
         subject: d.subject,
         body,
-        // NO `html`. The row stores the markup the server derived its plain part FROM, and the
-        // mirror's `EngineDraft` does not carry it — seeding the rich editor from `body` would
-        // silently flatten a formatted draft to text and then save the flattening back over it.
-        // Plain text is the honest reading of what this client holds.
-        html: "",
+        // The row's own markup. Opened as plain text, a formatted draft could be neither saved nor
+        // sent. A row whose html the sync page left out opens plain, and the engine
+        // then keeps its save from flattening it (`Engine.enrich`).
+        html: typeof d.html === "string" ? d.html : "",
         fromMailboxId: d.mailboxId,
         // THE ROW'S FORWARD: a forward kept as a draft reopens as a forward, and its
         // send carries the original — an id, never a copy of the original's words, which the
@@ -2180,6 +2182,7 @@ export function useShellCompose({
     resolveHeldSend,
     sendCompose,
     composeElsewhere: autosave.elsewhere,
+    composeSaveRefused: autosave.saveRefused,
     sendReply,
     setReplyAttachments,
     setReplyEnvelope,

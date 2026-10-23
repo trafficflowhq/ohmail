@@ -804,7 +804,7 @@ export async function promoteOrphanedReplyLane(
   save: (m: {
     kind: "draft_save"; draftId: string | null; mailboxId: string;
     inReplyToMessageId?: string; forwardOfMessageId?: string;
-    subject: string; body: string; html?: string;
+    subject: string; body: string; html?: string | null;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
 ): Promise<LanePromotion> {
@@ -819,7 +819,7 @@ export async function promoteOrphanedReplyLane(
     mailboxId: plan.mailboxId,
     ...(forward ? { forwardOfMessageId: parentId } : { inReplyToMessageId: parentId }),
     subject: plan.subject, body: body.text,
-    ...(body.html ? { html: body.html } : {}),
+    html: body.html ? body.html : null,
     to: plan.to.map((a) => ({ ...a })), cc: plan.cc.map((a) => ({ ...a })), bcc: plan.bcc.map((a) => ({ ...a })),
   });
   // ADOPTED, not assumed — `compose-autosave`'s rule: without the server's id nothing was

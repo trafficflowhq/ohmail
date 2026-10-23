@@ -6872,8 +6872,30 @@ export class OhmailEngine {
 
   // ── optimistic mutations ─────────────────────────────────────────────────
 
+  /**
+   * Whether the server's copy of draft `id` may hold formatting: the overlaid row, the row the
+   * server last confirmed, or a pending save that states html. A queued save's overlay reads
+   * plain while the server is still formatted, and this verb may retire that save.
+   */
+  private mayHoldFormatting(id: string): boolean {
+    const formatted = (d: EngineDraft | undefined) => typeof d?.html === "string" && d.html !== "";
+    if (formatted(this.read().get<EngineDraft>("draft", id)) || formatted(this.store.get<EngineDraft>("draft", id))) return true;
+    return [...this.queue, ...this.inFlight.values()].some((p) =>
+      p.supersededBy === undefined && p.mutation.kind === "draft_save" && p.mutation.draftId === id && "html" in p.mutation);
+  }
+
   /** Fill in wire-derivable fields so adapter + overlay agree on the payload. */
-  private enrich(m: EngineMutation): EngineMutation {
+  private enrich(given: EngineMutation): EngineMutation {
+    let m = given;
+    // `html: null` = the editor holds no formatting. It rides only to a row this mirror holds as
+    // formatted, which it makes plain; anywhere else the plain request stays as it was. Decided
+    // here so the overlay and the outbox hold the same request.
+    if ((m.kind === "draft_save" || m.kind === "mail_send") && m.html === null) {
+      if (!(m.draftId && this.mayHoldFormatting(m.draftId))) {
+        const { html: _plain, ...rest } = m;
+        m = rest as EngineMutation;
+      }
+    }
     // An address rule is written at a priority no rule on its domain filing elsewhere outranks.
     if (m.kind === "rule_create" || m.kind === "rule_update") return outrankCoveringDomains(rulesList(this.read()), m);
     if (m.kind === "tag_assign" && m.labels === undefined) {

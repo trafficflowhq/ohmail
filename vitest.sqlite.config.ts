@@ -151,6 +151,9 @@ export default defineConfig({
       // A forward that met the mailbox's own IMAP cap, through the route and the door the Desktop and
       // phone serve it with: offered again on this store, and its replay sends it once.
       "packages/api/test/send-rearm-forward-cap.test.ts",
+      // A draft whose formatting was removed, saved and sent as plain through the engine and the
+      // route, on the store the desktop-local and the standalone phone engines keep drafts in.
+      "packages/client-engine/test/draft-formatting-cleared-sends.test.ts",
       // A reader's arrangement: the mirror write, its change row and the materializer, on the
       // store the standalone phone reads a mailbox with.
       "packages/services/test/reader-shows-the-organizers-arrangement.test.ts",

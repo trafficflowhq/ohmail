@@ -276,6 +276,15 @@ const SEND_WIRE_STATUSES = new Set(["sent", "unverified", "queued", "in_flight",
  */
 export const EDIT_OWN_REFUSALS = new Set(["400 validation_failed", "413 draft_too_large", "413 payload_too_large"]);
 
+/**
+ * One of `body`/`html` on the wire, never both. `html: null` (kept by `Engine.enrich` only for a row
+ * the mirror holds as formatted) rides beside `body` and makes that row plain.
+ */
+function bodyOnWire(m: { body: string; html?: string | null }): { html: string } | { body: string; html?: null } {
+  if (typeof m.html === "string" && m.html !== "") return { html: m.html };
+  return m.html === null ? { body: m.body, html: null } : { body: m.body };
+}
+
 /** `POST /drafts/:id/send` answers this shape at 200 AND at 409 — never the error envelope. */
 interface SendWire {
   status?: "sent" | "unverified" | "failed" | "in_flight" | "queued";
@@ -1903,7 +1912,7 @@ export class HttpAdapter implements EngineAdapter {
       case "draft_save": {
         const fields = {
           subject: m.subject,
-          ...(m.html ? { html: m.html } : { body: m.body }),
+          ...bodyOnWire(m),
           to: m.to,
           cc: m.cc,
           bcc: m.bcc,
@@ -2176,7 +2185,7 @@ export class HttpAdapter implements EngineAdapter {
           const put = await this.request("PUT", `/drafts/${encodeURIComponent(row)}`, {
             body: {
               subject: m.subject ?? "",
-              ...(m.html ? { html: m.html } : { body: m.body }),
+              ...bodyOnWire(m),
               to: m.to ?? [],
               cc: m.cc ?? [],
               bcc: m.bcc ?? [],
@@ -2368,7 +2377,7 @@ export class HttpAdapter implements EngineAdapter {
           // see, which is precisely the assertion the server takes back so the two parts of
           // the multipart cannot disagree. `m.body` is still the local plain rendering; it
           // stays out of the request when there is markup to derive a better one from.
-          ...(m.html ? { html: m.html } : { body: m.body }),
+          ...bodyOnWire(m),
           to: m.to ?? [],
           cc: m.cc ?? [],
           bcc: m.bcc ?? [],

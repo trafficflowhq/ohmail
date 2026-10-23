@@ -46,7 +46,7 @@ export function forwardSend(
   parent: Pick<EngineMessage, "id" | "subject">,
   input: {
     body: string;
-    html?: string;
+    html?: string | null;
     mailboxId?: string;
     attachments?: readonly ComposeAttachment[];
     plan: ReplyEnvelopePlan;
@@ -63,7 +63,7 @@ export function forwardSend(
     forwardClock: { zone: activeFormatZone(), locale: activeFormatLocale() },
     subject: forwardSubject(parent.subject),
     body: input.body,
-    ...(input.html ? { html: input.html } : {}),
+    ...(input.html !== undefined ? { html: input.html } : {}),
     ...(input.mailboxId ? { mailboxId: input.mailboxId } : {}),
     ...(input.attachments && input.attachments.length > 0
       ? { attachments: [...input.attachments] }

@@ -58,8 +58,10 @@ export function worthSaving(f: ComposeFields): boolean {
  * silent refusal is the shape where a person loses what they wrote believing it was kept.
  * `compose-autosave.test.tsx` drives this and the door from one input and asserts they agree.
  */
-export function draftNoteKey(fields: ComposeFields): "draftNote" | "bodyTooLong" {
-  return draftOverCeiling(fields.body, fields.html) ? "bodyTooLong" : "draftNote";
+export function draftNoteKey(fields: ComposeFields, saveRefused = false): "draftNote" | "bodyTooLong" | "draftNotSaved" {
+  if (draftOverCeiling(fields.body, fields.html)) return "bodyTooLong";
+  // The account refused the last save: what is on screen is not in Drafts.
+  return saveRefused ? "draftNotSaved" : "draftNote";
 }
 
 /**
@@ -285,6 +287,12 @@ export interface ComposeAutosave {
    * (a tab closed or offline at the time), and are kept rather than cleared.
    */
   elsewhere: ComposeElsewhere | null;
+  /**
+   * The account refused the last save (`rolled_back`, not the row's own end): what is on screen is
+   * not what Drafts holds, so the surface may not promise it is. Cleared by a save that lands or
+   * queues, and by every door that takes or lets go of the row.
+   */
+  saveRefused: boolean;
 }
 
 /**
@@ -381,6 +389,7 @@ export function useComposeAutosave(opts: {
   /** A restored form the account may not hold yet — see {@link ComposeAutosave.restored}. */
   const openWrite = useRef(false);
   const restored = useCallback(() => { openWrite.current = true; }, []);
+  const [saveRefused, setSaveRefused] = useState(false);
 
   const adopt = useCallback((id: string, f: ComposeFields) => {
     epoch.current += 1;
@@ -396,6 +405,7 @@ export function useComposeAutosave(opts: {
     // A row taken over is a message this surface holds again — see `abandonedAt`.
     abandonedAt.current = null;
     setElsewhereAt(null);
+    setSaveRefused(false);
   }, []);
 
   /**
@@ -428,6 +438,7 @@ export function useComposeAutosave(opts: {
     savedHash.current = null;
     savedMailbox.current = null;
     setElsewhereAt(null);
+    setSaveRefused(false);
   }, []);
 
   /**
@@ -787,7 +798,7 @@ export function useComposeAutosave(opts: {
           ...(f.forwardOf ? { forwardOfMessageId: f.forwardOf } : {}),
           subject: f.subject,
           body: f.body,
-          ...(f.html ? { html: f.html } : {}),
+          html: f.html ? f.html : null,
           to, cc, bcc,
         });
         /* A ROLLED-BACK WRITE IS THE ONE THE CLOSE MAY NOT LEAVE ON: the account does not hold
@@ -797,9 +808,11 @@ export function useComposeAutosave(opts: {
         if (result.status === "rolled_back") {
           gone = mirrored && era === epoch.current
             && (result.error?.status === 404 || result.error?.code === "not_found");
+          if (!gone && era === epoch.current) setSaveRefused(true);
           outcome = { kind: "failed", reason: result.error?.message ?? null };
           return;
         }
+        if (era === epoch.current) setSaveRefused(false);
         if (result.status !== "confirmed") {
           openWrite.current = false;
           outcome = { kind: "saved" };
@@ -959,6 +972,6 @@ export function useComposeAutosave(opts: {
   settleComposeRef.current = settleCompose;
 
   return {
-    draftId, adopt, release, discard, flush, restored, settled, settleCompose, elsewhere,
+    draftId, adopt, release, discard, flush, restored, settled, settleCompose, elsewhere, saveRefused,
   };
 }

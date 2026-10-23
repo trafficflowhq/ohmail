@@ -931,6 +931,8 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           bcc: m.bcc,
           ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+          // The markup the save states, so the next save reads it while this one is in flight.
+          ...(m.html !== undefined ? { html: m.html } : {}),
           updatedAt: iso,
         } satisfies EngineDraft,
       }];

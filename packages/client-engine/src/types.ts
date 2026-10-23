@@ -771,6 +771,8 @@ export interface EngineDraft {
    * a reason this build has never heard of.
    */
   bodyOmitted?: "over_ceiling" | "sent" | "over_page_budget";
+  /** The stored markup; `null` plain or not carried; absent from an overlay before its echo. */
+  html?: string | null;
   to: EmailAddress[];
   cc: EmailAddress[];
   /** Blind-carbon recipients. Delivered on the envelope only; never a header on the sent mail. */
@@ -1392,13 +1394,14 @@ export type EngineMutation =
        */
       body: string;
       /**
-       * The rich body, as the editor produced it, or absent for a plain-text send.
+       * The rich body, as the editor produced it, or absent for a plain-text send. `null`: the
+       * editor holds no formatting, so the save before the send makes a formatted row plain.
        *
        * Sent INSTEAD of `body` on the wire — `POST /drafts` refuses both in one request,
        * because accepting both is how two clients end up disagreeing about which one the
        * recipient sees.
        */
-      html?: string;
+      html?: string | null;
       mailboxId?: string;
       threadId?: string | null;
       subject?: string;
@@ -1468,8 +1471,8 @@ export type EngineMutation =
        * plaintext from the markup instead, exactly as it does for `mail_send`.
        */
       body: string;
-      /** The markup, or absent for a plain-text draft. Never sent beside `body` on the wire. */
-      html?: string;
+      /** The markup; `null` = the editor holds no formatting (demotes a rich row); absent = not said. */
+      html?: string | null;
       to: EmailAddress[];
       cc: EmailAddress[];
       bcc: EmailAddress[];

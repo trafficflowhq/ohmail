@@ -1905,7 +1905,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
-    composeElsewhere, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
+    composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -3088,6 +3088,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 discardKeeps={discardKeepsCompose() !== null}
                 /* The letter went from another device — said, and Send answers in words. */
                 elsewhere={composeElsewhere}
+                saveRefused={composeSaveRefused}
                 /* As a new letter: the plan names the row a pause made since, or none — never the
                    sent one, which `elsewhere` let go of. */
                 onSendAsNew={sendCompose}

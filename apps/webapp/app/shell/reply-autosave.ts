@@ -38,8 +38,8 @@ export interface ReplyRowDoors {
   took: (lane: string, row: string) => void;
 }
 
-/** What a row holds, in the fields the editor writes — its html is not in the mirror. */
-export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "body" | "to" | "cc" | "bcc">;
+/** What a row holds, in the fields the editor writes. */
+export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "body" | "html" | "to" | "cc" | "bcc">;
 
 export interface ReplyAutosave {
   /** The Send press: the text sent is not saved again, and a create still in the air is undone. */
@@ -99,7 +99,7 @@ export function useReplyAutosave(
         kind: "draft_save", draftId: row,
         ...(f.mailboxId ? { mailboxId: f.mailboxId } : {}),
         threadId: f.threadId, inReplyToMessageId: lane,
-        subject: f.subject, body: f.body, ...(f.html ? { html: f.html } : {}),
+        subject: f.subject, body: f.body, html: f.html ? f.html : null,
         to: f.to, cc: f.cc, bcc: f.bcc,
       });
       if (result.status === "rolled_back") return;
@@ -147,7 +147,7 @@ export function useReplyAutosave(
     era.current.set(l, (era.current.get(l) ?? 0) + 1);
   }, []);
   const baseline = useCallback((l: string, row: ReplyRowFields) => {
-    saved.current.set(l, signatureOf({ ...row, lane: l, threadId: null, subjectEdited: false, html: "" }));
+    saved.current.set(l, signatureOf({ ...row, lane: l, threadId: null, subjectEdited: false }));
   }, []);
   const forget = useCallback((l: string) => {
     saved.current.delete(l);
