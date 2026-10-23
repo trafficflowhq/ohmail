@@ -67,7 +67,8 @@ cd ohmail/deploy/selfhost
 cp .env.example .env
 ```
 
-Open `.env` in an editor. Five values are required; the file documents every
+Open `.env` in an editor. Five values are required, and a public domain
+needs a sixth; the file documents every
 one beside where you type it, and everything not marked required has a
 working default. The five:
 
@@ -89,6 +90,12 @@ working default. The five:
   install. Generate it once, `echo "ohmail-selfhost:$(openssl rand -hex 6)"`,
   and never change it: a changed name makes the server read its own previous
   claims as a stranger's, and every mailbox waits for another "Organize here".
+- **`OHMAIL_BIND=0.0.0.0`** — on this guide's VPS with a public domain, the
+  front door must listen on every interface so the certificate authority and
+  your browser can reach ports 80 and 443. The file's default, `127.0.0.1`,
+  answers nobody outside the box: the domain stays dark and no certificate is
+  issued. (A private install binds one private address instead; see
+  [Private self-hosting](#private-self-hosting-and-ohmail-over-tailscale).)
 
 Two optional blocks worth deciding now:
 
