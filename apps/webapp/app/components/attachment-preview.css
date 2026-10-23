@@ -80,10 +80,14 @@ body.ap-lock { overflow: hidden; }
 }
 
 /* ── stage: the byte, centred, with the two side arrows ── */
+/* Centred by auto margins, never by the stage's align-items: centring content taller than its scroll
+   box pushes the top out above it, where no scroll reaches (a tall PDF page previewed blank). An
+   auto margin takes only free space, so a preview that fits is centred and a taller one starts at
+   its top and scrolls. */
 .ap-stage {
   position: relative;
   flex: 1; min-height: 0;
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
   padding: 20px;
   overflow: auto;
   overscroll-behavior: contain;
@@ -91,6 +95,7 @@ body.ap-lock { overflow: hidden; }
 .ap-content {
   display: flex; align-items: center; justify-content: center;
   width: 100%; min-height: 100%;
+  margin: auto;
 }
 
 .ap-nav {
