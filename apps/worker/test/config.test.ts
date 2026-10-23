@@ -4,6 +4,7 @@ import {
   ATTACH_DEADLINE_MS, DEFAULT_ATTACH_CONCURRENCY, DEFAULT_SYNC_BLOCK_GRACE_MS, MAX_ATTACH_CONCURRENCY,
   WorkerConfigError, loadConfig, resolveAttachConcurrency,
 } from "../src/config.js";
+import { keyRingVar, KEY_RING_RETIRED } from "../../../test/support/key-ring-env.js";
 
 /**
  * THE ATTACH POOL'S KNOBS (CLOUD-ROSTER-REATTACH-IS-SERIAL). The shipped defaults are asserted
@@ -65,5 +66,28 @@ describe("attach concurrency and deadline", () => {
 
   it("gives up on an attach before the row's sync-block grace runs out", () => {
     expect(ATTACH_DEADLINE_MS).toBeLessThan(DEFAULT_SYNC_BLOCK_GRACE_MS);
+  });
+});
+
+describe("the key ring's retired versions", () => {
+  const KEY_ONE = "a".repeat(64);
+  const KEY_TWO = "b".repeat(64);
+
+  it("carries the declaration beside the ring, and nothing retired as 0", () => {
+    const cfg = loadConfig({ ...BASE, [keyRingVar(2)]: KEY_TWO, [KEY_RING_RETIRED]: "1" });
+    expect(cfg.kekRetiredThrough).toBe(1);
+    expect(cfg.kek).toMatchObject({ active: 2, count: 1 });
+    expect(cfg.keyProvider?.currentKeyVersion()).toBe(2);
+    expect(loadConfig({ ...BASE, [keyRingVar(1)]: KEY_ONE }).kekRetiredThrough).toBe(0);
+  });
+
+  it("a ring the declaration contradicts refuses the boot with the loader's reason, never a key", () => {
+    // Logged as `configVar` and `reason`: before, a ring refusal reached the log as its class alone, so a
+    // worker refusing to start after a retirement said nothing about why.
+    const e = refusal({ [keyRingVar(1)]: KEY_ONE, [keyRingVar(2)]: KEY_TWO, [KEY_RING_RETIRED]: "1" });
+    expect(e.configVar).toBe(`${keyRingVar(1).slice(0, -1)}<n>`);
+    expect(e.remedy).toContain(`${keyRingVar(1)} is set`);
+    expect(`${e.message} ${e.remedy}`).not.toContain(KEY_ONE);
+    expect(`${e.message} ${e.remedy}`).not.toContain(KEY_TWO);
   });
 });

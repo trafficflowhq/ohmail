@@ -111,7 +111,7 @@ export interface HealthSnapshot {
   kekFingerprint: string | null;
   /** The version new secrets are written under — the persisted `key_version`. */
   kekActiveVersion: number | null;
-  /** How many KEK versions this host loaded (contiguous from 1, so == the active version). */
+  /** How many KEK versions this host loaded: the active version minus those its ring declares retired. */
   kekVersionCount: number | null;
   /**
    * The SAME `kekEnvIdentity()` object the API host publishes under the same key, so the

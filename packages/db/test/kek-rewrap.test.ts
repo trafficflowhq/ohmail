@@ -11,9 +11,11 @@ import {
 } from "../src/schema-cloud.js";
 import {
   runKekRewrap, kekRewrapCensus, formatCensus, WRAPPED_SECRET_SITES,
+  kekRetiredReferences, formatRetireStep, retiredVersionInUseFault,
   type RewrapKeyProvider, type KekRewrapResult,
 } from "../src/kek-rewrap.js";
 import type { Tx } from "../src/change-log.js";
+import { keyRingVar, versionLabel as v, KEY_RING_RETIRED } from "../../../test/support/key-ring-env.js";
 
 /**
  * CRYPTO-4 — the KEK re-wrap pass, everything a single connection can prove.
@@ -558,5 +560,160 @@ describe("CRYPTO-4 — the pass visits rows the live system is still using", () 
       .where(eq(mailboxCredentials.mailboxId, mailboxId));
     expect(row!.meta).toEqual({ host: "imap.example.test", port: 993, secure: true });
     expect(row!.keyVersion).toBe(2);
+  });
+});
+
+/**
+ * RETIRING A VERSION. A re-wrap that reads nothing below the active version licenses removing the
+ * older versions from both hosts and declaring them retired (`packages/core/src/crypto.ts`). Two
+ * questions follow from that, and both are this module's because both are about stored rows:
+ *
+ *   · at boot, does any stored envelope still name a version this host retired? The worker refuses
+ *     to start and the API's `/health` answers 503 when one does (`kekRetiredReferences`);
+ *   · after a pass, what exactly does the operator do next? (`formatRetireStep`, the runner's last
+ *     lines). The tool once said the old versions "may now be removed" and nothing more, and removing
+ *     them that way stopped both hosts from starting.
+ */
+describe("retiring a version — what stored rows still name, asked at boot", () => {
+  it("a full re-wrap leaves nothing naming the first version: the census reads 0 outstanding and no reference is left", async () => {
+    await seedAllSites(1);
+    const before = await kekRetiredReferences(db as unknown as Tx, 1);
+    expect(before.total).toBe(WRAPPED_SECRET_SITES.length);
+    expect(before.versions).toEqual([1]);
+    expect(before.sites.map((s) => [s.site, s.rows]))
+      .toEqual(WRAPPED_SECRET_SITES.map((s) => [s.site, 1]));
+
+    const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true });
+    expect(r.failed).toBe(0);
+    expect((await kekRewrapCensus(db as unknown as Tx, 2)).outstanding).toBe(0);
+
+    const after = await kekRetiredReferences(db as unknown as Tx, 1);
+    expect(after).toEqual({
+      retiredThrough: 1, total: 0, versions: [],
+      sites: WRAPPED_SECRET_SITES.map((s) => ({ site: s.site, rows: 0 })),
+    });
+  });
+
+  it("a row still on the first version is named by its site; rows above the floor are never counted", async () => {
+    await db.insert(mailboxCredentials).values({
+      mailboxId, transport: "imap", secretEnc: sealedAt(1, "still-v1"), keyVersion: 1,
+    });
+    await db.insert(totpSecrets).values({ userId, secretEnc: sealedAt(2, "on-v2"), keyVersion: 2, activated: true });
+    await db.insert(staffUsers).values({
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+      totpSecretEnc: sealedAt(3, "on-v3"), totpKeyVersion: 3,
+    });
+
+    const one = await kekRetiredReferences(db as unknown as Tx, 1);
+    expect(one.total).toBe(1);
+    expect(one.versions).toEqual([1]);
+    expect(one.sites.filter((s) => s.rows > 0)).toEqual([{ site: "mailbox_credentials.secret_enc", rows: 1 }]);
+
+    // The floor is inclusive: retiring the first two versions counts both rows, and still not the third's.
+    const two = await kekRetiredReferences(db as unknown as Tx, 2);
+    expect(two.total).toBe(2);
+    expect(two.versions).toEqual([1, 2]);
+  });
+
+  it("a row holding no secret is not a reference", async () => {
+    await db.insert(staffUsers).values({
+      email: `staff-${randomUUID()}@example.test`, passwordHash: "scrypt-x-password-hash",
+    });
+    expect((await kekRetiredReferences(db as unknown as Tx, 1)).total).toBe(0);
+  });
+
+  it("refuses a floor that retires nothing: asking about version 0 is a caller's defect", async () => {
+    for (const floor of [0, -1, 1.5, Number.NaN]) {
+      await expect(kekRetiredReferences(db as unknown as Tx, floor), String(floor)).rejects.toThrow(/whole number/);
+    }
+  });
+
+  it("the public sentence names the variables to restore and carries no count", async () => {
+    await seedAllSites(1);
+    const refs = await kekRetiredReferences(db as unknown as Tx, 1);
+    const said = retiredVersionInUseFault(refs);
+    expect(said).toContain(`${KEY_RING_RETIRED}=1`);
+    expect(said).toContain(`put ${keyRingVar(1)} back`);
+    expect(said).toContain(`unset ${KEY_RING_RETIRED}`);
+    expect(said).not.toMatch(/\b8\b/);
+    // Versions 1 and 2 retired, a row on version 2 alone: version 2 comes back, version 1 stays retired.
+    const deeper = retiredVersionInUseFault({ retiredThrough: 2, total: 1, versions: [2], sites: [] });
+    expect(deeper).toContain(`put ${keyRingVar(2)} back`);
+    expect(deeper).not.toContain(keyRingVar(1));
+    expect(deeper).toContain(`set ${KEY_RING_RETIRED}=1`);
+  });
+});
+
+describe("retiring a version — the step the re-wrap prints last", () => {
+  async function censusAfterRewrap(from: number, to: number) {
+    await seedAllSites(from);
+    const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: fakeProvider(to), apply: true });
+    return { census: await kekRewrapCensus(db as unknown as Tx, to), failed: r.failed };
+  }
+
+  it("nothing below version 2 after the pass: declare and delete version 1 on both hosts, and keep it for the backups", async () => {
+    const { census, failed } = await censusAfterRewrap(1, 2);
+    const text = formatRetireStep({ census, retiredThrough: 0, failed }).join("\n");
+    expect(text).toContain(`Nothing references a version below ${v(2)}`);
+    expect(text).toContain(`set ${KEY_RING_RETIRED}=1 and delete ${keyRingVar(1)}`);
+    expect(text).toContain("BOTH hosts");
+    expect(text).toContain("active 2, count 1");
+    expect(text).toContain("backups");
+    expect(text).not.toContain("may now be removed");
+  });
+
+  it("three versions loaded: both older ones go in one step", async () => {
+    const { census, failed } = await censusAfterRewrap(1, 3);
+    const text = formatRetireStep({ census, retiredThrough: 0, failed }).join("\n");
+    expect(text).toContain(`set ${KEY_RING_RETIRED}=2 and delete ${keyRingVar(1)} and ${keyRingVar(2)}`);
+  });
+
+  it("a floor already declared moves up by the versions this pass freed", async () => {
+    const { census, failed } = await censusAfterRewrap(2, 3);
+    const text = formatRetireStep({ census, retiredThrough: 1, failed }).join("\n");
+    expect(text).toContain(`set ${KEY_RING_RETIRED}=2 and delete ${keyRingVar(2)}`);
+    expect(text).not.toContain(`delete ${keyRingVar(1)}`);
+  });
+
+  it("rows left below the target: nothing may be removed yet", async () => {
+    await seedAllSites(1);
+    const census = await kekRewrapCensus(db as unknown as Tx, 2);
+    const text = formatRetireStep({ census, retiredThrough: 0, failed: 0 }).join("\n");
+    expect(text).toContain("Do NOT remove any KEK version yet");
+    expect(text).toContain(`8 row(s) remain below ${v(2)}`);
+    expect(text).not.toContain(KEY_RING_RETIRED);
+  });
+
+  it("a pass that skipped rows: nothing may be removed, and the skipped rows are named as the reason", async () => {
+    await seedAllSites(1);
+    const census = await kekRewrapCensus(db as unknown as Tx, 2);
+    const text = formatRetireStep({ census, retiredThrough: 0, failed: 3 }).join("\n");
+    expect(text).toContain("Do NOT remove any KEK version yet");
+    expect(text).toContain("3 of them skipped");
+  });
+
+  it("rows on a version this ring already retired: put it back before anything else", async () => {
+    await seedAllSites(1);
+    const census = await kekRewrapCensus(db as unknown as Tx, 2);
+    const text = formatRetireStep({ census, retiredThrough: 1, failed: 0 }).join("\n");
+    expect(text).toContain(`still name ${v(1)}, retired from this ring by ${KEY_RING_RETIRED}=1`);
+    expect(text).toContain(`put ${keyRingVar(1)} back`);
+    expect(text).toContain("No version may be removed");
+  });
+
+  it("rows above this ring's newest version: this environment is behind a host, so nothing is retired", async () => {
+    await seedAllSites(3);
+    const census = await kekRewrapCensus(db as unknown as Tx, 2);
+    const text = formatRetireStep({ census, retiredThrough: 0, failed: 0 }).join("\n");
+    expect(text).toContain(`above ${v(2)}`);
+    expect(text).toContain("Retire nothing");
+    expect(text).not.toContain(KEY_RING_RETIRED);
+  });
+
+  it("a ring holding only the active version has nothing to retire", async () => {
+    const { census, failed } = await censusAfterRewrap(1, 2);
+    const text = formatRetireStep({ census, retiredThrough: 1, failed }).join("\n");
+    expect(text).toContain(`Nothing to retire: this ring holds only ${v(2)}`);
+    expect(text).toContain(`${KEY_RING_RETIRED}=1`);
   });
 });

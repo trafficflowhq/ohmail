@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  keyProviderFromEnv, kekEnvIdentity, assertAnthropicKey,
+  keyProviderFromEnv, kekEnvIdentity, kekRetiredThroughFromEnv, assertAnthropicKey,
   type KeyProvider, type KekEnvIdentity,
 } from "@trafficflow/core";
 import { DEFAULT_SSE, type SseConfig, type BuildIdentitySource } from "@trafficflow/api";
@@ -147,6 +147,11 @@ export interface HostConfig {
   kek: KekEnvIdentity | null;
   /** Why {@link HostConfig.kek} is null, verbatim from the key-ring loader. Never key material. */
   kekError: string | null;
+  /**
+   * `TF_KEK_RETIRED`: every key version at or below it left this host after a re-wrap; 0 when none did
+   * or when the ring does not load. Non-zero arms `/health`'s key-retirement check (`kekRetirementFor`).
+   */
+  kekRetiredThrough: number;
   authConfig: AuthConfig;
   sse: SseConfig;
   /**
@@ -856,11 +861,13 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
   let keyProvider: KeyProvider;
   let kek: KekEnvIdentity | null;
   let kekError: string | null = null;
+  let kekRetiredThrough = 0;
   try {
     keyProvider = keyProviderFromEnv(env);
     const identity = kekEnvIdentity(env);
     if (!identity) throw new Error("TF_KEK_V1 is required on the API host (it decrypts mailbox credentials)");
     kek = identity;
+    kekRetiredThrough = kekRetiredThroughFromEnv(env);
   } catch (err) {
     kekError = err instanceof Error ? err.message : String(err);
     keyProvider = poisonedKeyProvider(kekError);
@@ -901,6 +908,7 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
     keyProvider,
     kek,
     kekError,
+    kekRetiredThrough,
     authConfig,
     sse: { ...DEFAULT_SSE, pollMs, lifetimeMs, enabled: sseEnabled },
     // The LISTEN url is loaded regardless of `sseEnabled` so a bad value is a deploy-time error

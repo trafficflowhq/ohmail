@@ -3,8 +3,10 @@ import {
   type AccessPort, type AiPricingMarker, type EntitlementsComposition, type ParkedAccountsReader,
   type SpendPort, type Tx,
 } from "@trafficflow/db";
-import type { AccountsAtCapReader, AlertHeartbeat, PlaneOpsReader } from "@trafficflow/db/cloud";
-import { alertHeartbeatFor } from "@trafficflow/db/cloud";
+import type { AccountsAtCapReader, AlertHeartbeat, PlaneOpsReader, RetiredKekReferences } from "@trafficflow/db/cloud";
+import {
+  alertHeartbeatFor, kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault,
+} from "@trafficflow/db/cloud";
 import {
   API_MAX_DURATION_MS, makePooledDb, recordApiFault, entitlementsFaultRecorder, accountsAtCapOf,
   ALERT_PARKED_READ_BOUND, planeOpsReaderOf,
@@ -668,6 +670,9 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     requireVerifiedForProduct: true,
     health: {
       version: cfg.version, buildSource: cfg.buildSource, kek: cfg.kek, kekError: cfg.kekError,
+      // Armed only on a ring that retired a version: `/health` answers 503 while a stored secret
+      // still names one, or while the host cannot tell (`kekRetirementFor`, once per instance).
+      kekRetirement: cfg.kekRetiredThrough > 0 ? kekRetirementFor(cfg) : null,
       buildError: cfg.buildError,
       // Non-fatal by design: `/health` names it and still answers 200, because an unarmed
       // STAFF console is not a reason to take the product host out of rotation.
@@ -958,6 +963,41 @@ function hostLogger(cfg: HostConfig): Logger {
   setNoticeSink(noticeSinkFor(logger));
   loggerCache = { key: cfg, logger };
   return logger;
+}
+
+/** The definite answers of the key-retirement check, one per config (production: one per cold instance). */
+const kekRetirementAnswers = new WeakMap<HostConfig, Promise<{ error: string; detail: string } | null>>();
+
+/**
+ * THE KEY-RETIREMENT CHECK for `/health` (`HealthConfig.kekRetirement`): does a stored secret still name
+ * a version this host's ring declares retired (`packages/core/src/crypto.ts`)? One read-only aggregate per sealed column on
+ * the pooled connection, asked ONCE per instance for a definite answer — after the redeploy that
+ * removed the version nothing can start naming it again, because every host writes under its active
+ * version — and asked again after a reading that failed, which is a fault of its own: a host that
+ * cannot tell is not known to be able to open its secrets, so `/health` says so rather than reading
+ * green over a question it never answered. Never throws. The sentence carries no count and no driver
+ * text: `/health` is public.
+ */
+export function kekRetirementFor(
+  cfg: HostConfig,
+  read: (retiredThrough: number) => Promise<RetiredKekReferences> =
+    (through) => kekRetiredReferences(makePooledDb(cfg.databaseUrlPooled) as unknown as Tx, through),
+): () => Promise<{ error: string; detail: string } | null> {
+  return async () => {
+    const kept = kekRetirementAnswers.get(cfg);
+    if (kept) return kept;
+    try {
+      const refs = await read(cfg.kekRetiredThrough);
+      const answer = refs.total > 0
+        ? { error: "kek_retired_version_in_use", detail: retiredVersionInUseFault(refs) }
+        : null;
+      kekRetirementAnswers.set(cfg, Promise.resolve(answer));
+      return answer;
+    } catch {
+      // A failed reading is not cached and carries no driver text: the next /health asks again.
+      return { error: "kek_retirement_unread", detail: retiredVersionUnreadFault(cfg.kekRetiredThrough) };
+    }
+  };
 }
 
 /** Test seam: drop the cached service bag. */

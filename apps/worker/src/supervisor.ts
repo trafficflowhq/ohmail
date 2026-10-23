@@ -7,6 +7,8 @@ import {
 } from "./config.js";
 import { evaluateHealth, startHealthServer, type HealthServer } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, type LockLostError } from "./leader-lock.js";
+import { kekRetirementGate, KekRetiredVersionInUseError } from "./kek-retirement-gate.js";
+import type { RetiredKekReferences } from "@trafficflow/db/cloud";
 import { startWorkerWithLock, type RunningWorker } from "./index.js";
 
 export type SupervisorState = "standby" | "leader" | "failed" | "stopped";
@@ -34,7 +36,13 @@ export async function runWorkerSupervised(
   config: WorkerConfig,
   hooks: {
     onFatal?: (err: unknown) => void;
-      } = {},
+    /**
+     * TEST SEAM for the key-retirement gate. Absent means the real one (`kek-retirement-gate.ts`),
+     * the only state production is in. It is asked at most once, before the health endpoint answers,
+     * and only when `config.kekRetiredThrough` declares a version retired.
+     */
+    kekRetirementGate?: (databaseUrl: string, retiredThrough: number) => Promise<RetiredKekReferences>;
+  } = {},
 ): Promise<SupervisedWorker> {
   const shards = config.shards ?? DEFAULT_SHARDS;
   const shardIndex = config.shardIndex ?? 0;
@@ -71,6 +79,27 @@ export async function runWorkerSupervised(
 
   let announceLeader: () => void = () => { /* replaced below */ };
   const leaderPromise = new Promise<void>((resolve) => { announceLeader = resolve; });
+
+  // ── THE KEY-RETIREMENT GATE, BEFORE THE HEALTH ENDPOINT AND THE LOCK ────────────────────────────
+  //
+  // A ring that declares versions retired (`packages/core/src/crypto.ts`) is sound only while no stored secret
+  // names one of them, and only the database can say so. Asked HERE, before `startHealthServer`, because
+  // a standby answers 200 from its first probe for the length of a deploy: a gate asked after the
+  // endpoint is up would leave a window in which the platform reads this deployment healthy, retires
+  // the instance it replaces, and only then hears the refusal. Asked before the lock, so a refused worker
+  // never becomes the leader, not even for an instant. A gate that throws (the database is unreachable)
+  // propagates: that is the boot failure a dead database already is, never a retirement verdict.
+  // With nothing retired the database is not asked at all.
+  let kekRefusal: { err: KekRetiredVersionInUseError; refs: RetiredKekReferences } | null = null;
+  const retiredThrough = config.kekRetiredThrough ?? 0;
+  if (retiredThrough > 0) {
+    const refs = await (hooks.kekRetirementGate ?? kekRetirementGate)(config.databaseUrl, retiredThrough);
+    if (refs.total > 0) {
+      kekRefusal = { err: new KekRetiredVersionInUseError(refs), refs };
+      fatal = kekRefusal.err;
+      state = "failed";
+    }
+  }
 
   const health: HealthServer = await startHealthServer({
     port: config.healthPort ?? DEFAULT_HEALTH_PORT,
@@ -265,7 +294,21 @@ export async function runWorkerSupervised(
   // reads); throwing would close the endpoint and leave a dead port. A gate that THROWS (database
   // unreachable) is deliberately NOT caught — that is the "genuinely broken config" case the first attempt
   // already fails loudly for.
-  {
+  if (kekRefusal) {
+    // Refused above: no lock is taken and `announceLeader()` is unreachable. The health endpoint is
+    // up so the refusal is READABLE (503, `error` naming what to put back); the count is this log
+    // line's, never the public endpoint's (fields on the logger's census only: `version` is the
+    // highest retired one, `rows` the envelopes still naming a retired version; the re-wrap's census
+    // names their sites). `onFatal` ends the process in the CLI, as a lost lock does.
+    log.error("kek_retired_version_in_use", {
+      err: kekRefusal.err,
+      version: kekRefusal.refs.retiredThrough,
+      rows: kekRefusal.refs.total,
+      reason: "a stored secret still names a retired key version; this worker will not take the leader " +
+        "lock, and health answers 503 so the deployment fails and the running one keeps serving",
+    });
+    hooks.onFatal?.(kekRefusal.err);
+  } else {
     // The FIRST attempt is awaited so a genuinely broken config (bad KEK, dead DB) still
     // fails the boot loudly instead of hiding behind a healthy-looking standby.
     try {

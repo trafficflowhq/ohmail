@@ -283,10 +283,11 @@ export {
  */
 export {
   runKekRewrap, kekRewrapCensus, formatCensus,
+  kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault, formatRetireStep,
   WRAPPED_SECRET_SITES, REWRAP_BATCH_LIMIT,
   type WrappedSecretSite, type RewrapKeyProvider, type KekRewrapDeps, type KekRewrapResult,
   type KekRewrapCensus, type SiteCensus, type RewrapFailure, type RewrapFailureReason,
-  type RewrapEvent, type RewrapHooks,
+  type RewrapEvent, type RewrapHooks, type RetiredKekReferences, type RetireStepInput,
 } from "./kek-rewrap.js";
 
 /**

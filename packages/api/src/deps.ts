@@ -500,6 +500,16 @@ export interface HealthConfig {
    */
   kekError?: string | null;
   /**
+   * THE KEY-RETIREMENT CHECK, as a capability: present only on a host whose ring declares versions
+   * retired (`packages/core/src/crypto.ts`). It resolves to the fault `/health` answers 503 with — a stored secret
+   * still names a version this host no longer holds (`kek_retired_version_in_use`), or the host could
+   * not tell (`kek_retirement_unread`) — and null when nothing names one. The host asks its database
+   * once per instance for a definite answer and asks again after a failed reading; it is contracted not
+   * to throw, and a throw is no reading. Ranked after `kekError`: a ring that does not load is the
+   * fault to name first. The detail is public, so it says what to put back and never how many rows.
+   */
+  kekRetirement?: (() => Promise<{ error: string; detail: string } | null>) | null;
+  /**
    * Why this deployment cannot identify its own build. Present ⇒ `/health` answers 503
    * `build_identity_unknown`: a PRODUCTION deployment reporting `version: "dev"` cannot be
    * correlated with a commit, so "which build is serving this?" — the first question of every

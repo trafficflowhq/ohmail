@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
 import {
-  keyProviderFromEnvOptional, kekFingerprintFromEnv, kekEnvIdentity,
+  keyProviderFromEnvOptional, kekFingerprintFromEnv, kekEnvIdentity, kekRetiredThroughFromEnv,
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter, makeOpusProposer,
   callCeilingMs, msDeviceEnv, organizerEnvironment, resolveCloudInstallId, blankRepairModeFrom,
   type BlankRepairMode, type KeyProvider, type ClassifierPort, type DraftPort, type WorkflowPort,
@@ -238,6 +238,11 @@ export interface WorkerConfig {
    *  invisible until a mailbox is touched). All three fields must match; see
    *  `KekEnvIdentity` in `@trafficflow/core`. */
   kek?: KekEnvIdentity;
+  /** `TF_KEK_RETIRED`: every key version at or below it left this host after a re-wrap. Absent or 0 ⇒
+   *  nothing is retired. When set, the supervisor asks the database once, before its health endpoint
+   *  answers and before the leader lock, whether a stored secret still names one of those versions,
+   *  and refuses to start while one does (`kek-retirement-gate.ts`). */
+  kekRetiredThrough?: number;
   pollIntervalMs: number;
   sentDomain: string;
   /** Max mailboxes this process serves; the rest are logged LOUDLY and left unsynced. */
@@ -755,6 +760,29 @@ export const keyProviderFromKekEnv: (env: NodeJS.ProcessEnv) => KeyProvider | un
   keyProviderFromEnvOptional;
 
 /**
+ * The ring's three config fields, read together, and a refusal that the log can explain. The loader
+ * throws a plain Error, which `worker_start_failed` reduces to its class (a boot failure's message is
+ * the one most likely to carry a connection string), so a worker whose ring was wrong — a retired
+ * version left set, a declaration with no key left — restarted without saying why. The loader's
+ * refusals name variables and version numbers and never key material (`packages/core/src/crypto.ts`),
+ * so its sentence travels as the remedy, logged beside `configVar`.
+ */
+function kekRingFrom(env: NodeJS.ProcessEnv): Pick<WorkerConfig, "keyProvider" | "kek" | "kekRetiredThrough"> {
+  try {
+    return {
+      keyProvider: keyProviderFromKekEnv(env),
+      kek: kekEnvIdentity(env),
+      kekRetiredThrough: kekRetiredThroughFromEnv(env),
+    };
+  } catch (err) {
+    throw new WorkerConfigError(
+      "TF_KEK_V<n>", "the key ring in the environment is unusable",
+      err instanceof Error ? err.message : "the key ring loader refused this environment",
+    );
+  }
+}
+
+/**
  * The mailbox selection implied by a config: THE SHARD, and nothing else. `config.accountId`
  * is deliberately not consulted — see the `accountId` note on `WorkerConfig`. A worker's
  * roster is always its shard's full duty, so there is no configuration in which a
@@ -991,6 +1019,7 @@ export function loadConfig(
   if (blankRepair === null) {
     throw new WorkerConfigError("OHMAIL_BLANK_REPAIR", "OHMAIL_BLANK_REPAIR must be off, dry or apply");
   }
+  const ring = kekRingFrom(env);
   return {
     blankRepair,
     databaseUrl: url,
@@ -1004,11 +1033,12 @@ export function loadConfig(
       host: env.SMTP_HOST, port: Number(env.SMTP_PORT ?? 587), secure: env.SMTP_SECURE === "true",
       user: env.SMTP_USER, pass: env.SMTP_PASS,
     } : undefined,
-    keyProvider: keyProviderFromKekEnv(env),
+    keyProvider: ring.keyProvider,
     // Read here so the deployed process cannot start without a decided policy, and read
     // from the API's own variable so the two cannot disagree about one operator's network.
     dialHostGuard: dialHostGuardFromEnv(env),
-    kek: kekEnvIdentity(env),
+    kek: ring.kek,
+    kekRetiredThrough: ring.kekRetiredThrough,
     pollIntervalMs,
     sentDomain: env.TF_SENT_DOMAIN ?? "trafficflow.ch",
     maxMailboxes: optInt(env, "TF_MAX_MAILBOXES", DEFAULT_MAX_MAILBOXES),

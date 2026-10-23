@@ -149,12 +149,52 @@ export class StaticKeyProvider implements KeyProvider {
 // removing it. Identical bytes in two versions are rejected at load. Empty counts as ABSENT. The
 // `TF_KEK_V` prefix is RESERVED: any non-canonical name (`TF_KEK_VX`, `TF_KEK_V02`) is a hard
 // boot failure — skipping it is the silent mid-rotation drift this loader exists to prevent.
+//
+// RETIRED VERSIONS. Removing a version once nothing references it is the step that takes a leaked
+// key out of the hosts, and "contiguous from 1" refused it: a host holding only the second version
+// did not boot.
+// `TF_KEK_RETIRED=<n>` declares that every version up to n was re-wrapped off and removed (the
+// re-wrap's census read nothing below the active version); the ring is then contiguous from n + 1.
+// Every other rule stands, and the declaration is as strict as a key: it is a whole number of 1 or
+// more, a retired version that is still SET refuses boot (the declaration and the environment
+// disagree, and the leaked key would stay on the host), and a declaration with no key left refuses.
+// Only the oldest versions retire — a floor, never a list — so a gap in the middle is still the
+// missing version a row needs. The environment cannot say whether a stored row still names a
+// retired version; the hosts ask their database at boot (`kekRetiredReferences`, packages/db).
 
 /** The RESERVED prefix: every non-empty `TF_KEK_V*` must be a canonical version. */
 const KEK_ENV_PREFIX = "TF_KEK_V";
 /** `TF_KEK_V<n>`, n ≥ 1, no leading zeros. */
 const KEK_ENV_RE = /^TF_KEK_V([1-9][0-9]*)$/;
 const HEX_64 = /^[0-9a-fA-F]{64}$/;
+/** Every version up to and including this one has left the host. Outside the reserved prefix. */
+export const KEK_RETIRED_ENV = "TF_KEK_RETIRED";
+/** A whole number of 1 or more, no leading zeros: the one spelling of a retired floor. */
+const RETIRED_RE = /^[1-9][0-9]*$/;
+
+/** What the environment holds: the loaded versions, and how many of the oldest were retired. */
+interface KekRing {
+  keks: Map<number, Buffer>;
+  /** `TF_KEK_RETIRED`, or 0 when nothing is retired. The ring starts at this + 1. */
+  retiredThrough: number;
+}
+
+/**
+ * `TF_KEK_RETIRED` as a number, 0 when unset or empty. Refusals name the variable and never its value:
+ * a boot failure reaches logs and `/health`, and a value is the one thing that must not.
+ */
+function readRetiredThrough(env: NodeJS.ProcessEnv): number {
+  const raw = env[KEK_RETIRED_ENV];
+  if (raw === undefined || raw.trim() === "") return 0;
+  const digits = raw.trim();
+  if (!RETIRED_RE.test(digits) || !Number.isSafeInteger(Number(digits))) {
+    throw new Error(
+      `${KEK_RETIRED_ENV} must be a whole number of 1 or more: the highest key version retired ` +
+      "from this host, so the ring starts at the version after it",
+    );
+  }
+  return Number(digits);
+}
 
 /**
  * Reject a non-canonical name under the reserved prefix, with the most specific
@@ -179,10 +219,12 @@ function rejectReservedName(name: string): never {
 }
 
 /**
- * Parse every `TF_KEK_V<n>` in `env` into version→KEK. Empty map ⇒ none configured.
- * Throws on a malformed name, a bad key, or a gap in the version sequence.
+ * Parse every `TF_KEK_V<n>` in `env` into version→KEK, with `TF_KEK_RETIRED`. Empty map ⇒ none
+ * configured. Throws on a malformed name, a bad key, a gap in the version sequence, or a
+ * declaration of retired versions the environment contradicts.
  */
-function readKeks(env: NodeJS.ProcessEnv): Map<number, Buffer> {
+function readKeks(env: NodeJS.ProcessEnv): KekRing {
+  const retiredThrough = readRetiredThrough(env);
   const keks = new Map<number, Buffer>();
   for (const [name, value] of Object.entries(env)) {
     if (!name.startsWith(KEK_ENV_PREFIX)) continue;                // a bare, un-versioned name is unrelated
@@ -202,21 +244,50 @@ function readKeks(env: NodeJS.ProcessEnv): Map<number, Buffer> {
     }
     keks.set(version, Buffer.from(hex, "hex"));
   }
-  if (keks.size === 0) return keks;
-
-  const versions = [...keks.keys()].sort((a, b) => a - b);
-  for (let i = 0; i < versions.length; i++) {
-    if (versions[i] !== i + 1) {
+  if (keks.size === 0) {
+    if (retiredThrough > 0) {
       throw new Error(
-        `KEK versions must be contiguous from 1: TF_KEK_V${i + 1} is missing ` +
-        `(found ${versions.map((v) => `V${v}`).join(", ")})`,
+        `${KEK_RETIRED_ENV}=${retiredThrough} is set and no ${KEK_ENV_PREFIX}<n> is: a ring whose every ` +
+        `version is retired has no key to write under — set ${KEK_ENV_PREFIX}${retiredThrough + 1}`,
       );
     }
+    return { keks, retiredThrough: 0 };
+  }
+
+  const versions = [...keks.keys()].sort((a, b) => a - b);
+  const found = versions.map((v) => `V${v}`).join(", ");
+  // A retired version that is still set: the declaration says the key left the host, and it did not.
+  const stillSet = versions.filter((v) => v <= retiredThrough);
+  if (stillSet.length > 0) {
+    const names = stillSet.map((v) => `${KEK_ENV_PREFIX}${v}`).join(", ");
+    throw new Error(
+      `${names} ${stillSet.length === 1 ? "is" : "are"} set, but ${KEK_RETIRED_ENV}=${retiredThrough} retires ` +
+      `every version up to V${retiredThrough}: remove ${names} from this host, or unset ` +
+      `${KEK_RETIRED_ENV} to load ${stillSet.length === 1 ? "it" : "them"} again`,
+    );
+  }
+  const first = retiredThrough + 1;
+  for (let i = 0; i < versions.length; i++) {
+    if (versions[i] === first + i) continue;
+    const missing = `${KEK_ENV_PREFIX}${first + i}`;
+    if (retiredThrough > 0) {
+      throw new Error(
+        `KEK versions must be contiguous from V${first} (${KEK_RETIRED_ENV}=${retiredThrough}): ` +
+        `${missing} is missing (found ${found})`,
+      );
+    }
+    // Only the OLDEST versions retire, so the way out is offered only when they are what is missing.
+    const lowest = versions[0]!;
+    const retiredWay = i === 0
+      ? `. If every version below V${lowest} was retired after run-kek-rewrap read no stored secret ` +
+        `below V${lowest}, declare it with ${KEK_RETIRED_ENV}=${lowest - 1}; otherwise put ${missing} back`
+      : "";
+    throw new Error(`KEK versions must be contiguous from 1: ${missing} is missing (found ${found})${retiredWay}`);
   }
   // Here as well as in the provider, so a host that only PUBLISHES its ring identity
   // (kekEnvIdentity never constructs a provider) fails closed on a duplicated ring too.
   assertDistinctKekBytes(keks);
-  return keks;
+  return { keks, retiredThrough };
 }
 
 /** Non-secret fingerprint of ONE KEK: the first 8 hex of SHA-256(KEK). */
@@ -261,7 +332,10 @@ export function kekRingFingerprint(keks: ReadonlyMap<number, Buffer> | Record<nu
 export interface KekEnvIdentity {
   /** The version new secrets are encrypted under (the highest loaded). */
   active: number;
-  /** How many versions are loaded (== `active`, since the sequence is contiguous). */
+  /**
+   * How many versions are loaded: `active` minus the retired ones (`TF_KEK_RETIRED`), since the loaded
+   * run is contiguous. Equal to `active` on a host that has retired nothing.
+   */
   count: number;
   /** {@link kekRingFingerprint} of EVERY loaded version, not just the active one. */
   fingerprint: string;
@@ -273,7 +347,7 @@ export interface KekEnvIdentity {
  * must fail at boot, not at the first mailbox.
  */
 export function keyProviderFromEnv(env: NodeJS.ProcessEnv = process.env): KeyProvider {
-  const keks = readKeks(env);
+  const { keks } = readKeks(env);
   if (keks.size === 0) {
     throw new Error("no KEK configured: set TF_KEK_V1 (64 hex chars = a 32-byte AES-256 KEK)");
   }
@@ -284,10 +358,10 @@ export function keyProviderFromEnv(env: NodeJS.ProcessEnv = process.env): KeyPro
  * {@link keyProviderFromEnv} for hosts that legitimately run without KEK material
  * (tests, and the worker's injected-provider path): `undefined` when NO `TF_KEK_V*`
  * is set at all. A PRESENT-but-malformed KEK still throws — silently degrading that
- * to "no KEK" is how a typo becomes an outage.
+ * to "no KEK" is how a typo becomes an outage. So does a `TF_KEK_RETIRED` with no key.
  */
 export function keyProviderFromEnvOptional(env: NodeJS.ProcessEnv = process.env): KeyProvider | undefined {
-  return readKeks(env).size === 0 ? undefined : keyProviderFromEnv(env);
+  return readKeks(env).keks.size === 0 ? undefined : keyProviderFromEnv(env);
 }
 
 /**
@@ -295,13 +369,24 @@ export function keyProviderFromEnvOptional(env: NodeJS.ProcessEnv = process.env)
  * This is the object BOTH hosts publish verbatim — see {@link KekEnvIdentity}.
  */
 export function kekEnvIdentity(env: NodeJS.ProcessEnv = process.env): KekEnvIdentity | undefined {
-  const keks = readKeks(env);
+  const { keks } = readKeks(env);
   if (keks.size === 0) return undefined;
   return {
     active: Math.max(...keks.keys()),
     count: keks.size,
     fingerprint: kekRingFingerprint(keks),
   };
+}
+
+/**
+ * `TF_KEK_RETIRED` as the ring loader reads it: every version at or below this one left the host,
+ * 0 when none did. It validates the whole ring, so it throws exactly where {@link keyProviderFromEnv}
+ * would. A host that reads a non-zero value asks its database at boot whether a stored secret still
+ * names one of those versions (`kekRetiredReferences` in packages/db) and refuses to serve while one
+ * does, because a key it no longer holds cannot open that secret.
+ */
+export function kekRetiredThroughFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  return readKeks(env).retiredThrough;
 }
 
 /**

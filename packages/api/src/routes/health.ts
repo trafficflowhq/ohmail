@@ -289,6 +289,8 @@ export function healthFault(input: {
   schemaOk: boolean;
   markersFound: number;
   kekError: string | null;
+  /** What `HealthConfig.kekRetirement` answered: a retired key version still named, or unreadable. */
+  kekRetiredFault?: { error: string; detail: string } | null;
   buildError: string | null;
   /** What this host expects. Absent ⇒ the mail tier's count (`mailTierMarkers().expected`). */
   expected?: number;
@@ -305,6 +307,7 @@ export function healthFault(input: {
     };
   }
   if (input.kekError !== null) return { error: "kek_env_invalid", detail: input.kekError };
+  if (input.kekRetiredFault) return { error: input.kekRetiredFault.error, detail: input.kekRetiredFault.detail };
   if (input.buildError !== null) return { error: "build_identity_unknown", detail: input.buildError };
   return null;
 }
@@ -509,8 +512,21 @@ export const healthRoutes: Route[] = [
       // The counts this host is held to, read only now that the probe was a Postgres one.
       const through = fullCensus?.through ?? mailTierMarkers().through;
       const expectedMarkers = fullCensus?.expected ?? mailTierMarkers().expected;
+      // A RETIRED KEY VERSION STILL NAMED — asked only here, where the database answered, and only on a
+      // host that retired one (`HealthConfig.kekRetirement`). Contracted not to throw; a throw anyway is
+      // no reading, never a darkened host.
+      let kekRetiredFault: { error: string; detail: string } | null = null;
+      if (injected?.kekRetirement) {
+        try {
+          kekRetiredFault = await injected.kekRetirement();
+        } catch {
+          // Contracted not to throw (the host's own failed reading is a fault it returns); a throw
+          // anyway is no reading, and `/health` must never darken on its own capability.
+          kekRetiredFault = null;
+        }
+      }
       const fault = healthFault({
-        schemaOk: probe.schemaOk, markersFound: probe.markersFound, kekError, buildError,
+        schemaOk: probe.schemaOk, markersFound: probe.markersFound, kekError, kekRetiredFault, buildError,
         expected: expectedMarkers, through,
       });
       return healthResponse(fault ? 503 : 200, {

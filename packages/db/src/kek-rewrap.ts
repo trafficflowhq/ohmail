@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, is, isNotNull, isNull, lt, sql, Column, type SQL } from "drizzle-orm";
+import { and, eq, is, isNotNull, isNull, lt, lte, sql, Column, type SQL } from "drizzle-orm";
 import { type PgColumn, type PgTable } from "drizzle-orm/pg-core";
 import type { Tx, LedgerTx } from "./change-log.js";
 import { mailboxCredentials } from "./schema-mail.js";
@@ -295,6 +295,76 @@ export async function kekRewrapCensus(db: Tx, target: number): Promise<KekRewrap
   };
 }
 
+/** What stored rows still name a version a host retired — see {@link kekRetiredReferences}. */
+export interface RetiredKekReferences {
+  /** `TF_KEK_RETIRED` as asked: every version at or below it has left the host. */
+  readonly retiredThrough: number;
+  /** Stored envelopes naming a retired version, across every site. Zero ⇒ the retirement is sound. */
+  readonly total: number;
+  /** The retired versions those envelopes name, ascending. */
+  readonly versions: readonly number[];
+  /** Every site, in registry order, with its count — zeros included, so an all-zero list is an answer. */
+  readonly sites: ReadonlyArray<{ readonly site: string; readonly rows: number }>;
+}
+
+/**
+ * DOES A STORED SECRET STILL NAME A RETIRED VERSION? — asked by a host at boot when its ring
+ * declares versions retired (`TF_KEK_RETIRED`, `packages/core/src/crypto.ts`).
+ *
+ * The census licenses removing a version, but the environment that later boots without it cannot
+ * see the census; a row the re-wrap did not move — a backup restored over the database, a host
+ * still writing under the old key while the pass ran — would hold a secret no host can open. So the
+ * worker refuses to start and the API's `/health` answers 503 while this counts anything. Read-only,
+ * one aggregate per site, and only on a host that retired something.
+ */
+export async function kekRetiredReferences(db: Tx, retiredThrough: number): Promise<RetiredKekReferences> {
+  if (!Number.isSafeInteger(retiredThrough) || retiredThrough < 1) {
+    throw new Error("kekRetiredReferences: retiredThrough must be a whole number >= 1, the highest retired version");
+  }
+  const sites: Array<{ site: string; rows: number }> = [];
+  const versions = new Set<number>();
+  for (const site of RESOLVED) {
+    const counts = await db
+      .select({ v: site.kvCol, n: sql<number>`count(*)::int` })
+      .from(site.table)
+      .where(and(isNotNull(site.ctCol), isNotNull(site.kvCol), lte(site.kvCol, retiredThrough)))
+      .groupBy(site.kvCol);
+    let rows = 0;
+    for (const r of counts as Array<{ v: number; n: number }>) {
+      rows += Number(r.n);
+      versions.add(Number(r.v));
+    }
+    sites.push({ site: site.site, rows });
+  }
+  return {
+    retiredThrough,
+    total: sites.reduce((a, s) => a + s.rows, 0),
+    versions: [...versions].sort((a, b) => a - b),
+    sites,
+  };
+}
+
+/**
+ * The sentence a host publishes while {@link kekRetiredReferences} counts anything: what to put back
+ * and how, never how many rows (`/health` is public, and a count is not the operator's next step; the
+ * worker logs the counts). To bring a version back, every version from it up to the floor comes back
+ * too, because the ring must stay contiguous above whatever is still declared retired.
+ */
+export function retiredVersionInUseFault(refs: RetiredKekReferences): string {
+  const lowest = refs.versions[0] ?? 1;
+  const back = Array.from({ length: Math.max(0, refs.retiredThrough - lowest + 1) }, (_, i) => `TF_KEK_V${lowest + i}`);
+  const marker = lowest > 1 ? `set TF_KEK_RETIRED=${lowest - 1}` : "unset TF_KEK_RETIRED";
+  return `a stored secret still names a key version this host retired (TF_KEK_RETIRED=${refs.retiredThrough}): ` +
+    `put ${back.join(" and ")} back on both hosts and ${marker}, redeploy both, then run the re-wrap ` +
+    "until it reads nothing below the active version";
+}
+
+/** The sentence a host publishes when {@link kekRetiredReferences} could not be read: no driver text, no count. */
+export function retiredVersionUnreadFault(retiredThrough: number): string {
+  return `whether a stored secret still names a key version this host retired (TF_KEK_RETIRED=${retiredThrough}) ` +
+    "could not be read from the database; it is asked again on the next /health";
+}
+
 /**
  * Crash-injection seams, and they exist ONLY so the resume and atomicity properties can be
  * PROVEN rather than asserted.
@@ -545,4 +615,68 @@ export function formatCensus(census: KekRewrapCensus): string[] {
         `Versions in use: ${census.versionsInUse.map((v) => `V${v}`).join(", ")}.`,
   );
   return lines;
+}
+
+export interface RetireStepInput {
+  /** The census to judge: on an apply, the one taken AFTER the pass. */
+  readonly census: KekRewrapCensus;
+  /** `TF_KEK_RETIRED` as this run's ring read it, 0 when nothing is retired. The ring holds the rest up to the target. */
+  readonly retiredThrough: number;
+  /** Rows the pass left unchanged; 0 on a dry run. */
+  readonly failed: number;
+}
+
+/**
+ * WHAT THE OPERATOR DOES NEXT — the runner's last lines, after the census.
+ *
+ * The runner used to end on "Versions below V<n> may now be removed from BOTH hosts", and removing
+ * them that way stopped both hosts from starting: the ring had to be contiguous from 1. A version is
+ * retired by declaring it (`TF_KEK_RETIRED`, `packages/core/src/crypto.ts`), on both hosts, in the
+ * same deploy as the removal. This names that exact change, or the reason there is none to make yet,
+ * in the order the reasons outrank each other:
+ *
+ *   1. rows ABOVE this ring's newest version: the environment running the pass is behind a host, so
+ *      nothing it concludes about versions is the hosts' truth;
+ *   2. rows on a version this ring already retired: those secrets open nowhere until it comes back;
+ *   3. rows left below the target, or rows the pass skipped: nothing may be removed yet;
+ *   4. nothing below the target: the versions the ring still holds below it can go.
+ */
+export function formatRetireStep(input: RetireStepInput): string[] {
+  const { census, retiredThrough, failed } = input;
+  const target = census.target;
+  const ahead = census.sites.reduce((a, s) => a + s.ahead, 0);
+  if (ahead > 0) {
+    return [`  ⇒ ${ahead} row(s) are sealed under a version above V${target}, which this run's ring does not hold: ` +
+      "a host writes under a newer key than this environment carries. Retire nothing; run with the hosts' ring."];
+  }
+  const unheld = census.versionsInUse.filter((v) => v >= 1 && v <= retiredThrough);
+  if (unheld.length > 0) {
+    const rows = census.sites.reduce((a, s) => a + unheld.reduce((b, v) => b + (s.byVersion[v] ?? 0), 0), 0);
+    const named = unheld.map((v) => `V${v}`).join(", ");
+    const back = Array.from({ length: retiredThrough - unheld[0]! + 1 }, (_, i) => `TF_KEK_V${unheld[0]! + i}`);
+    return [
+      `  ⇒ ${rows} row(s) still name ${named}, retired from this ring by TF_KEK_RETIRED=${retiredThrough}: ` +
+        "those secrets open on no host that retired it.",
+      `    put ${back.join(" and ")} back here and on BOTH hosts (${unheld[0]! > 1 ? `TF_KEK_RETIRED=${unheld[0]! - 1}` : "TF_KEK_RETIRED unset"} there), ` +
+        "redeploy both, and run the re-wrap again. No version may be removed until it reads nothing below the target.",
+    ];
+  }
+  if (census.outstanding > 0 || failed > 0) {
+    return [`  ⇒ Do NOT remove any KEK version yet: ${census.outstanding} row(s) remain below V${target}` +
+      `${failed > 0 ? `, ${failed} of them skipped by this pass (the log lines name each one and why)` : ""}. ` +
+      "Run the re-wrap with --apply until it reads 0 outstanding; a skipped row needs its reason fixed first."];
+  }
+  const removable = Array.from({ length: Math.max(0, target - 1 - retiredThrough) }, (_, i) => retiredThrough + 1 + i);
+  if (removable.length === 0) {
+    return [`  ⇒ Nothing to retire: this ring holds only V${target}` +
+      `${retiredThrough > 0 ? `, and every version up to V${retiredThrough} is already retired (TF_KEK_RETIRED=${retiredThrough}).` : "."}`];
+  }
+  const names = removable.map((v) => `TF_KEK_V${v}`).join(" and ");
+  return [
+    `  ⇒ Nothing references a version below V${target}, so ${removable.map((v) => `V${v}`).join(" and ")} can leave both hosts:`,
+    `    1. On BOTH hosts, as one change each (a single deploy): set TF_KEK_RETIRED=${target - 1} and delete ${names}.`,
+    `    2. Redeploy both and read both /health: kek {active ${target}, count 1} with the same fingerprint on each, ok true.`,
+    `    3. Keep the removed value${removable.length > 1 ? "s" : ""} only beside the backups taken before this re-wrap: restoring one needs ${removable.length > 1 ? "them" : "it"}.`,
+    "    Both hosts must run a release that reads TF_KEK_RETIRED (this one does); an older one refuses to start without the removed key.",
+  ];
 }
