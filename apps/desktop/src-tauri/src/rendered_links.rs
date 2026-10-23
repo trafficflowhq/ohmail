@@ -78,8 +78,8 @@ impl Rendered {
     /// judged alone — a shape refusal or a cap drops it and its siblings stay — and only a surface
     /// id this shell does not keep fails the report.
     pub fn report(&mut self, surface: &str, urls: &[String]) -> Result<Trimmed, String> {
-        if surface.is_empty() || surface.len() > SURFACE_ID_MAX || !surface.bytes().all(|b| b.is_ascii_graphic()) {
-            return Err("ohmail: that is not a surface the shell keeps links for".to_string());
+        if !surface_id_ok(surface) {
+            return Err(SURFACE_REFUSED.to_string());
         }
         self.remove(surface);
         let mut trimmed = Trimmed::default();
@@ -114,6 +114,26 @@ impl Rendered {
         Ok(trimmed)
     }
 
+    /// Several surfaces' reports, applied in order, each exactly as [`Rendered::report`] applies
+    /// it. Every surface id is checked BEFORE any report is applied, and one this shell does not
+    /// keep (or a batch whose two lists differ in length) refuses the whole batch, so a refused
+    /// batch changes nothing.
+    pub fn report_batch(&mut self, surfaces: &[String], urls: &[Vec<String>]) -> Result<Trimmed, String> {
+        if surfaces.len() != urls.len() || surfaces.len() > SURFACES_MAX {
+            return Err(BATCH_REFUSED.to_string());
+        }
+        if !surfaces.iter().all(|s| surface_id_ok(s)) {
+            return Err(SURFACE_REFUSED.to_string());
+        }
+        let mut total = Trimmed::default();
+        for (surface, list) in surfaces.iter().zip(urls.iter()) {
+            let one = self.report(surface, list)?;
+            total.dropped += one.dropped;
+            total.evicted += one.evicted;
+        }
+        Ok(total)
+    }
+
     fn remove(&mut self, surface: &str) {
         if let Some(at) = self.surfaces.iter().position(|(id, _)| id == surface) {
             if let Some((_, gone)) = self.surfaces.remove(at) {
@@ -136,6 +156,17 @@ impl Rendered {
     pub fn bytes(&self) -> usize {
         self.bytes
     }
+}
+
+/// The sentence a report with a surface id this shell does not keep hears.
+const SURFACE_REFUSED: &str = "ohmail: that is not a surface the shell keeps links for";
+
+/// The sentence a batch whose surfaces and lists do not pair up hears.
+const BATCH_REFUSED: &str = "ohmail: that is not a batch of links the shell keeps";
+
+/// A surface id the shell keeps: 1 to [`SURFACE_ID_MAX`] bytes of printable ASCII.
+fn surface_id_ok(surface: &str) -> bool {
+    !surface.is_empty() && surface.len() <= SURFACE_ID_MAX && surface.bytes().all(|b| b.is_ascii_graphic())
 }
 
 fn bytes_of(links: &HashSet<String>) -> usize {
@@ -259,17 +290,19 @@ pub fn trimmed_line(trimmed: Trimmed) -> String {
     )
 }
 
-/// The window's renderers report the http(s) links one surface draws; an empty list removes the
-/// surface. SYNC, so a report is applied in IPC order, on the thread that answers the new-window
+/// The window's renderers report the http(s) links their surfaces draw, in batches: `surfaces[i]`
+/// draws `urls[i]`, and an empty list removes that surface. One call per frame's worth of reports
+/// (`rendered-links.ts`), where a call per surface was sixty across the bridge for one switch into
+/// a stream. SYNC, so a batch is applied in IPC order, on the thread that answers the new-window
 /// request a later click makes. Opens nothing.
 #[tauri::command]
-pub fn rendered_links(set: tauri::State<'_, RenderedLinks>, surface: String, urls: Vec<String>) -> Result<(), String> {
+pub fn rendered_links_batch(set: tauri::State<'_, RenderedLinks>, surfaces: Vec<String>, urls: Vec<Vec<String>>) -> Result<(), String> {
     let trimmed = {
         let mut held = set
             .0
             .lock()
             .map_err(|_| "ohmail: the shell lost its list of links on screen".to_string())?;
-        held.report(&surface, &urls)?
+        held.report_batch(&surfaces, &urls)?
     };
     if trimmed != Trimmed::default() {
         crate::engine::log_json_line(&trimmed_line(trimmed));

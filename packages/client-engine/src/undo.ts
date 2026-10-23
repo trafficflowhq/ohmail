@@ -90,7 +90,10 @@ export function inverseMutations(reader: EntityReader, m: EngineMutation): Engin
     case "move": {
       const msg = reader.get<EngineMessage>("message", m.messageId);
       if (!msg || msg.folder === m.folder) return [];
-      const out: EngineMutation[] = [{ kind: "move", messageId: msg.id, folder: msg.folder }];
+      // Taking a rule press back is no correction of the route it rewrote: marked as that press's.
+      const out: EngineMutation[] = [{
+        kind: "move", messageId: msg.id, folder: msg.folder, ...(m.pressRule === true ? { pressRule: true as const } : {}),
+      }];
       /* The move spends a resurfaced pin in the same transaction; the reversal re-pins AFTER
          the move back, so the row returns to the exact group it left. */
       if (spendsPin(msg)) out.push({ kind: "triage_set", messageId: msg.id, state: "resurfaced" });

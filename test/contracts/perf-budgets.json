@@ -627,17 +627,351 @@
       ]
     },
     "view-switch": {
-      "what": "switching folder or view, in ms",
-      "p95Ms": 200,
-      "state": "no-origin-yet",
-      "origin": null,
+      "what": "switching between the Ohbox, News and Receipts (keys 1, 2, 3 and the rail), in ms: medians per engine on the view-switch harness, and the packaged desktop's ui_vitals switch percentiles",
+      "p95Ms": 120,
+      "state": "measured",
+      "origin": "scripts/perf/view-switch.mjs ab on one shared host, 2026-10-23: main before this change and with it, rounds interleaved A B A B, load 11-25 on 32 cores; the readings are the fix round's (each reading names its run)",
       "arm": "records",
-      "why": "NO ORIGIN YET: the number is the 0.19.1 plan's line and nothing has been measured AT it. The arm RECORDS - it prints the reading against the budget and reddens nothing - until a run reads under it, which is what would give it an origin as a budget.",
+      "harness": "scripts/perf/view-switch.mjs",
+      "fixture": "3000 Ohbox / 2000 News / 1000 Receipts rows, 50 KB newsletters (heavy=1), 80 bodies hydrated per stream, 1440x900, demo=0",
+      "why": "The harness lines are medians over at least ten presses per engine, WebKit standing in for the desktop's webview; they RECORD: CI runs the journey (apps/webapp/test/view-switch-journey.test.ts), which asserts what a switch does and never how long it took. The desktop line (p95 120, the row's own p95Ms, and p50 60) is the packaged app's ui_vitals on the desk rig; its readings below are the 0.29.0 app's, and the head's reading waits for this change's packaged build. It replaces the 0.19.1 plan's p95 200, which no run had read.",
+      "lines": {
+        "revisit-paint": {
+          "what": "a press of 1, 2 or 3 (key or click) back into a pile visited before, to its rows painted, in ms",
+          "webkit": {
+            "medianMs": 50
+          },
+          "chromium": {
+            "medianMs": 40
+          }
+        },
+        "first-paint": {
+          "what": "a press of 2 or 3 into a pile not mounted yet, to its rows painted, in ms",
+          "webkit": {
+            "medianMs": 100
+          },
+          "chromium": {
+            "medianMs": 70
+          }
+        },
+        "settled": {
+          "what": "a press to the last change on screen before 400 ms of quiet (revisits and first visits), in ms",
+          "webkit": {
+            "medianMs": 300
+          },
+          "chromium": {
+            "medianMs": 200
+          }
+        },
+        "rapid-paint": {
+          "what": "2, 3, 2, 3 then 2, forty ms apart, from the last press to News's rows painted, in ms",
+          "webkit": {
+            "medianMs": 100
+          },
+          "chromium": {
+            "medianMs": 100
+          }
+        },
+        "longest-frame": {
+          "what": "the longest frame of a switch, revisits and first visits pooled: the longest gap between two animation frames (WebKit), the longest long task or long animation frame (Chromium), in ms",
+          "webkit": {
+            "medianMs": 50
+          },
+          "chromium": {
+            "medianMs": 50
+          }
+        },
+        "first-visit-longest-frame": {
+          "what": "the longest frame of a press of 2 or 3 into a pile not mounted yet, read apart so the revisits cannot hide it: the longest rAF gap (WebKit), the longest long task (Chromium), in ms",
+          "webkit": {
+            "medianMs": 50
+          },
+          "chromium": {
+            "medianMs": 50
+          }
+        },
+        "desktop-ui-vitals": {
+          "what": "the packaged desktop's own ui_vitals switch percentiles over at least 40 switches on the desk rig, in ms",
+          "desktop": {
+            "p50Ms": 60,
+            "p95Ms": 120
+          }
+        }
+      },
       "readings": [
         {
           "value": "switch p95 4 421 ms over 480 (Windows, a release candidate); 5 432 ms (Windows 0.19.0)",
           "document": "the project's design notes",
           "date": "2026-09-15"
+        },
+        {
+          "value": "packaged desktop 0.29.0, ui_vitals switchP50 275-297 ms and switchP95 678-722 ms on the desk rig (the head's reading is owed: this host builds no desktop app)",
+          "document": "the VIEW-SWITCH-SMOOTH lane's desk-rig readings",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "revisit-paint",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 116,
+          "medianMs": 1307,
+          "p90Ms": 1699,
+          "value": "webkit base: median 1307 ms, p90 1699 ms over 116 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "revisit-paint",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 116,
+          "medianMs": 83,
+          "p90Ms": 124,
+          "value": "webkit head: median 83 ms, p90 124 ms over 116 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "revisit-paint",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 116,
+          "medianMs": 502,
+          "p90Ms": 703,
+          "value": "chromium base: median 502 ms, p90 703 ms over 116 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "revisit-paint",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 116,
+          "medianMs": 34,
+          "p90Ms": 49,
+          "value": "chromium head: median 34 ms, p90 49 ms over 116 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-paint",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 24,
+          "medianMs": 1410,
+          "p90Ms": 1639,
+          "value": "webkit base: median 1410 ms, p90 1639 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-paint",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 24,
+          "medianMs": 53,
+          "p90Ms": 99,
+          "value": "webkit head: median 53 ms, p90 99 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-paint",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 24,
+          "medianMs": 644,
+          "p90Ms": 945,
+          "value": "chromium base: median 644 ms, p90 945 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-paint",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 24,
+          "medianMs": 27,
+          "p90Ms": 35,
+          "value": "chromium head: median 27 ms, p90 35 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "settled",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 140,
+          "medianMs": 1414,
+          "p90Ms": 1873,
+          "value": "webkit base: median 1414 ms, p90 1873 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "settled",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 140,
+          "medianMs": 110,
+          "p90Ms": 241,
+          "value": "webkit head: median 110 ms, p90 241 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "settled",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 140,
+          "medianMs": 758,
+          "p90Ms": 1032,
+          "value": "chromium base: median 758 ms, p90 1032 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "settled",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 140,
+          "medianMs": 49,
+          "p90Ms": 146,
+          "value": "chromium head: median 49 ms, p90 146 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "rapid-paint",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 20,
+          "medianMs": 28,
+          "p90Ms": 2671,
+          "value": "webkit base: median 28 ms, p90 2671 ms over 20 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "rapid-paint",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 20,
+          "medianMs": 72,
+          "p90Ms": 80,
+          "value": "webkit head: median 72 ms, p90 80 ms over 20 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "rapid-paint",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 20,
+          "medianMs": 568,
+          "p90Ms": 652,
+          "value": "chromium base: median 568 ms, p90 652 ms over 20 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "rapid-paint",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 20,
+          "medianMs": 38,
+          "p90Ms": 48,
+          "value": "chromium head: median 38 ms, p90 48 ms over 20 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "longest-frame",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 140,
+          "medianMs": 760,
+          "p90Ms": 989,
+          "value": "webkit base: median 760 ms, p90 989 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "longest-frame",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 140,
+          "medianMs": 49,
+          "p90Ms": 68,
+          "value": "webkit head: median 49 ms, p90 68 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "longest-frame",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 140,
+          "medianMs": 464,
+          "p90Ms": 663,
+          "value": "chromium base: median 464 ms, p90 663 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "longest-frame",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 140,
+          "medianMs": 0,
+          "p90Ms": 0,
+          "value": "chromium head: median 0 ms, p90 0 ms over 140 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-visit-longest-frame",
+          "engine": "webkit",
+          "arm": "base",
+          "presses": 24,
+          "medianMs": 871,
+          "p90Ms": 1014,
+          "value": "webkit base: median 871 ms, p90 1014 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-visit-longest-frame",
+          "engine": "webkit",
+          "arm": "head",
+          "presses": 24,
+          "medianMs": 39,
+          "p90Ms": 60,
+          "value": "webkit head: median 39 ms, p90 60 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved (the fix round's rerun, load 14-23 on 32 cores)",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-visit-longest-frame",
+          "engine": "chromium",
+          "arm": "base",
+          "presses": 24,
+          "medianMs": 583,
+          "p90Ms": 839,
+          "value": "chromium base: median 583 ms, p90 839 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, main before this change against it, rounds interleaved",
+          "date": "2026-10-23"
+        },
+        {
+          "line": "first-visit-longest-frame",
+          "engine": "chromium",
+          "arm": "head",
+          "presses": 24,
+          "medianMs": 0,
+          "p90Ms": 0,
+          "value": "chromium head: median 0 ms, p90 0 ms over 24 presses",
+          "document": "scripts/perf/view-switch.mjs ab, the fix round's head against the head before it, rounds interleaved (load 11-13; main's Chromium arm hung on the rerun, so its base reading is the first run's)",
+          "date": "2026-10-23"
         }
       ]
     },

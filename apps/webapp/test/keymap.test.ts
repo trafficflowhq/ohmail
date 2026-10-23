@@ -720,3 +720,36 @@ describe("no cursor is its own reason", () => {
     expect(row!.getAttribute("title")).toBeNull();
   });
 });
+
+describe("reading the registry pins no earlier render", () => {
+  it("a shell that shows its own key and re-declares it each render lets every earlier render go", async () => {
+    /* The shell reads `b` back (`resurfaceKey`) and its next declaration closes over what it read:
+       a published row carrying `run` chained every render's whole scope to the one before. */
+    vi.useRealTimers();
+    const v8 = await import("node:v8");
+    const vm = await import("node:vm");
+    v8.setFlagsFromString("--expose-gc");
+    const gc = vm.runInNewContext("gc") as () => void;
+    const { KeymapProvider, useKeyBindings, useEnabledBinding } = await import("../app/shell/keymap.js");
+    const renders: Array<WeakRef<object>> = [];
+    const held: unknown[] = [];
+    function Shell({ n }: { n: number }): null {
+      const own = useEnabledBinding("b");
+      const derived = { n, rows: new Array(2000).fill(n) };
+      renders.push(new WeakRef(derived));
+      useKeyBindings([b({ chord: "b", label: `resurface ${n}`, run: () => { held.push(own, derived); } })], "global");
+      return null;
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    for (let n = 0; n < 20; n++) {
+      await act(async () => { root!.render(h(KeymapProvider, { children: h(Shell, { n }) })); });
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    gc();
+    const early = renders.slice(0, renders.length - 6);
+    expect(early.length).toBeGreaterThan(10);
+    expect(early.filter((r) => r.deref() !== undefined).length, "earlier renders are still reachable").toBe(0);
+  });
+});

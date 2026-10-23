@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine, CALENDAR_TEXT_MAX_PARTS } from "../src/engine.js";
-import { calendarEventsOf } from "../src/index.js";
+import { calendarEventsOf, withoutCalendarBodies } from "../src/index.js";
 import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
 import {
-  EMBEDDED_CALENDAR, GOOGLE, OUTLOOK_RELATED, TWO_EVENTS, type InviteShape,
+  APPLE, EMBEDDED_CALENDAR, EXCHANGE_ICAL, GOOGLE, OUTLOOK_RELATED, TWO_EVENTS, type InviteShape,
 } from "../../core/test/fixtures/invite-shapes.js";
 
 /**
@@ -92,5 +92,66 @@ describe("calendarEventsOf: one entry per event", () => {
     expect(calendarEventsOf(engine, "m1")).toBe(calendarEventsOf(engine, "m1"));
     engine.releaseAttachments("m1");
     expect(calendarEventsOf(engine, "m1")).toEqual([]);
+  });
+});
+
+describe("a strip leaves out a calendar alternative only when a listed file carries its event", () => {
+  const listed = async (shape: InviteShape, refused: readonly string[] = []) => {
+    const parts = wireOf(shape);
+    const adapter: EngineAdapter = {
+      sync: async () => ({ changes: [], cursor: "1", hasMore: false }) as never,
+      mutate: async () => ({ changes: [], seq: null }),
+      withdrawSend: async () => ({ outcome: "unsupported" as const }),
+      fetchBody: async () => null,
+      listAttachments: async () => parts,
+      fetchAttachment: async (id: string) => {
+        if (refused.includes(id)) throw new Error("refused");
+        return new Blob([shape.parts.find((p) => p.id === id)!.bytes], { type: "text/calendar" });
+      },
+    };
+    const engine = new OhmailEngine({ adapter });
+    await engine.loadAttachments("m1");
+    await engine.loadCalendarTexts("m1");
+    const list = engine.attachmentsOf("m1", { includeInlineParts: true });
+    if (list.state !== "ready") throw new Error("the premise: a ready list");
+    return { engine, items: list.items, strip: withoutCalendarBodies(engine, "m1", list.items) };
+  };
+
+  it("Google: the list keeps both, the alternative marked; a strip shows invite.ics once", async () => {
+    const { engine, items, strip } = await listed(GOOGLE);
+    expect(items.map((i) => [i.id, i.calendarBody === true])).toEqual([["google-alt", true], ["google-file", false]]);
+    expect(strip.map((i) => i.id)).toEqual(["google-file"]);
+    expect(calendarEventsOf(engine, "m1")).toHaveLength(1);
+  });
+
+  it("Google, the alternative refused: the card from the file, and the file alone in the strip", async () => {
+    const { engine, strip } = await listed(GOOGLE, ["google-alt"]);
+    expect(calendarEventsOf(engine, "m1")).toHaveLength(1);
+    expect(strip.map((i) => i.id)).toEqual(["google-file"]);
+  });
+
+  it("Google, the file refused: the alternative is the only copy in hand, and it stays", async () => {
+    const { engine, strip } = await listed(GOOGLE, ["google-file"]);
+    expect(calendarEventsOf(engine, "m1")).toHaveLength(1);
+    expect(strip.map((i) => i.id)).toEqual(["google-alt", "google-file"]);
+  });
+
+  it("Exchange: the alternative is the only calendar part, so the card and its tile", async () => {
+    const { engine, items, strip } = await listed(EXCHANGE_ICAL);
+    expect(calendarEventsOf(engine, "m1").map((e) => e.event.summary)).toEqual(["Budget review"]);
+    expect(strip).toBe(items);
+  });
+
+  it("Exchange, the fetch refused: no card, and the failed tile stays to retry or save", async () => {
+    const { engine, strip } = await listed(EXCHANGE_ICAL, ["exchange-alt"]);
+    expect(calendarEventsOf(engine, "m1")).toEqual([]);
+    expect(strip.map((i) => [i.id, i.state])).toEqual([["exchange-alt", "failed"]]);
+  });
+
+  it("a named calendar file, an embedded part and an inline picture stay (controls)", async () => {
+    for (const shape of [APPLE, EMBEDDED_CALENDAR, OUTLOOK_RELATED]) {
+      const { items, strip } = await listed(shape);
+      expect(strip, shape.name).toBe(items);
+    }
   });
 });

@@ -156,6 +156,25 @@ describe.skipIf(!PG_UP)("a Cancel decided by the server", () => {
     });
   });
 
+  it("(d2) a stale row that offered nothing: forgotten, then tombstoned; withdrawn, and a replay is refused", async () => {
+    const w = await seeded();
+    await dbA.update(drafts).set({ status: "sending" }).where(eq(drafts.id, w.draftId));
+    const [row] = await dbA.insert(outboundSends).values({
+      accountId: w.accountId, idempotencyKey: "key-d4", draftId: w.draftId, mintedMessageId: "<key-d4@race.test>",
+      status: "pending", offerState: "unoffered", createdAt: new Date(NOW.getTime() - 11 * MIN),
+    }).returning();
+    // An inline press's reservation holds its content claim; only such a row is forgotten.
+    await dbA.insert(outboundSendFingerprints).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: randomUUID().replace(/-/g, "").repeat(2), sendId: row!.id,
+    });
+    const spy = smtp({ inSent: false });
+    const said = await new SendService().withdraw(w.ctxB, "key-d4", w.draftId, { openSendAdapter: spy.open });
+    const replay = await refusal(new SendService().send(w.ctxA, w.draftId, "key-d4", { openSendAdapter: spy.open }));
+    const [d] = await dbA.select().from(drafts).where(eq(drafts.id, w.draftId));
+    expect({ said: said.outcome, row: (await rowOf(w.accountId, "key-d4"))!.status, replay, draft: d!.status, dialled: spy.opened(), smtp: spy.delivered.length })
+      .toEqual({ said: "withdrawn", row: "withdrawn", replay: "409 send_withdrawn", draft: "draft", dialled: 0, smtp: 0 });
+  });
+
   it("(e) a reservation committed first: the withdraw answers in_flight, the send lands once, the row is sent", async () => {
     const w = await seeded();
     let release!: () => void;

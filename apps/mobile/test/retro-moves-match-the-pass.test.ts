@@ -73,11 +73,12 @@ async function pressed(rows: readonly RetroFixtureRow[]) {
 }
 
 describe("the phone leaves a rule's past mail to the pass", () => {
-  it("puts no move on the wire for any row, though the fixture holds rows the pass would move", async () => {
+  it("puts no backlog move on the wire, though the fixture holds rows the pass would move", async () => {
     // Anti-vacuity: the fixture does hold mail the pass would reach, so "none" is a finding.
-    expect(RETRO_MOVES.length).toBeGreaterThan(0);
+    expect(RETRO_MOVES.length).toBeGreaterThan(1);
     const { ids } = await pressed(RETRO_FIXTURE);
-    expect(ids, "the press moved backlog the pass alone can judge").toEqual([]);
+    // The one move is the letter the press was made on (RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX).
+    expect(ids, "the press moved backlog the pass alone can judge").toEqual([RETRO_FIXTURE[0]!.id]);
   }, 30_000);
 
   it("and the rule it writes asks the pass for that mail — the positive control", async () => {

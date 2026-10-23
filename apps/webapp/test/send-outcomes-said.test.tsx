@@ -20,7 +20,7 @@ import {
  * Review round 1: `lineSeen` always true → case 5 red; the Ohbox arm's direct `setReaderFor`
  * removed → case 6 red; `openNotSent` back to `openDraft(row)` → cases 7 and 8 red; its
  * composer guard removed → case 9 red; one held slot and no Drafts mark → cases 10–12 red;
- * the notice span kept past an Open → case 13 red; the mark kept past an Open → case 1 red.
+ * the notice span kept past an Open → case 13 red; the mark erased by an Open → case 1 red (PR #198).
  * Review round 2: every unshown ending counted (`keptNotSent` dropped) → cases 14–17 red; the
  * `too_long` phase in `useMailSend.send` removed → cases 18–20 red; the Reply Run's toast off
  * `sendLine` → cases 20 and 21 red.
@@ -89,10 +89,10 @@ describe("a send that ends Not sent", () => {
     await press(held()!.querySelector(".toast-act"), "Open");
     await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the composer back");
     expect(composeSend(s.el)?.disabled, "Send is not live").toBe(false);
-    // Opened, so acted on: its Drafts row no longer carries the line.
+    // Opened is not sent: its Drafts row keeps the line until the letter goes or is discarded.
     await toDrafts();
     await waitFor(() => s.el.querySelector(".draft-row[data-id='d-letter']") != null, "the letter in Drafts");
-    expect(draftNotes(s)).not.toContain(en.compose.statusUnreachable);
+    expect(draftNotes(s), "an Open erased that the letter was not sent").toContain(en.compose.statusUnreachable);
   }, 30_000);
 
   it("2 — control: a confirmed send says only that it went, wherever the reader is", async () => {

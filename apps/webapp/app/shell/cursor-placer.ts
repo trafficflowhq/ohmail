@@ -13,6 +13,7 @@
 import { useTranslations } from "next-intl";
 import { useOptionalToast } from "@ohmail/ui";
 import { useCursorPlacer, type PlacerScope } from "./keymap";
+import { queryVisible } from "./visible-dom";
 
 /**
  * HOW LONG THE CURSOR HINT STANDS. Shorter than the toast's 2600 ms default, because this one
@@ -69,7 +70,7 @@ export function placeFirstRow(
   if (host.current != null) return false;
   const first = host.rows[0];
   if (first == null) return false;
-  const row = document.querySelector<HTMLElement>(
+  const row = queryVisible<HTMLElement>(
     `${host.scope} .row[data-id="${CSS.escape(first.id)}"]`,
   );
   if (row == null) return false;

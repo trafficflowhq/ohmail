@@ -17,11 +17,13 @@ const deps: MobileEngineDeps = {
 };
 const ADDR = "sender@fake.test";
 
-async function scene() {
+async function scene(older = false) {
   const fake = mailServer();
   const origin = await listen(fake.server);
   fake.addRule(ruleDto("r-own", "sender", ADDR, "INBOX"));
   fake.addMessage(dto("m1", { subject: "Order fulfilled", folder: "INBOX" }));
+  // The press files the letter it was made on itself; an older one is the pass's.
+  if (older) fake.addMessage(dto("m2", { subject: "Order placed", folder: "INBOX", date: "2026-08-01T08:00:00Z" }));
   fake.stampRetro(true);
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
   if (boot.kind !== "ready") throw new Error("boot refused");
@@ -52,12 +54,12 @@ describe("the pass a press waited on is said once it finished", () => {
   });
 
   it("a pass that ended with mail still elsewhere says what stays", async () => {
-    const s = await scene();
+    const s = await scene(true);
     try {
       await s.actions.screenSender("m1", "reads", "sender");
       s.fake.finishRetro("r-own");
       await s.engine.syncOnce();
-      expect(s.said.at(-1)).toBe("0 are in News · 1 is still in Ohbox.");
+      expect(s.said.at(-1)).toBe("1 is in News · 1 is still in Ohbox.");
     } finally { s.close(); }
   });
 

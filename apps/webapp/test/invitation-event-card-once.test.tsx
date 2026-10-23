@@ -138,12 +138,13 @@ describe("the reader shows one card per event, above the mail", () => {
     expect(page.querySelector(".ics-card .ics-summary")?.textContent).toBe("Quarterly planning");
   }, 60_000);
 
-  it("the strip keeps both of Google's files as plain tiles, and draws no card", async () => {
+  it("the strip lists Google's invite.ics once, as a plain tile, and draws no card", async () => {
     await mountWith([GOOGLE]);
     const page = await openInReader(idOf(GOOGLE));
-    expect(page.querySelectorAll(".att-strip .att-tile")).toHaveLength(2);
+    // The nameless alternative is the body the card reads, not a second invite.ics.
+    expect(page.querySelectorAll(".att-strip .att-tile")).toHaveLength(1);
     expect(page.querySelector(".att-strip .ics-card")).toBeNull();
-    expect(page.querySelector(".att-strip .att-sum")?.textContent).toContain("2");
+    expect(page.querySelector(".att-strip .att-head")).toBeNull();
   }, 60_000);
 
   it("an Exchange invitation's card comes before its long html body, not under it", async () => {

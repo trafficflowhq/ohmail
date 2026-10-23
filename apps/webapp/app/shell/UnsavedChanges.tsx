@@ -14,13 +14,14 @@ import { discardUnsavedChange } from "./mail-send";
 const NO_QUEUED: readonly QueuedChange[] = [];
 
 /**
- * THE QUEUED DISCARDS, from the engine's own selector (`queuedDiscards`), which the phone reads
- * too. A Delete that could not reach the account waits there and was told once, by a toast; listed
- * here beside the abandoned rows it stays visible for as long as it waits.
+ * EVERY CHANGE WAITING ON THE QUEUE, from the engine's own selector (`queuedChanges`): a Screener
+ * decision, a rule, a discard — anything a person did that has not gone through yet. Each was told
+ * once, by a toast at most; listed here beside the abandoned rows it stays visible for as long as it
+ * waits, with its own reason. A send and a draft's first save are their own surfaces' to say.
  */
-function useQueuedDiscards(engine: OhmailEngine): readonly QueuedChange[] {
+function useQueuedChanges(engine: OhmailEngine): readonly QueuedChange[] {
   const subscribe = useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
-  const snapshot = useCallback(() => engine.queuedDiscards(), [engine]);
+  const snapshot = useCallback(() => engine.queuedChanges(), [engine]);
   return useSyncExternalStore(subscribe, snapshot, () => NO_QUEUED);
 }
 import "./unsaved-changes.css";
@@ -38,7 +39,7 @@ import "./unsaved-changes.css";
 export function UnsavedChanges({ variant }: { variant: "shell" | "rail" }) {
   const engine = useEngine();
   const abandoned = useAbandoned();
-  const queued = useQueuedDiscards(engine);
+  const queued = useQueuedChanges(engine);
   return (
     <UnsavedChangesList
       variant={variant}
@@ -78,7 +79,7 @@ export function UnsavedChangesList({
   abandoned: readonly AbandonedMutation[];
   onRetry: (id: string) => Promise<RetryOutcome>;
   onDiscard: (id: string) => Promise<void>;
-  /** Verbs still on the outbox — listed with the same two answers, see {@link useQueuedDiscards}. */
+  /** Verbs still on the outbox — listed with the same two answers, see {@link useQueuedChanges}. */
   queued?: readonly QueuedChange[];
   onRetryQueued?: (id: string) => Promise<RetryOutcome | null>;
   /** Withdraws by the verb's Idempotency-Key, the engine's handle for a queued verb. */
@@ -230,7 +231,7 @@ export function UnsavedChangesList({
               <div className="unsaved-what">
                 <b>{t(KIND_LABELS.get(m.mutation.kind) ?? "unsavedKindOther")}</b>
                 <span className="unsaved-why">
-                  {said?.id === m.id ? (said.message || t("unsavedNoReason")) : t("unsavedQueuedWhy")}
+                  {said?.id === m.id ? (said.message || t("unsavedNoReason")) : queuedReason(m, t)}
                 </span>
               </div>
               <div className="unsaved-acts">
@@ -310,8 +311,27 @@ function describe(m: AbandonedMutation, t: Translate): string {
  * not say why. Anything the server DID phrase for a human is passed through untouched.
  */
 function reason(m: AbandonedMutation, t: Translate): string {
-  const opaque = m.error.code === null
-    || m.error.code === "internal"
-    || m.error.message.trim() === "";
-  return opaque ? t("unsavedNoReason") : m.error.message;
+  return opaque(m.error) ? t("unsavedNoReason") : m.error.message;
+}
+
+/** A refusal that says nothing a person can use: no code, the unhandled 500's "internal error", or no words. */
+function opaque(e: { code: string | null; message: string }): boolean {
+  return e.code === null || e.code === "internal" || e.message.trim() === "";
+}
+
+/** The answers that mean the account was never reached: no wire, no answer in time, the renewal down. */
+const UNREACHED = new Set(["network", "timeout", "offline_read_only"]);
+
+/**
+ * WHY A QUEUED CHANGE HAS NOT GONE THROUGH, from its own last attempt — the panel used to give every
+ * one "could not reach your account". Not tried yet: it waits its turn. Never reached: that
+ * sentence, still true. Kept across a sign-out (`not_signed_in`): the sentence it was kept with.
+ * Anything else the server said: its own words, or plainly that it gave none.
+ */
+export function queuedReason(m: QueuedChange, t: Translate): string {
+  const e = m.error ?? null;
+  if (e === null) return t("unsavedQueuedWaiting");
+  if (e.code !== null && UNREACHED.has(e.code)) return t("unsavedQueuedWhy");
+  if (e.code === "not_signed_in") return e.message.trim() === "" ? t("unsavedQueuedWhy") : e.message;
+  return opaque(e) ? t("unsavedQueuedServerWhy") : e.message;
 }

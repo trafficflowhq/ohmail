@@ -140,6 +140,9 @@ export interface ConnectConfig {
  */
 export const LOCAL_ENGINE_ORIGIN = "http://sidecar";
 
+/** The methods the engine's request guard reads a media type on. */
+const WRITES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
 /**
  * Every request a door in this process answers, with this launch's bearer on it. Composed here
  * and read by two callers — {@link bootEngine}'s own adapter and the session the connection
@@ -161,12 +164,17 @@ export function localEngineTransport(door: LocalEngineDoor): {
     headers,
     fetch: async (url, init) => {
       const given = (init ?? {}) as RequestInit;
+      const own = Object.fromEntries(new Headers(given.headers).entries());
+      /* React Native's Request has no `body`, so the engine's guard reads every bodiless write as
+         an undeclared body (415): a write with no declared type and no binary body says JSON. */
+      const typed = WRITES.has((given.method ?? "GET").toUpperCase()) && own["content-type"] === undefined
+        && (given.body == null || typeof given.body === "string") ? { "content-type": "application/json" } : null;
       return door.handle(new Request(url, {
         ...given,
         /* THE DOOR'S TOKEN LAST, so it wins. A caller's own `authorization` header can only ever
            be a different door's or a stale one, and this engine would refuse it — a refusal a
            person would read as their own mailbox rejecting them. */
-        headers: { ...Object.fromEntries(new Headers(given.headers).entries()), ...headers() },
+        headers: { ...own, ...(typed ?? {}), ...headers() },
       }));
     },
   };

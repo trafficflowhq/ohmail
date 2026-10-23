@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -52,12 +52,22 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let roots: Root[] = [];
 let restoreWidth: (() => void) | null = null;
 
+/* The stream opens one screen of cards (`stream-window.ts`), sized by the window's height where
+   nothing lays out; a screen tall enough for forty is what lets this count forty mounted cards. */
+let innerHeight: PropertyDescriptor | undefined;
+beforeEach(() => {
+  innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 40 * 220 });
+});
+
 afterEach(async () => {
   for (const r of roots) await act(() => r.unmount());
   roots = [];
   restoreWidth?.();
   restoreWidth = null;
   document.body.innerHTML = "";
+  if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
+  else delete (window as unknown as { innerHeight?: number }).innerHeight;
 });
 
 /** Give the cards a width, and count every card that is asked for its own. */

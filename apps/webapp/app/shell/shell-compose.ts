@@ -212,6 +212,11 @@ export interface ShellComposeInput {
   /** The host's mailto: click, or nothing. Required fields: an absent one selects no branch. */
   mailtoDraft: ComposePrefill | null | undefined;
   onMailtoDraftSeeded: (() => void) | undefined;
+  /**
+   * May a send from this mailbox leave its editor at once (`send-handoff.ts`), read at the press?
+   * Absent: never, and every send waits in its editor as before.
+   */
+  mayHandOffFor?: (mailboxId: string | null) => boolean;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -220,8 +225,11 @@ export type ShellCompose = ReturnType<typeof useShellCompose>;
 export function useShellCompose({
   engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
   fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
-  setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo,
+  setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
 }: ShellComposeInput) {
+  /** The route as it is now, for an ending that arrives after the person moved on. */
+  const routeViewRef = useRef(route.view);
+  routeViewRef.current = route.view;
   /**
    * Whether the open editor answers EVERYONE on the message (reply all). Set by every open —
    * `openReply(id, all)` — and read only while `replyTo` is non-null, so a stale `true` after
@@ -259,6 +267,38 @@ export function useShellCompose({
   const [replyEnvelope, setReplyEnvelope] = useState<ReplyEnvelopeEdit | null>(null);
   /** What a reply row held beside its text — the audience and the sender — for the open to restore. */
   const adoptedEdits = useRef<{ lane: string; envelope: ReplyEnvelopeEdit | null; fromId: string | null } | null>(null);
+  /**
+   * THE PRESS A HAND-OFF CLOSED ITS EDITOR ON, per lane, until it is delivered, withdrawn or pressed
+   * again; `row` is the row its refusal left. Closing the dock reset its audience, files and From, so
+   * every door back to the lane gets them from here ({@link pressBackOf}): the foot line's Open, the
+   * toast's, Reply pressed again in the reader, the lane's own row opened from Drafts. Before, only
+   * the foot line's Open did, and a refusal reopened any other way was sent a second time to the
+   * computed sender, from the default address, without its files. The compose lane keeps its press
+   * for its files, which no row stores.
+   */
+  const handedPress = useRef(new Map<string, { m: MailSendMutation; row: string | null }>());
+  /**
+   * THE ONE RESTORE: what a dock opening on `id` in `mode` gets back from its lane's handed-off press,
+   * or `null`. Body, subject and signature are the lane's scratch, so the signature is never doubled;
+   * a reply whose press named nobody stood on the computed audience, and does again.
+   */
+  const pressBackOf = useStableCallback((id: string, mode: "reply" | "forward"): {
+    envelope: ReplyEnvelopeEdit | null; attachments: ComposeAttachment[]; fromId: string | null;
+  } | null => {
+    const back = handedPress.current.get(mode === "forward" ? inlineForwardKey(id) : id);
+    if (back === undefined) return null;
+    const m = back.m;
+    const parent = reader.get<EngineMessage>("message", id) ?? null;
+    const named = mode === "forward" || m.to !== undefined || m.cc !== undefined || m.bcc !== undefined;
+    return {
+      envelope: named ? {
+        to: formatRecipientChips(m.to ?? (mode === "forward" || parent === null ? [] : [parent.from])),
+        cc: formatRecipientChips(m.cc ?? []), bcc: formatRecipientChips(m.bcc ?? []),
+      } : null,
+      attachments: m.attachments ?? [],
+      fromId: m.mailboxId !== undefined && m.mailboxId !== parent?.mailboxId ? m.mailboxId : null,
+    };
+  });
   useEffect(() => {
     // A FORWARD OPENS WITH THE ROWS ALREADY SHOWING, EMPTY — its audience is the user's to
     // pick and never derived (`forwardEnvelopePlan`), so a collapsed head would name nobody
@@ -271,6 +311,12 @@ export function useShellCompose({
     adoptedEdits.current = { ...adopted, envelope: null };
     if (replyMode === "reply" && adopted.envelope !== null) setReplyEnvelope(adopted.envelope);
   }, [replyTo, replyAll, replyMode]);
+  /* …and a lane whose handed-off press is still owed back opens with that press's audience. Keyed on
+     the open alone, so a Reply / Reply all switch on the open dock still widens or narrows it. */
+  useEffect(() => {
+    const back = replyTo === null ? null : pressBackOf(replyTo, replyMode);
+    if (back !== null && back.envelope !== null) setReplyEnvelope(back.envelope);
+  }, [replyTo, replyMode]);
   /**
    * THE REPLY'S PICKED SENDER and THE FILES IT WILL CARRY — both PER-MESSAGE and both stored
    * nowhere. The From pick overrides the mailbox the message arrived in (`resolveReplyFrom`); the
@@ -304,8 +350,9 @@ export function useShellCompose({
   useEffect(() => {
     const adopted = adoptedEdits.current;
     if (adopted?.lane === replyTo) adoptedEdits.current = null;
-    setReplyFromId(replyMode === "reply" && adopted?.lane === replyTo ? adopted.fromId : null);
-    setReplyAttachments([]);
+    const back = replyTo === null ? null : pressBackOf(replyTo, replyMode);
+    setReplyFromId(back !== null ? back.fromId : replyMode === "reply" && adopted?.lane === replyTo ? adopted.fromId : null);
+    setReplyAttachments(back?.attachments ?? []);
     if (replyTo !== null) {
       const meta = readReplyMeta(replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo);
       setReplySig(meta.sig ?? SIG_FOLLOWING);
@@ -504,7 +551,10 @@ export function useShellCompose({
         return;
       }
       // A send withdrawn before the wire: the words it took from the outbox's create are a draft again.
-      if (waitedToGo) replyAutosave.cancelled(lane);
+      if (waitedToGo) {
+        replyAutosave.cancelled(lane);
+        handedPress.current.delete(lane);
+      }
       setReplyTo(null);
     })();
   });
@@ -800,6 +850,13 @@ export function useShellCompose({
    */
   const replyRows = useRef(new Map<string, { row: string; seen: boolean }>());
   /**
+   * WHICH DRAFT A LANE'S PRESS WENT WITH — its row and the row that seeded its editor, as they stood
+   * at the press. A settlement arriving after another reply draft was opened into the same dock (from
+   * Drafts, or the account's row) is not about that draft, and its seed and row are not the
+   * settlement's to discard or forget — see `onSendSettled`.
+   */
+  const pressRows = useRef(new Map<string, { row: string | null; seed: string | null }>());
+  /**
    * THE SEED LEAVES once the message has a row of its own — a confirmed send's, or the row a
    * refused send left — and never when it IS that row (`keep`): that one holds the message.
    */
@@ -832,6 +889,8 @@ export function useShellCompose({
   const onSendSettled = useStableCallback((
     key: string, m: MailSendMutation, aboutThisCompose: boolean,
   ) => {
+    // Delivered: nothing is owed back to a door any more.
+    handedPress.current.delete(key);
     if (key === COMPOSE_SEND_KEY) {
       /* Invariant T(b), and this is the one implementation of it: the live
          confirmed path and the reload path both call `settleCompose` now
@@ -869,27 +928,38 @@ export function useShellCompose({
      * colleague is not being done with it. The scratch note is already cleared by `settle`
      * (the lane doubles as the suffix).
      */
+    /* THE LANE HOLDS ANOTHER DRAFT NOW: one was opened into this dock since the press (another seed
+       or row is bound). Everything below that judges the lane's rows or closes its editor would act on
+       that draft — the seed's discard deleted its row — so none of it runs; what the delivery itself
+       means (the answered message, the Reply Run) still does. Only a binding counts: the lane's own
+       row leaving Drafts (the send's `sending` flip, drained mid-flight) binds nothing. */
+    const atPress = pressRows.current.get(key);
+    pressRows.current.delete(key);
+    const other = (now: string | null | undefined, then: string | null): boolean => now != null && now !== then;
+    const moved = atPress !== undefined && (
+      other(replySeedDrafts.current.get(key), atPress.seed) || other(replyRows.current.get(key)?.row, atPress.row)
+    );
     // The lane's row was the one sent; nothing is left to send from.
-    replyRows.current.delete(key);
+    if (!moved) replyRows.current.delete(key);
     if (key.startsWith("fwd:")) {
       const forwarded = key.slice(4);
       // Close ONLY the editor this settlement is about: a late forward confirmation must not
       // take down a REPLY the user has since opened on the same message.
-      setReplyTo((cur) =>
-        cur === forwarded && replyModeRef.current === "forward" ? null : cur,
-      );
+      if (!moved) setReplyTo((cur) => (cur === forwarded && replyModeRef.current === "forward" ? null : cur));
       return;
     }
-    // A reply seeded from a draft row settled: the row's message has been delivered (the send
-    // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
-    dropReplySeed(key, m.draftId);
-    replyAutosave.forget(key);
+    if (!moved) {
+      // A reply seeded from a draft row settled: the row's message has been delivered (the send
+      // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
+      dropReplySeed(key, m.draftId);
+      replyAutosave.forget(key);
+    }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
     setReplyDone({ messageId: key, at: new Date().toISOString() });
     // The mirror-image of the fwd: guard above: a late REPLY confirmation must not close a
     // FORWARD newly opened on the same message.
-    setReplyTo((cur) => (cur === key && replyModeRef.current === "reply" ? null : cur));
+    if (!moved) setReplyTo((cur) => (cur === key && replyModeRef.current === "reply" ? null : cur));
     // A reply to this message has been delivered, so a drafted alternative to it is moot.
     // This is the ONLY thing that discards an unplaced draft other than answering the
     // question, because the AI action behind it has already been spent.
@@ -999,26 +1069,25 @@ export function useShellCompose({
    */
   /**
    * ROWS AN UNSHOWN ENDING LEFT, with the line it said: the Drafts list says it on the row until the
-   * row is opened. The toast can be replaced or missed; this cannot.
+   * message is sent or discarded, and the row with it leaves the list. Opening it is not sending it.
+   * The toast can be replaced or missed; this cannot.
    */
   const [notSentRows, setNotSentRows] = useState<ReadonlyMap<string, string>>(() => new Map());
-  const forgetNotSent = useStableCallback((rowId: string) => {
-    setNotSentRows((was) => {
-      if (!was.has(rowId)) return was;
-      const next = new Map(was);
-      next.delete(rowId);
-      return next;
-    });
-  });
-  /** The composer holds a message other than this row, with something in it worth keeping. */
-  const composerHoldsOther = useStableCallback((rowId: string): boolean =>
-    autosave.draftId !== rowId && reopenWouldOverwrite(composeRef.current, EMPTY_COMPOSE));
   /**
-   * WHERE AN UNSHOWN ENDING'S OPEN GOES. A reply or forward opens its own editor, which holds the
-   * words the press sent (the row can hold older ones when the save was refused); the row only when
-   * that editor holds nothing. Never into the composer over a different message being written.
+   * The composer holds a message other than this row, with something in it worth keeping: not one
+   * whose own send is carrying its words now (it waits read-only, and its send and row keep them).
    */
-  const openNotSent = useStableCallback((lane: string, left: RefusedRow | undefined) => {
+  const composerHoldsOther = useStableCallback((rowId: string): boolean =>
+    autosave.draftId !== rowId && reopenWouldOverwrite(composeRef.current, EMPTY_COMPOSE)
+    && !(mailSend.pressHere(COMPOSE_SEND_KEY) && SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(COMPOSE_SEND_KEY).phase)));
+  /**
+   * WHERE AN UNSHOWN ENDING'S OPEN GOES; `false` when nothing opened. A reply or forward opens its own
+   * editor, which holds the words the press sent (the row can hold older ones when the save was
+   * refused); the row only when that editor holds nothing. A letter opens by the row its refusal
+   * left, with its own press's files (`m`): the composer stands for it only while it holds that row.
+   * Never into the composer over a different message being written.
+   */
+  const openNotSent = useStableCallback((lane: string, left: RefusedRow | undefined, m?: MailSendMutation): boolean => {
     const row = left === undefined ? undefined : drafts.find((d) => d.id === left.rowId);
     const blocked = (): boolean => {
       if (row === undefined || !composerHoldsOther(row.id)) return false;
@@ -1026,31 +1095,29 @@ export function useShellCompose({
       return true;
     };
     if (lane === COMPOSE_SEND_KEY) {
-      if (left === undefined || left.aboutThisCompose || row === undefined) {
-        if (row !== undefined) forgetNotSent(row.id);
+      if (row === undefined || autosave.draftId === row.id) {
         go("compose");
-        return;
+        return true;
       }
-      if (blocked()) return;
-      forgetNotSent(row.id);
-      openDraft(row);
-      return;
+      if (blocked()) return false;
+      openDraft(row, m?.attachments);
+      return true;
     }
     const forward = lane.startsWith(inlineForwardKey(""));
     const id = forward ? lane.slice(inlineForwardKey("").length) : lane;
     const parent = reader.get<EngineMessage>("message", id);
     if (parent && (forward || row === undefined || !isRichEmpty(readReplyDraft(lane)))) {
-      if (row !== undefined) forgetNotSent(row.id);
+      // A dock closed at the hand-off gets its audience, files and From back as it opens (`pressBackOf`).
       if (forward) openForward(id); else openReply(id);
       openMessageRef.current(parent, { reply: true });
-      return;
+      return true;
     }
-    if (row === undefined) return;
+    if (row === undefined) return false;
     // `openDraft` takes the composer for a row whose parent is not here.
     const inReader = row.inReplyToMessageId != null && reader.get<EngineMessage>("message", row.inReplyToMessageId) != null;
-    if (!inReader && blocked()) return;
-    forgetNotSent(row.id);
+    if (!inReader && blocked()) return false;
     openDraft(row);
+    return true;
   });
   /** Endings held while the window is hidden, all said at the next visible edge. */
   const heldEndings = useRef<UnshownEnding[]>([]);
@@ -1105,9 +1172,15 @@ export function useShellCompose({
   });
   /**
    * A SEND THAT ENDED WITHOUT DELIVERY WHILE NO SURFACE SHOWED ITS LANE: the line its editor would
-   * say, as a toast with the way back, and on its Drafts row until opened. Without it a reply
+   * say, as a toast with the way back, and on its Drafts row until it is sent or discarded. Without it a reply
    * pressed and left said nothing at all.
    */
+  const markNotSentRow = useStableCallback((lane: string, ended: SendState, left: RefusedRow | undefined) => {
+    const line = sendLine(ended, false);
+    if (line === null || left === undefined) return;
+    const said = t(`${lane === COMPOSE_SEND_KEY ? "compose" : "reply"}.${line.key}`, sendLineValues());
+    setNotSentRows((was) => new Map(was).set(left.rowId, said));
+  });
   const sayUnshownEnding = useStableCallback((lane: string, ended: SendState, left: RefusedRow | undefined) => {
     const line = sendLine(ended, false);
     if (line === null) return;
@@ -1135,11 +1208,19 @@ export function useShellCompose({
     key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ): boolean => {
     if (!accepted && detail?.ended !== undefined && detail.shown === false) {
-      sayUnshownEnding(key, detail.ended, detail.left);
+      // The foot line says it, with Open: only the Drafts row is marked, no toast says it again.
+      if (detail.line === true) markNotSentRow(key, detail.ended, detail.left);
+      else sayUnshownEnding(key, detail.ended, detail.left);
     }
     if (!accepted && phase === "failed") handBackLane(key);
+    // The row a refusal left is the lane's own: the Drafts door to it gets the press back too.
+    const owed = handedPress.current.get(key);
+    if (!accepted && owed !== undefined && detail?.left !== undefined) owed.row = detail.left.rowId;
     // Withdrawn before the wire, once the server answered a Cancel it owed: the words are a draft again.
-    if (!accepted && phase === "idle") replyAutosave.cancelled(key);
+    if (!accepted && phase === "idle") {
+      handedPress.current.delete(key);
+      replyAutosave.cancelled(key);
+    }
     // Cancelled in another window: the dock showing that send closes as its own Cancel closes it.
     if (!accepted && phase === "idle" && replyToRef.current !== null) {
       const target = replyToRef.current;
@@ -1172,7 +1253,12 @@ export function useShellCompose({
     onSendOutcome(res.key, { kind: "mail_send" } as unknown as MailSendMutation, true, undefined, { andDone: res.andDone });
   });
 
-  const mailSend = useMailSend(engine, toast, onSendSettled, onSendOutcome);
+  /** The composer's binding epoch, late-bound like {@link settleComposeRef}: the sent beat's mark. */
+  const composeEpochRef = useRef<() => number>(() => 0);
+  const mailSend = useMailSend(
+    engine, toast, onSendSettled, onSendOutcome,
+    (key) => (key === COMPOSE_SEND_KEY ? composeEpochRef.current() : null),
+  );
   /**
    * The body comes from REACT STATE, not from `readReplyDraft`. Private mode refuses the
    * `localStorage` write, so re-reading the scratch buffer at press time would send an empty
@@ -1290,6 +1376,14 @@ export function useShellCompose({
    * rebuilt every render and reached through a ref, so there is no capture to go stale and no
    * list of names to keep in step with the reads above.
    */
+  /**
+   * The hand-off for a dock: close only the dock that pressed (a reply or forward opened since on
+   * another message stays), and keep its press for every door back to the lane (`pressBackOf`).
+   */
+  const handOffDock = (lane: string, messageId: string, mode: "reply" | "forward") => (m: MailSendMutation): void => {
+    handedPress.current.set(lane, { m, row: null });
+    setReplyTo((cur) => (cur === messageId && replyModeRef.current === mode ? null : cur));
+  };
   /* The one door both presses take: `andDone` is Send + Done's release, `null` a plain Send. */
   const sendReply = useStableCallback((messageId: string, andDone: SendAndDonePlan | null = null) => {
     const withDone = <T extends object>(o: T): T => (andDone !== null ? { ...o, andDone } : o);
@@ -1338,8 +1432,12 @@ export function useShellCompose({
       if (!parent) return;
       // An unanswered ask sends nothing: the dock shows the ask, not an editor, until confirmed.
       if (fwdGate !== null && !fwdGate.confirmed) return;
-      const fwdRow = laneRowOf(inlineForwardKey(messageId));
-      mailSend.send(
+      const fwdLane = inlineForwardKey(messageId);
+      const fwdRow = laneRowOf(fwdLane);
+      const fwdHandOff = mayHandOffFor?.(from.mailboxId ?? parent.mailboxId) === true
+        ? handOffDock(fwdLane, messageId, "forward") : undefined;
+      const atPress = { row: replyRows.current.get(fwdLane)?.row ?? null, seed: null };
+      const went = mailSend.send(
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
         // showed sits ABOVE the quoted history in what the recipient reads.
@@ -1354,8 +1452,13 @@ export function useShellCompose({
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
         }), sigText, sigHtml)),
-        withDone({ surface: "inline" as const }),
+        withDone({ surface: "inline" as const, ...(fwdHandOff ? { handOff: fwdHandOff } : {}) }),
       );
+      // A new press owes back nothing of the last; its own hand-off keeps it (`handOffDock`).
+      if (went) {
+        handedPress.current.delete(fwdLane);
+        pressRows.current.set(fwdLane, atPress);
+      }
       return;
     }
     // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock and this wire. Untouched
@@ -1377,6 +1480,10 @@ export function useShellCompose({
     const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
     // The text this press sends is not saved again, and a create still in the air is undone.
     replyAutosave.seal(messageId);
+    // Healthy: the dock closes once the send is on disk, and the sidebar's foot finishes it.
+    const replyHandOff = mayHandOffFor?.(from.mailboxId ?? parentMailbox) === true
+      ? handOffDock(messageId, messageId, "reply") : undefined;
+    const atPress = { row: replyRows.current.get(messageId)?.row ?? null, seed: replySeedDrafts.current.get(messageId) ?? null };
     const went = mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,
@@ -1410,9 +1517,17 @@ export function useShellCompose({
       // `In-Reply-To`/`References` from the parent row whatever the subject says.
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
-    }, sigText, sigHtml), withDone({ heldRow: heldReplyRow(messageId) }));
+    }, sigText, sigHtml), withDone({
+      heldRow: heldReplyRow(messageId),
+      ...(replyHandOff ? { handOff: replyHandOff } : {}),
+    }));
     // The send carries the words and makes its own row: a create the pause left on the outbox goes.
-    if (went) replyAutosave.sending(messageId);
+    // A new press owes back nothing of the last; its own hand-off keeps it (`handOffDock`).
+    if (went) {
+      replyAutosave.sending(messageId);
+      handedPress.current.delete(messageId);
+      pressRows.current.set(messageId, atPress);
+    }
   });
 
   /**
@@ -1457,6 +1572,12 @@ export function useShellCompose({
   );
   const composeMailbox = composeFrom.mailboxId ?? fallbackMailboxId;
   /**
+   * THE COMPOSE LANE'S LAST PRESS LET GO OF ITS COMPOSER (`sendCompose`'s hand-off): the person was
+   * sent on at the press, and wherever they are when it settles is theirs — the composer opened on it
+   * again included (it empties there, and stays).
+   */
+  const composeHandedOff = useRef(false);
+  /**
    * THE COMPOSE FORM IS A ROW ON THE ACCOUNT — see `compose-autosave.ts`.
    *
    * `active` is the route, so a timer armed by the last keystroke cannot write a draft after the
@@ -1497,11 +1618,14 @@ export function useShellCompose({
        a fact rather than a toast. */
     onCleared: (toList) => {
       setCompose(EMPTY_COMPOSE);
+      // A send that finished after the person moved on (the hand-off) leaves them where they are.
+      if (routeViewRef.current !== "compose" || composeHandedOff.current) return;
       setOhboxSel(null);
       go(toList);
     },
   });
   settleComposeRef.current = autosave.settleCompose;
+  composeEpochRef.current = autosave.epochNow;
   restoredRef.current = autosave.restored;
   releaseDraftIdRef.current = autosave.draftId;
   releaseBindingRef.current = autosave.release;
@@ -1570,21 +1694,21 @@ export function useShellCompose({
    * does not open and the row says so; a refusal is the only honest arm, because every other one presents a message
    * as shorter than it is.
    */
-  const openDraft = useStableCallback((d: EngineDraft) => {
-    forgetNotSent(d.id);
+  const openDraft = useStableCallback((d: EngineDraft, files?: ComposeAttachment[]) => {
     void openDraftDecision(d, {
       readDraftBody: (id) => engine.readDraftBody(id),
-      openWithBody: (row, body) => { openDraftWithBody(row, body); },
+      openWithBody: (row, body) => { openDraftWithBody(row, body, files); },
       unavailable: () => { toast(t("drafts.bodyUnavailable")); },
     });
   });
   /**
    * OPEN A DRAFT WHOSE TEXT IS KNOWN. `body` is a parameter and not read off the row, so the
    * type carries the invariant: this door cannot be reached with a body the mirror does not
-   * hold — {@link openDraft} above is the one that decides.
+   * hold — {@link openDraft} above is the one that decides. `pressed`: the files of the press that
+   * left this row, when the door holds that press ({@link openNotSent}); no row stores them.
    */
   const openDraftWithBody = useStableCallback(
-    (d: EngineDraft, body: string) => {
+    (d: EngineDraft, body: string, pressed?: ComposeAttachment[]) => {
       const parent = d.inReplyToMessageId
         ? reader.get<EngineMessage>("message", d.inReplyToMessageId)
         : null;
@@ -1611,6 +1735,10 @@ export function useShellCompose({
       });
       const parked = hold.kind !== "free";
       if (parent && !parked) {
+        /* The lane's handed-off press comes back with its own refused row only: any other reply
+           draft opened into the dock is another message, and keeps its own audience. */
+        const owed = handedPress.current.get(parent.id);
+        if (owed !== undefined && owed.row !== d.id) handedPress.current.delete(parent.id);
         /* The message's own inline editor, seeded with what was written. `openMessageRef` and
            not `openMessage` directly: that callback needs the screener row map and the consent
            partition and is therefore declared far below this one, so the reference is late-bound
@@ -1628,10 +1756,16 @@ export function useShellCompose({
         openMessageRef.current(parent, { reply: true });
         return;
       }
+      /* THE ROW A HANDED-OFF SEND'S REFUSAL LEFT gets that press's files back: no row stores them,
+         and the composer that held them has moved on (or holds them still, and is replaced here). */
+      const owedFiles = [...handedPress.current].find(([, p]) => p.row === d.id);
+      if (owedFiles !== undefined) handedPress.current.delete(owedFiles[0]);
+      const files = parked ? [] : owedFiles?.[1].m.attachments ?? pressed ?? [];
       // `formatRecipientChips`, never a bare join: the seeded string must end in a separator
       // or the LAST stored recipient reopens as raw text in the input — no ×, typing appends
       // to the address — while the others are chips.
       const seeded: ComposeFields = {
+        ...(files.length > 0 ? { attachments: files } : {}),
         to: formatRecipientChips(d.to),
         cc: formatRecipientChips(d.cc),
         bcc: formatRecipientChips(d.bcc),
@@ -2093,8 +2227,24 @@ export function useShellCompose({
      * original key rather than releasing it, and the person is shown that it needs checking. A retry that reuses the
      * key is safe; nothing here may invent a new one.
      */
+    /* HEALTHY, AND NOT SEND LATER: the composer lets go once the send is on disk and the sidebar's foot
+       finishes it. The form, the buffer and the session stay bound to this message until it settles.
+       Its press is kept for the files a door back to its row would otherwise lose (`handedPress`). */
+    const handOff = !sendAt && mayHandOffFor?.(composeMailbox ?? null) === true
+      ? (m: MailSendMutation): void => {
+        handedPress.current.set(COMPOSE_SEND_KEY, { m, row: null });
+        composeHandedOff.current = true;
+        if (routeViewRef.current !== "compose") return;
+        setOhboxSel(null);
+        go("ohbox");
+      }
+      : undefined;
     // The send carries the words and makes its own row: a create the pause left on the outbox goes.
-    if (mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)))) autosave.sending();
+    if (mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)), handOff ? { handOff } : undefined)) {
+      autosave.sending();
+      handedPress.current.delete(COMPOSE_SEND_KEY);
+      composeHandedOff.current = false;
+    }
   });
 
   /**
@@ -2124,7 +2274,11 @@ export function useShellCompose({
        * stays as it is and the reader is told. Emptying the form over a delivery nobody can take
        * back would be the product claiming to have cancelled something it did not.
        */
-      const said = await mailSend.withdraw(COMPOSE_SEND_KEY);
+      /* ONLY THIS MESSAGE'S SEND: the composer may hold the next message while the last one waits on
+         the outbox (the hand-off left it at the press), and throwing this one away withdraws nothing
+         of that one's. */
+      const own = mailSend.pressHere(COMPOSE_SEND_KEY);
+      const said = own ? await mailSend.withdraw(COMPOSE_SEND_KEY) : "close";
       if (said === "already_sent") {
         toast(t("compose.cancelAlreadySent"));
         return;
@@ -2143,6 +2297,8 @@ export function useShellCompose({
          and closing in silence after a question that promised a delete left the person thinking it
          was gone. Asked before the discard, which spends the binding it reads. */
       const keeps = discardKeepsCompose();
+      // This message's own press, withdrawn or thrown away with it, owes no door anything.
+      if (own) handedPress.current.delete(COMPOSE_SEND_KEY);
       if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {});
       void autosave.discard();
       if (keeps !== null) toast(t(keeps === "held" ? "compose.discardHeld" : "compose.discardUnknown"));
@@ -2345,6 +2501,7 @@ export function useShellCompose({
     replySubjectEdit,
     resolveHeldSend,
     sendCompose,
+    openNotSent,
     composeElsewhere: autosave.elsewhere,
     composeSaveRefused: autosave.saveRefused,
     sendReply,

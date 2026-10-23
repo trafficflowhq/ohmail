@@ -143,6 +143,9 @@ describe("a routing press is two halves and one sentence", () => {
     await moveFocusedTo("News");
 
     expect(kinds("move").length, "the mail did not move at the press").toBeGreaterThan(0);
+    /* The press rewrites the route: its moves are no override of it (`pressRule`). */
+    expect(kinds("move").every((m) => (m as { pressRule?: true }).pressRule === true),
+      "a rule press's move would count against the route it rewrites").toBe(true);
     expect(routing(), "a rule went out inside the window — there would be nothing to undo")
       .toEqual([]);
     expect(undoButton(), "the Move toast carries no Undo").toBeTruthy();
@@ -160,6 +163,8 @@ describe("a routing press is two halves and one sentence", () => {
     /* THE MAIL CAME BACK — the engine's own inverse on the wire, never a local state hack. */
     const back = kinds("move") as Array<{ messageId: string; folder: string }>;
     expect(back.length, "Undo dispatched no move").toBeGreaterThan(0);
+    expect(back.every((m) => (m as { pressRule?: true }).pressRule === true),
+      "taking the press back would count against the route as a correction").toBe(true);
     expect(new Set(back.map((m) => m.folder)), "the mail went back to the place it was filed in")
       .not.toContain("ohmail/News");
     expect(toastText()).toBe("The mail is back where it was, and no rule was made.");

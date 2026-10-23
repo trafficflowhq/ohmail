@@ -290,6 +290,27 @@ export const TNEF: InviteShape = {
   ],
 };
 
+/* ── No invitation: a calendar file somebody attached by hand (no METHOD, no calendar header) ──── */
+
+const PLAIN_FILE_ICS = ics({ uid: "plain-file-fixture@example.test", method: null, summary: "Office closed", start: "20261224T000000", end: "20261227T000000" });
+export const PLAIN_ICS_FILE: InviteShape = {
+  name: "plain-ics-file",
+  text: "The holiday dates, for your calendar.",
+  html: null,
+  calendarHeader: false,
+  eml: [
+    ...head("plain-file-1", "Holiday dates"),
+    'Content-Type: multipart/mixed; boundary="MIX"', "",
+    "--MIX", "Content-Type: text/plain; charset=utf-8", "", "The holiday dates, for your calendar.", "",
+    "--MIX", 'Content-Type: text/calendar; charset=utf-8; name="holidays.ics"', 'Content-Disposition: attachment; filename="holidays.ics"',
+    "Content-Transfer-Encoding: base64", "", b64(PLAIN_FILE_ICS), "",
+    "--MIX--", "",
+  ].join(CRLF),
+  parts: [
+    { id: "plain-file", filename: "holidays.ics", contentType: "text/calendar", inline: false, contentId: null, bytes: PLAIN_FILE_ICS },
+  ],
+};
+
 /* ── Two different events in one message: two cards ──────────────────────────────────────────── */
 
 const FIRST_ICS = ics({ uid: "two-events-first@example.test", summary: "Workshop day one", start: "20261104T090000", end: "20261104T170000" });

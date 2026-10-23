@@ -395,6 +395,9 @@ export class BearerManagerRN implements SessionRenewalDoor {
     // The server named the CREDENTIAL (a wrong code): the answer itself, never a lapsed session.
     if (await isCredentialRefusal(first)) return first;
     if (this.generation === stampedIn && !(await this.rotate())) return first;
+    // A caller that gave up while the pair rotated (the outbox ends a write at its ceiling) is sent
+    // nothing more, whatever the platform fetch does with an aborted signal.
+    if (options.signal?.aborted) throw options.signal.reason ?? Object.assign(new Error("aborted"), { name: "AbortError" });
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
     return this.heard(await this.fetchImpl(url, stamped()));

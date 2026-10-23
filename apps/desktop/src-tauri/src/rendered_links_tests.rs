@@ -213,3 +213,52 @@ fn a_refusal_line_names_no_part_of_the_address() {
         r#"{"service":"shell","event":"rendered_links_trimmed","dropped":3,"evicted":1}"#
     );
 }
+
+/// A BATCH IS ITS REPORTS, IN ORDER: a later report of the same surface wins, an empty one removes
+/// it, and the caps hold exactly as one report at a time holds them. Mutations: apply the batch in
+/// reverse → the replaced link stays and the removed surface survives; sum nothing → the trim reads
+/// zero; skip `report` and insert directly → the per-surface cap no longer drops.
+#[test]
+fn a_batch_applies_its_reports_in_order_under_the_same_caps() {
+    let mut set = reported("old", &["https://old.test/"]);
+    let surfaces: Vec<String> = ["s1", "s2", "s1", "old"].iter().map(|s| s.to_string()).collect();
+    let urls = vec![
+        owned(&["https://a.test/"]),
+        owned(&["https://b.test/", "javascript:alert(1)"]),
+        owned(&["https://c.test/"]),
+        Vec::new(),
+    ];
+    let trim = set.report_batch(&surfaces, &urls).expect("the batch was refused");
+    assert_eq!(trim, Trimmed { dropped: 1, evicted: 0 });
+    assert!(admitted("https://a.test/", Some(&set)).is_err(), "a surface's earlier report outlived its later one");
+    assert!(admitted("https://b.test/", Some(&set)).is_ok());
+    assert!(admitted("https://c.test/", Some(&set)).is_ok());
+    assert!(admitted("https://old.test/", Some(&set)).is_err(), "the batch's empty report did not remove the surface");
+    assert_eq!(set.surface_ids(), ["s2", "s1"]);
+
+    let many: Vec<String> = (0..=PER_SURFACE_MAX).map(|i| format!("https://example.test/{i}")).collect();
+    let mut set = Rendered::default();
+    let trim = set.report_batch(&["s1".to_string()], &[many.clone()]).expect("report");
+    assert_eq!(trim.dropped, 1, "the per-surface cap did not hold inside a batch");
+    assert!(admitted(&many[PER_SURFACE_MAX], Some(&set)).is_err());
+}
+
+/// ONE BAD SURFACE REFUSES THE WHOLE BATCH, BEFORE ANYTHING IS APPLIED; so does a batch whose two
+/// lists do not pair up. Mutations: check each id as it is applied → the first report lands before
+/// the refusal; zip the lists without the length check → the unpaired batch is taken.
+#[test]
+fn a_batch_with_a_malformed_surface_changes_nothing() {
+    let mut set = reported("kept", &["https://kept.test/"]);
+    for bad in ["s".repeat(SURFACE_ID_MAX + 1), String::new(), "«r1»".to_string(), "a b".to_string()] {
+        let surfaces = vec!["s1".to_string(), bad.clone()];
+        let urls = vec![owned(&["https://first.test/"]), owned(&["https://second.test/"])];
+        assert!(set.report_batch(&surfaces, &urls).is_err(), "surface id {bad:?} was taken");
+        assert!(admitted("https://first.test/", Some(&set)).is_err(), "a refused batch applied its first report");
+        assert!(admitted("https://kept.test/", Some(&set)).is_ok(), "a refused batch touched what was kept");
+    }
+    let unpaired = set.report_batch(&["s1".to_string(), "s2".to_string()], &[owned(&["https://first.test/"])]);
+    assert!(unpaired.is_err(), "a batch with more surfaces than lists was taken");
+    assert!(admitted("https://first.test/", Some(&set)).is_err());
+    assert_eq!(set.surface_ids(), ["kept"]);
+    assert_eq!(set.report_batch(&[], &[]), Ok(Trimmed::default()));
+}

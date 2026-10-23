@@ -62,7 +62,7 @@ import {
   connectionSay, firstSyncSay, setAsideSaid,
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
-  answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -88,7 +88,6 @@ import {
   liveTagged,
   mirrorSettled,
   presentedWorld,
-  scheduleLabel,
   answersPerMailbox,
   widestWindowOfAnswer,
   screeningAnswered,
@@ -615,6 +614,7 @@ const NO_ACTIONS: WorldActions = {
   sendAndDoneOffered: () => false,
   // Nothing is connected, so nothing is queued: there is no send here to withdraw.
   withdrawSend: () => Promise.resolve("gone" as const),
+  leaveSend: () => undefined,
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
@@ -1002,6 +1002,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * ON SCREEN and not about the raw mirror's folders.
    */
   const presentedNow = useRef<EntityReader | null>(null);
+  /* The same lists without the held presses' overlay: a press's read-back reads it. */
+  const unroutedNow = useRef<EntityReader | null>(null);
   /** When the mailbox facts were last read — a ref, so an unchanged answer rebuilds no projection. */
   const mailboxesReadAt = useRef<number | null>(null);
   const readMailboxesAt = useCallback(() => mailboxesReadAt.current, []);
@@ -1365,6 +1367,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         /* A GETTER for the same reason, and the fallback is the raw mirror for the one render
            before the world memo below has run — see `LiveDeps.presented`. */
         presented: () => presentedNow.current ?? engine.read(),
+        unrouted: () => unroutedNow.current ?? presentedNow.current ?? engine.read(),
         presentedOptions: () => presentedOptionsNow.current ?? presentedOptions(new Date()),
         /* THE CACHED QUEUE, RECONCILED AT THE DECIDE. `setScreenerServer` is `useState`'s own
            setter and identity-stable, and the update is FUNCTIONAL — this facade is built once
@@ -1487,10 +1490,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               // earlier reservation is about that press's words, and about its arrangement —
               // naming a time this press asked for would promise one nobody made. See
               // `FlushedOutcome.earlierWent`.
-              showToast(
-                o.earlierWent ? refuse(o.forward ? "forwardEarlierWent" : "replyEarlierWent")
-                  : o.sendAt !== null ? refuse("scheduledFor", scheduleLabel(o.sendAt, new Date(), zone)) : o.forward ? refuse("forwarded") : refuse("replySent"),
-              );
+              showToast(confirmedSendSay(o, new Date(), zone));
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
             else showToast(refusedSendSay(o.failure));
@@ -1595,6 +1595,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           /* BY REFERENCE for the reason above it. */
           sendAndDoneOffered: acts.sendAndDoneOffered,
           withdrawSend: (key) => acts.withdrawSend(key),
+          leaveSend: (key) => acts.leaveSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           draftDiscard: (draftId) => acts.draftDiscard(draftId),
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
@@ -1706,8 +1707,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
       mailboxes, ownAddresses: addressesNow.current, mailboxesReadAt: readMailboxesAt,
       walker, searchWalker, openOffMirror, actions,
-      onPresented: (pres, options) => {
+      onPresented: (pres, options, unrouted) => {
         presentedNow.current = pres;
+        unroutedNow.current = unrouted ?? pres;
         presentedOptionsNow.current = options;
       },
     });

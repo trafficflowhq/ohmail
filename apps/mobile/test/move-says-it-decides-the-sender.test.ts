@@ -121,6 +121,9 @@ describe("the pill says what the press decides", () => {
       await until("the rule on the wire", () => ruleWrites(s).length > 0);
       expect(ruleWrites(s).map((r) => `${r.method} ${r.url}`)).toEqual(["PATCH /rules/r-own"]);
       expect(JSON.parse(ruleWrites(s)[0]!.body)).toMatchObject({ destination: "ohmail/News", applyRetro: false });
+      // The press rewrites the route: its move is no override of it.
+      const moved = s.fake.seen.filter((r) => r.url === "/messages/m1/move");
+      expect(moved.map((r) => JSON.parse(r.body))).toEqual([{ folder: "ohmail/News", pressRule: true }]);
     } finally { s.close(); }
   });
 
@@ -138,6 +141,9 @@ describe("the pill says what the press decides", () => {
       expect(m.presentedFolder).toBe("INBOX");
       expect(await s.actions.move(m, "reads")).toBe(true);
       expect(s.said.map((x) => x.say)).toEqual(["Moved to News."]);
+      // No rule is written: an ordinary move, which may teach the route.
+      await until("the move on the wire", () => s.fake.seen.some((r) => r.url === "/messages/m1/move"));
+      expect(s.fake.seen.filter((r) => r.url === "/messages/m1/move").map((r) => JSON.parse(r.body))).toEqual([{ folder: "ohmail/News" }]);
       await tick(50);
       expect(ruleWrites(s), "a one-off move wrote a rule").toEqual([]);
     } finally { s.close(); }

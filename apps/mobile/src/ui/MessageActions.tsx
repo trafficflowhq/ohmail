@@ -63,7 +63,7 @@ import {
   ruleMatchKey,
   isSharedProviderDomain,
 } from "../state/live";
-import { useWorld } from "../state/world";
+import { useWorld, useWorldToast } from "../state/world";
 import { BAR, PILL, compactFit } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
 import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
@@ -95,7 +95,7 @@ import {
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
 import { usePrefs } from "../state/store";
-import { afterWithdraw, cancelAct } from "./send-cancel";
+import { cancelAct, cancelSendOffered, cancelSendPress, keptSay } from "./send-cancel";
 import { autosaveKeep, keepAct, unmountKeep, worthKeeping } from "./compose-keep";
 import { composeSenderOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
@@ -1166,6 +1166,7 @@ export function ComposeSheet({
     if (!pinNotes) letterScroll.current?.scrollToEnd({ animated: false });
   }, [pinNotes, notesHeight]);
   const w = useWorld();
+  const toast = useWorldToast();
   /* THE COMPOSER HOLDS THE READER'S MOVE, whatever opened it (the reader's sheet, the rail's pen, a
      mailto in a body): a fold or unfold while it is open replaced or covered the New mail route and
      unmounted it without a close. The move fires once the composer is gone (`reader-held.ts`). */
@@ -1260,6 +1261,8 @@ export function ComposeSheet({
   const [keepNote, setKeepNote] = useState<"failed" | "files" | "tooLong" | null>(null);
   /** A keep on its way — one row per close, however often the backdrop is tapped meanwhile. */
   const keeping = useRef(false);
+  /** A Cancel send still being asked: a press meanwhile is not a second question. */
+  const withdrawing = useRef(false);
   /**
    * THE ROW THIS LETTER IS — set once a refused send names the draft it left. Every later press
    * sends that row and the keep on close updates it, so one letter is one draft however often
@@ -1504,16 +1507,24 @@ export function ComposeSheet({
 
   /**
    * EVERY ROAD OUT OF THIS SHEET — the button, the scrim, the back gesture. Over a queued send
-   * the close IS the cancellation: the intent is withdrawn before the sheet goes, so the
-   * reconnect flush has nothing left to deliver and a second composer cannot mint a second copy.
-   * A withdrawal the engine refuses because the request has already left says so and STAYS, and
-   * the press after that dismisses (`cancelAct`'s `alreadySent` arm).
+   * the close KEEPS it: the send stands under its one key and goes when the network is back, and
+   * the sheet's caption is said as it goes. Only {@link cancelSend} withdraws.
    */
   const closeComposer = () => {
-    if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
-      /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes. */
+    const way = cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable });
+    if (way === "keepSend") {
+      w.actions.leaveSend(queuedKey!);
+      toast.say(keptSay(queuedCaptionKey(network, accepted, rearmed)));
+      leave();
+      return;
+    }
+    if (way === "close") {
+      /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes.
+         After a Cancel the server could not answer the words are kept too, except standalone, whose
+         engine already wrote them into a row. */
       const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
-      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null, tooLong });
+      const cancelOwed = cancelUnreachable && !alreadySent && !w.standalone;
+      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null, tooLong, cancelOwed });
       if (act === "close") {
         leave();
         return;
@@ -1542,13 +1553,30 @@ export function ComposeSheet({
       })();
       return;
     }
+  };
+
+  /**
+   * CANCEL SEND, the one way to withdraw a queued send. A withdrawal the engine refuses because the
+   * request has already left says so and STAYS, and the press after that dismisses (`cancelAct`'s
+   * `alreadySent` arm).
+   */
+  const cancelSend = () => {
+    if (cancelAct({ road: "cancelSend", phase, key: queuedKey, alreadySent }) !== "withdraw") {
+      closeComposer();
+      return;
+    }
     void (async () => {
       const key = queuedKey!;
-      // The verdict is read AFTER the withdrawal answers, not before it: a flush can settle
-      // under the await, and the fresher reading is the one this press is owed.
-      const said = afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key));
-      if (said === "close") leave();
-      else if (said === "already_sent") setAlreadySent(true);
+      const end = await cancelSendPress({
+        asking: withdrawing, withdraw: () => w.actions.withdrawSend(key), verdict: () => w.sendOutcome(key),
+        standalone: w.standalone, bound: draftId !== null,
+      });
+      if (end === null) return;
+      if (end.said === "close") {
+        if (end.say !== null) toast.say(end.say);
+        leave();
+      }
+      else if (end.said === "already_sent") setAlreadySent(true);
       else setCancelUnreachable(true);
     })();
   };
@@ -2091,7 +2119,11 @@ export function ComposeSheet({
           {/* The footer WRAPS on a narrow sheet: Cancel keeps the left edge on its own line and the
               send verbs stay right-aligned under it — nothing starts off-screen (the attach row's grammar). */}
           <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", columnGap: 8, rowGap: 8 }}>
-            <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
+            {cancelSendOffered({ phase, key: queuedKey, alreadySent }) ? (
+              <Button label={Copy.cancelSend} variant="quiet" onPress={cancelSend} style={{ marginRight: "auto" }} />
+            ) : (
+              <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
+            )}
             {/* SEND LATER stands beside Send because it is the same act on a different clock,
                 under the SAME lock: a message that may not be sent now may not be scheduled
                 either, and one predicate owns both buttons. A forward is never offered it —

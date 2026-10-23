@@ -299,6 +299,13 @@ export interface ComposeAutosave {
    * queues, and by every door that takes or lets go of the row.
    */
   saveRefused: boolean;
+  /**
+   * WHICH MESSAGE THIS COMPOSER IS BOUND TO, as a number that moves whenever it takes or lets go of
+   * one (`adopt`, `release` and the mount's adoption — the epoch a save in flight is judged by). A
+   * send's settlement compares it across its sent beat (`useMailSend`'s `markOf`): moved means the
+   * composer holds another message now, and nothing about it is the settlement's to clear.
+   */
+  epochNow: () => number;
 }
 
 /**
@@ -1001,8 +1008,9 @@ export function useComposeAutosave(opts: {
      the two are not forced into one declaration order by a dependency cycle. */
   settledRef.current = settled;
   settleComposeRef.current = settleCompose;
+  const epochNow = useCallback((): number => epoch.current, []);
 
   return {
-    draftId, adopt, release, discard, flush, sending, restored, settled, settleCompose, elsewhere, saveRefused,
+    draftId, adopt, release, discard, flush, sending, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
   };
 }

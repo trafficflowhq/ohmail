@@ -16,15 +16,75 @@ import { useEffect, useState } from "react";
 /** Where a report goes: the shell's list in the desktop window, nowhere elsewhere. */
 export type RenderedLinksSink = (surface: string, hrefs: readonly string[]) => void;
 
-let sink: RenderedLinksSink | null = null;
+/** One surface's report inside a batch: the same meaning as one {@link RenderedLinksSink} call. */
+export interface RenderedLinksReport {
+  surface: string;
+  hrefs: readonly string[];
+}
 
-/** Point reports at the shell, or pass `null` to take that away. */
+/** The batched sink: every surface's latest report since the last flush, in report order. */
+export type RenderedLinksBatchSink = (reports: readonly RenderedLinksReport[]) => void;
+
+let sink: RenderedLinksSink | null = null;
+let batchSink: RenderedLinksBatchSink | null = null;
+
+/** Point reports at the shell, one call per report, or pass `null` to take that away. */
 export function setRenderedLinksSink(next: RenderedLinksSink | null): void {
   sink = next;
+  batchSink = null;
+  pending.clear();
+}
+
+/**
+ * Point reports at the shell IN BATCHES — the desktop window's way. A switch into News mounted
+ * a viewer per card, and each one's report was its own message across the bridge: sixty in, sixty
+ * out when the view was left. Reports are now held per surface (the latest wins, an empty one
+ * included) and sent together once, in the task after the next paint, so the press's own frame
+ * carries none of them; a removal waits for the same flush, a frame at most (a timer stands in
+ * when no frame comes, as in a hidden window).
+ */
+export function setRenderedLinksBatchSink(next: RenderedLinksBatchSink | null): void {
+  batchSink = next;
+  sink = null;
+  pending.clear();
+}
+
+/** Held reports by surface, in the order their latest report came. */
+const pending = new Map<string, readonly string[]>();
+let flushArmed = false;
+let fallback: ReturnType<typeof setTimeout> | null = null;
+
+/** How long a held report waits when no animation frame comes (a minimized window). */
+const FLUSH_FALLBACK_MS = 100;
+
+function armFlush(): void {
+  if (flushArmed) return;
+  flushArmed = true;
+  fallback = setTimeout(flushRenderedLinks, FLUSH_FALLBACK_MS);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => setTimeout(flushRenderedLinks, 0));
+  }
+}
+
+/** Send every held report now, as one batch. A no-op with nothing held. */
+export function flushRenderedLinks(): void {
+  flushArmed = false;
+  if (fallback !== null) clearTimeout(fallback);
+  fallback = null;
+  if (pending.size === 0) return;
+  const reports = [...pending].map(([surface, hrefs]) => ({ surface, hrefs }));
+  pending.clear();
+  batchSink?.(reports);
 }
 
 /** Report one surface's links; an empty list removes the surface. Nothing happens with no sink. */
 export function reportRenderedLinks(surface: string, hrefs: readonly string[]): void {
+  if (batchSink) {
+    pending.delete(surface);
+    pending.set(surface, hrefs);
+    armFlush();
+    return;
+  }
   sink?.(surface, hrefs);
 }
 

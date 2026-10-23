@@ -760,7 +760,7 @@ describe("the Rust side", () => {
       "perf_budgets.rs",
       // THE LINKS ON SCREEN: the bounded per-surface list of http(s) links the window's renderers
       // report, the shell's own constant links, and the one predicate the new-window door asks
-      // before it opens anything. The `rendered_links` command keeps a list and opens nothing; a
+      // before it opens anything. The `rendered_links_batch` command keeps a list and opens nothing; a
       // refusal is one log line with the host's class. Compiled only under `local-engine`, like
       // `engine.rs`, whose door is its only reader.
       "rendered_links.rs",
@@ -1112,13 +1112,14 @@ describe("the Rust side", () => {
       // mean anything that got a string into the page could open an arbitrary address in the
       // user's real browser.
       "open_link",
-      // The links a surface draws, reported by the window's renderers as they draw them: a list
-      // the shell keeps, bounded, and opens nothing for (`rendered_links.rs`). No command takes an
-      // address to open: a link leaves only as the webview's own new-window request on the
-      // person's click (`link_gate.rs`). `open_external` did, with no click, and is gone; it and a
-      // sibling were once granted without being declared here, which aborted the process at
-      // launch — 0.9.7 shipped that way, so the set equality below is the guard that was missing.
-      "rendered_links",
+      // The links the surfaces draw, reported by the window's renderers as they draw them, in
+      // batches: a list the shell keeps, bounded, and opens nothing for (`rendered_links.rs`). No
+      // command takes an address to open: a link leaves only as the webview's own new-window
+      // request on the person's click (`link_gate.rs`). `open_external` did, with no click, and is
+      // gone; it and a sibling were once granted without being declared here, which aborted the
+      // process at launch — 0.9.7 shipped that way, so the set equality below is the guard that
+      // was missing.
+      "rendered_links_batch",
       // One attachment, by id, saved into the PERSON'S Downloads folder, which is what a button
       // that says Download has always promised. The shell picks the folder, sanitises the name,
       // and numbers a collision rather than overwriting anything already there. (`open_attachment`,

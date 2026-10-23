@@ -26,7 +26,8 @@ export function worthKeeping(o: { fresh: boolean; subject: string; body: string 
 /**
  * `armed` is the second press after the sheet said why it could not keep something — that press
  * is the person choosing to discard. Only an idle composer keeps: a queued or unverified send
- * already has its text on its way, and closing a sending one is not offered.
+ * already has its text on its way, and closing a sending one is not offered. A queued send whose
+ * Cancel is owed is the exception: its words go nowhere, so they are kept as an idle letter's are.
  */
 export function keepAct(o: {
   phase: ComposerPhase;
@@ -35,8 +36,11 @@ export function keepAct(o: {
   armed: boolean;
   /** The body is past `DRAFT_BODY_MAX_BYTES`. */
   tooLong?: boolean;
+  /** A Cancel the server could not answer is owed over this sheet's send, and no row holds its words. */
+  cancelOwed?: boolean;
 }): KeepAct {
-  if (o.phase !== "idle" || o.armed) return "close";
+  const idle = o.phase === "idle" || (o.phase === "queued" && o.cancelOwed === true);
+  if (!idle || o.armed) return "close";
   if (o.worth && o.tooLong === true) return "tooLong";
   if (o.worth) return "keep";
   return o.files > 0 ? "ask" : "close";

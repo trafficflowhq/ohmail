@@ -39,7 +39,7 @@ async function card(onReask: (id: string) => void) {
   const draw = (bodyState: MessageBody["state"]) => act(() => root.render(h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: NOW,
     children: h(StreamCardMemo, {
-      m, now: NOW, current: false, expanded: true, unread: false,
+      m, now: NOW, current: false, expanded: true, viewer: true, unread: false,
       bodyText: "", bodyState, bodyHtml: null, bodyLoadedRemote: false,
       loadingLabel: messages.body.loading, failedLabel: messages.body.failed,
       withheldKey: "withheldJunkLoading", onReask,

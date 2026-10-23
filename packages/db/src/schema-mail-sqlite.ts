@@ -1926,6 +1926,8 @@ export const outboundSends = sqliteTable("outbound_sends", {
   attempts: integer("attempts").notNull().default(1),
   retryUntil: integer("retry_until", { mode: "timestamp_ms" }),
   retryRefusal: text("retry_refusal"),
+  // Mail 0162: may this attempt have offered the message (see the server twin).
+  offerState: text("offer_state").notNull().default("unknown"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate

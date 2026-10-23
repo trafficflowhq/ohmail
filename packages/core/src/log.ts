@@ -430,6 +430,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // server's words; spelled out rather than `by`, because a two-letter generic name on a GLOBAL
   // allowlist is an open door for the next call site.
   "resolvedElsewhere", "gaveUp", "decidedBy",
+  // `forgotten`: the reconciler's `++` count of reservations that offered nothing (mail 0162) and
+  // were removed so the key's replay sends afresh; an integer, never a server's words.
+  "forgotten",
   // The AWAY RESPONDER's pass (mail 0087), added WITH the call sites. An operator reading
   // `away_responder_pass` asks how many correspondents were ANSWERED, how many were held back
   // because answered recently (`throttled`), and how many a guard refused outright (`suppressed`)

@@ -21,7 +21,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  calendarEventsOf, watchWireFailedLists, type DistinctCalendarEvent, type EngineMessage, type OhmailEngine,
+  calendarEventsOf, watchWireFailedLists, withoutCalendarBodies, type DistinctCalendarEvent, type EngineMessage,
+  type OhmailEngine,
 } from "@ohmail/client-engine";
 import { previewKind } from "../components/AttachmentPreview";
 import {
@@ -685,17 +686,21 @@ export function useMessageAttachments(
           return { state: "unavailable" };
         case "loading":
           return held.retrying ? { state: "loading", retrying: true } : { state: "loading" };
-        case "ready":
+        case "ready": {
           // FILES FIRST, the body's own pictures after — a stable partition, wire order kept
           // inside each half. The strip marks inline rows; grouping them behind the real files
           // keeps the invoice ahead of fifteen template logos. Download-all enumerates through
-          // the ENGINE with the same opts, so the saved set matches this list either way.
+          // the ENGINE with the same opts and the same filter, so the saved set matches this list.
+          // An invitation's calendar alternative is its body, read by the event card: no tile
+          // while a listed calendar file carries the same event (Google), its one tile otherwise.
+          const parts = withoutCalendarBodies(engine, id, held.items);
           return {
             state: "ready",
             items: opts.includeInlineParts === true
-              ? [...held.items.filter((i) => !i.inline), ...held.items.filter((i) => i.inline)]
-              : held.items,
+              ? [...parts.filter((i) => !i.inline), ...parts.filter((i) => i.inline)]
+              : parts,
           };
+        }
         case "failed":
           return {
             state: "failed",
@@ -813,7 +818,8 @@ export function useMessageAttachments(
         });
         try {
           const held = engine.attachmentsOf(id, opts);
-          if (held.state !== "ready" || held.items.length === 0) {
+          const listed = held.state === "ready" ? withoutCalendarBodies(engine, id, held.items) : [];
+          if (held.state !== "ready" || listed.length === 0) {
             // No metadata means nothing to enumerate. The strip is already saying why — the
             // list carries its own failure state — so this is the one case the toast would only
             // repeat. It is still reported, because the press did nothing, and a press that
@@ -826,7 +832,7 @@ export function useMessageAttachments(
           // for, nor is a failure the server said asking again cannot help. Any other `failed` IS
           // re-asked: a press of the group verb is a human act, which is the only thing that may
           // re-drive a `cost:"connection"` fetch the server already refused.
-          const wanted = held.items.filter((i) => i.state !== "too_large" && (i.state !== "failed" || fileRetryIsOffered(i)));
+          const wanted = listed.filter((i) => i.state !== "too_large" && (i.state !== "failed" || fileRetryIsOffered(i)));
           // ── the delivery half, and the two routes want opposite things ──
           //
           // `deliverAll` owns that split and its header states it: the browser arm stays ONE
@@ -849,7 +855,7 @@ export function useMessageAttachments(
           const after = engine.attachmentsOf(id, opts);
           const files: DeliverableFile[] = desktop
             ? wanted.map((item) => ({ messageId: id, attachmentId: item.id, filename: item.filename, retry: item.state === "failed" }))
-            : (after.state === "ready" ? after.items.filter((i) => i.state === "ready" && i.objectUrl) : [])
+            : (after.state === "ready" ? withoutCalendarBodies(engine, id, after.items).filter((i) => i.state === "ready" && i.objectUrl) : [])
               .map((item) => ({ messageId: id, attachmentId: item.id, filename: item.filename, url: item.objectUrl! }));
 
           const refusals: SaveRefusal[] = [];

@@ -10,7 +10,8 @@
  * Measured on the real wire, through the same `bootEngine` composition the app runs: what the
  * phone dispatches is what reaches `POST /messages/:id/move`. A move would be unawaited, so every
  * zero arm waits the whole settle window before it reads — a zero read without that window is
- * green for nothing. ON asks the server's pass instead (THE-CLIENTS-FIFTY).
+ * green for nothing. ON asks the server's pass instead (THE-CLIENTS-FIFTY). On either position the
+ * press files the one letter it was made on (RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX), never more.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -78,15 +79,15 @@ async function pastTheGate(n: number) {
   return { fake, live };
 }
 
-describe("the switch OFF: the rule is written and nothing already here is moved", () => {
-  it("a sender past the gate — zero moves on the wire, and the rule still lands", async () => {
+describe("the switch OFF: the rule is written and only the letter pressed on moves", () => {
+  it("a sender past the gate — only the letter pressed on moves, and the rule still lands", async () => {
     const { fake, live } = await pastTheGate(3);
     expect(await live.actions.screenSender("p1", "reads", "sender", false)).toBe(true);
     // The durable half DID happen: the person asked for a rule and got one.
     expect(fake.seen.filter((r) => r.method === "POST" && r.url === "/rules")).toHaveLength(1);
     await settleMoves(fake, Infinity);
-    // The half they declined did not.
-    expect(moves(fake)).toEqual([]);
+    // The half they declined did not: the rest of their mail stays.
+    expect(moves(fake)).toEqual(["/messages/p1/move"]);
     live.store.close();
     fake.server.close();
   });
@@ -111,38 +112,40 @@ describe("the switch OFF: the rule is written and nothing already here is moved"
   });
 
   it("the sentence the OFF switch shows is true of what the OFF switch does", async () => {
-    // The claim under test, in the deck the phone renders.
-    expect(Copy.screeningNote("ledger@shop.test")).toContain("stays where it is");
+    // The claim under test, in the deck the phone renders: the letter pressed on moves now, the rest stays.
+    expect(Copy.screeningNote("ledger@shop.test")).toContain("This message moves there now");
+    expect(Copy.screeningNote("ledger@shop.test")).toContain("The rest of their mail here stays where it is");
+    expect(Copy.screeningNote("ledger@shop.test"), "a promise the press breaks").not.toContain("Mail already here stays where it is");
     const { fake, live } = await pastTheGate(2);
     expect(await live.actions.screenSender("p1", "receipts", "sender", false)).toBe(true);
     await settleMoves(fake, Infinity);
-    expect(moves(fake)).toEqual([]);
+    expect(moves(fake)).toEqual(["/messages/p1/move"]);
     live.store.close();
     fake.server.close();
   });
 });
 
-describe("the switch ON: the rule asks the pass, and the phone moves nothing itself", () => {
+describe("the switch ON: the rule asks the pass, and the phone moves only the letter pressed on", () => {
   /* THE-CLIENTS-FIFTY: the ON arm used to move up to 50 of the mail already here from the phone,
      chosen by a predicate that cannot see a reply or a hand filing. The pass alone moves it now,
      so the ON arm's proof is the answer on the wire, and its zero reads wait the same window. */
-  it("a sender past the gate — the rule carries the past-mail answer, and no move leaves the phone", async () => {
+  it("a sender past the gate — the rule carries the past-mail answer, and no backlog move leaves the phone", async () => {
     const { fake, live } = await pastTheGate(3);
     expect(await live.actions.screenSender("p1", "reads", "sender", true)).toBe(true);
     const creates = fake.seen.filter((r) => r.method === "POST" && r.url === "/rules");
     expect(creates).toHaveLength(1);
     expect((JSON.parse(creates[0]!.body) as { applyRetro?: boolean }).applyRetro).toBe(true);
     await settleMoves(fake, Infinity);
-    expect(moves(fake)).toEqual([]);
+    expect(moves(fake)).toEqual(["/messages/p1/move"]);
     live.store.close();
     fake.server.close();
   });
 
-  it("however much mail there is — the bound was the phone's, and the phone moves none", async () => {
+  it("however much mail there is — the bound was the phone's, and the phone moves none of the backlog", async () => {
     const { fake, live } = await pastTheGate(56);
     expect(await live.actions.screenSender("p1", "reads", "sender", true)).toBe(true);
     await settleMoves(fake, Infinity);
-    expect(moves(fake)).toHaveLength(0);
+    expect(moves(fake)).toEqual(["/messages/p1/move"]);
     live.store.close();
     fake.server.close();
   });
@@ -185,11 +188,11 @@ describe("one boolean, two readers — the label and the dispatch cannot drift a
     const off = Copy.screeningNote("ledger@shop.test");
     const on = Copy.screeningNoteRetro("ledger@shop.test");
     expect(off).not.toBe(on);
-    // The OFF sentence promises nothing about the past beyond leaving it alone.
-    expect(off).toContain("stays where it is");
+    // The OFF sentence promises nothing about the rest of the past beyond leaving it alone.
+    expect(off).toContain("The rest of their mail here stays where it is");
     // The ON sentence is the pass's: it applies the rule and leaves the person's own acts alone.
-    // The phone moves none of it, so no count of moves "now" may be claimed.
-    expect(on).toContain("applies the rule to the mail it has already filed for you");
+    // The phone moves only the letter pressed on, so no count of moves "now" may be claimed.
+    expect(on).toContain("applies the rule to the rest of the mail it has already filed for you");
     // A filing the person made stays, here (`decided_at`, which the pass leaves) or in another mail app.
     expect(on).toContain("replied to, filed yourself here or in another mail app, or set aside are left alone");
     expect(on).not.toContain("50");

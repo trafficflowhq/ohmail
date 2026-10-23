@@ -150,10 +150,22 @@ interface Layer {
   get: () => KeyBinding[];
 }
 
+/**
+ * A binding as the registry publishes it: its shape, without `run` and `when`. A caller that read
+ * one during render and closed over it in its next declaration chained every render's whole scope
+ * to the one before (the shell's `resurfaceKey`: every open and close kept the whole shell scope).
+ */
+export type BoundKey = Omit<KeyBinding, "run" | "when">;
+
+function published(binding: KeyBinding): BoundKey {
+  const { run: _run, when: _when, ...shape } = binding;
+  return shape;
+}
+
 interface Registry {
   register: (layer: Omit<Layer, "id">) => () => void;
   /** Everything currently bound, in DISPATCH order. Bumps whenever a layer's shape changes. */
-  bindings: KeyBinding[];
+  bindings: BoundKey[];
   /** The modifier's cap on this keyboard — ⌘ or Ctrl. See {@link useModGlyph}. */
   mod: string;
   /**
@@ -592,7 +604,7 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     // `version` is the dependency that matters: it changes when a layer is added, removed
     // or reshaped, which is exactly when the overlay's content changes. `press` is NOT
     // subject to it — it resolves its handler when it is called.
-    () => ({ register, bindings: ordered(), press, mod, claimWriting, claimCursorPlacer }),
+    () => ({ register, bindings: ordered().map(published), press, mod, claimWriting, claimCursorPlacer }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [register, ordered, press, mod, claimWriting, claimCursorPlacer, version],
   );
@@ -711,7 +723,7 @@ export function useOptionalKeyBindings(bindings: KeyBinding[], scope: BindingSco
  * unlike `useKeymap`: reading is not declaring — `MessagePane` renders in provider-less mounts, and a
  * message must stay readable. No provider means no hint, never a guessed one.
  */
-export function useBinding(chord: string): KeyBinding | null {
+export function useBinding(chord: string): BoundKey | null {
   const ctx = useContext(KeymapContext);
   return ctx ? (ctx.bindings.find((b) => b.chord === chord) ?? null) : null;
 }
@@ -726,7 +738,7 @@ export function useBinding(chord: string): KeyBinding | null {
  * past disabled entries to the first LIVE one, exactly as `onKey` filters
  * and `groupedBindings` dedups. Null-safe for `useBinding`'s reason.
  */
-export function useEnabledBinding(chord: string): KeyBinding | null {
+export function useEnabledBinding(chord: string): BoundKey | null {
   const ctx = useContext(KeymapContext);
   return ctx ? (ctx.bindings.find((b) => b.chord === chord && !b.disabled) ?? null) : null;
 }
@@ -756,8 +768,8 @@ const NO_PRESS = (): boolean => false;
  * that exists somewhere in the app. Disabled bindings survive the dedup as themselves but
  * never shadow an enabled one below them.
  */
-export function groupedBindings(bindings: KeyBinding[]): Array<{ group: BindingGroup; items: KeyBinding[] }> {
-  const winner = new Map<string, KeyBinding>();
+export function groupedBindings<B extends BoundKey>(bindings: B[]): Array<{ group: BindingGroup; items: B[] }> {
+  const winner = new Map<string, B>();
   for (const b of bindings) {
     const prev = winner.get(b.chord);
     if (!prev) winner.set(b.chord, b);

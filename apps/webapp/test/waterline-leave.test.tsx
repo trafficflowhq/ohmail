@@ -185,7 +185,14 @@ let originalGetRect: unknown;
 let originalScrollTo: unknown;
 let originalScrollIntoView: unknown;
 
+/* The stream opens one screen of cards (`stream-window.ts`), sized by the window's height where
+   nothing lays out; this emulator's port is 600px of 200px cards, so it is handed a screen tall
+   enough to open with the whole pile, as the browser's lookahead would mount it. */
+let innerHeight: PropertyDescriptor | undefined;
+
 beforeEach(() => {
+  innerHeight = Object.getOwnPropertyDescriptor(window, "innerHeight");
+  Object.defineProperty(window, "innerHeight", { configurable: true, value: 20 * 220 });
   vi.useFakeTimers();
   vi.stubGlobal("IntersectionObserver", MockIO);
   commits = [];
@@ -206,6 +213,8 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
+  else delete (window as unknown as { innerHeight?: number }).innerHeight;
   Element.prototype.getBoundingClientRect = originalGetRect as typeof Element.prototype.getBoundingClientRect;
   (Element.prototype as unknown as { scrollTo: unknown }).scrollTo = originalScrollTo;
   (Element.prototype as unknown as { scrollIntoView: unknown }).scrollIntoView = originalScrollIntoView;

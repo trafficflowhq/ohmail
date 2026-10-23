@@ -156,7 +156,8 @@ describe("an edited re-press sends the edited words", () => {
 
   /**
    * THE RELOAD ROAD, on a reply bound to a draft row (the PUT road). The row is reported with the
-   * words it holds, so after a restart an edited press writes them and a same-words press replays.
+   * words it holds, so after a restart a same-words press replays. An edited press after a restart is
+   * a reply of its own: a restored send is held by no sheet, and nothing it promised is rewritten.
    * Mutation: drop the PUT-path `onDraftRow` report → the same-words press after the restart PUTs
    * blind over the sent row and says the earlier words went about words nobody changed.
    */
@@ -184,7 +185,7 @@ describe("an edited re-press sends the edited words", () => {
     after.store.close();
   }, 60_000);
 
-  it("control 1R — after a restart, edited words on a row still a draft: 1 PUT, the edited words", async () => {
+  it("control 1R — after a restart, edited words over a row still a draft are a reply of their own; the row goes unwritten", async () => {
     const s = await scene();
     s.net.set("offline");
     expect((await s.actions.sendReply("m-1", EARLIER, false)).outcome).toBe("queued");
@@ -193,8 +194,9 @@ describe("an edited re-press sends the edited words", () => {
     s.net.set("online");
     const said = s.toasts.length;
     expect((await after.actions.sendReply("m-1", EDITED, false)).outcome).toBe("sent");
+    await flushQueued(after.engine, after.actions.releaseConfirmed);
     expect({ delivered: deliveredWords(s), puts: contentPuts(s), said: s.toasts.slice(said).map((t) => t.say) })
-      .toEqual({ delivered: [EDITED], puts: 1, said: [replySent] });
+      .toEqual({ delivered: [EDITED, EARLIER], puts: 0, said: [replySent] });
     after.store.close();
   }, 60_000);
 
@@ -419,18 +421,18 @@ describe("a resumed save that is not answered keeps its key", () => {
     }, 60_000);
   }
 
-  it("the same over a restart: the restored key reads the row and settles, one delivery", async () => {
+  /* Over a restart the edited press never resumes the restored key (held by no sheet), so its sent row
+     is never written: the edit goes as a reply of its own, and the key replays as it stood. */
+  it("over a restart: the sent row is not written, and the edited words are a reply of their own", async () => {
     const s = await scene();
     s.loseNextAnswers(2);
     expect((await s.actions.sendReply("m-1", EARLIER, false)).outcome).toBe("queued");
     s.store.close();
     const after = await s.boot();
-    s.answerNextPut(400, JSON.stringify({ error: { code: "validation_failed", message: "refused" } }));
-    const t0 = s.toasts.length;
     const r = await after.actions.sendReply("m-1", EDITED, false);
     await flushQueued(after.engine, after.actions.releaseConfirmed);
-    expect({ outcome: r.outcome, said: s.toasts.slice(t0).map((t) => t.say), delivered: deliveredWords(s) })
-      .toEqual({ outcome: "sent", said: [earlierWent], delivered: [EARLIER] });
+    expect({ outcome: r.outcome, puts: contentPuts(s), delivered: deliveredWords(s), rowWords: rowFor(s)?.body })
+      .toEqual({ outcome: "sent", puts: 0, delivered: [EARLIER, EDITED], rowWords: EARLIER });
     after.store.close();
   }, 60_000);
 

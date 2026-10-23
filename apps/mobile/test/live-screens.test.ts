@@ -895,6 +895,7 @@ describe("the actions facade is ONE object delegating per call", () => {
     sendNew: () => (calls.push(`${tag}:sendNew`), Promise.resolve({ outcome: "sent" as const })),
     sendAndDoneOffered: () => (calls.push(`${tag}:sendAndDoneOffered`), false),
     withdrawSend: () => (calls.push(`${tag}:withdrawSend`), Promise.resolve("withdrawn" as const)),
+    leaveSend: () => { calls.push(`${tag}:leaveSend`); },
     cancelSchedule: () => (calls.push(`${tag}:cancelSchedule`), Promise.resolve(true)),
     draftDiscard: () => (calls.push(`${tag}:draftDiscard`), Promise.resolve("discarded" as const)),
     draftResolve: () => (calls.push(`${tag}:draftResolve`), Promise.resolve(true)),

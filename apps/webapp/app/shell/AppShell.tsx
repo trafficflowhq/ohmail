@@ -123,7 +123,7 @@ import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
 } from "./ProfileImportCard";
 import {
-  COMPOSE_SEND_KEY, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
+  COMPOSE_SEND_KEY, composeStateOnScreen, heldRowUnverified, inlineForwardKey, promoteOrphanedReplyLane,
   REPLY_DRAFT_PREFIX, SEND_IN_FLIGHT_PHASES,
   sendPendingInDurableOutbox, sendPendingInOutbox, useMailSend, readReplyDraft, writeReplyDraft,
   readReplyMeta, writeReplyMeta, type LanePromotionPlan, type SendState,
@@ -189,6 +189,8 @@ import "./zone-cursor.css";
 import { ColumnHandles } from "./ColumnHandles";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { SyncBar } from "./SyncBar";
+import { SendingLine } from "./SendingLine";
+import { useMayHandOffFor } from "./send-handoff";
 import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
@@ -222,6 +224,7 @@ import { useOrganizerLines } from "./organizer-lines";
 /* The OS-answer seam, threaded to `SettingsView` for the hosts that must inject one. */
 import type { NotificationHost } from "./notification-settings";
 import { ViewBoundary } from "./ViewBoundary";
+import { isKeptPile, KeptPiles } from "./kept-piles";
 import { lazyView } from "./lazy-view";
 import { ViewFailCard } from "./ViewFailCard";
 import {
@@ -395,6 +398,18 @@ export function mirrorSuggestionOfEngine(engine: { read(): Parameters<typeof mir
  * not — the opposite of what the row appears to offer. One message is the one-element case
  * of the same rule, so there is one derivation and no branch.
  */
+/** One number per engine instance, for the kept piles' key: a new mailbox is a new mount. */
+const engineSerials = new WeakMap<object, number>();
+let engineSerialNext = 1;
+function engineSerialOf(engine: object): number {
+  let n = engineSerials.get(engine);
+  if (n === undefined) {
+    n = engineSerialNext++;
+    engineSerials.set(engine, n);
+  }
+  return n;
+}
+
 function tagsOnAll(reader: EntityReader, ids: string[]): string[] {
   const lists = ids.map((id) => reader.get<EngineMessage>("message", id)?.labels ?? []);
   if (lists.length === 0) return [];
@@ -1899,18 +1914,20 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * which it reads (`setReaderFor` for the narrow open); `replyTo` stays above both, because the
    * route transition closes the editor.
    */
+  /** May a send leave its editor at once: the connection's health read at the press (`send-handoff.ts`). */
+  const mayHandOffFor = useMayHandOffFor({ stateKey: mailState.key, sync: syncStatus, hostOffline: hostConnection != null, engine, facts });
   const {
     cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
     confirmForward, forwardAsk, composeFrom, discardDraft, notSentRows, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
-    pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply,
+    pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
     composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
-    setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo,
+    setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
   });
 
   /**
@@ -1968,11 +1985,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     replyTo, setReplyTo,
   });
   useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
+  /** The route is on one of the three piles — the group News and Receipts are kept alive in. */
+  const inPiles = effectiveView === "ohbox" || isKeptPile(effectiveView);
 
   const frFinished = fr != null && fr.step >= fr.items.length;
   const frItem = fr && !frFinished ? fr.items[fr.step] : undefined;
   /** The step's send, off the one machine — the run is a caller of it, not a second one. */
   const frSend = frItem?.messageId ? mailSend.stateOf(frItem.messageId) : null;
+  /* The run says its own step's send (its toast below): the lane is shown, so the foot line yields. */
+  const frLane = frItem?.messageId ?? null;
+  useEffect(() => (frLane !== null ? mailSend.showing(frLane) : undefined), [frLane, mailSend.showing]);
 
   /**
    * A REPLY BEGUN BEFORE A RELOAD IS STILL OWED. Seeded from the same per-message scratch buffer the inline editor
@@ -2258,6 +2280,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             1024px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
         {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} />}
+        {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
+        <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
 
         {/* THE COMPUTER THIS WINDOW READS THROUGH, when it is not answering — the narrow-width
             copy, on `SyncBar`'s rule and hidden at 1024px and up by the same single query. It sits
@@ -2420,6 +2444,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                     status it acts on. Renders nothing in the demo and on builds with no Cloud
                     base; see `PullNewMail.tsx` for the honest-settle contract. */}
                 <PullNewMail variant="rail" binding={pullBinding} />
+                {/* A send that left its editor finishes here, above the mailbox's own line. */}
+                <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
                 {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
@@ -2499,13 +2525,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 whole-tab "Application error". Keyed on `effectiveView` so navigating to another
                 pile — still reachable, because the rail survived — clears a failed view. */}
             <ViewBoundary
-              key={effectiveView}
+              /* AMONG THE PILES the key is the group's and the engine's (`kept-piles.tsx`): News and
+                 Receipts stay mounted while the reader moves between the three, each under a
+                 boundary of its own, and the Ohbox under its own too. Any other view, or another
+                 mailbox's engine, is a new key, which unmounts them. */
+              key={inPiles ? `piles:${engineSerialOf(engine)}` : effectiveView}
               onError={(error) => console.error("[view] render failed", effectiveView, error)}
               /* The card carries the build and the view, and can copy them with the error's
                  class — the facts a report needs, and nothing a message could leak. */
               fallback={(error) => <ViewFailCard view={effectiveView} error={error} />}
             >
             {effectiveView === "ohbox" ? (
+              <ViewBoundary
+                key="ohbox"
+                onError={(error) => console.error("[view] render failed", "ohbox", error)}
+                fallback={(error) => <ViewFailCard view="ohbox" error={error} />}
+              >
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
@@ -2635,9 +2670,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 older={older}
                 onMarkAllRead={markAllRead}
               />
+              </ViewBoundary>
             ) : null}
 
-            {effectiveView === "reads" ? (
+            {inPiles ? (
+              <KeptPiles
+                active={isKeptPile(effectiveView) ? effectiveView : null}
+                onError={(pile, error) => console.error("[view] render failed", pile, error)}
+                fallback={(pile, error) => <ViewFailCard view={pile} error={error} />}
+                piles={{
+                  reads: (
               <ReadsView
                 /* The pair every list states its counts and its emptiness from — see
                    `MailState.settled` and `MailState.owed`. */
@@ -2671,9 +2713,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />
-            ) : null}
-
-            {effectiveView === "receipts" ? (
+                  ),
+                  receipts: (
               <ReceiptsView
                 /* The pair every list states its counts and its emptiness from — see
                    `MailState.settled` and `MailState.owed`. */
@@ -2717,6 +2758,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAction={onStreamAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
+              />
+                  ),
+                }}
               />
             ) : null}
 
@@ -3056,7 +3100,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    is holding is the persisted one, not the hook's: a parked reopen holds a row it
                    deliberately did not adopt. */
                 send={heldRowUnverified(
-                  mailSend.stateOf(COMPOSE_SEND_KEY),
+                  composeStateOnScreen(mailSend.stateOf(COMPOSE_SEND_KEY), mailSend.pressHere(COMPOSE_SEND_KEY)),
                   readComposeRow(),
                   holdOf(engine, {
                     lane: COMPOSE_SEND_KEY,

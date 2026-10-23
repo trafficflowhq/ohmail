@@ -1987,6 +1987,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         effect: effectForDestination(destination),
         priority: r.priority,
         provenance: r.provenance as Rule["provenance"], enabled: r.enabled,
+        ...(r.personDecidedAt != null ? { personDecided: true } : {}),
         // The second term (mail 0050). Carried VERBATIM — the folding and the empty/whitespace
         // reading are `rules.ts#subjectTermOf`'s job and belong in one place, next to the matcher
         // that depends on them. `?? null` because drizzle types a nullable text as `string | null`

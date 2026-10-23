@@ -4289,7 +4289,7 @@ fn every_command_the_window_calls_is_granted_to_it() {
 
     for command in [
         "engine-status", "engine-request", "engine-configure", "engine-logout",
-        "notify", "set-badge", "open-link", "rendered-links", "save-attachment",
+        "notify", "set-badge", "open-link", "rendered-links-batch", "save-attachment",
         "stage-attachment-preview", "release-attachment-preview", "mailto-claim", "default-mail-status", "default-mail-request", "window-ready",
     ] {
         let permission = format!("allow-{command}");

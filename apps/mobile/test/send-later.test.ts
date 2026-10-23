@@ -29,6 +29,7 @@ import {
   WALL_CLOCK_CASES, WALL_CLOCK_ZONE, askedTime, daysAhead,
 } from "../../../test/support/wall-clock-days";
 import {
+  confirmedSendSay,
   DAY_OFFSETS,
   dayAt,
   dayAtHour,
@@ -589,12 +590,13 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
   });
 
   it("a background-confirmed appointment is announced as one, not as a delivery", () => {
-    const world = read("../src/state/world.tsx");
-    /* THE SHAPE, not the spelling. This pinned `Copy.scheduledFor(...)` literally, and the
-       toast queue now carries a refusal rather than words — so the pin held the old form in
-       place and said nothing about the property, which is that the appointment branch is
-       chosen from `o.sendAt` and announces the appointment rather than a delivery. */
-    expect(world).toMatch(/o\.sendAt !== null \?\s*refuse\("scheduledFor", scheduleLabel\(o\.sendAt, new Date\(\), zone\)\)/);
+    /* The flush's sentence is chosen from `o.sendAt` and announces the appointment, for every kind. */
+    const at = "2030-01-02T09:00:00Z";
+    const now = new Date("2030-01-01T09:00:00Z");
+    for (const kind of [{ forward: false, fresh: false }, { forward: false, fresh: true }, { forward: true, fresh: false }]) {
+      expect(sayArg(confirmedSendSay({ ...kind, sendAt: at, earlierWent: false }, now, "UTC")))
+        .toBe(Copy.scheduledFor(scheduleLabel(at, now, "UTC")));
+    }
   });
 
   it("a failed appointment shows what happened and offers no cancel", () => {

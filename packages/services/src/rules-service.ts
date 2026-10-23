@@ -585,7 +585,7 @@ export class RulesService {
         destination: rules.destination, kind: rules.kind, subjectContains: rules.subjectContains,
         enabled: rules.enabled,
         bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
-        provenance: rules.provenance, personDecidedAt: rules.personDecidedAt,
+        provenance: rules.provenance, personDecidedAt: rules.personDecidedAt, demotions: rules.demotions,
         // The key's match as the store itself folds it, so the lookup below compares one
         // normaliser with itself (SQL `lower` and JS `toLowerCase` differ past ASCII on some stores).
         matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
@@ -594,6 +594,12 @@ export class RulesService {
       }).from(rules)
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId))).limit(1);
 
+      /* A PERSON NAMING A PLACE FOR A ROUTE A DEMOTION SWITCHED OFF switches it back on: an older
+         client's press moved the letter first, and that move demoted the rule it then retargets.
+         A row the person paused themselves (stamped) stays off. */
+      if (before !== undefined && set.destination !== undefined && patch.enabled === undefined && !keepProvenance
+        && !before.enabled && before.personDecidedAt === null && before.provenance === "promoted"
+        && before.demotions > 0) set.enabled = true;
       // A PATCH naming a match and no kind is keyed by the row's own kind, read just above.
       if (patch.match !== undefined && patch.kind === undefined && before !== undefined) {
         set.match = this.validMatch(patch.match, before.kind);

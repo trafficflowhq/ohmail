@@ -3074,6 +3074,11 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0161_mailboxes_account_idx": [
     "ff852b369d4313f6",   // create index if not exists mailboxes_account_idx (account_id, id)
   ],
+  // THE SEND'S OFFER STATE — one text column on outbound_sends with a constant default, IF NOT
+  // EXISTS (metadata-only). No index, no DML.
+  "0162_outbound_sends_offer_state": [
+    "a834f367d628f76f",   // ADD COLUMN IF NOT EXISTS outbound_sends.offer_state text NOT NULL DEFAULT 'unknown'
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4065,12 +4070,14 @@ describe("the two journals are well-formed", () => {
   // 0158_mailboxes_gap_strangers's.
   // 160 → 162 for `0160_folder_state_outstanding` and `0161_mailboxes_account_idx`: their `when`s
   // (1791602600064, 1791602600065) are strictly above 0159_rules_settled_press_at's, in order.
+  // 162 → 163 for `0162_outbound_sends_offer_state`: its `when` (1791602600066) is strictly above
+  // 0161_mailboxes_account_idx's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 162], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 163], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

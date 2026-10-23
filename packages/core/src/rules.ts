@@ -54,6 +54,11 @@ export interface Rule {
    * never touches them: a `manual` sender→INBOX rule is absolute.
    */
   provenance: "manual" | "migrated" | "promoted" | "seeded-from-sent";
+  /**
+   * A person's own Screener decision wrote it (`rules.person_decided_at` set), never the act's or
+   * learning's promotion. Absent reads as not decided: the sensitivity lift's side.
+   */
+  personDecided?: boolean;
   enabled: boolean;
   /**
    * A second term, and it is a CONJUNCTION — `null` for every rule without one: from this address

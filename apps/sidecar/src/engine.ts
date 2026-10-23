@@ -2035,6 +2035,16 @@ export function withPullKick(
         return res;
       } };
     }
+    /* A RULE WRITTEN HERE RINGS EVERY RUNTIME: the retro walk runs at the start of each drain, so
+       the mail a sheet press asked to file is not left to the idle poll. A 202 (another install
+       organizes) or a refusal rings nothing. */
+    if ((r.method === "POST" && r.pattern === "/rules") || (r.method === "PATCH" && r.pattern === "/rules/:id")) {
+      return { ...r, handler: async (req, deps, params) => {
+        const res = await r.handler(req, deps, params);
+        if (res.status === 200 || res.status === 201) for (const rt of runtimesFor()) rt.ring();
+        return res;
+      } };
+    }
     /* THE GAP PRESS (mail 0151) RINGS ITS OWN MAILBOX: the organizer's next drain files the set. */
     if (r.method === "POST" && r.pattern === "/mailboxes/:id/gap-letters") {
       return { ...r, handler: async (req, deps, params) => {
@@ -2191,7 +2201,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * so its rows keep the stale window, as every row this run makes does. A read that fails names
      * none, which is today's behaviour.
      */
-    const inheritedSends: readonly string[] = config.store !== undefined ? [] : await db
+    const inheritedPending: readonly string[] = config.store !== undefined ? [] : await db
       .select({ id: outboundSends.id }).from(outboundSends)
       .where(eq(outboundSends.status, "pending"))
       .orderBy(outboundSends.createdAt)
@@ -2203,6 +2213,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             + "out the ordinary ten minutes before the drain checks the Sent folder for them",
         });
         return [];
+      });
+    /* THE ONES THAT OFFERED NOTHING ARE FORGOTTEN HERE, before any door serves (mail 0162): a quit
+       during a slow IMAP login leaves `unoffered`, the draft goes back to a draft, and the window's
+       restored outbox entry sends it under its own key without waiting for the drain. The rest go
+       to the reconcile pass as before; a failure leaves them all to it. */
+    const inheritedSends: readonly string[] = inheritedPending.length === 0 ? inheritedPending : await sendService
+      .forgetInherited(
+        { db: db as never, accountId: world.accountId, userId: null, now, requestId: "inherited-sends" },
+        inheritedPending,
+      )
+      .then((r) => {
+        if (r.forgotten > 0) log("inherited_sends_forgotten", { count: r.forgotten });
+        return r.remaining;
+      }, (err: unknown) => {
+        log("inherited_sends_forget_failed", {
+          err,
+          reason: "the reservations the last run left pending that offered nothing could not be "
+            + "forgotten, so the drain decides them as before",
+        });
+        return inheritedPending;
       });
 
     // rpID/origin are required by `makeAuthConfig` and validated at construction. Nothing local
@@ -6313,6 +6343,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             log("send_reconcile_pass", {
               claimed: r.claimed, sent: r.sent, unverified: r.unverified,
               deferred: r.deferred, resolvedElsewhere: r.resolvedElsewhere, gaveUp: r.gaveUp,
+              forgotten: r.forgotten,
             });
           }
         } catch (err) {

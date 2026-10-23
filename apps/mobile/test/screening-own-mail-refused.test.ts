@@ -59,13 +59,16 @@ describe("a Screening press on the account's own mail", () => {
     });
   }
 
-  it("where the phone has not read the account's addresses, the server's own_address says the same sentence", async () => {
+  it("where the phone has not read the account's addresses, the server's own_address refuses the rule", async () => {
     setActiveLocale("en");
     const s = await scene({ folder: "INBOX", from: ME }, undefined);
     s.fake.answerNext("POST", "/rules", 400, { error: { code: "own_address", message: "refused by test" } });
     expect(await s.actions.screenSender("m1", "screened", "sender")).toBe(false);
     expect(s.writes().map((r) => `${r.method} ${r.url}`)).toEqual(["POST /rules"]);
-    expect(s.said).toContain(DECKS.en.liveOwnAddress);
+    // The press filed the letter it was made on, so the sentence says it moved and the rule did
+    // not: the own-address sentence never stands alone over mail that moved (REVIEW-026 HIGH-1).
+    expect(s.said, s.said.join(" | ")).toContain(DECKS.en.liveRuleFailedMoved("Screened out", ME));
+    expect(s.said).not.toContain(DECKS.en.liveOwnAddress);
     expect(s.said.some((x) => x.startsWith("That decision could not be saved"))).toBe(false);
     s.close();
   });

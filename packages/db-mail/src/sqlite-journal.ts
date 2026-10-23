@@ -528,5 +528,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE INDEX IF NOT EXISTS \"mailboxes_account_idx\" ON \"mailboxes\" (\"account_id\", \"id\");"
     ]
+  },
+  {
+    "name": "0162_outbound_sends_offer_state.sql",
+    "statements": [
+      "ALTER TABLE \"outbound_sends\" ADD COLUMN \"offer_state\" text NOT NULL DEFAULT 'unknown';"
+    ]
   }
 ] as const;

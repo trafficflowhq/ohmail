@@ -10,7 +10,7 @@
  */
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
-import { calendarEventsOf, type DistinctCalendarEvent } from "@ohmail/client-engine";
+import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, draftOverCeiling } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
@@ -146,7 +146,7 @@ import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import {
-  mailboxProfiles, planScreenCommit, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
+  mailboxProfiles, planScreenCommit, PRESS_VISIBLE_ROWS, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
   type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
   type ScreenIntent,
 } from "@ohmail/client-engine";
@@ -2046,19 +2046,21 @@ function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAtta
   const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
   const atts = engine.attachmentsOf(id, EVERY_PART);
   if (atts.state !== "ready" || atts.items.length === 0) return {};
-  // Real files first, the body's own pictures after them — the web strip's partition.
-  const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
+  // Real files first, the body's own pictures after them — the web strip's partition. An
+  // invitation's calendar alternative is its body, read by the event card: no chip while a listed
+  // calendar file carries the same event (Google), its one chip otherwise (Exchange).
+  const items = [...withoutCalendarBodies(engine, id, atts.items)].sort((a, b) => Number(a.inline) - Number(b.inline));
   const events = calendarEventsOf(engine, id);
   return {
     ...(events.length > 0 ? { events } : {}),
-    attachments: items.map((item) => ({
+    ...(items.length > 0 ? { attachments: items.map((item) => ({
       id: item.id,
       filename: item.filename,
       size: sizeLabel(item.sizeBytes),
       inline: item.inline,
       mime: item.mimeType,
       state: item.state,
-    })),
+    })) } : {}),
   };
 }
 
@@ -2807,6 +2809,17 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
 }
 
 /**
+ * DOES THIS PRESS CARRY ANYTHING THE STANDING SEND DOES NOT? Its words ({@link sendTextDiffers}),
+ * its files and its appointment. Every press states those two, so absent there means none.
+ */
+export function sendWireDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
+  if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
+  const files = (m: typeof standing) => JSON.stringify((m.attachments ?? []).map((f) => [f.filename, f.contentType, f.contentBase64]));
+  return sendTextDiffers(standing, pressed) || files(standing) !== files(pressed)
+    || (standing.sendAt ?? null) !== (pressed.sendAt ?? null);
+}
+
+/**
  * WAS THIS CONFIRMATION ABOUT AN EARLIER MESSAGE? Two facts, both the server's: this key was
  * already settled (`firstSend`), and this press's changed words were kept back (`earlierWordsKept`,
  * the resume's save refused over a row a send holds). One without the other is an ordinary send —
@@ -2827,6 +2840,8 @@ export interface FlushedOutcome {
   kind: EngineMutation["kind"];
   /** mail_send only: whether the intent was a forward — the confirmation sentence differs. */
   forward: boolean;
+  /** mail_send only: a mail with no parent (neither a reply nor a forward) — "Sent.", never "Reply sent.". */
+  fresh: boolean;
   /**
    * mail_send only: the APPOINTMENT the queued intent carried (Send later, mail 0077), or
    * `null`. The sentence differs for the same reason `forward` does, and more sharply: an
@@ -2853,6 +2868,19 @@ export interface FlushedOutcome {
 }
 
 /**
+ * THE SENTENCE A CONFIRMED BACKGROUND SEND EARNS, by its kind. A confirmation the server answered
+ * from an earlier reservation is about that press's words and arrangement (`earlierWent`); an
+ * appointment delivered nothing yet (`sendAt`); otherwise it went, as a forward, a new mail or a reply.
+ */
+export function confirmedSendSay(
+  o: Pick<FlushedOutcome, "forward" | "fresh" | "sendAt" | "earlierWent">, now: Date, zone: string,
+): Refusal {
+  if (o.earlierWent) return refuse(o.forward ? "forwardEarlierWent" : o.fresh ? "composeEarlierWent" : "replyEarlierWent");
+  if (o.sendAt !== null) return refuse("scheduledFor", scheduleLabel(o.sendAt, now, zone));
+  return refuse(o.forward ? "forwarded" : o.fresh ? "composeSent" : "replySent");
+}
+
+/**
  * WHAT A LOCKED COMPOSER READS OFF THE LEDGER beside the status: the server accepted the send
  * (still sending, not waiting), or offered it again ({@link sendRearmed}), or it was refused,
  * leaving this row and earning this sentence.
@@ -2866,12 +2894,13 @@ export interface SendSettlement {
 export const NO_SETTLEMENT: SendSettlement = { accepted: false, rearmed: false, draftId: null, failure: null };
 
 /** What a queued intent was, captured while the queue still holds it — see {@link sendsOffTheQueue}. */
-interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; sendAt: string | null }
+interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; fresh: boolean; sendAt: string | null }
 
 function queuedMetaOf(m: EngineMutation): QueuedMeta {
   return {
     kind: m.kind,
     forward: m.kind === "mail_send" && !!m.forwardOf,
+    fresh: m.kind === "mail_send" && !m.forwardOf && !m.inReplyTo,
     sendAt: (m.kind === "mail_send" ? m.sendAt : undefined) ?? null,
   };
 }
@@ -2888,6 +2917,18 @@ function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
   let known = sendsOffTheQueue.get(engine);
   if (known === undefined) sendsOffTheQueue.set(engine, (known = new Map()));
   return known;
+}
+
+/**
+ * Keys of waiting sends no sheet holds, by engine: closed over ({@link LiveWorldActions.leaveSend}),
+ * or restored from a session that died, whose sheet died with it.
+ */
+const sendsLeft = new WeakMap<OhmailEngine, Set<string>>();
+
+function sendsLeftOf(engine: OhmailEngine): Set<string> {
+  let left = sendsLeft.get(engine);
+  if (left === undefined) sendsLeft.set(engine, (left = new Set()));
+  return left;
 }
 
 /**
@@ -2975,7 +3016,7 @@ export async function flushQueued(
      * send the person themselves cancelled is the wrong sentence, and there is no right one.
      */
     if (r.error?.code === OUTBOX_WITHDRAWN_CODE) { offQueue.delete(r.key); continue; }
-    const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
+    const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, fresh: false, sendAt: null };
     offQueue.delete(r.key);
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
@@ -2984,7 +3025,7 @@ export async function flushQueued(
     const earlierWent = earlierVersionWent(r);
     const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
     outcomes.set(r.key, {
-      status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
+      status, kind: meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
       ...(refusedSend ? { failure: failedSendCopy(r), ...(r.entityId ? { draftId: r.entityId } : {}) } : {}),
       done: done.get(r.key) ?? null,
     });
@@ -3139,6 +3180,11 @@ export interface LiveDeps {
    * world always supplies it.
    */
   presented?: () => EntityReader;
+  /**
+   * THE SAME LISTS WITHOUT A HELD PRESS'S OVERLAY — what a press's read-back reads: a row the
+   * window or the landing hold shows at the place is not yet filed there. Absent ⇒ `presented`.
+   */
+  unrouted?: () => EntityReader;
   /** The options those lists are partitioned with ({@link presentedOptions}), for a press's forecast. */
   presentedOptions?: () => ConsentOptions;
   /**
@@ -3424,6 +3470,12 @@ export interface LiveWorldActions {
    * holds. See {@link OhmailEngine.withdrawQueued}.
    */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
+  /**
+   * THE SHEET CLOSED OVER THIS WAITING SEND and told the person it goes: from here a press for the
+   * same message carrying other words, files or a time is another message under its own key, never
+   * a replacement. A send restored after a relaunch is treated the same.
+   */
+  leaveSend(key: string): void;
   /**
    * TAKE THE APPOINTMENT OFF A SCHEDULED SEND — `draft_schedule_cancel`, the Scheduled
    * screen's one verb. See {@link LiveWorldActions.cancelSchedule}'s implementation for why
@@ -4673,7 +4725,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        mutation has a wire inverse, so the way back is to not send it yet (`held-routing.ts`).
        Junk rides this arm, so a spam filing is undone exactly like any other Move. */
     const rules = writes.filter((w) => w.kind !== "move");
-    const mail = writes.filter((w) => w.kind === "move");
+    // A press that writes the sender's rule rewrites the route: its moves are no override of it.
+    const ruled = rules.some((w) => w.kind === "rule_create" || w.kind === "rule_update");
+    const mail = writes.filter((w) => w.kind === "move").map((w) => (ruled ? { ...w, pressRule: true as const } : w));
     const inv = mail.flatMap((w) => inverseMutations(engine.verbRead(), w));
     const pressId = deps.uuid ? deps.uuid() : `${messageId}:${now().getTime()}`;
     const subject = routingSubject({ scope: "sender", address: m.from.address });
@@ -4977,24 +5031,28 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * ONE INTENT, ONE KEY, FOR AS LONG AS IT IS RETRYABLE. A send still standing on the queue for
    * this intent — a tunnel, or a killed app whose durable row this session restored — already
-   * carries the key it was expressed under, so a second press RESUMES it instead of minting a
-   * fresh one: same key, same request, and the server's own same-key branch decides whether that
-   * mail has gone. A fresh key there is a second copy in somebody's inbox, which is the whole
-   * defect. Standing means queued OR on the wire: a send in the air resumes its key too, the queue
-   * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
+   * carries the key it was expressed under, so a second press of that message RESUMES it instead
+   * of minting a fresh one: same key, same request, and the server's own same-key branch decides
+   * whether that mail has gone. A fresh key there is a second copy in somebody's inbox, which is the
+   * whole defect. Standing means queued OR on the wire: a send in the air resumes its key too, the
+   * queue read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     // Queued or on the wire, and not a send already confirmed and kept for its echo.
-    const standing = intent === null
-      ? undefined
-      : [...engine.pendingMutations(), ...engine.inFlightMutations()]
-        .find((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
+    const standingSends = intent === null ? [] : [...engine.pendingMutations(), ...engine.inFlightMutations()]
+      .filter((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
+    /* A SEND NO SHEET HOLDS — closed over, or restored after a relaunch — is joined only by a press
+       carrying what it carries; anything else is another message. The mark is kept by key, so a
+       resume under it stays marked. */
+    const left = sendsLeftOf(engine);
+    for (const p of standingSends) if ("restored" in p && p.restored === true) left.add(p.key);
+    const standing = standingSends.find((p) => !left.has(p.key) || !sendWireDiffers(p.mutation, m));
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
-       draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
+       draft of its own (`send-waits.ts`). Other words or files, or Send + Done pressed over a plain
        Send (or back), take the resume below: the latest press decides, under the same key. */
-    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)
+    if (standing !== undefined && networkNow() === "offline" && !sendWireDiffers(standing.mutation, m)
       && sameIntent(standing.andDone ?? null, andDone)) {
       return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
@@ -5016,6 +5074,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * pressed Cancel is the one that knows what to render.
    */
   const withdrawSend = (key: string): Promise<WithdrawOutcome> => engine.withdrawQueued(key);
+
+  const leaveSend = (key: string): void => { sendsLeftOf(engine).add(key); };
 
   const sendReply = async (
     messageId: string,
@@ -5426,10 +5486,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** The press's forecast over the raw mirror and the lists' own options (`presentedOptions`). */
   const forecastOf = (
     raw: EntityReader, subject: readonly EngineMessage[], scope: Scope, match: string, wanted: Folder,
-    applyRetro: boolean, decide?: Extract<EngineMutation, { kind: "screener_decide" }>,
+    applyRetro: boolean, decide?: Extract<EngineMutation, { kind: "screener_decide" }>, seedId?: string,
   ): PressForecast => pressForecast({
     reader: raw, options: deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.()),
     subject, scope, match, wanted, makeRule: true, applyRetro, now: now(), ...(decide ? { decide } : {}),
+    ...(seedId === undefined ? {} : { seedId }),
   });
 
   /** The subject a press is about, read as `screenSender` reads it. */
@@ -5456,7 +5517,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const decision: "yes" | "no" = dest === "screened" || dest === "spam" ? "no" : "yes";
     return forecastOf(engine.read(), at.subject, scope, at.match, wanted, applyRetro, waiting
       ? { kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope, applyRetro }
-      : undefined);
+      : undefined, messageId);
   };
 
   const screeningRules = (messageId: string, scope: Scope): RulesInPlay | null => {
@@ -5517,19 +5578,25 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   }): Promise<boolean> => {
     const raw = engine.read();
     const resolution = p.press?.resolution ?? "keep";
-    const forecast = p.press?.forecast ?? forecastOf(raw, p.subject, "sender", p.match, p.wanted, p.applyRetro);
+    const forecast = p.press?.forecast ?? forecastOf(raw, p.subject, "sender", p.match, p.wanted, p.applyRetro, undefined, p.m.id);
     const landing = new Set(forecast[resolution].landing);
+    const seedMove = forecast[resolution].seedMove;
+    /* THE REST OF THE LANDING, newest first and capped: held at the place while the walk files it.
+       The letter pressed on is drawn there by its own move. */
+    const others = p.subject
+      .filter((x) => landing.has(x.id) && x.id !== seedMove?.messageId)
+      .sort(newestFirst)
+      .slice(0, PRESS_VISIBLE_ROWS);
     const shown = p.press?.shown ?? [];
     const intent: ScreenIntent = {
       v: 2, verb: "screen", id: deps.uuid ? deps.uuid() : `${p.m.id}:${now().getTime()}`, seedId: p.m.id,
-      address: p.m.from.address, scope: "sender", dest: p.dest as ScreenDest, messageIds: [...landing],
+      address: p.m.from.address, scope: "sender", dest: p.dest as ScreenDest, messageIds: others.map((x) => x.id),
       makeRule: true, applyRetro: p.applyRetro, resolution,
       shown: shown.slice(0, 20).map((r) => ({ id: r.id, fp: ruleFingerprint(r) })), at: now().getTime(),
     };
-    // A RULE'S PAST MAIL IS THE SERVER PASS'S (THE-CLIENTS-FIFTY): the intent always writes the
-    // rule with the past-mail answer, so this press moves none of it; the held window presents the
-    // `landing` rows at the place meanwhile, and the pass moves them.
-    const moves: EngineMutation[] = [];
+    // A RULE'S PAST MAIL IS THE SERVER PASS'S (THE-CLIENTS-FIFTY): this press moves only the letter
+    // it was made on, at the press, with its inverse in Undo; the walk files the rest.
+    const moves: EngineMutation[] = seedMove ? [seedMove] : [];
     const inv = moves.flatMap((mu) => inverseMutations(engine.verbRead(), mu));
     const settled = moves.map((mu) => engine.mutate(mu).catch(() => null));
     const place = destDone(p.dest);
@@ -5546,7 +5613,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         if (state === "applying") return;
         off();
         if (state !== "done") return;
-        const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+        const lists = deps.unrouted?.() ?? deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
         const outcome = pressOutcome({
           presented: lists, subject: engine.read().list<EngineMessage>("message").filter(p.ofSubject),
           rules: rulesList(engine.read()), profiles: mailboxProfiles(engine.read()), wanted: p.wanted, retro: false,
@@ -5570,10 +5637,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       // Every write replaced by a newer press: that press reads its own list back.
       if (verdicts.length > 0 && back.silent === verdicts.length) return true;
       if (back.refused > 0 || back.queued > 0) {
-        return saidAll(verdicts, refuse("liveDecided", place, p.target),
-          ownAddressOr(verdicts, refuse("liveDecideFailed", p.m.from.address)));
+        // The letter pressed on moved: a refused rule says so, never "still waiting" or our own address.
+        return saidAll(verdicts, refuse("liveDecided", place, p.target), moves.length > 0
+          ? refuse("liveRuleFailedMoved", place, p.target)
+          : ownAddressOr(verdicts, refuse("liveDecideFailed", p.m.from.address)));
       }
-      const lists = deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+      const lists = deps.unrouted?.() ?? deps.presented?.() ?? presentedOf(engine.read(), now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
       const stay = pressReadBack(engine.read(), lists, p.ofSubject, p.wanted, place, p.applyRetro);
       if (stay) {
         toast(stay);
@@ -5594,7 +5663,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return true;
     };
 
-    const opened = await holdScreenRouting(intent, (a) => { void Promise.allSettled(settled).then(() => readBack(a)); });
+    const opened = await holdScreenRouting(
+      intent, (a) => { void Promise.allSettled(settled).then(() => readBack(a)); },
+      others.map((x) => ({ id: x.id, from: physicalFolderOf(x) })),
+    );
     // Already sent by the window (its record refused after a flush): the follow-up reads it back.
     if (opened.sent) return true;
     if (!opened.held) {
@@ -5695,18 +5767,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ? press.forecast.remove.writes.filter((w) => !press.forecast.keep.writes.includes(w))
       : [];
 
+    const decide: Extract<EngineMutation, { kind: "screener_decide" }> | undefined = waiting ? {
+      kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope,
+      // The past-mail answer rides the decision, because the rule it promotes is the only rule
+      // this press writes — the webapp's ruling, on the same wire.
+      applyRetro,
+    } : undefined;
     let ruled: Promise<PressVerdict[]>;
-    if (waiting) {
+    if (decide) {
       // The step's removals go ahead of the decide, each answered with it.
       const removed = removals.map((w) => watched(engine.mutate(w)));
-      ruled = Promise.all([...removed, watched(
-        engine.mutate({
-          kind: "screener_decide", senderId: waiting.id, decision, dest: dest as ScreenDest, scope,
-          // The past-mail answer rides the decision, because the rule it promotes is the only rule
-          // this press writes — the webapp's ruling, on the same wire.
-          applyRetro,
-        }),
-      )]);
+      ruled = Promise.all([...removed, watched(engine.mutate(decide))]);
     } else {
       /* THE WEB SHEET'S LADDER, ONE FUNCTION: every twin elsewhere is retargeted, each one already
          at the destination re-armed when the past-mail answer is yes (off, a habit-click writes
@@ -5714,10 +5785,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, applyRetro);
       ruled = Promise.all([...writes, ...removals].map((w) => watched(engine.mutate(w))));
     }
+    /* …AND THE LETTER PRESSED ON IS FILED BY THE PRESS, after the rule writes (the web's domain
+       path). Under a decide only once the decision stands, and never a letter in its bag. */
+    const seedMove = (press?.forecast ?? forecastOf(raw, subject, scope, match, wanted, applyRetro, decide, m.id))[press?.resolution ?? "keep"].seedMove;
+    const send = (mu: EngineMutation) => engine.mutate(mu).catch((): MutationResult | null => null);
+    const seedSent = seedMove && !decide ? send(seedMove) : null;
     /* THE SENTENCE FOLLOWS THE ANSWER, not the press: the optimistic "Screened" stood over a
        rule the server had only RECORDED for the organizing install, which is the same claim the
        Screener's own decide stopped making. `saidAll` raises it, or the wait, or the refusal. */
     const verdicts = await ruled;
+    const back = tallyVerdicts(verdicts);
+    // A refused or replaced decision files nothing.
+    if (seedMove && decide && back.refused === 0 && back.silent < verdicts.length) await send(seedMove);
+    await seedSent;
     /* THE SAME RECONCILIATION AS THE SCREENER'S OWN PRESS, because this is the same mutation by
        another door: a sender screened from the open message is decided, and the paired shelf's
        cached answer would have gone on naming them. Only the branch that DECIDED one — the rule
@@ -5728,9 +5808,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* THE LIST IS READ AGAIN BEFORE SUCCESS IS SAID — the web sheet's reading: a pressed row the
        list shows elsewhere is named with its count and cause. Only a press whose every write
        applied reads back; a wait or a refusal keeps its own sentence. */
-    const back = tallyVerdicts(verdicts);
     // The lists' own reader; a harness without one reads the same projection with its defaults.
-    const lists = deps.presented?.() ?? presentedOf(engine.read(), deps.now?.() ?? new Date(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
+    const lists = deps.unrouted?.() ?? deps.presented?.() ?? presentedOf(engine.read(), deps.now?.() ?? new Date(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.());
     const stay = back.refused === 0 && back.queued === 0
       ? pressReadBack(engine.read(), lists, ofSubject, wanted, destDone(dest), applyRetro) : null;
     const pressSaid = stay ?? refuse("liveDecided", destDone(dest), target);
@@ -5788,7 +5867,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
-    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
@@ -5907,6 +5986,8 @@ export interface WorldActions {
   ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
+  /** See {@link LiveWorldActions.leaveSend}. */
+  leaveSend(key: string): void;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
   cancelSchedule(draftId: string): Promise<boolean>;
   /** Discard a draft — see {@link LiveWorldActions.draftDiscard} for the four endings. */
@@ -5997,6 +6078,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
       current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
+    leaveSend: (key) => current().leaveSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     draftDiscard: (draftId) => current().draftDiscard(draftId),
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),

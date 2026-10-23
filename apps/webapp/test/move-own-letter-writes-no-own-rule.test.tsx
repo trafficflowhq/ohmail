@@ -118,6 +118,8 @@ afterEach(async () => { await teardownShellEnv(); });
 const MOUNT = () => mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO } as never)]);
 const named = (w: string[], needle: string): string[] => w.filter((x) => x.includes(needle));
 
+/* A Move that writes its sender's rule marks its moves `pressRule` (no override of the route it
+   rewrites); a Move that writes no rule sends the plain body. */
 describe("Move on our own letter", () => {
   it("a conversation whose newest letter is ours moves the reply and leaves our Sent copies in Sent", async () => {
     const host = await MOUNT();
@@ -128,7 +130,7 @@ describe("Move on our own letter", () => {
     const w = writes();
     expect.soft(named(w, "rule_me"), "a rule about our own address was written").toEqual([]);
     expect.soft(named(w, "/messages/c_fwd/").concat(named(w, "/messages/c_mine/")), "our Sent copy left Sent").toEqual([]);
-    expect.soft(named(w, "/messages/c_reply/move"), "the reply did not move").toEqual([`POST /api/messages/c_reply/move {"folder":"ohmail/News"}`]);
+    expect.soft(named(w, "/messages/c_reply/move"), "the reply did not move").toEqual([`POST /api/messages/c_reply/move {"folder":"ohmail/News","pressRule":true}`]);
     expect.soft(named(w, "rule_friend"), "the correspondent's rule").toEqual([`PATCH /api/rules/rule_friend {"destination":"ohmail/News","applyRetro":false}`]);
     expect.soft(said).not.toContain(ME);
     expect(said).toContain(FRIEND);
@@ -144,8 +146,8 @@ describe("Move on our own letter", () => {
     expect.soft(named(w, "rule_me"), "a rule about our own address was written").toEqual([]);
     expect.soft(named(w, "/messages/g_mine/"), "our Sent copy left Sent").toEqual([]);
     expect.soft(w.filter((x) => x.includes("/move")).sort()).toEqual([
-      `POST /api/messages/g_a/move {"folder":"ohmail/News"}`,
-      `POST /api/messages/g_b/move {"folder":"ohmail/News"}`,
+      `POST /api/messages/g_a/move {"folder":"ohmail/News","pressRule":true}`,
+      `POST /api/messages/g_b/move {"folder":"ohmail/News","pressRule":true}`,
     ]);
     expect.soft(w.filter((x) => x.includes("/rules/")).sort()).toEqual([
       `PATCH /api/rules/rule_friend {"destination":"ohmail/News","applyRetro":false}`,
@@ -164,7 +166,7 @@ describe("Move on our own letter", () => {
       await moveTo(host, "g_b", "News");
       await windowCloses();
       const w = writes();
-      expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+      expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News","pressRule":true}`]);
       expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
     });
   }
@@ -179,7 +181,7 @@ describe("Move on our own letter", () => {
     await pressMove(host, "News");
     await windowCloses();
     const w = writes();
-    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News","pressRule":true}`]);
     expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
   });
 
@@ -210,7 +212,7 @@ describe("Move on our own letter", () => {
     await pressMove(host, "News");
     await windowCloses();
     const w = writes();
-    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News"}`]);
+    expect.soft(w.filter((x) => x.includes("/move"))).toEqual([`POST /api/messages/g_b/move {"folder":"ohmail/News","pressRule":true}`]);
     expect(w.filter((x) => x.includes("/rules/"))).toEqual([`PATCH /api/rules/rule_other {"destination":"ohmail/News","applyRetro":false}`]);
   });
 
@@ -227,7 +229,7 @@ describe("Move on our own letter", () => {
     await windowCloses();
     const w = writes();
     expect(w).toEqual([
-      `POST /api/messages/c_reply/move {"folder":"ohmail/News"}`,
+      `POST /api/messages/c_reply/move {"folder":"ohmail/News","pressRule":true}`,
       `PATCH /api/rules/rule_friend {"destination":"ohmail/News","applyRetro":false}`,
     ]);
   });
@@ -264,7 +266,7 @@ describe("Move on our own letter", () => {
     await windowCloses();
     const w = writes();
     expect.soft(w).toEqual([
-      `POST /api/messages/fr/move {"folder":"ohmail/News"}`,
+      `POST /api/messages/fr/move {"folder":"ohmail/News","pressRule":true}`,
       `PATCH /api/rules/rule_friend {"destination":"ohmail/News","applyRetro":false}`,
     ]);
     expect(said).toContain("Future mail from them files there too");

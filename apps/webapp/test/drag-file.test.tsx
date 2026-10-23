@@ -193,7 +193,8 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await click(byText(`→ ${messages.place.reads}`));
     const pillMove = kinds("move");
     expect(pillMove).toHaveLength(1);
-    expect(pillMove[0]).toEqual({ kind: "move", messageId: pillRowId, folder: FOLDER_OF_VIEW.reads });
+    // The Move writes the sender's rule, so its move is marked as that press's (`pressRule`).
+    expect(pillMove[0]).toEqual({ kind: "move", messageId: pillRowId, folder: FOLDER_OF_VIEW.reads, pressRule: true });
 
     // ── the drag, on a different (solo) row, compared field for field ─────────────────────
     sent = [];

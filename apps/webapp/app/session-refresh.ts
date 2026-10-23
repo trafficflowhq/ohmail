@@ -74,7 +74,21 @@ export interface RefreshReport {
   errorClass: string | null;
   /** The server's `Retry-After`, in ms, when a fault named one — the backoff seeds from it. */
   retryAfterMs: number | null;
+  /** A deadline of ours ended the wait: the request's ({@link RENEWAL_DEADLINE_MS}) or the lock's. */
+  timedOut?: "request" | "lock";
 }
+
+/**
+ * HOW LONG ONE RENEWAL MAY GO UNANSWERED. Sent over a connection that died silently (a lid closed,
+ * a network change), `POST /auth/refresh` never answered, and every caller in the tab and every tab
+ * behind the lock waited with it until a reload. Past the API's 60 s limit (`maxDuration`), so a
+ * renewal the server is working on always answers first; a timeout learned nothing about the
+ * session, answers `unavailable` and keeps its attempt name for the next try.
+ */
+export const RENEWAL_DEADLINE_MS = 75_000;
+
+/** How long a tab waits for the cross-tab lock: past the holder's own {@link RENEWAL_DEADLINE_MS}. */
+export const REFRESH_LOCK_GRANT_MS = RENEWAL_DEADLINE_MS + 5_000;
 
 let lastReport: RefreshReport | null = null;
 
@@ -127,9 +141,11 @@ export function lastRefreshOutcome(): RefreshOutcome | null {
  * a licence: at machine wake a browser's worth of tabs fires over a re-associating network, and a
  * presentation was measured 10.1 s after its token was consumed — family revoked. Web Locks is the
  * browser's own cross-tab mutex: the first tab rotates, the rest queue, and each queued fetch reads the
- * jar current AT SEND TIME. No API ⇒ per-tab behaviour, still covered by the grace window. Deliberately
- * NO timeout on fetch or lock wait: the request must outwait a cold start (`session-resume.test.ts` pins
- * it), and the network stack bounds the holder; a closed tab releases its lock automatically.
+ * jar current AT SEND TIME. No API ⇒ per-tab behaviour, still covered by the grace window. The request
+ * and the wait for the lock have deadlines, and both are past anything a live server takes: the request
+ * {@link RENEWAL_DEADLINE_MS} (it must outwait a cold start, `session-resume.test.ts` pins it), the wait
+ * {@link REFRESH_LOCK_GRANT_MS}, past the holder's own. The network stack used to be the only bound,
+ * and on a dead connection it was none; a closed tab still releases its lock at once.
  */
 const REFRESH_LOCK = "ohmail:session-refresh";
 
@@ -256,8 +272,30 @@ async function withCrossTabLock(fn: () => Promise<ResumeAnswer>): Promise<Resume
     // never a double refresh.
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
     if (locks?.request) {
-      // `request` resolves with the callback's settled value once the grant releases.
-      return (await locks.request(REFRESH_LOCK, { mode: "exclusive" }, fn)) as ResumeAnswer;
+      /* THE WAIT FOR A GRANT HAS A DEADLINE (see {@link REFRESH_LOCK_GRANT_MS}); the holder never does
+         from here. Our own abort before a grant answers `unavailable` and never the lock-less run: that
+         would present the token beside the holder, the reuse the lock exists to stop. */
+      const ctl = new AbortController();
+      let granted = false;
+      const timer = setTimeout(() => ctl.abort(), REFRESH_LOCK_GRANT_MS);
+      try {
+        // `request` resolves with the callback's settled value once the grant releases.
+        return (await locks.request(REFRESH_LOCK, { mode: "exclusive", signal: ctl.signal }, () => {
+          granted = true;
+          clearTimeout(timer);
+          return fn();
+        })) as ResumeAnswer;
+      } catch (err) {
+        if (!granted && ctl.signal.aborted) {
+          recordRefresh({
+            outcome: "unavailable", status: 0, code: null, errorClass: null, retryAfterMs: null, timedOut: "lock",
+          });
+          return "unavailable";
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
     }
   } catch {
     /* fall through to the lock-less run */
@@ -268,9 +306,9 @@ async function withCrossTabLock(fn: () => Promise<ResumeAnswer>): Promise<Resume
 /**
  * How long {@link refreshSettled} will wait to be ordered behind a refresh already in flight.
  *
- * Fifteen seconds: comfortably past a serverless cold start plus a rotation (the budget the
- * refresh itself is deliberately given no ceiling for), and far short of a form somebody decides
- * is broken. It is not a request timeout and must never become one — see `refreshSettled`.
+ * Fifteen seconds: comfortably past a serverless cold start plus a rotation, and far short of a form
+ * somebody decides is broken. It is not the request's timeout and must never become one — that is
+ * {@link RENEWAL_DEADLINE_MS}, past the API's own limit — see `refreshSettled`.
  */
 export const SETTLE_DEADLINE_MS = 15_000;
 
@@ -523,6 +561,11 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
     const request = new AbortController();
     inFlightRequest = request;
     let noted = false;
+    /* THE REQUEST'S OWN DEADLINE ({@link RENEWAL_DEADLINE_MS}), told apart from a sign-in's abort: only
+       that one is `superseded`. A timeout is `unavailable`, settles no attempt (the next renewal, a
+       reload or another tab presents the same name) and never marks the session dead. */
+    let timedOut = false;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       // INSIDE the `try`, so the `finally` below clears `inFlight`. Outside it, one refusal
       // left the module's dedupe holding a settled promise for the life of the page and every
@@ -573,6 +616,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // Who this refresh leaves under — BEFORE it goes: an erased account's answer clears the jar.
       const erasedBefore = erasedCapture();
       const attemptId = opts.attemptId ?? attemptFor(csrf);
+      deadline = setTimeout(() => { timedOut = true; request.abort(); }, RENEWAL_DEADLINE_MS);
       const res = await fetch(REFRESH_ENDPOINT, {
         method: "POST",
         headers: {
@@ -594,7 +638,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       });
       // Any answer warms the API: the resume lane's lead is over.
       webLane.noteAnswer();
-      if (request.signal.aborted) return superseded(null);
+      // An answer in hand is read even past the deadline; only the sign-in's abort drops it.
+      if (request.signal.aborted && !timedOut) return superseded(null);
       // 204 with fresh Set-Cookie is success; a 401 means the family is
       // gone and the server has already cleared the whole jar, so the next navigation is an honest
       // signed-out landing. Both answers are told to the session-truth store, because both are
@@ -643,13 +688,15 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       });
       return "unavailable";
     } catch (err) {
-      if (request.signal.aborted) return superseded(err);
-      // Offline, aborted, DNS — not resumable right now, and no answer to read a code from.
+      if (request.signal.aborted && !timedOut) return superseded(err);
+      // Offline, DNS, our own deadline — not resumable right now, and no answer to read a code from.
       recordRefresh({
-        outcome: "unavailable", status: 0, code: null, errorClass: classOf(err), retryAfterMs: null,
+        outcome: "unavailable", status: 0, code: null, errorClass: timedOut ? null : classOf(err), retryAfterMs: null,
+        ...(timedOut ? { timedOut: "request" as const } : {}),
       });
       return "unavailable";
     } finally {
+      if (deadline !== undefined) clearTimeout(deadline);
       // Heard: the next page has nothing to wait for. A page that unloaded first never gets here.
       if (noted) durableSessionRemove(SPLASH_PRESENTATION_KEY, "session-splash");
       if (inFlightRequest === request) inFlightRequest = null;

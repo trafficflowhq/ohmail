@@ -16,6 +16,8 @@ export interface PressWatch {
 
 export function usePressWatch(reader: EntityReader): PressWatch {
   const watches = useRef(new Set<{ ruleIds: readonly string[]; done: (state: "done" | "unknown") => void }>());
+  // The shell's reader is one object for the engine's life: its version is what changes.
+  const version = reader.version();
   useEffect(() => {
     for (const w of [...watches.current]) {
       const state = retroOf(reader, w.ruleIds);
@@ -23,6 +25,6 @@ export function usePressWatch(reader: EntityReader): PressWatch {
       watches.current.delete(w);
       w.done(state);
     }
-  }, [reader]);
+  }, [reader, version]);
   return useMemo(() => ({ watch: (w) => { watches.current.add(w); } }), []);
 }

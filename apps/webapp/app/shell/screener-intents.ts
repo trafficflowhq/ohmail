@@ -61,6 +61,11 @@ export interface ScreenerIntent {
    * record written before the field, which keep the server's default.
    */
   inboxIds?: string[];
+  /**
+   * A SHEET PRESS'S LETTER OUTSIDE THE BAG (the answer the gate admitted, standing in the Ohbox):
+   * moved to `folder` once the decision stands, and only while it is still in `from`.
+   */
+  seed?: { id: string; folder: string; from: string | null };
 }
 
 /**
@@ -82,6 +87,12 @@ export function screenerIntentsKey(owner: string | null = storageOwner()): strin
   return `${SCREENER_INTENTS_PREFIX}${owner ?? "local"}`;
 }
 
+function isSeed(x: unknown): x is NonNullable<ScreenerIntent["seed"]> {
+  if (typeof x !== "object" || x === null) return false;
+  const s = x as Record<string, unknown>;
+  return typeof s.id === "string" && typeof s.folder === "string" && (s.from === null || typeof s.from === "string");
+}
+
 function isIntent(x: unknown): x is ScreenerIntent {
   if (typeof x !== "object" || x === null) return false;
   const r = x as Record<string, unknown>;
@@ -95,6 +106,7 @@ function isIntent(x: unknown): x is ScreenerIntent {
     && typeof r.derived === "boolean"
     && Array.isArray(r.heldIds) && r.heldIds.every((h) => typeof h === "string")
     && (r.inboxIds === undefined || (Array.isArray(r.inboxIds) && r.inboxIds.every((h) => typeof h === "string")))
+    && (r.seed === undefined || isSeed(r.seed))
     && typeof r.from === "object" && r.from !== null
     && typeof (r.from as Record<string, unknown>).address === "string";
 }

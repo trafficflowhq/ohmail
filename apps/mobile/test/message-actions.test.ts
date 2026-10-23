@@ -38,6 +38,8 @@ import {
   nextWeekNine,
   setTimeLabel,
   moveTargetsFor,
+  presentedOf,
+  standsInOhbox,
   type LiveWorldActions,
   type WorldMail,
 } from "../src/state/live";
@@ -625,7 +627,7 @@ describe("the forward field's recipient parsing", () => {
 });
 
 describe("screening from the open message — the webapp's rule ladder", () => {
-  it("a standing same-kind rule is retargeted, never duplicated; the mail is the pass's to move", async () => {
+  it("a standing same-kind rule is retargeted, never duplicated; the press moves only the letter it was made on", async () => {
     const { fake, live } = await scene();
     expect(await live.actions.screenSender("m1", "reads", "sender")).toBe(true);
     // The allow rule (sender → INBOX) is the standing row: PATCH, not a second POST /rules.
@@ -633,10 +635,13 @@ describe("screening from the open message — the webapp's rule ladder", () => {
     expect(retarget).toHaveLength(1);
     expect((JSON.parse(retarget[0]!.body) as { destination: string }).destination).toBe(FOLDER_OF_VIEW.reads);
     expect(wire(fake, "POST", "/rules")).toHaveLength(0);
-    // THE-CLIENTS-FIFTY: the retarget asks the pass for the mail already here, and the phone
-    // moves none of it itself — a move would be unawaited, so the window is waited out.
+    // THE-CLIENTS-FIFTY: the retarget asks the pass for the rest of the mail already here; the
+    // phone moves exactly the letter pressed on (RULE-FILED-MESSAGE-SNAPS-BACK-TO-OHBOX), and it
+    // never stands in the Ohbox again.
     await new Promise((r) => setTimeout(r, 500));
-    expect(wire(fake, "POST", "/messages/m1/move")).toHaveLength(0);
+    expect(wire(fake, "POST", "/messages/m1/move")).toHaveLength(1);
+    expect(fake.seen.filter((r) => r.method === "POST" && r.url.endsWith("/move"))).toHaveLength(1);
+    expect(standsInOhbox(presentedOf(live.engine.read(), new Date(), false), "m1")).toBe(false);
     live.store.close();
     fake.server.close();
   });
@@ -772,9 +777,11 @@ describe("applying the rule to past mail, from the phone", () => {
   it("the sheet's caption follows the answer, and never claims mail simply moves", () => {
     // The old single sentence promised "what is already here moves", which the pass does not do —
     // it re-evaluates and skips anything the person already acted on.
-    expect(Copy.screeningNoteRetro("@x.test")).toContain("applies the rule to the mail it has already filed");
+    expect(Copy.screeningNoteRetro("@x.test")).toContain("applies the rule to the rest of the mail it has already filed");
     expect(Copy.screeningNoteRetro("@x.test")).toContain("left alone");
-    expect(Copy.screeningNote("@x.test")).toContain("stays where it is");
+    expect(Copy.screeningNote("@x.test")).toContain("The rest of their mail here stays where it is");
+    // The press files the letter pressed on now, on either answer, and the caption says so first.
+    for (const s of [Copy.screeningNote("@x.test"), Copy.screeningNoteRetro("@x.test")]) expect(s).toMatch(/^This message moves there now\./);
     for (const s of [Copy.screeningNote("@x.test"), Copy.screeningNoteRetro("@x.test")]) {
       expect(s, "no sentence may promise that the backlog simply moves").not.toContain("is already here moves");
     }

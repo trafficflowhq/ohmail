@@ -183,7 +183,9 @@ export function ResumeScreen({ initialOwner = null }: { initialOwner?: string | 
       window.location.replace("/login");
       return;
     }
-    if (n >= CONFIRM_ATTEMPTS) { setView({ kind: "busy" }); return; }
+    // A renewal that met its own deadline already waited longer than the whole ladder would: the
+    // busy card at once, whose Try again asks again. Never a sign-in — nothing was learned.
+    if (n >= CONFIRM_ATTEMPTS || report?.timedOut !== undefined) { setView({ kind: "busy" }); return; }
     timer.current = setTimeout(() => void attempt(n + 1), nextConfirmDelay(n, report?.retryAfterMs ?? null));
   }, [leave, stillMine]);
 

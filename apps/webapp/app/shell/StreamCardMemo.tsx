@@ -54,6 +54,13 @@ export interface StreamCardMemoProps {
   current: boolean;
   /** The reader has this card open (the verbs show, the clamp lifts). A boolean, same reason. */
   expanded: boolean;
+  /**
+   * MOUNT THE RENDERED VIEWER — the card is near the screen (the stream's lookahead reported it),
+   * open, or the cursor's. A viewer is a sanitize pass and a framed document; a card further off
+   * shows its text at its estimated height, and turns into its viewer a screen before it can be
+   * seen. A boolean, so only the cards whose answer flips re-render.
+   */
+  viewer: boolean;
   /** Stamps `data-unseen` for the seen-on-scroll sweep. Draws nothing — see `StreamCard`. */
   unread: boolean;
   /** Body PRIMITIVES, not the fresh object `bodyOf` returns — see the header. */
@@ -102,7 +109,7 @@ export interface StreamCardMemoProps {
 }
 
 function StreamCardMemoInner({
-  m, now, current, expanded, unread,
+  m, now, current, expanded, viewer, unread,
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, cidImages, needCidImages,
   loadingLabel, failedLabel, withheldKey, onReask,
   mailboxLabel, onSelect, onToggle, onAction,
@@ -128,7 +135,16 @@ function StreamCardMemoInner({
    * `setNotice` is a state setter and therefore stable, which is what keeps the viewer's effect
    * from re-firing on every render of this card.
    */
-  const [notice, setNotice] = useState<BlockNotice | null>(null);
+  const [notice, setNoticeState] = useState<BlockNotice | null>(null);
+  /* The viewer reports again whenever its effects run again — a pile shown again runs them all —
+     so an answer equal to the one held changes nothing and re-renders nothing. */
+  const setNotice = useCallback((next: BlockNotice | null) => {
+    setNoticeState((prev) =>
+      prev === next || (prev !== null && next !== null && prev.kind === next.kind
+        && prev.caption === next.caption && prev.text === next.text)
+        ? prev
+        : next);
+  }, []);
   /* The pictures are fetched for the card the reader OPENED, as the files strip is: a collapsed
      card is a preview, and its parts are connection-cost fetches nobody asked for. What arrived
      stays drawn after a close. */
@@ -140,7 +156,7 @@ function StreamCardMemoInner({
      mode: the stored flag, the account's auto setting, this session's press. Built inside the
      memo so a skipped render costs nothing. */
   const bodySlot: ReactNode =
-    bodyState === "full" && bodyHtml ? (
+    viewer && bodyState === "full" && bodyHtml ? (
       <MessageBodyView
         messageId={m.id}
         text={bodyText}
@@ -247,6 +263,7 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.now === b.now &&
     a.current === b.current &&
     a.expanded === b.expanded &&
+    a.viewer === b.viewer &&
     a.unread === b.unread &&
     a.bodyText === b.bodyText &&
     a.bodyState === b.bodyState &&

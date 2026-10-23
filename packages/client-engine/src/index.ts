@@ -98,7 +98,7 @@ export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ic
  * The event card's facts and words, from core's browser-safe leaf: the events a message carries,
  * once each, and the formatters both readers draw them with. The phone reaches core only here.
  */
-export { calendarEventsOf } from "./calendar-events.js";
+export { calendarEventsOf, withoutCalendarBodies } from "./calendar-events.js";
 export {
   distinctCalendarEvents, formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName, parseIcsEvent,
   type DistinctCalendarEvent, type IcsEventPreview, type IcsFormatOptions, type IcsKickerKey, type IcsRecurrenceSaying,
@@ -114,7 +114,7 @@ export { owaInvitationStub, type OwaInvitationStub } from "@trafficflow/core/ics
  * question and the fifty they move stay a subset of what the worker's pass would move. Here
  * because this package is the one both of them compile; the phone reaches core only through it.
  */
-export { retroPassWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
+export { retroPassWouldMove, retroWalkWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
 
 /**
  * WHETHER SOMEBODY STILL ORGANIZES A MAILBOX — a named holder whose lease has not lapsed. The
@@ -576,6 +576,10 @@ export {
 export { ROUTING_JOURNAL_TYPE } from "./types.js";
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
+export {
+  LANDING_HOLD_MS, createLandingHold,
+  type LandingHold, type LandingHoldEntry, type LandingHoldRow, type LandingPlaces, type LandingSettle,
+} from "./landing-hold.js";
 
 // Send + Done — the composer's second send action, as one rule every surface reads: whether it
 // is offered at all, what the release is, and that it runs only after an accepted send.
@@ -605,6 +609,9 @@ export {
   // bound that sentence by the engine's own number instead of guessing one: a spinner is only
   // honest for as long as a request can still be in the air, and this is how long that is.
   BODY_FETCH_TIMEOUT_MS,
+  // The drain's two read deadlines, which the browser's adapter opts into (`syncDeadlines`).
+  SYNC_ANSWER_TIMEOUT_MS,
+  SYNC_BODY_TIMEOUT_MS,
   // The client↔server view vocabularies and the single table that joins them. Exported so the
   // translation can be checked against the server's own list rather than only through a request.
   SERVER_VIEW_OF,
@@ -681,6 +688,11 @@ export {
   // the guards read the shipped numbers, not copies.
   OUTBOX_REPLAY_DEADLINE_MS,
   OUTBOX_UNKEYED_CREATE_TTL_MS,
+  // How long one hung write may hold the outbox, how old it must be before a Try again ends its
+  // wait, and the drain's belt for a door with no bound.
+  OUTBOX_HOLD_CEILING_MS,
+  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS,
+  DRAIN_REQUEST_CEILING_MS,
   // The give-up ceiling and its backoff, same reasoning: a guard that hard-codes 8 is asserting
   // against its own copy of the rule rather than against the shipped one.
   OUTBOX_MAX_SERVER_FAILURES,
@@ -941,6 +953,7 @@ export {
   landingOfMoves,
   planScreenCommit,
   pressForecast,
+  PRESS_VISIBLE_ROWS,
   readerWithEffects,
   ruleFingerprint,
   rulesInPlay,

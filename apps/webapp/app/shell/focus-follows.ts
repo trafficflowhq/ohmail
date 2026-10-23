@@ -10,6 +10,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { pageModal } from "./modal-gate";
+import { queryAllVisible, queryVisible } from "./visible-dom";
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -93,14 +94,14 @@ function rowOf(el: HTMLElement): HTMLElement | null {
 
 function rowById(id: string | null): HTMLElement | null {
   if (id === null) return null;
-  for (const row of document.querySelectorAll<HTMLElement>(".row[data-id]")) {
+  for (const row of queryAllVisible<HTMLElement>(".row[data-id]")) {
     if (row.dataset.id === id) return row;
   }
   return null;
 }
 
 function cursorRow(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(".view .row.sel");
+  return queryVisible<HTMLElement>(".view .row.sel");
 }
 
 function holderOf(el: HTMLElement | null): Surface | null {
@@ -164,8 +165,8 @@ function land(p: Place, returnTo: boolean): boolean {
   for (const q of chain) {
     if (take(q.next) || take(rowById(q.nextId)) || take(q.prev) || take(rowById(q.prevId))) return true;
   }
-  if (take(cursorRow()) || take(document.querySelector<HTMLElement>(".view .scroller"))) return true;
-  if (returnTo && take(tabbables(document.querySelector<HTMLElement>(".view") ?? document.body)[0])) return true;
+  if (take(cursorRow()) || take(queryVisible<HTMLElement>(".view .scroller"))) return true;
+  if (returnTo && take(tabbables(queryVisible<HTMLElement>(".view") ?? document.body)[0])) return true;
   return modal !== null && enterInto(modal);
 }
 

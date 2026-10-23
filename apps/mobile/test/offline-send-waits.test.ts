@@ -15,7 +15,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey, sendWaitsForNetwork } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { answersWaiting, flushQueued, liveActions } from "../src/state/live";
+import { answersWaiting, confirmedSendSay, flushQueued, liveActions } from "../src/state/live";
+import { cancelAct, cancelSendPress, keptSay, type CloseRoad, type SendVerdict } from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -78,14 +79,22 @@ async function scene() {
     uuid,
     fetch: async () => { throw new Error("the global transport was used on the standalone door"); },
   };
-  const boot = await bootEngine(deps, {
-    origin: LOCAL_ENGINE_ORIGIN, accountId: "acct-1", localEngine: door, network: networkNow,
-  });
-  if (boot.kind !== "ready") throw new Error("boot refused");
-  await boot.engine.start();
+  const config = { origin: LOCAL_ENGINE_ORIGIN, accountId: "acct-1", localEngine: door, network: networkNow } as const;
   const toasts: string[] = [];
-  const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
-  return { fake, net, engine: boot.engine, store: boot.store, actions, toasts, sendAnswers };
+  const launch = async () => {
+    const boot = await bootEngine(deps, config);
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    await boot.engine.start();
+    const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
+    return { engine: boot.engine, store: boot.store, actions };
+  };
+  const first = await launch();
+  /** The app killed and launched again over the same device store. */
+  const relaunch = async () => {
+    first.store.close();
+    return launch();
+  };
+  return { fake, net, ...first, toasts, sendAnswers, relaunch };
 }
 
 /** The send route's re-arm: a passing refusal of the mail server, offered again after the wait it names. */
@@ -105,6 +114,23 @@ const drafted = (fake: ReturnType<typeof mailServer>) => fake.seen.filter((r) =>
 const sendsOf = (fake: ReturnType<typeof mailServer>) =>
   fake.seen.filter((r) => r.method === "POST" && /^\/drafts\/[^/]+\/send$/.test(r.url));
 const TO = [{ name: "Bo", address: "bo@fake.test" }];
+
+/** The sheet's way out over a waiting send, as it takes it: decide, then say the sentence it leaves with. */
+async function wayOut(
+  s: Awaited<ReturnType<typeof scene>>, res: { key?: string; accepted?: boolean; rearmed?: boolean }, road: CloseRoad,
+  verdict: SendVerdict = "unknown",
+): Promise<string | null> {
+  const act = cancelAct({ road, phase: "queued", key: res.key ?? null, alreadySent: false });
+  if (act === "keepSend") {
+    s.actions.leaveSend(res.key!);
+    return sayArg(keptSay(queuedCaptionKey(networkNow(), res.accepted === true, res.rearmed === true)));
+  }
+  if (act === "close") return null;
+  const end = await cancelSendPress({
+    asking: { current: false }, withdraw: () => s.actions.withdrawSend(res.key!), verdict: () => verdict, standalone: true, bound: false,
+  });
+  return end === null ? null : end.say !== null ? sayArg(end.say) : end.said;
+}
 
 describe("a send pressed with no network", () => {
   it("waits in the outbox under one key, reaches nothing, and says it goes when the network is back", async () => {
@@ -156,12 +182,102 @@ describe("a send pressed with no network", () => {
     s.store.close();
   }, 60_000);
 
+  it("left while it waits, it goes once when the network is back", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const res = await s.actions.sendNew("mb-1", TO, "On a train", "Goes when the signal does.");
+    expect(res.outcome).toBe("queued");
+    const said = await wayOut(s, res, "close");
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(sendsOf(s.fake), "a send told it goes on the return never went").toHaveLength(1);
+    expect(s.fake.deliveries()).toEqual([res.key]);
+    expect(drafted(s.fake), "not exactly one draft row").toHaveLength(1);
+    expect(said, "the sheet did not say the send still waits").toBe(Copy.replyQueuedOffline);
+    s.store.close();
+  }, 60_000);
+
+  it("left while it waits, a forward to someone else is a message of its own, and both go", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const a = await s.actions.sendForward("m-1", [{ name: "Alice", address: "alice@fake.test" }], "Alice, see below.");
+    expect(await wayOut(s, a, "close")).toBe(Copy.replyQueuedOffline);
+    const b = await s.actions.sendForward("m-1", [{ name: "Bob", address: "bob@fake.test" }], "Bob, see below.");
+    expect(b.key, "the second forward retired the one the sheet left waiting").not.toBe(a.key);
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(new Set(s.fake.deliveries())).toEqual(new Set([a.key, b.key]));
+    const sent = s.fake.draftRows().filter((d) => (d as { status?: string }).status === "sent")
+      .map((d) => [(d as { to?: Array<{ address: string }> }).to?.map((x) => x.address).join(","), (d as { body?: string }).body]);
+    expect(sent.sort()).toEqual([["alice@fake.test", "Alice, see below."], ["bob@fake.test", "Bob, see below."]]);
+    s.store.close();
+  }, 60_000);
+
+  it("left while it waits, then a relaunch: a forward to someone else is still a message of its own, and both go", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const a = await s.actions.sendForward("m-1", [{ name: "Alice", address: "alice@fake.test" }], "Alice, see below.");
+    expect(await wayOut(s, a, "close")).toBe(Copy.replyQueuedOffline);
+    const after = await s.relaunch();
+    const b = await after.actions.sendForward("m-1", [{ name: "Bob", address: "bob@fake.test" }], "Bob, see below.");
+    expect(b.key, "after the relaunch the second forward retired the one the sheet left waiting").not.toBe(a.key);
+    s.net.set("online");
+    await flushQueued(after.engine, after.actions.releaseConfirmed);
+    const sent = s.fake.draftRows().filter((d) => (d as { status?: string }).status === "sent")
+      .map((d) => (d as { to?: Array<{ address: string }> }).to?.map((x) => x.address).join(","));
+    expect(sent.sort(), "Alice's forward was replaced after the relaunch").toEqual(["alice@fake.test", "bob@fake.test"]);
+    after.store.close();
+  }, 60_000);
+
+  it("left while it waits, the same words with a file are a message of their own, and the file goes", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const first = await s.actions.sendReply("m-1", "See attached.", false);
+    expect(await wayOut(s, first, "close")).toBe(Copy.replyQueuedOffline);
+    const file = { filename: "contract.pdf", contentType: "application/pdf", contentBase64: "JVBERi0xLjQKJcfsj6IK" };
+    const second = await s.actions.sendReply("m-1", "See attached.", false, null, null, [file]);
+    expect(second.key, "the press with the file was answered by the send without it").not.toBe(first.key);
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(new Set(s.fake.deliveries())).toEqual(new Set([first.key, second.key]));
+    expect(sendsOf(s.fake).filter((r) => r.body.includes("contract.pdf")).map((r) => r.key), "the file never left")
+      .toEqual([second.key]);
+    s.store.close();
+  }, 60_000);
+
+  it("pressed again with a file over a send not left, the file rides that send: one delivery, with it", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const first = await s.actions.sendReply("m-1", "See attached.", false);
+    const file = { filename: "contract.pdf", contentType: "application/pdf", contentBase64: "JVBERi0xLjQKJcfsj6IK" };
+    const again = await s.actions.sendReply("m-1", "See attached.", false, null, null, [file]);
+    expect(again.key, "a press again of one reply minted a second key").toBe(first.key);
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(s.fake.deliveries()).toEqual([first.key]);
+    expect(sendsOf(s.fake).some((r) => r.body.includes("contract.pdf")), "the waiting send answered the press and dropped its file")
+      .toBe(true);
+    s.store.close();
+  }, 60_000);
+
+  it("Cancel send over a send that already went, before the ledger heard, says no cancellation", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const res = await s.actions.sendNew("mb-1", TO, "Gone", "Already in Sent.");
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(s.fake.deliveries()).toEqual([res.key]);
+    expect(await wayOut(s, res, "cancelSend", "pending"), "a sent row was said to be in Drafts").toBe("close");
+    s.store.close();
+  }, 60_000);
+
   it("cancelled while it waits, it keeps the words in its one draft and sends nothing on the return", async () => {
     const s = await scene();
     s.net.set("offline");
     const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.");
     expect(res.outcome).toBe("queued");
-    expect(await s.actions.withdrawSend(res.key!)).toBe("withdrawn");
+    expect(await wayOut(s, res, "cancelSend")).toBe(Copy.sendCancelledInDrafts);
+    expect(Copy.sendCancelledInDrafts).toContain("in Drafts");
     const rows = s.fake.draftRows();
     expect(rows.map((r) => r.subject), "the cancelled letter's words were lost").toEqual(["Second thoughts"]);
     s.net.set("online");
@@ -182,6 +298,33 @@ describe("a send pressed with no network", () => {
       "an appointment was held as though it were a delivery").toBe(true);
     s.store.close();
   }, 60_000);
+});
+
+describe("the sentence a waiting send earns when it goes on the return", () => {
+  it("a new mail says it was sent, a reply that the reply was", async () => {
+    const s = await scene();
+    s.net.set("offline");
+    const mail = await s.actions.sendNew("mb-1", TO, "Offline", "A mail of its own.");
+    const reply = await s.actions.sendReply("m-1", "An answer.", false);
+    expect([mail.outcome, reply.outcome]).toEqual(["queued", "queued"]);
+    s.net.set("online");
+    const settled = await flushQueued(s.engine, s.actions.releaseConfirmed);
+    const say = (key: string | undefined) => sayArg(confirmedSendSay(settled.get(key!)!, new Date(), "UTC"));
+    expect(say(mail.key), "a new mail went with the reply's sentence").toBe(Copy.composeSent);
+    expect(say(reply.key)).toBe(Copy.replySent);
+    s.store.close();
+  }, 60_000);
+
+  it("by kind, an earlier press's confirmation, and an appointment", () => {
+    const o: { forward: boolean; fresh: boolean; sendAt: string | null; earlierWent: boolean } =
+      { forward: false, fresh: false, sendAt: null, earlierWent: false };
+    const say = (x: Partial<typeof o>) => confirmedSendSay({ ...o, ...x }, new Date(), "UTC");
+    expect(say({ forward: true })).toEqual({ say: "forwarded" });
+    expect(say({ fresh: true, earlierWent: true })).toEqual({ say: "composeEarlierWent" });
+    expect(say({ earlierWent: true })).toEqual({ say: "replyEarlierWent" });
+    expect(say({ forward: true, earlierWent: true })).toEqual({ say: "forwardEarlierWent" });
+    expect(say({ fresh: true, sendAt: "2030-01-02T09:00:00Z" }).say).toBe("scheduledFor");
+  });
 });
 
 /* The server offered the send again after a passing refusal, and its window for the key runs out

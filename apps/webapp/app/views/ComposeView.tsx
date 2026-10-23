@@ -646,6 +646,8 @@ export function ComposeView({
   useEffect(() => {
     if (!tooLong) setLongNote(false);
   }, [tooLong]);
+  /* Another message's send on the lane (`SendState.previous`) freezes this one too, and its line says
+     why: while the lane sends, a first save is refused, so typing here would be kept nowhere. */
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
      deliberately NOT the same question as `inFlight`. */

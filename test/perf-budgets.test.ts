@@ -343,6 +343,58 @@ describe("the performance budgets are one table", () => {
     expect(noLineAtAll, "no row without a line at all — that relaxation has nothing to measure").toBeGreaterThan(0);
   });
 
+  it("the view-switch row names its harness and fixture, and every reading its engine and presses", () => {
+    /* THE SWITCH IS MEASURED BY A HARNESS IN THE REPOSITORY (`scripts/perf/view-switch.mjs`), PER
+       ENGINE, AND A READING WITHOUT ITS ENGINE, ITS PRESS COUNT OR ITS FIXTURE IS A NUMBER NOBODY CAN
+       RUN AGAIN. The lines are medians; each reading carries its median and p90, and a p90 below its
+       median is a typo the row would otherwise publish. Counts (frames at entry, sanitize passes,
+       link batches, requests) are not durations and are held by tests, not here. */
+    type Line = Partial<Record<"webkit" | "chromium" | "desktop", { medianMs?: number; p50Ms?: number; p95Ms?: number }>>;
+    type SwitchReading = Reading & { line?: string; engine?: string; presses?: number; arm?: string; medianMs?: number; p90Ms?: number };
+    const b = table.latency["view-switch"] as Latency & {
+      harness?: string; fixture?: string; lines?: Record<string, Line & { what?: string }>;
+      readings?: SwitchReading[];
+    };
+    expect(b.harness, "the row does not name the harness that reads it").toBe("scripts/perf/view-switch.mjs");
+    expect(readFileSync(join(ROOT, b.harness!), "utf8")).toMatch(/export async function runArm/);
+    expect(b.fixture ?? "", "the row does not name its fixture").toMatch(/3000.*2000.*1000/);
+    const lines = Object.entries(b.lines ?? {});
+    expect(lines.length, "no lines — the rules below would pass for an empty row").toBeGreaterThan(4);
+    for (const [name, line] of lines) {
+      expect(line.what, `view-switch/${name}: a line with no subject`).toBeTruthy();
+      const engines = Object.keys(line).filter((k) => k !== "what");
+      expect(engines.length, `view-switch/${name}: a line with no engine`).toBeGreaterThan(0);
+      for (const e of engines) {
+        expect(["webkit", "chromium", "desktop"], `view-switch/${name}: engine '${e}'`).toContain(e);
+        const v = line[e as "webkit"]!;
+        const nums = [v.medianMs, v.p50Ms, v.p95Ms].filter((x): x is number => typeof x === "number");
+        expect(nums.length, `view-switch/${name}/${e}: no number`).toBeGreaterThan(0);
+        for (const x of nums) expect(x, `view-switch/${name}/${e}: a duration of 0 or less`).toBeGreaterThan(0);
+      }
+    }
+    const measured = (b.readings ?? []).filter((r) => r.line !== undefined);
+    expect(measured.length, "no harness reading at all").toBeGreaterThan(0);
+    for (const r of measured) {
+      const where = `view-switch reading ${r.line}/${r.engine}/${r.arm}`;
+      expect(b.lines?.[r.line!], `${where}: names a line the row does not have`).toBeDefined();
+      expect(["webkit", "chromium", "desktop"], `${where}: engine`).toContain(r.engine);
+      expect(["base", "head"], `${where}: arm`).toContain(r.arm);
+      expect(r.presses ?? 0, `${where}: fewer than ten presses`).toBeGreaterThanOrEqual(r.engine === "desktop" ? 40 : 10);
+      expect(typeof r.medianMs, `${where}: no median`).toBe("number");
+      expect(typeof r.p90Ms, `${where}: no p90`).toBe("number");
+      expect(r.medianMs!, `${where}: a median above its own p90`).toBeLessThanOrEqual(r.p90Ms!);
+    }
+    /* Each harness line is read on both arms, for each engine it states: the before beside the after. */
+    for (const [name, line] of lines) {
+      for (const e of Object.keys(line).filter((k) => k !== "what" && k !== "desktop")) {
+        for (const arm of ["base", "head"]) {
+          expect(measured.some((r) => r.line === name && r.engine === e && r.arm === arm), `view-switch/${name}/${e}: no ${arm} reading`)
+            .toBe(true);
+        }
+      }
+    }
+  });
+
   it("the desktop shell reads the ceiling and spells none of its own", () => {
     /* THE FOURTH READER, and the one a person actually sees: `vitals.rs` declared a ceiling of its own to
        itself in every `renderer_vitals` line while two gates read another. It re-exports the

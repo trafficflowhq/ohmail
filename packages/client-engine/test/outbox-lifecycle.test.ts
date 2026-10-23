@@ -2031,8 +2031,9 @@ describe("there is ONE dispatch, and the source says so", () => {
     const callers = [...src.matchAll(/this\.dispatchOnLane\(/g)];
     expect(
       callers.length,
-      "five roads dispatch: a fresh verb, the boot replay, a retry, a queued verb's Try again, and a flush",
-    ).toBe(5);
+      "six roads dispatch: a fresh verb, the boot replay, a retry, a queued verb's Try again, a flush, and the "
+        + "hung change a Try again ended (`dispatchEndedFirst`), which goes ahead of the press",
+    ).toBe(6);
   });
 });
 

@@ -117,7 +117,7 @@ describe("opening an invitation on the phone asks its calendar parts and carries
     const m = liveMessage(engine, idOf(GOOGLE), view as never)!;
     expect(m.events?.length, "one meeting, one event").toBe(1);
     expect(m.events?.[0]?.event.summary).toBe("Quarterly planning");
-    expect(m.attachments?.length, "both files stay tiles").toBe(2);
+    expect(m.attachments?.map((a) => a.id), "the file is one chip; the alternative is the card's").toEqual(["google-file"]);
   });
 
   it("each conversation member carries its own events, and a held row's are read the same way", async () => {

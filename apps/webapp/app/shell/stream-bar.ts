@@ -18,6 +18,12 @@ export interface StreamBar {
   hasBar: (id: string) => boolean;
   /** The card's toggle, called from the press — before React commits the change. */
   toggled: (id: string, open: boolean) => void;
+  /**
+   * A visit ended (`visit.ts`): every earlier holder lets its bar go. Their off-screen waiters went
+   * with the stream's effects, so nothing would release them, and the next visit starts with the
+   * one bar of the card last opened, as a fresh mount had none.
+   */
+  endVisit: () => void;
 }
 
 /**
@@ -67,7 +73,8 @@ export function useStreamBar(
   }, [stream, release]);
 
   const hasBar = useCallback((id: string) => id === holder || lingering.has(id), [holder, lingering]);
-  return { hasBar, toggled };
+  const endVisit = useCallback(() => setLingering((s) => (s.size === 0 ? s : NONE)), []);
+  return { hasBar, toggled, endVisit };
 }
 
 /**

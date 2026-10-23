@@ -73,7 +73,7 @@ const DEFAULT_MAIL_REQUEST_COMMAND = "default_mail_request";
 const UI_VITALS_COMMAND = "ui_vitals";
 const WINDOW_READY_COMMAND = "window_ready";
 const TEXT_SIZE_COMMAND = "set_text_size";
-const RENDERED_LINKS_COMMAND = "rendered_links";
+const RENDERED_LINKS_COMMAND = "rendered_links_batch";
 
 /**
  * The places on the web this app can open, named as PLACES and never as addresses. A hosted
@@ -522,17 +522,20 @@ export function reportWindowReady(canvas: string | null = frameCanvas()): void {
 }
 
 /**
- * THE LINKS A SURFACE DRAWS, TO THE SHELL (`rendered_links.rs`): besides the shell's own, the only
+ * THE LINKS THE SURFACES DRAW, TO THE SHELL (`rendered_links.rs`): besides the shell's own, the only
  * addresses its new-window door will open, on the person's click. `main.tsx` arms this as the shared
- * renderers' sink (`rendered-links.ts`); an empty list takes the surface away. Not awaited — the
- * shell applies a report in order, before a later open — and a refused one is said in the log,
- * because it shows up later as a link that will not open.
+ * renderers' batched sink (`rendered-links.ts`): one call carries every surface's latest report, in
+ * order, and an empty list takes a surface away. Not awaited — the shell applies a batch in order,
+ * before a later open — and a refused one is said in the log, because it shows up later as a link
+ * that will not open.
  */
-export function reportRenderedLinksToShell(surface: string, urls: readonly string[]): void {
+export function reportRenderedLinksToShell(reports: readonly { surface: string; hrefs: readonly string[] }[]): void {
   const shell = internals();
-  if (!shell) return;
+  if (!shell || reports.length === 0) return;
+  const surfaces = reports.map((r) => r.surface);
+  const urls = reports.map((r) => [...r.hrefs]);
   try {
-    void shell.invoke(RENDERED_LINKS_COMMAND, { surface, urls: [...urls] }).catch((err: unknown) => {
+    void shell.invoke(RENDERED_LINKS_COMMAND, { surfaces, urls }).catch((err: unknown) => {
       console.error("ohmail: the shell did not take the links on screen", err);
     });
   } catch (err) {
