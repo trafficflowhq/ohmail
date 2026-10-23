@@ -158,7 +158,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       # The Android SDK is preinstalled on ubuntu-latest; Java is pinned rather than
       # inherited so a runner image bump cannot silently change what compiles the app.
@@ -405,7 +405,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:

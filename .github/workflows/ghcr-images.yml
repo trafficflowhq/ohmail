@@ -238,7 +238,7 @@ jobs:
       # For the prune check's patch read, which runs on the runner against the checked-out tree.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       # THE BUILDKIT DAEMON BY DIGEST. Left to its default, setup-buildx boots moby/buildkit:buildx-stable-1,
       # a tag its publisher moves, and that daemon runs every build step and pushes with this job's token.
@@ -360,7 +360,7 @@ jobs:
       # boot-smoke.mjs runs on the runner, against the stack's proxy.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: The clone must carry the deployment this gate is about
         run: |

@@ -107,7 +107,7 @@ if (mode === "die-loudly") {
   // reports the consequences of its first failure too, and quoting the last of them diagnoses the
   // symptom. Without this line the two rules are indistinguishable.
   fs.writeSync(2, "Error: the connection closed while the first error was being reported\n");
-  fs.writeSync(2, "Node.js v22.23.2\n");
+  fs.writeSync(2, "Node.js v22.23.4\n");
   process.exit(1);
 }
 

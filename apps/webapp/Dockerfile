@@ -22,10 +22,10 @@
 # sibling `Dockerfile.dockerignore`, which admits only this app's compile closure.
 
 # ── Base: pinned runtime ─────────────────────────────────────────────────────────────────
-# By digest, never by tag: the multi-arch index node:22-bookworm-slim named on 2026-10-14 (Node
-# 22.23.3, amd64 and arm64). A bump is a reviewed commit that moves every published recipe together.
+# By digest, never by tag: the multi-arch index node:22-bookworm-slim named on 2026-10-23 (Node
+# 22.23.4, amd64 and arm64). A bump is a reviewed commit that moves every published recipe together.
 # The `# syntax=` frontend on line 1, the code that reads this file, is named by its digest the same way.
-FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS base
+FROM node:22-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS base
 ENV CI=true
 WORKDIR /app
 

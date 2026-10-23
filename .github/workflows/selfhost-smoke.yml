@@ -61,7 +61,7 @@ jobs:
       # boot-smoke.mjs runs on the runner, against the stack's proxy.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       # The tag exists only in this run, so nothing published can stand in for the build.
       - name: Build the three images, boot the stack, run the first-run ceremony

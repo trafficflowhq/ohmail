@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       # Whole for the nightly, dispatch, a batch branch, a fork, a bot and a harness change; selected for
       # the rest (.github/scripts/ci-select.mjs). Any fault here leaves the run whole.
@@ -159,7 +159,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -326,7 +326,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -404,7 +404,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -495,7 +495,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -537,7 +537,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -577,7 +577,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
@@ -610,7 +610,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22.23.3
+          node-version: 22.23.4
 
       - name: Install the locked dependency tree
         run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund

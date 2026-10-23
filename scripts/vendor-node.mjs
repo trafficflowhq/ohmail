@@ -20,7 +20,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /* Pinned, and read from one place. A runtime bump is a deliberate edit here, not whatever the
  * `latest` redirect happened to serve on the day a release was cut. */
-export const VERSION = process.env.OHMAIL_NODE_VERSION ?? "v22.23.2";
+export const VERSION = process.env.OHMAIL_NODE_VERSION ?? "v22.23.4";
 const DIST = `https://nodejs.org/dist/${VERSION}`;
 
 /**
@@ -32,12 +32,12 @@ const DIST = `https://nodejs.org/dist/${VERSION}`;
  * than a surprise the first time somebody builds without a network.
  */
 const PINS = {
-  "v22.23.2": {
-    "node-v22.23.2-darwin-arm64.tar.gz": "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
-    "node-v22.23.2-darwin-x64.tar.gz": "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026",
-    "node-v22.23.2-linux-x64.tar.xz": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307",
-    "node-v22.23.2-linux-arm64.tar.xz": "fff4078c5def658577f92c88db7db3bc0072924bfb93fe52c1e744a54e94abb8",
-    "node-v22.23.2-win-x64.zip": "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97",
+  "v22.23.4": {
+    "node-v22.23.4-darwin-arm64.tar.gz": "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428",
+    "node-v22.23.4-darwin-x64.tar.gz": "efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819",
+    "node-v22.23.4-linux-x64.tar.xz": "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce",
+    "node-v22.23.4-linux-arm64.tar.xz": "6287aa46b6c375d816e63ae66d024fbbfd70404825aabdfdf898a970871d2f4b",
+    "node-v22.23.4-win-x64.zip": "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20",
   },
 };
 

@@ -994,7 +994,7 @@ struct Shared {
     /// Which one is the diagnosis depends on whether the run ever SERVED. A run that never started
     /// is diagnosed by its first error — a runtime that cannot resolve its main module prints the
     /// cause, then a stack trace, then its own version banner, and quoting the last line would
-    /// report `Node.js v22.23.2`. A run that served and later died is diagnosed by its latest —
+    /// report `Node.js v22.23.4`. A run that served and later died is diagnosed by its latest —
     /// an earlier `request_failed` is something the run SURVIVED, and reporting it as the cause of
     /// a crash eight hours later is the same species of wrong diagnosis as blaming a second copy.
     ///

@@ -1,15 +1,15 @@
 /**
  * THE BASE THE PUBLISHED IMAGES ARE BUILT FROM, BY DIGEST, AND THE NODE RELEASE IT CARRIES.
  *
- * Read anonymously from Docker Hub on 2026-10-14: node:22-bookworm-slim's multi-arch index (amd64
+ * Read anonymously from Docker Hub on 2026-10-23: node:22-bookworm-slim's multi-arch index (amd64
  * and arm64/v8 among its platforms), and NODE_VERSION as its amd64 and arm64 configs both state it.
  * A bump moves this constant, every published Dockerfile and every workflow's setup-node in one
  * reviewed commit; the tests that import it refuse any of the three moving alone.
  */
 export const NODE_BASE = {
   image: "node:22-bookworm-slim",
-  digest: "sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392",
-  node: "22.23.3",
+  digest: "sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d",
+  node: "22.23.4",
 } as const;
 export const NODE_BASE_REF = `${NODE_BASE.image}@${NODE_BASE.digest}`;
 /** The Dockerfile frontend line 1 names: docker/dockerfile 1.27.1, the index tag `1` named on 2026-10-14. */

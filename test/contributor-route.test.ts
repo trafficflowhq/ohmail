@@ -342,7 +342,7 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
       }, /^CONTRIBUTING\.md · suite: the block does not open with/],
       ["a marker removed", () => withDoc("CONTRIBUTING.md", "<!-- run by .github/workflows/contributor.yml: suite -->\n", ""), /^CONTRIBUTING\.md · suite: the route runs it and CONTRIBUTING\.md marks no such block$/],
       ["a marked block no job runs", () => withDoc("CONTRIBUTING.md", "\n## Sign your commits", "\n<!-- run by .github/workflows/contributor.yml: stray -->\n```bash\necho stray\n```\n\n## Sign your commits"), /the marked block stray is run by no job$/],
-      ["setup-node differing from CONTRIBUTING's version", () => withDoc("CONTRIBUTING.md", "(CI runs 22.23.3)", "(CI runs 22.23.4)"), /^setup-node is not exactly node-version 22\.23\.4.*\(linux-build, linux-suite-1, .*, windows-suite-4\)$/],
+      ["setup-node differing from CONTRIBUTING's version", () => withDoc("CONTRIBUTING.md", "(CI runs 22.23.4)", "(CI runs 22.23.5)"), /^setup-node is not exactly node-version 22\.23\.5.*\(linux-build, linux-suite-1, .*, windows-suite-4\)$/],
       ["a secrets. read", () => ({ ...base, contributor: base.contributor.replace(/^name: (.*)$/m, "name: $1 ${{ secrets.TOKEN }}") }), /^contributor\.yml:\d+: reads name: .*secrets\.TOKEN/],
       ["persist-credentials missing", () => {
         const w = wf();

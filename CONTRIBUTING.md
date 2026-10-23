@@ -80,7 +80,7 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 
 ## Running the tests
 
-Node 22 (CI runs 22.23.3), and stable Rust for the desktop app's native half.
+Node 22 (CI runs 22.23.4), and stable Rust for the desktop app's native half.
 Every command runs from the repository root unless it says otherwise, in bash
 (Git Bash on Windows).
 
