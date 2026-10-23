@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
-import { evalIf, type IfContext } from "./support/workflow-if.js";
+import { evalIf, namesStatusCheck, runJobs, type IfContext, type JobResult } from "./support/workflow-if.js";
 
 /**
  * A PULL REQUEST BUILDS THE PLATFORMS ONLY WHEN IT CHANGES WHAT THEY BUILD, AND THE REQUIRED JOBS ALWAYS REPORT.
@@ -19,7 +19,9 @@ import { evalIf, type IfContext } from "./support/workflow-if.js";
  *   · the two contexts the ruleset requires from build.yml run on every pull request, never behind the
  *     answer, and no trigger is path-filtered (a required context that never reports blocks the merge);
  *   · a push to main, a `v*` tag, a merge group and a dispatch run every platform job, whatever `changes`
- *     did — a release takes its installers from the tag run;
+ *     did, and every job after one — a release takes its installers from the tag run. Read as GitHub starts
+ *     jobs (`runJobs`): an `if:` naming no status-check function is `success()` over the whole needs chain,
+ *     so `changes`, skipped there, would skip any job below it that does not say `!cancelled()`;
  *   · on a pull request a platform job runs when the answer says so, and when `changes` did not succeed;
  *   · the script answers the paths the builds read, and every script a workflow runs is in its own scope.
  */
@@ -47,13 +49,29 @@ function run(event: string, ref: string, result: string, scope: string, extra: I
 }
 const PR = (result: string, scope: string) => run("pull_request", "refs/pull/7/merge", result, scope);
 /** Every run that is not a pull request: `changes` is skipped there, so its answer is empty. */
-const NOT_PR: Array<[string, IfContext]> = [
-  ["push to main", run("push", "refs/heads/main", "skipped", "")],
-  ["v* tag", run("push", "refs/tags/v1.2.3", "skipped", "")],
-  ["merge group", run("merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc", "skipped", "")],
-  ["dispatch", run("workflow_dispatch", "refs/heads/main", "skipped", "")],
+const NOT_PR_RUNS: Array<[string, string, string]> = [
+  ["push to main", "push", "refs/heads/main"],
+  ["v* tag", "push", "refs/tags/v1.2.3"],
+  ["merge group", "merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc"],
+  ["dispatch", "workflow_dispatch", "refs/heads/main"],
 ];
-const ifOf = (j: Job | undefined) => String(j?.if ?? "true");
+const NOT_PR: Array<[string, IfContext]> = NOT_PR_RUNS.map(([label, event, ref]) => [label, run(event, ref, "skipped", "")]);
+/**
+ * A job's own condition, for a reader that evaluates it alone. For a job that needs another, an `if:` naming no
+ * status-check function is not its own answer: GitHub reads it as `success()` over the whole needs chain, so such a
+ * job is read through runJobs, and here it refuses.
+ */
+const ifOf = (j: Job | undefined) => {
+  const raw = j?.if === undefined ? "" : String(j.if);
+  if (needsOf(j ?? {}).length && !namesStatusCheck(raw)) throw new Error(`${j?.name}: an if: naming no status function waits on the whole needs chain: read it through runJobs`);
+  return raw === "" ? "true" : raw;
+};
+/** A run as runJobs takes it: what no job decides, the event and the answer `changes` printed; it works out the rest. */
+const graphRun = (event: string, ref: string, scope: string): IfContext => ({
+  "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail",
+  "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope,
+});
+const ran = (r: Record<string, JobResult>) => Object.keys(r).filter((id) => r[id] === "success").sort();
 /** The script runs with nothing of the caller's run: under CI it would otherwise write to the job's own output. */
 const ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: tmpdir(), GIT_CONFIG_NOSYSTEM: "1", LC_ALL: "C" };
 
@@ -148,8 +166,52 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
   it("the reader refuses what it cannot read, and is watched failing on an ungated job", () => {
     expect(() => evalIf("${{ success() }}", {})).toThrow(/no value given|not an expression/);
     expect(() => evalIf("github.sha == 'x'", {})).toThrow(/no value given for the context github.sha/);
-    const ungated = load(BUILD.replace(/^(  macos:\n(?: {4}.*\n)*?) {4}if: .*\n/m, "$1")).jobs!.macos!;
-    expect(evalIf(ifOf(ungated), PR("success", "false")), "the planted ungated macOS job").toBe(true);
+    const ungated = load(BUILD.replace(/^(  macos:\n(?: {4}.*\n)*?) {4}if: .*\n/m, "$1")).jobs!;
+    expect(ungated.macos!.if, "the plant").toBeUndefined();
+    expect(() => ifOf(ungated.macos), "a job that needs another, read alone").toThrow(/whole needs chain/);
+    expect(runJobs(ungated, graphRun("pull_request", "refs/pull/7/merge", "false")).macos, "the planted ungated macOS job").toBe("success");
+  });
+});
+
+describe("every job after a platform build follows it, read as GitHub reads the whole needs chain", () => {
+  const build = load(BUILD).jobs ?? {};
+  const ALL = Object.keys(build).sort();
+  /** The one job that runs on a release tag alone: it opens what was shipped. */
+  const TAG_ONLY = ["macos-signed-check"];
+  const PR_RUN = (scope: string, ended: Record<string, JobResult> = {}) => runJobs(build, graphRun("pull_request", "refs/pull/7/merge", scope), { ended });
+
+  it("a push to main, a v* tag, a merge group and a dispatch run every job but `changes`, the check job on the tag alone", () => {
+    expect(ALL, "the parser read the signing jobs").toEqual(expect.arrayContaining(["macos", "macos-sign", "macos-signed-check", "linux-rpm-install"]));
+    for (const [label, event, ref] of NOT_PR_RUNS) {
+      const r = runJobs(build, graphRun(event, ref, ""));
+      expect(r.changes, label).toBe("skipped");
+      expect(ran(r), label).toEqual(ALL.filter((id) => id !== "changes" && (ref.startsWith("refs/tags/v") || !TAG_ONLY.includes(id))));
+    }
+  });
+
+  it("on a pull request the signing job follows the macOS build, and the check job waits for a tag", () => {
+    expect(ran(PR_RUN("true")), "a pull request that builds the desktop").toEqual(ALL.filter((id) => !TAG_ONLY.includes(id)));
+    expect(ran(PR_RUN("false")), "a pull request that builds nothing").toEqual(["changes", "engine", "engine-ui-smoke"]);
+    expect(ran(PR_RUN("", { changes: "failure" })), "an answer that could not be read").toEqual(ALL.filter((id) => id !== "changes" && !TAG_ONLY.includes(id)));
+    const failed = PR_RUN("true", { macos: "failure" });
+    expect([failed.macos, failed["macos-sign"], failed["macos-signed-check"]], "a failed build signs nothing").toEqual(["failure", "skipped", "skipped"]);
+    expect(runJobs(build, graphRun("push", "refs/tags/v1.2.3", ""), { ended: { "macos-sign": "failure" } })["macos-signed-check"], "nor is a failed signing opened").toBe("skipped");
+  });
+
+  /* The shape the signing job first had: no `if:`, and a check job whose `if:` asks the ref alone. Each reads true
+     alone and runs on a pull request, where `changes` ran; GitHub skips both everywhere else. */
+  it("is watched failing on a job below a skipped one whose `if:` names no status function", () => {
+    const head = {
+      ...build,
+      "macos-sign": { ...build["macos-sign"], if: undefined },
+      "macos-signed-check": { ...build["macos-signed-check"], if: "${{ startsWith(github.ref, 'refs/tags/v') }}" },
+    };
+    for (const [label, event, ref] of NOT_PR_RUNS) {
+      const r = runJobs(head, graphRun(event, ref, ""));
+      expect([r.macos, r["macos-sign"], r["macos-signed-check"]], label).toEqual(["success", "skipped", "skipped"]);
+    }
+    expect(runJobs(head, graphRun("pull_request", "refs/pull/7/merge", "true"))["macos-sign"], "where changes ran").toBe("success");
+    expect(() => ifOf(head["macos-sign"]), "read alone").toThrow(/whole needs chain/);
   });
 });
 

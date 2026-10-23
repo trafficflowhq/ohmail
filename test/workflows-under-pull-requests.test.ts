@@ -156,7 +156,7 @@ describe("the workflows of a main that takes pull requests", () => {
 
   it("every job holding a signing secret runs in the release environment", () => {
     const holders = [build, android, feeds].flatMap((t) => jobsOf(t).filter((j) => SIGNING.test(exec(j.body))).map((j) => j.name));
-    expect(holders, "the census found no key-holding job").toEqual(["macos", "sign", "sign"]);
+    expect(holders, "the census found no key-holding job").toEqual(["macos-sign", "sign", "sign"]);
     for (const t of [build, android, feeds]) expect(keysOutsideRelease(t)).toEqual([]);
   });
 
@@ -198,7 +198,7 @@ describe("the workflows of a main that takes pull requests", () => {
     expect(valueOf("${{ github.ref == 'r' }}", { "github.ref": "r" })).toBe(true);
     expect(keysOutsideRelease(android.replace("    environment: release\n", ""))).toEqual(["sign"]);
     expect(keysOutsideRelease(feeds.replace("    environment: release\n", ""))).toEqual(["sign"]);
-    expect(keysOutsideRelease(build.replace(/^ {4}environment: .+\n/m, ""))).toEqual(["macos"]);
+    expect(keysOutsideRelease(build.replace(/^ {4}environment: .+\n/m, ""))).toEqual(["macos-sign"]);
     /* The tools checkout as it was, attempt and retry (no ref: the launching ref, which is the tag on a recovery). */
     expect(toolsRefOf(feeds.replace(/\n {10}ref: \$\{\{ github\.event_name == 'workflow_dispatch'[^\n]*\n/g, "\n"))).toBeNull();
     expect(() => evaluate("github.ref || runner.os", { "github.ref": "x" })).toThrow(/unknown context runner\.os/);

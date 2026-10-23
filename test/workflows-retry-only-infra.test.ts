@@ -9,12 +9,17 @@ import { publicPath, ROOT } from "./support/public-root.mjs";
  *
  * A single, visible retry on a named infrastructure class of a non-test step is allowed, and a test is
  * never retried. `.github/scripts/retry-infra.sh` is the one way the workflows retry anything (its own
- * test holds what it does); this file holds where it may stand:
+ * test holds what it does), but for one inline copy of its hdiutil-busy class in build.yml's macos-sign,
+ * which holds the signing identity and so has no checkout to run the script from. This file holds where
+ * each may stand:
  *
  *   · every npm install line in ci, build and android goes through the npm-network class;
  *   · each wrapper call names a known class and wraps only that class's command: npm ci / npm install,
  *     `cargo test --locked … --no-run` (a compile, never a run), `hdiutil detach`, and in
  *     build-engine-app.mjs the tauri build alone, verbose, on macOS when a dmg is built;
+ *   · the inline retry is one function in macos-sign and nowhere else: `hdiutil detach`, again once
+ *     after the exit status 16 alone, announced as the wrapper announces one; every detach in that job
+ *     goes through it;
  *   · the macOS job compiles its Rust tests (the default configuration) through the wrapper BEFORE its
  *     unwrapped test step;
  *   · every "Note how long the build step took" leaves the reading empty after a retry, so a retried
@@ -88,6 +93,56 @@ export function noteProblems(text: string): string[] {
   });
 }
 
+/** The jobs of a workflow as lines, by id. */
+function jobLines(text: string): Array<{ job: string; lines: string[] }> {
+  const out: Array<{ job: string; lines: string[] }> = [];
+  for (const l of text.slice(Math.max(0, text.indexOf("\njobs:\n"))).split("\n")) {
+    const key = /^ {2}([A-Za-z][\w-]*):\s*$/.exec(l);
+    if (key) out.push({ job: key[1]!, lines: [] });
+    else out.at(-1)?.lines.push(l);
+  }
+  return out;
+}
+
+/**
+ * Where a workflow retries inline, and what is wrong with each: a function that announces a retry the way the
+ * wrapper does, or runs `hdiutil detach` more than once (a silent one), and a `Retried once` outside any function.
+ */
+export function inlineRetries(file: string, text: string): { sites: string[]; problems: string[] } {
+  const sites: string[] = [];
+  const problems: string[] = [];
+  const marked = (l: string) => /Retried once/.test(l) && !l.includes("retry-infra.sh");
+  /* `hdiutil detach` run, never named in an echo. */
+  const detaches = (l: string) => (/^\s*(?:echo|printf)\b/.test(l) ? 0 : (l.match(/\bhdiutil detach\b/g) ?? []).length);
+  for (const { job, lines } of jobLines(text)) {
+    const exec = code(lines.join("\n"));
+    const where = `${file} ${job}`;
+    const inside = new Set<number>();
+    for (let from = 0; from < exec.length; from++) {
+      const head = /^(\s*)([A-Za-z_]\w*)\(\) \{\s*$/.exec(exec[from]!);
+      if (!head) continue;
+      const to = exec.findIndex((l, i) => i > from && l.trim() === "}" && l.search(/\S/) === head[1]!.length);
+      const end = to < 0 ? exec.length : to;
+      const body = exec.slice(from + 1, end);
+      for (let i = from; i <= end; i++) inside.add(i);
+      const runs = body.reduce((n, l) => n + detaches(l), 0);
+      if (!body.some(marked) && runs < 2) continue;
+      const name = head[2]!;
+      sites.push(where);
+      if (runs !== 2) problems.push(`${where}: ${name} runs hdiutil detach ${runs} times, not once and once again`);
+      const codes = body.flatMap((l) => [...l.matchAll(/(?:-eq|-ne|==?|!=)\s*"?(\d+)"?\s*\]/g)].map((m) => m[1]));
+      if (codes.length === 0 || codes.some((c) => c !== "16")) problems.push(`${where}: ${name} retries on ${codes.length ? codes.join(", ") : "any status"}, not 16 alone`);
+      if (body.some((l) => /^\s*(?:for|while|until)\b/.test(l))) problems.push(`${where}: ${name} retries in a loop`);
+      const warn = body.findIndex((l) => l.includes("::warning title=Retried once%3A hdiutil-busy::"));
+      const retry = body.map((l, i) => (detaches(l) ? i : -1)).filter((i) => i >= 0).at(-1) ?? -1;
+      if (runs === 2 && (warn < 0 || warn > retry)) problems.push(`${where}: ${name} does not announce its retry as hdiutil-busy before it runs`);
+      for (const l of exec.filter((x, i) => (i < from || i > end) && detaches(x))) problems.push(`${where}: a detach that does not go through ${name}: ${l.trim()}`);
+    }
+    exec.forEach((l, i) => { if (marked(l) && !inside.has(i)) { sites.push(where); problems.push(`${where}: an inline retry outside a function`); } });
+  }
+  return { sites, problems };
+}
+
 /** build-engine-app.mjs: the wrapper around the tauri build only, verbose, on macOS with a dmg. */
 export function engineAppProblems(text: string): string[] {
   const out: string[] = [];
@@ -112,6 +167,12 @@ describe("a retry wraps a named infrastructure class of a non-test step", () => 
     const calls = WORKFLOWS.flatMap((n) => code(TEXT[n]).filter((l) => l.includes("retry-infra.sh")));
     expect(calls.length).toBeGreaterThanOrEqual(24);
     expect(WORKFLOWS.flatMap((n) => wrapperProblems(TEXT[n]))).toEqual([]);
+  });
+
+  it("the one inline retry is macos-sign's detach: exit 16 alone, once, announced, and every detach there goes through it", () => {
+    const all = WORKFLOWS.map((n) => inlineRetries(`${n}.yml`, TEXT[n]));
+    expect(all.flatMap((r) => r.sites)).toEqual(["build.yml macos-sign"]);
+    expect(all.flatMap((r) => r.problems)).toEqual([]);
   });
 
   it("macOS compiles its Rust tests through the wrapper, then runs them unwrapped", () => {
@@ -161,5 +222,29 @@ describe("a retry wraps a named infrastructure class of a non-test step", () => 
 
     expect(engineAppProblems(ENGINE_APP.replace('"build", "--verbose"', '"build"'))).toEqual(["the wrapped call is not the verbose tauri build"]);
     expect(engineAppProblems(ENGINE_APP.replace('process.platform === "darwin" && ', ""))).toEqual(["no darwin + dmg condition"]);
+  });
+
+  it("the inline retry reader refuses another status, a second retry, another command, a loop, a bare detach and another job", () => {
+    const fn = [
+      "detach() {", "  rc=0", '  hdiutil detach "$1" || rc=$?', '  if [ "$rc" -eq 16 ]; then',
+      '    echo "::warning title=Retried once%3A hdiutil-busy::busy; running it once more"', "    sleep 5", '    hdiutil detach "$1"',
+      "  else", '    return "$rc"', "  fi", "}", 'detach "$MNT"',
+    ].join("\n");
+    const wf = (job: string, run: string) => `jobs:\n  ${job}:\n    steps:\n      - name: s\n        run: |\n${run.split("\n").map((l) => `          ${l}`).join("\n")}\n`;
+    expect(inlineRetries("x.yml", wf("macos-sign", fn)), "the positive control").toEqual({ sites: ["x.yml macos-sign"], problems: [] });
+    const planted: Array<[string, string]> = [
+      ["another status", fn.replace('"$rc" -eq 16', '"$rc" -eq 1')],
+      ["a second retry", fn.replace('    hdiutil detach "$1"\n', '    hdiutil detach "$1" || hdiutil detach "$1"\n')],
+      ["another command", fn.replace('    hdiutil detach "$1"\n', '    hdiutil attach "$1"\n')],
+      ["a loop", fn.replace('    sleep 5\n', '    for _ in 1 2 3; do sleep 5; done\n')],
+      ["the announcement without its class", fn.replace("title=Retried once%3A hdiutil-busy::", "title=Retried once::")],
+      ["a silent retry", fn.replace('    echo "::warning title=Retried once%3A hdiutil-busy::busy; running it once more"\n', "")],
+      ["a bare detach beside it", `${fn}\nhdiutil detach "$OTHER"`],
+      ["an announcement outside a function", `${fn}\necho "::warning title=Retried once%3A hdiutil-busy::x"`],
+    ];
+    for (const [what, run] of planted) expect(inlineRetries("x.yml", wf("macos-sign", run)).problems, what).toHaveLength(1);
+    /* The same function in a job that can reach the wrapper is a second site, which the census refuses. */
+    const twice = `${wf("macos-sign", fn)}  macos:\n    steps:\n      - name: s\n        run: |\n${fn.split("\n").map((l) => `          ${l}`).join("\n")}\n`;
+    expect(inlineRetries("x.yml", twice).sites).toEqual(["x.yml macos-sign", "x.yml macos"]);
   });
 });
