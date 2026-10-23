@@ -82,6 +82,8 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /folders": verbs("folder_create"),
   "POST /kb": none,
   "POST /mailboxes": mbx,
+  "POST /mailboxes/:id/filings/leave": { rows: "sync+mailboxes", verbs: [] },
+  "POST /mailboxes/:id/filings/retry": mbx,
   "POST /mailboxes/:id/gap-letters": mbx,
   "POST /mailboxes/:id/inbound-quiet/dismiss": mbx,
   "POST /mailboxes/:id/organize": mbx,

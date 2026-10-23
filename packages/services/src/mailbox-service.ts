@@ -32,6 +32,9 @@ import { defaultMailboxAllowance } from "./mailbox-allowance-registry.js";
 import { lockAccountRow, lockAccountSettingsRow, lockMailboxRow } from "./account-lock.js";
 import { recordSettingsChange } from "./consent-seed.js";
 import { ownedMessages } from "./message-service.js";
+import {
+  leaveMailboxFilings, readMailboxFilings, retryMailboxFilings, type MailboxFilingsDTO,
+} from "./mailbox-filings.js";
 import type { KeyProvider } from "./auth/crypto.js";
 import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
@@ -202,6 +205,10 @@ export interface OrganizeHereInput {
 export const canonicalAddress = (raw: string): string => raw.trim();
 
 type MailboxRow = typeof mailboxes.$inferSelect;
+
+/** A stored class on the wire: a class this build cannot name is `unknown`, never "none recorded". */
+const wireRefusalClass = (v: string | null | undefined): string | null =>
+  v === null || v === undefined ? null : isFilingRefusalClass(v) ? v : "unknown";
 
 /** The filing aggregate over a mailbox's `folder_state` rows; absent when it has none. */
 interface FilingFacts {
@@ -2100,6 +2107,21 @@ export class MailboxService {
       .where(eq(mailboxFolders.mailboxId, id));
   }
 
+  /** Settings → Mailboxes' waiting filings — `mailbox-filings.ts`. */
+  readFilings(ctx: ServiceContext, id: string): Promise<MailboxFilingsDTO> {
+    return readMailboxFilings(ctx, id);
+  }
+
+  retryFilings(ctx: ServiceContext, id: string, body: unknown): Promise<{ reset: number; skipped: number }> {
+    return retryMailboxFilings(ctx, id, body);
+  }
+
+  leaveFilings(
+    ctx: ServiceContext, id: string, body: unknown,
+  ): Promise<{ settled: number; remaining: number; seq: bigint | null }> {
+    return leaveMailboxFilings(ctx, id, body);
+  }
+
   async dismissInboundQuiet(ctx: ServiceContext, id: string): Promise<MailboxDTO> {
     // Dismiss the forwarding-detection notice (mail 0078) — "this mailbox is quiet and I know it".
     // One timestamp, stamped over whatever stood (a repeat press only makes it MORE durable; the
@@ -3182,14 +3204,10 @@ export class MailboxService {
         oldestPendingAt: pending?.oldestPendingAt?.toISOString() ?? null,
         nextAttemptAt: pending?.nextAttemptAt?.toISOString() ?? null,
         attempts: pending?.attempts ?? 0,
-        lastRefusalClass: isFilingRefusalClass(pending?.lastRefusalClass)
-          ? pending!.lastRefusalClass!
-          : null,
+        lastRefusalClass: wireRefusalClass(pending?.lastRefusalClass),
         stuck: pending?.stuck ?? 0,
         stuckSince: pending?.stuckSince?.toISOString() ?? null,
-        stuckRefusalClass: isFilingRefusalClass(pending?.stuckRefusalClass)
-          ? pending!.stuckRefusalClass!
-          : null,
+        stuckRefusalClass: wireRefusalClass(pending?.stuckRefusalClass),
         // THE READ'S OWN INSTANT, so a client can say when it last looked instead of running a
         // clock over a figure it has not re-fetched. `MailStateProvider` polls this route every
         // 30 s and re-fetches on nothing else, so a strip with a live clock and no `asOf` was

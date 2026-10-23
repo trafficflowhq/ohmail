@@ -337,10 +337,12 @@ describe("cron reconciler backstop", () => {
     // does — so a due-filter that only the always-on loop honoured would let this pass hammer a
     // refusing provider once per tick, which is the head-of-line blocking mail 0058 removed.
     await h.db.update(folderState)
-      .set({
-        desiredFolder: "ohmail/Receipts", reconcileStatus: "pending", lastSetBy: "us",
-        attempts: 2, nextAttemptAt: new Date(Date.now() + 60 * 60 * 1000),
-      })
+      .set({ desiredFolder: "ohmail/Receipts", reconcileStatus: "pending", lastSetBy: "us" })
+      .where(eq(folderState.messageId, row!.id));
+    // The deferral, written as the worker writes it (no desired folder), so mail 0163's
+    // fresh-intent trigger keeps it.
+    await h.db.update(folderState)
+      .set({ attempts: 2, nextAttemptAt: new Date(Date.now() + 60 * 60 * 1000) })
       .where(eq(folderState.messageId, row!.id));
 
     expect(await runReconcileCron(cfgFrom(h))).toEqual({ ran: true });

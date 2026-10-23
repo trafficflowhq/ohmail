@@ -56,6 +56,28 @@ describe("normalizedHash — the rewrite decision, as a pure function", () => {
   });
 });
 
+describe("the Mailboxes pane names a mailbox — the strip's link opens that mailbox's block", () => {
+  it("`?mailbox=` round-trips on the mailboxes pane", () => {
+    expect(parseHash("#/settings/mailboxes?mailbox=mbx-2").settingsMailboxId).toBe("mbx-2");
+    expect(normalizedHash("#/settings/mailboxes?mailbox=mbx-2")).toBeNull();
+    expect(parseHash("#/settings/mailboxes?mailbox=a%2Fb").settingsMailboxId).toBe("a/b");
+    expect(canonicalHash(parseHash("#/settings/mailboxes?mailbox=a%2Fb"))).toBe("#/settings/mailboxes?mailbox=a%2Fb");
+    expect(parseHash("#/settings/mailboxes").settingsMailboxId).toBeNull();
+    expect(normalizedHash("#/settings/mailboxes?mailbox=")).toBe("#/settings/mailboxes");
+  });
+
+  it("is dropped on every other pane and view", () => {
+    for (const [hash, to] of [
+      ["#/settings/devices?mailbox=mbx-2", "#/settings/devices"],
+      ["#/settings?mailbox=mbx-2", "#/settings"],
+      ["#/ohbox?mailbox=mbx-2", "#/ohbox"],
+    ] as const) {
+      expect(parseHash(hash).settingsMailboxId, hash).toBeNull();
+      expect(normalizedHash(hash), hash).toBe(to);
+    }
+  });
+});
+
 describe("the shell corrects the address bar", () => {
   let roots: Root[] = [];
 

@@ -61,10 +61,14 @@ describe.skipIf(!AVAILABLE)("the apply path writes no pre-I/O desire over a newe
   }
 
   /** The competing door: a decision that commits between the caller's read and this write. */
-  const commitNewerDesire = async (messageId: string) =>
-    owned.db.update(folderState)
-      .set({ desiredFolder: NEWER, reconcileStatus: "pending", attempts: 3 })
+  const commitNewerDesire = async (messageId: string) => {
+    await owned.db.update(folderState)
+      .set({ desiredFolder: NEWER, reconcileStatus: "pending" })
       .where(eq(folderState.messageId, messageId));
+    // The newer intent's own schedule, written as its deferrals write it: no desired folder, so
+    // mail 0163's fresh-intent trigger (which zeroes the schedule on a changed desire) keeps it.
+    await owned.db.update(folderState).set({ attempts: 3 }).where(eq(folderState.messageId, messageId));
+  };
 
   const rowOf = async (messageId: string) =>
     (await owned.db.select().from(folderState).where(eq(folderState.messageId, messageId)))[0]!;

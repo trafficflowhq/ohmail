@@ -113,7 +113,7 @@ describe("a signed-in account can connect a mailbox without leaving the shell", 
     // shared view must keep working with the prop absent.
     // The pane leads the Settings → Mailboxes node; the self-check sits beside it, a second consumer.
     expect(read("../app/(product)/mailbox/CloudShell.tsx"))
-      .toMatch(/mailboxSection=\{<><MailboxSection subscriptionPane=\{manageOffered\} \/><MailboxSelfCheck check=\{mailboxApi\.selfCheck\} \/><\/>\}/);
+      .toMatch(/mailboxSection=\{<><MailboxSection subscriptionPane=\{manageOffered\} \/><MailboxFilings api=\{filingsApi\} \/><MailboxSelfCheck check=\{mailboxApi\.selfCheck\} \/><\/>\}/);
     // Withheld in demo mode, like `accountSection` — `?demo=1` has no session to post with.
     expect(read("../app/shell/AppShell.tsx")).toMatch(/mailboxSection=\{demo \? undefined : mailboxSection\}/);
   });

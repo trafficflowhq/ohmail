@@ -721,10 +721,11 @@ export interface MailboxFacts {
   address: string;
   /**
    * The mailbox's user-facing label from `GET /mailboxes` — what the "me" recipient chip wears
-   * as the account's name (viewer redesign). `deriveMailState` must never read it, and does not: a
-   * label says nothing about whether mail is arriving. OPTIONAL and nullable because the wire
-   * is (`MailboxDTO.displayName` — OAuth connects fill it from the provider, IMAP connects only
-   * when the user typed one), and the chip's fallback for both absences is the bare address.
+   * as the account's name (viewer redesign). The ladder never decides on it: a label says nothing
+   * about whether mail is arriving; the filing arm only carries it to name the mailbox. OPTIONAL
+   * and nullable because the wire is (`MailboxDTO.displayName` — OAuth connects fill it from the
+   * provider, IMAP connects only when the user typed one), and the chip's fallback for both
+   * absences is the bare address.
    */
   displayName?: string | null;
   /** The 3-member lifecycle union, widened to `string` because the wire is a string. */
@@ -1712,6 +1713,12 @@ export interface FilingReport {
   } | null;
   /** When the facts behind this were read — the strip says "as of HH:MM". */
   asOf: string | null;
+  /** How many live mailboxes the arm is about. */
+  mailboxes: number;
+  /** The first of them in `GET /mailboxes` order — the strip names it and links to it. */
+  first: { id: string; address: string; displayName: string | null } | null;
+  /** The covered mailboxes carry different reasons; {@link reason} is then null. */
+  reasonsDiffer: boolean;
 }
 
 /**
@@ -1800,10 +1807,23 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
       return best === null || at > best ? at : best;
     }, null,
   );
-  const reason = filingReason(
-    rows.map((m) => m.filing.lastRefusalClass).find((c) => c !== null) ?? null,
-  );
   const waitedMinutes = minutesSince(oldestPendingAt, now);
+  /* WHICH MAILBOXES AN ARM IS ABOUT, and their reason: each covered mailbox brings its own class,
+   * and the report states the shared one or says they differ. The first non-null class across
+   * every mailbox spoke for all of them, and a mailbox nothing refused read as refused. */
+  type Row = (typeof rows)[number];
+  const about = (covered: Row[], cls: (m: Row) => string | null) => {
+    const reasons = covered.map((m) => filingReason(cls(m)));
+    const reasonsDiffer = reasons.some((r) => r !== reasons[0]);
+    const m = covered[0];
+    return {
+      mailboxes: covered.length,
+      first: m ? { id: m.id, address: m.address, displayName: m.displayName ?? null } : null,
+      reason: reasonsDiffer ? null : reasons[0] ?? null,
+      reasonsDiffer,
+    };
+  };
+  const last = (m: Row) => m.filing.lastRefusalClass;
   const lastPassSeconds = secondsSince(lastCycleAt, now);
   /* NOTHING OUTSTANDING ⇒ NO REPORT, rather than a report with an arm nobody renders.
    *
@@ -1814,7 +1834,8 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
   if (count === 0) return null;
 
   const base = {
-    count, deferred, reason, nextAttemptAt, waitedMinutes, lastPassSeconds, who: null, asOf,
+    count, deferred, nextAttemptAt, waitedMinutes, lastPassSeconds, who: null, asOf,
+    ...about(rows.filter((m) => m.filing.due + m.filing.deferred > 0), last),
   } as const;
 
   /* Who files this mailbox, when it is not us: a READER's decisions are
@@ -1834,6 +1855,7 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
   if (elsewhere) {
     return {
       ...base,
+      ...about([elsewhere], last),
       arm: "elsewhere",
       // The SCHEDULE is withheld deliberately: it is our ladder, and it is not what these rows
       // are waiting for.
@@ -1865,12 +1887,17 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
       return {
         ...base, arm: "stuck", count: stuck,
         waitedMinutes: minutesSince(earliest(rows.map((m) => m.filing.stuckSince ?? null)), now),
-        reason: filingReason(rows.map((m) => m.filing.stuckRefusalClass ?? null).find((c) => c !== null) ?? null),
+        ...about(rows.filter((m) => (m.filing.stuck ?? 0) > 0), (m) => m.filing.stuckRefusalClass ?? null),
       };
     }
   } else if (attempts >= FILING_STUCK_ATTEMPTS
       || (waitedMinutes !== null && waitedMinutes * 60_000 >= FILING_STUCK_MS)) {
-    return { ...base, arm: "stuck" };
+    // An older server: the aggregate rule, and the mailboxes that meet it on their own figures.
+    const legacyStuck = (m: Row): boolean => {
+      const w = minutesSince(m.filing.oldestPendingAt, now);
+      return m.filing.attempts >= FILING_STUCK_ATTEMPTS || (w !== null && w * 60_000 >= FILING_STUCK_MS);
+    };
+    return { ...base, arm: "stuck", ...about(rows.filter(legacyStuck), last) };
   }
 
   /* WAITING — a refusal is recorded and the retry is scheduled ahead. Keyed on `deferred` rather
@@ -1878,7 +1905,10 @@ function filingReportOf(live: MailboxFacts[], now: number): FilingReport | null 
    * next attempt has already come round is due again and is being worked on, which is WORKING.
    * The class stays on the report either way — it is what the row has been through, not a
    * schedule. */
-  if (deferred > 0) return { ...base, arm: "waiting" };
+  if (deferred > 0) {
+    // The title counts the rows that wait for a retry, not the ones the next pass will take.
+    return { ...base, arm: "waiting", count: deferred, ...about(rows.filter((m) => m.filing.deferred > 0), last) };
+  }
 
   /* WORKING — the ordinary shape of the handoff. `lastPassSeconds` is the half that makes it a
    * fact rather than reassurance. */

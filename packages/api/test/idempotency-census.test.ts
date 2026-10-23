@@ -128,18 +128,20 @@ describe("the idempotency census over everything that spends", () => {
     // 81 -> 82 with the Screener's put-back, `guarded` on its own route: a message put back is at
     // the gate and no longer where the pass filed it, so a replay puts nothing back.
     // 82 -> 83 with the gap offer's answer, `state`: a replayed File finds the press already there.
-    expect(spenders).toHaveLength(83);
+    // 83 -> 85 with the waiting filings' two presses: Try again `state` (a replay re-arms rows
+    // already armed), Leave `guarded` (a settled row is no longer pending, so a replay settles none).
+    expect(spenders).toHaveLength(85);
     // 19 -> 25 with the six creates that mint a durable row per call and now claim their key:
     // snippets, kb, notify-rules, the two notes and workflows.
     // 25 -> 26 with the tag create, which claims its key: a retry whose answer was lost met the
     // name rule over the tag it had made.
     expect(keyedByMiddleware).toHaveLength(26);
-    expect(declared).toHaveLength(83 - 26);
+    expect(declared).toHaveLength(85 - 26);
     // Per disposition, so a route that CHANGES its answer moves two numbers rather than none.
     expect(withDisposition("handler").map(key))
       .toEqual(["DELETE /rules/:id", "POST /attachments/staging"]);
-    expect(withDisposition("state")).toHaveLength(40);
-    expect(withDisposition("guarded")).toHaveLength(11);
+    expect(withDisposition("state")).toHaveLength(41);
+    expect(withDisposition("guarded")).toHaveLength(12);
     expect(withDisposition("ephemeral").map(key)).toEqual([
       "POST /account/checkout/confirm",
       "POST /account/manage-link",

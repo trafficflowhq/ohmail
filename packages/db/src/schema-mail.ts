@@ -894,8 +894,8 @@ export const folderState = pgTable("folder_state", {
    * WHY the last attempt was refused — one of `refused | no_such_folder | read_only |
    * over_quota`, NULL while no refusal stands. A CLASS, not the free text the block above
    * forbids; {@link RECONCILE_REFUSAL_CLASSES} in `apps/worker/src/sync.ts` holds the mapping and
-   * the CHECK's membership. Written by the deferral and cleared by a fresh intent, alongside the
-   * schedule pair — one group, because a class without its schedule is a reason for nothing and a
+   * the CHECK's membership. Written by the deferral and cleared by a fresh intent (mail 0163's
+   * trigger, on any change of `desired_folder`), alongside the schedule pair — one group, because a class without its schedule is a reason for nothing and a
    * schedule without its class is the sentence this column exists to end. A TRANSPORT failure
    * writes NEITHER: an unreachable mail host is not this message's refusal.
    */
@@ -907,15 +907,17 @@ export const folderState = pgTable("folder_state", {
    * Trash and later deleted elsewhere must not inherit its previous life's origin;
    * `upsertDesired` takes the value as an argument, so a caller cannot write `desired_folder`
    * without saying what this becomes. A path, never trusted: `restore` resolves it and falls back
-   * to INBOX — no CHECK, no FK. NOT a `change_log` read: the log has a retention horizon — a
-   * restore would work for a week, then silently stop.
+   * to INBOX — no CHECK, no FK. Settings' "Leave them where they are" clears it too. NOT a
+   * `change_log` read: the log has a retention horizon — a restore would work for a week, then
+   * silently stop.
    */
   trashedFrom: text("trashed_from"),
   /**
    * When the person PUT BACK the Screener's automatic filing of this message (mail 0138). The
    * undo moves it to the gate through the ordinary move door, whose `last_set_by = 'us'` the
    * auto-apply candidate statement admits; this is that statement's sixth exclusion, so the pass
-   * never files the message again. Written by the undo alone, never cleared.
+   * never files the message again. Written by the undo and by Settings' "Leave them where they
+   * are" (`mailbox-filings.ts`), never cleared.
    */
   autoFilingUndoneAt: timestamp("auto_filing_undone_at", { withTimezone: true }),
   /**

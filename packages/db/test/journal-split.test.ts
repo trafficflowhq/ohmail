@@ -3079,6 +3079,13 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
   "0162_outbound_sends_offer_state": [
     "a834f367d628f76f",   // ADD COLUMN IF NOT EXISTS outbound_sends.offer_state text NOT NULL DEFAULT 'unknown'
   ],
+  // A NEW FILING STARTS FRESH — the trigger function that resets the schedule and the refusal class,
+  // and the BEFORE UPDATE trigger that runs it when desired_folder changes, where pg_trigger lacks it.
+  // No DML.
+  "0163_folder_state_fresh_intent": [
+    "6634aeab0254ff67",   // CREATE OR REPLACE FUNCTION folder_state_fresh_intent() … attempts 0, next_attempt_at and last_error_class NULL
+    "d3d90621a05fabdf",   // DO … CREATE TRIGGER folder_state_fresh_intent_tg BEFORE UPDATE … WHEN desired_folder changes, where pg_trigger lacks it
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4072,12 +4079,14 @@ describe("the two journals are well-formed", () => {
   // (1791602600064, 1791602600065) are strictly above 0159_rules_settled_press_at's, in order.
   // 162 → 163 for `0162_outbound_sends_offer_state`: its `when` (1791602600066) is strictly above
   // 0161_mailboxes_account_idx's.
+  // 163 → 164 for `0163_folder_state_fresh_intent` (idx 163): its `when` (1791602600067) is strictly
+  // above 0162_outbound_sends_offer_state's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 163], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 164], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

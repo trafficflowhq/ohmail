@@ -182,6 +182,11 @@ export interface Route {
    * would be a third state both readers would have to know about.
    */
   firstRunMailboxId: string | null;
+  /**
+   * Which mailbox the Mailboxes pane opens at — `#/settings/mailboxes?mailbox=<id>`, the strip's
+   * link to a mailbox whose filings wait; `null` everywhere else. Read like {@link firstRunMailboxId}.
+   */
+  settingsMailboxId: string | null;
 }
 
 /**
@@ -244,19 +249,19 @@ export function parseHash(hash: string): Route {
   const withMsg = (route: Route): Route =>
     messageId !== null && MESSAGE_VIEWS.includes(route.view) ? { ...route, messageId } : route;
   if (raw.startsWith("tag/") && raw.slice(4)) {
-    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "tag", tagId: raw.slice(4), folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   // `#/folder/<entityId>` — one of the mailbox's own folders (FOLDERS-SPEC.md §3, the rail).
   // The tag branch's shape exactly: an id the mirror does not hold falls back in the shell.
   if (raw.startsWith("folder/") && raw.slice(7)) {
-    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "folder", tagId: null, folderId: raw.slice(7), address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   // `#/address/<addr>` — everything from and to one correspondent. The tag branch's shape, with
   // the segment DECODED: see {@link Route.address} for why this one is escaped and the other two
   // are not. An address the mirror has no mail for falls back in the view (its empty state names
   // the address), never 404s here — exactly as an unknown tag or folder id does.
   if (raw.startsWith("address/") && raw.slice(8)) {
-    return withMsg({ view: "address", tagId: null, folderId: null, address: decodedAddress(raw.slice(8)), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+    return withMsg({ view: "address", tagId: null, folderId: null, address: decodedAddress(raw.slice(8)), screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
   }
   if (raw === "screener" || raw.startsWith("screener/")) {
     const sub = raw.split("/")[1];
@@ -272,6 +277,7 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      settingsMailboxId: null,
     };
   }
   // `#/triage`, `#/triage/aside`, `#/triage/resurface`. An unknown sub-path falls to the first
@@ -292,6 +298,7 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      settingsMailboxId: null,
     });
   }
   // `#/settings`, `#/settings/devices`, … A named pane is validated against `PANE_IDS`; an
@@ -312,6 +319,8 @@ export function parseHash(hash: string): Route {
       firstRunRerun: false,
       firstRunAdd: false,
       firstRunMailboxId: null,
+      // The Mailboxes pane alone reads the query: the strip's link names the mailbox to open.
+      settingsMailboxId: sub === "mailboxes" ? firstRunMailboxOf(query) : null,
     };
   }
   // `#/first-run` — the setup stage, OVER whatever the shell would otherwise show. The view is
@@ -331,10 +340,11 @@ export function parseHash(hash: string): Route {
       firstRunAdd: raw === "first-run/add",
       // The one route that reads the query. See {@link Route.firstRunMailboxId}.
       firstRunMailboxId: firstRunMailboxOf(query),
+      settingsMailboxId: null,
     };
   }
   const view = (VIEWS as readonly string[]).includes(raw) ? (raw as ViewId) : "ohbox";
-  return withMsg({ view, tagId: null, folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null });
+  return withMsg({ view, tagId: null, folderId: null, address: null, screenerSegment: "waiting", triagePile: "reply", settingsPane: null, messageId: null, firstRun: false, firstRunRerun: false, firstRunAdd: false, firstRunMailboxId: null, settingsMailboxId: null });
 }
 
 /**
@@ -374,8 +384,12 @@ export function canonicalHash(route: Route): string {
     return (route.triagePile === "reply" ? "#/triage" : `#/triage/${route.triagePile}`) + tail;
   // BOTH spellings are canonical for settings: bare (`settingsPane: null` — the pane is the
   // view's deep-link logic's to decide) and named. Only an UNKNOWN sub-path normalizes, to bare.
-  if (route.view === "settings")
-    return route.settingsPane === null ? "#/settings" : `#/settings/${route.settingsPane}`;
+  if (route.view === "settings") {
+    if (route.settingsPane === null) return "#/settings";
+    const named = route.settingsPane === "mailboxes" && route.settingsMailboxId !== null
+      ? `?mailbox=${encodeURIComponent(route.settingsMailboxId)}` : "";
+    return `#/settings/${route.settingsPane}${named}`;
+  }
   return `#/${route.view}${tail}`;
 }
 

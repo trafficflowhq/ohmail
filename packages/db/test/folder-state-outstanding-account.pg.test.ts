@@ -5,7 +5,9 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
 import { runMigrations } from "../src/admin.js";
 import { PG_TEST_URL, realPgAvailable, type makeTestDb } from "../src/testing.js";
-import { controlWithoutTrigger, drift, runWriteShapes } from "./folder-state-outstanding-cases.js";
+import {
+  controlFreshIntentWithoutTrigger, controlWithoutTrigger, drift, runFreshIntentShapes, runWriteShapes,
+} from "./folder-state-outstanding-cases.js";
 
 /**
  * MAIL 0160's COLUMN ON REAL POSTGRES: the write shapes of `folder-state-outstanding-account.test.ts`
@@ -52,5 +54,11 @@ describe.skipIf(!PG_UP)("mail 0160's column on real Postgres", () => {
     const db = await fresh("c");
     await runWriteShapes(db, "c");
     await controlWithoutTrigger(db, false, "c");
+  }, 120_000);
+
+  it("mail 0163: a new filing resets its schedule, the same filing and a deferral keep it", async () => {
+    const db = await fresh("fi");
+    await runFreshIntentShapes(db, "fi");
+    await controlFreshIntentWithoutTrigger(db, false, "fi");
   }, 120_000);
 });

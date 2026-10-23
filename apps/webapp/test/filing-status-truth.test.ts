@@ -260,6 +260,37 @@ describe("the filing strip distinguishes the four reasons a decision is outstand
     expect(s.filing?.arm).toBe("stuck");
     expect(s.filing?.count).toBe(3);
     expect(s.pending).toBe(3);
+    // The arm covers the one mailbox it is about, and that mailbox's reason.
+    expect(s.filing?.mailboxes).toBe(1);
+    expect(s.filing?.first).toEqual({ id: "b", address: "two@example.invalid", displayName: null });
+    expect(s.filing?.reason).toBe("over_quota");
+    expect(s.filing?.reasonsDiffer).toBe(false);
+  });
+
+  it("names how many mailboxes the arm covers, the first of them, and whether their reasons agree", () => {
+    const stuck = (cls: string | null) => ({
+      ...noFiling, due: 1, oldestPendingAt: ago(4_000_000), stuck: 1, stuckSince: ago(4_000_000), stuckRefusalClass: cls,
+    });
+    const two = (a: string | null, b: string | null) => deriveMailState(inputs({
+      mailboxes: [
+        mailbox({ id: "a", address: "one@example.invalid", displayName: "Work", filing: stuck(a) }),
+        mailbox({ id: "b", address: "two@example.invalid", filing: stuck(b) }),
+        mailbox({ id: "c", address: "three@example.invalid", filing: { ...noFiling, stuck: 0, stuckSince: null, stuckRefusalClass: null } }),
+      ],
+    })).filing;
+    expect(two(null, "read_only")).toMatchObject({
+      arm: "stuck", count: 2, mailboxes: 2, reason: null, reasonsDiffer: true,
+      first: { id: "a", address: "one@example.invalid", displayName: "Work" },
+    });
+    expect(two("read_only", "read_only")).toMatchObject({ mailboxes: 2, reason: "read_only", reasonsDiffer: false });
+  });
+
+  it("an unrecognised class reads 'unknown', and the waiting title counts the deferred rows", () => {
+    const s = deriveMailState(withFiling({
+      due: 1, deferred: 2, attempts: 1, oldestPendingAt: ago(60_000), lastRefusalClass: "transport",
+      nextAttemptAt: new Date(NOW + 60_000).toISOString(), stuck: 0, stuckSince: null, stuckRefusalClass: null,
+    }));
+    expect(s.filing).toMatchObject({ arm: "waiting", count: 2, reason: "unknown", mailboxes: 1 });
   });
 });
 
@@ -274,6 +305,10 @@ describe("the four sentences exist in both catalogues and none of them says 'cat
        the line on the date dropped it for exactly those servers, and `sync-bar-loader.test.ts`
        caught that — this keeps the pair from being collapsed back into one. */
     "filingWhere", "filingWhereAsOf",
+    // The mailbox and the reason, named: hours past the first, a count of mailboxes, and the
+    // sentence for mailboxes whose reasons disagree.
+    "filingStuckHours", "filingMailboxes", "filingReasonsDiffer", "filingReason_none",
+    "filingStuckWhy", "filingWaitingWhy",
   ] as const;
 
   it("every key this arm renders is in en.json and de.json", () => {

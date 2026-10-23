@@ -187,6 +187,11 @@ export {
 export {
   readMailboxProfile, type MailboxProfileView,
 } from "./profile-mirror-read.js";
+/* Settings → Mailboxes' waiting filings and the two presses on them — no dial, no move. */
+export {
+  readMailboxFilings, retryMailboxFilings, leaveMailboxFilings, FILINGS_PRESS_MAX, FILINGS_FOLDER_MAX_CHARS,
+  type MailboxFilingsDTO, type MailboxFilingsGroup, type MailboxFilingsReason,
+} from "./mailbox-filings.js";
 export {
   ThreadService, threadService, THREAD_MERGE_MAX_IDS,
   type ThreadPatchBody, type ThreadRenameBody, type ThreadMergeBody,

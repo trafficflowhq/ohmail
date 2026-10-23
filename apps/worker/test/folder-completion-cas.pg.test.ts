@@ -171,8 +171,11 @@ describe.skipIf(!AVAILABLE)("folder completion — the desire it read is a witne
     // pending intent, so this test is about the DESIRE surviving and not about the physical-fact
     // write the sibling test below exists to prove.
     await otherDb.update(folderState)
-      .set({ desiredFolder: SCREENER, reconcileStatus: "pending", attempts: 3, updatedAt: new Date() })
+      .set({ desiredFolder: SCREENER, reconcileStatus: "pending", updatedAt: new Date() })
       .where(eq(folderState.messageId, messageId));
+    // The newer intent's own schedule, written as a deferral writes it (no desired folder), so
+    // mail 0163's fresh-intent trigger keeps it.
+    await otherDb.update(folderState).set({ attempts: 3 }).where(eq(folderState.messageId, messageId));
 
     // the IMAP move landed at INBOX; this is its completion.
     await completeFiling(repo, accountId, mailboxId, p, LOC(OHBOX, "9:900"), SPECIAL);

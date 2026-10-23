@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "../src/testing.js";
 import { dialect } from "../src/dialect/index.js";
-import { controlWithoutTrigger, drift, runWriteShapes } from "./folder-state-outstanding-cases.js";
+import {
+  controlFreshIntentWithoutTrigger, controlWithoutTrigger, drift, runFreshIntentShapes, runWriteShapes,
+} from "./folder-state-outstanding-cases.js";
 
 /**
  * MAIL 0160: `folder_state.outstanding_account_id` cannot drift, because nothing counts. The store
@@ -26,6 +28,19 @@ describe("mail 0160's column on every write shape", () => {
     const db = await makeTestDb();
     await runWriteShapes(db, "c");
     await controlWithoutTrigger(db, dialect(db).name === "sqlite", "c");
+  });
+});
+
+describe("mail 0163: a new filing starts its schedule fresh", () => {
+  it("resets on a new desired folder, keeps on the same one and on a deferral", async () => {
+    const db = await makeTestDb();
+    await runFreshIntentShapes(db, "t");
+  });
+
+  it("control: without the trigger the new filing keeps the old refusal", async () => {
+    const db = await makeTestDb();
+    await runFreshIntentShapes(db, "c");
+    await controlFreshIntentWithoutTrigger(db, dialect(db).name === "sqlite", "c");
   });
 });
 

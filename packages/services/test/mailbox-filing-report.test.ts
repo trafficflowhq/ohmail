@@ -1,8 +1,12 @@
 import { describe, it, expect } from "vitest";
+import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import {
+  accounts, applyScreenerDecision, auditLog, changeLog, mailboxes, messages, folderState, type Tx,
+} from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
-import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
 /**
  * ═══ `MailboxDTO.pendingMoves` IS ONE NUMBER FOR FOUR SITUATIONS ════════════════════════════
@@ -48,10 +52,14 @@ type Db = Awaited<ReturnType<typeof makeTestDb>>;
 const ctxFor = (db: Db, accountId: string): ServiceContext =>
   ({ db, accountId, userId: null, now: () => NOW, requestId: "r" });
 
-async function seed(db: Db): Promise<{ accountId: string; mailboxId: string }> {
+async function seed(
+  db: Db, over: { organizer?: boolean; reader?: boolean; address?: string } = {},
+): Promise<{ accountId: string; mailboxId: string }> {
   const [a] = await db.insert(accounts).values({ name: "filing-report" }).returning();
   const [mb] = await db.insert(mailboxes).values({
-    accountId: a!.id, provider: "imap", address: "person@example.test",
+    accountId: a!.id, provider: "imap", address: over.address ?? "person@example.test",
+    ...(over.organizer || over.reader ? { organizeConsentedAt: minutesAgo(600) } : {}),
+    ...(over.reader ? { organizerRole: "reader" } : {}),
   }).returning();
   return { accountId: a!.id, mailboxId: mb!.id };
 }
@@ -71,7 +79,7 @@ async function seedFiling(
     observed?: string;
     status?: "pending" | "reconciled";
   },
-): Promise<void> {
+): Promise<string> {
   const [m] = await db.insert(messages).values({
     accountId: ids.accountId,
     mailboxId: ids.mailboxId,
@@ -93,6 +101,7 @@ async function seedFiling(
     nextAttemptAt: row.nextAttemptAt ?? null,
     ...(row.lastErrorClass !== undefined ? { lastErrorClass: row.lastErrorClass } : {}),
   });
+  return m!.id;
 }
 
 const minutesAgo = (n: number) => new Date(NOW.getTime() - n * 60_000);
@@ -262,5 +271,288 @@ describe("MailboxDTO.filing — the stuck rows are counted apart", () => {
     const f = (await svc.get(ctxFor(db, ids.accountId), ids.mailboxId)).filing!;
     expect(f.stuck).toBe(1);
     expect(f.stuckSince).toBe(minutesAgo(5).toISOString());
+  });
+});
+
+/**
+ * SETTINGS → MAILBOXES SHOWS THE WAITING FILINGS, AND TWO PRESSES. The strip said "6 messages have
+ * not been filed … · Settings → Mailboxes" and the pane said nothing. The read names how many,
+ * since when, into which folder and why; "Try again now" re-arms the schedule; "Leave them where
+ * they are" settles the intent where the mail already is. The API writes desired state only.
+ */
+const waiting = (o: { updatedAt?: Date; attempts?: number; nextAttemptAt?: Date | null; lastErrorClass?: string | null; desired?: string; observed?: string } = {}) =>
+  ({ updatedAt: minutesAgo(345), attempts: 1, nextAttemptAt: null, lastErrorClass: "refused", desired: "ohmail/Receipts", observed: "ohmail/Reads", ...o });
+
+async function row(db: Db, messageId: string) {
+  const [r] = await db.select().from(folderState).where(eq(folderState.messageId, messageId));
+  return r!;
+}
+
+/** A letter deleted from INBOX into "Trash" `ago` minutes before NOW; the move has not landed. */
+async function deletedLetter(db: Db, ids: { accountId: string; mailboxId: string }, ago: number): Promise<string> {
+  await db.update(mailboxes).set({ trashFolder: "Trash" }).where(eq(mailboxes.id, ids.mailboxId));
+  const id = await seedFiling(db, ids, 1, { updatedAt: minutesAgo(900), desired: "INBOX", status: "reconciled", by: "external" });
+  await db.update(messages).set({ nativeLocator: { folder: "INBOX", ref: "7:42" } }).where(eq(messages.id, id));
+  await new MessageService().delete({ ...ctxFor(db, ids.accountId), now: () => minutesAgo(ago) }, id);
+  return id;
+}
+
+/** The delete landed in Trash; the restore pressed an hour ago has not. */
+async function restoringLetter(db: Db, ids: { accountId: string; mailboxId: string }): Promise<string> {
+  const id = await deletedLetter(db, ids, 120);
+  await db.update(folderState).set({ observedFolder: "Trash", reconcileStatus: "reconciled" }).where(eq(folderState.messageId, id));
+  await db.update(messages).set({ nativeLocator: { folder: "Trash", ref: "9:5" } }).where(eq(messages.id, id));
+  await new MessageService().restore({ ...ctxFor(db, ids.accountId), now: () => minutesAgo(60) }, id);
+  return id;
+}
+
+describe("the waiting filings of one mailbox", () => {
+  it("reads groups by folder with a count per reason; fresh, external and other accounts' rows left out", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    await seedFiling(db, ids, 1, waiting());
+    await seedFiling(db, ids, 2, waiting({ updatedAt: minutesAgo(300), attempts: 0, lastErrorClass: null }));
+    await seedFiling(db, ids, 3, waiting({ updatedAt: minutesAgo(2), nextAttemptAt: minutesAhead(10), lastErrorClass: "read_only" }));
+    await seedFiling(db, ids, 4, { updatedAt: minutesAgo(1), desired: "ohmail/News" });
+    await seedFiling(db, ids, 5, { updatedAt: minutesAgo(20), by: "external", desired: "Archive" });
+    const other = await seed(db, { organizer: true, address: "other@example.test" });
+    await seedFiling(db, other, 6, waiting());
+    const r = await svc.readFilings(ctxFor(db, ids.accountId), ids.mailboxId);
+    expect(r).toEqual({
+      mailboxId: ids.mailboxId, asOf: NOW.toISOString(), more: false,
+      groups: [{
+        folder: "ohmail/Receipts", count: 3, deferred: 1, stuck: 2, deletes: 0,
+        since: minutesAgo(345).toISOString(), through: minutesAgo(2).toISOString(),
+        nextAttemptAt: minutesAhead(10).toISOString(), at: "ohmail/Reads",
+        reasons: [{ reason: "read_only", count: 1 }, { reason: "refused", count: 1 }, { reason: null, count: 1 }],
+      }],
+    });
+  });
+
+  it("is 404 for another account's mailbox and for a removed one; a reader's rows are not listed", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const other = await seed(db, { organizer: true, address: "other@example.test" });
+    await expect(svc.readFilings(ctxFor(db, other.accountId), ids.mailboxId)).rejects.toMatchObject({ httpStatus: 404 });
+    await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, other.mailboxId));
+    await expect(svc.readFilings(ctxFor(db, other.accountId), other.mailboxId)).rejects.toMatchObject({ httpStatus: 404 });
+    const reader = await seed(db, { reader: true, address: "reader@example.test" });
+    await seedFiling(db, reader, 7, waiting());
+    expect((await svc.readFilings(ctxFor(db, reader.accountId), reader.mailboxId)).groups).toEqual([]);
+  });
+
+  it("an unrecognised class reads 'unknown', never null", async () => {
+    const db = await makeTestDb();
+    if (dialect(db).name !== "sqlite") {
+      await db.execute(sql`alter table folder_state drop constraint folder_state_last_error_class_check`);
+    }
+    const ids = await seed(db, { organizer: true });
+    await seedFiling(db, ids, 1, waiting({ lastErrorClass: "transport" }));
+    const r = await svc.readFilings(ctxFor(db, ids.accountId), ids.mailboxId);
+    expect(r.groups[0]!.reasons).toEqual([{ reason: "unknown", count: 1 }]);
+    const f = (await svc.get(ctxFor(db, ids.accountId), ids.mailboxId)).filing!;
+    expect(f.lastRefusalClass).toBe("unknown");
+    expect(f.stuckRefusalClass).toBe("unknown");
+  });
+});
+
+describe("Try again now", () => {
+  it("re-arms that folder's waiting rows, skips a News pair, rings the doorbell, writes no change row", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const a = await seedFiling(db, ids, 1, waiting({ attempts: 3, nextAttemptAt: minutesAhead(300) }));
+    const b = await seedFiling(db, ids, 2, waiting({ desired: "Archive" }));
+    const news = await seedFiling(db, ids, 3, waiting({ desired: "ohmail/Receipts", observed: "ohmail/Reads" }));
+    await db.update(folderState).set({ desiredFolder: "ohmail/News" }).where(eq(folderState.messageId, news));
+    await db.update(folderState).set({ attempts: 2, lastErrorClass: "refused" }).where(eq(folderState.messageId, news));
+    const ctx = ctxFor(db, ids.accountId);
+    expect(await svc.retryFilings(ctx, ids.mailboxId, { folder: "ohmail/Receipts" })).toEqual({ reset: 1, skipped: 0 });
+    expect(await row(db, a)).toMatchObject({ attempts: 0, nextAttemptAt: null, lastErrorClass: null, updatedAt: minutesAgo(345) });
+    expect((await row(db, b)).attempts).toBe(1);
+    expect(await svc.retryFilings(ctx, ids.mailboxId, { folder: "ohmail/News" })).toEqual({ reset: 0, skipped: 1 });
+    expect((await row(db, news)).attempts).toBe(2);
+    const [mb] = await db.select({ at: mailboxes.syncRequestedAt }).from(mailboxes).where(eq(mailboxes.id, ids.mailboxId));
+    expect(mb!.at).toEqual(NOW);
+    expect(await db.select().from(changeLog).where(eq(changeLog.accountId, ids.accountId))).toEqual([]);
+    const audit = await db.select().from(auditLog).where(and(eq(auditLog.accountId, ids.accountId), eq(auditLog.action, "filing.retry")));
+    expect(audit.map((x) => x.payload)).toEqual([
+      { mailboxId: ids.mailboxId, folder: "ohmail/Receipts", count: 1 },
+      { mailboxId: ids.mailboxId, folder: "ohmail/News", count: 0 },
+    ]);
+  });
+
+  it("is refused on a reader and on another account's mailbox, and validates the folder", async () => {
+    const db = await makeTestDb();
+    const reader = await seed(db, { reader: true });
+    await seedFiling(db, reader, 1, waiting());
+    await expect(svc.retryFilings(ctxFor(db, reader.accountId), reader.mailboxId, { folder: "ohmail/Receipts" }))
+      .rejects.toMatchObject({ code: "organized_elsewhere" });
+    const other = await seed(db, { organizer: true, address: "other@example.test" });
+    await expect(svc.retryFilings(ctxFor(db, other.accountId), reader.mailboxId, { folder: "ohmail/Receipts" }))
+      .rejects.toMatchObject({ httpStatus: 404 });
+    for (const folder of [undefined, "", 7, "x".repeat(1025)]) {
+      await expect(svc.retryFilings(ctxFor(db, other.accountId), other.mailboxId, { folder }))
+        .rejects.toMatchObject({ httpStatus: 400 });
+    }
+    expect((await row(db, (await db.select().from(messages).where(eq(messages.mailboxId, reader.mailboxId)))[0]!.id)).attempts).toBe(1);
+  });
+});
+
+describe("Leave them where they are", () => {
+  it("settles desired := observed verbatim, clears the schedule, marks the put-back, one move row each", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    // A named Trash makes no living row a delete.
+    await db.update(mailboxes).set({ trashFolder: "Trash" }).where(eq(mailboxes.id, ids.mailboxId));
+    const a = await seedFiling(db, ids, 1, waiting());
+    const b = await seedFiling(db, ids, 2, waiting({ observed: "INBOX", updatedAt: minutesAgo(10) }));
+    const ctx = ctxFor(db, ids.accountId);
+    const through = (await svc.readFilings(ctx, ids.mailboxId)).groups[0]!.through!;
+    const r = await svc.leaveFilings(ctx, ids.mailboxId, { folder: "ohmail/Receipts", through });
+    expect(r.settled).toBe(2);
+    expect(r.remaining).toBe(0);
+    expect(r.seq).not.toBeNull();
+    for (const [id, observed] of [[a, "ohmail/Reads"], [b, "INBOX"]] as const) {
+      expect(await row(db, id)).toMatchObject({
+        desiredFolder: observed, observedFolder: observed, reconcileStatus: "reconciled", lastSetBy: "us",
+        attempts: 0, nextAttemptAt: null, lastErrorClass: null, trashedFrom: null,
+        updatedAt: NOW, decidedAt: NOW, autoFilingUndoneAt: NOW,
+      });
+    }
+    const moves = await db.select().from(changeLog).where(eq(changeLog.accountId, ids.accountId));
+    expect(moves.map((c) => [c.entityId, c.op, c.meta]).sort()).toEqual([
+      [a, "move", { from: "ohmail/Receipts", to: "ohmail/Reads" }],
+      [b, "move", { from: "ohmail/Receipts", to: "INBOX" }],
+    ].sort());
+    expect(r.seq).toBe(moves.map((c) => c.seq).reduce((x, y) => (y > x ? y : x)));
+    const [audit] = await db.select().from(auditLog).where(eq(auditLog.action, "filing.leave"));
+    expect(audit!.accountId).toBe(ids.accountId);
+    expect(audit!.payload).toEqual({ mailboxId: ids.mailboxId, folder: "ohmail/Receipts", count: 2 });
+    expect((audit!.inverse as { desiredFolder: string; messageIds: string[] }).desiredFolder).toBe("ohmail/Receipts");
+    expect([...(audit!.inverse as { messageIds: string[] }).messageIds].sort()).toEqual([a, b].sort());
+    // The strip clears: nothing of ours is outstanding on the mailbox any more.
+    const dto = await svc.get(ctx, ids.mailboxId);
+    expect(dto.pendingMoves).toBe(0);
+    expect(dto.filing?.stuck).toBe(0);
+  });
+
+  it("CAS: a row filed elsewhere since, or touched after `through`, stays; the same millisecond settles", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const through = minutesAgo(10);
+    const same = await seedFiling(db, ids, 1, waiting({ updatedAt: through }));
+    // A server keeps microseconds; the press's `through` is milliseconds.
+    if (dialect(db).name !== "sqlite") {
+      await db.execute(sql`update folder_state set updated_at = updated_at + interval '400 microseconds' where message_id = ${same}`);
+    }
+    const later = await seedFiling(db, ids, 2, waiting({ updatedAt: new Date(through.getTime() + 2) }));
+    const elsewhere = await seedFiling(db, ids, 3, waiting({ desired: "Archive" }));
+    const r = await svc.leaveFilings(ctxFor(db, ids.accountId), ids.mailboxId, { folder: "ohmail/Receipts", through: through.toISOString() });
+    expect(r.settled).toBe(1);
+    expect((await row(db, same)).reconcileStatus).toBe("reconciled");
+    expect((await row(db, later)).desiredFolder).toBe("ohmail/Receipts");
+    expect((await row(db, elsewhere)).desiredFolder).toBe("Archive");
+  });
+
+  it("settles at most 500 rows a press and says what remains", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const made = await db.insert(messages).values(Array.from({ length: 501 }, (_, i) => ({
+      accountId: ids.accountId, mailboxId: ids.mailboxId, dedupKey: `mid:<bulk-${i}@example.test>`, bodyHash: `bulk-${i}`,
+    }))).returning({ id: messages.id });
+    await db.insert(folderState).values(made.map((m) => ({
+      messageId: m.id, desiredFolder: "ohmail/Receipts", observedFolder: "INBOX", lastSetBy: "us", updatedAt: minutesAgo(60),
+    })));
+    const r = await svc.leaveFilings(ctxFor(db, ids.accountId), ids.mailboxId, { folder: "ohmail/Receipts", through: NOW.toISOString() });
+    expect(r).toMatchObject({ settled: 500, remaining: 1 });
+  });
+
+  it("never settles a waiting delete: it stays deleted and in Trash", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const id = await deletedLetter(db, ids, 10);
+    const ms = new MessageService();
+    const ctx = ctxFor(db, ids.accountId);
+    const [g] = (await svc.readFilings(ctx, ids.mailboxId)).groups;
+    expect(g).toMatchObject({ folder: "Trash", count: 1, deletes: 1 });
+    expect(await svc.leaveFilings(ctx, ids.mailboxId, { folder: "Trash", through: g!.through })).toMatchObject({ settled: 0, remaining: 0 });
+    expect(await row(db, id)).toMatchObject({ desiredFolder: "Trash", reconcileStatus: "pending", trashedFrom: "INBOX" });
+    expect((await ms.listTrash(ctx, { view: "trash" })).items.map((m) => m.id)).toEqual([id]);
+  });
+
+  it("a waiting restore is no delete: Leave keeps it in Trash, where Restore brings it back", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const id = await restoringLetter(db, ids);
+    const ms = new MessageService();
+    const ctx = ctxFor(db, ids.accountId);
+    const [g] = (await svc.readFilings(ctx, ids.mailboxId)).groups;
+    expect(g).toMatchObject({ folder: "INBOX", count: 1, deletes: 0, at: "Trash" });
+    expect(await svc.leaveFilings(ctx, ids.mailboxId, { folder: "INBOX", through: g!.through })).toMatchObject({ settled: 1, remaining: 0 });
+    expect(await row(db, id)).toMatchObject({ desiredFolder: "Trash", observedFolder: "Trash", reconcileStatus: "reconciled" });
+    expect((await ms.listTrash(ctx, { view: "trash" })).items.map((m) => m.id)).toEqual([id]);
+    expect((await ms.restore(ctx, id)).restoreTo).toBe("INBOX");
+  });
+
+  // Every attach re-writes trash_folder: a rename or a lost Trash must not make a delete leavable.
+  for (const trash of ["Deleted Items", null]) {
+    it(`never settles a waiting delete once the attach names its Trash ${trash ?? "nowhere"}`, async () => {
+      const db = await makeTestDb();
+      const ids = await seed(db, { organizer: true });
+      const id = await deletedLetter(db, ids, 10);
+      await db.update(mailboxes).set({ trashFolder: trash }).where(eq(mailboxes.id, ids.mailboxId));
+      const ctx = ctxFor(db, ids.accountId);
+      const [g] = (await svc.readFilings(ctx, ids.mailboxId)).groups;
+      expect(g).toMatchObject({ folder: "Trash", count: 1, deletes: 1 });
+      expect(await svc.leaveFilings(ctx, ids.mailboxId, { folder: "Trash", through: g!.through })).toMatchObject({ settled: 0, remaining: 0 });
+      expect(await row(db, id)).toMatchObject({ desiredFolder: "Trash", reconcileStatus: "pending", trashedFrom: "INBOX" });
+    });
+  }
+
+  it("never settles a waiting restore out of a Trash the attach has since renamed", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const id = await restoringLetter(db, ids);
+    await db.update(mailboxes).set({ trashFolder: "Deleted Items" }).where(eq(mailboxes.id, ids.mailboxId));
+    const ctx = ctxFor(db, ids.accountId);
+    const [g] = (await svc.readFilings(ctx, ids.mailboxId)).groups;
+    expect(g).toMatchObject({ folder: "INBOX", count: 1, deletes: 1, at: "Trash" });
+    expect(await svc.leaveFilings(ctx, ids.mailboxId, { folder: "INBOX", through: g!.through })).toMatchObject({ settled: 0, remaining: 0 });
+    expect(await row(db, id)).toMatchObject({ desiredFolder: "INBOX", observedFolder: "Trash", reconcileStatus: "pending" });
+  });
+
+  it("is refused on a reader, across accounts, and without a timestamp", async () => {
+    const db = await makeTestDb();
+    const reader = await seed(db, { reader: true });
+    const id = await seedFiling(db, reader, 1, waiting());
+    await expect(svc.leaveFilings(ctxFor(db, reader.accountId), reader.mailboxId, { folder: "ohmail/Receipts", through: NOW.toISOString() }))
+      .rejects.toMatchObject({ code: "organized_elsewhere" });
+    const other = await seed(db, { organizer: true, address: "other@example.test" });
+    await expect(svc.leaveFilings(ctxFor(db, other.accountId), reader.mailboxId, { folder: "ohmail/Receipts", through: NOW.toISOString() }))
+      .rejects.toMatchObject({ httpStatus: 404 });
+    await expect(svc.leaveFilings(ctxFor(db, other.accountId), other.mailboxId, { folder: "ohmail/Receipts", through: "soon" }))
+      .rejects.toMatchObject({ httpStatus: 400 });
+    expect((await row(db, id)).desiredFolder).toBe("ohmail/Receipts");
+  });
+});
+
+describe("a new filing starts its schedule fresh", () => {
+  it("through the move door", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const id = await seedFiling(db, ids, 1, waiting({ attempts: 4, nextAttemptAt: minutesAhead(360) }));
+    await new MessageService().move(ctxFor(db, ids.accountId), id, { folder: "ohmail/Screened" });
+    expect(await row(db, id)).toMatchObject({ desiredFolder: "ohmail/Screened", attempts: 0, nextAttemptAt: null, lastErrorClass: null });
+  });
+
+  it("through the Screener's apply", async () => {
+    const db = await makeTestDb();
+    const ids = await seed(db, { organizer: true });
+    const id = await seedFiling(db, ids, 1, waiting({ desired: "ohmail/Screener", observed: "INBOX" }));
+    await db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx) as unknown as Tx, {
+      accountId: ids.accountId, scope: "sender", address: "stranger@example.test", appliedFolder: "ohmail/Screened",
+      decision: "yes", triggeringActionId: "screener:fresh", now: NOW, decidedBy: "person", overExisting: "converge",
+    }));
+    expect(await row(db, id)).toMatchObject({ desiredFolder: "ohmail/Screened", attempts: 0, nextAttemptAt: null, lastErrorClass: null });
   });
 });

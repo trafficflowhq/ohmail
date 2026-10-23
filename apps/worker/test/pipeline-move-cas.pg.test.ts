@@ -100,8 +100,11 @@ describe("applyReconcileAction — a desire committed during the move survives (
         repo,
         adapter: adapterThatMoves(async () => {
           await otherDb.update(folderState)
-            .set({ desiredFolder: NEWER, reconcileStatus: "pending", attempts: 3, updatedAt: new Date() })
+            .set({ desiredFolder: NEWER, reconcileStatus: "pending", updatedAt: new Date() })
             .where(eq(folderState.messageId, messageId));
+          // The newer intent's own schedule, written as a deferral writes it (no desired folder), so
+          // mail 0163's fresh-intent trigger keeps it.
+          await otherDb.update(folderState).set({ attempts: 3 }).where(eq(folderState.messageId, messageId));
         }),
         accountId, mailboxId: "",
       },
