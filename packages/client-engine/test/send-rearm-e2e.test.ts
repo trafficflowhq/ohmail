@@ -24,12 +24,12 @@ import { FIXED_NOW, makeDeps, seedBody, seedMessage, seedSession } from "../../a
 const app = createApp(apiRoutes);
 const closed = (): Error => Object.assign(new Error("Connection closed"), { code: "EIMAPCLOSED" });
 
-async function world(store: () => MirrorStore = () => new MemoryMirrorStore()) {
+async function world(store: () => MirrorStore = () => new MemoryMirrorStore(), faults = 1) {
   const delivered: OutboundMessage[] = [];
   let opens = 0;
   const factory: OpenSendAdapter = async () => {
     opens += 1;
-    if (opens === 1) throw closed();
+    if (opens <= faults) throw closed();
     return {
       async send(msg: OutboundMessage) { delivered.push(msg); return { providerMessageId: msg.messageId ?? "<none>" }; },
       async messageInSent() { return false; },
@@ -124,5 +124,35 @@ describe("a send whose first dial meets a passing fault goes on the first press"
     expect(store2.entries(OUTBOX_TYPE)).toHaveLength(0);
     store2.close();
     expect(await w.db.select().from(outboundSends).where(eq(outboundSends.idempotencyKey, first.key))).toHaveLength(1);
+  });
+
+  /**
+   * THE DECISION'S CONTROL: a client never retries a refused send by itself.
+   * Past the server's three tries the key is told the refusal for good, so no flush, no reconnect
+   * and no restart sends it: sending again is the person's press, under a new key.
+   */
+  it("three passing faults end Not sent, and nothing sends it again on its own", async () => {
+    const factory = new IDBFactory();
+    const owner = "acct-rearm-gave-up";
+    const w = await world(() => new IndexedDbMirrorStore({ owner, factory }), Number.POSITIVE_INFINITY);
+    let last = await w.engine.mutate({ kind: "mail_send", inReplyTo: w.parent.id, body: "Gerne" });
+    for (let i = 0; i < 4 && last.status === "queued"; i++) {
+      w.clock.advance(6_000);
+      last = (await w.engine.flushPending())[0] ?? last;
+    }
+    expect({ status: last.status, code: last.error?.code, retryable: last.error?.retryable })
+      .toEqual({ status: "rolled_back", code: "send_unreachable", retryable: false });
+    expect((await w.rows()).map((r) => ({ status: r.status, attempts: r.attempts }))).toEqual([{ status: "failed", attempts: 3 }]);
+
+    w.clock.advance(120_000);
+    expect(await w.engine.flushPending(), "a flush after the window dispatched something").toEqual([]);
+    (w.store as IndexedDbMirrorStore).close();
+    const store2 = new IndexedDbMirrorStore({ owner, factory });
+    const engine2 = await w.engineOver(store2);
+    await engine2.hydrate();
+    expect(await engine2.flushPending(), "a restart dispatched something").toEqual([]);
+    store2.close();
+    expect(w.delivered).toHaveLength(0);
+    expect(await w.rows()).toHaveLength(1);
   });
 });

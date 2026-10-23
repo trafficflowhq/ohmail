@@ -9,8 +9,11 @@
  */
 import type { ComposerPhase } from "./send-cancel";
 
-/** What the close does: keep the text, say why it cannot and wait, or just close. */
-export type KeepAct = "keep" | "ask" | "close";
+/**
+ * What the close does: keep the text, say why it cannot and wait, or just close. `tooLong`: the
+ * text is past the draft limit, so no keep can land — said in place, and the next close discards.
+ */
+export type KeepAct = "keep" | "ask" | "close" | "tooLong";
 
 /**
  * Worth a draft row — the web's `worthCreating`: a body, or a new mail's own subject. A reply's
@@ -30,8 +33,11 @@ export function keepAct(o: {
   worth: boolean;
   files: number;
   armed: boolean;
+  /** The body is past `DRAFT_BODY_MAX_BYTES`. */
+  tooLong?: boolean;
 }): KeepAct {
   if (o.phase !== "idle" || o.armed) return "close";
+  if (o.worth && o.tooLong === true) return "tooLong";
   if (o.worth) return "keep";
   return o.files > 0 ? "ask" : "close";
 }
@@ -41,8 +47,8 @@ export function keepAct(o: {
  * worth a row is kept quietly, as the close would have kept it. Files cannot ride a draft and there
  * is nobody left to ask, so they go; a send in flight or a keep already running keeps its own.
  */
-export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: boolean }): "keep" | "nothing" {
-  return o.phase === "idle" && o.worth && !o.keeping ? "keep" : "nothing";
+export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: boolean; tooLong?: boolean }): "keep" | "nothing" {
+  return o.phase === "idle" && o.worth && !o.keeping && o.tooLong !== true ? "keep" : "nothing";
 }
 
 /**
@@ -53,7 +59,7 @@ export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: 
 export async function autosaveKeep(
   saved: { current: string | null },
   onScreen: string,
-  keep: () => Promise<"kept" | "refused">,
+  keep: () => Promise<"kept" | "refused" | "tooLong">,
 ): Promise<void> {
   if ((await keep()) === "kept") saved.current = onScreen;
 }

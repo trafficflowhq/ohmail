@@ -966,11 +966,17 @@ export function useShellOpenState({
         // A landing is no row press: its Move moves the message it landed on (`ownFaceFor`).
         setRowSeed(null);
         setOhboxSel(target.id);
-        // The reader, and via `readerPending` because `go` is about to clear it.
-        if (target.reader) setReaderPending(target.id);
         setLocated(target.id);
+        // The reader, via `readerPending` when `go` is about to clear it; already here, nothing
+        // will consume a pending one, so the sheet opens now.
+        if (target.reader) {
+          if (route.view !== "ohbox") setReaderPending(target.id);
+          else setReaderFor(target.id);
+        }
         replyAfter(route.view !== "ohbox");
-        go("ohbox");
+        /* Already in the Ohbox: the selection is the open and the bar follows it. Writing
+           `#/ohbox` over `#/ohbox/m/<other>` closed the open this arm just made. */
+        if (route.view !== "ohbox") go("ohbox");
         return;
       case "stream":
         (target.view === "reads" ? setReadsCur : setReceiptsCur)(target.id);

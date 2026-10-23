@@ -70,7 +70,7 @@ async function mount(engine: OhmailEngine, messages: AbstractIntlMessages, local
       state: () => mail.stateOf("m-1") as { phase: string; code?: string },
       canSend: () => canSend(mail.stateOf("m-1") as never, REPLY as never),
     };
-    return h("div", { id: "status" }, h(SendStatus, { send: mail.stateOf("m-1") as never, scope: "reply" }));
+    return h("div", { id: "status" }, h(SendStatus, { send: mail.stateOf("m-1") as never, scope: "reply", lane: null, showing: null }));
   };
   const host = document.createElement("div");
   document.body.appendChild(host);

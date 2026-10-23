@@ -96,6 +96,7 @@ import {
   type LaneEnvelope,
   type LanePromotionPlan,
   type OutcomeDetail,
+  type RefusedRow,
   type ReplyEditorMeta,
   type SendPhase,
   type SendState,
@@ -104,6 +105,8 @@ import type { MailboxFacts } from "./mail-state";
 import { readColumnHidden } from "./narrow";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
 import { go, type Route } from "./routing";
+import { sendLine, sendLineValues } from "./SendStatus";
+import { documentHidden } from "./document-hidden";
 import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
 import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
@@ -117,6 +120,9 @@ import {
 import { useStableCallback } from "./stable-callback";
 import type { OhboxReplyDone } from "../views/OhboxView";
 import type { MailboxEntity } from "../views/SettingsView";
+
+/** How long a Not sent notice stands; a second ending inside it widens it to a count. */
+const NOT_SENT_TOAST_MS = 8000;
 
 /**
  * WHETHER A DRAFT MAY BE OPENED YET — a named unit for the reason `makeHydrateBody` is.
@@ -145,6 +151,17 @@ export async function openDraftDecision(
   const text = await io.readDraftBody(draft.id);
   if (text === null) { io.unavailable(); return; }
   io.openWithBody({ ...draft, body: text }, text);
+}
+
+/** A send that ended without delivery while no surface showed its lane — see `sayUnshownEnding`. */
+interface UnshownEnding { lane: string; ended: SendState; left: RefusedRow | undefined }
+
+/**
+ * NOT SENT, AND KEPT IN DRAFTS — the only endings the count notice may fold together, because that
+ * is what its sentence says: a refusal (`failed`) that named the row it left.
+ */
+function keptNotSent(e: UnshownEnding): boolean {
+  return e.ended.phase === "failed" && e.left !== undefined;
 }
 
 /** A send from the row its lane's refused send left (`replyRows`), or the send as built. */
@@ -464,6 +481,7 @@ export function useShellCompose({
     const target = replyToRef.current;
     if (target === null) { setReplyTo(null); return; }
     const lane = replyModeRef.current === "forward" ? inlineForwardKey(target) : target;
+    const waitedToGo = mailSend.stateOf(lane).phase === "queued";
     void (async () => {
       const said = await mailSend.withdraw(lane);
       if (said === "already_sent") {
@@ -485,6 +503,8 @@ export function useShellCompose({
         toast(t("compose.cancelUnreachable"));
         return;
       }
+      // A send withdrawn before the wire: the words it took from the outbox's create are a draft again.
+      if (waitedToGo) replyAutosave.cancelled(lane);
       setReplyTo(null);
     })();
   });
@@ -977,10 +997,149 @@ export function useShellCompose({
    * release made — the shell has spoken for this send, and `settle` neither discharges the reply's
    * debt nor raises "Reply sent." over it. One press, one sentence.
    */
+  /**
+   * ROWS AN UNSHOWN ENDING LEFT, with the line it said: the Drafts list says it on the row until the
+   * row is opened. The toast can be replaced or missed; this cannot.
+   */
+  const [notSentRows, setNotSentRows] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const forgetNotSent = useStableCallback((rowId: string) => {
+    setNotSentRows((was) => {
+      if (!was.has(rowId)) return was;
+      const next = new Map(was);
+      next.delete(rowId);
+      return next;
+    });
+  });
+  /** The composer holds a message other than this row, with something in it worth keeping. */
+  const composerHoldsOther = useStableCallback((rowId: string): boolean =>
+    autosave.draftId !== rowId && reopenWouldOverwrite(composeRef.current, EMPTY_COMPOSE));
+  /**
+   * WHERE AN UNSHOWN ENDING'S OPEN GOES. A reply or forward opens its own editor, which holds the
+   * words the press sent (the row can hold older ones when the save was refused); the row only when
+   * that editor holds nothing. Never into the composer over a different message being written.
+   */
+  const openNotSent = useStableCallback((lane: string, left: RefusedRow | undefined) => {
+    const row = left === undefined ? undefined : drafts.find((d) => d.id === left.rowId);
+    const blocked = (): boolean => {
+      if (row === undefined || !composerHoldsOther(row.id)) return false;
+      toast(t("compose.notSentOpenBlocked"));
+      return true;
+    };
+    if (lane === COMPOSE_SEND_KEY) {
+      if (left === undefined || left.aboutThisCompose || row === undefined) {
+        if (row !== undefined) forgetNotSent(row.id);
+        go("compose");
+        return;
+      }
+      if (blocked()) return;
+      forgetNotSent(row.id);
+      openDraft(row);
+      return;
+    }
+    const forward = lane.startsWith(inlineForwardKey(""));
+    const id = forward ? lane.slice(inlineForwardKey("").length) : lane;
+    const parent = reader.get<EngineMessage>("message", id);
+    if (parent && (forward || row === undefined || !isRichEmpty(readReplyDraft(lane)))) {
+      if (row !== undefined) forgetNotSent(row.id);
+      if (forward) openForward(id); else openReply(id);
+      openMessageRef.current(parent, { reply: true });
+      return;
+    }
+    if (row === undefined) return;
+    // `openDraft` takes the composer for a row whose parent is not here.
+    const inReader = row.inReplyToMessageId != null && reader.get<EngineMessage>("message", row.inReplyToMessageId) != null;
+    if (!inReader && blocked()) return;
+    forgetNotSent(row.id);
+    openDraft(row);
+  });
+  /** Endings held while the window is hidden, all said at the next visible edge. */
+  const heldEndings = useRef<UnshownEnding[]>([]);
+  /**
+   * What the standing notice covers, so a second ending widens it rather than replacing it. `own`:
+   * it says one ending's own line ({@link keptNotSent}), which no count replaces while it stands.
+   */
+  const lastSaid = useRef<{ at: number; lanes: ReadonlySet<string>; own: boolean } | null>(null);
+  const onVisibleRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => {
+    heldEndings.current = [];
+    if (onVisibleRef.current) document.removeEventListener("visibilitychange", onVisibleRef.current);
+  }, []);
+  /** One ending's own line, with the way back to its lane. */
+  const sayEnding = useStableCallback(({ lane, ended, left }: UnshownEnding) => {
+    const line = sendLine(ended, false);
+    if (line === null) return;
+    const scope = lane === COMPOSE_SEND_KEY ? "compose" : "reply";
+    toast(t(`${scope}.${line.key}`, sendLineValues()), {
+      action: t(`${scope}.notSentOpen`),
+      onAction: () => { lastSaid.current = null; openNotSent(lane, left); },
+      duration: NOT_SENT_TOAST_MS,
+    });
+  });
+  const sayEndings = useStableCallback((list: readonly UnshownEnding[]) => {
+    if (list.length === 0) return;
+    const now = Date.now();
+    const standing = lastSaid.current !== null && now - lastSaid.current.at < NOT_SENT_TOAST_MS ? lastSaid.current : null;
+    /* AN ENDING THE COUNT MAY NOT NAME SAYS ITS OWN LINE, and its instruction outranks the count: an
+       unverified send may have been delivered, a duplicate's first copy went or is going, and a refusal
+       that named no row left nothing in Drafts. The latest such ending takes the notice; the kept ones
+       beside it carry their line on their Drafts rows (`notSentRows`). */
+    const own = [...list].reverse().find((e) => !keptNotSent(e));
+    if (own !== undefined) {
+      lastSaid.current = { at: now, lanes: new Set([own.lane]), own: true };
+      sayEnding(own);
+      return;
+    }
+    // A standing ending's own line is not replaced by a count, nor widened into one.
+    if (standing?.own === true) return;
+    const lanes = new Set([...(standing?.lanes ?? []), ...list.map((e) => e.lane)]);
+    lastSaid.current = { at: now, lanes, own: false };
+    if (lanes.size > 1) {
+      toast(t("compose.notSentMany", { count: lanes.size }), {
+        action: t("compose.notSentOpen"),
+        onAction: () => { lastSaid.current = null; go("drafts"); },
+        duration: NOT_SENT_TOAST_MS,
+      });
+      return;
+    }
+    sayEnding(list[list.length - 1]!);
+  });
+  /**
+   * A SEND THAT ENDED WITHOUT DELIVERY WHILE NO SURFACE SHOWED ITS LANE: the line its editor would
+   * say, as a toast with the way back, and on its Drafts row until opened. Without it a reply
+   * pressed and left said nothing at all.
+   */
+  const sayUnshownEnding = useStableCallback((lane: string, ended: SendState, left: RefusedRow | undefined) => {
+    const line = sendLine(ended, false);
+    if (line === null) return;
+    const scope = lane === COMPOSE_SEND_KEY ? "compose" : "reply";
+    if (left !== undefined) {
+      const said = t(`${scope}.${line.key}`, sendLineValues());
+      setNotSentRows((was) => new Map(was).set(left.rowId, said));
+    }
+    if (!documentHidden()) { sayEndings([{ lane, ended, left }]); return; }
+    heldEndings.current.push({ lane, ended, left });
+    if (onVisibleRef.current !== null) return;
+    const onVisible = (): void => {
+      if (documentHidden()) return;
+      document.removeEventListener("visibilitychange", onVisible);
+      onVisibleRef.current = null;
+      const held = heldEndings.current;
+      heldEndings.current = [];
+      sayEndings(held);
+    };
+    onVisibleRef.current = onVisible;
+    document.addEventListener("visibilitychange", onVisible);
+  });
+
   const onSendOutcome = useStableCallback((
     key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ): boolean => {
+    if (!accepted && detail?.ended !== undefined && detail.shown === false) {
+      sayUnshownEnding(key, detail.ended, detail.left);
+    }
     if (!accepted && phase === "failed") handBackLane(key);
+    // Withdrawn before the wire, once the server answered a Cancel it owed: the words are a draft again.
+    if (!accepted && phase === "idle") replyAutosave.cancelled(key);
     // Cancelled in another window: the dock showing that send closes as its own Cancel closes it.
     if (!accepted && phase === "idle" && replyToRef.current !== null) {
       const target = replyToRef.current;
@@ -1218,7 +1377,7 @@ export function useShellCompose({
     const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
     // The text this press sends is not saved again, and a create still in the air is undone.
     replyAutosave.seal(messageId);
-    mailSend.send(withSignature({
+    const went = mailSend.send(withSignature({
       kind: "mail_send",
       inReplyTo: messageId,
       // THE ROW A REFUSED SEND LEFT, when this lane took one: sent again rather than made again.
@@ -1252,6 +1411,8 @@ export function useShellCompose({
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
     }, sigText, sigHtml), withDone({ heldRow: heldReplyRow(messageId) }));
+    // The send carries the words and makes its own row: a create the pause left on the outbox goes.
+    if (went) replyAutosave.sending(messageId);
   });
 
   /**
@@ -1410,6 +1571,7 @@ export function useShellCompose({
    * as shorter than it is.
    */
   const openDraft = useStableCallback((d: EngineDraft) => {
+    forgetNotSent(d.id);
     void openDraftDecision(d, {
       readDraftBody: (id) => engine.readDraftBody(id),
       openWithBody: (row, body) => { openDraftWithBody(row, body); },
@@ -1931,7 +2093,8 @@ export function useShellCompose({
      * original key rather than releasing it, and the person is shown that it needs checking. A retry that reuses the
      * key is safe; nothing here may invent a new one.
      */
-    mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)));
+    // The send carries the words and makes its own row: a create the pause left on the outbox goes.
+    if (mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)))) autosave.sending();
   });
 
   /**
@@ -2149,6 +2312,7 @@ export function useShellCompose({
     forwardAsk,
     composeFrom,
     discardDraft,
+    notSentRows,
     draftRepliesHere,
     draftReply,
     draftReplyChrome,

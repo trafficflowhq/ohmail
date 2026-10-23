@@ -262,6 +262,12 @@ export interface ComposeAutosave {
    */
   flush: () => Promise<ComposeFlush>;
   /**
+   * THE PRESS WENT, carrying the words: every create the outbox still holds for this message (a
+   * pause written offline) is taken back, so the send is its one row. Left there, it landed beside
+   * the send on reconnect: the sent message stayed in Drafts, one press from a second copy.
+   */
+  sending: () => void;
+  /**
    * The form was just restored from this browser's unit, which the account may not hold — a tab
    * closed inside the pause, or one that died. Written once at this open, wherever it landed, with
    * every refusal of the ordinary save; a door that replaces the form ends it.
@@ -390,9 +396,26 @@ export function useComposeAutosave(opts: {
   const openWrite = useRef(false);
   const restored = useCallback(() => { openWrite.current = true; }, []);
   const [saveRefused, setSaveRefused] = useState(false);
+  /**
+   * THE CREATES THE OUTBOX HOLDS FOR THIS MESSAGE (answered `queued`, offline), by key, and the
+   * count of its sends: {@link ComposeAutosave.sending} takes them back, and a create answered after
+   * a send went is taken back at once. A door that lets the message go forgets them.
+   */
+  const waitingCreates = useRef(new Set<string>());
+  const sendsPressed = useRef(0);
+  const takeBack = useCallback((key: string) => {
+    if (typeof engine.withdrawQueued === "function") void engine.withdrawQueued(key).catch(() => undefined);
+  }, [engine]);
+  const sending = useCallback(() => {
+    sendsPressed.current += 1;
+    const keys = [...waitingCreates.current];
+    waitingCreates.current.clear();
+    for (const key of keys) takeBack(key);
+  }, [takeBack]);
 
   const adopt = useCallback((id: string, f: ComposeFields) => {
     epoch.current += 1;
+    waitingCreates.current.clear();
     openWrite.current = false;
     setDraftId(id);
     // DURABLY, because this hook's state does not survive a reload and the scratch buffer holding
@@ -419,6 +442,7 @@ export function useComposeAutosave(opts: {
 
   const release = useCallback(() => {
     epoch.current += 1;
+    waitingCreates.current.clear();
     openWrite.current = false;
     /* THE CLOSE'S FLUSH MAY NOT RESURRECT THIS — see `abandonedAt`. Recorded here rather than at
        the doors: `discard` releases before it deletes, and every door that lets a message go
@@ -772,6 +796,7 @@ export function useComposeAutosave(opts: {
     if (row === null && sendInFlightRef.current) return { kind: "nothing" };
     inFlight.current = true;
     const era = epoch.current;
+    const sendsAt = sendsPressed.current;
     /* A 404 to a PUT is the server's word only when the mirror held the row: an absent row is
        refused locally with the same 404 (a resync between pages), and absence is not a delete. */
     const mirrored = row !== null && engine.read().get("draft", row) != null;
@@ -814,6 +839,12 @@ export function useComposeAutosave(opts: {
         }
         if (era === epoch.current) setSaveRefused(false);
         if (result.status !== "confirmed") {
+          /* A CREATE THE OUTBOX HOLDS (offline): no row until it lands, and this message's send
+             takes it back (`sending`) — at once when the send went while this was answered. */
+          if (row === null && result.status === "queued" && era === epoch.current) {
+            if (sendsPressed.current !== sendsAt) takeBack(result.key);
+            else waitingCreates.current.add(result.key);
+          }
           openWrite.current = false;
           outcome = { kind: "saved" };
           return;
@@ -972,6 +1003,6 @@ export function useComposeAutosave(opts: {
   settleComposeRef.current = settleCompose;
 
   return {
-    draftId, adopt, release, discard, flush, restored, settled, settleCompose, elsewhere, saveRefused,
+    draftId, adopt, release, discard, flush, sending, restored, settled, settleCompose, elsewhere, saveRefused,
   };
 }

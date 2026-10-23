@@ -148,6 +148,9 @@ export {
 /** THE ONE MAILTO PARSER — the phone's composer reads a link with it, as the desktop does. */
 export { emptyDraft as emptyMailtoDraft, isMailto, parseMailto, type MailtoDraft } from "./mailto.js";
 
+/** THE DRAFT CEILING — the phone says it before the wire, as the web does. */
+export { DRAFT_BODY_MAX_BYTES, draftOverCeiling } from "./draft-ceiling.js";
+
 /**
  * The folder-name validator, re-exported from core's browser-safe leaf (the `/ics` rule above):
  * the honest sentence BEFORE the wire is the SERVER's own rules, and every client that offers

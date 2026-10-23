@@ -41,8 +41,12 @@ export interface DraftShell {
   store: MirrorStore;
   /** Every verb this shell put on the wire, in order. */
   sent: EngineMutation[];
-  /** While on, a `mail_send` is refused and names the row it used or made — for good, or unverified. */
-  refuseSend: { on: boolean; unverified?: boolean };
+  /**
+   * While on, a `mail_send` is refused and names the row it used or made — for good, or unverified.
+   * `code`/`status` name the refusal (default `send_failed`, 409); `retryableFirst` answers that
+   * many presses retryably first, as the route does while it re-arms a pre-SMTP failure.
+   */
+  refuseSend: { on: boolean; unverified?: boolean; code?: string; status?: number; retryableFirst?: number };
   /** While set, a `draft_save` waits on it before the server answers — a save still in the air. */
   saveGate: { wait: Promise<void> | null };
   /** Another device's acts, server-side: the next `/sync` drain carries and empties this. */
@@ -60,6 +64,10 @@ export interface DraftShell {
   resync: { armed: boolean; gate: Promise<void> | null; phase: 0 | 1 | 2 };
   /** While on, a `draft_discard` is refused 409 `send_recorded`, as for a row with a send running. */
   refuseDiscard: { on: boolean };
+  /** While on, a delivered `mail_send` leaves the row it named `sent`, as the route does: no longer in Drafts. */
+  spendSentRow: { on: boolean };
+  /** What `POST /sends/withdraw` answers a Cancel while online; `null` (the default) is a server that cannot be asked. */
+  withdrawAnswer: { outcome: "withdrawn" | null };
 }
 
 let roots: Root[] = [];
@@ -145,6 +153,8 @@ function engineOver(
   serverGone: Set<string> = new Set(),
   resync: DraftShell["resync"] = { armed: false, gate: null, phase: 0 },
   refuseDiscard: DraftShell["refuseDiscard"] = { on: false },
+  spendSentRow: DraftShell["spendSentRow"] = { on: false },
+  withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null },
 ): OhmailEngine {
   return new OhmailEngine({
     store: s,
@@ -197,6 +207,12 @@ function engineOver(
         }
         if (m.kind === "draft_save" && saveGate.wait) await saveGate.wait;
         if (m.kind === "mail_send" && sendGate.wait) await sendGate.wait;
+        if (m.kind === "mail_send" && refuseSend.on && (refuseSend.retryableFirst ?? 0) > 0) {
+          refuseSend.retryableFirst! -= 1;
+          throw new MutationRejectedError("not sent yet", {
+            status: refuseSend.status ?? 409, code: refuseSend.code ?? "send_failed", retryable: true,
+          });
+        }
         if (m.kind === "mail_send" && refuseSend.on) {
           // The route's own answer to a send refused for good: the row stays a draft, and the
           // refusal names it — the row the send carried, or the one it made.
@@ -212,7 +228,8 @@ function engineOver(
             } as SyncChange]);
           }
           throw new MutationRejectedError("The receiving server refused this message.", {
-            status: 409, code: refuseSend.unverified ? "send_unverified" : "send_failed",
+            status: refuseSend.status ?? 409,
+            code: refuseSend.unverified ? "send_unverified" : refuseSend.code ?? "send_failed",
             retryable: false, entityId: rowId,
           });
         }
@@ -223,11 +240,20 @@ function engineOver(
             id: e.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: e.entity,
             ...(e.move ? { move: e.move } : {}),
           })) as SyncChange[];
+        const spent = m.kind === "mail_send" && spendSentRow.on && m.draftId ? s.get<EngineDraft>("draft", m.draftId) : undefined;
+        if (spent) {
+          changes.push({
+            type: "draft", op: "update", id: spent.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: { ...spent, status: "sent" },
+          } as unknown as SyncChange);
+        }
         await s.applyChanges(changes);
         // A draft write names its row, as the HTTP adapter's does: a create's id is the server's.
         const entityId = m.kind === "draft_save" ? (m.draftId ?? changes[0]?.id) : undefined;
         return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}) };
       },
+      withdrawSend: async () => (offline.on || withdrawAnswer.outcome === null
+        ? { outcome: "unreachable" as const }
+        : { outcome: withdrawAnswer.outcome }),
       /* `GET /drafts/:id`: a row another device deleted answers 404, as the route does. */
       fetchDraftBody: async (id: string) => {
         if (serverGone.has(id)) throw new MutationRejectedError("draft not found", { status: 404, code: "not_found", retryable: false });
@@ -241,12 +267,14 @@ function engineOver(
   } as never);
 }
 
-const consentTransport = {
+/** The account's settings wire; `signatures` is each mailbox's stored signature, as the server echoes it. */
+const consentTransportWith = (signatures?: Record<string, string>) => ({
   foldersStorable: true,
   state: async () => ({
     seedConfirmedAt: "2026-09-01T00:00:00.000Z",
     screeningResetAt: null, dormancyDays: 90,
     foldersEnabledAt: "2026-09-01T00:00:00.000Z",
+    ...(signatures !== undefined ? { signatures } : {}),
   }),
   setAutoSuggest: async () => ({ autoSuggestAt: null }),
   setDormancyDays: async () => ({}),
@@ -255,8 +283,8 @@ const consentTransport = {
   setBlockAutoUnsubscribe: async () => ({ blockAutoUnsubscribeAt: null }),
   setFoldersEnabled: async () => ({ foldersEnabledAt: "2026-09-01T00:00:00.000Z" }),
   setMailboxFoldersEnabled: async () => ({ folderMailboxesOff: {} }),
-  setMailboxSignature: async () => ({ signatures: {} }),
-};
+  setMailboxSignature: async () => ({ signatures: signatures ?? {} }),
+});
 
 const ROSTER: MailboxFacts[] = [{
   id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null,
@@ -278,7 +306,7 @@ export async function waitFor(predicate: () => boolean, what: string, rounds = 1
 /** Mount the shell at `hash` over these messages and drafts. */
 export async function mountShell(
   hash: string, messagesIn: EngineMessage[], drafts: EngineDraft[] = [],
-  options: { draftReplyWire?: DraftReplyWire } = {},
+  options: { draftReplyWire?: DraftReplyWire; signatures?: Record<string, string> } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
   const { AppShell } = await import("../app/shell/AppShell.js");
@@ -293,7 +321,11 @@ export async function mountShell(
   const serverGone = new Set<string>();
   const resync: DraftShell["resync"] = { armed: false, gate: null, phase: 0 };
   const refuseDiscard: DraftShell["refuseDiscard"] = { on: false };
-  const engine = engineOver(store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard);
+  const spendSentRow: DraftShell["spendSentRow"] = { on: false };
+  const withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null };
+  const engine = engineOver(
+    store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
+  );
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
@@ -304,7 +336,7 @@ export async function mountShell(
       children: h(ThemeProvider, {
         children: h(ToastHost, {
           children: h(AppShell as never, {
-            demo: false, engine, consentTransport,
+            demo: false, engine, consentTransport: consentTransportWith(options.signatures),
             mailboxFacts: async () => ROSTER,
             ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
           } as never),
@@ -313,7 +345,10 @@ export async function mountShell(
     }));
   });
   await settleFirstPaint();
-  return { el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard };
+  return {
+    el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
+    withdrawAnswer,
+  };
 }
 
 /** A real press: the pointer's three events, then the editor's lazy seam. */

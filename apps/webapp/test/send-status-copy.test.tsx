@@ -6,7 +6,7 @@ import { act } from "react";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { SendStatus } from "../app/shell/SendStatus.js";
+import { SendStatus, sendLine } from "../app/shell/SendStatus.js";
 import { phaseFor, type SendState } from "../app/shell/mail-send.js";
 
 /**
@@ -39,7 +39,7 @@ function render(send: SendState, messages: typeof en | typeof de, locale: string
   act(() => {
     root!.render(
       <NextIntlClientProvider locale={locale} messages={messages as never} timeZone="UTC">
-        <SendStatus send={send} scope={scope} />
+        <SendStatus send={send} scope={scope} lane={null} showing={null} />
       </NextIntlClientProvider>,
     );
   });
@@ -126,17 +126,21 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
-  it("send_unreachable says the mail server could not be reached, in both scopes and both languages", () => {
+  it("send_unreachable says the mail server could not be reached and where the message is, in both scopes and both languages", () => {
+    // Tester round 22: the send gave up after its retries; the row is an ordinary draft again, and
+    // the phone's facts are the true ones — kept in Drafts, sent again by a press.
     const send: SendState = { phase: "failed", reason: "This was not sent — your mail server could not be reached.", code: "send_unreachable" };
     for (const scope of ["reply", "compose"] as const) {
       const en1 = render(send, en, "en", scope);
       expect(en1).toContain("Your mail server couldn't be reached");
-      expect(en1).toContain("draft is kept");
+      expect(en1).toContain("kept in Drafts");
+      expect(en1).not.toContain("Try again");
       expect(en1).not.toContain("Sending didn't work");
       act(() => root?.unmount());
       host?.remove();
       const de1 = render(send, de, "de", scope);
       expect(de1).toContain("Dein Mailserver war nicht erreichbar");
+      expect(de1).toContain("in den Entwürfen");
       act(() => root?.unmount());
       host?.remove();
     }
@@ -204,5 +208,36 @@ describe("a failed send never relays the wire", () => {
       act(() => root?.unmount());
       host?.remove();
     }
+  });
+
+  it("a send refused past the draft limit names the limit, and claims neither a kept draft nor a retry", () => {
+    // Tester round 22: a 413 on Send said "your draft is kept. Try again." — neither was true.
+    for (const code of ["draft_too_large", "payload_too_large"] as const) {
+      const send: SendState = { phase: "failed", reason: "the server's own words", code };
+      for (const scope of ["reply", "compose"] as const) {
+        const en1 = render(send, en, "en", scope);
+        expect(en1, code).toMatch(/^Not sent\. It's too (long|large) to send/);
+        if (code === "draft_too_large") expect(en1, code).toMatch(/the limit is 262(\.1)? kB/i);
+        for (const lie of ["kept", "Try again", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        act(() => root?.unmount());
+        host?.remove();
+        const de1 = render(send, de, "de", scope);
+        expect(de1, code).toMatch(/^Nicht gesendet\. Die (Nachricht|Antwort) ist zu (lang|groß) zum Senden/);
+        for (const lie of ["gesichert", "Versuch es", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        act(() => root?.unmount());
+        host?.remove();
+      }
+    }
+  });
+
+  it("control: a refusal with no sentence of its own still says the general line", () => {
+    const text = render({ phase: "failed", reason: "x", code: "some_new_code" }, en, "en", "compose");
+    expect(text).toBe(en.compose.statusFailed);
+  });
+
+  it("sendLine is the one derivation: the toast's key is the line's key", () => {
+    expect(sendLine({ phase: "failed", code: "send_unreachable" }, false)).toEqual({ tone: "error", key: "statusUnreachable" });
+    expect(sendLine({ phase: "failed", code: "draft_too_large" }, false)).toEqual({ tone: "error", key: "statusTooLong" });
+    expect(sendLine({ phase: "idle" }, false)).toBeNull();
   });
 });

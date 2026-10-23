@@ -44,6 +44,14 @@ export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "bod
 export interface ReplyAutosave {
   /** The Send press: the text sent is not saved again, and a create still in the air is undone. */
   seal: (lane: string) => void;
+  /**
+   * THE PRESS WENT, carrying the words: every create the outbox still holds for this lane (one the
+   * pause wrote offline) is taken back, so the send is the reply's one row. Left there, it landed
+   * beside the send on reconnect: the sent reply stayed in Drafts, one press from a second copy.
+   */
+  sending: (lane: string) => void;
+  /** That send was withdrawn before the wire: the words it carried are a draft to keep again. */
+  cancelled: (lane: string) => void;
   /** The editor was seeded from this row: a form that shows what it holds writes nothing. */
   baseline: (lane: string, row: ReplyRowFields) => void;
   /** The reply was delivered: the next reply to that message is a new one. */
@@ -75,6 +83,16 @@ export function useReplyAutosave(
   /** The last form each lane showed, for the write its close owes. */
   const lastOf = useRef(new Map<string, ReplyDraftForm>());
   if (form !== null) lastOf.current.set(form.lane, form);
+  /** Per lane: the creates the outbox holds (answered `queued`, offline), by key — see `sending`. */
+  const waiting = useRef(new Map<string, Set<string>>());
+  /** Lanes whose creates a send took back — owed a write again should that send be cancelled. */
+  const taken = useRef(new Set<string>());
+  /** Lanes whose send was cancelled after it took their creates back: the close's write may create. */
+  const owed = useRef(new Set<string>());
+  const takeBack = useCallback((keys: Iterable<string>) => {
+    if (typeof engine.withdrawQueued !== "function") return;
+    for (const key of keys) void engine.withdrawQueued(key).catch(() => undefined);
+  }, [engine]);
 
   /** Whether `f` is a write this lane may make now — asked when the pause is armed and when it ends. */
   const writable = useCallback((f: ReplyDraftForm, allowCreate: boolean): boolean => {
@@ -103,12 +121,21 @@ export function useReplyAutosave(
         to: f.to, cc: f.cc, bcc: f.bcc,
       });
       if (result.status === "rolled_back") return;
-      // A Send pressed while a create was in the air sent without it: the row made here is a copy.
+      // A Send pressed while a create was in the air sent without it: the row made here is a copy,
+      // and one the outbox holds instead is taken back before it can land.
       if (row === null && (era.current.get(lane) ?? 0) !== at) {
         if (result.status === "confirmed" && result.entityId) {
           await engine.mutate({ kind: "draft_discard", draftId: result.entityId });
+        } else if (result.status === "queued") {
+          taken.current.add(lane);
+          takeBack([result.key]);
         }
         return;
+      }
+      /* A CREATE THE OUTBOX HOLDS (offline): no row to take until it lands, and the lane's send takes
+         it back (`sending`). */
+      if (row === null && result.status === "queued") {
+        waiting.current.set(lane, new Set([...(waiting.current.get(lane) ?? []), result.key]));
       }
       if (row === null && result.status === "confirmed" && result.entityId) doorsRef.current.took(lane, result.entityId);
       else if (row !== null) doorsRef.current.took(lane, row);
@@ -132,12 +159,13 @@ export function useReplyAutosave(
     return () => window.clearTimeout(timer);
   }, [lane, signature, writable, writeNow]);
 
-  /* The pending write of a CLOSED editor goes now, to the row it holds; a close never creates. */
+  /* The pending write of a CLOSED editor goes now, to the row it holds; a close never creates, but
+     for words a cancelled send had taken from a create (`cancelled`). */
   useEffect(() => {
     if (lane === null) return;
     return () => {
       const last = lastOf.current.get(lane);
-      if (last) void writeNow(last, false);
+      if (last) void writeNow(last, owed.current.delete(lane));
     };
   }, [lane, writeNow]);
 
@@ -146,12 +174,30 @@ export function useReplyAutosave(
     if (f !== null && f.lane === l) sealed.current.set(l, signatureOf(f));
     era.current.set(l, (era.current.get(l) ?? 0) + 1);
   }, []);
+  const sending = useCallback((l: string) => {
+    const keys = waiting.current.get(l);
+    if (keys === undefined) return;
+    waiting.current.delete(l);
+    // No create holds these words for the account now: the send carries them.
+    saved.current.delete(l);
+    taken.current.add(l);
+    takeBack(keys);
+  }, [takeBack]);
+  const cancelled = useCallback((l: string) => {
+    if (!taken.current.delete(l)) return;
+    sealed.current.delete(l);
+    saved.current.delete(l);
+    owed.current.add(l);
+  }, []);
   const baseline = useCallback((l: string, row: ReplyRowFields) => {
     saved.current.set(l, signatureOf({ ...row, lane: l, threadId: null, subjectEdited: false }));
   }, []);
   const forget = useCallback((l: string) => {
     saved.current.delete(l);
     sealed.current.delete(l);
+    waiting.current.delete(l);
+    taken.current.delete(l);
+    owed.current.delete(l);
   }, []);
-  return { seal, baseline, forget };
+  return { seal, sending, cancelled, baseline, forget };
 }

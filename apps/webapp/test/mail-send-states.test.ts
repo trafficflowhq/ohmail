@@ -499,6 +499,18 @@ describe("canSend — an attachment is content", () => {
     })).toBe(null);
   });
 
+  it("past the draft limit is its own refusal: one UTF-8 byte over, never at it, and the plain half only", async () => {
+    const { sendRefusal } = await import("../app/shell/mail-send.js");
+    const { DRAFT_BODY_MAX_BYTES } = await import("@trafficflow/core/outbound-text");
+    const at = "é".repeat(DRAFT_BODY_MAX_BYTES / 2);
+    const m = (body: string, html?: string) => ({ kind: "mail_send", inReplyTo: "m1", body, ...(html ? { html } : {}) }) as never;
+    expect(sendRefusal({ phase: "idle" }, m(`${at}x`)), "one byte past the limit").toBe("too_long");
+    expect(sendRefusal({ phase: "idle" }, m(at)), "exactly at the limit").toBe(null);
+    // Markup alone past it is the server's to judge: the sanitizer may shrink a paste.
+    expect(sendRefusal({ phase: "idle" }, m("short", `<p>${"a".repeat(DRAFT_BODY_MAX_BYTES)}</p>`))).toBe(null);
+    expect(sendRefusal({ phase: "sending" }, m(`${at}x`)), "a stronger lock outranks it").toBe("locked");
+  });
+
   it("a forward never needs content — its content is the forwarded message", async () => {
     const { sendNeedsContent } = await import("../app/shell/mail-send.js");
     expect(sendNeedsContent({ kind: "mail_send", inReplyTo: null, body: "", forwardOf: "m9" })).toBe(false);
@@ -571,10 +583,10 @@ describe("useMailSend refuses on its own, not only via the button", () => {
   });
 
   /** Mount a probe that exposes the hook's `send`. */
-  async function probe(rec: Recorder): Promise<(m: Mut) => void> {
+  async function probe(rec: Recorder): Promise<(m: Mut) => boolean> {
     await unmount();
     const { useMailSend } = await import("../app/shell/mail-send.js");
-    let send!: (m: Mut) => void;
+    let send!: (m: Mut) => boolean;
     const Probe = (): null => {
       const api = useMailSend(
         rec.engine as never,
@@ -584,7 +596,7 @@ describe("useMailSend refuses on its own, not only via the button", () => {
           rec.settledWith.push(m);
         }) as never,
       );
-      send = api.send as unknown as (m: Mut) => void;
+      send = api.send as unknown as (m: Mut) => boolean;
       return null;
     };
     host = document.createElement("div");
@@ -629,6 +641,68 @@ describe("useMailSend refuses on its own, not only via the button", () => {
    * BY HAND and asserted what it renders. Nothing drove the flag through the machine, which is
    * where both defects lived: one in what `absorb` calls, one in what the next answer overwrites.
    */
+  it("a body past the draft limit sends nothing and takes no lock", async () => {
+    const { DRAFT_BODY_MAX_BYTES } = await import("@trafficflow/core/outbound-text");
+    const rec = recorder();
+    const send = await probe(rec);
+    expect(send(compose(`${"é".repeat(DRAFT_BODY_MAX_BYTES / 2)}x`)), "an over-limit press answered that it went").toBe(false);
+    await drain();
+    const sends = () => rec.mutations.filter((m) => m.kind === "mail_send").length;
+    expect(sends(), "an over-limit press reached the engine").toBe(0);
+    // Control: no lock was taken, so the shortened message goes.
+    expect(send(compose("short now")), "a press that went answered otherwise").toBe(true);
+    await drain();
+    expect(sends()).toBe(1);
+  });
+
+  it("an ending says whether a surface showed its lane, and a withdrawn send ends with nothing to say", async () => {
+    await unmount();
+    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { sendLine } = await import("../app/shell/SendStatus.js");
+    const { OUTBOX_WITHDRAWN_CODE } = await import("@ohmail/client-engine");
+    const rec = recorder();
+    let code = "send_unreachable";
+    (rec.engine as { mutate: unknown }).mutate = async (m: Mut) => {
+      rec.mutations.push(m);
+      return { id: "i", key: `k${rec.mutations.length}`, seq: null, status: "rolled_back", error: { code, retryable: false, message: "x" } };
+    };
+    const endings: Array<{ shown?: boolean; phase?: string; line: string | null }> = [];
+    let api!: { send: (m: Mut) => void; showing: (lane: string) => () => void };
+    const Probe = (): null => {
+      api = useMailSend(
+        rec.engine as never, (() => {}) as never, (() => {}) as never,
+        ((_k: string, _m: unknown, _ok: boolean, _p: unknown, d?: { shown?: boolean; ended?: SendState }) => {
+          endings.push({ shown: d?.shown, phase: d?.ended?.phase, line: d?.ended ? sendLine(d.ended, false)?.key ?? null : null });
+          return false;
+        }) as never,
+      ) as never;
+      return null;
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", now: NOW, children: h(Probe) }));
+    });
+    // Shown twice (the pane mounts twice), released once: still shown.
+    const a = api.showing("m1");
+    const b = api.showing("m1");
+    a();
+    api.send(reply("first"));
+    await drain();
+    b();
+    api.send(reply("second"));
+    await drain();
+    code = OUTBOX_WITHDRAWN_CODE;
+    api.send(reply("third"));
+    await drain();
+    expect(endings).toEqual([
+      { shown: true, phase: "failed", line: "statusUnreachable" },
+      { shown: false, phase: "failed", line: "statusUnreachable" },
+      { shown: false, phase: "idle", line: null },
+    ]);
+  });
+
   async function acceptedProbe(): Promise<{
     send: (m: Mut) => void;
     stateOf: (k: string) => { phase: string; accepted?: true };
@@ -1249,11 +1323,13 @@ describe("the unverified lock names a message, and refuses when nobody named one
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
     const src = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/mail-send.ts"), "utf8");
+    // `sendRefusal` is `canSend` with its reason kept (the surfaces read the same one), so a refusal
+    // past the draft limit can be said on the lane.
     expect(
       src,
       "`send` judges React state alone, so a caller that is not the button gets past the durable "
         + "fact the button enforces",
-    ).toMatch(/if \(!canSend\(stateFor\(key\), m\)\) \{/);
+    ).toMatch(/const refused = sendRefusal\(stateFor\(key\), m\);\n {6}if \(refused !== null\) \{/);
     /**
      * AND THE REFUSAL STILL RETURNS. The check gained a body — the row the message has since
      * acquired is written onto the record on the way out (`attachSendLockDraft`) — and a body is
@@ -1262,8 +1338,8 @@ describe("the unverified lock names a message, and refuses when nobody named one
      */
     expect(
       src,
-      "the refused press no longer returns, so `canSend` decides nothing",
-    ).toMatch(/if \(!canSend\(stateFor\(key\), m\)\) \{[\s\S]*?\n {8}return;\n {6}\}/);
+      "the refused press no longer returns, so the refusal decides nothing",
+    ).toMatch(/if \(refused !== null\) \{[\s\S]*?\n {8}return false;\n {6}\}/);
     expect(src, "`stateOf` is a second derivation beside `stateFor`").toMatch(/stateOf: stateFor,/);
   });
 });

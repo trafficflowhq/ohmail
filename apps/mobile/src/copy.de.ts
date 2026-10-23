@@ -1419,6 +1419,8 @@ export const DE: Deck = {
   replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
   replyUnreachable: "Nicht gesendet. Dein Mailserver war nicht erreichbar.",
+  replyTooLong: (size: string) => `Nicht gesendet. Zu lang zum Senden — höchstens ${size}. Kürze die Nachricht und sende sie nochmal.`,
+  replyTooLarge: "Nicht gesendet. Zu groß zum Senden. Kürze die Nachricht und sende sie nochmal.",
   replyBusy: "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an. Versuch es gleich nochmal.",
   replyNotSignedIn: "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet. Melde es in den Einstellungen neu an.",
   replyForwardOriginalUnavailable: "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
@@ -1476,6 +1478,11 @@ export const DE: Deck = {
   composeKeptQueuedWithoutFiles:
     "Als Entwurf behalten, ohne die Anhänge. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
   composeKeepFailed: "Das konnte nicht als Entwurf behalten werden. Schließe noch einmal, um es zu verwerfen.",
+  composeTooLong: (size: string) => `Zu lang zum Speichern — höchstens ${size}. Kürze die Nachricht, dann wird sie wieder gespeichert.`,
+  composeKeepTooLong: (size: string) =>
+    `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze es, oder schließe noch einmal, um es zu verwerfen.`,
+  composeKeepTooLongBound: (size: string) =>
+    `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze sie, oder schließe noch einmal, um die Änderungen zu verwerfen.`,
   composeKeepFiles: "Entwürfe behalten keine Anhänge. Schließe noch einmal, um sie zu verwerfen.",
   composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
   composeNoMailbox: "Noch kann kein Postfach auf diesem Handy senden.",

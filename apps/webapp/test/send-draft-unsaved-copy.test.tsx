@@ -29,7 +29,7 @@ function render(send: SendState, messages: typeof en | typeof de, locale: string
   act(() => {
     root!.render(
       <NextIntlClientProvider locale={locale} messages={messages as never} timeZone="UTC">
-        <SendStatus send={send} scope="compose" />
+        <SendStatus send={send} scope="compose" lane={null} showing={null} />
       </NextIntlClientProvider>,
     );
   });

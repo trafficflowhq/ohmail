@@ -96,7 +96,8 @@ describe("a composer is never unmounted without keeping what a close keeps", () 
     expect(sheet).toContain("const leave = () => {\n    closed.current = true;\n    onClose();");
     expect(sheet).toContain("useEffect(() => () => { if (!closed.current) atUnmount.current(); }, []);");
     const keep = sheet.slice(sheet.indexOf("atUnmount.current = () => {"), sheet.indexOf("const send = async ("));
-    expect(keep).toContain("unmountKeep({ phase, worth, keeping: keeping.current })");
+    // Past the draft limit no keep can land, so the unmount keeps nothing (`compose-keep.ts`).
+    expect(keep).toContain("unmountKeep({ phase, worth, keeping: keeping.current, tooLong })");
     expect(keep).toContain("void w.actions.draftKeep({");
     expect(keep).toContain("quiet: true");
   });

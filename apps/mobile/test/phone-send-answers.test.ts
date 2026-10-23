@@ -136,6 +136,24 @@ describe("a send the mail server could not be reached for says so, and keeps its
   }, 30_000);
 });
 
+describe("a send past the draft limit names the limit, and never says Try again", () => {
+  it("413 draft_too_large and payload_too_large on POST /drafts: failed, its own sentence, nothing sent", async () => {
+    for (const [code, kind] of [["draft_too_large", "replyTooLong"], ["payload_too_large", "replyTooLarge"]] as const) {
+      const live = await scene();
+      live.fake.answerNext("POST", "/drafts", 413, { error: { code, message: "too large", retryable: false } });
+      const res = await live.actions.sendNew("mb-1", peer, "Coffee?", "Tomorrow at ten?");
+      expect(res, code).toMatchObject({ outcome: "failed", failure: kind });
+      expect(live.toasts, code).toEqual([sayArg(refusedSendSay(kind))]);
+      expect(live.toasts[0], code).not.toMatch(/Try again|kept/);
+      expect(live.fake.seen.some((r) => r.url.endsWith("/send")), `${code}: a send went out`).toBe(false);
+    }
+    expect(failedSendLine("replyTooLong", null, true)).toBe("Not sent. It's too long to send — the limit is 256 KB. Shorten it and send again.");
+    expect(DE.replyTooLong("256 KB")).toMatch(/höchstens 256 KB/);
+    // Control: an ordinary refusal keeps the general sentence.
+    expect(failedSendLine("replyFailed", null, true)).toBe(Copy.replyFailed);
+  }, 30_000);
+});
+
 describe("a send from a mailbox that is not signed in here says so, and keeps its row", () => {
   it("424 mailbox_not_signed_in: failed, the file's sentence after the kept draft, the row bound", async () => {
     const live = await scene();

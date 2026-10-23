@@ -2094,6 +2094,9 @@ const TABLE = {
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
   replyLoginRefused: "Not sent. Your mail server refused the sign-in.",
   replyUnreachable: "Not sent. Your mail server couldn't be reached.",
+  /* Past the draft limit (413): nothing left, and no retry helps until the text is shorter. */
+  replyTooLong: (size: string) => `Not sent. It's too long to send — the limit is ${size}. Shorten it and send again.`,
+  replyTooLarge: "Not sent. It's too large to send. Shorten it and send again.",
   /* It took the dial and would not serve it now, past the send's own retries. */
   replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
@@ -2162,6 +2165,12 @@ const TABLE = {
   composeKeptQueuedWithoutFiles:
     "Kept as a draft, without the attachments. It reaches Drafts once this phone is back online.",
   composeKeepFailed: "This could not be kept as a draft. Close again to discard it.",
+  /* PAST THE DRAFT LIMIT — said while typing (the web's `compose.bodyTooLong`), and on a close. */
+  composeTooLong: (size: string) => `Too long to save — the limit is ${size}. Shorten the message and it saves again.`,
+  composeKeepTooLong: (size: string) =>
+    `This can't be kept as a draft — it's past the ${size} limit. Shorten it, or close again to discard it.`,
+  composeKeepTooLongBound: (size: string) =>
+    `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it, or close again to discard the changes.`,
   composeKeepFiles: "Drafts do not keep attachments. Close again to discard them.",
   composeNeedRecipient: "Add someone to send it to.",
   composeNoMailbox: "No mailbox on this phone can send yet.",

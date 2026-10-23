@@ -27,7 +27,8 @@ import {
 } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
 import { displayAddress } from "./idn";
-import { sendRefusal, sendStateFor, sendVerb, type SendState } from "./mail-send";
+import { sendKeyOf, sendRefusal, sendStateFor, sendVerb, type SendState, type ShowSend } from "./mail-send";
+import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { HeldSendResolve } from "../components/HeldSendResolve";
@@ -35,7 +36,7 @@ import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { useManagedService } from "./managed-service";
-import { SendStatus } from "./SendStatus";
+import { SendStatus, sendLineValues } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
 import {
   formatRecipientChips,
@@ -129,6 +130,7 @@ export function InlineReply({
   replyAll = false,
   value,
   send = { phase: "idle" },
+  showing = null,
   onChange,
   onClose,
   onSend,
@@ -176,6 +178,8 @@ export function InlineReply({
   value: RichValue;
   /** How the send is going — see `mail-send.ts`. Defaults to idle for panes with no shell. */
   send?: SendState;
+  /** The shell's lane registry (`MailSendApi.showing`), so an ending here is said in place; `null` with no shell. */
+  showing: ShowSend | null;
   onChange: (next: RichValue) => void;
   onClose: () => void;
   onSend: () => void;
@@ -543,6 +547,20 @@ export function InlineReply({
   useEffect(() => {
     if (!needsContent) setNeedNote(false);
   }, [needsContent]);
+  /* PAST THE DRAFT CEILING: pressable like `needsContent`, and the press is refused in words. */
+  const tooLong = refusal === "too_long" && attaching.length === 0;
+  const told = needsContent || tooLong;
+  const [longNote, setLongNote] = useState(false);
+  useEffect(() => {
+    if (!tooLong) setLongNote(false);
+  }, [tooLong]);
+  const refusedTitle = needsContent ? tc("needContent") : tooLong ? t("sendTooLong", sendLineValues()) : undefined;
+  /** Refuse a told press in words; `true` when the press was refused. */
+  const refuseTold = (): boolean => {
+    if (needsContent) { setNeedNote(true); return true; }
+    if (tooLong) { setLongNote(true); return true; }
+    return false;
+  };
 
   /**
    * THE FROM CONTROL, BUILT ONCE — the same `<select>` whether it stands in the collapsed
@@ -829,21 +847,28 @@ export function InlineReply({
       {needNote && needsContent ? (
         <p className="reply-hint" role="status">{tc("needContent")}</p>
       ) : null}
+      {/* PAST THE CEILING the autosave stops (`reply-autosave.ts`), so it is said while typing;
+          a refused press says why it sent nothing. */}
+      {longNote && tooLong ? (
+        <p className="reply-hint" role="status">{t("sendTooLong", sendLineValues())}</p>
+      ) : draftOverCeiling(value.text, value.html) ? (
+        <p className="reply-hint" role="status">{t("bodyTooLong", sendLineValues())}</p>
+      ) : null}
 
       <div className="reply-actions">
         <Button
           variant="primary"
           /* Pressable while only content is missing — that press is refused in words above.
              Every other lock keeps the native `disabled`. */
-          disabled={locked && !needsContent}
-          aria-disabled={needsContent || undefined}
-          title={needsContent ? tc("needContent") : undefined}
+          disabled={locked && !told}
+          aria-disabled={told || undefined}
+          title={refusedTitle}
           aria-busy={send.phase === "sending" || undefined}
           // THE BUTTON CARRIES THE LANE'S PHASE — see `sendVerb`. It is the same attribute and the
           // same word on both send surfaces, because "sent" and "queued" differ by whether the
           // mail is gone and a surface may not reach its own verdict about that.
           data-send={verb.attr}
-          onClick={() => { if (needsContent) { setNeedNote(true); return; } onSend(); }}
+          onClick={() => { if (refuseTold()) return; onSend(); }}
         >
           {t(verb.key)}
           {/* The verb's chord, from the live registry — the action-bar law (§12): an action
@@ -857,11 +882,11 @@ export function InlineReply({
         {onSendAndDone ? (
           <Button
             className="reply-send-done"
-            disabled={locked && !needsContent}
-            aria-disabled={needsContent || undefined}
-            title={needsContent ? tc("needContent") : undefined}
+            disabled={locked && !told}
+            aria-disabled={told || undefined}
+            title={refusedTitle}
             onClick={() => {
-              if (needsContent) { setNeedNote(true); return; }
+              if (refuseTold()) return;
               onSendAndDone();
             }}
           >
@@ -877,7 +902,7 @@ export function InlineReply({
         </span>
       </div>
 
-      <SendStatus send={sendStateFor(send, wouldSend)} scope="reply" />
+      <SendStatus send={sendStateFor(send, wouldSend)} scope="reply" lane={sendKeyOf(wouldSend, "inline")} showing={showing} />
       {/* THE VERBS SIT WHERE THE SENTENCE IS, and off the SAME narrowed state: an unresolved send
           on this lane that does not name this message puts no warning up, so it must offer no
           answer either. The row is the shell's; this component dispatches nothing itself. */}

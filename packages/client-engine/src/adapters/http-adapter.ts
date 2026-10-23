@@ -2249,6 +2249,16 @@ export class HttpAdapter implements EngineAdapter {
         }
         ended = "frozen";
       }
+      /* A FIRST PRESS WHOSE WORDS THE SERVER REFUSED sends nothing: the row holds older words, and
+         no retry can help until the words change. The key was never presented to /send. */
+      if (!resumed && ended === "own") {
+        const r = refusal as unknown as MutationRejectedError;
+        this.forgetSendKey(idempotencyKey);
+        throw new MutationRejectedError(r.message, {
+          code: r.code, status: r.status, retryable: false, entityId: row,
+          ...(r.details !== undefined ? { details: r.details } : {}),
+        });
+      }
       /**
        * THE SAVE FAILED AND THIS CLIENT HAS NEVER SEEN A VERSION OF THIS ROW — one more try.
        *

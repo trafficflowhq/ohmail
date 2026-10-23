@@ -1,0 +1,7 @@
+### A send that did not go out says so, and a letter past the size limit is never lost unsaid
+
+On the desktop and the web, a reply or message that ends "Not sent" after you moved on, for example because your mail server could not be reached, now says so in a notice with an Open button that brings the message back with your words and Send ready, also in a narrow window. Its row in Drafts says it was not sent until you open it, and several that were not sent are named together. A send ohmail could not confirm, or one your server refused as a copy of a message already sent, keeps its own sentence and is never counted as not sent. Nothing is sent again without you pressing Send. A message past the 262 KB text limit is no longer answered "your draft is kept. Try again": the composer and the reply editor name the limit and send nothing until the text is shorter, also when your signature is what takes it over, and so does the Reply Run; the reply editor names it while you type.
+
+A reply or message sent while offline from ohmail Cloud goes once when the connection is back, and no longer also stays in Drafts on the web and on a paired desktop, where it could be sent a second time. In the Reply Run, a reply that went says "Reply sent." instead of "Sending didn't work".
+
+On the phone, the composer names the 256 KB limit while you type, and Send and Cancel say why nothing was sent or kept instead of "Try again" or no reason at all. A draft opened from Drafts and written past the limit says so when you close it, and Drafts keeps the earlier version.

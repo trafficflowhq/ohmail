@@ -11,6 +11,7 @@
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import { calendarEventsOf, type DistinctCalendarEvent } from "@ohmail/client-engine";
+import { DRAFT_BODY_MAX_BYTES, draftOverCeiling } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -467,6 +468,8 @@ export { JUNK_REFILL_BOUND_MS } from "@ohmail/client-engine";
 // Which side failed for a file that could not be fetched — the web reader's own class table.
 export { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 export { ruleMatchKey } from "@ohmail/client-engine";
+/** The draft limit's one predicate — the composer says it before the wire (the web's rule). */
+export { draftOverCeiling } from "@ohmail/client-engine";
 // The shared-provider list, for the Screening sheet: a domain there is never offered as a scope.
 export { isSharedProviderDomain } from "@ohmail/client-engine";
 export type { WaitingOnOrganizerView } from "@ohmail/client-engine";
@@ -2653,7 +2656,11 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * because asking again cannot help; every other failure keeps the plain one.
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyBusy" | "replyNotSignedIn"
-  | "replyForwardOriginalUnavailable" | "replyFailed" | "replySentElsewhere" | "replyDeletedElsewhere";
+  | "replyForwardOriginalUnavailable" | "replyFailed" | "replySentElsewhere" | "replyDeletedElsewhere"
+  | "replyTooLong" | "replyTooLarge";
+
+/** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
+export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
 
 export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
   const code = r?.error?.code;
@@ -2663,7 +2670,9 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
         : code === "send_busy" ? "replyBusy"
           : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
             : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
-              : "replyFailed";
+              : code === "draft_too_large" ? "replyTooLong"
+                : code === "payload_too_large" ? "replyTooLarge"
+                  : "replyFailed";
 }
 
 /** The refused send's sentence as a refusal, each key spelled out so the refusal census reads it. */
@@ -2674,7 +2683,9 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
         : kind === "replyBusy" ? refuse("replyBusy")
           : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
             : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
-              : refuse("replyFailed");
+              : kind === "replyTooLong" ? refuse("replyTooLong", draftLimitLabel())
+                : kind === "replyTooLarge" ? refuse("replyTooLarge")
+                  : refuse("replyFailed");
 }
 
 /**
@@ -2988,8 +2999,11 @@ export interface DraftKeep {
   rebind?: (draftId: string) => void;
 }
 
-/** `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said. */
-export type DraftKeepOutcome = "kept" | "refused";
+/**
+ * `kept` — the account holds it or the outbox does; `refused` — nothing was kept, and said;
+ * `tooLong` — the body is past the draft limit (`DRAFT_BODY_MAX_BYTES`), so no save is tried.
+ */
+export type DraftKeepOutcome = "kept" | "refused" | "tooLong";
 
 export const UNDO_MS = 8000;
 
@@ -4998,8 +5012,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        nothing: `sendAt` is a message still on the account, and filing its source would say it
        had been answered. */
     const plan = donePlan(messageId, andDone && sendAt === null);
-    return sent(
-      dispatchSend(withSignature({
+    const signed = withSignature({
         kind: "mail_send" as const,
         inReplyTo: messageId,
         body: text,
@@ -5012,7 +5025,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(attachments.length > 0 ? { attachments } : {}),
         // The row a refused press left (`SendResult.draftId`): this press sends THAT row.
         ...(draftId ? { draftId } : {}),
-      }, sig), plan),
+      }, sig);
+    if (draftOverCeiling(signed.body)) return tooLongSend();
+    return sent(
+      dispatchSend(signed, plan),
       // THE CONFIRMED SENTENCE IS THE WHOLE DIFFERENCE, and it is honest rather than
       // convenient: nothing was sent, an appointment was made, and "Reply sent." over a
       // message still sitting on the account is exactly the false claim the four-outcome
@@ -5178,6 +5194,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return seen !== undefined && drained !== null && drained !== seen ? "deleted" : null;
   };
 
+  /** PAST THE DRAFT LIMIT, signature included: refused before the wire, and said. */
+  const tooLongSend = (): SendResult => {
+    toast(refuse("replyTooLong", draftLimitLabel()));
+    return { outcome: "failed", failure: "replyTooLong" };
+  };
+
   /** A bound send of a row another device sent or deleted: refused before the wire, and said. */
   const sentElsewhere = (draftId: string | null): SendResult | null => {
     const left = draftId === null ? null : draftLeft(draftId);
@@ -5189,6 +5211,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const parent = k.messageId === null ? undefined : messageOf(k.messageId);
     const mailboxId = k.mailboxId ?? parent?.mailboxId ?? null;
     if (mailboxId === null || (k.messageId !== null && !parent)) return "refused";
+    // The server's 413 judges the same bytes: asked here, nothing goes on the wire.
+    if (draftOverCeiling(k.body)) return "tooLong";
     const reply = k.mode === "reply" || k.mode === "replyAll";
     const env = k.mode === "replyAll" && parent
       ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES)
@@ -5222,6 +5246,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       target = null;
       r = await save(null);
     }
+    if (r?.status === "rolled_back" && r.error?.code === "draft_too_large") return "tooLong";
     if (r === null || r.status === "rolled_back") return "refused";
     if (target !== bound && r.entityId) k.rebind?.(r.entityId);
     // A newer save of this row replaced this one: it owns the sentence.
@@ -5253,8 +5278,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     }
     /* SEND + DONE — read before the dispatch, for the reply arm's reason. */
     const plan = donePlan(messageId, andDone);
-    return sent(
-      dispatchSend(withSignature({
+    const signed = withSignature({
         kind: "mail_send" as const,
         inReplyTo: null,
         forwardOf: messageId,
@@ -5269,7 +5293,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
-      }, sig), plan),
+      }, sig);
+    if (draftOverCeiling(signed.body)) return tooLongSend();
+    return sent(
+      dispatchSend(signed, plan),
       Copy.forwarded,
       Copy.forwardEarlierWent,
     );
@@ -5305,8 +5332,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       toast(refuse("composeNeedContent"));
       return { outcome: "failed" };
     }
-    return sent(
-      dispatchSend(withSignature({
+    const signed = withSignature({
         kind: "mail_send" as const,
         inReplyTo: null,
         mailboxId,
@@ -5318,7 +5344,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(sendAt ? { sendAt } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
-      }, sig)),
+      }, sig);
+    if (draftOverCeiling(signed.body)) return tooLongSend();
+    return sent(
+      dispatchSend(signed),
       sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent,
       Copy.composeEarlierWent,
     );

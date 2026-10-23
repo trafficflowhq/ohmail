@@ -63,6 +63,7 @@ export function DraftsView({
   onSendAgain,
   refusal,
   heldHere,
+  notSent,
   onCancelSchedule,
   onEditScheduled,
   /**
@@ -111,6 +112,8 @@ export function DraftsView({
    * anywhere. Optional: the three other doors that mount this view's component pass nothing.
    */
   heldHere?: ReadonlySet<string>;
+  /** Rows a send left Not sent while nothing showed it, with the line it said (the shell's). */
+  notSent?: ReadonlyMap<string, string>;
   onCancelSchedule: (draftId: string) => void;
   onEditScheduled: (draft: EngineDraft) => void;
   repliesHere: (draft: EngineDraft) => boolean;
@@ -322,6 +325,9 @@ export function DraftsView({
                           treatment of a live refusal — the row is an ordinary draft again, so
                           opening it to fix and resend works as on any draft, and the sentence
                           clears on the next edit or schedule. */}
+                      {d.status === "draft" && notSent?.has(d.id) ? (
+                        <span className="draft-state" role="status">{notSent.get(d.id)}</span>
+                      ) : null}
                       {d.status === "draft" && d.sendError ? (
                         <span className="draft-state" role="status">
                           {t("scheduleFailedNote", { reason: d.sendError })}

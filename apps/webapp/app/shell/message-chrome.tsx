@@ -20,7 +20,7 @@ import {
   type MessageBody,
 } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
-import type { SendState } from "./mail-send";
+import type { SendState, ShowSend } from "./mail-send";
 import { EMPTY_RICH, type RichValue } from "./rich-text";
 import type { DraftReplyChrome } from "./InlineReply";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
@@ -254,6 +254,8 @@ export interface MessageChrome {
   sendReplyAndDone?: (messageId: string) => (() => void) | null;
   /** Where that message's send has got to — see `mail-send.ts` for why it has four states. */
   replySendState: (messageId: string) => SendState;
+  /** The send machine's lane registry — see `MailSendApi.showing`. `null` on the inert chrome. */
+  replySendShowing?: ShowSend | null;
   /**
    * THE HELD REPLY'S WAY OUT, or `null` when this message has no unconfirmed reply row.
    *
@@ -443,6 +445,7 @@ const MessageChromeContext = createContext<MessageChrome>({
   closeReply: noop,
   sendReply: noop,
   replySendState: () => ({ phase: "idle" }),
+  replySendShowing: null,
   openSenderMenu: noop,
   openAttachmentPreview: noop,
   conversationOf: () => [],

@@ -1977,6 +1977,7 @@ export function MessagePane({
       send={chrome.replySendState(
         (chrome.replyMode ?? "reply") === "forward" ? inlineForwardKey(replyTarget.id) : replyTarget.id,
       )}
+      showing={chrome.replySendShowing ?? null}
       onChange={chrome.onReplyBody}
       onClose={chrome.closeReply}
       onSend={() => chrome.sendReply(replyTarget.id)}

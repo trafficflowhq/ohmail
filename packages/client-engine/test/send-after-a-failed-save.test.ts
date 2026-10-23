@@ -24,7 +24,7 @@ const SAVED = "a".repeat(64);
  * One account, one server. `putFails` is the blipped save: the request is recorded and rejected
  * exactly as a dropped connection rejects, which is the class the adapter's own catch handles.
  */
-function harness(opts: { putFails?: () => boolean; putRevision?: string | null } = {}) {
+function harness(opts: { putFails?: () => boolean; putRevision?: string | null; putRefusal?: () => Response | null } = {}) {
   const calls: Call[] = [];
   const putFails = opts.putFails ?? (() => false);
   const rev = opts.putRevision === undefined ? SAVED : opts.putRevision;
@@ -41,6 +41,8 @@ function harness(opts: { putFails?: () => boolean; putRevision?: string | null }
     }
     if (path.startsWith("/drafts/") && init?.method === "PUT") {
       if (putFails()) throw new TypeError("Network request failed");
+      const refused = opts.putRefusal?.() ?? null;
+      if (refused) return refused;
       return new Response(JSON.stringify({
         id: path.split("/")[2], bcc: [], mailboxId: "mbx-1",
         ...(rev === null ? {} : { contentRevision: rev }),
@@ -168,5 +170,32 @@ describe("a send whose own save failed carries the version this client last saw"
       puts(calls).length - before,
       "the repeat fired for a press that already had something to vouch with",
     ).toBe(1);
+  });
+
+  it("7 — a first press whose save is refused for its own words sends nothing and says that refusal", async () => {
+    let refuse = false;
+    const { calls, fetchImpl } = harness({
+      putRefusal: () => refuse
+        ? new Response(JSON.stringify({ error: { code: "draft_too_large", message: "Too large." } }), {
+          status: 413, headers: { "content-type": "application/json" },
+        })
+        : null,
+    });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl });
+    // Saved once under the limit, so the older row is what a send would deliver.
+    await a.mutate(save("draft-7", "short"), { idempotencyKey: "save-7" });
+    const before = puts(calls).length;
+
+    refuse = true;
+    const err = await a.mutate(press("draft-7", "far too long"), { idempotencyKey: "send-7" })
+      .then(() => null).catch((e: unknown) => e as MutationRejectedError);
+
+    expect(
+      {
+        code: err?.code ?? null, retryable: err?.retryable ?? null, entityId: err?.entityId ?? null,
+        puts: puts(calls).length - before, sends: sends(calls).length,
+      },
+      "the older row was sent, the PUT repeated, or the refusal lost its code",
+    ).toEqual({ code: "draft_too_large", retryable: false, entityId: "draft-7", puts: 1, sends: 0 });
   });
 });

@@ -131,7 +131,8 @@ describe("a draft opened here is one row from the first keystroke to the send", 
     expect(SHEET).toContain("mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,");
     expect(SHEET).toContain("}, DRAFT_AUTOSAVE_MS);");
     expect(SHEET).toContain("const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });");
-    expect(SHEET, "the timer must not reset on the route's per-render seed").toContain("}, [bound, draftId, phase, onScreen]);");
+    // `tooLong` is a flag of the words on screen, not the seed: past the limit nothing is saved.
+    expect(SHEET, "the timer must not reset on the route's per-render seed").toContain("}, [bound, draftId, phase, onScreen, tooLong]);");
   });
 
   it("the card offers Edit only where the composer can take the draft whole, and the route opens it bound", () => {

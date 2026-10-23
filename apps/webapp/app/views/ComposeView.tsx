@@ -19,9 +19,9 @@ import { Button, Chip, Icon, Kbd, TextField, cssRect, formatFileSize, useToast }
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import { chordKeys, useBinding, useKeyBindings, useModGlyph, useWritingSurface } from "../shell/keymap";
 import { displayAddress } from "../shell/idn";
-import { canCancel, canSend, sendRefusal, sendStateFor, sendVerb, type SendState } from "../shell/mail-send";
+import { COMPOSE_SEND_KEY, canCancel, canSend, sendRefusal, sendStateFor, sendVerb, type SendState, type ShowSend } from "../shell/mail-send";
 import { RichEditor } from "../shell/RichEditorLazy";
-import { SendStatus } from "../shell/SendStatus";
+import { SendStatus, sendLineValues } from "../shell/SendStatus";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import {
   RecipientField,
@@ -78,6 +78,7 @@ export function ComposeView({
   signaturesHtml,
   plan,
   send,
+  showing,
   locked,
   onSend,
   onSendLater,
@@ -143,6 +144,8 @@ export function ComposeView({
   /** The same object `canSend` judges and `onSend` dispatches. */
   plan: ComposePlan;
   send: SendState;
+  /** The shell's lane registry (`MailSendApi.showing`), so an ending here is said in place. */
+  showing: ShowSend | null;
   onSend: () => void;
   /**
    * SEND LATER (mail 0077): the same dispatch as {@link onSend} with the picked instant on the
@@ -637,6 +640,12 @@ export function ComposeView({
   useEffect(() => {
     if (!needsContent) setNeedNote(false);
   }, [needsContent]);
+  /* PAST THE DRAFT CEILING: pressable like `needsContent`, and the press is refused in words. */
+  const tooLong = refusal === "too_long" && held === null && attaching.length === 0;
+  const [longNote, setLongNote] = useState(false);
+  useEffect(() => {
+    if (!tooLong) setLongNote(false);
+  }, [tooLong]);
   const inFlight = send.phase === "sending" || send.phase === "queued" || held !== null;
   /* CANCEL IS NOT AN INPUT, and a queued send is not on the wire — see `canCancel`, which is
      deliberately NOT the same question as `inFlight`. */
@@ -1110,13 +1119,17 @@ export function ComposeView({
                 /* Pressable while only content is missing — that press is refused IN WORDS below.
                    Every other lock keeps the native `disabled`: those presses must stay
                    impossible, not merely explained. */
-                disabled={sendBlocked && !needsContent}
-                aria-disabled={needsContent || undefined}
-                title={needsContent ? t("needContent") : undefined}
+                disabled={sendBlocked && !needsContent && !tooLong}
+                aria-disabled={needsContent || tooLong || undefined}
+                title={needsContent ? t("needContent") : tooLong ? t("sendTooLong", sendLineValues()) : undefined}
                 aria-busy={send.phase === "sending" || undefined}
                 // See `sendVerb` — the same attribute and the same word as the inline dock.
                 data-send={verb.attr}
-                onClick={() => { if (needsContent) { setNeedNote(true); return; } pressSend(); }}
+                onClick={() => {
+                  if (needsContent) { setNeedNote(true); return; }
+                  if (tooLong) { setLongNote(true); return; }
+                  pressSend();
+                }}
               >
                 {t(verb.key)}
                 {/* The verb's chord, from the live registry — the action-bar law (§12): an
@@ -1161,6 +1174,9 @@ export function ComposeView({
                   content arrives (`needsContent` flips and the effect clears the note). */}
               {needNote && needsContent ? (
                 <span className="send-note" role="status">{t("needContent")}</span>
+              ) : null}
+              {longNote && tooLong ? (
+                <span className="send-note" role="status">{t("sendTooLong", sendLineValues())}</span>
               ) : null}
               {/* WHY SEND DID NOT SEND, and the one way on: what is on screen, as a new letter.
                   Nothing is offered for an unchanged SENT letter — it already went. */}
@@ -1219,7 +1235,7 @@ export function ComposeView({
               )}
             </div>
 
-            <SendStatus send={shown} scope="compose" />
+            <SendStatus send={shown} scope="compose" lane={COMPOSE_SEND_KEY} showing={showing} />
             {/* THE VERBS, off the SAME narrowed state the sentence renders from: an unresolved send
                 that does not name this message says nothing here, so it offers no answer either. */}
             {heldResolve !== null && shown.phase === "unverified" ? (

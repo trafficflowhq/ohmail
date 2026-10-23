@@ -42,7 +42,7 @@ function render(send: SendState, messages: typeof en | typeof de, locale: string
   act(() => {
     root!.render(
       <NextIntlClientProvider locale={locale} messages={messages as never} timeZone="UTC">
-        <SendStatus send={send} scope="reply" />
+        <SendStatus send={send} scope="reply" lane={null} showing={null} />
       </NextIntlClientProvider>,
     );
   });
@@ -102,7 +102,7 @@ describe("a send that is still going says so", () => {
     await act(async () => {
       root!.render(
         <NextIntlClientProvider locale="en" messages={en as never} timeZone="UTC">
-          <SendStatus send={{ phase: "sending", since }} scope="reply" />
+          <SendStatus send={{ phase: "sending", since }} scope="reply" lane={null} showing={null} />
         </NextIntlClientProvider>,
       );
     });
@@ -125,7 +125,7 @@ describe("a send that is still going says so", () => {
     await act(async () => {
       root!.render(
         <NextIntlClientProvider locale="en" messages={en as never} timeZone="UTC">
-          <SendStatus send={{ phase: "sending", since: Date.now() - SENDING_LONG_MS - 1 }} scope="reply" />
+          <SendStatus send={{ phase: "sending", since: Date.now() - SENDING_LONG_MS - 1 }} scope="reply" lane={null} showing={null} />
         </NextIntlClientProvider>,
       );
     });

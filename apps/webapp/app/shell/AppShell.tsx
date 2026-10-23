@@ -286,6 +286,7 @@ import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
 import { SendReleaseProvider } from "./send-release";
+import { sendLine, sendLineValues } from "./SendStatus";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -1900,7 +1901,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
-    confirmForward, forwardAsk, composeFrom, discardDraft, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
+    confirmForward, forwardAsk, composeFrom, discardDraft, notSentRows, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig,
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
@@ -1994,27 +1995,21 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /**
    * A SEND THE RUN MADE THAT DID NOT LAND MUST SAY SO. `FocusReplyOverlay` renders a card and two buttons and has no
    * status line, so the run's only other feedback for a failure is the step NOT advancing — which is silence to
-   * somebody who pressed Done and is waiting. The inline editor's four status strings say exactly the same four
-   * things, so they are reused rather than re-worded, and none of them claims a delivery: `settle`'s toast is the
-   * only sentence in the app that does, and it fires only on a confirmation. Keyed on the PHASE moving, not on
-   * `t`/`toast` identity — a render-keyed effect here would re-announce the same failure on every keystroke.
+   * somebody who pressed Done and is waiting. The inline editor's line says it, from the same derivation
+   * (`sendLine`), and none of its sentences claims a delivery: `settle`'s toast is the only sentence in the app that
+   * does, and it fires only on a confirmation. The sent beat has no line, so it no longer reads as a failure over
+   * "Reply sent.". Keyed on the PHASE moving, not on `t`/`toast` identity — a render-keyed effect here would
+   * re-announce the same failure on every keystroke.
    */
   const frPhase = frSend?.phase ?? "idle";
   const frCode = frSend?.code;
   useEffect(() => {
-    if (frPhase === "idle" || frPhase === "sending") return;
+    if (frSend === null || frPhase === "idle" || frPhase === "sending") return;
     // The failed arm never quotes the wire — `SendStatus.tsx` carries the whole argument (a
     // real subscriber read "Nicht gesendet: authentication required", the API middleware's own
     // 401 text). Same catalog keys, same code-not-text branching, one contract on both surfaces.
-    toast(
-      frPhase === "queued"
-        ? t("reply.statusQueued")
-        : frPhase === "unverified"
-          ? t("reply.statusUnverified")
-          : frCode === "mailbox_disabled"
-            ? t("reply.statusMailboxDisabled")
-            : t("reply.statusFailed"),
-    );
+    const line = sendLine(frSend, false);
+    if (line !== null) toast(t(`reply.${line.key}`, sendLineValues()));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frPhase, frCode]);
 
@@ -2092,6 +2087,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
        * `replySendState`. One reading of the hold, two surfaces.
        */
       replySendState: replySendState,
+      replySendShowing: mailSend.showing,
       /** The held reply's way out, on the door the reader actually opens — see `DraftsView`. */
       replyHeldResolve: (messageId: string) => {
         const row = heldReplyRow(messageId);
@@ -3081,6 +3077,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   /* A store whose load was refused cannot say the send is over: held, and said. */
                   ? { sentence: t(engine.outboxUnreadable?.() === true ? "compose.sendingOutboxUnread" : "compose.sendingFromLastSession") }
                   : null}
+                showing={mailSend.showing}
                 onSend={sendCompose}
                 onSendLater={sendCompose}
                 onCancel={cancelCompose}
@@ -3130,6 +3127,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    restated, and it is O(records) rather than O(drafts). Read here so it costs a
                    jar read only while this view is the route. */
                 heldHere={unresolvedSendRows(COMPOSE_SEND_KEY)}
+                notSent={notSentRows}
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}

@@ -39,6 +39,8 @@ import {
   resurfaceTimeLabel,
   RESURFACE_HOURS,
   sizeLabel,
+  draftLimitLabel,
+  draftOverCeiling,
   scheduleLabel,
   SEND_LATER_MIN_LEAD_MS,
   SIG_FOLLOWING,
@@ -1239,7 +1241,7 @@ export function ComposeSheet({
    * WHY THE LAST CLOSE DID NOT CLOSE — the keep failed, or the files cannot be kept. Said in place;
    * the next close discards (`compose-keep.ts`). Any edit takes it back, so new text is kept again.
    */
-  const [keepNote, setKeepNote] = useState<"failed" | "files" | null>(null);
+  const [keepNote, setKeepNote] = useState<"failed" | "files" | "tooLong" | null>(null);
   /** A keep on its way — one row per close, however often the backdrop is tapped meanwhile. */
   const keeping = useRef(false);
   /**
@@ -1323,23 +1325,32 @@ export function ComposeSheet({
      holds what is on screen, quietly, so leaving the app mid-sentence loses nothing. Only a bound
      sheet saves this way; a fresh one keeps on close. */
   const onScreen = JSON.stringify([to, subject, body, copies.cc, copies.bcc]);
+  /* PAST THE DRAFT LIMIT no save can land (the server's 413): said while typing, never autosaved. */
+  const tooLong = draftOverCeiling(body);
   /* By presence, not identity: the route builds the seed per render, and a new object must not reset the timer. */
   const bound = draft !== undefined;
+  /** The snapshot a quiet save is carrying — one in flight per snapshot. */
+  const savingFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen) return;
+    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
     const timer = setTimeout(() => {
+      if (savingFor.current === onScreen) return;
+      const snapshot = onScreen;
+      savingFor.current = snapshot;
       /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
          A forward draft is saved as a forward of its original, never as a new mail. */
       void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
         mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
         mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
         rebind: setDraftId,
-      }));
+      })).catch(() => undefined).finally(() => {
+        if (savingFor.current === snapshot) savingFor.current = null;
+      });
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
     // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bound, draftId, phase, onScreen]);
+  }, [bound, draftId, phase, onScreen, tooLong]);
   /* THE ROW WAS SENT OR DELETED ON ANOTHER DEVICE — the mirror's word, read while this sheet is idle
      on it (its own send leaves the sheet). Held from that moment, because the keep that follows
      binds a NEW row; `at` is what the row held, so text typed after it is told apart from the letter. */
@@ -1486,9 +1497,13 @@ export function ComposeSheet({
     if (cancelAct({ phase, key: queuedKey, alreadySent }) === "close") {
       /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes. */
       const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
-      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null });
+      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null, tooLong });
       if (act === "close") {
         leave();
+        return;
+      }
+      if (act === "tooLong") {
+        setKeepNote("tooLong");
         return;
       }
       if (act === "ask") {
@@ -1507,7 +1522,7 @@ export function ComposeSheet({
         });
         keeping.current = false;
         if (kept === "kept") leave();
-        else setKeepNote("failed");
+        else setKeepNote(kept === "tooLong" ? "tooLong" : "failed");
       })();
       return;
     }
@@ -1524,7 +1539,7 @@ export function ComposeSheet({
 
   atUnmount.current = () => {
     const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
-    if (unmountKeep({ phase, worth, keeping: keeping.current }) !== "keep") return;
+    if (unmountKeep({ phase, worth, keeping: keeping.current, tooLong }) !== "keep") return;
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
       ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, quiet: true,
@@ -1621,10 +1636,19 @@ export function ComposeSheet({
         {connectionSaid(w.boot.connection)}
       </Txt>
     ) : null,
-    /* Why the close stayed — nothing typed is thrown away without the person being told. */
+    /* Why the close stayed — nothing typed is thrown away without the person being told. A draft
+       opened from Drafts says the row still holds its earlier words. */
     keepNote !== null ? (
       <Txt key="keep" variant="caption" tone="ink2" accessibilityRole="alert">
-        {keepNote === "failed" ? Copy.composeKeepFailed : Copy.composeKeepFiles}
+        {keepNote === "failed" ? Copy.composeKeepFailed
+          : keepNote === "files" ? Copy.composeKeepFiles
+            : bound && draftId !== null ? Copy.composeKeepTooLongBound(draftLimitLabel())
+              : Copy.composeKeepTooLong(draftLimitLabel())}
+      </Txt>
+    ) : tooLong ? (
+      /* Past the limit, while typing — the web's `compose.bodyTooLong`. */
+      <Txt key="tooLong" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.composeTooLong(draftLimitLabel())}
       </Txt>
     ) : null,
   ].filter((n) => n !== null);

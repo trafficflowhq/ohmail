@@ -18,7 +18,8 @@ import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions, type ToastOpts } from "../src/state/live";
-import { keepAct, worthKeeping } from "../src/ui/compose-keep";
+import { keepAct, unmountKeep, worthKeeping } from "../src/ui/compose-keep";
+import { DRAFT_BODY_MAX_BYTES } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
@@ -136,5 +137,47 @@ describe("every road out of the sheet asks before it closes", () => {
     expect(close).toContain("w.actions.draftKeep({");
     // The close waits for the keep: `leave` (the close that calls `onClose`) follows a "kept" answer.
     expect(close).toContain('if (kept === "kept") leave();');
+  });
+});
+
+describe("past the draft limit the composer says so, and nothing typed is lost unsaid", () => {
+  const over = `${"é".repeat(DRAFT_BODY_MAX_BYTES / 2)}x`;
+  const at = "é".repeat(DRAFT_BODY_MAX_BYTES / 2);
+
+  it("a close over too long a text stays and says why; the second close discards", () => {
+    expect(keepAct({ phase: "idle", worth: true, files: 0, armed: false, tooLong: true })).toBe("tooLong");
+    expect(keepAct({ phase: "idle", worth: true, files: 0, armed: true, tooLong: true })).toBe("close");
+    // Control: nothing written, nothing to say.
+    expect(keepAct({ phase: "idle", worth: false, files: 0, armed: false, tooLong: true })).toBe("close");
+    expect(unmountKeep({ phase: "idle", worth: true, keeping: false, tooLong: true })).toBe("nothing");
+    expect(unmountKeep({ phase: "idle", worth: true, keeping: false, tooLong: false })).toBe("keep");
+  });
+
+  it("draftKeep answers tooLong before the wire, and on the server's 413; exactly at the limit it keeps", async () => {
+    const live = await scene();
+    const keep = (body: string) => live.actions.draftKeep({
+      mode: "reply", messageId: "m1", mailboxId: null, to: [], subject: "", body, files: 0,
+    });
+    expect(await keep(over)).toBe("tooLong");
+    expect(posted(live.fake), "an over-limit keep reached the wire").toHaveLength(0);
+    live.fake.answerNext("POST", "/drafts", 413, { error: { code: "draft_too_large", message: "too large", retryable: false } });
+    expect(await keep("Fits here, not there")).toBe("tooLong");
+    expect(await keep(at)).toBe("kept");
+  }, 30_000);
+
+  it("the sheet says the limit while typing and on the close, and a refused quiet save is owed again", () => {
+    expect(SHEET).toContain("const tooLong = draftOverCeiling(body);");
+    expect(SHEET).toContain("{Copy.composeTooLong(draftLimitLabel())}");
+    expect(SHEET).toContain("Copy.composeKeepTooLongBound(draftLimitLabel())");
+    const close = SHEET.slice(SHEET.indexOf("const closeComposer = () => {"), SHEET.indexOf("const send = async ("));
+    expect(close).toContain('if (act === "tooLong") {');
+    expect(close).toContain('setKeepNote(kept === "tooLong" ? "tooLong" : "failed");');
+    // The autosave skips past the limit, moves `saved` only once the row holds the words
+    // (`autosaveKeep`, kept-draft-edited-on-the-phone.test.ts), and carries one save per snapshot.
+    const auto = SHEET.slice(SHEET.indexOf("const savingFor = useRef"), SHEET.indexOf("THE ROW WAS SENT OR DELETED ON ANOTHER DEVICE"));
+    expect(auto).toContain('saved.current === onScreen || tooLong) return;');
+    expect(auto).toContain("if (savingFor.current === onScreen) return;");
+    expect(auto).toContain("autosaveKeep(saved, onScreen,");
+    expect(auto).not.toContain("saved.current = onScreen;");
   });
 });

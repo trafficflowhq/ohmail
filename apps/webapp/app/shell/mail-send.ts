@@ -35,6 +35,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
+import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
@@ -166,8 +167,10 @@ export interface MailSendApi {
    * `heldRow` is the draft row the hold should be asked about when the MUTATION cannot name one:
    * an inline reply's row is the adapter's and its editor is a scratch buffer, so this door asked
    * about `null` and got `free` while the row a previous press left sat unconfirmed.
+   *
+   * `true` when the press went: the lane is sending under its key. Every refusal answers `false`.
    */
-  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => void;
+  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => boolean;
   /**
    * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one. A queued send is an intent
    * on the engine's outbox: nothing is on the wire, and the reconnect flush or a later boot
@@ -179,7 +182,16 @@ export interface MailSendApi {
    * only the server knows what it did with it.
    */
   withdraw: (lane: string) => Promise<CancelSaid>;
+  /** A surface showing this lane's send line, while mounted — see {@link ShowSend}. */
+  showing: ShowSend;
 }
+
+/**
+ * Registers a lane's line and returns its release. `seen` is asked at the ending: the reply pane
+ * mounts twice, once in a reading column the layout may hide. An ending no registered line can show
+ * is said by the shell instead (`OutcomeDetail.shown`).
+ */
+export type ShowSend = (lane: string, seen?: () => boolean) => () => void;
 
 /**
  * WHAT AN ENDING CARRIES BESIDE ITS PHASE — see `onOutcome`. `left` on a refusal that names its
@@ -188,6 +200,10 @@ export interface MailSendApi {
 export interface OutcomeDetail {
   left?: RefusedRow;
   andDone?: SendAndDonePlan;
+  /** A terminal ending that is not a delivery (failed, duplicate, unverified): its state. */
+  ended?: SendState;
+  /** Whether a surface showed this lane's line when it ended — see {@link ShowSend}. */
+  shown?: boolean;
 }
 
 /** The row a send refused for good was sent from, handed to the surface that may take it. */
@@ -1101,7 +1117,7 @@ export function heldRowUnverified(
  * sending mailbox, or a reply whose edited recipients emptied. Order matters: a stronger lock
  * outranks a missing word, so a surface never offers "write something" over a send in flight.
  */
-export type SendRefusal = "locked" | "needs_content" | "incomplete";
+export type SendRefusal = "locked" | "too_long" | "needs_content" | "incomplete";
 
 export function sendRefusal(state: SendState, m: MailSend): SendRefusal | null {
   /**
@@ -1131,6 +1147,9 @@ export function sendRefusal(state: SendState, m: MailSend): SendRefusal | null {
    * present is the answered case, and only a match locks.
    */
   if (unresolvedNames(state, m)) return "locked";
+  /* Past the draft ceiling the save is refused, so a send could only deliver older words. The plain
+     half only: the sanitizer may shrink pasted markup, and the server's 413 judges that. */
+  if (draftOverCeiling(m.body)) return "too_long";
   if (sendNeedsContent(m)) return "needs_content";
   if (m.inReplyTo === null) {
     if (!m.mailboxId) return "incomplete";
@@ -1331,6 +1350,18 @@ export function useMailSend(
      arrives long after the render that armed it. */
   const outcomeRef = useRef(onOutcome);
   outcomeRef.current = onOutcome;
+  /** The lines mounted per lane, each with its own visibility question — see {@link ShowSend}. */
+  const shownLanes = useRef(new Map<string, Set<() => boolean>>());
+  const showing = useCallback<ShowSend>((lane, seen) => {
+    const probe = (): boolean => (seen ? seen() : true);
+    const set = shownLanes.current.get(lane) ?? new Set<() => boolean>();
+    set.add(probe);
+    shownLanes.current.set(lane, set);
+    return () => {
+      set.delete(probe);
+      if (set.size === 0 && shownLanes.current.get(lane) === set) shownLanes.current.delete(lane);
+    };
+  }, []);
 
   const setPhase = useCallback((key: string, next: SendState) => {
     setStates((prev) => {
@@ -1628,7 +1659,8 @@ export function useMailSend(
           const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
           const about = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
           const left = refusedRowOf(res, about);
-          outcomeRef.current?.(key, m, false, next.phase, left ? { left } : undefined);
+          const shown = [...(shownLanes.current.get(key) ?? [])].some((seen) => seen());
+          outcomeRef.current?.(key, m, false, next.phase, { ...(left ? { left } : {}), ended: next, shown });
         }
         setPhase(key, next);
       }
@@ -2078,13 +2110,13 @@ export function useMailSend(
   }
 
   const send = useCallback(
-    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => {
+    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }): boolean => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
       // tick. `canSend` then applies the SAME rule the button's `disabled` uses — through the
       // SAME derivation, see `stateFor` — so a caller that is not the button (a keyboard
       // shortcut, a future Reply Run step) cannot get past something the button enforces.
-      if (locked.current.has(key)) return;
+      if (locked.current.has(key)) return false;
       /**
        * THE HOLD, ASKED AT THE PRESS AND NOT ONLY AT THE BUTTON: `canSend` below reads the durable RECORD through
        * `stateFor`. It does not read the row's status, and the row's status is the only witness for a send whose row
@@ -2107,7 +2139,7 @@ export function useMailSend(
       }, owner.current);
       if (hold.kind === "parked") {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
-        return;
+        return false;
       }
 
       /**
@@ -2125,10 +2157,11 @@ export function useMailSend(
           sendPendingInDurableOutbox(engine, key), owner.current, standingOf(engine),
         )) {
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
-        return;
+        return false;
       }
 
-      if (!canSend(stateFor(key), m)) {
+      const refused = sendRefusal(stateFor(key), m);
+      if (refused !== null) {
         /**
          * REFUSED — and the row this message has since acquired is written down on the way out.
          *
@@ -2140,7 +2173,11 @@ export function useMailSend(
          * `attachSendLockDraft`.
          */
         attachSendLockDraft(key, sendSubjects(m, sessionOf(key)), m.draftId ?? null, owner.current);
-        return;
+        /* PAST THE DRAFT LIMIT AS IT WOULD GO — the signature sealed in, which the surfaces' own
+           judgement leaves out. Said in place on the lane for every caller, a chord as much as the
+           button: nothing dispatched, no lock taken, so the press after a trim goes. */
+        if (refused === "too_long") setPhase(key, { phase: "failed", code: "draft_too_large" });
+        return false;
       }
 
       /**
@@ -2221,6 +2258,7 @@ export function useMailSend(
           locked.current.delete(key);
           setPhase(key, { phase: "failed", reason: String(err) });
         });
+      return true;
     },
     [engine, stateFor, setPhase, absorb, arm, sessionOf],
   );
@@ -2302,6 +2340,7 @@ export function useMailSend(
       stateOf: stateFor,
       send,
       withdraw,
+      showing,
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
       /** See {@link sendUnsettledFromLastSession} — the identity latched at mount is the key. */
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
@@ -2310,6 +2349,6 @@ export function useMailSend(
           sendPendingInDurableOutbox(engine, lane), owner.current, standingOf(engine),
         ),
     }),
-    [stateFor, send, withdraw],
+    [stateFor, send, withdraw, showing],
   );
 }
