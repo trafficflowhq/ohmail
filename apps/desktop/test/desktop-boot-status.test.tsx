@@ -1,4 +1,6 @@
 /** @vitest-environment jsdom */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -9,6 +11,8 @@ import messages from "../../webapp/messages/en.json";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { bootSentence, LONG_PHASE_MS } from "../src/BootStatus.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
+
+const APP_CSS = readFileSync(resolve(process.cwd(), "apps/webapp/app/app.css"), "utf8");
 
 /**
  * ═══ THE BOOT'S WORDS SIT WHERE THE APP'S OWN SYNC LINE SITS — AND THEY ARE THE ENGINE'S ═══
@@ -107,11 +111,16 @@ describe("where the boot line stands", () => {
     expect(line!.querySelector(".mbx-spin")).not.toBeNull();
     expect(line!.querySelector(".rs-track")).not.toBeNull();
 
-    // Anchored at the rail's foot: bottom-left of the window, not centred over the canvas.
+    // Anchored at the rail's foot: bottom-left of the window, not centred over the canvas. The box
+    // is app.css's `.gate-boot > .boot-foot` (the rail's own track; `boot-sync-line-frames.test.ts`
+    // measures it frame by frame in Chromium), so here it is the class and that rule's anchoring.
     const anchor = line!.parentElement as HTMLElement;
-    expect(anchor.style.position).toBe("absolute");
-    expect(Number.parseInt(anchor.style.bottom, 10)).toBeGreaterThan(0);
-    expect(Number.parseInt(anchor.style.left, 10)).toBeGreaterThan(0);
+    expect(anchor.className).toBe("boot-foot");
+    expect(anchor.parentElement!.classList.contains("gate-boot")).toBe(true);
+    const rule = /\n\.gate-boot > \.boot-foot \{([^}]*)\}/.exec(APP_CSS)?.[1] ?? "";
+    expect(rule).toContain("position: absolute;");
+    expect(rule).toContain("left: var(--gap-edge);");
+    expect(rule).toContain("bottom: var(--gap-edge);");
     // A live region, exactly like the sync line it stands in for.
     expect(anchor.getAttribute("role")).toBe("status");
   });

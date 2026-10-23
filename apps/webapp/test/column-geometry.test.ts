@@ -94,6 +94,12 @@ describe("app.css — the two properties the columns hang on, and the numbers th
     expect(sk).toContain(`var(${SPLIT_SK_VAR}, minmax(${LIST.min}px, ${LIST.dflt}px) 1fr)`);
     expect(sk).not.toContain(`var(${SPLIT_VAR},`);
   });
+
+  it("the desktop's boot line takes its box from the same rail track, so it stays inside the rail", () => {
+    const foot = blockOf(APP, ".gate-boot > .boot-foot");
+    expect(foot).toContain(`width: ${RAIL_TRACK};`);
+    expect(foot).toContain("left: var(--gap-edge);");
+  });
 });
 
 describe("column-handles.css — appearance only, tokens only, and no width of its own", () => {

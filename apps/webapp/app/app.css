@@ -5406,11 +5406,30 @@ input.set-tag-input {
   opacity: 0.55;
   pointer-events: none;
 }
+/* THE BOOT LINE'S BOX (`BootStatus.tsx`, the desktop window's "Opening your mailbox…" card): the
+   silhouette's rail column, by the same three facts the silhouette is drawn from — the window's
+   gap (`--gap-edge`), the deck's rail track verbatim, the rail's own side and foot padding — so
+   the card lies inside the rail at every gap, every dragged width and every window narrow enough
+   to clamp the track. It is CSS because the card is drawn from the first frame, before the
+   silhouette's grace has drawn the rail behind it: fixed numbers here (32px in, 196px wide, the
+   paper gap and the default rail restated) put it up to 18px past the rail's edge, over the list,
+   on a 200px rail. Not dimmed and not `pointer-events: none`: it is the sentence, not scenery. */
+.gate-boot > .boot-foot {
+  position: absolute;
+  left: var(--gap-edge);
+  bottom: var(--gap-edge);
+  width: clamp(200px, var(--rail-w, 224px), min(360px, calc(100vw / var(--ui-zoom, 1) - 800px - 2 * var(--gap-edge) - 2 * var(--gap-tile))));
+  padding: 0 12px 18px 16px;
+  z-index: 1;
+}
 /* The narrow gate frame — DECLARED AFTER the base inset so it wins their equal-specificity tie
    (the same source-order rule the bar modifiers follow): the narrow shell's own frame is the
    topbar's padding plus the deck's 0 10px 10px, both drawn inside the silhouette itself. */
 @media (max-width: 1023.98px) {
   .gate-boot > .boot-sk { inset: 0; }
+  /* No rail at this width: the card stands at the foot of the list panel, inside the narrow
+     deck's 10px frame, at the width it has at the default rail. */
+  .gate-boot > .boot-foot { left: 10px; bottom: 10px; width: 224px; max-width: calc(100% - 20px); }
 }
 .gate-boot > .gate-card { position: relative; z-index: 1; }
 

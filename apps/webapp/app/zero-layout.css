@@ -262,6 +262,16 @@
     margin: 0;
     padding: 7px 0;
   }
+  /* the desktop's boot line (`BootStatus.tsx`) cannot sit in a 52px ribbon, and the
+     ribbon carries no sentence here either: it stands at the foot of the tile beside
+     the ribbon, never over it (app.css places it in the rail at width). */
+  :root[data-layout="zero"] .gate-boot > .boot-foot {
+    left: calc(var(--gap-edge) + 52px + var(--gap-tile));
+    bottom: var(--gap-edge);
+    width: 224px;
+    max-width: calc(100% - 2 * var(--gap-edge) - 52px - var(--gap-tile));
+    padding: 0 12px 18px 16px;
+  }
 }
 
 /* ═══ 722–1023: the split survives beside the ribbon, at the READER'S

@@ -66,22 +66,12 @@ export function bootSentence(
   }
 }
 
-/**
- * Where the card sits: at the foot of the boot skeleton's rail column, which `app.css` draws at
- * `inset: 16px` with a 224px rail padded `22px 12px 18px 16px`. The numbers below place this box
- * exactly inside that padding — restated rather than shared, the same bargain the skeleton itself
- * strikes with the real deck's geometry: the only property needed is "sits where the rail's own
- * sync line will sit", and inheriting a future rail change would move a surface that only has to
- * be close. Inline because nothing else in either product needs this placement.
+/*
+ * Where the card sits: `.gate-boot > .boot-foot` in `app.css`, the boot skeleton's rail column
+ * (the window's gap, the deck's rail track, the rail's padding), and in the Zero layout's ribbon
+ * tier the foot of the tile beside the ribbon (`zero-layout.css`). In CSS, not inline numbers, so
+ * the card is inside the rail from the first frame at every look, dragged width and window width.
  */
-const AT_RAIL_FOOT: React.CSSProperties = {
-  position: "absolute",
-  left: 32,
-  bottom: 34,
-  width: 196,
-  zIndex: 1,
-};
-
 export function BootStatus({
   phase,
   applied,
@@ -109,7 +99,7 @@ export function BootStatus({
   }, [phase]);
 
   return (
-    <div style={AT_RAIL_FOOT} role="status" aria-live="polite">
+    <div className="boot-foot" role="status" aria-live="polite">
       {/* The sync line's own classes, on purpose — `rail-sync busy` is the app's one way of
           saying "working, nothing wrong" in this corner, and a second styling of that statement
           would be a second thing to keep honest. */}
