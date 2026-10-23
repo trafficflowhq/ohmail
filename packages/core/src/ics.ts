@@ -114,6 +114,30 @@ export function isCalendarMime(contentType: string): boolean {
  */
 export const CALENDAR_FALLBACK_FILENAME = "invite.ics";
 
+/** What {@link isCalendarBodyPart} reads off a stored part: the four facts ingest keeps. */
+export interface CalendarBodyFacts {
+  filename: string | null | undefined;
+  contentType: string;
+  inline: boolean;
+  contentId: string | null | undefined;
+}
+
+/**
+ * IS THIS PART THE INVITATION'S OWN CALENDAR BODY, rather than a file? A calendar part with no
+ * name, no Content-ID and not embedded: the `text/calendar` alternative Google, Thunderbird,
+ * Exchange and Outlook put beside the text and html bodies (or the whole message, for a bare iTIP
+ * one). The event card reads it. A strip leaves it out only while a listed calendar file carries
+ * its event (client-engine `withoutCalendarBodies`), so a Google invitation lists its `invite.ics`
+ * once and an Outlook one, whose alternative is its only copy, keeps it. A calendar file somebody
+ * attached carries a name (Content-Disposition `filename` or Content-Type `name`), an embedded one
+ * a Content-ID: neither is a body.
+ */
+export function isCalendarBodyPart(part: CalendarBodyFacts): boolean {
+  if (!isCalendarMime(part.contentType) || part.inline) return false;
+  if ((part.contentId ?? "").trim() !== "") return false;
+  return (part.filename ?? "").trim() === "";
+}
+
 /**
  * The parse ceiling, in UTF-16 code units. Real invites are 1–4 KB (the live corpus's largest
  * is 4 035 bytes); 512 KiB is two orders of magnitude of headroom. Above it the input is just
@@ -950,6 +974,16 @@ function drawnFingerprint(e: IcsEventPreview): string {
 }
 
 /**
+ * ONE EVENT'S IDENTITY within a message, the key {@link distinctCalendarEvents} folds on:
+ * `(UID, RECURRENCE-ID)` where a UID exists, otherwise every drawn field.
+ */
+export function calendarEventKey(event: IcsEventPreview): string {
+  return event.uid !== null
+    ? `u\u0000${event.uid}\u0000${event.recurrenceId ?? ""}`
+    : `f\u0000${drawnFingerprint(event)}`;
+}
+
+/**
  * THE EVENTS A MESSAGE CARRIES, ONCE EACH. Google and Thunderbird send one invitation as two parts
  * (the nameless alternative and `invite.ics`), so a card per part drew the meeting twice. Parts
  * that do not parse are dropped. Identity is `(UID, RECURRENCE-ID)` where a UID exists, otherwise
@@ -963,9 +997,7 @@ export function distinctCalendarEvents(parts: readonly CalendarPartText[]): Dist
   for (const part of parts) {
     const event = parseIcsEvent(part.text);
     if (!event) continue;
-    const key = event.uid !== null
-      ? `u\u0000${event.uid}\u0000${event.recurrenceId ?? ""}`
-      : `f\u0000${drawnFingerprint(event)}`;
+    const key = calendarEventKey(event);
     const rank = calendarPartRank(part.contentType);
     const held = best.get(key);
     if (!held) {

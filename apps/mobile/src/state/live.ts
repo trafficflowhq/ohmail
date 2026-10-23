@@ -10,7 +10,7 @@
  */
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
-import { calendarEventsOf, type DistinctCalendarEvent } from "@ohmail/client-engine";
+import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, draftOverCeiling } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
@@ -2046,19 +2046,21 @@ function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAtta
   const EVERY_PART = { includeInlineImages: true, includeInlineParts: true };
   const atts = engine.attachmentsOf(id, EVERY_PART);
   if (atts.state !== "ready" || atts.items.length === 0) return {};
-  // Real files first, the body's own pictures after them — the web strip's partition.
-  const items = [...atts.items].sort((a, b) => Number(a.inline) - Number(b.inline));
+  // Real files first, the body's own pictures after them — the web strip's partition. An
+  // invitation's calendar alternative is its body, read by the event card: no chip while a listed
+  // calendar file carries the same event (Google), its one chip otherwise (Exchange).
+  const items = [...withoutCalendarBodies(engine, id, atts.items)].sort((a, b) => Number(a.inline) - Number(b.inline));
   const events = calendarEventsOf(engine, id);
   return {
     ...(events.length > 0 ? { events } : {}),
-    attachments: items.map((item) => ({
+    ...(items.length > 0 ? { attachments: items.map((item) => ({
       id: item.id,
       filename: item.filename,
       size: sizeLabel(item.sizeBytes),
       inline: item.inline,
       mime: item.mimeType,
       state: item.state,
-    })),
+    })) } : {}),
   };
 }
 

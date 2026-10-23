@@ -98,7 +98,7 @@ export { CALENDAR_FALLBACK_FILENAME, isCalendarMime } from "@trafficflow/core/ic
  * The event card's facts and words, from core's browser-safe leaf: the events a message carries,
  * once each, and the formatters both readers draw them with. The phone reaches core only here.
  */
-export { calendarEventsOf } from "./calendar-events.js";
+export { calendarEventsOf, withoutCalendarBodies } from "./calendar-events.js";
 export {
   distinctCalendarEvents, formatIcsWhen, icsDateGlyph, icsKicker, icsPeople, icsRecurrence, icsWeekdayName, parseIcsEvent,
   type DistinctCalendarEvent, type IcsEventPreview, type IcsFormatOptions, type IcsKickerKey, type IcsRecurrenceSaying,

@@ -11,7 +11,7 @@
 // `@trafficflow/core/ics` maps to a dependency-free SOURCE module (see its header) — the ONE
 // core entry point browser bundles may import. Never the barrel or `./mail` from here: both
 // carry mailparser and `node:crypto`, which no consumer of this engine can load.
-import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarMime } from "@trafficflow/core/ics";
+import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
   StayedWhy, WithdrawSendAnswer, WithdrawSendOutcome,
@@ -1605,6 +1605,14 @@ export interface AttachmentItem {
    */
   contentId: string | null;
   /**
+   * The invitation's own calendar body, not a file: a nameless, un-embedded calendar part, the
+   * `text/calendar` alternative beside the text and html bodies (core `isCalendarBodyPart`). Kept
+   * in the list, because the event card reads it; a strip leaves it out while a listed calendar file
+   * carries its event (`withoutCalendarBodies`), so a Google invitation lists its invite.ics once and
+   * an Outlook one, whose alternative is the only copy, keeps it as its one tile. Absent: false.
+   */
+  calendarBody?: boolean;
+  /**
    * A `blob:` URL for the fetched bytes, valid ONLY in the document that minted it.
    *
    * SAFE FOR `<img src>` AND `<a download>`. NOT safe to navigate to top-level: a `blob:` URL
@@ -1738,6 +1746,9 @@ function toAttachmentItem(wire: AttachmentWire): AttachmentItem {
     state: "idle",
     inline: wire.inline === true,
     contentId: typeof wire.contentId === "string" && wire.contentId !== "" ? wire.contentId : null,
+    ...(isCalendarBodyPart({
+      filename: wire.filename, contentType: wire.contentType || "", inline: wire.inline === true, contentId: wire.contentId,
+    }) ? { calendarBody: true } : {}),
   };
 }
 
@@ -8885,6 +8896,7 @@ export class OhmailEngine {
       state: "idle" as const,
       inline: i.inline,
       contentId: i.contentId,
+      ...(i.calendarBody === true ? { calendarBody: true } : {}),
     }));
     const items = [...seed.composeItems, ...inherited];
     this.attachmentLists.set(messageId, { state: "ready", items });

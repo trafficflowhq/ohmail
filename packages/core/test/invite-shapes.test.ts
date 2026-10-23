@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { normalizeMime, invitationWithoutEvent } from "../src/mime.js";
-import { INVITE_SHAPES } from "./fixtures/invite-shapes.js";
+import { INVITE_SHAPES, PLAIN_ICS_FILE } from "./fixtures/invite-shapes.js";
 
 /**
  * The invitation fixtures are what ingest really stores: every UI test that serves a shape's
@@ -8,7 +8,7 @@ import { INVITE_SHAPES } from "./fixtures/invite-shapes.js";
  * flags included. A fixture that drifts from ingest fails here, not in a UI test that trusted it.
  */
 describe("invite shapes: the parts ingest stores", () => {
-  for (const shape of INVITE_SHAPES) {
+  for (const shape of [...INVITE_SHAPES, PLAIN_ICS_FILE]) {
     it(shape.name, async () => {
       const msg = await normalizeMime(shape.eml);
       expect(msg.attachments.map((a) => ({
