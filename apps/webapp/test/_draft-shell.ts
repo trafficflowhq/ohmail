@@ -68,6 +68,12 @@ export interface DraftShell {
   spendSentRow: { on: boolean };
   /** What `POST /sends/withdraw` answers a Cancel while online; `null` (the default) is a server that cannot be asked. */
   withdrawAnswer: { outcome: "withdrawn" | null };
+  /**
+   * While off (the default), the engine reports its outbox held, so every send waits in its editor —
+   * the unhealthy path, today's behaviour, which the editor-line suites pin. On, a healthy press
+   * leaves its editor and the sidebar's foot finishes it (`send-handoff.test.tsx`).
+   */
+  handOff: { on: boolean };
 }
 
 let roots: Root[] = [];
@@ -306,7 +312,11 @@ export async function waitFor(predicate: () => boolean, what: string, rounds = 1
 /** Mount the shell at `hash` over these messages and drafts. */
 export async function mountShell(
   hash: string, messagesIn: EngineMessage[], drafts: EngineDraft[] = [],
-  options: { draftReplyWire?: DraftReplyWire; signatures?: Record<string, string> } = {},
+  options: {
+    draftReplyWire?: DraftReplyWire; signatures?: Record<string, string>; handOff?: boolean;
+    /** A second sending address (`mb2`), so a reply dock offers a From pick. */
+    secondMailbox?: boolean;
+  } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
   const { AppShell } = await import("../app/shell/AppShell.js");
@@ -326,6 +336,9 @@ export async function mountShell(
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
   );
+  const handOff: DraftShell["handOff"] = { on: options.handOff === true };
+  const outboxHeld = engine.outboxHeld.bind(engine);
+  engine.outboxHeld = () => !handOff.on || outboxHeld();
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
@@ -337,7 +350,9 @@ export async function mountShell(
         children: h(ToastHost, {
           children: h(AppShell as never, {
             demo: false, engine, consentTransport: consentTransportWith(options.signatures),
-            mailboxFacts: async () => ROSTER,
+            mailboxFacts: async () => (options.secondMailbox === true
+              ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
+              : ROSTER),
             ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
           } as never),
         }),
@@ -347,7 +362,7 @@ export async function mountShell(
   await settleFirstPaint();
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer,
+    withdrawAnswer, handOff,
   };
 }
 

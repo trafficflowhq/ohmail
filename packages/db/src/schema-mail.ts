@@ -2190,6 +2190,11 @@ export const outboundSends = pgTable("outbound_sends", {
   attempts: integer("attempts").notNull().default(1),
   retryUntil: timestamp("retry_until", { withTimezone: true }),
   retryRefusal: text("retry_refusal"),
+  // ── Mail 0162 — may this attempt have offered the message to SMTP? `unoffered` from the
+  // reservation and each re-arm, `offered` once committed right before the first SMTP traffic,
+  // `unknown` for rows older than the column (read as possibly offered). A stale `unoffered` row
+  // sent nothing and is forgotten (`SendService.forgetUnoffered`). Written by `SendService` alone.
+  offerState: text("offer_state").notNull().default("unknown"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
   uqKey: unique().on(t.accountId, t.idempotencyKey),         // the per-account idempotency reservation gate

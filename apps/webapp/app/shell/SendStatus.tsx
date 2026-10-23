@@ -42,6 +42,9 @@ export function sendLineValues(): { size: string } {
  * never say different things about one send.
  */
 export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; key: string } | null {
+  /* ANOTHER MESSAGE'S SEND HOLDS THE LANE (`composeStateOnScreen`): this one says only that it waits
+     for it, never that other message's state. */
+  if (send.previous === true) return { tone: "pending", key: "statusPreviousSending" };
   return (
     send.phase === "sending"
       ? { tone: "pending", key: longAt ? "statusSendingLong" : "statusSending" }

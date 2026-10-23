@@ -1332,6 +1332,7 @@
     "sending": "Wird gesendet …",
     "statusSending": "Deine Nachricht wird gesendet.",
     "statusSendingLong": "Sendet noch.",
+    "statusPreviousSending": "Deine letzte Nachricht wird noch gesendet. Diese kannst du bearbeiten und senden, sobald sie raus ist.",
     "statusAccepted": "Angenommen. ohmail sendet sie beim nächsten Durchlauf.",
     "sent": "Gesendet",
     "scheduled": "Geplant",
@@ -3421,6 +3422,21 @@
     "unsavedKindTag": "Eine Tag-\u00c4nderung",
     "unsavedKindFolder": "Eine Ordner-\u00c4nderung",
     "unsavedKindRule": "Eine Regel-\u00c4nderung"
+  },
+  "sendingLine": {
+    "sending": "Wird an {name} gesendet\u2026",
+    "sendingUnnamed": "Wird gesendet\u2026",
+    "sendingLong": "Wird noch an {name} gesendet\u2026",
+    "sendingLongUnnamed": "Wird noch gesendet\u2026",
+    "sendingMany": "{count} Nachrichten werden gesendet\u2026",
+    "sent": "Gesendet",
+    "sentTo": "An {name} gesendet",
+    "sentToAbout": "An {name} gesendet · „{subject}“",
+    "aboutBoth": "An {name} \u00b7 \u201e{subject}\u201c",
+    "aboutTo": "An {name}",
+    "aboutSubject": "\u201e{subject}\u201c",
+    "open": "\u00d6ffnen",
+    "dismiss": "Ausblenden"
   },
   "screening": {
     "scopeShared": "{domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.",

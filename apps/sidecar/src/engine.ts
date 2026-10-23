@@ -2191,7 +2191,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * so its rows keep the stale window, as every row this run makes does. A read that fails names
      * none, which is today's behaviour.
      */
-    const inheritedSends: readonly string[] = config.store !== undefined ? [] : await db
+    const inheritedPending: readonly string[] = config.store !== undefined ? [] : await db
       .select({ id: outboundSends.id }).from(outboundSends)
       .where(eq(outboundSends.status, "pending"))
       .orderBy(outboundSends.createdAt)
@@ -2203,6 +2203,26 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             + "out the ordinary ten minutes before the drain checks the Sent folder for them",
         });
         return [];
+      });
+    /* THE ONES THAT OFFERED NOTHING ARE FORGOTTEN HERE, before any door serves (mail 0162): a quit
+       during a slow IMAP login leaves `unoffered`, the draft goes back to a draft, and the window's
+       restored outbox entry sends it under its own key without waiting for the drain. The rest go
+       to the reconcile pass as before; a failure leaves them all to it. */
+    const inheritedSends: readonly string[] = inheritedPending.length === 0 ? inheritedPending : await sendService
+      .forgetInherited(
+        { db: db as never, accountId: world.accountId, userId: null, now, requestId: "inherited-sends" },
+        inheritedPending,
+      )
+      .then((r) => {
+        if (r.forgotten > 0) log("inherited_sends_forgotten", { count: r.forgotten });
+        return r.remaining;
+      }, (err: unknown) => {
+        log("inherited_sends_forget_failed", {
+          err,
+          reason: "the reservations the last run left pending that offered nothing could not be "
+            + "forgotten, so the drain decides them as before",
+        });
+        return inheritedPending;
       });
 
     // rpID/origin are required by `makeAuthConfig` and validated at construction. Nothing local
@@ -6313,6 +6333,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             log("send_reconcile_pass", {
               claimed: r.claimed, sent: r.sent, unverified: r.unverified,
               deferred: r.deferred, resolvedElsewhere: r.resolvedElsewhere, gaveUp: r.gaveUp,
+              forgotten: r.forgotten,
             });
           }
         } catch (err) {

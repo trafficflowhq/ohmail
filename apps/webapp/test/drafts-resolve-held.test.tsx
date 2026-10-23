@@ -325,7 +325,7 @@ describe("the shell asks about the hold BEFORE it opens a reply", () => {
    * adapter made a second row and sent under a fresh key — while the first row sat at
    * `unverified` and Drafts said so. The shell knows the row; it hands it to the press.
    *
-   * Mutation: drop `{ heldRow: heldReplyRow(messageId) }` from `sendReply`'s send. Real failure
+   * Mutation: drop `heldRow: heldReplyRow(messageId)` from `sendReply`'s `withDone`. Real failure
    * text: AssertionError: sendReply presses without naming the reply's own row, so the hold at
    * that door is asked about nothing
    */
@@ -335,7 +335,7 @@ describe("the shell asks about the hold BEFORE it opens a reply", () => {
       sendReply,
       "sendReply presses without naming the reply's own row, so the hold at that door is asked "
       + "about nothing and a second copy goes out under a fresh key",
-    ).toMatch(/\{ heldRow: heldReplyRow\(messageId\) \}/);
+    ).toMatch(/withDone\(\{\s*heldRow: heldReplyRow\(messageId\)[,\s}]/);
     /* By the DECLARED NAME and no hook — `anchor-census.test.ts`'s rule: a census that locates a
        declaration by its memoization hook is one a codemod turns into a silent -1. */
     expect(

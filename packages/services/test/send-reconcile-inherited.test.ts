@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mintMessageId } from "@trafficflow/core/mail";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
@@ -30,7 +30,7 @@ async function world() {
   return { db, accountId, mailboxId: mb!.id };
 }
 
-async function pending(w: Awaited<ReturnType<typeof world>>, ageMs: number) {
+async function pending(w: Awaited<ReturnType<typeof world>>, ageMs: number, offerState?: "unoffered" | "offered") {
   const minted = mintMessageId("inherited.test");
   const at = new Date(NOW.getTime() - ageMs);
   const [d] = await w.db.insert(drafts).values({
@@ -39,8 +39,12 @@ async function pending(w: Awaited<ReturnType<typeof world>>, ageMs: number) {
   }).returning();
   const [s] = await w.db.insert(outboundSends).values({
     accountId: w.accountId, idempotencyKey: randomUUID(), draftId: d!.id,
-    mintedMessageId: minted, status: "pending", createdAt: at,
+    mintedMessageId: minted, status: "pending", createdAt: at, ...(offerState ? { offerState } : {}),
   }).returning();
+  // An inline press's reservation holds its content claim, as `reserve` writes it.
+  await w.db.insert(outboundSendFingerprints).values({
+    accountId: w.accountId, mailboxId: w.mailboxId, fingerprint: randomUUID().replace(/-/g, "").repeat(2), sendId: s!.id,
+  });
   return { sendId: s!.id, draftId: d!.id, minted };
 }
 
@@ -72,6 +76,26 @@ describe("runSendReconcilePass — a reservation an earlier run left pending", (
     expect(spy.seen.delivered, "the pass sent something").toHaveLength(0);
     expect(await status(w, left.sendId)).toBe("sent");
     expect(await status(w, ours.sendId), "a young row the caller did not name was taken").toBe("pending");
+  });
+
+  it("an inherited row that offered nothing is forgotten with no dial charged; an offered one is probed", async () => {
+    const w = await world();
+    const quiet = await pending(w, 1 * MIN, "unoffered");
+    const spoke = await pending(w, 1 * MIN, "offered");
+    let dials = 0;
+    const spy = inSent();
+    const counting: typeof spy.factory = async (id) => { dials += 1; return spy.factory(id); };
+
+    const r = await runSendReconcilePass(w.db, {
+      openSendAdapter: counting, now: () => NOW, inherited: [quiet.sendId, spoke.sendId], batch: 1,
+    });
+
+    expect({ claimed: r.claimed, forgotten: r.forgotten, sent: r.sent }).toEqual({ claimed: 2, forgotten: 1, sent: 1 });
+    expect(spy.seen.probed, "only the offered row was looked for").toEqual([spoke.minted]);
+    expect(dials, "the forget charged no login: the one slot went to the offered row").toBe(1);
+    expect(spy.seen.delivered, "the pass sent something").toHaveLength(0);
+    expect((await w.db.select().from(outboundSends).where(eq(outboundSends.id, quiet.sendId))).length).toBe(0);
+    expect((await w.db.select({ s: drafts.status }).from(drafts).where(eq(drafts.id, quiet.draftId)))[0]!.s).toBe("draft");
   });
 
   it("CONTROL: with no names the window is today's, and a named row already decided is not taken again", async () => {

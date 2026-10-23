@@ -605,6 +605,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // `inherited_sends_read_failed` — the open's read of the send reservations the last run left
   // pending. `err` + `reason`: nothing is decided early and the rows keep the ten-minute window.
   inherited_sends_read_failed: "error",
+  // `inherited_sends_forgotten` — the open forgetting the last run's reservations that offered
+  // nothing (mail 0162); `count` only. Its `_failed` twin: `err` + `reason`, the drain decides them.
+  inherited_sends_forgotten: "info",
+  inherited_sends_forget_failed: "error",
   ensure_folders_failed: "error",
   // `organizer_peek_failed` — the APPEND-less look a pre-consent install takes so its own consent
   // screen can name the holder. `err` + `reason`, no holder and no mailbox: the whole content of a

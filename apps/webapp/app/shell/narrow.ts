@@ -136,6 +136,17 @@ export function railLayout(): RailLayout {
   return { drawer, offCanvas: drawer && !docked };
 }
 
+/**
+ * Can anyone see the sidebar's foot line of this shape (`SendingLine`)? The rail's copy shows from
+ * 1024px, where the rail stays lit over the reader; the corner pill shows under it, and the reader
+ * sheet (`body.reading`) covers it there.
+ */
+export function footLineSeen(variant: "rail" | "shell"): boolean {
+  const drawer = typeof window !== "undefined" && window.matchMedia?.(CLASSIC_DRAWER).matches === true;
+  if (variant === "rail") return !drawer;
+  return drawer && !(typeof document !== "undefined" && document.body.classList.contains("reading"));
+}
+
 /** {@link railLayout}, subscribed: both breakpoints and the `data-layout` stamp. */
 export function watchRailLayout(onChange: (layout: RailLayout) => void): () => void {
   if (typeof window === "undefined" || !window.matchMedia) return () => {};

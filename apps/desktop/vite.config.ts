@@ -254,7 +254,8 @@ const BASE_MESSAGE_NAMESPACES = [
   // header renders on first paint, so without this the desktop shows `stream.newSince` over
   // both streams.
   "stream",
-  "shortcuts", "sync", "tag", "triage",
+  // `sendingLine` is the sidebar foot's line for a send that left its editor (`SendingLine.tsx`).
+  "sendingLine", "shortcuts", "sync", "tag", "triage",
   // `trash` is the Trash view's own namespace — the list's empty and scope sentences, the
   // Restore verb, its four toasts and the "ohmail never erases mail" line the disabled delete
   // keys carry. Shared shell code reads it (`views/TrashView.tsx` and `MessagePane`'s bar), so

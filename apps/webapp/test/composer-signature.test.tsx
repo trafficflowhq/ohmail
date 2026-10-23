@@ -243,8 +243,9 @@ describe("both send paths derive with effectiveSignature and seal with withSigna
     // The THIRD argument is the markup half (mail 0098) — the same derivation, one question
     // over. Pinned in the call because a send that dropped it would ship the escaped text where
     // the block rendered a document, which is the torn mix wearing the other shape's clothes.
+    // The send's options (the hand-off) follow the sealed mutation and never wrap it.
     expect(src).toContain(
-      "mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)))",
+      "mailSend.send(withWhen(withSignature(plan.mutation, sigText, sigHtml)),",
     );
     // The fresh-send branch is GONE by ruling: after an unverified send nothing may re-send under
     // a new key, so that second sealed call site no longer exists. Its absence is the assertion.

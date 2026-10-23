@@ -2635,6 +2635,11 @@ export class OhmailEngine {
    * and queues the verb rather than joining at all.
    */
   private outboxHold: Promise<void> | null = null;
+
+  /** Does a timed-out dispatch's barrier stand, so new verbs wait in the queue? */
+  outboxHeld(): boolean {
+    return this.outboxHold !== null;
+  }
   /**
    * Retries refused THIS SESSION whose durable marker could not be written — id to reason.
    *
@@ -7008,7 +7013,14 @@ export class OhmailEngine {
    * Not restricted to `mail_send` in the signature — the rule is "the caller owns this verb's identity" — but a key
    * must be durable at the caller before it is handed over, or this is just a slower `uuid()`.
    */
-  async mutate(m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan } = {}): Promise<MutationResult> {
+  async mutate(
+    m: EngineMutation,
+    opts: {
+      key?: string; andDone?: SendAndDonePlan;
+      /** Called once, after the outbox write committed and before the dispatch; never on a refused write. */
+      onDurable?: () => void;
+    } = {},
+  ): Promise<MutationResult> {
     const result = await this.mutateOnce(m, opts);
     // A verb that may travel to another install re-reads what waits — on a 202 AND on an applied
     // answer, since a mixed account's rule removal is applied here and asked there.
@@ -7023,7 +7035,9 @@ export class OhmailEngine {
     return result;
   }
 
-  private async mutateOnce(m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan }): Promise<MutationResult> {
+  private async mutateOnce(
+    m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan; onDurable?: () => void },
+  ): Promise<MutationResult> {
     const enriched = this.enrich(m);
     const id = this.uuid();
     const key = opts.key ?? this.uuid();
@@ -7150,6 +7164,10 @@ export class OhmailEngine {
           { status: null, code: "storage_refused", retryable: true },
         ),
       };
+    }
+    // The verb is on disk and replays under its key whatever happens next: a caller may let go now.
+    if (persisted) {
+      try { opts.onDurable?.(); } catch { /* the caller's own fault; the verb goes on */ }
     }
 
     /**

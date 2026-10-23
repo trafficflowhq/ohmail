@@ -200,6 +200,8 @@ describe("the SQLite journal, applied", () => {
       "0160_folder_state_outstanding.sql",
       // The list read's index, the pg index's twin.
       "0161_mailboxes_account_idx.sql",
+      // The send's offer state, the pg column's twin.
+      "0162_outbound_sends_offer_state.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -328,6 +330,8 @@ describe("the SQLite journal, applied", () => {
       "0160_folder_state_outstanding.sql",
       // The list read's index, the pg index's twin.
       "0161_mailboxes_account_idx.sql",
+      // The send's offer state, the pg column's twin.
+      "0162_outbound_sends_offer_state.sql",
     ]);
   });
 

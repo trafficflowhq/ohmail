@@ -51,7 +51,11 @@ function transport(script: Script = {}) {
       async send(msg: OutboundMessage) {
         const f = script.submit?.[state.submits] ?? null;
         state.submits += 1;
-        if (f && f !== HANG) throw f();
+        if (f === HANG) {
+          await new Promise<void>((_resolve, reject) => { hung.push(() => reject(shaped({ code: "ECONNRESET" }))); });
+        } else if (f) {
+          throw f();
+        }
         state.delivered.push(msg);
         return { providerMessageId: msg.messageId! };
       },
@@ -518,7 +522,7 @@ describe("Cancel during the wait", () => {
 });
 
 describe("a crash between attempts sends at most once", () => {
-  it("the attempt dies after its re-arm committed: in_flight until stale, then the Sent check settles it, nothing resent", async () => {
+  it("the attempt dies after its re-arm committed, before any offer: in_flight until stale, then forgotten and sent once", async () => {
     const w = await world();
     const tr = transport({ dial: [() => shaped({ code: "EIMAPCLOSED" }), HANG] });
     expect(refusal(await outcome(press(w, "k1", tr)))).toMatchObject({ retryable: true });
@@ -526,6 +530,26 @@ describe("a crash between attempts sends at most once", () => {
     const dying = outcome(press(w, "k1", tr, {}, { attemptCeilingMs: 60_000 }));
     for (let i = 0; i < 200 && (await w.row("k1")).status !== "pending"; i++) await new Promise((r) => setTimeout(r, 5));
     expect((await w.row("k1")).status).toBe("pending");
+    expect((await press(w, "k1", tr)).status, "a live re-armed attempt is answered in_flight").toBe("in_flight");
+    w.advance(SEND_STALE_AFTER_MS + 1_000);
+    // It offered nothing (mail 0162): the row is forgotten and this press reserves afresh and sends.
+    const settled = await press(w, "k1", tr);
+    expect(settled.status).toBe("sent");
+    expect(tr.state.probes, "nothing to probe").toBe(0);
+    expect(tr.state.delivered, "one press, one message").toHaveLength(1);
+    tr.release();
+    await dying;
+    expect((await w.row("k1")).status, "the dead attempt's late ending writes nothing over the new row").toBe("sent");
+  });
+
+  it("the attempt dies after its offer: in_flight until stale, then the Sent check settles it, nothing resent", async () => {
+    const w = await world();
+    const tr = transport({ dial: [() => shaped({ code: "EIMAPCLOSED" })], submit: [HANG] });
+    expect(refusal(await outcome(press(w, "k1", tr)))).toMatchObject({ retryable: true });
+    // The re-armed attempt's submission never answers: it may have reached the server.
+    const dying = outcome(press(w, "k1", tr, {}, { attemptCeilingMs: 60_000 }));
+    for (let i = 0; i < 200 && tr.state.submits < 1; i++) await new Promise((r) => setTimeout(r, 5));
+    expect((await w.row("k1")).offerState).toBe("offered");
     expect((await press(w, "k1", tr)).status, "a live re-armed attempt is answered in_flight").toBe("in_flight");
     w.advance(SEND_STALE_AFTER_MS + 1_000);
     const settled = await press(w, "k1", tr);

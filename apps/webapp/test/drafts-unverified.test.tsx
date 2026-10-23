@@ -318,8 +318,10 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
     const frame = readFileSync(
       resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8",
     );
+    /* The lane's state reaches the projection as THIS message sees it (`composeStateOnScreen`: another
+       message's send is not this one's to show), and the held row is still asked about over it. */
     expect(frame, "the compose send state does not consider the row the composer is holding")
-      .toMatch(/send=\{heldRowUnverified\(\s*mailSend\.stateOf\(COMPOSE_SEND_KEY\),\s*readComposeRow\(\),\s*holdOf\(engine, \{/);
+      .toMatch(/send=\{heldRowUnverified\(\s*composeStateOnScreen\(mailSend\.stateOf\(COMPOSE_SEND_KEY\), mailSend\.pressHere\(COMPOSE_SEND_KEY\)\),\s*readComposeRow\(\),\s*holdOf\(engine, \{/);
     /* IT DOES RELEASE, AND THAT IS NOT THE RECOVERY DOOR. The recovery door releases and then
        lets the next pause write a FRESH row (`recoverySeed` arms the delete of the stranded one).
        Here the release only drops whatever row the composer was holding for the message being

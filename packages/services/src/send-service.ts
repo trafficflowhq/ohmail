@@ -817,22 +817,27 @@ export interface SendWithdrawResult {
  * `undialable` — no dial was possible or permitted and the caller asked for a decision anyway (a
  * `disabled` mailbox, credentials gone, a give-up). `elsewhere` — the compare-and-swap matched
  * nothing: another resolver already wrote a terminal state, and `status` is THEIRS, re-read.
- * `deferred` — nothing was written and nothing is claimed; try again next cycle.
+ * `deferred` — nothing was written and nothing is claimed; try again next cycle. `not_offered` — the
+ * attempt committed no offer before it died (mail 0162), so nothing reached SMTP: the row was forgotten.
  */
-export type ResolveStaleBy = "mirror" | "probe" | "undialable" | "elsewhere" | "deferred";
+export type ResolveStaleBy = "mirror" | "probe" | "undialable" | "elsewhere" | "deferred" | "not_offered";
 
 /**
  * What became of one stale reservation. `status` is `pending` only alongside `by: "deferred"`,
- * which is the one outcome that wrote nothing.
+ * which is the one outcome that wrote nothing. `forgotten` (with `by: "not_offered"`): the row and
+ * its content claim are gone and the draft is a draft again, so the key's replay reserves afresh.
  */
 export interface ResolveStaleOutcome {
-  status: "sent" | "unverified" | "failed" | "pending";
+  status: "sent" | "unverified" | "failed" | "pending" | "forgotten";
   providerMessageId: string | null;
   draftId: string;
   /** The `change_log` seq this call emitted, or `null` when it emitted none. */
   seq: number | null;
   by: ResolveStaleBy;
 }
+
+/** `resumeExisting`'s answer when the key's stale attempt offered nothing and was forgotten. */
+const FORGOTTEN = Symbol("send-forgotten");
 
 /**
  * The ceiling as a thing that can be raced — one timer per attempt, shared by both phases. ONE
@@ -1202,7 +1207,11 @@ export class SendService {
     ctx: ServiceContext, idempotencyKey: string, draftId: string | null,
     deps: Pick<SendDeps, "openSendAdapter" | "log">,
   ): Promise<SendWithdrawResult> {
-    const answer = await this.withdrawOnce(ctx, idempotencyKey, draftId, deps);
+    let once = await this.withdrawOnce(ctx, idempotencyKey, draftId, deps);
+    // The key's stale attempt offered nothing and was forgotten: the key is free, so the second pass
+    // writes the tombstone every later replay is refused by.
+    if (once === FORGOTTEN) once = await this.withdrawOnce(ctx, idempotencyKey, draftId, deps);
+    const answer: SendWithdrawResult = once === FORGOTTEN ? { outcome: "in_flight" } : once;
     // One line per answer, content-free: the outcome is what a person was told.
     (deps.log ?? defaultLog).info("send_withdraw", { accountId: ctx.accountId, outcome: answer.outcome });
     return answer;
@@ -1211,7 +1220,7 @@ export class SendService {
   private async withdrawOnce(
     ctx: ServiceContext, idempotencyKey: string, draftId: string | null,
     deps: Pick<SendDeps, "openSendAdapter">,
-  ): Promise<SendWithdrawResult> {
+  ): Promise<SendWithdrawResult | typeof FORGOTTEN> {
     type Decided = { result: SendWithdrawResult } | { stale: typeof outboundSends.$inferSelect; mailboxId: string };
     const decided = await withAccountTx(ctx, async (tx): Promise<Decided> => {
       // The draft is recorded only when this account holds it: the composite FK refuses anything else.
@@ -1286,6 +1295,7 @@ export class SendService {
     if (out.status === "unverified") {
       return { outcome: "unverified", firstSend: firstSendFacts("unverified", decided.stale.createdAt) };
     }
+    if (out.status === "forgotten") return FORGOTTEN;
     return { outcome: out.status === "failed" ? "failed" : "in_flight" };
   }
 
@@ -1302,7 +1312,7 @@ export class SendService {
     };
 
     // ── 1. RESERVE (short tx, NO network) ────────────────────────────────────
-    const reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
+    let reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
     phases.reserveMs = Date.now() - started;
 
     // A same-key request that hit the UNIQUE reservation: branch on stored status.
@@ -1313,7 +1323,18 @@ export class SendService {
     // also mean a timed-out RECOVERY answered `queued`, which is a claim about a submission this
     // request never made.
     if (reservation.kind === "existing") {
-      return this.resumeExisting(ctx, reservation.row, reservation.mailboxId, deps);
+      const resumed = await this.resumeExisting(ctx, reservation.row, reservation.mailboxId, deps);
+      if (resumed !== FORGOTTEN) return resumed;
+      // The key's earlier attempt offered nothing and was forgotten: this press reserves afresh,
+      // once (new clock, new Message-ID, fresh claim). A second hit answers as a live attempt.
+      reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
+      phases.reserveMs = Date.now() - started;
+      if (reservation.kind === "existing") {
+        const again = await this.resumeExisting(ctx, reservation.row, reservation.mailboxId, deps);
+        return again === FORGOTTEN
+          ? { status: "in_flight", providerMessageId: null, draftId, seq: null }
+          : again;
+      }
     }
 
     // ── 2. SMTP OUTSIDE the tx. Always close() in finally. ───────────────
@@ -1381,6 +1402,21 @@ export class SendService {
         throw await this.endInWindow(ctx, deps, reservation, draftId, timedOut, phases, started);
       }
       adapter = opened.value;
+
+      // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` after its
+      // attempt died provably offered nothing and may be forgotten (`forgetUnoffered`). A failed
+      // mark offers nothing; a lost compare-and-swap means another resolver owns the row.
+      let marked: boolean;
+      try {
+        marked = await this.markOffered(ctx, sendId);
+      } catch (err) {
+        await adapter.close().catch(() => { /* the connection is already broken */ });
+        throw await this.endInWindow(ctx, deps, reservation, draftId, err, phases, started);
+      }
+      if (!marked) {
+        await adapter.close().catch(() => { /* the connection is already broken */ });
+        return { status: "in_flight", providerMessageId: null, draftId, seq: null };
+      }
 
       /**
        * THE SUBMISSION — one promise, so the ceiling can stop waiting for it WITHOUT stopping it.
@@ -1789,6 +1825,8 @@ export class SendService {
         draftId,
         mintedMessageId,
         status: "pending",
+        // Mail 0162: nothing offered yet; `markOffered` commits `offered` before the first SMTP traffic.
+        offerState: "unoffered",
         createdAt: reservedAt,
       })
         .onConflictDoNothing({ target: [outboundSends.accountId, outboundSends.idempotencyKey] })
@@ -2235,7 +2273,10 @@ export class SendService {
       .limit(1));
     if (claim?.sendId !== existing.id) return null;
     const [swapped] = await tx.update(outboundSends)
-      .set({ status: "pending", attempts: sql`${outboundSends.attempts} + 1`, retryUntil: null, retryRefusal: null })
+      .set({
+        status: "pending", attempts: sql`${outboundSends.attempts} + 1`, retryUntil: null, retryRefusal: null,
+        offerState: "unoffered",
+      })
       .where(and(eq(outboundSends.id, existing.id), eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.status, "failed")))
       .returning({ attempts: outboundSends.attempts });
     return swapped?.attempts ?? null;
@@ -2378,7 +2419,7 @@ export class SendService {
     row: typeof outboundSends.$inferSelect,
     mailboxId: string,
     deps: SendDeps,
-  ): Promise<SendResult> {
+  ): Promise<SendResult | typeof FORGOTTEN> {
     // A CANCELLED KEY SENDS NOTHING, from any window: first, so a draftless tombstone is not read
     // as a discard below. Terminal and not retryable — the client ends the send as withdrawn.
     if (row.status === "withdrawn") {
@@ -2450,9 +2491,95 @@ export class SendService {
     if (out.status === "pending") {
       return { status: "in_flight", providerMessageId: null, draftId: out.draftId, seq: null };
     }
+    if (out.status === "forgotten") return FORGOTTEN;
     return {
       status: out.status, providerMessageId: out.providerMessageId, draftId: out.draftId, seq: out.seq,
     };
+  }
+
+  /**
+   * Commit `offered` on this attempt's reservation, right before its first SMTP traffic. A
+   * compare-and-swap on `pending` + `unoffered`: false means the row is no longer this attempt's.
+   */
+  private async markOffered(ctx: ServiceContext, sendId: string): Promise<boolean> {
+    const won = await asTx(ctx).update(outboundSends).set({ offerState: "offered" })
+      .where(and(
+        eq(outboundSends.id, sendId), eq(outboundSends.accountId, ctx.accountId),
+        eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
+      ))
+      .returning({ id: outboundSends.id });
+    return won.length > 0;
+  }
+
+  /**
+   * FORGET A RESERVATION THAT OFFERED NOTHING — one transaction, scoped by account: its content
+   * claim, the row (compare-and-swap on `pending` + `unoffered`), the draft from `sending` back to
+   * `draft`, and a draft change. `null` for a scheduled draft or a row holding no claim of its own
+   * (a staged press: its files ride the request, and a replay of a held key carries none), so both
+   * keep verify-by-Sent; a lost swap answers the winner. The caller vouches no attempt is alive
+   * (stale, or inherited by the data-dir lock). Nothing here sends.
+   */
+  private async forgetUnoffered(
+    ctx: ServiceContext, row: typeof outboundSends.$inferSelect,
+  ): Promise<ResolveStaleOutcome | null> {
+    const draftId = draftOfOpenAttempt(row);
+    const done = await asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept"> => {
+      const [d] = await tx.select({ sendAt: drafts.sendAt }).from(drafts)
+        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
+      if (d && d.sendAt !== null) return "kept";
+      const [held] = await dialect(ctx.db).forUpdate(tx.select({ id: outboundSends.id }).from(outboundSends)
+        .where(and(
+          eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId),
+          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
+        ))
+        .limit(1));
+      if (!held) return "lost";
+      // Every inline or re-armed reservation holds its content claim; a staged one never does.
+      const [own] = await tx.select({ id: outboundSendFingerprints.id }).from(outboundSendFingerprints)
+        .where(and(eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, row.id)))
+        .limit(1);
+      if (!own) return "kept";
+      // The claim first and by name: the device store's cascade is not relied on.
+      await tx.delete(outboundSendFingerprints)
+        .where(and(eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, row.id)));
+      await tx.delete(outboundSends)
+        .where(and(
+          eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId),
+          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
+        ));
+      await tx.update(drafts).set({ status: "draft", updatedAt: ctx.now() })
+        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending")));
+      await recordChange(tx, {
+        accountId: ctx.accountId, entityType: "draft", entityId: draftId, op: "update", meta: null,
+      });
+      return "forgotten";
+    });
+    if (done === "kept") return null;
+    if (done === "lost") return this.answerWinner(ctx, row);
+    defaultLog.info("send_unoffered_forgotten", {
+      sendId: row.id, accountId: ctx.accountId, draftId, decidedBy: "not_offered",
+    });
+    return { status: "forgotten", providerMessageId: null, draftId, seq: null, by: "not_offered" };
+  }
+
+  /**
+   * THE LAST RUN'S RESERVATIONS THAT OFFERED NOTHING, forgotten at the open before any door serves
+   * (the desktop holds its data directory alone, so none has a live attempt). Answers the ids it
+   * did not forget, for the reconcile pass. This account's rows only.
+   */
+  async forgetInherited(
+    ctx: ServiceContext, ids: readonly string[],
+  ): Promise<{ forgotten: number; remaining: string[] }> {
+    if (ids.length === 0) return { forgotten: 0, remaining: [] };
+    const rows = await asTx(ctx).select().from(outboundSends)
+      .where(and(eq(outboundSends.accountId, ctx.accountId), inArray(outboundSends.id, [...ids])));
+    const gone = new Set<string>();
+    for (const row of rows) {
+      if (row.status !== "pending" || row.offerState !== "unoffered" || row.draftId === null) continue;
+      const out = await this.forgetUnoffered(ctx, row);
+      if (out?.status === "forgotten") gone.add(row.id);
+    }
+    return { forgotten: gone.size, remaining: ids.filter((id) => !gone.has(id)) };
   }
 
   /**
@@ -2472,6 +2599,14 @@ export class SendService {
     openAdapter: OpenSendAdapter | null,
     onMiss: "unverified" | "defer" = "unverified",
   ): Promise<ResolveStaleOutcome> {
+    // 0. THE UNOFFERED ARM (mail 0162), no dial: an attempt that never committed its offer sent
+    // nothing, so the row is forgotten and the person's own press, replayed under its key, sends it.
+    // A scheduled draft and a staged press keep the arms below. `unknown` (older rows and code)
+    // reads as offered.
+    if (row.offerState === "unoffered") {
+      const forgotten = await this.forgetUnoffered(ctx, row);
+      if (forgotten !== null) return forgotten;
+    }
     // 1. The mirror arm. Account-scoped like every read in this service. NORMALIZED, and this is
     // the whole arm: `mintedMessageId` is `<uuid@domain>` WITH angle brackets (`mintMessageId`),
     // while `messages.message_id_header` is written through `normalizeMessageId`, which STRIPS

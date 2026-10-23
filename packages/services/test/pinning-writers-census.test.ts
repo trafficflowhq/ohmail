@@ -217,6 +217,8 @@ const CLASSIFIED: Record<string, { how: "paired" | "paired-by-caller" | "no-new-
     { how: "no-new-pin", why: "the send's own status; the reply target is not written" },
   "packages/services/src/send-service.ts  SendService.finalizeSentFromUnverified":
     { how: "no-new-pin", why: "the send's own status; the reply target is not written" },
+  "packages/services/src/send-service.ts  SendService.forgetUnoffered":
+    { how: "no-new-pin", why: "the draft's status back to draft; the reply target is not written" },
 };
 
 describe("every server writer of a pinning row", () => {

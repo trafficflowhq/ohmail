@@ -529,7 +529,7 @@ describe("runSendReconcilePass — the claim", () => {
     const r = await run(w, { openSendAdapter: spy.factory });
     expect(r).toEqual({
       claimed: 0, sent: 0, unverified: 0, deferred: 0, resolvedElsewhere: 0, gaveUp: 0,
-      rechecked: 0, recheckedSent: 0,
+      rechecked: 0, recheckedSent: 0, forgotten: 0,
     });
     expect(spy.opened).toEqual([]);
   });

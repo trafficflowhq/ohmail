@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer, connect as netConnect, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { connectOverStdio, type StdioClient } from "../src/client.js";
@@ -302,4 +303,100 @@ describe.skipIf(!greenmailUp)("the engine, its input closed while a slow drain r
     expect(existsSync(join(dataDir, LOCK_FILE)), "the lock outlived the engine").toBe(false);
     expect(events).toContain("engine_left");
   });
+});
+
+/**
+ * A REPLY SENT HALF A SECOND BEFORE CLOSING, WHILE THE MAIL SERVER IS SLOW TO ANSWER.
+ * The send's own IMAP login (before any SMTP) runs past the quit, so nothing was offered. At main the
+ * next start probed Sent, found nothing and wrote `unverified` for good, and the reply never went. Now
+ * the start forgets the reservation that offered nothing and the key's replay sends it once.
+ */
+describe.skipIf(!greenmailUp)("a reply sent just before the quit while the mail server is slow to log in", () => {
+  const kids: ChildProcessWithoutNullStreams[] = [];
+  const bridges: StdioClient[] = [];
+  afterEach(() => {
+    for (const cl of bridges.splice(0)) cl.close();
+    for (const c of kids.splice(0)) if (c.exitCode === null && c.signalCode === null) c.kill("SIGKILL");
+  });
+
+  const SMTP_PORT = Number(process.env.SMTP_PORT ?? 3025);
+  async function engine(dataDir: string, address: string, imapPort: number) {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const k of Object.keys(env)) if (k.startsWith("OHMAIL_")) delete env[k];
+    Object.assign(env, {
+      OHMAIL_DATA_DIR: dataDir, OHMAIL_IMAP_HOST: "127.0.0.1", OHMAIL_IMAP_PORT: String(imapPort),
+      OHMAIL_IMAP_SECURE: "0", OHMAIL_IMAP_USER: address, OHMAIL_IMAP_PASS: "test",
+      OHMAIL_SMTP_HOST: GREENMAIL.host, OHMAIL_SMTP_PORT: String(SMTP_PORT), OHMAIL_SMTP_SECURE: "0",
+      OHMAIL_MAILBOX_ADDRESS: address, OHMAIL_KEK: "cd".repeat(32), OHMAIL_POLL_MS: "15000",
+    });
+    const child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx", "src/main.ts"], {
+      cwd: SIDECAR_DIR, env, stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
+    kids.push(child);
+    let stderr = "";
+    child.stderr.on("data", (c: Buffer) => { stderr += c.toString("utf8"); });
+    const exited = new Promise<number>((resolve) => { child.once("exit", (code) => resolve(code ?? -1)); });
+    const client = connectOverStdio({ input: child.stdout, output: child.stdin, baseUrl: "http://sidecar" });
+    bridges.push(client);
+    const header = await client.ready();
+    const call = (path: string, method: string, body?: unknown, key?: string) => client.fetch(path, {
+      method,
+      headers: {
+        authorization: `Bearer ${String(header.sessionToken)}`, "content-type": "application/json",
+        ...(key ? { "idempotency-key": key } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const events = (): string[] => stderr.split("\n").flatMap((l) => {
+      try { return [(JSON.parse(l) as { event?: string }).event ?? ""]; } catch { return []; }
+    });
+    return { child, header, call, events, exited };
+  }
+
+  async function copies(user: string, folder: string, messageId: string): Promise<number> {
+    const c = new ImapFlow({ host: GREENMAIL.host, port: GREENMAIL.port, secure: false, auth: { user, pass: "test" }, logger: false });
+    await c.connect();
+    try {
+      const lock = await c.getMailboxLock(folder);
+      try {
+        const uids = await c.search({ header: { "message-id": messageId.replace(/[<>]/g, "") } }, { uid: true });
+        return Array.isArray(uids) ? uids.length : 0;
+      } finally { lock.release(); }
+    } finally { await c.logout().catch(() => undefined); }
+  }
+
+  it("goes out once at the next start: one delivery, one copy in Sent, the draft sent", async () => {
+    const relay = await slowRelay(GREENMAIL.host, GREENMAIL.port, 0);
+    const dataDir = await freshDataDir("ohmail-quit-slow-login-");
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const address = `dcc-${randomUUID()}@trafficflow.test`;
+    const to = `rcpt-${randomUUID()}@trafficflow.test`;
+    const first = await engine(dataDir, address, relay.port);
+    await sleep(1_500);
+    const created = await first.call("/drafts", "POST", {
+      mailboxId: first.header.mailboxId, subject: "Re: Thursday", body: "Yes, Thursday works.", to: [{ name: null, address: to }],
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const draftId = (await created.json() as { id: string }).id;
+    const key = `quit-${randomUUID()}`;
+    relay.setDelay(SLOW_MS);
+    void first.call(`/drafts/${draftId}/send`, "POST", {}, key).catch(() => undefined);
+    await sleep(500);
+    first.child.stdin.end();
+    const code = await Promise.race([first.exited, sleep(10_000).then(() => "still running" as const)]);
+    expect(code, `the first engine left with ${String(code)}`).toBe(0);
+
+    relay.setDelay(0);
+    const next = await engine(dataDir, address, relay.port);
+    const replay = await next.call(`/drafts/${draftId}/send`, "POST", {}, key);
+    const sent = await replay.json() as { status?: string; providerMessageId?: string };
+    expect({ http: replay.status, status: sent.status }).toEqual({ http: 200, status: "sent" });
+    expect(next.events(), "the start did not forget the reservation that offered nothing").toContain("inherited_sends_forgotten");
+    expect(await copies(address, "Sent", sent.providerMessageId!), "not exactly one copy in Sent").toBe(1);
+    expect(await copies(to, "INBOX", sent.providerMessageId!), "not exactly one delivery").toBe(1);
+    const d = await next.call(`/drafts/${draftId}`, "GET");
+    expect((await d.json() as { status?: string }).status).toBe("sent");
+    next.child.stdin.end();
+    await Promise.race([next.exited, sleep(10_000)]);
+  }, 120_000);
 });

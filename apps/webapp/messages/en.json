@@ -1332,6 +1332,7 @@
     "sending": "Sending…",
     "statusSending": "Sending your message.",
     "statusSendingLong": "Still sending.",
+    "statusPreviousSending": "Your last message is still being sent. You can edit and send this one once it has gone.",
     "statusAccepted": "Accepted. ohmail sends it on its next pass.",
     "sent": "Sent",
     "scheduled": "Scheduled",
@@ -3421,6 +3422,21 @@
     "unsavedKindTag": "A tag change",
     "unsavedKindFolder": "A folder change",
     "unsavedKindRule": "A rule change"
+  },
+  "sendingLine": {
+    "sending": "Sending to {name}\u2026",
+    "sendingUnnamed": "Sending\u2026",
+    "sendingLong": "Still sending to {name}\u2026",
+    "sendingLongUnnamed": "Still sending\u2026",
+    "sendingMany": "Sending {count} messages\u2026",
+    "sent": "Sent",
+    "sentTo": "Sent to {name}",
+    "sentToAbout": "Sent to {name} · “{subject}”",
+    "aboutBoth": "To {name} \u00b7 \u201c{subject}\u201d",
+    "aboutTo": "To {name}",
+    "aboutSubject": "\u201c{subject}\u201d",
+    "open": "Open",
+    "dismiss": "Dismiss"
   },
   "screening": {
     "scopeShared": "{domain} is a shared provider. Decisions here are per address.",

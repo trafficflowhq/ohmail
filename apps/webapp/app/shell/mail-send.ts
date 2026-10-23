@@ -52,6 +52,7 @@ import {
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent, type SendLockOwed,
 } from "./send-lock";
 import { storageOwner } from "./storage-owner";
+import { displayAddress } from "./idn";
 import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
 import type { SignatureState } from "./signature";
@@ -78,6 +79,33 @@ export const SENT_BEAT_MS = 600;
  * this line answers.
  */
 export const SENDING_LONG_MS = 4_000;
+
+/** How long the sidebar's foot says "Sent" for a send it finished, before it settles away. */
+export const SENT_LINE_MS = 2_000;
+
+/**
+ * ONE SEND THE SIDEBAR'S FOOT SHOWS (`SendingLine`): a lane no mounted, visible editor shows.
+ * Presentation only, derived on each read from the lane states, the frozen press and the outbox;
+ * nothing a send decision reads, nothing persisted.
+ */
+export interface SendLineItem {
+  /** This item, for Dismiss: one lane can stand on the line twice (the compose lane, two messages). */
+  id: string;
+  /** The lane (`sendKeyOf`). */
+  key: string;
+  state: "sending" | "queued" | "sent" | "ended";
+  /** The first recipient, as a name or the address; `null` when the press cannot name one. */
+  to: string | null;
+  /** The message's subject in a few words — a reply's is its message's; `null` when it has none. */
+  subject: string | null;
+  /** For `ended`: the state the editor would say, and the row it left. */
+  ended?: SendState;
+  left?: RefusedRow;
+  /** The frozen press, when this mount pressed it: Open puts it back. */
+  m?: MailSend;
+  /** For `sending`: when the phase began. */
+  since?: number;
+}
 
 export interface SendState {
   phase: SendPhase;
@@ -146,6 +174,13 @@ export interface SendState {
    * true of all of them. See `firstSendStatusOf`.
    */
   firstSend?: "sent" | "unverified" | "pending";
+  /**
+   * THE LANE IS STILL CARRYING ANOTHER MESSAGE'S SEND — {@link composeStateOnScreen}'s answer for a
+   * composer holding a message other than the one its lane's press was for. The phase stays (the
+   * composer waits, read-only, while the lane's one lock holds) and the sentence and the verb say
+   * only that.
+   */
+  previous?: true;
 }
 
 export interface MailSendApi {
@@ -170,7 +205,7 @@ export interface MailSendApi {
    *
    * `true` when the press went: the lane is sending under its key. Every refusal answers `false`.
    */
-  send: (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }) => boolean;
+  send: (m: MailSend, opts?: SendOpts) => boolean;
   /**
    * CANCEL CANCELS — withdraw this lane's QUEUED send, if it has one. A queued send is an intent
    * on the engine's outbox: nothing is on the wire, and the reconnect flush or a later boot
@@ -184,6 +219,34 @@ export interface MailSendApi {
   withdraw: (lane: string) => Promise<CancelSaid>;
   /** A surface showing this lane's send line, while mounted — see {@link ShowSend}. */
   showing: ShowSend;
+  /** The sends the sidebar's foot shows now — see {@link SendLineItem}. */
+  line: () => readonly SendLineItem[];
+  /** Subscribe to changes of {@link line}; `lineVersion` is its snapshot. */
+  subscribeLine: (cb: () => void) => () => void;
+  lineVersion: () => number;
+  /** A mounted foot line, while mounted: endings are said there instead of in a toast while `seen`. */
+  mountLine: (seen?: () => boolean) => () => void;
+  /** Take an ended item off the line (its Dismiss, or its Open), by {@link SendLineItem.id}. */
+  dismissLine: (id: string) => void;
+  /**
+   * IS THE LANE'S LAST PRESS THE MESSAGE ITS SURFACE HOLDS NOW? Always for a reply or a forward,
+   * which are named by the message they answer. The compose lane names every message this browser
+   * writes, and the hand-off leaves the composer at the press, so the next message can be open in it
+   * while the last one is still out: that one's state is not this one's to show, nor its Cancel.
+   */
+  pressHere: (lane: string) => boolean;
+}
+
+/**
+ * What a press may carry. `handOff` is called once the send is durably queued (the engine's outbox
+ * write, ahead of the wire), with the press it let go of; the caller closes its editor there and
+ * keeps the press for the way back to it. Never on a refused write.
+ */
+export interface SendOpts {
+  surface?: "inline";
+  heldRow?: string | null;
+  andDone?: SendAndDonePlan;
+  handOff?: (m: MailSend) => void;
 }
 
 /**
@@ -204,6 +267,8 @@ export interface OutcomeDetail {
   ended?: SendState;
   /** Whether a surface showed this lane's line when it ended — see {@link ShowSend}. */
   shown?: boolean;
+  /** Said by the sidebar's foot line (`SendingLine`) rather than by a toast. */
+  line?: boolean;
 }
 
 /** The row a send refused for good was sent from, handed to the surface that may take it. */
@@ -470,6 +535,69 @@ function pendingSendLanes(reader: EntityReader): Map<string, string> {
     out.set(r.key, m.inReplyTo === null && m.forwardOf != null ? inlineForwardKey(m.forwardOf) : sendKeyOf(m));
   }
   return out;
+}
+
+/** The durable outbox's pending sends with their lane and mutation, per (reader, outbox stamp). */
+const outboxRowsCache = new WeakMap<EntityReader, { at: number; rows: Array<{ key: string; lane: string; m: MailSend }> }>();
+function pendingSendRows(reader: EntityReader): Array<{ key: string; lane: string; m: MailSend }> {
+  const at = typeof reader.stampOf === "function" ? reader.stampOf(OUTBOX_TYPE) : NaN;
+  const hit = outboxRowsCache.get(reader);
+  if (hit !== undefined && hit.at === at && !Number.isNaN(at)) return hit.rows;
+  const rows: Array<{ key: string; lane: string; m: MailSend }> = [];
+  for (const r of reader.list(OUTBOX_TYPE) as ReadonlyArray<OutboxRow>) {
+    if (!pendingSendRow(r) || typeof r.key !== "string") continue;
+    const m = r.mutation as unknown as MailSend;
+    rows.push({ key: r.key, lane: m.inReplyTo === null && m.forwardOf != null ? inlineForwardKey(m.forwardOf) : sendKeyOf(m), m });
+  }
+  outboxRowsCache.set(reader, { at, rows });
+  return rows;
+}
+
+/** How long a subject may run on the line before it is cut at a word, in characters. */
+const LINE_SUBJECT_MAX = 40;
+
+/**
+ * THE SUBJECT A PRESS IS KNOWN BY, in a few words: its own, else the message it answers or forwards
+ * (a reply's derived "Re:" adds nothing on the line). Cut at a word past {@link LINE_SUBJECT_MAX}.
+ */
+function pressSubject(engine: OhmailEngine, m: MailSend | undefined): string | null {
+  if (m === undefined) return null;
+  const parentId = m.inReplyTo ?? m.forwardOf ?? null;
+  const own = typeof m.subject === "string" ? m.subject : undefined;
+  const raw = own ?? (parentId !== null && typeof engine.read === "function"
+    ? engine.read().get<EngineMessage>("message", parentId)?.subject
+    : undefined);
+  const s = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (s === "") return null;
+  if (s.length <= LINE_SUBJECT_MAX) return s;
+  const cut = s.slice(0, LINE_SUBJECT_MAX);
+  const at = cut.lastIndexOf(" ");
+  return `${(at > LINE_SUBJECT_MAX / 2 ? cut.slice(0, at) : cut).trimEnd()}…`;
+}
+
+/**
+ * ARE THESE TWO PRESSES OF THE COMPOSE LANE THE SAME MESSAGE? By the row, when both name one (or the
+ * row the first one's refusal left), else by the compose session. One the press cannot name is taken
+ * as the same: that is how every lane was treated before two messages could stand on one.
+ */
+function sameComposeMessage(a: ComposeHeld | undefined, b: ComposeHeld | undefined, aLeft?: RefusedRow): boolean {
+  if (a === undefined || b === undefined) return true;
+  if (b.draftId !== null && (b.draftId === a.draftId || b.draftId === aLeft?.rowId)) return true;
+  if (a.draftId !== null && b.draftId !== null) return false;
+  return a.session !== null && a.session === b.session;
+}
+
+/** The first recipient of a press, as the line names it: a name, else the address. */
+function firstRecipient(engine: OhmailEngine, m: MailSend | undefined): string | null {
+  if (m === undefined) return null;
+  const list = [...(m.to ?? []), ...(m.cc ?? []), ...(m.bcc ?? [])] as EmailAddress[];
+  let who: EmailAddress | undefined = list[0];
+  if (who === undefined && m.inReplyTo) {
+    who = engine.read().get<EngineMessage>("message", m.inReplyTo)?.from as EmailAddress | undefined;
+  }
+  if (who === undefined) return null;
+  const name = who.name?.trim();
+  return name ? name : displayAddress(who.address);
 }
 
 /**
@@ -874,6 +1002,8 @@ export async function promoteOrphanedReplyLane(
 export function sendVerb(
   state: SendState, scope: "compose" | "reply",
 ): { key: "send" | "sending" | "sent" | "scheduled" | "queued"; attr?: "sending" | "sent" | "queued" } {
+  // Another message's send: this one has not been pressed, and its button says so.
+  if (state.previous === true) return { key: "send" };
   if (state.phase === "sending") return { key: "sending", attr: "sending" };
   if (state.phase === "sent") {
     return state.scheduled === true && scope === "compose"
@@ -895,7 +1025,30 @@ export function sendVerb(
  * record that it happened.
  */
 export function canCancel(state: SendState, held: boolean): boolean {
-  return !held && state.phase !== "sending";
+  // Another message's send on the lane leaves this one free to be thrown away.
+  return !held && (state.phase !== "sending" || state.previous === true);
+}
+
+/**
+ * THE COMPOSE LANE'S STATE AS THE MESSAGE ON SCREEN SEES IT — what the composer renders.
+ *
+ * There is one compose lane, and the hand-off leaves the composer at the press, so the next message
+ * can be open in it while the last one is still out ({@link MailSendApi.pressHere} answers which).
+ * That press's state is about the message it was for: over another one it said "Sending…", "Not
+ * sent…" or "Sent" about mail nobody pressed Send on, and its ending was said nowhere else. So a
+ * press that is not the message on screen shows nothing of its own here — its ending is the foot
+ * line's (or the toast's) to say. While it is still out, the composer waits on the lane's one lock,
+ * read-only, and says only that ({@link SendState.previous}). The unresolved sends the lane holds
+ * still ride along, so a message an unverified send names is parked exactly as before (`sendStateFor`).
+ */
+export function composeStateOnScreen(state: SendState, pressHere: boolean): SendState {
+  if (pressHere || state.phase === "idle" || state.phase === "unverified") return state;
+  const kept = {
+    ...(state.unresolved !== undefined ? { unresolved: state.unresolved } : {}),
+    ...(state.session !== undefined ? { session: state.session } : {}),
+  };
+  if (state.phase === "sending" || state.phase === "queued") return { phase: state.phase, previous: true, ...kept };
+  return (state.unresolved?.length ?? 0) > 0 ? { phase: "unverified", ...kept } : { phase: "idle", ...kept };
 }
 
 /* ── the one rule ─────────────────────────────────────────────────────────────────────── */
@@ -1298,6 +1451,14 @@ export function useMailSend(
   onOutcome?: (
     key: string, m: MailSend, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ) => boolean,
+  /**
+   * WHICH MESSAGE THE LANE'S SURFACE IS BOUND TO NOW, as a mark compared by identity — the
+   * composer's binding epoch (`useComposeAutosave`, moved by every adopt and release). Read at a
+   * confirmation and again at its sent beat: a surface that moved in between (the next draft opened
+   * in those 600 ms) is no longer the one the confirmation was about, so the beat settles nothing.
+   * Absent: nothing moves.
+   */
+  markOf?: (key: string) => unknown,
 ): MailSendApi {
   const t = useTranslations();
   const [states, setStates] = useState<Record<string, SendState>>({});
@@ -1350,18 +1511,109 @@ export function useMailSend(
      arrives long after the render that armed it. */
   const outcomeRef = useRef(onOutcome);
   outcomeRef.current = onOutcome;
+  const markRef = useRef(markOf);
+  markRef.current = markOf;
+  /**
+   * THE COMPOSE LANE'S LAST PRESS, BY ITS NAMES — {@link sentFor}'s identity, kept until the next
+   * press rather than spent by the settlement: what {@link pressHere} and the foot line ask whether
+   * the composer still holds.
+   */
+  const pressedHeld = useRef(new Map<string, ComposeHeld>());
+  /**
+   * A lane in its sent beat: whether the confirmation was about the surface's message, and the
+   * surface's mark then. Its beat settles only while both still hold.
+   */
+  const beatAbout = useRef(new Map<string, { about: boolean; mark: unknown }>());
   /** The lines mounted per lane, each with its own visibility question — see {@link ShowSend}. */
   const shownLanes = useRef(new Map<string, Set<() => boolean>>());
+  /* ── THE SIDEBAR'S FOOT LINE (`SendingLine`) — presentation only, see {@link SendLineItem}. ── */
+  const lineSubs = useRef(new Set<() => void>());
+  const lineVer = useRef(0);
+  const bumpLine = useCallback((): void => {
+    lineVer.current += 1;
+    for (const cb of [...lineSubs.current]) cb();
+  }, []);
+  /** Mounted foot lines' visibility probes; while none is seen, endings keep #185's toast. */
+  const lineProbes = useRef(new Set<() => boolean>());
+  const lineSeenNow = useCallback((): boolean => [...lineProbes.current].some((seen) => seen()), []);
+  /** The press each lane last sent, frozen: the line names its recipient and Open puts it back. */
+  const pressed = useRef(new Map<string, MailSend>());
+  /**
+   * Lanes whose editor let go at the press (`SendOpts.handOff`): only these, and sends restored from
+   * the outbox, are the line's. A send that waited in its editor keeps #185's endings (its line,
+   * then the toast once left) — today's behaviour on the unhealthy path.
+   */
+  const handedOff = useRef(new Set<string>());
+  /** Lanes the line says "Sent" for, until {@link SENT_LINE_MS} has passed. */
+  const sentLine = useRef(new Map<string, {
+    m: MailSend | undefined; timer: ReturnType<typeof setTimeout>; held?: ComposeHeld;
+  }>());
+  /**
+   * Endings the line stands on until opened or dismissed, by item id: the compose lane can hold two,
+   * one message's ending standing while the next message goes. `held` names a compose press.
+   */
+  const endedLine = useRef(new Map<string, {
+    lane: string; m: MailSend | undefined; ended: SendState; left?: RefusedRow; held?: ComposeHeld;
+  }>());
+  const endedSeq = useRef(0);
+  /**
+   * A PRESS OF THIS LANE ENDS WHAT THE LINE STOOD ON FOR THE SAME MESSAGE — every ending of a reply's
+   * or a forward's lane (the lane is the message), and of the compose lane only the endings of the
+   * message this press is ({@link sameComposeMessage}).
+   */
+  const endLaneOn = useCallback((lane: string, held: ComposeHeld | undefined): boolean => {
+    let gone = false;
+    for (const [id, e] of [...endedLine.current]) {
+      if (e.lane !== lane) continue;
+      if (lane === COMPOSE_SEND_KEY && !sameComposeMessage(e.held, held, e.left)) continue;
+      endedLine.current.delete(id);
+      gone = true;
+    }
+    return gone;
+  }, []);
+  const shownNow = useCallback(
+    (lane: string): boolean => [...(shownLanes.current.get(lane) ?? [])].some((seen) => seen()), [],
+  );
+  /**
+   * DOES AN EDITOR SHOW THIS MESSAGE'S SEND? {@link shownNow}, and for the compose lane only while the
+   * composer holds the message `held` names: a composer open on the next message registers the lane
+   * too, and showing that one is not showing this one. `held` absent: the lane is the message.
+   */
+  const shownHolding = useCallback((lane: string, held: ComposeHeld | undefined): boolean =>
+    shownNow(lane) && (lane !== COMPOSE_SEND_KEY || held === undefined || composeStillHolds(held, owner.current)),
+  [shownNow]);
   const showing = useCallback<ShowSend>((lane, seen) => {
     const probe = (): boolean => (seen ? seen() : true);
     const set = shownLanes.current.get(lane) ?? new Set<() => boolean>();
     set.add(probe);
     shownLanes.current.set(lane, set);
+    bumpLine();
     return () => {
       set.delete(probe);
       if (set.size === 0 && shownLanes.current.get(lane) === set) shownLanes.current.delete(lane);
+      bumpLine();
     };
+  }, [bumpLine]);
+  /** Say "Sent" on the line for a lane it shows, then let it settle away. */
+  const sayLineSent = useCallback((lane: string, m: MailSend | undefined, held?: ComposeHeld): void => {
+    const was = sentLine.current.get(lane);
+    if (was) clearTimeout(was.timer);
+    const timer = setTimeout(() => {
+      if (sentLine.current.get(lane)?.timer === timer) sentLine.current.delete(lane);
+      bumpLine();
+    }, SENT_LINE_MS);
+    sentLine.current.set(lane, { m, timer, ...(held ? { held } : {}) });
+    // A restored send names no press: it ends no compose message's ending but its own lane's.
+    if (lane !== COMPOSE_SEND_KEY || held !== undefined) endLaneOn(lane, held);
+    bumpLine();
+  }, [bumpLine, endLaneOn]);
+  useEffect(() => () => {
+    for (const s of sentLine.current.values()) clearTimeout(s.timer);
   }, []);
+
+  /** The lane states as last rendered, for the line's reads between renders. */
+  const statesRef = useRef(states);
+  useEffect(() => { statesRef.current = states; bumpLine(); }, [states, bumpLine]);
 
   const setPhase = useCallback((key: string, next: SendState) => {
     setStates((prev) => {
@@ -1418,6 +1670,10 @@ export function useMailSend(
          name this very call had removed. A reply and a forward are named by the message they
          answer, which no door can rename, so the question is the compose surface's alone. */
       const aboutThisCompose = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
+      /* AN EDITOR SHOWS THIS SEND only while it holds the message the send was for: a composer open
+         on the next message registers the compose lane too, and is not this send's to finish. Asked
+         here, before the clear below spends the names it is asked by. */
+      const shown = shownNow(key) && aboutThisCompose;
       clearLaneScratch(key, m, owner.current, aboutThisCompose);
       /* SEND + DONE IS ASKED FIRST, before the debt below moves anything: its release is read from
          the mirror NOW. `true` is a release made — it clears the bookings and reads the row, so the
@@ -1446,11 +1702,28 @@ export function useMailSend(
        * `scheduled` rides the state for the same reason the toast branches on `m.sendAt`:
        * nothing was sent, an appointment was made, and the button may not say "Sent" over it.
        */
-      setPhase(key, m.sendAt ? { phase: "sent", scheduled: true } : { phase: "sent" });
-      beat(key, () => {
+      /* NO EDITOR SHOWS THIS LANE AND A FOOT LINE IS SEEN: the line finishes it, "Sent", and no
+         toast says it twice. Send + Done keeps its Undo toast and gets no "Sent". */
+      const onLine = handedOff.current.has(key) && !m.sendAt && lineSeenNow() && !shown;
+      if (handedOff.current.has(key) && !shown) {
+        /* LET GO AT THE PRESS AND SHOWN BY NO EDITOR: there is no button to say "Sent" on, so
+           nothing waits for a beat. Settled now, while the surface is still the one this
+           confirmation was decided about — a beat would judge whatever the person opened in its
+           600 ms (the next draft) and delete that draft's row as a copy of this one. */
         setPhase(key, IDLE);
         settledRef.current(key, m, aboutThisCompose);
-      });
+      } else {
+        setPhase(key, m.sendAt ? { phase: "sent", scheduled: true } : { phase: "sent" });
+        /* THE BEAT CARRIES WHICH MESSAGE THE SURFACE HELD AT THE CONFIRMATION (`markOf`): one that
+           moved since is not this send's, and settles nothing — no discard, no clear, no close. */
+        const mark = markRef.current?.(key);
+        beatAbout.current.set(key, { about: aboutThisCompose, mark });
+        beat(key, () => {
+          beatAbout.current.delete(key);
+          setPhase(key, IDLE);
+          settledRef.current(key, m, aboutThisCompose && Object.is(markRef.current?.(key), mark));
+        });
+      }
       // Each lane's own sentence — keyed on the LANE, not the mutation shape, for the same
       // reason the cleanup above is. A forward is not a reply, and a toast that said "Reply
       // sent." over a forward was measured live; the key shim keeps the sentence honest until
@@ -1463,6 +1736,10 @@ export function useMailSend(
       /* SEND + DONE TAKES THE SENTENCE: one press, one toast, rather than "Reply sent." replaced a
          beat later by "Sent · marked done". */
       if (released) return;
+      if (onLine && !earlierWent && !answeredEarlier) {
+        sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined);
+        return;
+      }
       /* A re-press that joined a send already delivered: the earlier words went, the newer did not. */
       if (earlierWent) {
         toast(t(key === COMPOSE_SEND_KEY ? "compose.toastEarlierWent" : key.startsWith("fwd:") ? "reply.toastForwardEarlierWent" : "reply.toastEarlierWent"));
@@ -1484,7 +1761,7 @@ export function useMailSend(
             : t("reply.toastSent"),
       );
     },
-    [engine, setPhase, toast, t, beat],
+    [engine, setPhase, toast, t, beat, shownNow, lineSeenNow, sayLineSent],
   );
 
   /**
@@ -1548,6 +1825,14 @@ export function useMailSend(
       if (res.status === "superseded") return;
       // CANCELLED IN ANOTHER WINDOW: the lane ends as this window's own Cancel ends it, silently.
       let next = cancelledElsewhere(res) ? IDLE : phaseFor(res);
+      /* WHICH MESSAGE THIS ANSWER IS ABOUT, by the names its press recorded — never the surface's
+         names now: the composer may hold the next message by the time the answer comes, and a record
+         written under that one's session or row would park it for a send it never had. */
+      const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
+      const about = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
+      const pressSession = key === COMPOSE_SEND_KEY ? held.session : null;
+      /** The row the surface holds for this message, when it still holds the message. */
+      const heldRow = (): string | null => (key !== COMPOSE_SEND_KEY ? null : about ? readComposeRow(owner.current) : held.draftId);
       if (res.status === "queued") {
         // A waiting send whose newer words were kept back carries the earlier ones: said once.
         if ((res.error?.details as { earlierWordsKept?: boolean } | undefined)?.earlierWordsKept === true && !saidGoing.current.has(res.key)) {
@@ -1567,9 +1852,8 @@ export function useMailSend(
            that row as an ordinary draft, and the next press minted a second key for one message.
            Diagnostic on the record, exactly as everywhere else: nothing chooses a key from it. */
         attachSendLockDraft(
-          key, sendSubjects(m, sessionOf(key)),
-          m.draftId ?? res.entityId
-            ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+          key, sendSubjects(m, pressSession),
+          m.draftId ?? res.entityId ?? heldRow(),
           owner.current,
         );
         // STILL LOCKED: the intent is out there under this key and a second press would
@@ -1638,12 +1922,11 @@ export function useMailSend(
              The lane test is gone with it: a reply or a forward pressed with no row has the same
              gap, and the record for those lanes is named by the parent message either way. */
           attachSendLockDraft(
-            key, sendSubjects(m, sessionOf(key)),
-            m.draftId ?? res.error?.entityId
-              ?? (key === COMPOSE_SEND_KEY ? readComposeRow(owner.current) : null),
+            key, sendSubjects(m, pressSession),
+            m.draftId ?? res.error?.entityId ?? heldRow(),
             owner.current,
           );
-          next = { ...next, unresolved: [{ subjects: sendSubjects(m, sessionOf(key)), fp }] };
+          next = { ...next, unresolved: [{ subjects: sendSubjects(m, pressSession), fp }] };
         }
       }
       // A confirmation is the only outcome that does anything beyond the phase, and `settle`
@@ -1656,11 +1939,21 @@ export function useMailSend(
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
            not terminal — the flush confirms it later and `settle` answers then. */
         if (next.phase !== "queued") {
-          const held = sentFor.current.get(key) ?? { draftId: m.draftId ?? null, session: null };
-          const about = key !== COMPOSE_SEND_KEY || composeStillHolds(held, owner.current);
           const left = refusedRowOf(res, about);
-          const shown = [...(shownLanes.current.get(key) ?? [])].some((seen) => seen());
-          outcomeRef.current?.(key, m, false, next.phase, { ...(left ? { left } : {}), ended: next, shown });
+          // Shown only by an editor holding this send's message — see `settle`.
+          const shown = shownNow(key) && about;
+          /* Said on the foot line when no editor shows the lane and a line is seen; the toast stays
+             the fallback for a shell with no line, or one the reader sheet covers. */
+          const line = handedOff.current.has(key) && !shown && lineSeenNow() && next.phase !== "idle";
+          if (line) {
+            endedSeq.current += 1;
+            endedLine.current.set(`${key}#${endedSeq.current}`, {
+              lane: key, m: pressed.current.get(key) ?? m, ended: next,
+              ...(left ? { left } : {}), ...(key === COMPOSE_SEND_KEY ? { held } : {}),
+            });
+            bumpLine();
+          }
+          outcomeRef.current?.(key, m, false, next.phase, { ...(left ? { left } : {}), ended: next, shown, ...(line ? { line } : {}) });
         }
         setPhase(key, next);
       }
@@ -1686,7 +1979,7 @@ export function useMailSend(
        * claimed, because the intent is out there under it and a second press would be a second delivery.
        */
     },
-    [settle, setPhase, sessionOf, toast, t, releaseEnded],
+    [settle, setPhase, toast, t, releaseEnded, shownNow, lineSeenNow, bumpLine],
   );
 
   /**
@@ -1770,6 +2063,10 @@ export function useMailSend(
       && record.session !== undefined
       && record.session !== composeSessionId(owner.current)
     );
+    /** The record's names as a press's, for the foot line's own question — the same test. */
+    const recordHeld: ComposeHeld | undefined = record.lane === COMPOSE_SEND_KEY
+      ? { draftId: null, session: record.session ?? null }
+      : undefined;
     if (res.status === "confirmed") {
       /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
          whichever surface is on screen, because the release is about the source, not the composer. */
@@ -1816,6 +2113,9 @@ export function useMailSend(
        * which no re-mint can change). Those settle as before: a rule that fails closed needs the state it fails
        * closed ON to be distinguishable from "this shell has no such thing".
        */
+      /* A restored send that went finishes on the foot line, where it said "Sending…" — also when the
+         composer holds another message, which is not this one's to finish. */
+      if (!res.andDone && lineSeenNow() && !shownHolding(record.lane, recordHeld)) sayLineSent(record.lane, undefined, recordHeld);
       if (!speaksForScreen) {
         console.warn(
           "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
@@ -1853,6 +2153,8 @@ export function useMailSend(
         if (record.session !== undefined) names.push(`compose:${record.session}`);
         attachSendLockDraft(record.lane, names, res.entityId, owner.current);
       }
+      // AND IT IS SAID, as a live unverified ending is: before, a restored one said nothing at all.
+      reportRestored(record.lane, { phase: "unverified" }, undefined, recordHeld);
     } else if (res.status !== "queued") {
       /**
        * Everything else releases and reports. A settled late result ends the record it names as the live press
@@ -1884,12 +2186,28 @@ export function useMailSend(
       const ended = cancelledElsewhere(res) ? IDLE : phaseFor(res);
       if (speaksForScreen) setPhase(record.lane, ended);
       // And the lane's owner hears it as the live path's owner does: this send is over, not sent.
-      outcomeRef.current?.(
-        record.lane, { kind: "mail_send" } as unknown as MailSend, false, ended.phase,
-        // The replay's own row, for the surface this answer speaks to and no other.
-        speaksForScreen && refusedRowOf(res, true) ? { left: refusedRowOf(res, true)! } : undefined,
-      );
+      // The replay's own row, for the surface this answer speaks to and no other.
+      reportRestored(record.lane, ended, speaksForScreen ? refusedRowOf(res, true) : undefined, recordHeld);
     }
+  };
+  /**
+   * A restored send's terminal ending, said as the live path says one — see `absorb`. `held`: the
+   * record's names, for a compose — a composer holding another message does not show this one's
+   * ending (`speaksForScreen`), so the line or the toast says it.
+   */
+  const reportRestored = (lane: string, ended: SendState, left: RefusedRow | undefined, held: ComposeHeld | undefined): void => {
+    const shown = shownHolding(lane, held);
+    const line = !shown && lineSeenNow() && ended.phase !== "idle";
+    if (line) {
+      endedSeq.current += 1;
+      endedLine.current.set(`${lane}#${endedSeq.current}`, { lane, m: undefined, ended, ...(left ? { left } : {}), ...(held ? { held } : {}) });
+      bumpLine();
+    }
+    outcomeRef.current?.(
+      lane, { kind: "mail_send" } as unknown as MailSend, false, ended.phase,
+      ended.phase === "idle" ? (left ? { left } : undefined)
+        : { ...(left ? { left } : {}), ended, shown, ...(line ? { line } : {}) },
+    );
   };
 
   /**
@@ -2110,7 +2428,7 @@ export function useMailSend(
   }
 
   const send = useCallback(
-    (m: MailSend, opts?: { surface?: "inline"; heldRow?: string | null; andDone?: SendAndDonePlan }): boolean => {
+    (m: MailSend, opts?: SendOpts): boolean => {
       const key = sendKeyOf(m, opts?.surface ?? "compose");
       // THE LOCK FIRST, off the ref, because it is the only check that is correct within one
       // tick. `canSend` then applies the SAME rule the button's `disabled` uses — through the
@@ -2201,7 +2519,9 @@ export function useMailSend(
          same reason the durable claim is: what is written down has to describe the message that
          went, not the surface as it stands when the answer comes back. */
       if (key === COMPOSE_SEND_KEY) {
-        sentFor.current.set(key, { draftId: m.draftId ?? readComposeRow(owner.current), session });
+        const names = { draftId: m.draftId ?? readComposeRow(owner.current), session };
+        sentFor.current.set(key, names);
+        pressedHeld.current.set(key, names);
       }
       // ONE ASSEMBLY, because `sendFingerprint` hashes every attachment's contents and the resume
       // and the claim both need it — see `sendIdentity`.
@@ -2236,12 +2556,23 @@ export function useMailSend(
 
       ownKeys.current.add(sendKey);
       locked.current.add(key);
+      // The line's own record of this press: a new press ends what the line said about this message.
+      pressed.current.set(key, m);
+      handedOff.current.delete(key);
+      endLaneOn(key, pressedHeld.current.get(key));
+      const s = sentLine.current.get(key);
+      if (s) { clearTimeout(s.timer); sentLine.current.delete(key); }
       setPhase(key, { phase: "sending", since: Date.now() });
+      const handOff = opts?.handOff;
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
       // above are synchronous and stay that way: they are what make a second press impossible,
       // and a yield in front of either would open the window they exist to close.
       void afterPaint()
-        .then(() => engine.mutate(m, { key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}) }))
+        .then(() => engine.mutate(m, {
+          key: sendKey, ...(opts?.andDone ? { andDone: opts.andDone } : {}),
+          // The editor lets go once the send is on disk; a refused write never calls it.
+          ...(handOff ? { onDurable: () => { handedOff.current.add(key); bumpLine(); handOff(m); } } : {}),
+        }))
         .then((res) => {
           absorb(key, m, res);
           if (res.status === "queued") arm();
@@ -2260,7 +2591,7 @@ export function useMailSend(
         });
       return true;
     },
-    [engine, stateFor, setPhase, absorb, arm, sessionOf],
+    [engine, stateFor, setPhase, absorb, arm, sessionOf, bumpLine, endLaneOn],
   );
 
   /**
@@ -2325,6 +2656,81 @@ export function useMailSend(
     return "close";
   }, [engine, setPhase]);
 
+  /**
+   * The foot line's items — see {@link SendLineItem}. Every one stands on its own: the line shows each
+   * kind present (`SendingLine.lineRows`), so a standing ending hides no later send. A lane an editor
+   * shows is the editor's to say — for the compose lane, only while the composer holds that message.
+   */
+  const line = useCallback((): readonly SendLineItem[] => {
+    const out: SendLineItem[] = [];
+    const lanes = new Set<string>();
+    const add = (item: SendLineItem): void => { lanes.add(item.key); out.push(item); };
+    for (const [id, e] of endedLine.current) {
+      if (shownHolding(e.lane, e.held)) continue;
+      add({
+        id, key: e.lane, state: "ended", to: firstRecipient(engine, e.m), subject: pressSubject(engine, e.m), ended: e.ended,
+        ...(e.left ? { left: e.left } : {}), ...(e.m ? { m: e.m } : {}),
+      });
+    }
+    for (const [key, st] of Object.entries(statesRef.current)) {
+      if (!handedOff.current.has(key) || shownHolding(key, pressedHeld.current.get(key))) continue;
+      const m = pressed.current.get(key);
+      if (m?.sendAt) continue;
+      const named = { to: firstRecipient(engine, m), subject: pressSubject(engine, m), ...(m ? { m } : {}) };
+      if (st.phase === "sending") add({ id: `live:${key}`, key, state: "sending", ...named, ...(st.since !== undefined ? { since: st.since } : {}) });
+      else if (st.phase === "queued") add({ id: `live:${key}`, key, state: st.accepted === true ? "sending" : "queued", ...named });
+    }
+    for (const [key, s] of sentLine.current) {
+      if (shownHolding(key, s.held)) continue;
+      add({ id: `sent:${key}`, key, state: "sent", to: firstRecipient(engine, s.m), subject: pressSubject(engine, s.m) });
+    }
+    // A send restored from the last session (or another window's): the outbox carries it.
+    if (typeof engine.read === "function") {
+      const abandoned = typeof engine.abandoned === "function" ? new Set(engine.abandoned().map((a) => a.key)) : new Set<string>();
+      for (const r of pendingSendRows(engine.read())) {
+        if (ownKeys.current.has(r.key) || abandoned.has(r.key) || lanes.has(r.lane) || shownNow(r.lane) || r.m.sendAt) continue;
+        add({ id: `out:${r.key}`, key: r.lane, state: "sending", to: firstRecipient(engine, r.m), subject: pressSubject(engine, r.m), m: r.m });
+      }
+    }
+    return out;
+  }, [engine, shownNow, shownHolding]);
+  const subscribeLine = useCallback((cb: () => void): (() => void) => {
+    lineSubs.current.add(cb);
+    /* The outbox moves with the engine: a restored send leaving it ends its item. ONLY ITS MOVES are
+       the line's — every other notify (a sync page, a body) re-rendered each mounted copy of the line
+       for nothing, which a first import's walk counted in hundreds of commits. A reader with no stamp
+       is asked on every notify, as before. */
+    const stamp = (): number => {
+      const reader = typeof engine.read === "function" ? engine.read() : null;
+      return reader !== null && typeof reader.stampOf === "function" ? reader.stampOf(OUTBOX_TYPE) : NaN;
+    };
+    let at = stamp();
+    const off = typeof engine.subscribe === "function" ? engine.subscribe(() => {
+      const now = stamp();
+      if (!Number.isNaN(now) && now === at) return;
+      at = now;
+      bumpLine();
+    }) : () => {};
+    return () => { lineSubs.current.delete(cb); off(); };
+  }, [engine, bumpLine]);
+  const lineVersion = useCallback((): number => lineVer.current, []);
+  const mountLine = useCallback((seen?: () => boolean): (() => void) => {
+    const probe = (): boolean => (seen ? seen() : true);
+    lineProbes.current.add(probe);
+    return () => { lineProbes.current.delete(probe); };
+  }, []);
+  const dismissLine = useCallback((id: string): void => {
+    if (endedLine.current.delete(id)) bumpLine();
+  }, [bumpLine]);
+  /** See {@link MailSendApi.pressHere}: in a sent beat, the confirmation's own verdict while the mark holds. */
+  const pressHere = useCallback((lane: string): boolean => {
+    if (lane !== COMPOSE_SEND_KEY) return true;
+    const b = beatAbout.current.get(lane);
+    if (b !== undefined) return b.about && Object.is(markRef.current?.(lane), b.mark);
+    const held = pressedHeld.current.get(lane);
+    return held === undefined || composeStillHolds(held, owner.current);
+  }, []);
+
   return useMemo(
     () => ({
       /**
@@ -2341,6 +2747,7 @@ export function useMailSend(
       send,
       withdraw,
       showing,
+      line, subscribeLine, lineVersion, mountLine, dismissLine, pressHere,
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
       /** See {@link sendUnsettledFromLastSession} — the identity latched at mount is the key. */
       restoredPending: (lane: string) => lane === COMPOSE_SEND_KEY
@@ -2349,6 +2756,6 @@ export function useMailSend(
           sendPendingInDurableOutbox(engine, lane), owner.current, standingOf(engine),
         ),
     }),
-    [stateFor, send, withdraw, showing],
+    [stateFor, send, withdraw, showing, line, subscribeLine, lineVersion, mountLine, dismissLine, pressHere],
   );
 }

@@ -221,6 +221,8 @@ export interface SendReconcilePassResult {
   rechecked: number;
   /** Of those, how many the mirror or the Sent folder answered `sent` — the person is never asked. */
   recheckedSent: number;
+  /** Forgotten: the attempt offered nothing (mail 0162), so the key's replay sends it afresh. */
+  forgotten: number;
 }
 
 /** One row the claim selected, with the two joined facts the resolution needs. */
@@ -248,7 +250,7 @@ export async function runSendReconcilePass(
   const sends = deps.sends ?? sendService;
   const result: SendReconcilePassResult = {
     claimed: 0, sent: 0, unverified: 0, deferred: 0, resolvedElsewhere: 0, gaveUp: 0,
-    rechecked: 0, recheckedSent: 0,
+    rechecked: 0, recheckedSent: 0, forgotten: 0,
   };
 
   /**
@@ -533,6 +535,13 @@ export async function runSendReconcilePass(
         }
       }
 
+      if (outcome.status === "forgotten") {
+        result.forgotten += 1;
+        log.info("send_reconcile_forgotten", {
+          sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId,
+        });
+        continue;
+      }
       if (outcome.by === "elsewhere") {
         result.resolvedElsewhere += 1;
         continue;
@@ -658,6 +667,8 @@ async function claimStale(
       attempts: outboundSends.attempts,
       retryUntil: outboundSends.retryUntil,
       retryRefusal: outboundSends.retryRefusal,
+      // Mail 0162: an `unoffered` row is forgotten without a dial.
+      offerState: outboundSends.offerState,
       mailboxId: drafts.mailboxId,
       mailboxStatus: mailboxes.status,
     })
@@ -727,6 +738,7 @@ async function claimStale(
           // is ever set on anything it sees.
           resolvedBy: r.resolvedBy, resolvedAt: r.resolvedAt,
           attempts: r.attempts, retryUntil: r.retryUntil, retryRefusal: r.retryRefusal,
+          offerState: r.offerState,
         },
         kind: r.kind,
         mailboxId: r.mailboxId,

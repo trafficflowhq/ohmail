@@ -64,8 +64,10 @@ interface Knobs {
   appendFails?: boolean;
   /** The mail server refuses the session: nothing was offered, a definite failure. */
   smtpRefuses?: boolean;
+  /** The send door's IMAP login (before any SMTP) takes this long: a slow server at the quit. */
+  connectMs?: number;
 }
-interface SendSeen { startedAt: number | null; doneAt: number | null; closedAt: number | null; forcedAt: number | null; append: string | null }
+interface SendSeen { connectAt?: number | null; sends?: number; startedAt: number | null; doneAt: number | null; closedAt: number | null; forcedAt: number | null; append: string | null }
 interface Seen {
   meta: MemoryMeta;
   changesEntered: number;
@@ -80,8 +82,12 @@ interface Seen {
 function sendConnection(knobs: Knobs, seen: SendSeen): MailboxAdapter {
   let closed = false;
   return {
-    async connect(): Promise<void> {},
+    async connect(): Promise<void> {
+      seen.connectAt ??= performance.now();
+      await sleep(knobs.connectMs ?? 0);
+    },
     async send(msg: { messageId?: string }) {
+      seen.sends = (seen.sends ?? 0) + 1;
       seen.startedAt = performance.now();
       await sleep(knobs.smtpMs ?? 0);
       seen.doneAt = performance.now();
@@ -456,6 +462,38 @@ describe("a quit on the plan", () => {
     const replay = await post(next, `/drafts/${draftId}/send`, {}, "quit-send-sent");
     expect(replay.status, await replay.clone().text()).toBe(200);
     expect((await replay.json() as { status?: string }).status).toBe("sent");
+  });
+
+  it("a reply pressed 0.5 s before the quit while the mail server is slow to log in goes out at the next start", async () => {
+    const slow: Knobs = { ...SEND_KNOBS, smtpMs: 0, connectMs: 6_000 };
+    const rig = await boot(slow, { organize: false });
+    const created = await post(rig, "/drafts", {
+      mailboxId: rig.sidecar.world.mailboxId, subject: "Re: the list", body: "Yes, Thursday.",
+      to: [{ name: null, address: "you@example.test" }],
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const draftId = (await created.json() as { id: string }).id;
+    const sending = post(rig, `/drafts/${draftId}/send`, {}, "quit-slow-login").then(() => undefined, () => undefined);
+    const t = performance.now();
+    while (!rig.seen.send.connectAt && performance.now() - t < 10_000) await sleep(5);
+    expect(rig.seen.send.connectAt, "the premise: the send door is logging in").toBeTruthy();
+    await sleep(500);
+    const { exits } = await quitDuring(rig, sending);
+    expect(exits).toEqual([0]);
+    expect(rig.seen.send.startedAt, "nothing was offered before the quit").toBeNull();
+
+    const next = await boot({ ...SEND_KNOBS, smtpMs: 0 }, { organize: false, dataDir: rig.dataDir });
+    expect(await sendRows(next.sidecar, draftId), "the row was left to the Sent check").toEqual({ sends: [], drafts: ["draft"] });
+    expect(next.lines.find((l) => l.event === "inherited_sends_forgotten")?.detail, "the open did not forget it").toEqual({ count: 1 });
+    const replay = await post(next, `/drafts/${draftId}/send`, {}, "quit-slow-login");
+    expect(replay.status, await replay.clone().text()).toBe(200);
+    expect((await replay.json() as { status?: string }).status).toBe("sent");
+    /* One process holds both runs here, so the replay may be handed the first run's warm send
+       connection (the process-wide keeper); count SMTP over both. */
+    expect((rig.seen.send.sends ?? 0) + (next.seen.send.sends ?? 0), "one press, one delivery").toBe(1);
+    expect([rig.seen.send.append, next.seen.send.append], "its Sent copy").toContain("appended");
+    expect(await sendRows(next.sidecar, draftId)).toEqual({ sends: ["sent"], drafts: ["sent"] });
+    await sending;
   });
 
   it("SMTP accepted and the Sent copy refused, just before the quit: recorded sent, never unverified", async () => {

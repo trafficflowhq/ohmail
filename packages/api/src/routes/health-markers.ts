@@ -850,6 +850,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mailbox poll's filing statement binds; an API ahead of the migration 42703s on every poll.
   // Deploy order setup → migration → API.
   ["folder_state", "outstanding_account_id"],
+  // mail 0162_outbound_sends_offer_state — whether a send attempt may have offered its message;
+  // `send()` writes it at the reservation, so an API ahead of the migration 42703s every send.
+  // Deploy order migration → API → worker.
+  ["outbound_sends", "offer_state"],
 ] as const;
 
 /**
@@ -1266,7 +1270,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0161_mailboxes_account_idx";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0162_outbound_sends_offer_state";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

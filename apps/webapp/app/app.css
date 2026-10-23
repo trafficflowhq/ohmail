@@ -1088,6 +1088,88 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   color: var(--accent-ink);
   background: var(--accent-soft);
 }
+/* THE SENDING LINE (`SendingLine.tsx`): a send that left its editor finishes in the sync line's
+   own look, the rail box above the dock or the corner pill under 1024px (the `.sync-bar` /
+   `.rail-sync-slot` pair above shows exactly one). Its Open and Dismiss wear the line's link pill. */
+.sync-bar .sl-act,
+.rail-sync .sl-act {
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  border: 0;
+  border-radius: var(--r-pill);
+  padding: 1px 9px;
+  background: oklch(1 0 0 / 0.5);
+  cursor: pointer;
+}
+.sync-bar .sl-act:hover,
+.rail-sync .sl-act:hover {
+  background: oklch(1 0 0 / 0.75);
+}
+[data-theme="dark"] .sync-bar .sl-act,
+[data-theme="dark"] .rail-sync .sl-act {
+  background: var(--canvas);
+}
+[data-theme="dark"] .sync-bar .sl-act:hover,
+[data-theme="dark"] .rail-sync .sl-act:hover {
+  background: var(--panel);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar .sl-act,
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync .sl-act {
+    background: var(--canvas);
+  }
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .sync-bar .sl-act:hover,
+  :root:not([data-theme="light"]):not([data-theme="dark"]) .rail-sync .sl-act:hover {
+    background: var(--panel);
+  }
+}
+.sl-act.sl-quiet {
+  font-weight: 500;
+}
+.rail-sync .sl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* The pill stacks above the first-sync pill when both float (`--pill-h` is that one's room). */
+.sync-bar.busy.sending-pill {
+  bottom: max(18px, calc(var(--pill-h, 0px) + 8px));
+  flex-direction: column;
+  align-items: stretch;
+}
+/* ONE ROW PER KIND (`lineRows`): an ending that waits for the person stands above the sends still
+   going, a hairline between them; an outcome's sentence wraps under the message it names. */
+.rail-sync .sl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.sending-pill .sl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+}
+.rail-sync .sl-row + .sl-row,
+.sending-pill .sl-row + .sl-row {
+  padding-top: 6px;
+  border-top: 1px solid var(--hair);
+}
+.rail-sync .sl-say,
+.sending-pill .sl-say {
+  overflow-wrap: anywhere;
+}
+.sending-pill .sl-say {
+  flex-basis: 100%;
+}
+.sending-pill .sl-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .rail-sync.stopped {
   color: var(--on-accent);
   background: var(--accent);
@@ -4733,10 +4815,10 @@ input.set-tag-input {
      or control rests clear of it at scroll end. */
   .view .stream {
     padding: 0 6px 0;
-    --stream-tail: calc(48px + var(--pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    --stream-tail: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   .view .scroller {
-    padding-bottom: calc(48px + var(--pill-h, 0px) + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(48px + var(--pill-h, 0px) + var(--send-pill-h, 0px) + env(safe-area-inset-bottom, 0px));
   }
   /* The sent-mail seed review scrolls the whole card (`.view-seed { overflow:auto }`), and its
      Confirm / Not now actions sit at the bottom of it. */
