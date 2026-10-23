@@ -200,6 +200,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   },
   "streamPart|fetchOne": { how: "single_message", why: "one UID's UID item, the post-read witness that a part read was not cut by an expunge" },
   "move|fetchOne": { how: "single_message", why: "one UID, the move's source probe" },
+  "assertNotTaken|fetchOne": { how: "single_message", why: "one UID, the move's source re-probed after a refused MOVE or COPY" },
   "setFlags|fetchOne": { how: "single_message", why: "one UID, the existence probe" },
   "moveMany|fetchAll": {
     how: "bounded_by_input",
@@ -223,6 +224,8 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   },
   "ensureFolders|mailboxRename": { how: "no_server_sized_result", why: "RENAME answers a tagged OK — the one-time News rename (0.22), organizer-only" },
   "moveAllByPath|messageMove": { how: "no_server_sized_result", why: "MOVE answers a UID map for a range the caller named" },
+  "moveAllByPath|messageCopy": { how: "no_server_sized_result", why: "COPY answers a UID map for the UIDs searchBounded capped" },
+  "moveAllByPath|messageDelete": { how: "no_server_sized_result", why: "EXPUNGE of the UIDs searchBounded capped; its answer is a boolean" },
   "move|messageMove": { how: "no_server_sized_result", why: "one message" },
   "move|messageCopy": { how: "no_server_sized_result", why: "one message" },
   "move|messageDelete": { how: "no_server_sized_result", why: "one message" },
@@ -275,7 +278,8 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   "sourceFingerprintOf|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "setFlags|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "watch|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
-  "folderStatus|status": { how: "no_server_sized_result", why: "STATUS answers one folder's three counters, under the caller's deadline composed with the read ceiling" },
+  "statusAt|status": { how: "no_server_sized_result", why: "STATUS answers one folder's three counters, under the caller's deadline composed with the read ceiling" },
+  "messagesAt|status": { how: "no_server_sized_result", why: "STATUS answers one counter, under the read deadline through `bounded`" },
 };
 
 /** Every `this.client.<method>(…)` in the adapter, as `enclosingFunction|method` → lines. */

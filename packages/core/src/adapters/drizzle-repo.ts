@@ -12,7 +12,7 @@ import type {
   // default barrel re-exports the model half beside it — so naming it here would put the
   // classifier and the drafter into the import graph of every artifact that stores a message.
 } from "../mail.js";
-import { canonicalDestination, SENT_SHAPED_PATHS } from "../types.js";
+import { canonicalDestination, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATHS } from "../types.js";
 import { messageSearchUpsert, reindexMessageSearch, type MessageSearchInput } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
 import {
@@ -91,6 +91,23 @@ export interface KnownLocator {
    * the server against; see `KnownEntry.seen`.
    */
   seen: boolean | null;
+}
+/** What one {@link WorkerRepo.repairLegacyNews} chunk did. */
+export interface LegacyNewsRepair {
+  /** Messages the chunk read. */
+  examined: number;
+  /** Messages whose primary moved onto a live copy (the News instance a re-read recorded). */
+  repointed: number;
+  /** Instance rows forgotten: legacy-named, or News under an epoch the folder has left. */
+  forgotten: number;
+  /** Live letters with no live copy on record: kept, and marked missing on the server. */
+  missing: string[];
+  /** `folder_state` rows whose News spelling was rewritten. */
+  spellings: number;
+  /** More candidates remain past the chunk. */
+  more: boolean;
+  /** Set when nothing ran: no News cursor with a known epoch to match copies against. */
+  skipped?: "no_news_cursor";
 }
 export interface PendingFolderState {
   messageId: string; desiredFolder: string; observedFolder: string;
@@ -484,8 +501,31 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * still spelled there, at any epoch, then drop its row and write the folder `delete` every
    * folder list drains. `held` when a user's command owns the row (dropping it would cascade the
    * command away); `absent` when no row exists. Optional: a fake repo without it retires nothing.
+   * `repair_owed` for the legacy News name while instances are still spelled there: they are News
+   * letters, not letters that left with a folder, and {@link repairLegacyNews} owns them.
    */
-  retireGoneFolder?(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent">;
+  retireGoneFolder?(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed">;
+  /**
+   * THE LEGACY NEWS REPAIR (the 0.22 rename): one chunk of up to `limit` messages whose locator,
+   * an instance or a `folder_state` folder is still spelled `ohmail/Reads`. Content-matched only:
+   * the News instance a re-read recorded under the News cursor's epoch takes the primary, never a
+   * bare uid; legacy-named and dead-epoch News instances are forgotten; both `folder_state`
+   * spellings become News and the false `conflict` clears. A live letter left with no live copy is
+   * KEPT and marked missing on the server (`server_missing_at`), never reaped. Idempotent; the
+   * caller runs it under the organizer's fenced group. Optional: a fake repo repairs nothing.
+   */
+  repairLegacyNews?(accountId: string, mailboxId: string, opts: { limit: number }): Promise<LegacyNewsRepair>;
+  /**
+   * Is anything in this mailbox still spelled the pre-0.22 way? A read, so a clean store pays no
+   * write and keeps the known-set memo; {@link repairLegacyNews} runs only on a yes.
+   */
+  hasLegacyNewsRows?(accountId: string, mailboxId: string): Promise<boolean>;
+  /**
+   * The instance this message has in one of `folders` (the spellings of ONE physical folder) under
+   * the epoch `uidValidity`, else null — the reconciler's first answer to a locator whose epoch the
+   * folder has left. A read. Optional: a repo without it finds none.
+   */
+  instanceAtEpoch?(messageId: string, folders: readonly string[], uidValidity: string): Promise<NativeLocator | null>;
   /** The honest refusal: `status='failed'` + the closed code, carried on the entity until dismissed. */
   failFolderOp(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">, error: string): Promise<void>;
   /** A transient miss: count the attempt, keep the command pending for the next cycle. */
@@ -558,7 +598,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * The reaper: tombstone messages whose every watched instance is gone (mail 0065), bounded by
    * `limit`. Each victim gets `deleted_at`, the `'expunged'` husk and a `change_log` `delete` in
    * the caller's transaction, so every client tombstones the row. Skipped deliberately: rows
-   * already tombstoned; rows that never had an instance (`native_locator IS NULL`); and rows
+   * already tombstoned; rows that never had an instance (`native_locator IS NULL`); rows marked
+   * missing on the server (mail 0164), whose mirror copy is the only one; and rows
    * whose `folder_state` is reconciled-while-divergent — the junk-parked signature only the
    * `satisfiedBy` completion writes, where no watched instance is the design. Optional; returns
    * how many rows were tombstoned.
@@ -748,6 +789,8 @@ function rowToStored(r: typeof messages.$inferSelect): StoredMessage {
     bodyHash: r.bodyHash,
     subject: r.subject,
     fromAddress: r.fromAddress,
+    // Mail 0164, off the same row: an arrival of a letter marked missing clears the mark.
+    ...(r.serverMissingAt != null ? { serverMissing: true as const } : {}),
   };
 }
 
@@ -847,11 +890,31 @@ async function instancelessCandidates(db: Db, accountId: string, mailboxId: stri
       eq(messages.accountId, accountId),
       isNull(messages.deletedAt),
       sql`${messages.nativeLocator} is not null`,
+      // Mail 0164: a letter marked missing on the server has no instance BY DESIGN; the mirror
+      // holds its only copy, and the reaper's husk would destroy it.
+      isNull(messages.serverMissingAt),
     ))
     .except(db.select({ id: messageInstances.messageId }).from(messageInstances)
       .where(eq(messageInstances.mailboxId, mailboxId)))
     .orderBy(asc(messages.id));
   return rows.map((r) => r.id);
+}
+
+/**
+ * Messages of one mailbox whose locator, an instance or a `folder_state` folder is spelled the
+ * pre-0.22 way (`ohmail/Reads`), in id order. Module-level, as the reaper's candidates are, so the
+ * known-set census enumerates operations, not fragment builders.
+ */
+async function legacyNewsCandidates(db: Db, accountId: string, mailboxId: string, limit: number): Promise<Array<{ id: string }>> {
+  const legacy = LEGACY_NEWS_FOLDER;
+  return db.select({ id: messages.id }).from(messages).where(and(
+    eq(messages.mailboxId, mailboxId), eq(messages.accountId, accountId),
+    or(
+      sql`exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id} and ${messageInstances.folder} = ${legacy})`,
+      sql`${messages.nativeLocator}->>'folder' = ${legacy}`,
+      sql`exists (select 1 from ${folderState} where ${folderState.messageId} = ${messages.id} and (${folderState.desiredFolder} = ${legacy} or ${folderState.observedFolder} = ${legacy}))`,
+    ),
+  )).orderBy(asc(messages.id)).limit(limit);
 }
 
 /* `SQLWrapper` and never `unknown`: what this takes is a column or a fragment, and both are
@@ -1299,7 +1362,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
          where ${messageInstances.messageId} = ${messageId} and ${messageInstances.isPrimary}
       )`,
     }).from(messages).where(eq(messages.id, messageId)).limit(1);
-    return row?.vanished === true;
+    // The device store answers a SQL boolean as 1 or 0, never `true`: read either spelling.
+    return Number(row?.vanished ?? 0) === 1;
   }
 
   /**
@@ -1543,6 +1607,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           eq(messages.accountId, accountId),
           isNull(messages.deletedAt),
           sql`${messages.nativeLocator} is not null`,
+          isNull(messages.serverMissingAt),
           sql`not exists (select 1 from ${messageInstances}
                 where ${messageInstances.messageId} = ${messages.id})`,
           // The junk-parked signature — reconciled while divergent — which only the `satisfiedBy`
@@ -1763,6 +1828,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const matched = sql`desired_folder = ${c.expectDesiredFolder}`;
     const gate = physical ? sql`TRUE` : matched;
     const satisfiedBy = this.d.castText(c.satisfiedBy ?? null);
+    // News and its pre-0.22 spelling are one server folder: a desire spelled either way is met by
+    // an observation spelled either way, or the row stays pending and files onto itself.
+    const agrees = canonicalDestination(c.observedFolder) === NEWS_FOLDER
+      ? sql`desired_folder IN (${NEWS_FOLDER}, ${LEGACY_NEWS_FOLDER})`
+      : sql`desired_folder = ${c.observedFolder}`;
     const result = await this.d.exec(this.db, sql`
       UPDATE ${folderState} SET
         observed_folder = CASE
@@ -1775,7 +1845,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         reconcile_status = CASE
           WHEN ${gate} THEN
             CASE
-              WHEN desired_folder = ${c.observedFolder} THEN 'reconciled'
+              WHEN ${agrees} THEN 'reconciled'
               WHEN ${satisfiedBy} IS NOT NULL
                    AND ${matched}
                    AND ${satisfiedBy} = ${c.observedFolder}
@@ -1791,7 +1861,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         attempts = CASE WHEN ${matched}
           THEN 0 ELSE attempts END,
         next_attempt_at = CASE WHEN ${matched}
-          THEN NULL ELSE next_attempt_at END
+          THEN NULL ELSE next_attempt_at END,
+        last_error_class = CASE WHEN ${matched}
+          THEN NULL ELSE last_error_class END
       WHERE message_id = ${this.d.castUuid(messageId)}
       RETURNING desired_folder AS "desiredFolder"
     `);
@@ -3125,13 +3197,21 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     });
   }
 
-  async retireGoneFolder(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent"> {
+  async retireGoneFolder(accountId: string, mailboxId: string, folder: string): Promise<"retired" | "held" | "absent" | "repair_owed"> {
     const [row] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), eq(mailboxFolders.folder, folder))).limit(1);
     if (!row) return "absent";
     const [op] = await this.db.select({ id: folderOps.id }).from(folderOps)
       .where(eq(folderOps.folderId, row.id)).limit(1);
     if (op) return "held";
+    // The legacy News name is News under its old spelling: its letters did not leave with a folder,
+    // and forgetting them here would hand a letter whose only record is that spelling to the reaper.
+    // The repair re-points or marks them first; the row goes once none is left.
+    if (folder === LEGACY_NEWS_FOLDER) {
+      const [left] = await this.db.select({ id: messageInstances.id }).from(messageInstances)
+        .where(and(eq(messageInstances.mailboxId, mailboxId), eq(messageInstances.folder, folder))).limit(1);
+      if (left) return "repair_owed";
+    }
     // The server's statement covers every epoch: residue of a dead one is no copy either, and a
     // row-less folder would turn it into a "maybe alive" survivor the reaper never takes.
     const residue = await this.db.select({ uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid })
@@ -3142,6 +3222,156 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
     await this.removeFolderRow(accountId, row.id);
     return "retired";
+  }
+
+  /** See {@link WorkerRepo.hasLegacyNewsRows}: the repair's candidate read, one row at most. */
+  async hasLegacyNewsRows(accountId: string, mailboxId: string): Promise<boolean> {
+    return (await legacyNewsCandidates(this.db, accountId, mailboxId, 1)).length > 0;
+  }
+
+  /**
+   * See {@link WorkerRepo.repairLegacyNews}. A LIVE copy is an instance at its folder's cursor
+   * epoch (a folder with no cursor row is unknown, never evidence of loss); News's is the epoch a
+   * re-read recorded the letter under after the rename, which is the content match: that row
+   * exists only because the dedup key found this message. Nothing here trusts a bare uid.
+   */
+  async repairLegacyNews(accountId: string, mailboxId: string, opts: { limit: number }): Promise<LegacyNewsRepair> {
+    const out: LegacyNewsRepair = { examined: 0, repointed: 0, forgotten: 0, missing: [], spellings: 0, more: false };
+    const cursors = await this.db.select({ folder: mailboxFolders.folder, uidvalidity: mailboxFolders.uidvalidity })
+      .from(mailboxFolders).where(eq(mailboxFolders.mailboxId, mailboxId));
+    const cursorEpoch = new Map(cursors.map((c) => [c.folder, epochOf(c.uidvalidity)] as const));
+    const newsEpoch = cursorEpoch.get(NEWS_FOLDER);
+    if (newsEpoch === undefined || !newsEpoch.known) return { ...out, skipped: "no_news_cursor" };
+    const legacy = LEGACY_NEWS_FOLDER;
+    const picked = await legacyNewsCandidates(this.db, accountId, mailboxId, opts.limit + 1);
+    out.more = picked.length > opts.limit;
+    const ids = picked.slice(0, opts.limit).map((r) => r.id);
+    out.examined = ids.length;
+    if (ids.length === 0) return out;
+
+    const rows = await this.db.select({
+      id: messages.id, loc: messages.nativeLocator, deletedAt: messages.deletedAt, missingAt: messages.serverMissingAt,
+    }).from(messages).where(and(eq(messages.accountId, accountId), inArray(messages.id, ids)));
+    const instances = await this.db.select({
+      id: messageInstances.id, messageId: messageInstances.messageId, folder: messageInstances.folder,
+      uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+      isPrimary: messageInstances.isPrimary, firstSeenAt: messageInstances.firstSeenAt,
+    }).from(messageInstances).where(and(eq(messageInstances.mailboxId, mailboxId), inArray(messageInstances.messageId, ids)));
+    const states = await this.db.select({
+      messageId: folderState.messageId, desired: folderState.desiredFolder, observed: folderState.observedFolder,
+      status: folderState.reconcileStatus, conflict: folderState.conflict,
+    }).from(folderState).where(inArray(folderState.messageId, ids));
+    const stateOf = new Map(states.map((s) => [s.messageId, s] as const));
+    const now = new Date();
+    const changes: ChangeInput[] = [];
+    const byAge = (a: { firstSeenAt: Date; uid: number }, b: { firstSeenAt: Date; uid: number }) =>
+      (a.firstSeenAt.getTime() - b.firstSeenAt.getTime()) || (a.uid - b.uid);
+
+    for (const m of rows) {
+      const mine = instances.filter((i) => i.messageId === m.id);
+      const liveNews = mine.filter((i) => i.folder === NEWS_FOLDER && sameEpoch(epochOf(i.uidvalidity), newsEpoch));
+      const stale = mine.filter((i) => i.folder === legacy
+        || (i.folder === NEWS_FOLDER && !sameEpoch(epochOf(i.uidvalidity), newsEpoch)));
+      const kept = mine.filter((i) => !stale.includes(i));
+      const isLive = (i: (typeof mine)[number]): boolean => {
+        const e = cursorEpoch.get(i.folder);
+        return e === undefined || sameEpoch(epochOf(i.uidvalidity), e);
+      };
+      const wasPrimary = mine.find((i) => i.isPrimary) ?? null;
+      const choice = (wasPrimary !== null && kept.includes(wasPrimary) && isLive(wasPrimary))
+        ? wasPrimary
+        : ([...liveNews].sort(byAge)[0] ?? [...kept.filter(isLive)].sort(byAge)[0] ?? null);
+
+      if (stale.length > 0) {
+        await this.db.delete(messageInstances).where(inArray(messageInstances.id, stale.map((i) => i.id)));
+        out.forgotten += stale.length;
+      }
+      const loc = (m.loc as NativeLocator | null) ?? null;
+      const asLocator = (i: (typeof mine)[number]): NativeLocator =>
+        ({ folder: i.folder, ref: `${String(i.uidvalidity)}:${i.uid}` });
+      let next: NativeLocator | null = loc;
+      if (choice !== null) {
+        if (!choice.isPrimary) {
+          // The partial unique admits one primary: the old one goes first, unless it was stale above.
+          if (wasPrimary !== null && kept.includes(wasPrimary)) {
+            await this.db.update(messageInstances).set({ isPrimary: false }).where(eq(messageInstances.id, wasPrimary.id));
+          }
+          await this.db.update(messageInstances).set({ isPrimary: true, lastSeenAt: now })
+            .where(eq(messageInstances.id, choice.id));
+        }
+        next = asLocator(choice);
+      } else if (wasPrimary !== null && kept.includes(wasPrimary)) {
+        // No live copy, and the primary is another folder's residue: the locator stays its mirror.
+        next = asLocator(wasPrimary);
+      } else if (loc !== null && loc.folder === legacy) {
+        // No live copy: the locator keeps its ref, under the one spelling.
+        next = { folder: NEWS_FOLDER, ref: loc.ref };
+      }
+      const moved = next !== null && (loc === null || next.folder !== loc.folder || next.ref !== loc.ref);
+      if (moved) {
+        await this.db.update(messages).set({ nativeLocator: next, updatedAt: now }).where(eq(messages.id, m.id));
+        if (choice !== null) out.repointed++;
+      }
+      // Only a letter the server once held (a locator on record), as the reaper reads it.
+      const marking = choice === null && loc !== null && m.deletedAt === null && m.missingAt === null;
+      if (marking) {
+        await this.db.update(messages).set({ serverMissingAt: now, updatedAt: now }).where(eq(messages.id, m.id));
+        out.missing.push(m.id);
+      }
+
+      const st = stateOf.get(m.id);
+      let stateWritten = false;
+      if (st !== undefined) {
+        const desired = canonicalDestination(st.desired);
+        const observed = canonicalDestination(st.observed);
+        const respelled = desired !== st.desired || observed !== st.observed;
+        // `kept` is what the message has left: one copy is no conflict, whatever a re-read said.
+        const clearConflict = st.conflict && kept.length <= 1;
+        const rearm = moved && choice !== null && st.status === "pending";
+        if (respelled || clearConflict || rearm) {
+          // CONDITIONAL on the pair this chunk read: a press since owns `desired_folder`, and a
+          // re-spelt copy of the older desire may not be written over it. A miss waits a visit.
+          const written = await this.db.update(folderState).set({
+            desiredFolder: desired, observedFolder: observed,
+            ...(clearConflict ? { conflict: false } : {}),
+            // The refusals were earned against a locator the server no longer resolves.
+            ...(rearm ? { attempts: 0, nextAttemptAt: null, lastErrorClass: null } : {}),
+          }).where(and(
+            eq(folderState.messageId, m.id),
+            eq(folderState.desiredFolder, st.desired), eq(folderState.observedFolder, st.observed),
+          )).returning({ id: folderState.messageId });
+          stateWritten = written.length > 0;
+          if (respelled && stateWritten) out.spellings++;
+        }
+      }
+      if (moved || marking || stateWritten || stale.length > 0) {
+        changes.push({ accountId, entityType: "message", entityId: m.id, op: "update", meta: null });
+      }
+    }
+    await recordChangesTx(this.db as LedgerTx, changes);
+    return out;
+  }
+
+  /** See {@link WorkerRepo.instanceAtEpoch}. One read of at most one row. */
+  async instanceAtEpoch(messageId: string, folders: readonly string[], uidValidity: string): Promise<NativeLocator | null> {
+    const epoch = epochOf(uidValidity);
+    if (!epoch.known || folders.length === 0) return null;
+    const [row] = await this.db.select({
+      folder: messageInstances.folder, uidvalidity: messageInstances.uidvalidity, uid: messageInstances.uid,
+    }).from(messageInstances).where(and(
+      eq(messageInstances.messageId, messageId),
+      inArray(messageInstances.folder, [...folders]),
+      eq(messageInstances.uidvalidity, BigInt(epoch.value)),
+    )).orderBy(desc(messageInstances.isPrimary), asc(messageInstances.firstSeenAt), asc(messageInstances.uid)).limit(1);
+    return row ? { folder: row.folder, ref: `${String(row.uidvalidity)}:${row.uid}` } : null;
+  }
+
+  /** See {@link RepoPort.clearServerMissing}: a no-op on an unmarked row. */
+  async clearServerMissing(accountId: string, messageId: string): Promise<boolean> {
+    const cleared = await this.db.update(messages).set({ serverMissingAt: null, updatedAt: new Date() })
+      .where(and(eq(messages.id, messageId), eq(messages.accountId, accountId), isNotNull(messages.serverMissingAt)))
+      .returning({ id: messages.id });
+    return cleared.length > 0;
   }
 
   async failFolderOp(op: Pick<FolderOpRow, "id" | "accountId" | "folderId">, error: string): Promise<void> {

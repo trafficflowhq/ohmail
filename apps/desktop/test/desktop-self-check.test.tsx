@@ -208,6 +208,16 @@ describe("selfCheckSentence — every arm against the catalogue", () => {
     expect(one("dropped")).toBe("Could not check this mailbox: your mail server could not be read.");
   });
 
+  it("News' folder before the rename says where its letters are", () => {
+    expect(say([
+      { folder: "INBOX/Sent", k: "server_more", server: 9, mirror: 5 },
+      { folder: "ohmail/Reads", k: "server_more", server: 28, mirror: 0, predecessorOf: "ohmail/News" },
+    ])).toBe("2 folders differ from your mail server: INBOX/Sent (4 more messages on the server), "
+      + "ohmail/Reads, News' folder before the rename (28 letters not moved into News yet).");
+    expect(say([{ folder: "ohmail/Reads", k: "server_more", server: 1, mirror: 0, predecessorOf: "ohmail/News" }]))
+      .toBe("1 folder differs from your mail server: ohmail/Reads, News' folder before the rename (1 letter not moved into News yet).");
+  });
+
   it("a long list names six and counts the rest", () => {
     const s = say(Array.from({ length: 8 }, (_, i) => ({ folder: `box-${i}`, k: "server_more", server: 2, mirror: 1 })));
     expect(s.startsWith("8 folders differ from your mail server: box-0 (1 more message on the server)")).toBe(true);

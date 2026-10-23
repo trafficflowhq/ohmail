@@ -226,12 +226,27 @@ describe("reconcileFolders — a failure is isolated to its own message", () => 
   });
 
   it("a bare NO with no response code is `refused`, which is a real answer and not a fallback", async () => {
-    // The catch-all, and it earns its place: a server that refuses a move without saying why HAS
-    // refused it, and telling somebody that is both true and more than they had. There is
-    // deliberately no message-text probe — the output would stop being four words we chose.
-    const rec = await run(new Error("EXPUNGE refused"));
+    // A server that refuses a move without saying why HAS refused it: imapflow's tagged NO carries
+    // `responseStatus`. There is deliberately no message-text probe.
+    const rec = await run(Object.assign(new Error("Command failed"), { responseStatus: "NO" }));
     expect(rec.deferredMoves[0]!.errorClass).toBe("refused");
   });
+
+  it("a failure that is not the server's answer is `unconfirmed`, never the server's refusal", async () => {
+    // Our own check that could not prove the move, or a throw nobody classified (mail 0164).
+    const rec = await run(new Error("EXPUNGE refused"));
+    expect(rec.deferredMoves[0]!.errorClass).toBe("unconfirmed");
+    const failed = rec.audits.find((a) => a.action === "reconcile.move.failed");
+    expect((failed!.payload as { errorClass?: string }).errorClass).toBe("unconfirmed");
+  });
+
+  it.each(["NoConnection", "EConnectionClosed", "StateLogout", "EIMAPCLOSED"])(
+    "imapflow's %s is a dropped connection: no deferral, no class, no audit row", async (code) => {
+      const rec = await run(Object.assign(new Error("Connection not available"), { code }));
+      expect(rec.deferredMoves).toEqual([]);
+      expect(rec.audits.filter((a) => a.action === "reconcile.move.failed")).toHaveLength(0);
+      expect(rec.moved).toEqual(["healthy"]);
+    });
 
   it("a HOST OUTAGE stamps NOTHING — the socket is not the message's refusal", async () => {
     // The other half of the transport rule the case below states for the schedule: an unreachable

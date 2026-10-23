@@ -1,5 +1,6 @@
 import {
-  planChange, commitChange, canonicalDestination, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
+  planChange, commitChange, canonicalDestination, isNewsFolder, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
+  LEGACY_NEWS_FOLDER, NEWS_FOLDER,
   type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
   type CycleSignatures, type ImportHold, type Logger, type OhboxPolicy, type PlanSignatures, type ProcessResult,
   type StorageCap,
@@ -39,8 +40,11 @@ import { junkRestorePass } from "./junk-restore.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
+import { newsFoldPass } from "./news-fold.js";
+import { legacyNewsRepairPass } from "./news-repair.js";
 import {
-  RECONCILE_BACKOFF_MINUTES, classifyMoveRefusal, isTransportFailure, nextReconcileAttemptAfter,
+  RECONCILE_BACKOFF_MINUTES, STALE_FLAG_RETIRES_AT, classifyMoveRefusal, isTransportFailure,
+  nextReconcileAttemptAfter,
 } from "./reconcile-refusal.js";
 /* Re-exported where it has always lived: the ladder's one consumer outside this file is a test
    that reads it off `sync.js`, and moving the definition may not move the name. */
@@ -690,7 +694,8 @@ function writeAuthorityOf(deps: Pick<SyncDeps, "fence" | "writeAuthority">): Mai
 }
 
 /** The passes a cycle writes in — the vocabulary its stand-down verdict names a place with. */
-export type CyclePass = "folder_ops" | "junk_rescue" | "junk_sweep" | "blank_repair" | "filing" | "flags";
+export type CyclePass =
+  | "folder_ops" | "junk_rescue" | "junk_sweep" | "news_fold" | "blank_repair" | "filing" | "flags";
 
 /**
  * WHERE THIS CYCLE WAS WHEN IT LAST ASKED THE LEASE — one mutable cursor per cycle, advanced at the
@@ -1170,6 +1175,25 @@ async function syncCycleWithin(
     }
   }
 
+  // ── THE PRE-0.22 NEWS SPELLING, REPAIRED (see `news-repair.ts`) ────────────────────────────
+  //
+  // Before the filing and the cursor, so this cycle files from the repaired locators and its walk
+  // reads the repaired known-set. The organizer's alone, database only, one chunk a visit; a
+  // failure other than a refusal leaves it for the next visit.
+  let repairOwesMore = false;
+  if (!readerMode) {
+    try {
+      const out = await legacyNewsRepairPass({
+        repo, adapter, accountId, mailboxId, write: (fn) => fencedLiveGroup(deps, fn),
+        ...(log !== undefined ? { log } : {}),
+      });
+      repairOwesMore = out.owesMore;
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("legacy_news_repair_failed", { mailboxId, accountId, err });
+    }
+  }
+
   // ── A PENDING MOVE BEFORE THE WALK (see `SyncDeps.fileBeforeWalk`) ─────────────────────────
   //
   // Before the cursor, so the walk below already reads the moved message at its new locator: the
@@ -1186,6 +1210,22 @@ async function syncCycleWithin(
         reason: "the pending moves could not be filed before the folder walk; the walk runs and "
           + "the reconcile pass after it files them",
       });
+    }
+  }
+
+  // ── A LEGACY ohmail/Reads BESIDE News, FOLDED IN (see `news-fold.ts`) ─────────────────────
+  //
+  // Before the cursor, so this pass's walk reads the folded letters in News. The organizer's
+  // alone; a failure other than a refusal leaves it for the next pass.
+  if (!readerMode && (adapter.legacyNewsBeside?.() ?? null) !== null) {
+    try {
+      openPage(at, "news_fold");
+      await newsFoldPass({
+        adapter, accountId, mailboxId, writeAuthority: writeAuthorityOf(deps), ...(log !== undefined ? { log } : {}),
+      });
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("news_fold_failed", { mailboxId, accountId, err });
     }
   }
 
@@ -1372,6 +1412,9 @@ async function syncCycleWithin(
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
     if (live === undefined || !sameEpoch(epochOf(live), epochOf(site.uidValidity))) continue;
+    // The legacy News name stated gone is News under its old spelling: its letters are not deletes.
+    // The organizer's repair re-points them (`news-repair.ts`), and the row retires once it has.
+    if (goneFolders.has(site.folder) && site.folder === LEGACY_NEWS_FOLDER) continue;
     if (goneFolders.has(site.folder)) { prove("folder_gone", ch); continue; }
     // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
@@ -1610,7 +1653,8 @@ async function syncCycleWithin(
       const outcome = await fencedLiveGroup(deps, (r) =>
         typeof r.retireGoneFolder === "function" ? r.retireGoneFolder(accountId, mailboxId, folder) : Promise.resolve(null));
       if (outcome === "retired") reaperDrained.set(adapter, false);
-      if (outcome === null || outcome === "absent") continue;
+      // `repair_owed`: the organizer's repair logs its own progress, and a reader's row waits quietly.
+      if (outcome === null || outcome === "absent" || outcome === "repair_owed") continue;
       log?.info("sync_folder_retired", {
         mailboxId, accountId, folderLabel: folderLabel(folder), outcome,
         reason: outcome === "held"
@@ -1743,7 +1787,7 @@ async function syncCycleWithin(
   if (firstDeferredError !== null) throw firstDeferredError;
   return {
     hasBacklog: (batch.hasBacklog ?? false) || deletesCapped,
-    owesFiling: owesMore || folderOpsOweMore || junkRescueOwesMore || sweepOwesMore,
+    owesFiling: owesMore || folderOpsOweMore || junkRescueOwesMore || sweepOwesMore || repairOwesMore,
   };
 }
 
@@ -2358,6 +2402,22 @@ async function fileChunk(
   // nothing written: every row stays pending and due, and the next `changesSince` adopts what the
   // server shows, exactly as the uncommitted-bookkeeping path below already does.
   if (result.outcome === "declined") return null;
+  if (result.outcome === "refused") {
+    // The server refused the `UID MOVE` and every member is still at its source (the adapter
+    // re-probed): each row earns the refusal the per-message path would record, in one group.
+    await fencedLiveGroup(deps, async (r) => {
+      for (const p of chunk) {
+        await recordFilingFailure(r, accountId, p, toFolder, "refused",
+          "the mail server refused the batched UID MOVE; every letter is still at its source");
+      }
+    });
+    log?.warn("reconcile_move_batch_refused", {
+      mailboxId, accountId, size: chunk.length, toFolder: folderLabel(toFolder),
+      reason: "the mail server refused the batched move and nothing moved; each letter's refusal is "
+        + "recorded and retried on the ladder",
+    });
+    return { reopened: false };
+  }
   if (result.outcome === "moved_unmapped") {
     log?.warn("reconcile_move_batch_unmapped", {
       mailboxId, accountId, size: chunk.length, to: folderLabel(toFolder),
@@ -2458,7 +2518,7 @@ async function recordAudits(
 async function voidGoneFiling(
   repo: WorkerRepo, accountId: string, p: PendingFolderState, special: SpecialFolderMap,
   absentAtSource: boolean,
-): Promise<void> {
+): Promise<boolean> {
   /* `absentAtSource` is FALSE from the pass before the walk: there an absent UID is most often an
      external move the walk has not read yet, and the walk adopts it by Message-ID. Only a delete
      already on record voids there. */
@@ -2469,7 +2529,8 @@ async function voidGoneFiling(
   const vanished = await repo.primaryInstanceVanished(p.messageId);
   const absentOnly = !vanished && absentAtSource && p.nativeLocator !== null
     && typeof repo.onlyInstanceAt === "function" && await repo.onlyInstanceAt(p.messageId, p.nativeLocator);
-  if (!vanished && !absentOnly) return;
+  // `false`: the row is kept for ingest to adopt — the caller owes a stale epoch its own answer.
+  if (!vanished && !absentOnly) return false;
   /* A RESTORE OUT OF TRASH IS VOIDED AGAINST THE OBSERVATION, NEVER `observed := desired`.
    * A mail server empties its own Trash on its own schedule, so between the delete's move and the
    * restore's the copy can be gone — and completing the restore would say the message is back in
@@ -2502,7 +2563,7 @@ async function voidGoneFiling(
       },
       null,
     );
-    return;
+    return true;
   }
   // CONDITIONAL, for `completeFolderState`'s stated reason: `p` was read before this pass's IMAP
   // work, so voiding through `upsertFolderState` would write a superseded desire back over a
@@ -2522,7 +2583,7 @@ async function voidGoneFiling(
       },
       null,
     );
-    return;
+    return true;
   }
   await repo.recordAudit(
     accountId, "reconcile.move.voided",
@@ -2532,6 +2593,73 @@ async function voidGoneFiling(
     },
     null,
   );
+  return true;
+}
+
+/**
+ * The spellings of ONE physical folder a stored instance may carry: News and its pre-0.22 name are
+ * one server folder, every other folder is its own name.
+ */
+const physicalSpellings = (folder: string): string[] =>
+  isNewsFolder(folder) ? [NEWS_FOLDER, LEGACY_NEWS_FOLDER] : [folder];
+
+/**
+ * A locator under an epoch its folder has left (`MessageGoneError`, not absent): the instance this
+ * message has in the same physical folder under the epoch the folder states NOW, when the store
+ * holds one — a re-read recorded it by content. Re-pointed in the fenced group and left due, so the
+ * next turn files from it; `false` when the store holds none.
+ */
+async function relocateToLiveEpoch(
+  deps: SyncDeps, p: { messageId: string; nativeLocator: NativeLocator | null }, err: MessageGoneError,
+): Promise<boolean> {
+  const { accountId, mailboxId, log } = deps;
+  const from = p.nativeLocator;
+  const live = err.liveEpoch;
+  if (from === null || live === null) return false;
+  const found = await fencedLiveGroup(deps, async (r) => {
+    const at = typeof r.instanceAtEpoch === "function"
+      ? await r.instanceAtEpoch(p.messageId, physicalSpellings(from.folder), live)
+      : null;
+    if (at === null || (at.folder === from.folder && at.ref === from.ref)) return null;
+    // No `from`: the primary moves onto a row the known-set memo already holds, which the memo
+    // cannot follow in place, so it is dropped and re-read rather than left holding it twice.
+    await r.updateLocator(p.messageId, at);
+    return at;
+  });
+  if (found === null) return false;
+  log?.info("reconcile_locator_relocated", {
+    mailboxId, accountId, messageId: p.messageId,
+    fromFolder: folderLabel(from.folder), toFolder: folderLabel(found.folder),
+    reason: "the folder was renumbered; the letter's copy under the new number is on record, so the "
+      + "locator moved onto it and the write is retried from there",
+  });
+  return true;
+}
+
+/**
+ * One failed filing, recorded in the repo it is handed (every caller is already fenced): the audit
+ * row with the error and the attempt, and the schedule on the ladder with its class. The row stays
+ * pending and listed; a class without its schedule is a reason for nothing. Answers the attempt.
+ */
+async function recordFilingFailure(
+  r: WorkerRepo, accountId: string, p: PendingFolderState, physical: string,
+  errorClass: FilingRefusalClass, error: string,
+): Promise<number> {
+  const attempts = (p.attempts ?? 0) + 1;
+  const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
+  await r.recordAudit(
+    accountId,
+    "reconcile.move.failed",
+    {
+      messageId: p.messageId, from: p.nativeLocator,
+      // The PHYSICAL destination the server refused — under the junk mapping that is the native
+      // Junk path, and recording the pile instead would blame a folder the command never named.
+      to: physical, error, attempts, nextAttemptAt: nextAttemptAt.toISOString(), errorClass,
+    },
+    null,
+  );
+  await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt, errorClass });
+  return attempts;
 }
 
 /**
@@ -2571,10 +2699,25 @@ async function fileOne(
       return false;
     }
     if (err instanceof MessageGoneError) {
+      // A STALE EPOCH (the adapter names the epoch the folder states now) first tries the copy on
+      // record under it: re-pointed, the row is due again and the caller re-kicks.
+      const stale = !err.absent && err.liveEpoch !== null;
+      if (stale && await relocateToLiveEpoch(deps, p, err)) return true;
       // Already moved (crash between IMAP move and DB update) → leave pending; the next
       // changesSince adopts it. Expunged outright → nothing will ever adopt it; see
       // voidGoneFiling for how the two are told apart.
-      await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent && !beforeWalk));
+      const closed = await fencedLiveGroup(deps, (r) => voidGoneFiling(r, accountId, p, special, err.absent && !beforeWalk));
+      // A stale epoch with no copy on record is NEVER silent: an audit row, a deferral on the
+      // ladder under a class that is not a refusal, and a log line.
+      if (!closed && stale) {
+        const attempts = await fencedLiveGroup(deps, (r) => recordFilingFailure(r, accountId, p, physical, "stale_locator",
+          "the folder was renumbered and this letter was not found under its new number"));
+        log?.warn("reconcile_move_stale_locator", {
+          mailboxId, accountId, messageId: p.messageId, attempts, state: "deferred",
+          reason: "the letter's locator names a folder numbering the server has left; the filing waits for "
+            + "the next walk to re-find the letter, on the ladder",
+        });
+      }
       return false;
     }
     if (isTransportFailure(err)) {
@@ -2601,31 +2744,12 @@ async function fileOne(
     // mailbox-wide outage. Isolation alone left it unbounded in TIME, which this deferral closes: the
     // failure is recorded AND the row is put to sleep on a widening schedule with a floor. Both writes
     // are ONE GROUP — a deferral without its audit row goes quiet with nothing saying why, the reverse is the unbounded retry.
-    const attempts = (p.attempts ?? 0) + 1;
-    const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
     // The CLASS rides in the same group as the schedule and the audit row — see
-    // {@link classifyMoveRefusal} for why the output is four words, and `WorkerRepo.
-    // deferFolderReconcile` for why it is an argument to the deferral rather than a write of its
-    // own. A class without its schedule is a reason for nothing.
+    // {@link classifyMoveRefusal} for the closed set, and `WorkerRepo.deferFolderReconcile` for why
+    // it is an argument to the deferral rather than a write of its own.
     const errorClass = classifyMoveRefusal(err);
-    await fencedLiveGroup(deps, async (r) => {
-      await r.recordAudit(
-        accountId,
-        "reconcile.move.failed",
-        {
-          messageId: p.messageId,
-          from: p.nativeLocator,
-          // The PHYSICAL destination the server refused — under the junk mapping that is the
-          // native Junk path, and recording the pile instead would blame a folder the command
-          // never named.
-          to: physical,
-          error: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
-          attempts, nextAttemptAt: nextAttemptAt.toISOString(), errorClass,
-        },
-        null,
-      );
-      await r.deferFolderReconcile(p.messageId, { attempts, nextAttemptAt, errorClass });
-    });
+    await fencedLiveGroup(deps, (r) => recordFilingFailure(r, accountId, p, physical, errorClass,
+      err instanceof Error ? `${err.name}: ${err.message}` : String(err)));
     return false;
   }
 
@@ -2725,6 +2849,41 @@ async function retireLocatorlessFlag(deps: SyncDeps, p: PendingFlagState): Promi
 }
 
 /**
+ * A `\Seen` intent whose locator names a folder numbering the server has left, with no copy under
+ * the new one on record: `reconcile.flags.failed` and the ladder, then at {@link STALE_FLAG_RETIRES_AT}
+ * the retirement `retireLocatorlessFlag` writes, with `reconcile.flags.retired`. One group.
+ */
+async function deferStaleFlag(deps: SyncDeps, p: PendingFlagState): Promise<void> {
+  const { accountId, mailboxId, log } = deps;
+  const attempts = (p.attempts ?? 0) + 1;
+  const spent = attempts >= STALE_FLAG_RETIRES_AT;
+  const nextAttemptAt = nextReconcileAttemptAfter(attempts, new Date());
+  const reason = "the folder was renumbered and this letter was not found under its new number";
+  await fencedLiveGroup(deps, async (r) => {
+    await r.recordAudit(
+      accountId, spent ? "reconcile.flags.retired" : "reconcile.flags.failed",
+      {
+        messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen, attempts,
+        error: reason, ...(spent ? {} : { nextAttemptAt: nextAttemptAt.toISOString() }),
+      },
+      null,
+    );
+    if (spent) {
+      await r.completeFlagState(p.messageId, {
+        expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us",
+      });
+    } else {
+      await r.deferFlagReconcile(p.messageId, { attempts, nextAttemptAt });
+    }
+  });
+  log?.warn("reconcile_flag_stale_locator", {
+    mailboxId, accountId, messageId: p.messageId, attempts, state: spent ? "retired" : "deferred",
+    reason: "a read-state intent names a folder numbering the server has left and no copy under the "
+      + "new one is on record",
+  });
+}
+
+/**
  * Push OUR intended read-state to IMAP — the `\Seen` mirror of `reconcileFolders`, and the reason
  * `PATCH /messages` can write intent and stop. The `lastSetBy !== "us"` guard is the SAME user-wins
  * rule, and not a formality here: an external row is written by `applyExternalFlag` precisely when the
@@ -2760,19 +2919,26 @@ async function reconcileFlags(deps: SyncDeps, at: CyclePageCursor): Promise<bool
       // are the throws that still leave this loop, and they must leave it unreclassified.
       rethrowRefusal(err);
       if (err instanceof MessageGoneError) {
+        // A STALE EPOCH first tries the copy on record under the folder's live epoch.
+        const stale = !err.absent && err.liveEpoch !== null;
+        if (stale && await relocateToLiveEpoch(deps, p, err)) continue;
         // The message left this locator between the DB read and the STORE. Mid-move, the next
         // changesSince refreshes the locator and this retries. Expunged outright, no refresh is
         // ever coming — voidGoneFiling's argument, one flag over — so the intent is voided the
         // same way rather than re-STOREd (one IMAP round trip per cycle) for ever.
-        await fencedLiveGroup(deps, async (r) => {
-          if (!(await r.primaryInstanceVanished(p.messageId))) return;
+        const voided = await fencedLiveGroup(deps, async (r) => {
+          if (!(await r.primaryInstanceVanished(p.messageId))) return false;
           await r.completeFlagState(p.messageId, { expectDesiredSeen: p.desiredSeen, observedSeen: p.desiredSeen, lastSetBy: "us" });
           await r.recordAudit(
             accountId, "reconcile.flags.voided",
             { messageId: p.messageId, locator: p.nativeLocator, seen: p.desiredSeen },
             null,
           );
+          return true;
         });
+        // A stale epoch with no copy on record is never silent: an audit row and a bounded
+        // deferral, retired at the bound (the read state stays ohmail's, the server never told).
+        if (!voided && stale) await deferStaleFlag(deps, p);
         continue;
       }
       if (isTransportFailure(err)) {

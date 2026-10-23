@@ -146,6 +146,11 @@ export interface StoredMessage {
    * row. Free: the returning clause already reads the whole row.
    */
   threadId: string | null;
+  /**
+   * The row carries mail 0164's missing-on-the-server mark. Optional and absent when unmarked, so
+   * every fake keeps compiling; an arrival of the letter clears the mark (`commitChange`).
+   */
+  serverMissing?: true;
 }
 
 export interface InsertMessageInput {
@@ -433,6 +438,13 @@ export interface RepoPort {
    * Optional so every fake repo keeps compiling.
    */
   clearDeletedOnAdopt?(messageId: string): Promise<boolean>;
+  /**
+   * A copy of a letter marked missing on the server (mail 0164) was seen again: clear the mark, so
+   * the reaper's ordinary rule applies to it once more. Every existing-message arrival shape that
+   * found a marked row calls it (`ChangePlan.clearsServerMissing`). Returns whether a mark was
+   * cleared. Optional so every fake repo keeps compiling.
+   */
+  clearServerMissing?(accountId: string, messageId: string): Promise<boolean>;
   /**
    * Refill a `junk_filed`/`expunged` husk from an arrival that carries the bytes (mail 0065) —
    * the message re-appeared in a watched folder, so the mirror owes it its content back. Runs

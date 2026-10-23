@@ -2984,6 +2984,7 @@
     "selfCheckServerMore": "{folder} ({count, plural, one {# more message} other {# more messages}} on the server)",
     "selfCheckMirrorMore": "{folder} ({count, plural, one {# more message} other {# more messages}} here)",
     "selfCheckRenumbered": "{folder} (renumbered by the server)",
+    "selfCheckPredecessor": "{folder}, News' folder before the rename ({count, plural, one {# letter} other {# letters}} not moved into News yet)",
     "selfCheckAndMore": "{list}, and {count} more",
     "selfCheckFailed": "The check could not run. Nothing was changed."
   },
@@ -3389,6 +3390,8 @@
     "filingReason_no_such_folder": "the folder is not there",
     "filingReason_read_only": "the folder will not take it",
     "filingReason_over_quota": "the mailbox is full",
+    "filingReason_stale_locator": "ohmail lost track of it on your mail server",
+    "filingReason_unconfirmed": "ohmail could not confirm the move",
     "filingReason_unknown": "the last try did not go through",
     "filingReason_none": "no refusal is recorded",
     "filingMailboxes": "{count, plural, one {1 mailbox} other {# mailboxes}}",

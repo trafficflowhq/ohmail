@@ -2984,6 +2984,7 @@
     "selfCheckServerMore": "{folder} ({count, plural, one {# Nachricht} other {# Nachrichten}} mehr auf dem Server)",
     "selfCheckMirrorMore": "{folder} ({count, plural, one {# Nachricht} other {# Nachrichten}} mehr hier)",
     "selfCheckRenumbered": "{folder} (vom Server neu nummeriert)",
+    "selfCheckPredecessor": "{folder}, der Ordner von News vor der Umbenennung ({count, plural, one {# Nachricht} other {# Nachrichten}} noch nicht nach News verschoben)",
     "selfCheckAndMore": "{list} und {count} weitere",
     "selfCheckFailed": "Die Prüfung konnte nicht laufen. Es wurde nichts verändert."
   },
@@ -3389,6 +3390,8 @@
     "filingReason_no_such_folder": "der Ordner ist nicht da",
     "filingReason_read_only": "der Ordner nimmt es nicht an",
     "filingReason_over_quota": "das Postfach ist voll",
+    "filingReason_stale_locator": "ohmail findet es auf deinem Mailserver nicht wieder",
+    "filingReason_unconfirmed": "ohmail konnte das Verschieben nicht bestätigen",
     "filingReason_unknown": "der letzte Versuch ging nicht durch",
     "filingReason_none": "keine Ablehnung verzeichnet",
     "filingMailboxes": "{count, plural, one {1 Postfach} other {# Postfächer}}",

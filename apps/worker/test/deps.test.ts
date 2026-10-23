@@ -453,6 +453,12 @@ describe("worker dependency boundary", () => {
       "hand-back-rings-the-pass.pg.test.ts",
       "held-release.pg.test.ts",
       "known-set-cache.pg.test.ts",
+      // The person's next move and delete on a refused filing are `MessageService`'s own: the desire
+      // they write keeps the refusal's schedule, which is the subject. The import boundary still holds.
+      "legacy-news-filing.test.ts",
+      // Every letter of a pre-0.22 store is read where a person reads it, `MessageService.list` and
+      // `SearchService.search`: the claim is that no view, History or Search loses one. The import boundary still holds.
+      "legacy-news-folder.e2e.test.ts",
       // The held-release press over a list address is `releaseHeld` itself: its bag is the offer's
       // own query, and a hand-built `within` would test a copy of the bag the defect lived in. The import boundary still holds.
       "list-address-is-not-a-person.test.ts",

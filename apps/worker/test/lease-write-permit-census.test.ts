@@ -40,6 +40,7 @@ const REPO = resolve(__dirname, "../../..");
 /** The verbs that change somebody's mailbox. `expunge` is absent because ohmail never issues one. */
 const DESTRUCTIVE_VERBS = [
   "move", "moveMany", "moveAll", "deleteFolder", "createFolder", "renameFolder", "setFlags",
+  "foldLegacyNews",
 ] as const;
 
 type Verb = (typeof DESTRUCTIVE_VERBS)[number];
@@ -77,6 +78,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "apps/worker/src/folder-ops.ts:runRename:renameFolder": "needs_permit",
   "apps/worker/src/folder-ops.ts:runDelete:moveAll": "needs_permit",
   "apps/worker/src/folder-ops.ts:runDelete:deleteFolder": "needs_permit",
+  // A legacy ohmail/Reads beside News, swept into News and deleted once empty.
+  "apps/worker/src/news-fold.ts:newsFoldPass:foldLegacyNews": "needs_permit",
 };
 
 /** The ONE predicate. A second spelling is the thing census 2 refuses. */

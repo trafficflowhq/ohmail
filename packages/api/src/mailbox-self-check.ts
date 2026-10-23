@@ -4,6 +4,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   WATCHED_FOLDERS, epochOf, epochVerdict, isImapBoundExceeded, type FolderStatusAnswer,
 } from "@trafficflow/core/adapters/imap";
+import { LEGACY_NEWS_FOLDER, NEWS_FOLDER } from "@trafficflow/core/folder-name";
 import { IMAP_DOOR_DEADLINE_MS, isImapDoorTimeout, withinDoorBudget } from "./imap-door.js";
 import { verdictFor } from "./imap-probe.js";
 import type { ApiDeps } from "./deps.js";
@@ -14,6 +15,10 @@ import type { ApiDeps } from "./deps.js";
  * folder and the epoch the server states now. One connection, a per-folder deadline and one
  * whole-read budget that the dial and every folder spend. Read-only on the server and here: no
  * lease, no `ohmail/_meta`, no repair. It answers the same on an organizer and a reader.
+ *
+ * THE NEWS RENAME (0.22): a pre-0.22 row labelled `ohmail/Reads` beside a News row is not compared
+ * (through the pile resolver it would read News' count). A physical `ohmail/Reads` listed beside
+ * News is asked by its own name and, holding letters, read as `server_more` with `predecessorOf`.
  */
 
 /** The whole read, dial included — the one budget every API-side dial runs under. */
@@ -42,7 +47,11 @@ type CheckUnreadable = (typeof MAILBOX_CHECK_UNREADABLE)[number];
 
 /** One folder's reading. `server`/`mirror` are message counts; the difference is theirs. */
 type FolderCheck =
-  | { folder: string; k: "in_step" | "server_more" | "mirror_more" | "uidvalidity_changed"; server: number; mirror: number }
+  | {
+    folder: string; k: "in_step" | "server_more" | "mirror_more" | "uidvalidity_changed"; server: number; mirror: number;
+    /** Set on the legacy News folder beside News: the folder it is the predecessor of. */
+    predecessorOf?: typeof NEWS_FOLDER;
+  }
   | { folder: string; k: "unreadable"; error: CheckUnreadable };
 
 interface MailboxCheck {
@@ -91,6 +100,24 @@ export function compareFolder(m: MirrorFolder, a: Answer): FolderCheck {
 function byCount(folder: string, server: number, mirror: number): FolderCheck {
   const k = server === mirror ? "in_step" : server > mirror ? "server_more" : "mirror_more";
   return { folder, k, server, mirror };
+}
+
+/**
+ * The legacy News folder beside News, as one entry: its letters are on the server and in no view
+ * until the organizer folds them in, so they read `server_more` against none here. An empty or
+ * vanished folder is no entry; an unanswered one reads `unreadable` like any folder.
+ */
+function predecessorCheck(p: { folder: string; answer: Answer } | null): FolderCheck | null {
+  if (p === null) return null;
+  const a = p.answer;
+  if (a.k === "absent") return null;
+  if (a.k === "status") {
+    if (!epochOf(a.uidValidity).known) return { folder: p.folder, k: "unreadable", error: "short_reply" };
+    return a.messages > 0
+      ? { folder: p.folder, k: "server_more", server: a.messages, mirror: 0, predecessorOf: NEWS_FOLDER }
+      : null;
+  }
+  return compareFolder({ folder: p.folder, epoch: null, counts: new Map() }, a);
 }
 
 /** The worst folder's class; `empty` for a mailbox with no folder to compare. */
@@ -159,12 +186,15 @@ export async function selfCheckMailbox(
   const held = await mirrorOf(deps, accountId, mailboxId);
   const answers = new Map<string, Answer>();
   let fallback: CheckUnreadable = "budget";
+  const hasNews = held.some((f) => f.folder === NEWS_FOLDER);
+  const asked = held.filter((f) => !(hasNews && f.folder === LEGACY_NEWS_FOLDER));
+  let predecessor: { folder: string; answer: Answer } | null = null;
   if (held.length > 0) {
     let dialled = false;
     try {
       await withinDoorBudget(deps, mailboxId, async (adapter) => {
         dialled = true;
-        for (const f of held.slice(0, MAILBOX_CHECK_FOLDERS_MAX)) {
+        for (const f of asked.slice(0, MAILBOX_CHECK_FOLDERS_MAX)) {
           const room = left() - MARGIN_MS;
           if (room < FOLDER_MIN_MS) break;
           try {
@@ -174,16 +204,29 @@ export async function selfCheckMailbox(
             answers.set(f.folder, { k: "timeout" });
           }
         }
+        // One raw STATUS of a listed old folder beside News; no command when none is listed.
+        const room = left() - MARGIN_MS;
+        if (room >= FOLDER_MIN_MS) {
+          try {
+            predecessor = await adapter.predecessorStatus(Math.min(folderMs, room));
+          } catch (err) {
+            if (!isImapBoundExceeded(err)) throw err;
+            predecessor = { folder: LEGACY_NEWS_FOLDER, answer: { k: "timeout" } };
+          }
+        }
       }, { budgetMs: Math.max(1, left()) });
     } catch (err) {
       fallback = !dialled ? dialClass(err) : isImapDoorTimeout(err) ? "budget" : "dropped";
       deps.logger?.warn?.("mailbox_self_check_read_failed", { mailboxId, err });
     }
   }
-  const folders = held.map((f): FolderCheck => {
+  const shown = predecessor === null ? asked : asked.filter((f) => f.folder !== LEGACY_NEWS_FOLDER);
+  const folders = shown.map((f): FolderCheck => {
     const a = answers.get(f.folder);
     return a === undefined ? { folder: f.folder, k: "unreadable", error: fallback } : compareFolder(f, a);
   });
+  const before = predecessorCheck(predecessor);
+  if (before !== null) folders.push(before);
   return {
     mailboxId, checkedAt, elapsedMs: Date.now() - startedAt, verdict: worstOf(folders), folders,
   };

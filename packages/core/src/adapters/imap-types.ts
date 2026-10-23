@@ -639,8 +639,9 @@ export class WriteDeclinedError extends Error {
 }
 
 /**
- * What {@link MailboxAdapter.moveMany} answers — THREE outcomes, because "declined" and "moved,
- * then could not say where" are opposite facts and a boolean told the caller only the first.
+ * What {@link MailboxAdapter.moveMany} answers — FOUR outcomes, because "declined" and "moved,
+ * then could not say where" are opposite facts and a boolean told the caller only the first, and a
+ * refused `UID MOVE` (imapflow's `false`) is a third: nothing moved, after the command.
  * `declined` used to carry both: three returns sat AFTER `UID MOVE` and answered with the
  * pre-write fallback, so a caller reading "nothing was written" re-filed mail that had moved.
  *
@@ -655,10 +656,13 @@ export type MoveManyOutcome =
   | "declined"
   /** The server MOVED the mail and did not name where: nothing was written, and the caller may
    * not move it again — the rows stay pending and `changesSince` adopts what the server shows. */
-  | "moved_unmapped";
+  | "moved_unmapped"
+  /** The server REFUSED the `UID MOVE` (imapflow's `false`) and every member is still at its
+   * source, re-probed: nothing moved, and the caller records the refusal per member. */
+  | "refused";
 
 export interface MoveManyResult {
-  /** Which of the three happened. `batched` ⇒ `moved` and `gone` account for every locator. */
+  /** Which of the four happened. `batched` ⇒ `moved` and `gone` account for every locator. */
   outcome: MoveManyOutcome;
   /** Source `ref` → the locator the message now has at the destination. */
   moved: Map<string, NativeLocator>;
@@ -1079,6 +1083,19 @@ export interface MailboxAdapter {
   capabilities(): Promise<ImapCapabilities>;
   /** Creates the `ohmail/*` tree an organizer files into; every CREATE and RENAME asks `door`. */
   ensureFolders(door: WriteDoor): Promise<void>;
+  /**
+   * A legacy `ohmail/Reads` the last LIST named beside `ohmail/News`, which no read reaches, else
+   * null. Optional, like {@link foldLegacyNews}; fakes keep compiling.
+   */
+  legacyNewsBeside?(): string | null;
+  /** Sweep that folder into News (never DELETE it): the organizer's, under the lease; every write asks `door`. */
+  foldLegacyNews?(door: WriteDoor): Promise<{ moved: number; acted: "merged" | "none"; refused: string | null }>;
+  /**
+   * Whether the legacy News locator repair may run (the pile at `ohmail/News`, no `ohmail/Reads`
+   * listed beside it), with the attach it was read under; `null` otherwise. Optional: a fake that
+   * lacks it never repairs.
+   */
+  legacyNewsRepairGate?(): { attach: number } | null;
   changesSince(cursor: ImapCursor): Promise<ChangeBatch>;
   /** `door` is asked before the MOVE, or once before a COPY-then-DELETE pair — see {@link WriteDoor}. */
   move(locator: NativeLocator, toFolder: string, door: WriteDoor): Promise<NativeLocator>;

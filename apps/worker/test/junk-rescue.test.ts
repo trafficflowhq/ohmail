@@ -198,7 +198,8 @@ describe("the junk rescue inside the cycle", () => {
   });
 
   it("the ladder's last rung answers REFUSED and keeps the row, so the window can say so", async () => {
-    const refusal = Object.assign(new Error("NO move refused"), {});
+    // The server's tagged NO, as imapflow carries it: only that reads as `refused` (mail 0164).
+    const refusal = Object.assign(new Error("NO move refused"), { responseStatus: "NO" });
     const rec = await cycle({
       rows: [{ ...ROW, attempts: JUNK_RESCUE_MAX_ATTEMPTS - 1 }],
       move: async () => { throw refusal; },

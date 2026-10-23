@@ -62,6 +62,14 @@ describe("the card's sentence, per press", () => {
     expect(many?.endsWith("box-5 (1 more message on the server), and 2 more.")).toBe(true);
   });
 
+  it("News' folder before the rename says where its letters are, in both languages", async () => {
+    const before = [{ folder: "ohmail/Reads", k: "server_more", server: 28, mirror: 0, predecessorOf: "ohmail/News" }];
+    expect(await say(before)).toBe("1 folder differs from your mail server: ohmail/Reads, News' folder before the rename (28 letters not moved into News yet).");
+    setActiveLocale("de");
+    expect(await say(before)).toBe("1 Ordner weicht von deinem Mailserver ab: ohmail/Reads, der Ordner von News vor der Umbenennung (28 Nachrichten noch nicht nach News verschoben).");
+    resetLocaleRegisterForTests();
+  });
+
   it("in German too, and a reading for another mailbox is refused, not shown", async () => {
     setActiveLocale("de");
     expect(await say([{ folder: "INBOX", k: "in_step", server: 1, mirror: 1 }])).toBe("Stimmt mit deinem Mailserver überein.");

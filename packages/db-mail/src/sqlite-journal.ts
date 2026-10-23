@@ -540,5 +540,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE TRIGGER IF NOT EXISTS folder_state_fresh_intent AFTER UPDATE OF desired_folder ON folder_state\n  WHEN NEW.\"desired_folder\" IS NOT OLD.\"desired_folder\"\nBEGIN\n  UPDATE folder_state SET attempts = 0, next_attempt_at = NULL, last_error_class = NULL\n   WHERE id = NEW.id AND (attempts <> 0 OR next_attempt_at IS NOT NULL OR last_error_class IS NOT NULL);\nEND;"
     ]
+  },
+  {
+    "name": "0164_messages_server_missing.sql",
+    "statements": [
+      "ALTER TABLE \"messages\" ADD COLUMN \"server_missing_at\" integer;"
+    ]
   }
 ] as const;

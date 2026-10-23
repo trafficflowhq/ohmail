@@ -3086,6 +3086,15 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "6634aeab0254ff67",   // CREATE OR REPLACE FUNCTION folder_state_fresh_intent() … attempts 0, next_attempt_at and last_error_class NULL
     "d3d90621a05fabdf",   // DO … CREATE TRIGGER folder_state_fresh_intent_tg BEFORE UPDATE … WHEN desired_folder changes, where pg_trigger lacks it
   ],
+  // A LETTER THE SERVER LOST STAYS — one nullable column on messages, and the two filing-class CHECKs
+  // drop-then-added under their names with `stale_locator` and `unconfirmed`, NOT VALID. No DML.
+  "0164_messages_server_missing": [
+    "1e07f09430fc2230",   // ALTER TABLE messages ADD COLUMN IF NOT EXISTS server_missing_at timestamptz
+    "ec13af1d11ea005e",   // ALTER TABLE folder_state DROP CONSTRAINT IF EXISTS folder_state_last_error_class_check
+    "8d2728a70ff88449",   // ADD CONSTRAINT folder_state_last_error_class_check … 'stale_locator', 'unconfirmed' … NOT VALID
+    "5f466be3758298c5",   // ALTER TABLE junk_rescues DROP CONSTRAINT IF EXISTS junk_rescues_error_class_check
+    "62a6cded8b78db9c",   // ADD CONSTRAINT junk_rescues_error_class_check … 'stale_locator', 'unconfirmed' … NOT VALID
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4081,12 +4090,14 @@ describe("the two journals are well-formed", () => {
   // 0161_mailboxes_account_idx's.
   // 163 → 164 for `0163_folder_state_fresh_intent` (idx 163): its `when` (1791602600067) is strictly
   // above 0162_outbound_sends_offer_state's.
+  // 164 → 165 for `0164_messages_server_missing` (idx 164): its `when` (1791602600068) is strictly
+  // above 0163_folder_state_fresh_intent's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 164], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 165], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

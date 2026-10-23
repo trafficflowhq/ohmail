@@ -27,6 +27,8 @@ const UNREACHED: Partial<Record<SelfCheckUnreadable, string>> = {
 };
 
 function item(t: Say, d: SelfCheckDiffer): string {
+  // News' folder before the rename: say where the letters are; the organizer folds them in.
+  if (d.predecessorOf !== undefined) return t("selfCheckPredecessor", { folder: d.folder, count: d.n });
   if (d.k === "server_more") return t("selfCheckServerMore", { folder: d.folder, count: d.n });
   if (d.k === "mirror_more") return t("selfCheckMirrorMore", { folder: d.folder, count: d.n });
   return t("selfCheckRenumbered", { folder: d.folder });

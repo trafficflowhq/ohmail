@@ -675,6 +675,8 @@ export const messages = sqliteTable("messages", {
   senderCheckBrand: text("sender_check_brand"),
   /** Which writer gave the fact (mail 0149), the pg column's twin — see `schema-mail.ts`. */
   senderCheckBy: text("sender_check_by"),
+  /** Missing on the mail server (mail 0164), the pg column's twin — see `schema-mail.ts`. */
+  serverMissingAt: integer("server_missing_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),

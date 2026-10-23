@@ -115,6 +115,17 @@ describe("the stuck filing sentence", () => {
     expect(text).toContain("the mailbox is full");
   });
 
+  it.each([
+    ["stale_locator", "ohmail lost track of it on your mail server"],
+    ["unconfirmed", "ohmail could not confirm the move"],
+  ])("a failure on our side (%s) names itself, never the unknown reason", async (cls, words) => {
+    const text = await strip({
+      due: 1, attempts: 2, oldestPendingAt: ago(75 * MIN), lastRefusalClass: cls,
+      stuck: 1, stuckSince: ago(75 * MIN), stuckRefusalClass: cls,
+    });
+    expect(text).toContain(words);
+  });
+
   it("CONTROL — a real refusal still reads its class", async () => {
     const text = await strip({
       deferred: 1, attempts: 3, oldestPendingAt: ago(10 * MIN), lastRefusalClass: "read_only",

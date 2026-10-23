@@ -161,6 +161,11 @@ export interface MessageDTO {
    * takes `undefined` as `null` — arrival, the order before the field.
    */
   openReadAt?: ISODateTime | null;
+  /**
+   * The mail server holds no copy of this letter that ohmail knows of (mail 0164), and the mirror
+   * keeps its only one; a reader can say so. ABSENT when held, and on a server older than the field.
+   */
+  missingOnServer?: true;
   hasAttachments: boolean;
   attachmentCount: number;
   sensitivity: SensitivityFlags;

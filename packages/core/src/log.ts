@@ -191,6 +191,9 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // The Cloud mirror's refusals counted by key past its held cap (`cloud_row_quarantine_full`):
   // an integer the mirror counts itself, never a key or a table name.
   "overflow",
+  // The legacy News repair (`legacy_news_repaired`, apps/worker/src/news-repair.ts): four counts
+  // of rows it re-pointed, forgot, found missing on the server and re-spelt. No folder, no uid.
+  "repointed", "forgotten", "missing", "spellings",
   // ── THE STAND-DOWN'S HANDOVER, three counts of OUR OWN bookkeeping ──
   //
   // `organizer_stand_down_moves_handed_over` (both hosts) reports how many pending local moves

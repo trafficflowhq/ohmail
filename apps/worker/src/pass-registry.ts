@@ -69,6 +69,29 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter + a fresh organizer-lease read before every move; every row write through the fenced group",
   },
   {
+    name: "news_fold",
+    module: `${W}/news-fold.ts`, entry: "newsFoldPass",
+    // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
+    triggers: ["visit"],
+    cadence: "every organizer visit whose last LIST named the legacy Reads folder beside ohmail/News, before the change scan; "
+      + "a fold that moved nothing and could not delete waits for a LIST stating letters there, or the next attach",
+    budget: "one MOVE 1:*, one EXAMINE, at most one DELETE and one LIST per visit",
+    owns: "letters in the legacy Reads folder beside News reach News, the folder ensureFolders' merge would otherwise sweep only at attach",
+    fence: "the visit's leased adapter, the lease asked before the fold; the same lease-only door as ensureFolders; a reader folds nothing",
+  },
+  {
+    name: "news_repair",
+    module: `${W}/news-repair.ts`, entry: "legacyNewsRepairPass",
+    // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
+    triggers: ["visit"],
+    cadence: "every organizer visit, before the filing and the cursor, until the store holds no pre-0.22 News spelling; "
+      + "once clean, checked again only after the next attach (a rename or merge there re-arms it)",
+    budget: "database only: one bounded chunk (LEGACY_NEWS_REPAIR_PER_VISIT) and its audit rows per visit, no IMAP command",
+    owns: "a pre-0.22 store's old-spelling News locators, instances and folder_state spellings re-pointed onto the News copies "
+      + "a re-read recorded; a letter with no live copy kept and marked missing on the server",
+    fence: "the visit's fenced group: the chunk and its audit rows commit together; a reader repairs nothing",
+  },
+  {
     name: "junk_restore",
     module: `${W}/junk-restore.ts`, entry: "junkRestorePass",
     triggers: ["visit"],

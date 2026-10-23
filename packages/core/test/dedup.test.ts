@@ -214,4 +214,22 @@ describe("classifyDedup", () => {
     });
     expect(out.kind).toBe("own_move");
   });
+
+  it("a re-read in News of a letter the store still spells `ohmail/Reads` is the SAME letter, not a copy", () => {
+    // One server folder under two names (the 0.22 rename): an external copy here recorded a second
+    // instance and set `conflict` on every re-read, and never re-pointed the stale locator.
+    const out = classifyDedup({
+      change: change("ohmail/News"), dedupKey: KEY, existing: stored("ohmail/Reads"),
+      pendingMoveFolders: new Set(["ohmail/Receipts"]), evidence: APPEARANCE,
+    });
+    expect(out).toEqual({ kind: "duplicate", existing: stored("ohmail/Reads") });
+  });
+
+  it("a pending move spelled the old way still names News for a News arrival", () => {
+    const out = classifyDedup({
+      change: change("ohmail/News"), dedupKey: KEY, existing: stored("INBOX"),
+      pendingMoveFolders: new Set(["ohmail/Reads"]), evidence: APPEARANCE,
+    });
+    expect(out.kind).toBe("own_move");
+  });
 });

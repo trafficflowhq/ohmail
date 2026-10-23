@@ -875,6 +875,9 @@ describe("the baseline cutoff is frozen", () => {
       // A new filing's schedule reset: a trigger function and a trigger created only where
       // missing, no data. Safe over any history.
       "0163_folder_state_fresh_intent",
+      // A letter the server lost, kept: one nullable ADD COLUMN IF NOT EXISTS on messages, and the
+      // two filing-class CHECKs re-added under their names, NOT VALID. No data. Safe over any history.
+      "0164_messages_server_missing",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

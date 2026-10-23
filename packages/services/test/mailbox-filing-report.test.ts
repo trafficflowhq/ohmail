@@ -167,6 +167,15 @@ describe("MailboxDTO.filing — why an outstanding filing is outstanding", () =>
     expect(dto.filing?.lastRefusalClass).toBe("refused");
   });
 
+  it("the two classes of a failure on our side (mail 0164) read as themselves, never 'unknown'", async () => {
+    for (const cls of ["stale_locator", "unconfirmed"]) {
+      const db = await makeTestDb();
+      const ids = await seed(db);
+      await seedFiling(db, ids, 1, { updatedAt: minutesAgo(9), attempts: 2, nextAttemptAt: minutesAhead(6), lastErrorClass: cls });
+      expect((await svc.get(ctxFor(db, ids.accountId), ids.mailboxId)).filing?.lastRefusalClass).toBe(cls);
+    }
+  });
+
   it("reports the OLDEST outstanding filing and the SOONEST next attempt", async () => {
     const db = await makeTestDb();
     const ids = await seed(db);

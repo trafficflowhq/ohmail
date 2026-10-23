@@ -5,7 +5,7 @@
  * server's locator. The rule and its four consumers are `sender-headers.ts`.
  */
 import { permitsAdoption, type Change, type MoveEvidence, type StoredMessage } from "./ports.js";
-import { isSentFolderPath } from "./types.js";
+import { canonicalDestination, isSentFolderPath } from "./types.js";
 
 export type DedupOutcome =
   | { kind: "new" }
@@ -45,12 +45,14 @@ export function classifyDedup(input: DedupInput): DedupOutcome {
   const { change, existing, pendingMoveFolders, evidence } = input;
   if (existing === null) return { kind: "new" };
 
-  const observedFolder = change.locator.folder;
-  const knownFolder = existing.nativeLocator.folder;
+  // CANONICAL: News and its pre-0.22 spelling (`ohmail/Reads`) are one server folder, so a re-read
+  // of a letter the store still spells the old way is the same letter, never a second copy.
+  const observedFolder = canonicalDestination(change.locator.folder);
+  const knownFolder = canonicalDestination(existing.nativeLocator.folder);
 
   if (observedFolder === knownFolder) return { kind: "duplicate", existing };
   if (change.ownAuthored) return { kind: "own_copy", existing };
-  if (pendingMoveFolders.has(observedFolder)) return { kind: "own_move", existing };
+  if ([...pendingMoveFolders].some((f) => canonicalDestination(f) === observedFolder)) return { kind: "own_move", existing };
   // THE CONSENT BOUNDARY. Adoption requires a disappearance; an appearance is a copy.
   if (permitsAdoption(evidence)) return { kind: "external_move", existing };
   // A letter the account sent itself: its INBOX copy is received mail, so it takes the row from

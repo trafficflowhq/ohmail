@@ -44,6 +44,9 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "imap.ts:renameFolder:mailboxRename#1": "door",
   "imap.ts:deleteFolderByPath:mailboxDelete#1": "door",
   "imap.ts:moveAllByPath:messageMove#1": "door",
+  /* No MOVE: a UID COPY proved in the destination, then the same UIDs expunged, each asked. */
+  "imap.ts:moveAllByPath:messageCopy#1": "door",
+  "imap.ts:moveAllByPath:messageDelete#1": "door",
   "imap.ts:move:messageMove#1": "door",
   "imap.ts:move:messageCopy#1": "door",
   "imap.ts:move:messageDelete#1": "door",
@@ -138,7 +141,7 @@ describe("the write-site census over the IMAP adapter", () => {
       .filter((s) => CENSUS[s.key] === "door" && s.verdict !== "asked")
       .map((s) => `${s.key} (line ${s.line}): ${s.verdict}`);
     expect(bad, "an IMAP write reachable without the lease asked at the write").toEqual([]);
-    expect(sites.filter((s) => CENSUS[s.key] === "door")).toHaveLength(13);
+    expect(sites.filter((s) => CENSUS[s.key] === "door")).toHaveLength(15);
   });
 
   it("the `_meta` medium's writes are counted by name, none of them silent", () => {

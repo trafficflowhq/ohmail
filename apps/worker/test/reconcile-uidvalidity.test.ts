@@ -53,9 +53,10 @@ interface Recorded {
   folderStates: Array<{ messageId: string; desired: string; observed: string }>;
   flagStates: Array<{ messageId: string; desired: boolean; observed: boolean }>;
   audits: string[];
+  deferred: Array<{ messageId: string; attempts: number; errorClass: string }>;
 }
 
-const blank = (): Recorded => ({ imap: [], locators: [], folderStates: [], flagStates: [], audits: [] });
+const blank = (): Recorded => ({ imap: [], locators: [], folderStates: [], flagStates: [], audits: [], deferred: [] });
 
 function repoOf(rec: Recorded, opts: {
   pending?: PendingFolderState[];
@@ -86,7 +87,9 @@ function repoOf(rec: Recorded, opts: {
     recordAuditMany: async (_a: string, batch: ReadonlyArray<{ action: string }>) => {
       for (const r of batch) rec.audits.push(r.action);
     },
-    deferFolderReconcile: async () => {},
+    deferFolderReconcile: async (messageId: string, d: { attempts: number; errorClass: string }) => {
+      rec.deferred.push({ messageId, attempts: d.attempts, errorClass: d.errorClass });
+    },
     deferFlagReconcile: async () => {},
     transaction: async (fn: (r: WorkerRepo) => Promise<unknown>) => fn(stub as unknown as WorkerRepo),
     // The removal fence reads this inside every write transaction; the double answers what a live
@@ -177,9 +180,11 @@ describe("a recycled source folder — the per-message filing path", () => {
     // Message-ID — the row is deferred, never lost.
     expect(rec.locators).toEqual([]);
     expect(rec.folderStates).toEqual([]);
-    // …and it was NOT recorded as a failure of this message: an epoch change is the folder's
-    // event, not the message's. `voidGoneFiling` writes only when the disappearance is durable.
-    expect(rec.audits).toEqual([]);
+    // …and it is NEVER SILENT (mail 0164): with no copy under the live epoch on record, the row is
+    // deferred on the ladder under `stale_locator` — the folder's event, not the server's refusal —
+    // with its audit row, and the next scan re-resolves the message by its Message-ID.
+    expect(rec.audits).toEqual(["reconcile.move.failed"]);
+    expect(rec.deferred).toEqual([{ messageId: "m-0", attempts: 1, errorClass: "stale_locator" }]);
   });
 
   it("ACTS on a matching epoch — the healthy path files exactly as before", async () => {
@@ -242,10 +247,10 @@ describe("a recycled source folder — the `\\Seen` mirror", () => {
     const rec = blank();
     await run(rec, repoOf(rec, { pendingFlags: flags(7) }), { [SRC]: 9n, INBOX: 1n });
     expect(rec.imap).toEqual([]);
-    // Not converged and not blamed: `desired_seen` is untouched, so the intent survives the
-    // folder's renumbering and lands once the scan has re-resolved the locator.
+    // Not converged: `desired_seen` is untouched, so the intent survives the folder's renumbering
+    // and lands once the scan has re-resolved the locator — recorded and deferred, never silent.
     expect(rec.flagStates).toEqual([]);
-    expect(rec.audits).toEqual([]);
+    expect(rec.audits).toEqual(["reconcile.flags.failed"]);
   });
 
   it("ACTS on a matching epoch", async () => {

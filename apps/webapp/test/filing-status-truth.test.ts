@@ -298,7 +298,7 @@ describe("the four sentences exist in both catalogues and none of them says 'cat
   const KEYS = [
     "filingPass", "filingWaiting", "filingStuck", "filingElsewhere",
     "filingReason_refused", "filingReason_no_such_folder", "filingReason_read_only",
-    "filingReason_over_quota", "filingReason_unknown",
+    "filingReason_over_quota", "filingReason_stale_locator", "filingReason_unconfirmed", "filingReason_unknown",
     /* BOTH halves of the address line. `filingWhereAsOf` carries the read's instant and
        `filingWhere` does not, and the undated one is required rather than legacy: `asOf` comes
        from the new aggregate, so a server that predates it must still name the mailbox. Gating

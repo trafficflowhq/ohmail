@@ -50,6 +50,9 @@ describe("known-set memo: the classification", () => {
       "forgetInstanceAt",
       "insertMessage",
       "recordInstance",
+      // The legacy News repair (mail 0164): it forgets legacy-named and dead-epoch instances and
+      // moves the primary onto the live News copy.
+      "repairLegacyNews",
       // A folder the server stated gone: it forgets every instance still spelled there, at any epoch.
       "retireGoneFolder",
       "setPrimaryInstance",

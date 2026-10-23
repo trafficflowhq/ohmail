@@ -536,6 +536,11 @@ export interface ChangePlan {
   receivedCopy?: ReceivedCopyPlan;
   /** Present when the message was reached through the legacy key and verified. */
   upgrade?: DedupKeyUpgrade;
+  /**
+   * The existing row this arrival found carries the missing-on-server mark (mail 0164): the
+   * server holds a copy again, so the commit clears it — whichever arm the arrival takes.
+   */
+  clearsServerMissing?: string;
 }
 
 export interface PlanDeps {
@@ -1465,6 +1470,8 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
   // Existing message: never re-ingest. `upgrade` rides along on every one of these shapes — a
   // verified legacy row's key is rewritten whatever the outcome turns out to be.
   const existingMsg = outcome.existing;
+  // Mail 0164: any arrival of a letter marked missing on the server is a copy seen again.
+  const clears = existingMsg.serverMissing === true ? { clearsServerMissing: existingMsg.id } : {};
 
   // The Sent twin of mail we already hold. No placement decision and no delta — see
   // `classifyDedup`'s `own_copy` note for the self-CC case this exists to stop. It DOES record its
@@ -1475,6 +1482,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       outcome: "own_copy",
       ownCopy: { messageId: existingMsg.id, arrivalLocator: change.locator },
       ...(upgrade ? { upgrade } : {}),
+      ...clears,
     };
   }
 
@@ -1497,6 +1505,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         seen: change.seen ?? false, state, listAddresses: listAddressesOf(normalized, auth, deps.ownAddresses),
       },
       ...(upgrade ? { upgrade } : {}),
+      ...clears,
     };
   }
 
@@ -1512,6 +1521,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       outcome: "external_copy",
       externalCopy: { messageId: existingMsg.id, arrivalLocator: change.locator, state },
       ...(upgrade ? { upgrade } : {}),
+      ...clears,
     };
   }
 
@@ -1545,7 +1555,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
    * row says: a reader's steady state writes nothing.
    */
   const action: ReconcileAction = deps.readerMode === true
-    ? (change.locator.folder === state.desiredFolder
+    ? (canonicalDestination(change.locator.folder) === canonicalDestination(state.desiredFolder)
       ? { type: "none" }
       : {
         // No attribution rides along: adopting a message we ALREADY HOLD is the person's own hand
@@ -1578,6 +1588,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       ...(unexpungedSource ? { unexpungedSource } : {}),
     },
     ...(upgrade ? { upgrade } : {}),
+    ...clears,
   };
 }
 
@@ -1611,6 +1622,14 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   if (plan.upgrade) {
     await repo.upgradeDedupKey(plan.upgrade.messageId, plan.upgrade.from, plan.upgrade.to);
   }
+  // Mail 0164: the server holds a copy of a letter marked missing, so the mark goes, in this
+  // transaction and before any arm records the copy. Only a marked row asks: no statement otherwise.
+  // The delta that tells clients rides each arm's own change, after its writes (the lock order).
+  const markCleared = plan.clearsServerMissing !== undefined
+    && (await repo.clearServerMissing?.(accountId, plan.clearsServerMissing)) === true;
+  const clearedDelta = async (messageId: string): Promise<void> => {
+    if (markCleared) await repo.recordChange({ accountId, entityType: "message", entityId: messageId, op: "update", meta: null });
+  };
 
   // ── THE OUTCOME THAT CHANGES NO PLACEMENT ──────────────────────────────────────────────────
   //
@@ -1625,6 +1644,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   if (plan.outcome === "own_copy") {
     const c = plan.ownCopy!;
     await repo.recordInstance(c.messageId, c.arrivalLocator);
+    await clearedDelta(c.messageId);
     return { outcome: "own_copy", messageId: c.messageId, action: { type: "none" } };
   }
 
@@ -1640,6 +1660,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     const c = plan.externalCopy!;
     await repo.recordInstance(c.messageId, c.arrivalLocator);
     await repo.setFolderConflict(c.messageId, c.state);
+    await clearedDelta(c.messageId);
     return { outcome: "external_copy", messageId: c.messageId, action: { type: "none" } };
   }
 
@@ -1946,9 +1967,10 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // permanently-unknown UID the claim denied: 9.4 MB per two-minute cycle for weeks. The
   // own-authored arm records AND repoints; a different epoch — repoint; a replay — repoint. The
   // residual is closed in `forgetInstanceAt`, which promotes a survivor.
+  // Canonical, like `classifyDedup`: News and its pre-0.22 spelling are one server folder.
   const sameFolderSameEpochCopy =
     e.kind === "duplicate"
-    && e.storedLocator.folder === e.arrivalLocator.folder
+    && canonicalDestination(e.storedLocator.folder) === canonicalDestination(e.arrivalLocator.folder)
     && sameEpoch(epochOfRef(e.storedLocator.ref), epochOfRef(e.arrivalLocator.ref))
     && e.storedLocator.ref !== e.arrivalLocator.ref;
   const secondCopyInSameEpoch = sameFolderSameEpochCopy && !e.ownAuthored;
@@ -2092,7 +2114,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
   // The resurrection delta for the arms whose switch emits no change of their own: a client
   // holding the tombstone needs one newer-seq entity write to live again ("a LATER create
   // resurrects" — the sync service re-materializes the row for an `update`).
-  if (resurrected && e.action.type !== "adopt_external") {
+  if ((resurrected || markCleared) && e.action.type !== "adopt_external") {
     await repo.recordChange({
       accountId, entityType: "message", entityId: e.messageId, op: "update", meta: null,
     });

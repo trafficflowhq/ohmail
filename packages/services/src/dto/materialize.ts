@@ -380,6 +380,8 @@ export function messageRowToDTO(
     // the field", which is what makes the consumers' `=== true` test correct for both.
     ...(invitationWithoutEvent === undefined ? {} : { invitationWithoutEvent }),
     ...(itipReplyHeader === undefined ? {} : { itipReplyHeader }),
+    // Mail 0164: the mail server holds no copy ohmail knows of; the mirror's is the only one.
+    ...(m.serverMissingAt != null ? { missingOnServer: true as const } : {}),
   };
 }
 

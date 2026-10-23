@@ -153,6 +153,30 @@ describe("the diagnostic file's parts", () => {
     expect(many.k === "differs" && many.differ.length).toBe(6);
   });
 
+  it("predecessorOf is closed to the News folder, and carried on the differing entry", () => {
+    const c = readSelfCheck({
+      mailboxId: "m", folders: [
+        { folder: "ohmail/Reads", k: "server_more", server: 28, mirror: 0, predecessorOf: "ohmail/News" },
+        { folder: "Archive", k: "server_more", server: 2, mirror: 1, predecessorOf: "Archive2" },
+        { folder: "Old", k: "unreadable", error: "timeout", predecessorOf: "ohmail/News" },
+      ],
+    })!;
+    expect(c.folders).toEqual([
+      { folder: "ohmail/Reads", k: "server_more", server: 28, mirror: 0, predecessorOf: "ohmail/News" },
+      { folder: "Archive", k: "server_more", server: 2, mirror: 1 },
+      { folder: "Old", k: "unreadable", error: "timeout" },
+    ]);
+    expect(selfCheckSaid(c)).toMatchObject({
+      k: "differs", differCount: 2,
+      differ: [
+        { folder: "ohmail/Reads", k: "server_more", n: 28, predecessorOf: "ohmail/News" },
+        { folder: "Archive", k: "server_more", n: 1 },
+      ],
+    });
+    const said = selfCheckSaid(c);
+    expect(said.k === "differs" && "predecessorOf" in said.differ[1]!).toBe(false);
+  });
+
   it("a reading for another mailbox is not written under this one", () => {
     const b = buildDiagnosticBundle({
       surface: "desktop", now: new Date("2026-09-27T05:00:00.000Z"), build: {}, platform: {}, install: INSTALL,

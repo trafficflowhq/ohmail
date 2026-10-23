@@ -129,6 +129,9 @@ export function filingWaiting(now: Date): SQL {
  */
 export const FILING_REFUSAL_CLASSES = [
   "refused", "no_such_folder", "read_only", "over_quota",
+  // Mail 0164: not the server's refusal. `stale_locator` — the folder was renumbered and the letter
+  // was not found under its new number; `unconfirmed` — our own check could not prove the move.
+  "stale_locator", "unconfirmed",
 ] as const;
 
 export type FilingRefusalClass = (typeof FILING_REFUSAL_CLASSES)[number];

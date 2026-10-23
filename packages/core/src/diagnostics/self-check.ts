@@ -5,6 +5,7 @@
  * person's own, on their own screen); the diagnostic file keeps only hashes and classes.
  * No import here reaches the network or the store.
  */
+import { NEWS_FOLDER } from "../types.js";
 
 /** Copies of the engine's closed sets (`packages/api/src/mailbox-self-check.ts`); a test holds them equal. */
 export const SELF_CHECK_FOLDER_CLASSES = [
@@ -24,7 +25,11 @@ export type SelfCheckUnreadable = (typeof SELF_CHECK_UNREADABLE)[number];
 export type SelfCheckVerdict = SelfCheckFolderClass | "empty";
 
 export type SelfCheckFolder =
-  | { folder: string; k: Exclude<SelfCheckFolderClass, "unreadable">; server: number; mirror: number }
+  | {
+    folder: string; k: Exclude<SelfCheckFolderClass, "unreadable">; server: number; mirror: number;
+    /** The legacy News folder beside News: the folder it is the predecessor of, closed to News. */
+    predecessorOf?: typeof NEWS_FOLDER;
+  }
   | { folder: string; k: "unreadable"; error: SelfCheckUnreadable };
 
 export interface SelfCheck {
@@ -58,7 +63,7 @@ export function readSelfCheck(wire: unknown): SelfCheck | null {
     const server = count(f.server);
     const mirror = count(f.mirror);
     if (k !== null && k !== "unreadable" && server !== null && mirror !== null) {
-      folders.push({ folder: f.folder, k, server, mirror });
+      folders.push({ folder: f.folder, k, server, mirror, ...(f.predecessorOf === NEWS_FOLDER ? { predecessorOf: NEWS_FOLDER } : {}) });
     } else {
       folders.push({ folder: f.folder, k: "unreadable", error: k === "unreadable" ? member(SELF_CHECK_UNREADABLE, f.error) ?? "unknown" : "unknown" });
     }
@@ -75,7 +80,11 @@ export function readSelfCheck(wire: unknown): SelfCheck | null {
 }
 
 /** One differing folder as a sentence names it: its name, its class and the difference. */
-export interface SelfCheckDiffer { folder: string; k: "server_more" | "mirror_more" | "uidvalidity_changed"; n: number }
+export interface SelfCheckDiffer {
+  folder: string; k: "server_more" | "mirror_more" | "uidvalidity_changed"; n: number;
+  /** Set when the folder is News' before the rename; the sentence says so. */
+  predecessorOf?: typeof NEWS_FOLDER;
+}
 
 /**
  * WHAT THE ONE SENTENCE SAYS. `in_step` and `empty` are whole sentences. `unreached` is every
@@ -95,7 +104,12 @@ export function selfCheckSaid(c: SelfCheck): SelfCheckSaid {
   const unread: string[] = [];
   for (const f of c.folders) {
     if (f.k === "unreadable") unread.push(f.folder);
-    else if (f.k !== "in_step") differ.push({ folder: f.folder, k: f.k, n: Math.abs(f.server - f.mirror) });
+    else if (f.k !== "in_step") {
+      differ.push({
+        folder: f.folder, k: f.k, n: Math.abs(f.server - f.mirror),
+        ...(f.predecessorOf !== undefined ? { predecessorOf: f.predecessorOf } : {}),
+      });
+    }
   }
   if (differ.length === 0 && unread.length === 0) return { k: "in_step" };
   if (differ.length === 0 && unread.length === c.folders.length) {

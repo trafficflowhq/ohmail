@@ -758,6 +758,13 @@ export const messages = pgTable("messages", {
    * `messages_sender_check_by_closed`.
    */
   senderCheckBy: text("sender_check_by"),
+  /**
+   * MISSING ON THE MAIL SERVER (mail 0164): when ohmail found that the server holds no copy of this
+   * letter it knows of, while the mirror still holds it. Set by the legacy News repair
+   * (`repairLegacyNews`) on a letter with no live instance left; cleared when a copy is seen again.
+   * The reaper never takes a row that carries it, so its body stays for a re-append. NULL = held.
+   */
+  serverMissingAt: timestamp("server_missing_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   ckSenderCheck: check("messages_sender_check_closed", sql`${t.senderCheck} in ('none', 'impersonation')`),

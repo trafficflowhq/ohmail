@@ -1,12 +1,13 @@
 /**
  * THE RECONCILE REFUSAL VOCABULARY — the backoff ladder, the transport/mutation question and the
- * four-word class. ONE HOME, because three passes now ask it: the folder reconciler and the flag
+ * class. ONE HOME, because three passes now ask it: the folder reconciler and the flag
  * reconciler in `sync.ts`, and the junk rescue in `junk-rescue.ts`. `sync.ts` imports the passes
  * it runs, so a pass importing these back out of `sync.ts` would be a cycle; a copy in the pass
  * would be a second opinion about the same throw, which is the shape that lets two queues disagree
  * about what a server said.
  */
 import type { FilingRefusalClass } from "@trafficflow/db";
+import { isRefusedCommand } from "@trafficflow/core/adapters/imap";
 import { classifyIngestFault } from "./dead-letter.js";
 
 /**
@@ -18,6 +19,8 @@ import { classifyIngestFault } from "./dead-letter.js";
  * permanently refused row sits at the head of the budget every cycle, so 500 of them eat the whole
  * budget while fresh mail never reaches the server (head-of-line blocking by BUDGET, unreachable from
  * any `try`/`catch`). So a refusal buys widening silence with a six-hour FLOOR, never an end: there is no give-up, because this records the USER's instruction, not our failure to read mail. `attempts` rides the audit row, so "failed 40 times" is a value somebody can select.
+ * The person's next decision about the letter rides the same row's schedule, so it is sent at the next
+ * due pass, at most one rung later.
  */
 export const RECONCILE_BACKOFF_MINUTES: readonly number[] = [1, 5, 15, 60, 360];
 
@@ -34,6 +37,22 @@ export function nextReconcileAttemptAfter(attempts: number, now: Date): Date {
 }
 
 /**
+ * The attempt at which a READ MARK whose folder was renumbered, with no copy under the new numbering
+ * on record, is retired (`deferStaleFlag`): the climb and four tries on the top rung, about a day for
+ * the walk to find the letter again. Retiring completes the row, so the next mark is due at once. A
+ * filing has no such end (above).
+ */
+export const STALE_FLAG_RETIRES_AT = RECONCILE_BACKOFF_MINUTES.length - 1 + 4;
+
+/**
+ * imapflow's codes for a connection that went away under a command: the socket is closed, closed
+ * mid-command, or logged out. The adapter's own `EIMAPCLOSED` is the same fact. None is the message's.
+ */
+const CONNECTION_GONE_CODES: ReadonlySet<string> = new Set([
+  "NoConnection", "EConnectionClosed", "StateLogout", "EIMAPCLOSED",
+]);
+
+/**
  * Is this throw evidence about THIS MUTATION, or about the pipes? The distinction decides whether a
  * failure earns a deferral, and getting it backwards is expensive both ways (it reuses
  * `classifyIngestFault` rather than growing a second opinion): call a HOST OUTAGE per-message and a
@@ -44,6 +63,8 @@ export function nextReconcileAttemptAfter(attempts: number, now: Date): Date {
  * the row EXACTLY as it was (due now, attempts unchanged, no audit row) — the pass continues, and the backlog drains the moment the host is back (`reconcile-resume.pg.test.ts`).
  */
 export function isTransportFailure(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && CONNECTION_GONE_CODES.has(code)) return true;
   return classifyIngestFault(err).domain === "infrastructure";
 }
 
@@ -52,10 +73,12 @@ export function isTransportFailure(err: unknown): boolean {
  * SCHEDULE; what it could not record is WHY, so the client had a number and a retry time and nothing
  * else — and the honest sentence cannot be written from those ("1 message waits · retrying at 14:20"
  * tells a person nothing to do, where "the folder is not there" names the one screen that fixes it).
- * The output is FOUR WORDS, the whole safety argument: `folder_state`'s schema forbids an error column
- * ("what went wrong is free text from someone else's mail server"), and this MAY read the error and may
- * never store it — the server's wording goes only to the `reconcile.move.failed` audit row. STRUCTURED
- * evidence only (`serverResponseCode`), no message probe; `refused` is a real member (a bare `NO` to a `UID MOVE` is a refusal). Nothing for a transport failure — `isTransportFailure` returns first.
+ * The output is a CLOSED SET of words, the whole safety argument: `folder_state`'s schema forbids an
+ * error column ("what went wrong is free text from someone else's mail server"), and this MAY read the
+ * error and may never store it — the server's wording goes only to the `reconcile.move.failed` audit
+ * row. STRUCTURED evidence only (`serverResponseCode`, `responseStatus`), no message probe; `refused`
+ * is the server's bare `NO`, `unconfirmed` is ours (mail 0164). Nothing for a transport failure —
+ * `isTransportFailure` returns first.
  */
 export function classifyMoveRefusal(err: unknown): FilingRefusalClass {
   const code = typeof (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "string"
@@ -70,5 +93,8 @@ export function classifyMoveRefusal(err: unknown): FilingRefusalClass {
   // whoever filed the mail — the folder will not take it. A provider's own maintenance window
   // produces the second one, which is why the ladder's early rungs are minutes.
   if (code === "NOPERM" || code === "READ-ONLY") return "read_only";
-  return "refused";
+  // `refused` only for the server's own tagged NO or BAD: imapflow's, or the adapter's re-probed
+  // `false` (`MoveRefusedError`). Everything else is ours — a verify that could not prove the copy,
+  // a half-done move, a probe bound, a throw nobody classified — and says so.
+  return isRefusedCommand(err) ? "refused" : "unconfirmed";
 }

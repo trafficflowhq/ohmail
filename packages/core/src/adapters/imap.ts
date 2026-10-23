@@ -790,9 +790,33 @@ export class MessageGoneError extends Error {
    * other reading, an epoch that moved on (the message may be there under a new UID). Only an
    * absence lets the reconciler close a filing whose only copy it names.
    */
-  constructor(public locator: NativeLocator, readonly absent: boolean = false) {
+  constructor(
+    public locator: NativeLocator, readonly absent: boolean = false,
+    /**
+     * The epoch the folder states NOW, when the refusal is the stale reading: the reconciler looks
+     * for this message's instance under it before it gives the filing a bounded end.
+     */
+    readonly liveEpoch: string | null = null,
+  ) {
     super(`message not at source locator ${locator.folder}#${locator.ref}`);
     this.name = "MessageGoneError";
+  }
+}
+
+/**
+ * The server would not take a MOVE or COPY, and the letter is still at its source: nothing moved.
+ * imapflow catches a tagged NO and resolves `false` (and an unsent command `undefined`), so the
+ * adapter re-probes the source and says so here instead of reading the answer as a move. A `false`
+ * is the server's refusal (`responseStatus` NO, as {@link isRefusedCommand} reads it); imapflow
+ * keeps the response code to itself. `not_sent` is our own state, not the server's word.
+ */
+export class MoveRefusedError extends Error {
+  readonly code = "EMOVEREFUSED";
+  readonly responseStatus: "NO" | undefined;
+  constructor(public locator: NativeLocator, public toFolder: string, readonly answer: "refused" | "not_sent") {
+    super(`the server did not move ${locator.folder}#${locator.ref} to ${toFolder} (${answer}); the letter is still there`);
+    this.name = "MoveRefusedError";
+    this.responseStatus = answer === "refused" ? "NO" : undefined;
   }
 }
 
@@ -1382,6 +1406,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private newsRename: { acted: "renamed" | "merged" | "none"; refused: string | null } =
     { acted: "none", refused: null };
   /**
+   * A listed legacy `ohmail/Reads` BESIDE the News pile (News is where the pile lives), else null.
+   * Nothing reads it: the resolver prefers News and the scan leaves ohmail's folders out, so the
+   * organizer folds it into News ({@link foldLegacyNews}). Re-derived from every LIST.
+   */
+  private legacyNewsAt: string | null = null;
+  /** The listed `ohmail/News`, the fold's destination, else null. */
+  private newsAt: string | null = null;
+  /**
+   * Why the fold is not retried on this connection: `empty` until a LIST may name letters there
+   * (LIST-STATUS above 0, or a LIST with no counts), `refused` until the next `ensureFolders`.
+   */
+  private legacyFoldParked: "empty" | "refused" | null = null;
+  /** How many `ensureFolders` this connection ran — the legacy News repair's re-arm. */
+  private attaches = 0;
+  /**
    * A read-only Sent memo, consulted before a re-LIST ({@link findSentForScan}). Production no
    * longer sets it: read and write share one decision (`findSent`) and a found Sent lands on
    * {@link sentFolder}. A NEGATIVE answer is never memoised, so a mailbox that grows a Sent
@@ -1919,6 +1958,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
      * one thing that propagates: swallowing it here would re-pay it every cycle (`imap-bounds.ts`).
      */
     this.newsRename = { acted: "none", refused: null };
+    this.legacyFoldParked = null;
+    this.attaches += 1;
     const canon = new Set(list.map((f) => this.toCanonical(f.path)));
     const at = (c: string): string | null =>
       canon.has(c) ? c : (canon.has(`INBOX/${c}`) ? `INBOX/${c}` : null);
@@ -1933,6 +1974,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           this.newsRename = { acted: "renamed", refused: null };
         } else {
           const swept = await this.moveAllByPath(this.toServerPathRaw(readsAt), this.toServerPathRaw(newsAt), door);
+          // A refused sweep is not retried by the per-pass fold until the next attach.
+          if (swept.refused) this.legacyFoldParked = "refused";
           const outcome = await this.deleteFolderByPath(this.toServerPathRaw(readsAt), swept.fence, door);
           if (outcome === "deleted" || outcome === "already") {
             this.newsRename = { acted: "merged", refused: null };
@@ -2027,6 +2070,56 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   newsFolderReport(): { physical: string; acted: "renamed" | "merged" | "none"; refused: string | null } {
     return { physical: this.newsPhysical, ...this.newsRename };
+  }
+
+  /**
+   * May the legacy News repair run on this connection? `null` unless the last LIST put the pile at
+   * `ohmail/News` and named no `ohmail/Reads` beside it (those letters fold first). `attach` counts
+   * this connection's `ensureFolders`, so a rename or a merge there re-arms the repair.
+   */
+  legacyNewsRepairGate(): { attach: number } | null {
+    if (this.newsPhysical !== NEWS_FOLDER || this.newsAt === null || this.legacyNewsAt !== null) return null;
+    return { attach: this.attaches };
+  }
+
+  /** The legacy folder the last LIST named beside the News pile, unless a fold there is parked. */
+  legacyNewsBeside(): string | null {
+    return this.legacyFoldParked !== null ? null : this.legacyNewsAt;
+  }
+
+  /**
+   * Sweep a legacy `ohmail/Reads` beside News into News, on any organizer pass that LISTed it. Only
+   * a sweep: a DELETE takes whatever lands in the folder meanwhile, so it stays with the attach
+   * (`ensureFolders`). An empty sweep parks the fold until a LIST may name letters there; a refused
+   * one until the next attach. Same door as {@link ensureFolders}; a breach or a declined write
+   * ends the call.
+   */
+  async foldLegacyNews(door: WriteDoor): Promise<{ moved: number; acted: "merged" | "none"; refused: string | null }> {
+    const readsAt = this.legacyNewsBeside();
+    const newsAt = this.newsAt;
+    if (readsAt === null || newsAt === null) return { moved: 0, acted: "none", refused: null };
+    let refused: string | null = null;
+    let moved = 0;
+    try {
+      const sweep = await this.moveAllByPath(this.toServerPathRaw(readsAt), this.toServerPathRaw(newsAt), door);
+      if (sweep.refused) refused = "sweep_refused"; else moved = sweep.moved;
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded || err instanceof WriteDeclinedError) throw err;
+      refused = String((err as Error).message ?? err);
+    }
+    if (refused !== null) this.legacyFoldParked = "refused";
+    else if (moved === 0) this.legacyFoldParked = "empty";
+    return { moved, acted: moved > 0 ? "merged" : "none", refused };
+  }
+
+  /**
+   * STATUS of the listed legacy folder by its own name, never through the pile resolver (which
+   * answers for News). `null`, and no command, when no such folder is listed beside News.
+   */
+  async predecessorStatus(deadlineMs: number): Promise<{ folder: string; answer: FolderStatusAnswer } | null> {
+    const at = this.legacyNewsAt;
+    if (at === null) return null;
+    return { folder: at, answer: await this.statusAt(this.toServerPathRaw(at), at, deadlineMs) };
   }
 
   // ---- FolderScanner (HEY migration folder-scan, §16) ----
@@ -2202,18 +2295,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * Move EVERYTHING in one folder to another — the folder delete's sweep, at folder level rather
    * than per known message, because the mailbox may hold mail the mirror never ingested and every
    * one of them must reach Trash before the folder may go. One `MOVE 1:*` on the warm connection;
-   * imapflow's fallback (COPY + \Deleted + EXPUNGE) covers servers without MOVE and is the standard
-   * move mechanics, not an expunge of mail — the copy lands first. Returns how many messages the
-   * sweep found; a source that no longer exists is 0. It also returns the FENCE: one EXAMINE inside
-   * the sweep's own lock, so what it reports is the folder as the sweep left it, and {@link
+   * without MOVE, a UID COPY proved in the destination before the same UIDs are expunged. Returns
+   * how many messages it moved; a source that no longer exists, or a refused sweep, is 0. It also
+   * returns the FENCE: one EXAMINE inside the sweep's own lock, so what it reports is the folder as
+   * the sweep left it, and {@link
    * deleteFolder} is authorized against that and nothing else.
    */
   async moveAll(folder: string, toFolder: string, door: WriteDoor): Promise<FolderSweepResult> {
     return this.moveAllByPath(this.toServerPath(folder), this.toServerPath(toFolder), door);
   }
 
-  /** {@link moveAll} on SERVER paths — the News merge's sweep, where resolving would collapse src and dst. */
-  private async moveAllByPath(src: string, dst: string, door: WriteDoor): Promise<FolderSweepResult> {
+  /**
+   * {@link moveAll} on SERVER paths — the News merge's sweep, where resolving would collapse src and
+   * dst. `refused`: the server would not take the sweep, so `moved` is 0 and the fence is what stayed.
+   */
+  private async moveAllByPath(src: string, dst: string, door: WriteDoor): Promise<FolderSweepResult & { refused: boolean }> {
     let lock: { release(): void };
     try {
       lock = await this.bounded(this.client.getMailboxLock(src));
@@ -2224,20 +2320,59 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // stopped answering as an empty result, which is the silent degrade this whole file exists
       // to replace with a refusal. See `imap-bounds.ts`.
       if (err instanceof ImapBoundExceeded) throw err;
-      return { moved: 0, fence: null };
+      return { moved: 0, fence: null, refused: false };
     }
     try {
       const mb = this.client.mailbox as MailboxObject | false;
       const count = mb && typeof mb.exists === "number" ? mb.exists : 0;
       // A folder the lock reports empty still gets its fence read: "empty" off the lock is a
       // memory (the fast path), and the DELETE may only follow a reading.
+      let moved = 0;
       if (count > 0) {
-        this.admitWrite(door, "folder_sweep");
-        await this.client.messageMove("1:*", dst);
+        const caps = await this.capabilities();
+        if (caps.move) {
+          this.admitWrite(door, "folder_sweep");
+          const res = await this.client.messageMove("1:*", dst);
+          if (!res || typeof res !== "object") return { moved: 0, fence: await this.folderFence(src), refused: true };
+          moved = count;
+        } else {
+          // No MOVE: never imapflow's imitation, which EXPUNGEs `1:*` after a refused COPY. The UIDs
+          // read here are copied, proved in `dst`, and only then expunged.
+          const uids = await this.searchBounded({ all: true }, { uid: true }, src);
+          if (!Array.isArray(uids)) return { moved: 0, fence: await this.folderFence(src), refused: true };
+          if (uids.length > 0) {
+            const before = caps.uidplus ? 0 : await this.messagesAt(dst);
+            this.admitWrite(door, "folder_sweep");
+            const copy = await this.client.messageCopy(uids, dst, { uid: true });
+            const landed = copy && typeof copy === "object" && (caps.uidplus
+              ? uids.every((u) => copy.uidMap?.has(u) === true)
+              : before !== null && ((await this.messagesAt(dst)) ?? -1) - before >= uids.length);
+            if (!landed) return { moved: 0, fence: await this.folderFence(src), refused: true };
+            this.admitWrite(door, "folder_sweep");
+            const gone = await this.client.messageDelete(uids, { uid: true });
+            const left = await this.searchBounded({ all: true }, { uid: true }, src);
+            const copied = new Set(uids);
+            if (gone === false || !Array.isArray(left) || left.some((u) => copied.has(u))) {
+              return { moved: 0, fence: await this.folderFence(src), refused: true };
+            }
+            moved = uids.length;
+          }
+        }
       }
-      return { moved: count, fence: await this.folderFence(src) };
+      return { moved, fence: await this.folderFence(src), refused: false };
     } finally {
       lock.release();
+    }
+  }
+
+  /** STATUS MESSAGES of a server path that is not the selected one; null when unanswered. */
+  private async messagesAt(path: string): Promise<number | null> {
+    try {
+      const st = await this.bounded(this.client.status(path, { messages: true }), path);
+      return typeof st?.messages === "number" ? st.messages : null;
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      return null;
     }
   }
 
@@ -2302,6 +2437,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * it) and throws the breach, so every later ask here answers `dropped` at once, never queued.
    */
   async folderStatus(canonical: string, deadlineMs: number): Promise<FolderStatusAnswer> {
+    return this.statusAt(this.toServerPath(canonical), canonical, deadlineMs);
+  }
+
+  /** {@link folderStatus} on a SERVER path; `canonical` names the folder in a breach. */
+  private async statusAt(serverPath: string, canonical: string, deadlineMs: number): Promise<FolderStatusAnswer> {
     const usable = (): boolean => (this.client as unknown as { usable?: unknown }).usable === true;
     if (this.retiredBecause !== null || !usable()) return { k: "dropped" };
     const clock = ImapDeadline.soonest(
@@ -2310,7 +2450,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     let st: Partial<StatusObject> | false | undefined;
     try {
       st = await clock.race(
-        this.client.status(this.toServerPath(canonical), { messages: true, uidValidity: true, uidNext: true }),
+        this.client.status(serverPath, { messages: true, uidValidity: true, uidNext: true }),
         canonical, (because) => this.retireConnection(because),
       ) as Partial<StatusObject> | false | undefined;
     } catch (err) {
@@ -2634,6 +2774,15 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       const c = this.toCanonical(e.path);
       return c.startsWith("INBOX/") ? c.slice("INBOX/".length) : c;
     }));
+    // A legacy folder BESIDE the pile, which no read reaches through the resolver.
+    const canonOf = new Map(list.map((e) => [this.toCanonical(e.path), e] as const));
+    const pick = (c: string): string | null =>
+      canonOf.has(c) ? c : (canonOf.has(`INBOX/${c}`) ? `INBOX/${c}` : null);
+    this.newsAt = pick(NEWS_FOLDER);
+    this.legacyNewsAt = this.newsPhysical === NEWS_FOLDER ? pick(LEGACY_NEWS_FOLDER) : null;
+    const legacyHolds = this.legacyNewsAt === null ? undefined : canonOf.get(this.legacyNewsAt)?.status?.messages;
+    if (this.legacyNewsAt === null) this.legacyFoldParked = null;
+    else if (this.legacyFoldParked === "empty" && legacyHolds !== 0) this.legacyFoldParked = null;
     const sent = this.sentFolder ?? this.scanSentFolder;
     // The ceiling bounds SELECTS PER CYCLE, not folders — see {@link DEFAULT_PASSIVE_FOLDERS_MAX}.
     // With LIST-STATUS a settled folder costs nothing at all, so the number that applies is the high
@@ -3594,7 +3743,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    */
   private async folderStatedGone(folder: string): Promise<boolean> {
     try {
-      await this.bounded(this.client.status(this.toServerPath(folder), { messages: true }), folder);
+      // The legacy News name is asked as itself: through the resolver it is News, which exists.
+      const path = folder === LEGACY_NEWS_FOLDER ? this.toServerPathRaw(folder) : this.toServerPath(folder);
+      await this.bounded(this.client.status(path, { messages: true }), folder);
       return false;
     } catch (err) {
       if (err instanceof ImapBoundExceeded) throw err;
@@ -4619,7 +4770,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private assertLocatorEpoch(locator: NativeLocator): void {
     const verdict = this.locatorEpochVerdict(locator);
     if (verdict === "unknown") throw new EpochUnknownError(locator);
-    if (verdict === "stale") throw new MessageGoneError(locator);
+    if (verdict === "stale") {
+      const mb = this.client.mailbox as MailboxObject | false;
+      const live = epochOf(mb ? mb.uidValidity : null);
+      throw new MessageGoneError(locator, false, live.known ? live.value : null);
+    }
   }
 
   /**
@@ -4739,7 +4894,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
             dstUid = caps.uidplus ? (res.uidMap?.get(uid) ?? null) : null;
-          }
+          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res);
         } else {
           // The pair's one ask: once this COPY has run, the DELETE below follows unasked.
           this.admitWrite(door, "move");
@@ -4747,7 +4902,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
             dstUid = caps.uidplus ? (res.uidMap?.get(uid) ?? null) : null;
-          }
+          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res);
           // NOT deleted here. See the header: the expunge is last, after the verify.
           sourceAwaitingDelete = true;
           copiedHere = true;
@@ -4792,7 +4947,18 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         lock.release();
       }
     }
-    return { folder: toFolder, ref: makeRef(dstUidValidity, dstUid) };
+    return { folder: canonicalDestination(toFolder), ref: makeRef(dstUidValidity, dstUid) };
+  }
+
+  /**
+   * imapflow answered a MOVE or COPY with `false` (it caught the server's tagged NO) or `undefined`
+   * (nothing was sent): NOT a move. Re-probed under the caller's source lock: a letter still there
+   * refuses with {@link MoveRefusedError}, and a dropped connection throws its own transport error
+   * here. A source already gone falls through to the destination look, which finds the copy.
+   */
+  private async assertNotTaken(locator: NativeLocator, toFolder: string, uid: number, res: unknown): Promise<void> {
+    const still = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
+    if (still) throw new MoveRefusedError(locator, toFolder, res === false ? "refused" : "not_sent");
   }
 
   /**
@@ -4928,11 +5094,21 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // the source and destination were read sends nothing (`WriteDeclinedError`).
         this.admitWrite(door, "move");
         const res = await this.client.messageMove(uids, dstPath, { uid: true });
+        // imapflow answers a tagged NO with `false` and an unsent command with `undefined`: no
+        // move unless the source says so. Re-probed under this lock — the whole set still there is
+        // a refusal (`refused`, recorded per member); a set some of which went is unmapped.
+        if (res === false || res === undefined || res === null) {
+          const left = await this.client.fetchAll(uids.join(","), { uid: true }, { uid: true });
+          const still = new Set<number>();
+          for (const r of left) if (askedRow(r, wanted, "uid")) still.add(r.uid);
+          if (uids.every((u) => still.has(u))) return { outcome: "refused", moved: new Map(), gone: [] };
+          return movedUnmapped;
+        }
         // FROM HERE THE MAIL HAS MOVED, so every refusal below answers `moved_unmapped`, never
         // the pre-write fallback: a server that reports the move as a bare `true`, or a `uidMap`
         // that does not name every message, leaves us unable to say WHERE each landed — which is
         // a reason not to record anything, and no reason at all to move it a second time.
-        if (!res || typeof res === "boolean") return movedUnmapped;
+        if (typeof res === "boolean") return movedUnmapped;
         const map = res.uidMap;
         // A map that does not name every message cannot say where the unnamed ones landed. The
         // per-message path can recover that by fingerprint; this one refuses instead — and it may,
@@ -4943,7 +5119,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         for (const uid of uids) {
           const dstUid = map.get(uid);
           if (dstUid == null) return movedUnmapped;
-          moved.set(wanted.get(uid)!.ref, { folder: toFolder, ref: makeRef(validity, dstUid) });
+          moved.set(wanted.get(uid)!.ref, { folder: canonicalDestination(toFolder), ref: makeRef(validity, dstUid) });
         }
       } finally {
         lock.release();

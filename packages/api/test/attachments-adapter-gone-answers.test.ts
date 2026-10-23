@@ -5,7 +5,7 @@ import { attachments, drafts, mailboxCredentials, messageBodies, messages } from
 import * as imapModule from "@trafficflow/core/adapters/imap";
 import {
   AttachmentTooLargeError, EpochUnknownError, ImapAdapter, ImapBoundConfigError, ImapBoundExceeded,
-  ImapConnectionClosedError, MessageGoneError, MoveIncompleteError, MoveVerifyError,
+  ImapConnectionClosedError, MessageGoneError, MoveIncompleteError, MoveRefusedError, MoveVerifyError,
   RawMessageTooLargeError, SameFolderMoveError, UnsupportedAuthTypeError, WriteDeclinedError,
 } from "@trafficflow/core/adapters/imap";
 import type { MimeStructure, NativeLocator, OutboundMessage, SendAdapter } from "@trafficflow/core/mail";
@@ -115,6 +115,7 @@ const MODULE_CLASSES: Record<string, { verdict: Verdict; make: () => unknown }> 
   ImapBoundConfigError: { verdict: "latch", make: () => new ImapBoundConfigError("TF_X", "not a number") },
   MoveVerifyError: { verdict: "latch", make: () => new MoveVerifyError(STALE, "Archive") },
   MoveIncompleteError: { verdict: "latch", make: () => new MoveIncompleteError(STALE, "Archive", "refused") },
+  MoveRefusedError: { verdict: "latch", make: () => new MoveRefusedError(STALE, "Archive", "refused") },
   SameFolderMoveError: { verdict: "latch", make: () => new SameFolderMoveError(STALE, "INBOX") },
   WriteDeclinedError: { verdict: "latch", make: () => new WriteDeclinedError("move", "claim_stale") },
   UnsupportedAuthTypeError: { verdict: "latch", make: () => new UnsupportedAuthTypeError("kerberos") },

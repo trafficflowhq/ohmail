@@ -1913,6 +1913,8 @@ export const DE: Deck = {
   selfCheckMirrorMore: (folder: string, n: number) =>
     `${folder} (${n} ${n === 1 ? "Nachricht" : "Nachrichten"} mehr hier)`,
   selfCheckRenumbered: (folder: string) => `${folder} (vom Server neu nummeriert)`,
+  selfCheckPredecessor: (folder: string, n: number) =>
+    `${folder}, der Ordner von News vor der Umbenennung (${n} ${n === 1 ? "Nachricht" : "Nachrichten"} noch nicht nach News verschoben)`,
   selfCheckAndMore: (list: string, n: number) => `${list} und ${n} weitere`,
   selfCheckFailed: "Die Prüfung konnte nicht laufen. Es wurde nichts verändert.",
 

@@ -854,6 +854,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `send()` writes it at the reservation, so an API ahead of the migration 42703s every send.
   // Deploy order migration → API → worker.
   ["outbound_sends", "offer_state"],
+  // mail 0164_messages_server_missing — a letter the mail server lost, kept in the mirror. LOUD:
+  // `select().from(messages)` on every read surface and in the worker's dedup lookup. Deploy order
+  // migration → API → worker.
+  ["messages", "server_missing_at"],
 ] as const;
 
 /**
@@ -1217,6 +1221,11 @@ export const MAIL_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker>
   // replaced under its name). Against a 0144 database the organizer's ack of an aged move behind a
   // newer placement is refused by the old CHECK and the reader's row never settles.
   ["organizer_requests_refused_reason_closed", "superseded"],
+  // Mail 0164_messages_server_missing — `stale_locator` and `unconfirmed` join the filing classes on
+  // both tables (0097's and 0117's constraints, replaced under their names). Against a 0163 database
+  // the worker's deferral of a letter it lost track of is refused by the old CHECK.
+  ["folder_state_last_error_class_check", "stale_locator"],
+  ["junk_rescues_error_class_check", "stale_locator"],
 ];
 
 /**
@@ -1273,7 +1282,7 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0163_folder_state_fresh_intent";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0164_messages_server_missing";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { messages } from "@trafficflow/db";
 import { materializeMessages } from "../src/dto/materialize.js";
 import { MessageService } from "../src/message-service.js";
 import { makeCtx, seedMessage } from "./helpers.js";
@@ -37,5 +39,17 @@ describe("MessageDTO.authVerdict", () => {
     const page = await new MessageService().list(c.ctx, { view: "imbox", limit: 5 });
     expect(page.items).toHaveLength(1);
     expect(Object.keys(page.items[0]!).sort()).toEqual([...KEYS_EVERY_MESSAGE_CARRIES].sort());
+  });
+});
+
+describe("MessageDTO.missingOnServer (mail 0164)", () => {
+  it("says so only for a letter marked missing on the server, so a reader can show it", async () => {
+    const c = await makeCtx();
+    const lost = await seedMessage(c.db, c.accountId, c.mailboxId, { folder: "ohmail/News", from: "a@x.test" });
+    const held = await seedMessage(c.db, c.accountId, c.mailboxId, { folder: "ohmail/News", from: "b@x.test" });
+    await c.db.update(messages).set({ serverMissingAt: new Date() }).where(eq(messages.id, lost));
+    const dtos = await materializeMessages(c.db, c.accountId, [lost, held]);
+    expect(dtos.get(lost)?.missingOnServer).toBe(true);
+    expect(Object.keys(dtos.get(held)!)).not.toContain("missingOnServer");
   });
 });

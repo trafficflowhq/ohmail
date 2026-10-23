@@ -479,6 +479,11 @@ export default defineConfig({
       // A folder deleted on the server leaves the folder list, and one made there joins it.
       "apps/worker/test/empty-folder-deleted-elsewhere.e2e.test.ts",
       "apps/worker/test/gone-folder-leaves-the-list.test.ts",
+      // The News rename's tail: a pre-0.22 row retired, a Reads folder beside News folded in.
+      "apps/worker/test/legacy-news-folder.e2e.test.ts",
+      // The legacy News repair and the letters it keeps, and the filing path around the six.
+      "apps/worker/test/legacy-news-repair.test.ts",
+      "apps/worker/test/legacy-news-filing.test.ts",
       // A message over the download ceiling, listed from its headers on the phone's store too.
       "apps/worker/test/too-large-message-is-listed.e2e.test.ts",
       // The blank repair's read and its writes on the device store: the desktop repairs a blank

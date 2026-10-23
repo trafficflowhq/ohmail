@@ -16,9 +16,10 @@ export interface SelfCheckRowSaid {
 }
 
 const item = (d: SelfCheckDiffer): string =>
-  d.k === "server_more" ? Copy.selfCheckServerMore(d.folder, d.n)
-    : d.k === "mirror_more" ? Copy.selfCheckMirrorMore(d.folder, d.n)
-      : Copy.selfCheckRenumbered(d.folder);
+  d.predecessorOf !== undefined ? Copy.selfCheckPredecessor(d.folder, d.n)
+    : d.k === "server_more" ? Copy.selfCheckServerMore(d.folder, d.n)
+      : d.k === "mirror_more" ? Copy.selfCheckMirrorMore(d.folder, d.n)
+        : Copy.selfCheckRenumbered(d.folder);
 
 const listOf = (items: string[], total: number): string =>
   (total > items.length ? Copy.selfCheckAndMore(items.join(", "), total - items.length) : items.join(", "));

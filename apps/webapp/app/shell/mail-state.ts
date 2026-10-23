@@ -1731,7 +1731,7 @@ export interface FilingReport {
  * say why") — silence there would restore the invisibility this whole arm exists to end.
  */
 export const FILING_REFUSAL_REASONS = [
-  "refused", "no_such_folder", "read_only", "over_quota", "unknown",
+  "refused", "no_such_folder", "read_only", "over_quota", "stale_locator", "unconfirmed", "unknown",
 ] as const;
 
 export type FilingRefusalReason = (typeof FILING_REFUSAL_REASONS)[number];

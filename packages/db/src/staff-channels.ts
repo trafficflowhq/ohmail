@@ -100,6 +100,8 @@ export const AUDIT_LOG_ACTIONS: readonly string[] = [
   "reconcile.move.same_folder",
   "reconcile.flags", "reconcile.flags.retired", "reconcile.flags.no_locator",
   "reconcile.flags.voided", "reconcile.flags.failed",
+  // The legacy News repair and the letters it found missing on the server (`apps/worker/src/news-repair.ts`).
+  "sync.legacy_news_repaired", "sync.message_missing",
   "sync.message_skipped", "sweep.junk_filed",
   // ── the worker's own passes ──────────────────────────────────────────────────────────────
   "ohbox_tidy_move", "redacted_body_restore", "rule_retro_move", "screener_auto_apply_move", "gap_catchup_move",

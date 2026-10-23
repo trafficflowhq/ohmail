@@ -347,3 +347,43 @@ describe("changesSince — a UIDVALIDITY reset with a letter deleted meanwhile",
     expect(refsIn(batch.moves, "Projects")).toEqual(["5:9"]);
   });
 });
+
+describe("changesSince — the pre-0.22 News row after the server rename", () => {
+  const LEGACY = "ohmail/Reads";
+  const residue = folder(mails("n", 2), 100n);
+  const noNews = (): Record<string, FakeFolder> =>
+    Object.fromEntries(Object.entries(watched()).filter(([p]) => p !== "ohmail/News"));
+
+  it("asked by its own name, not through the pile resolver: gone, with deletes at its epoch", async () => {
+    const client = makeClient({ ...watched(), "ohmail/News": folder(mails("n", 5), 100n) });
+    const batch = await pass(client, cursorOf({ ...watched(), "ohmail/News": folder(mails("n", 5), 100n), [LEGACY]: residue }));
+    expect(client.asked).toEqual([LEGACY]);
+    expect(batch.foldersGone).toEqual([LEGACY]);
+    expect(refsIn(batch.deletes, LEGACY)).toEqual(["100:1", "100:2"]);
+  });
+
+  it("still where News lives (not renamed yet): listed, never asked, kept", async () => {
+    const client = makeClient({ ...noNews(), [LEGACY]: residue });
+    const batch = await pass(client, cursorOf({ ...noNews(), [LEGACY]: residue }));
+    expect(client.asked).toEqual([]);
+    expect(batch.foldersGone).toBeUndefined();
+    expect(refsIn(batch.deletes, LEGACY)).toEqual([]);
+  });
+
+  it("listed beside News: never asked, kept", async () => {
+    const client = makeClient({ ...watched(), [LEGACY]: residue });
+    const batch = await pass(client, cursorOf({ ...watched(), [LEGACY]: residue }));
+    expect(client.asked).toEqual([]);
+    expect(batch.foldersGone).toBeUndefined();
+  });
+
+  it("a NO for another cause keeps it; a lost user folder still goes", async () => {
+    const kept = await pass(makeClient(watched(), { status: { no: "A" + "1 NO [NOPERM] Permission denied" } }),
+      cursorOf({ ...watched(), [LEGACY]: residue }));
+    expect(kept.foldersGone ?? []).toEqual([]);
+    const client = makeClient(watched());
+    const both = await pass(client, cursorOf({ ...watched(), [LEGACY]: residue, Projects: folder(mails("p", 1), 777n) }));
+    expect(client.asked.sort()).toEqual(["Projects", LEGACY]);
+    expect([...(both.foldersGone ?? [])].sort()).toEqual(["Projects", LEGACY]);
+  });
+});

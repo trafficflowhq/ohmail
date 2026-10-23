@@ -115,6 +115,8 @@ const GUARDS: Record<string, { arg: string; gate?: string }> = {
   "apps/worker/src/folder-ops.ts:runDelete:writeDoorOf": { arg: "deps.writeAuthority" },
   "apps/worker/src/junk-rescue.ts:junkRescuePass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
   "apps/worker/src/junk-rescue.ts:junkRescuePass:writeDoorOf": { arg: "deps.writeAuthority" },
+  "apps/worker/src/news-fold.ts:newsFoldPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },
+  "apps/worker/src/news-fold.ts:newsFoldPass:writeDoorOf": { arg: "deps.writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:assertMayWriteToMailbox": { arg: "writeAuthority" },
   "apps/worker/src/junk-sweep.ts:junkSweepPass:writeDoorOf": { arg: "writeAuthority" },
   "apps/worker/src/blank-repair.ts:blankRepairPass:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },

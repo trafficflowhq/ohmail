@@ -2812,6 +2812,8 @@ const TABLE = {
   selfCheckMirrorMore: (folder: string, n: number) =>
     `${folder} (${n} more ${n === 1 ? "message" : "messages"} here)`,
   selfCheckRenumbered: (folder: string) => `${folder} (renumbered by the server)`,
+  selfCheckPredecessor: (folder: string, n: number) =>
+    `${folder}, News' folder before the rename (${n} ${n === 1 ? "letter" : "letters"} not moved into News yet)`,
   selfCheckAndMore: (list: string, n: number) => `${list}, and ${n} more`,
   selfCheckFailed: "The check could not run. Nothing was changed.",
 
