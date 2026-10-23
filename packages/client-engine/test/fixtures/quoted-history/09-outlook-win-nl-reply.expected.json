@@ -1,0 +1,43 @@
+{
+  "id": "09",
+  "file": "09-outlook-win-nl-reply.eml",
+  "shape": "outlook-win-nl-reply",
+  "description": "Outlook for Windows, Dutch: Van:/Verzonden:/Aan:/Onderwerp:, iso-8859-1",
+  "client": "outlook_win",
+  "ui_language": "nl",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "iso-8859-1",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Sanne Proef"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Beste Sanne,",
+      "visibleLastLine": "Voorbeeld Installaties BV",
+      "historyStartLine": "Van: Sanne Proef <sanne.proef@example.net>",
+      "historyStartLineNormalized": "Van: Sanne Proef <sanne.proef@example.net>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Van: Sanne Proef <sanne.proef@example.net>",
+      "visibleFirstText": "Beste Sanne,",
+      "visibleLastText": "Voorbeeld Installaties BV"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

@@ -928,6 +928,22 @@ export {
   SAFE_HREF,
   tinyDimension,
 } from "./mail-render-rules.js";
+// Where a body's quoted history starts and ends — one reading for every reader. See `quoted-history.ts`.
+export {
+  QUOTED_HISTORY_LIMITS,
+  quotedDomTree,
+  quotedHistoryCut,
+  quotedHistoryOfHtml,
+  quotedHistoryOfText,
+  quotedHistoryReadingOfHtml,
+  quotedHistoryVerdictOfHtml,
+  type QuotedAt,
+  type QuotedDomNode,
+  type QuotedNodeRange,
+  type QuotedTextRange,
+  type QuotedTree,
+  type QuotedVerdict,
+} from "./quoted-history.js";
 
 // Which side failed for a file that could not be fetched — the one table both readers render from.
 export { attachmentFaultClass, type AttachmentFaultClass } from "./attachment-fault.js";

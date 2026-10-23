@@ -1,0 +1,47 @@
+{
+  "id": "56",
+  "file": "56-inline-interleaved-gmail-html.eml",
+  "shape": "inline-interleaved-gmail-html",
+  "description": "Gmail web, English: inside one div.gmail_quote, blockquote / bold answer / blockquote / answer / blockquote / answer; text/plain '> ' lines with *answers* between",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Elif Testa"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "On Wed, Oct 21, 2026 at 4:12 PM Elif Testa <elif.testa@example.net> wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 21, 2026 at 4:12 PM Elif Testa <elif.testa@example.net> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Wed, Oct 21, 2026 at 4:12 PM Elif Testa <elif.testa@example.net> wrote:",
+      "visibleFirstText": "Hi Elif,",
+      "visibleLastText": "Logistics Coordinator, Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [
+      "Yes, the first truck can be there at 7:15.",
+      "Understood, I moved that delivery to November 19.",
+      "Yes, I will send it 48 hours before arrival."
+    ],
+    "trailingTail": null
+  },
+  "notes": "The body ENDS with an answer, so no quote run is trailing."
+}

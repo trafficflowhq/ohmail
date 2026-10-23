@@ -1,0 +1,39 @@
+{
+  "id": "94",
+  "file": "94-apple-coloured-answers-inside-quote.eml",
+  "shape": "apple-coloured-answers-inside-quote",
+  "description": "Apple Mail, German: answers typed in blue inside the quote, nothing in the lead says so",
+  "client": "apple",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "Ja, die Filterreinigung ist Position 3 im Angebot.",
+      "Ja, bitte am Empfang hinterlegen."
+    ],
+    "trailingTail": null
+  }
+}

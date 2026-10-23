@@ -1,0 +1,36 @@
+{
+  "id": "87",
+  "file": "87-r42-gmail-plain-wrapped-attribution-chain.eml",
+  "shape": "r42-gmail-plain-wrapped-attribution-chain",
+  "description": "Gmail text/plain: the attribution wrapped at '<' over two lines at every level, a blank line before each quote",
+  "client": "gmail_wrapped",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Samir Muster",
+    "Léa Exemple"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thank you, that saves me a trip.",
+      "visibleLastLine": "Thank you, that saves me a trip.",
+      "historyStartLine": "On Fri, Oct 24, 2026 at 3:21 AM Samir Muster <",
+      "historyStartLineNormalized": "On Fri, Oct 24, 2026 at 3:21 AM Samir Muster <"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

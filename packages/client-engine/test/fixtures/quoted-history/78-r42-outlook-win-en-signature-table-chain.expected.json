@@ -1,0 +1,44 @@
+{
+  "id": "78",
+  "file": "78-r42-outlook-win-en-signature-table-chain.eml",
+  "shape": "r42-outlook-win-en-signature-table-chain",
+  "description": "Outlook desktop, English: a logo-and-name signature table (the name bold in brand blue) in every hop, two border-top From blocks",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Jonas Sample",
+    "Noor Example"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Dear Jonas,",
+      "visibleLastLine": "Example Works AG",
+      "historyStartLine": "From: Jonas Sample <jonas.sample@example.org>",
+      "historyStartLineNormalized": "From: Jonas Sample <jonas.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: Jonas Sample <jonas.sample@example.org>",
+      "visibleFirstText": "Dear Jonas,",
+      "visibleLastText": "Example Works AG"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

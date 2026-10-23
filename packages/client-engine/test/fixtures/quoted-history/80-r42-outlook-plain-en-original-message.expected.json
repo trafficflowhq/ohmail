@@ -1,0 +1,36 @@
+{
+  "id": "80",
+  "file": "80-r42-outlook-plain-en-original-message.eml",
+  "shape": "r42-outlook-plain-en-original-message",
+  "description": "Outlook plain text, English: '-----Original Message-----' hops, unquoted",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Samir Muster",
+    "Piet Voorbeeld"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thanks, I will note it on the receipt.",
+      "visibleLastLine": "Thanks, I will note it on the receipt.",
+      "historyStartLine": "-----Original Message-----",
+      "historyStartLineNormalized": "-----Original Message-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

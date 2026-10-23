@@ -1,0 +1,43 @@
+{
+  "id": "32",
+  "file": "32-thunderbird-de-forward-inline.eml",
+  "shape": "thunderbird-de-forward-inline",
+  "description": "Thunderbird, German, inline forward: div.moz-forward-container with '-------- Weitergeleitete Nachricht --------' and a moz-email-headers-table (Betreff/Datum/Von/An)",
+  "client": "thunderbird",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Clara,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "-------- Weitergeleitete Nachricht --------",
+      "historyStartLineNormalized": "-------- Weitergeleitete Nachricht --------"
+    },
+    "html": {
+      "historyStartSelector": "div.moz-forward-container",
+      "attributionBefore": null,
+      "historyStartText": "-------- Weitergeleitete Nachricht --------",
+      "visibleFirstText": "Hallo Clara,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+}

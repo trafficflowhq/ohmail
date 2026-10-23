@@ -1,0 +1,43 @@
+{
+  "id": "110",
+  "file": "110-mailcom-en-reply.eml",
+  "shape": "mailcom-en-reply",
+  "description": "mail.com, English: 'Sent:/From:/To:/Subject:' (the date first) over the original in an unclassed div name=quote",
+  "client": "mailcom",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Ben,",
+      "visibleLastLine": "Cheers, Clara",
+      "historyStartLine": "Sent: Thursday, October 22, 2026 at 9:14 AM",
+      "historyStartLineNormalized": "Sent: Thursday, October 22, 2026 at 9:14 AM"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-left:2px solid #C3D9E5\"]",
+      "attributionBefore": null,
+      "historyStartText": "Sent: Thursday, October 22, 2026 at 9:14 AM",
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Cheers, Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

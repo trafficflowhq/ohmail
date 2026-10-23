@@ -1,0 +1,36 @@
+{
+  "id": "85",
+  "file": "85-r42-plain-bottom-posted.eml",
+  "shape": "r42-plain-bottom-posted",
+  "description": "Plain text, bottom-posted: the attribution and '>' quote first, the new words last",
+  "client": "plain",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Piet Voorbeeld",
+    "Léa Exemple"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "leading",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Corrected, thank you Piet.",
+      "visibleLastLine": "Corrected, thank you Piet.",
+      "historyStartLine": "On Fri, 24 Oct 2026 at 03:21, Piet Voorbeeld <piet.voorbeeld@example.net> wrote:",
+      "historyStartLineNormalized": "On Fri, 24 Oct 2026 at 03:21, Piet Voorbeeld <piet.voorbeeld@example.net> wrote:"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

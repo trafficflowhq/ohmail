@@ -1,0 +1,36 @@
+{
+  "id": "39",
+  "file": "39-exchange-plain-fr-message-dorigine.eml",
+  "shape": "exchange-plain-fr-message-dorigine",
+  "description": "Plain text only, French: \"-----Message d'origine-----\" / De : / Envoyé : / À : / Objet :, windows-1252",
+  "client": "exchange_plain",
+  "ui_language": "fr",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "windows-1252",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Léa Modèle"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Bonjour Léa,",
+      "visibleLastLine": "Atelier Exemple SARL",
+      "historyStartLine": "-----Message d'origine-----",
+      "historyStartLineNormalized": "-----Message d'origine-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

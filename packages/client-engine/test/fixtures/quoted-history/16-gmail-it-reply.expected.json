@@ -1,0 +1,43 @@
+{
+  "id": "16",
+  "file": "16-gmail-it-reply.eml",
+  "shape": "gmail-it-reply",
+  "description": "Gmail web, Italian: 'Il giorno gio 22 ott 2026 alle ore 09:14 Name <address> ha scritto:'",
+  "client": "gmail",
+  "ui_language": "it",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Marco Prova"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Buongiorno Marco,",
+      "visibleLastLine": "Studio Esempio Srl",
+      "historyStartLine": "Il giorno mer 14 ott 2026 alle ore 11:20 Marco Prova <marco.prova@example.com> ha scritto:",
+      "historyStartLineNormalized": "Il giorno mer 14 ott 2026 alle ore 11:20 Marco Prova <marco.prova@example.com> ha scritto:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "Il giorno mer 14 ott 2026 alle ore 11:20 Marco Prova <marco.prova@example.com> ha scritto:",
+      "visibleFirstText": "Buongiorno Marco,",
+      "visibleLastText": "Studio Esempio Srl"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

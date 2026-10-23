@@ -1,0 +1,19 @@
+Thanks, I will note it on the receipt.
+
+-----Original Message-----
+From: Samir Muster <samir.muster@example.net>
+Sent: Fri, 24 Oct 2026 at 03:21
+To: Alex Reader <alex.reader@example.com>
+Subject: Delivery note 4471
+
+Hi Piet,
+you are right, box 12 is still in our warehouse. It ships tomorrow.
+
+-----Original Message-----
+From: Piet Voorbeeld <piet.voorbeeld@example.net>
+Sent: Fri, 24 Oct 2026 at 03:05
+To: Alex Reader <alex.reader@example.com>
+Subject: Delivery note 4471
+
+Hello Samir,
+the delivery note 4471 lists 12 boxes but we received 11.

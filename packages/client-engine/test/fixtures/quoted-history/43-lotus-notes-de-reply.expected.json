@@ -1,0 +1,43 @@
+{
+  "id": "43",
+  "file": "43-lotus-notes-de-reply.eml",
+  "shape": "lotus-notes-de-reply",
+  "description": "HCL (Lotus) Notes, German: grey <font size=1 color=#5f5f5f> label column Von/An/Datum/Betreff, <hr noshade>, subject prefix 'Antwort:'",
+  "client": "lotus",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "iso-8859-1",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Von:     \"Ana Example\" <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: \"Ana Example\" <ana.example@example.com>"
+    },
+    "html": {
+      "historyStartSelector": "font[color=\"#5f5f5f\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: \"Ana Example\" <ana.example@example.com>",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

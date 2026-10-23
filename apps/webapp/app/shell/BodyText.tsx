@@ -23,15 +23,15 @@
  */
 
 /**
- * The trailing history is folded, because the reader has read it: the trailing top-level quote run —
- * plus its attribution lines — collapses behind a quiet chip ({@link splitTrailingHistory} decides).
- * Three limits: only the trailing run (a quote answered inline is part of the letter); never on a
- * body that is nothing but quote (collapsing the only content empties the pane); and collapsed means
- * NOT IN THE DOM, not hidden by style — a folded tracking URL must not become an anchor until asked
- * for. Native path only: the framed HTML path shows the sender's own document, as sent.
+ * The quoted history is folded, because the reader has read it: the shared detector
+ * (`quotedHistoryOfText`, or `MessageBody`'s html reading handed down as {@link RichFold}) says
+ * where it starts and ends, and it sits behind one quiet toggle. Never on a body that is nothing
+ * but history, never over inline answers; collapsed means NOT IN THE DOM, not hidden by style — a
+ * folded tracking URL must not become an anchor until asked for.
  */
-import { memo, useState, type ReactNode } from "react";
+import { Fragment, memo, useId, useMemo, useState, type ReactNode } from "react";
 import { BODY_PAGE_CHARS, pageEnd, pageEnds } from "@ohmail/ui";
+import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedAt, type QuotedVerdict } from "@ohmail/client-engine";
 import { liveCopy } from "./locale";
 import { RenderedLinks } from "./rendered-links";
 
@@ -317,51 +317,6 @@ const EN = {
 export const COPY: typeof EN = liveCopy("bodyText", EN, { linkTitle: ["host"], more: ["percent"] });
 
 /**
- * The fold's one decision: which top-level nodes are "the trailing quoted history"? The LAST top-level node must be a
- * quote run (`toTree` has already merged contiguous quoted material, so a trailing history is exactly one node), and
- * every attribution paragraph sitting immediately above it — "On … wrote:", a Von/Gesendet/Betreff header block —
- * introduces that history and folds with it. `null` means "do not fold", and it is the answer whenever the lead would
- * hold no fresh words: a fully-quoted forward, a bare attribution over a quote, an empty body. Collapsing those would
- * put the whole message behind a chip. Mid-message quotes are lead BY CONSTRUCTION: a quote run with depth-0 prose
- * after it is not the last node, so it never reaches the fold. That is the inline-reply case, and it stays on screen
- * with the words that answer it.
- */
-/** Is this node an attribution line, in either of the two paragraph spellings? */
-function isAttributionNode(n: BodyNode): boolean {
-  return (n.kind === "para" && n.block.attribution) || (n.kind === "rich" && n.attribution);
-}
-
-/**
- * Does this node hold fresh words — content the fold must leave on screen? Quotes are what the
- * fold hides, attributions introduce them, and a bare rule holds no words; everything else —
- * a paragraph of either spelling, a heading, a list, a table — is the letter.
- */
-function carriesProse(n: BodyNode): boolean {
-  switch (n.kind) {
-    case "para": return !n.block.attribution;
-    case "rich": return !n.attribution;
-    case "heading": case "list": case "table": case "pre": return true;
-    case "quote": case "rule": return false;
-  }
-}
-
-function splitTrailingHistory(
-  nodes: BodyNode[],
-): { lead: BodyNode[]; history: BodyNode[] } | null {
-  const last = nodes[nodes.length - 1];
-  if (!last || last.kind !== "quote") return null;
-  let start = nodes.length - 1;
-  while (start > 0) {
-    const prev = nodes[start - 1]!;
-    if (isAttributionNode(prev)) start -= 1;
-    else break;
-  }
-  const lead = nodes.slice(0, start);
-  if (!lead.some(carriesProse)) return null;
-  return { lead, history: nodes.slice(start) };
-}
-
-/**
  * A CANDIDATE, NOT A DECISION. This matches anything shaped like `scheme:rest`, INCLUDING `javascript:` and `data:`.
  * That is on purpose and it is the whole design: if the pattern itself only ever matched `https?://`, the scheme rule
  * would be an invisible property of a regex nobody can watch fail, and `test/body-text.test.ts` case 1 would pass
@@ -617,14 +572,6 @@ function renderNodes(nodes: BodyNode[], keyPrefix: string, own: ReadonlySet<stri
   });
 }
 
-/**
- * `rich` is the walker's output for a prose-classified html part — `MessageBody` is the only
- * caller that passes it. Present and non-empty, it replaces the text-parsing entirely (the
- * message renders with its own structure — lists, tables, real anchors); absent, `null` (the
- * walker hit its node cap, or the mail had no usable structure) or empty, the text part
- * renders exactly as it always has. The fold below applies identically to both, because the
- * walker emits the same {@link QuoteNode} the text parser builds.
- */
 /** The plain-text parse of one stretch of a body: lines, blocks, the quote tree. */
 function parsePlain(text: string): BodyNode[] {
   return toTree(toBlocks(text.replace(/\r\n?/g, "\n").split("\n").map(classifyLine)));
@@ -641,11 +588,12 @@ const BodyPage = memo(function BodyPage({ text, index }: { text: string; index: 
 });
 
 /**
- * A plain body past one page ({@link BODY_PAGE_CHARS}, or its lines), drawn a page at a time with a press for the next. The
- * history fold is not offered here: its trailing quote is pages away from what is on screen. The
+ * A plain stretch past one page ({@link BODY_PAGE_CHARS}, or its lines), drawn a page at a time with
+ * a press for the next. The history fold runs BEFORE paging: what is paged is one part of it. The
  * shown count keys on the text, like the fold, so it never carries over to the next message.
+ * `ownEnd`: this stretch ends the message's own words (exactly one end marker per body).
  */
-function PagedBody({ text }: { text: string }) {
+function PagedBody({ text, ownEnd = true }: { text: string; ownEnd?: boolean }) {
   const [shown, setShown] = useState<{ text: string; pages: number }>({ text, pages: 1 });
   const pages = shown.text === text ? shown.pages : 1;
   const ends = pageEnds(text, pages);
@@ -653,7 +601,7 @@ function PagedBody({ text }: { text: string }) {
   return (
     <>
       {ends.map((e, i) => <BodyPage key={i} index={i} text={text.slice(i === 0 ? 0 : ends[i - 1]!, e)} />)}
-      <OwnEnd />
+      {ownEnd ? <OwnEnd /> : null}
       {end < text.length ? (
         <button type="button" className="msg-page-more" onClick={() => setShown({ text, pages: pages + 1 })}>
           {COPY.more(String(Math.floor((end / text.length) * 100)))}
@@ -665,61 +613,126 @@ function PagedBody({ text }: { text: string }) {
 
 /**
  * WHERE THE MESSAGE'S OWN WORDS END — a zero-size mark the reader's read rule takes as the body's
- * end (`reader-seen.ts`: a body shorter than its first three lines is its own top): after the lead
- * where history is folded, after the last shown page of a long body, else at the end.
+ * end (`reader-seen.ts`: a body shorter than its first three lines is its own top): above the
+ * toggle where history is folded, after the last shown page of a long body, else at the end.
  */
 export function OwnEnd() {
   return <span data-own-end="" aria-hidden="true" className="own-end" />;
 }
 
-/** `ownImages`: the message's own embedded-picture URLs, the only `blob:` srcs {@link inlineImageAdmitted} draws. */
-export function BodyText({ text, rich, ownImages = NO_OWN_IMAGES }: {
+/**
+ * THE ONE CONTROL OVER A FOLDED HISTORY, on every surface that renders one (this file and the
+ * framed body in `MessageBody`). A real button: Enter and Space come with the element, and it keeps
+ * its place in the tree when the history mounts after it, so focus stays on it. `aria-controls`
+ * names the region that exists only while open.
+ */
+export function HistoryToggle({ open, controls, onToggle }: { open: boolean; controls: string; onToggle: () => void }) {
+  return (
+    <button type="button" className="msg-history-toggle" aria-expanded={open} aria-controls={controls} onClick={onToggle}>
+      {open ? COPY.hide : COPY.show}
+    </button>
+  );
+}
+
+/** `MessageBody`'s reading of a prose html part's history: the walk of each side of the cut. */
+export interface RichFold {
+  at: QuotedAt;
+  before: BodyNode[];
+  history: BodyNode[];
+  after: BodyNode[];
+}
+
+/** One stretch of the text part: its nodes, or its pages when it is longer than one. */
+function plainPart(text: string, key: string, links: string[], ownEnd: boolean): ReactNode {
+  if (pageEnd(text, 0) < text.length) return <PagedBody key={key} text={text} ownEnd={ownEnd} />;
+  return (
+    <Fragment key={key}>
+      {renderNodes(parsePlain(text), key, NO_OWN_IMAGES, links)}
+      {ownEnd ? <OwnEnd /> : null}
+    </Fragment>
+  );
+}
+
+/**
+ * `rich` is the walker's output for a prose-classified html part — `MessageBody` is the only caller
+ * that passes it, and `richHistory` with it when its html reading found a history. `rich` alone
+ * renders whole: the html said there is no history. Neither: the text part renders, folded by
+ * {@link quotedHistoryOfText}. `ownImages`: the message's own embedded-picture URLs, the only
+ * `blob:` srcs {@link inlineImageAdmitted} draws. `foldKey` names the message for the open state
+ * (the text otherwise). `htmlFold`: the message's html part's own reading of its history — the
+ * text part folds only where it folds; absent when there is no html part.
+ */
+export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, foldKey, htmlFold }: {
   text: string;
   rich?: BodyNode[] | null;
+  richHistory?: RichFold | null;
   ownImages?: ReadonlySet<string>;
+  foldKey?: string;
+  htmlFold?: QuotedVerdict;
 }) {
   /**
-   * The fold's state keys on the MESSAGE TEXT, not on the component instance: `open` is only
-   * true while the text it was opened for is the text on screen. The pane reuses one mounted
-   * `BodyText` as the reader moves between messages, and a plain `useState(false)` would carry
-   * one mail's expansion onto the next — history the reader never asked for, on a message they
-   * have not read. Comparing against the same string the mirror handed down is an identity
-   * check in practice and correct even when it is not. The rich path keys on the same string:
-   * `text` is the same message's text part, handed down beside the nodes.
+   * The fold's state keys on the MESSAGE, not on the component instance: `open` is only true while
+   * the message it was opened for is the one on screen. The pane reuses one mounted `BodyText` as
+   * the reader moves between messages, and a plain `useState(false)` would carry one mail's
+   * expansion onto the next — history the reader never asked for, on a message they have not read.
    */
   const [openedFor, setOpenedFor] = useState<string | null>(null);
+  const region = useId();
+  const body = text ?? "";
+  const key = foldKey ?? body;
   const useRich = rich != null && rich.length > 0;
-  if (!useRich && pageEnd(text ?? "", 0) < (text ?? "").length) return <PagedBody text={text} />;
-  // CRLF is what an IMAP body actually carries; normalise before splitting on lines, or a
-  // blank line is `\r\n\r\n` and every paragraph boundary is missed.
-  const nodes = useRich ? rich : parsePlain(text ?? "");
-  const split = splitTrailingHistory(nodes);
+  // CRLF is what an IMAP body actually carries; the detector and the parts read the same lines.
+  const lines = useMemo(() => body.replace(/\r\n?/g, "\n").split("\n"), [body]);
+  const range = useMemo(
+    () => (useRich || body.length > QUOTED_HISTORY_LIMITS.chars ? null : quotedHistoryOfText(lines, { html: htmlFold })),
+    [useRich, body, lines, htmlFold],
+  );
+  const open = openedFor === key;
   // Every href drawn below, reported as on screen (`rendered-links.ts`): a folded history draws
   // nothing, so it reports nothing until it is open.
   const links: string[] = [];
-  if (split === null) {
-    const drawn = renderNodes(nodes, "b", ownImages, links);
-    return <>{drawn}<OwnEnd /><RenderedLinks hrefs={links} /></>;
+  const toggle = (
+    <HistoryToggle key="t" open={open} controls={region} onToggle={() => setOpenedFor(open ? null : key)} />
+  );
+  const shown = (children: ReactNode): ReactNode =>
+    open ? <div key="h" id={region} className="msg-history">{children}</div> : null;
+
+  if (useRich && richHistory) {
+    const before = renderNodes(richHistory.before, "b", ownImages, links);
+    const history = open ? renderNodes(richHistory.history, "h", ownImages, links) : null;
+    const after = renderNodes(richHistory.after, "a", ownImages, links);
+    return richHistory.at === "leading" ? (
+      <>{before}{toggle}{shown(history)}{after}<OwnEnd /><RenderedLinks hrefs={links} /></>
+    ) : (
+      <>{before}<OwnEnd />{toggle}{shown(history)}{after}<RenderedLinks hrefs={links} /></>
+    );
   }
-  const open = openedFor === text;
-  const lead = renderNodes(split.lead, "b", ownImages, links);
-  const history = open ? renderNodes(split.history, "h", ownImages, links) : null;
-  return (
+  if (useRich) {
+    return <>{renderNodes(rich, "b", ownImages, links)}<OwnEnd /><RenderedLinks hrefs={links} /></>;
+  }
+  if (range === null) {
+    if (pageEnd(body, 0) < body.length) return <PagedBody text={body} />;
+    return <>{renderNodes(parsePlain(body), "b", NO_OWN_IMAGES, links)}<OwnEnd /><RenderedLinks hrefs={links} /></>;
+  }
+  const part = (from: number, to: number): string => lines.slice(from, to).join("\n");
+  const leading = range.at === "leading";
+  const before = part(0, range.start);
+  const after = part(range.end, lines.length);
+  const history = open ? plainPart(part(range.start, range.end), "h", links, false) : null;
+  return leading ? (
     <>
-      {lead}
-      <OwnEnd />
-      {/* A real <button> — Enter and Space come with the element; `aria-expanded` reports the
-          fold. Collapsed history is NOT RENDERED rather than hidden: nothing in it (including
-          its anchors) exists until the reader asks. */}
-      <button
-        type="button"
-        className="msg-history-toggle"
-        aria-expanded={open}
-        onClick={() => setOpenedFor(open ? null : text)}
-      >
-        {open ? COPY.hide : COPY.show}
-      </button>
-      {history}
+      {before.trim() ? plainPart(before, "b", links, false) : null}
+      {toggle}
+      {shown(history)}
+      {plainPart(after, "a", links, true)}
+      <RenderedLinks hrefs={links} />
+    </>
+  ) : (
+    <>
+      {plainPart(before, "b", links, true)}
+      {toggle}
+      {shown(history)}
+      {after.trim() ? plainPart(after, "a", links, false) : null}
       <RenderedLinks hrefs={links} />
     </>
   );

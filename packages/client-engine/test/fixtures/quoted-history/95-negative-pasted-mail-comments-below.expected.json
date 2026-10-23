@@ -1,0 +1,35 @@
+{
+  "id": "95",
+  "file": "95-negative-pasted-mail-comments-below.eml",
+  "shape": "negative-pasted-mail-comments-below",
+  "description": "Plain text: a pasted header block under a lead that ends in a sentence, the writer's request below it",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 0,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Tom,",
+      "visibleLastLine": "Thanks, Dave",
+      "historyStartLine": "From: Bob Supplier <bob.supplier@example.com>",
+      "historyStartLineNormalized": "From: Bob Supplier <bob.supplier@example.com>"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "I think we should push back. Can you call them tomorrow and ask for a 2% cap?"
+    ],
+    "trailingTail": null
+  }
+}

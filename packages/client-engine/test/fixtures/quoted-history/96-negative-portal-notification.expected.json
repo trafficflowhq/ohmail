@@ -1,0 +1,35 @@
+{
+  "id": "96",
+  "file": "96-negative-portal-notification.eml",
+  "shape": "negative-portal-notification",
+  "description": "Plain text: a portal notification quoting the customer's message under a From/Subject/Date block",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 0,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hello,",
+      "visibleLastLine": "Answer it in the portal: https://support.example.com/t/4471",
+      "historyStartLine": "From: Carla Customer <carla.customer@example.net>",
+      "historyStartLineNormalized": "From: Carla Customer <carla.customer@example.net>"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "I cannot log in since this morning. Can you reset my account?"
+    ],
+    "trailingTail": null
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "17",
+  "file": "17-gmail-es-reply.eml",
+  "shape": "gmail-es-reply",
+  "description": "Gmail web, Spanish: 'El jue, 22 oct 2026 a las 9:14, Name (<address>) escribió:'",
+  "client": "gmail",
+  "ui_language": "es",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Pablo Muestra"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hola Pablo,",
+      "visibleLastLine": "Ejemplo Logística SL",
+      "historyStartLine": "El mié, 14 oct 2026 a las 12:05, Pablo Muestra (<pablo.muestra@example.net>) escribió:",
+      "historyStartLineNormalized": "El mié, 14 oct 2026 a las 12:05, Pablo Muestra (<pablo.muestra@example.net>) escribió:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "El mié, 14 oct 2026 a las 12:05, Pablo Muestra (<pablo.muestra@example.net>) escribió:",
+      "visibleFirstText": "Hola Pablo,",
+      "visibleLastText": "Ejemplo Logística SL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

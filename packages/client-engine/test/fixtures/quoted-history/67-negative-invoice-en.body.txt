@@ -1,0 +1,12 @@
+Invoice 2026-1042
+
+From: Brightwater Samples Ltd, 12 Example Road, Sampletown
+To: Harbourline Example Inc., 4 Placeholder Street, Exampleville
+Date: 22 October 2026
+Due: 21 November 2026
+
+Consulting hours    12    1,440.00
+Total                     1,440.00
+
+Please pay within 30 days.
+Brightwater Samples Ltd

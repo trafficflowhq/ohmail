@@ -1,0 +1,45 @@
+{
+  "id": "61",
+  "file": "61-gmail-reply-to-owa-forward-chain.eml",
+  "shape": "gmail-reply-to-owa-forward-chain",
+  "description": "Gmail reply quoting an OWA forward (x_-prefixed markers) of a two-level Outlook thread: gmail_quote > divRplyFwdMsg > border-top Von blocks",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 3,
+  "authorsInHistory": [
+    "Elif Testa",
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thanks Elif,",
+      "visibleLastLine": "Grace Sample",
+      "historyStartLine": "On Mon, Oct 12, 2026 at 9:13 AM Elif Testa <elif.testa@example.net> wrote:",
+      "historyStartLineNormalized": "On Mon, Oct 12, 2026 at 9:13 AM Elif Testa <elif.testa@example.net> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Mon, Oct 12, 2026 at 9:13 AM Elif Testa <elif.testa@example.net> wrote:",
+      "visibleFirstText": "Thanks Elif,",
+      "visibleLastText": "Grace Sample"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Three different marker families at three depths; the outermost (gmail_quote) starts the history."
+}

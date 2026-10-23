@@ -1,0 +1,34 @@
+{
+  "id": "68",
+  "file": "68-negative-designed-newsletter-card.eml",
+  "shape": "negative-designed-newsletter-card",
+  "description": "A designed newsletter (nested layout tables) whose content shows a full From/Sent/To/Subject card",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Example Weekly",
+      "visibleLastText": "Example Weekly, 1 Sample Lane, Exampleville"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

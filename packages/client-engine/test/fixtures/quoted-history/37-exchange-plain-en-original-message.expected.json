@@ -1,0 +1,36 @@
+{
+  "id": "37",
+  "file": "37-exchange-plain-en-original-message.eml",
+  "shape": "exchange-plain-en-original-message",
+  "description": "Plain text only, English: '-----Original Message-----' then From: Name [mailto:...] / Sent / To / Subject, history unquoted",
+  "client": "exchange_plain",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "-----Original Message-----",
+      "historyStartLineNormalized": "-----Original Message-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

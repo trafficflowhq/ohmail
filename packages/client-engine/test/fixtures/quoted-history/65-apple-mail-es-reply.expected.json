@@ -1,0 +1,43 @@
+{
+  "id": "65",
+  "file": "65-apple-mail-es-reply.eml",
+  "shape": "apple-mail-es-reply",
+  "description": "Apple Mail, Spanish: 'El 22 oct 2026, a las 9:14, Name <address> escribió:'",
+  "client": "apple",
+  "ui_language": "es",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Pablo Muestra"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hola Pablo,",
+      "visibleLastLine": "Ejemplo Logística SL",
+      "historyStartLine": "> El 11 oct 2026, a las 15:00, Pablo Muestra <pablo.muestra@example.net> escribió:",
+      "historyStartLineNormalized": "El 11 oct 2026, a las 15:00, Pablo Muestra <pablo.muestra@example.net> escribió:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "El 11 oct 2026, a las 15:00, Pablo Muestra <pablo.muestra@example.net> escribió:",
+      "visibleFirstText": "Hola Pablo,",
+      "visibleLastText": "Ejemplo Logística SL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

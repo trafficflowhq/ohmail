@@ -1227,6 +1227,8 @@ export const DE: Deck = {
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",
   bodyShowMore: (percent: number) => `Mehr anzeigen (${percent} % angezeigt)`,
+  bodyHistoryShow: "Verlauf anzeigen",
+  bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
   mailOpenLinkTitle: "Diesen Link öffnen?",

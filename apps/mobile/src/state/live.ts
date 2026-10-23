@@ -496,6 +496,8 @@ export type WorldEarlier = Held & {
   mine?: true;
   /** Who wrote it, for its square's name in the reader's rail. */
   sender?: string;
+  /** Its html part: the text's fold follows that part's own reading of its history. */
+  html?: string;
 };
 
 export type WorldMail = Omit<Mail, "earlier"> & {
@@ -1976,15 +1978,17 @@ export function liveMessage(
       const forwardedTo = isForwardedByUs(member)
         ? member.to.map((a) => a.name || a.address).filter((n) => n.length > 0).join(", ")
         : "";
+      const b = bodyOf(pres, member);
       return {
         id: member.id,
         subject: member.subject,
         time: messageDisplayTime(member, v.now, v.zone, v.locale ?? "en"),
-        body: bodyOf(pres, member).text,
+        body: b.text,
+        ...(b.html ? { html: b.html } : {}),
         seen: !member.unread,
         ...(isResurfaced(member) ? { resurfaced: true as const } : {}),
         ...(later ? { later: true as const } : {}),
-        ...(bodyReady(bodyOf(pres, member).state, member) ? { ready: true as const } : {}),
+        ...(bodyReady(b.state, member) ? { ready: true as const } : {}),
         ...(isOwnOutbound(member) ? { mine: true as const } : {}),
         sender: member.from.name || member.from.address,
         ...(forwardedTo ? { face: Copy.forwardedTo(forwardedTo) } : {}),

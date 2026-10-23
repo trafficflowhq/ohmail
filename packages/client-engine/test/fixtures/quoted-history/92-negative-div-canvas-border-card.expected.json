@@ -1,0 +1,34 @@
+{
+  "id": "92",
+  "file": "92-negative-div-canvas-border-card.eml",
+  "shape": "negative-div-canvas-border-card",
+  "description": "A max-width 600px newsletter whose reply card is an Outlook-style border-top div: designed, never history",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 0,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Example Helpdesk Weekly",
+      "visibleLastText": "Read the whole story on our blog."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

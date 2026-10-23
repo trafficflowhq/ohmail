@@ -1,0 +1,43 @@
+{
+  "id": "35",
+  "file": "35-yahoo-de-reply.eml",
+  "shape": "yahoo-de-reply",
+  "description": "Yahoo Mail, German: 'Am Donnerstag, 22. Oktober 2026 um 09:14:05 MESZ hat Name <address> Folgendes geschrieben:'",
+  "client": "yahoo",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "    Am Montag, 19. Oktober 2026 um 09:25:00 MESZ hat Ana Example <ana.example@example.com> Folgendes geschrieben:",
+      "historyStartLineNormalized": "Am Montag, 19. Oktober 2026 um 09:25:00 MESZ hat Ana Example <ana.example@example.com> Folgendes geschrieben:"
+    },
+    "html": {
+      "historyStartSelector": "div.yahoo_quoted",
+      "attributionBefore": null,
+      "historyStartText": "Am Montag, 19. Oktober 2026 um 09:25:00 MESZ hat Ana Example <ana.example@example.com> Folgendes geschrieben:",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

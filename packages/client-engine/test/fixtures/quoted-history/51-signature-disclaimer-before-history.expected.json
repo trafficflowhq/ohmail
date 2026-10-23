@@ -1,0 +1,44 @@
+{
+  "id": "51",
+  "file": "51-signature-disclaimer-before-history.eml",
+  "shape": "signature-disclaimer-before-history",
+  "description": "Outlook, German: every message ends with a signature AND a two-language legal disclaimer before the history; the disclaimer repeats at every level",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Guten Tag zusammen,",
+      "visibleLastLine": "This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender and delete this message.",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Guten Tag zusammen,",
+      "visibleLastText": "This e-mail may contain confidential information. If you are not the intended recipient, please notify the sender and delete this message."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "The visible part ends with the disclaimer (it belongs to the new message); a disclaimer is not a history marker."
+}

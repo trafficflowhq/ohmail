@@ -1,0 +1,44 @@
+{
+  "id": "29",
+  "file": "29-ios-mail-de-reply.eml",
+  "shape": "ios-mail-de-reply",
+  "description": "iOS Mail, German: 'Von meinem iPhone gesendet' over a two-level Outlook chain (the Outlook Von: block sits inside the iOS quote)",
+  "client": "ios",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Guten Tag zusammen,",
+      "visibleLastLine": "Von meinem iPhone gesendet",
+      "historyStartLine": "> Am 18.10.2026 um 11:36 schrieb Ben Sample <ben.sample@example.org>:",
+      "historyStartLineNormalized": "Am 18.10.2026 um 11:36 schrieb Ben Sample <ben.sample@example.org>:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Am 18.10.2026 um 11:36 schrieb Ben Sample <ben.sample@example.org>:",
+      "visibleFirstText": "Guten Tag zusammen,",
+      "visibleLastText": "Von meinem iPhone gesendet"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

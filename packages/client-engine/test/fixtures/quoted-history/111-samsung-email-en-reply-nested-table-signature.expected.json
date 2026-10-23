@@ -1,0 +1,43 @@
+{
+  "id": "111",
+  "file": "111-samsung-email-en-reply-nested-table-signature.eml",
+  "shape": "samsung-email-en-reply-nested-table-signature",
+  "description": "Fixture 44 (Samsung, '-------- Original message --------') with a nested-table signature under the quoted message",
+  "client": "samsung",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Sent from my Galaxy",
+      "historyStartLine": "-------- Original message --------",
+      "historyStartLineNormalized": "-------- Original message --------"
+    },
+    "html": {
+      "historyStartSelector": "div[style=\"font-size:100%;color:#000000\"]",
+      "attributionBefore": null,
+      "historyStartText": "-------- Original message --------",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Sent from my Galaxy"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Fixture 44 with one change; synthetic."
+}

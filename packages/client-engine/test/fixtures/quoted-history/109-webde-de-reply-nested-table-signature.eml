@@ -1,0 +1,35 @@
+From: Clara Muster <clara.muster@example.net>
+To: Ben Sample <ben.sample@example.org>
+Subject: Aw: Begehung
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh109@mail.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="united-qh109"
+
+--united-qh109
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hallo Ben,
+
+Dienstag passt mir gut, ich bringe die Pläne mit.
+
+Gruss Clara
+
+
+Gesendet: Donnerstag, 22. Oktober 2026 um 09:14 Uhr
+Von: "Ben Sample" <ben.sample@example.org>
+An: clara.muster@example.net
+Betreff: Begehung
+
+Hallo Clara,
+passt dir Dienstag für die Begehung?
+Ben Sample
+Example Works AG
+
+--united-qh109
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><head></head><body><div style="font-family: Verdana;font-size: 12.0px;"><div>Hallo Ben,</div><div>&nbsp;</div><div>Dienstag passt mir gut, ich bringe die Pläne mit.</div><div>&nbsp;</div><div>Gruss Clara</div><div>&nbsp;</div><div name="quote" style="margin:10px 5px 5px 10px; padding: 10px 0 10px 10px; border-left:2px solid #C3D9E5; word-wrap: break-word; -webkit-nbsp-mode: space; -webkit-line-break: after-white-space;"><div style="margin:0 0 10px 0;"><b>Gesendet:</b>&nbsp;Donnerstag, 22. Oktober 2026 um 09:14 Uhr<br><b>Von:</b>&nbsp;"Ben Sample" &lt;ben.sample@example.org&gt;<br><b>An:</b>&nbsp;clara.muster@example.net<br><b>Betreff:</b>&nbsp;Begehung</div><div name="quoted-content"><div>Hallo Clara,</div><div>passt dir Dienstag für die Begehung?</div><table><tr><td><table><tr><td><img src="cid:logo@example.org" width="80" height="40" alt="Example Works"></td></tr></table></td><td>Ben Sample<br>Example Works AG</td></tr></table></div></div></div></body></html>
+--united-qh109--

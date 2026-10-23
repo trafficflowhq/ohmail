@@ -1,0 +1,43 @@
+{
+  "id": "15",
+  "file": "15-gmail-fr-reply-to-outlook.eml",
+  "shape": "gmail-fr-reply-to-outlook",
+  "description": "Gmail web, French: 'Le jeu. 22 oct. 2026 à 09:14, Name <address> a écrit :' over an Outlook original (MsoNormal inside blockquote.gmail_quote)",
+  "client": "gmail",
+  "ui_language": "fr",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Léa Modèle"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Bonjour Léa,",
+      "visibleLastLine": "Atelier Exemple SARL",
+      "historyStartLine": "Le mer. 14 oct. 2026 à 10:45, Léa Modèle <lea.modele@example.org> a écrit :",
+      "historyStartLineNormalized": "Le mer. 14 oct. 2026 à 10:45, Léa Modèle <lea.modele@example.org> a écrit :"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "Le mer. 14 oct. 2026 à 10:45, Léa Modèle <lea.modele@example.org> a écrit :",
+      "visibleFirstText": "Bonjour Léa,",
+      "visibleLastText": "Atelier Exemple SARL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

@@ -1,0 +1,35 @@
+From: Clara Muster <clara.muster@example.com>
+To: Ben Sample <ben.sample@example.org>
+Subject: Re: Site visit
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh110@mail.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="united-qh110"
+
+--united-qh110
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hi Ben,
+
+Tuesday works for me, I will bring the plans.
+
+Cheers, Clara
+
+
+Sent: Thursday, October 22, 2026 at 9:14 AM
+From: "Ben Sample" <ben.sample@example.org>
+To: clara.muster@example.com
+Subject: Site visit
+
+Hi Clara,
+does Tuesday work for the site visit?
+Ben Sample
+Example Works AG
+
+--united-qh110
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><head></head><body><div style="font-family: Verdana;font-size: 12.0px;"><div>Hi Ben,</div><div>&nbsp;</div><div>Tuesday works for me, I will bring the plans.</div><div>&nbsp;</div><div>Cheers, Clara</div><div>&nbsp;</div><div name="quote" style="margin:10px 5px 5px 10px; padding: 10px 0 10px 10px; border-left:2px solid #C3D9E5; word-wrap: break-word; -webkit-nbsp-mode: space; -webkit-line-break: after-white-space;"><div style="margin:0 0 10px 0;"><b>Sent:</b>&nbsp;Thursday, October 22, 2026 at 9:14 AM<br><b>From:</b>&nbsp;"Ben Sample" &lt;ben.sample@example.org&gt;<br><b>To:</b>&nbsp;clara.muster@example.com<br><b>Subject:</b>&nbsp;Site visit</div><div name="quoted-content"><div>Hi Clara,</div><div>does Tuesday work for the site visit?</div><div>Ben Sample<br>Example Works AG</div></div></div></div></body></html>
+--united-qh110--

@@ -1,0 +1,43 @@
+{
+  "id": "90",
+  "file": "90-outlook-nested-table-signature-new-part.eml",
+  "shape": "outlook-nested-table-signature-new-part",
+  "description": "Outlook for Windows, German: the new message's signature is a nested table (logo cell, text cell with its own table)",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

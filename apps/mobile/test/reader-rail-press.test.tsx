@@ -127,6 +127,10 @@ vi.mock("../src/ui/BodyPages", async () => {
   const React = await import("react");
   return { BodyPages: (p: any) => React.createElement("div", { "data-rn": "BodyPages", "data-text": p.text }) };
 });
+vi.mock("../src/ui/HistoryFold", async () => {
+  const React = await import("react");
+  return { HistoryFold: (p: any) => React.createElement(React.Fragment, null, p.children, p.end), HistoryRow: () => null };
+});
 vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/MailBodyFrame", () => ({ MailBodyFrame: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));

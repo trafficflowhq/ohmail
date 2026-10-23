@@ -1,0 +1,27 @@
+From: Ana Example <ana.example@example.com>
+To: Ben Sample <ben.sample@example.org>
+Subject: Draft contract
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh101@mail.example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="qh2-qh101"
+
+--qh2-qh101
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hi Ben,
+
+please check this paragraph of the draft contract before Friday:
+
+> The supplier shall deliver within 30 days of the order.
+
+-- 
+Ana Example
+Projektleitung Haustechnik
+--qh2-qh101
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<div dir="ltr">Hi Ben,<div><br></div><div>please check this paragraph of the draft contract before Friday:</div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">The supplier shall deliver within 30 days of the order.</blockquote><div><br></div><span class="gmail_signature_prefix">-- </span><br><div dir="ltr" class="gmail_signature">Ana Example<br>Projektleitung Haustechnik</div></div>
+--qh2-qh101--

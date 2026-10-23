@@ -1,0 +1,10 @@
+Great, 14 copies is enough.
+
+On Friday, October 24th, 2026 at 03:21, Tobias Beispiel <tobias.beispiel@example.org> wrote:
+
+> Confirmed, the job runs at 02:00 and keeps 14 copies.
+>
+> On Friday, October 24th, 2026 at 03:05, Jonas Sample <jonas.sample@example.org> wrote:
+>
+> > Tobias,
+> > the encrypted backup should run nightly at 02:00. Can you confirm the job is set?

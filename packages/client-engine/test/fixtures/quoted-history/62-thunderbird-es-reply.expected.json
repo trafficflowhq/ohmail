@@ -1,0 +1,43 @@
+{
+  "id": "62",
+  "file": "62-thunderbird-es-reply.eml",
+  "shape": "thunderbird-es-reply",
+  "description": "Thunderbird, Spanish: 'El 22/10/26 a las 9:14, Name escribió:'",
+  "client": "thunderbird",
+  "ui_language": "es",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Pablo Muestra"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hola Pablo,",
+      "visibleLastLine": "Ejemplo Logística SL",
+      "historyStartLine": "El 18/10/26 a las 14:00, Pablo Muestra escribió:",
+      "historyStartLineNormalized": "El 18/10/26 a las 14:00, Pablo Muestra escribió:"
+    },
+    "html": {
+      "historyStartSelector": "div.moz-cite-prefix",
+      "attributionBefore": null,
+      "historyStartText": "El 18/10/26 a las 14:00, Pablo Muestra escribió:",
+      "visibleFirstText": "Hola Pablo,",
+      "visibleLastText": "Ejemplo Logística SL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

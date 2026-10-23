@@ -1,0 +1,36 @@
+{
+  "id": "40",
+  "file": "40-exchange-plain-it-messaggio-originale.eml",
+  "shape": "exchange-plain-it-messaggio-originale",
+  "description": "Plain text only, Italian: '-----Messaggio originale-----' / Da: / Inviato: / A: / Oggetto:",
+  "client": "exchange_plain",
+  "ui_language": "it",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "windows-1252",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Marco Prova"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Buongiorno Marco,",
+      "visibleLastLine": "Studio Esempio Srl",
+      "historyStartLine": "-----Messaggio originale-----",
+      "historyStartLineNormalized": "-----Messaggio originale-----"
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

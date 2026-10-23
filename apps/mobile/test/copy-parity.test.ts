@@ -120,6 +120,9 @@ const SAME_IN_BOTH: Record<string, string> = {
  * exists, never a new claim that two surfaces ought to match.
  */
 const SAME_AS_WEBAPP: Record<string, string> = {
+  /* The quoted-history toggle — the web body's own pair. */
+  bodyHistoryShow: "bodyText.show",
+  bodyHistoryHide: "bodyText.hide",
   /* The gate's two named `_meta` refusals — the desktop row's sentences on the phone's strip. */
   phoneStateMetaFolderFull: "sync.blocked_meta_folder_full",
   phoneStateMetaUndeletable: "sync.blocked_meta_undeletable",

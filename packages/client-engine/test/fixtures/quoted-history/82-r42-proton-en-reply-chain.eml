@@ -1,0 +1,30 @@
+From: Jonas Sample <jonas.sample@example.org>
+To: Alex Reader <alex.reader@example.com>
+Subject: Re: Encrypted backup schedule
+Date: Fri, 23 Oct 2026 10:15:00 +0200
+Message-ID: <q15.2.r42@mail.example.com>
+MIME-Version: 1.0
+In-Reply-To: <q15.1.r42@mail.example.com>
+References: <q15.0.r42@mail.example.com> <q15.1.r42@mail.example.com>
+Content-Type: multipart/alternative; boundary="r42-q15-2-r42"
+
+--r42-q15-2-r42
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Great, 14 copies is enough.
+
+On Friday, October 24th, 2026 at 03:21, Tobias Beispiel <tobias.beispiel@example.org> wrote:
+
+> Confirmed, the job runs at 02:00 and keeps 14 copies.
+>
+> On Friday, October 24th, 2026 at 03:05, Jonas Sample <jonas.sample@example.org> wrote:
+>
+> > Tobias,
+> > the encrypted backup should run nightly at 02:00. Can you confirm the job is set?
+--r42-q15-2-r42
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<div style="font-family: Arial, sans-serif; font-size: 14px;"><div>Great, 14 copies is enough.</div></div><div style="font-family: Arial, sans-serif; font-size: 14px;"><br></div><div class="protonmail_signature_block" style="font-family: Arial, sans-serif; font-size: 14px;"><div class="protonmail_signature_block-proton">Sent with <a target="_blank" href="https://proton.me/mail/home">Proton Mail</a> secure email.</div></div><div class="protonmail_quote">On Friday, October 24th, 2026 at 03:21, Tobias Beispiel &lt;tobias.beispiel@example.org&gt; wrote:<br><blockquote class="protonmail_quote" type="cite"><div style="font-family: Arial, sans-serif; font-size: 14px;"><div>Confirmed, the job runs at 02:00 and keeps 14 copies.</div></div><div style="font-family: Arial, sans-serif; font-size: 14px;"><br></div><div class="protonmail_signature_block" style="font-family: Arial, sans-serif; font-size: 14px;"><div class="protonmail_signature_block-proton">Sent with <a target="_blank" href="https://proton.me/mail/home">Proton Mail</a> secure email.</div></div><div class="protonmail_quote">On Friday, October 24th, 2026 at 03:05, Jonas Sample &lt;jonas.sample@example.org&gt; wrote:<br><blockquote class="protonmail_quote" type="cite"><div dir="ltr"><div>Tobias,</div><div>the encrypted backup should run nightly at 02:00. Can you confirm the job is set?</div></div></blockquote><br></div></blockquote><br></div>
+--r42-q15-2-r42--

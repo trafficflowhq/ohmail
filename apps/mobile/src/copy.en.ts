@@ -1852,6 +1852,9 @@ const TABLE = {
   mailShowOriginal: "Show original",
   /** The press under a body drawn a page at a time — the web's `bodyText.more`, word for word. */
   bodyShowMore: (percent: number) => `Show more (${percent}% shown)`,
+  /** The quoted-history toggle under a body — the web's `bodyText.show` / `bodyText.hide`, word for word. */
+  bodyHistoryShow: "Show history",
+  bodyHistoryHide: "Hide history",
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */

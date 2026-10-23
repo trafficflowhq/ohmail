@@ -1,0 +1,43 @@
+{
+  "id": "100",
+  "file": "100-samsung-email-en-bare-forward-signature.eml",
+  "shape": "samsung-email-en-bare-forward-signature",
+  "description": "Samsung Email, English: a forward with nothing typed but 'Sent from my Galaxy'",
+  "client": "samsung",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": true,
+    "text": {
+      "visibleFirstLine": "Sent from my Galaxy",
+      "visibleLastLine": "Ben",
+      "historyStartLine": "Sent from my Galaxy",
+      "historyStartLineNormalized": "Sent from my Galaxy"
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Sent from my Galaxy",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

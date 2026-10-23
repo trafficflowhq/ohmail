@@ -1,0 +1,43 @@
+{
+  "id": "22",
+  "file": "22-gmail-android-en-reply.eml",
+  "shape": "gmail-android-en-reply",
+  "description": "Gmail for Android, English: 'On Thu, 22 Oct 2026, 09:14 Name, <address> wrote:' over an Outlook original",
+  "client": "gmail_android",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Warehouse South is closed for inventory from November 16 to 18.",
+      "historyStartLine": "On Fri, 16 Oct 2026, 08:50 David Placeholder, <david.placeholder@example.com> wrote:",
+      "historyStartLineNormalized": "On Fri, 16 Oct 2026, 08:50 David Placeholder, <david.placeholder@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Fri, 16 Oct 2026, 08:50 David Placeholder, <david.placeholder@example.com> wrote:",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Warehouse South is closed for inventory from November 16 to 18."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

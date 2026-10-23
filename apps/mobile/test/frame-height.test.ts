@@ -263,7 +263,7 @@ describe("LOW 3: every frame timer is cancelled by what arms it", () => {
 
 describe("the frame is wired to that height, with JavaScript still off", () => {
   it("its height is the learned one; the settle is armed only by a seed-size reading", () => {
-    expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, m.id, windowWidth, rememberedFrameHeight(m.id));");
+    expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, frameId, windowWidth, rememberedFrameHeight(frameId));");
     expect(FRAME).toContain("if (frameHeight !== null) rememberFrameHeight(frameHeight);");
     expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, view, at));");
     expect(FRAME).toContain("const reported = e.nativeEvent.contentSize.height;");
@@ -273,7 +273,7 @@ describe("the frame is wired to that height, with JavaScript still off", () => {
     // The settle key is null until a seed-size reading: no timer runs from mount or from a width change.
     expect(FRAME).toContain("const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;");
     expect(FRAME).toContain("useEffect(() => armFrameTimer(settleDelayMs(sized, Date.now()), () => update(settleFrameHeight)), [settleKey]);");
-    expect(FRAME).toContain("onLoadEnd={() => setLoadedFor(m.id)}");
+    expect(FRAME).toContain("onLoadEnd={() => setLoadedFor(frameId)}");
     expect(FRAME).toContain("useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);");
     expect(code(FRAME)).not.toMatch(/\bsetTimeout\(|\bclearTimeout\(/);
   });

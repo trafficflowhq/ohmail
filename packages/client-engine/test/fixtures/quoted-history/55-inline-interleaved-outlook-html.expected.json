@@ -1,0 +1,47 @@
+{
+  "id": "55",
+  "file": "55-inline-interleaved-outlook-html.eml",
+  "shape": "inline-interleaved-outlook-html",
+  "description": "Outlook for Windows, German: 'meine Antworten finden Sie unten in Blau' - the answers are bold blue paragraphs INSIDE the quoted message, below its Von: header; no '>' anywhere",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Herr Sample,",
+      "visibleLastLine": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Herr Sample,",
+      "visibleLastText": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin"
+    },
+    "inlineAnswers": [
+      "[AE] Ja, die Filterreinigung ist Position 3 im Angebot.",
+      "[AE] Ja, bitte am Empfang hinterlegen, wir holen ihn um 9:15 Uhr ab.",
+      "[AE] Ja, Sie erhalten das Protokoll am selben Tag als PDF."
+    ],
+    "trailingTail": null
+  },
+  "notes": "Structurally identical to a plain Outlook reply (header block, then the earlier text); only the answers inside it say it must stay open. A fold keyed only on the Von: block hides the answers."
+}

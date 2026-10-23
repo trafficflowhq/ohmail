@@ -1,0 +1,43 @@
+{
+  "id": "14",
+  "file": "14-gmail-de-reply-to-apple.eml",
+  "shape": "gmail-de-reply-to-apple",
+  "description": "Gmail web, German: 'Am Do., 22. Okt. 2026 um 09:14 Uhr schrieb Name <address>:' over an Apple Mail original",
+  "client": "gmail",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "Am Mi., 14. Okt. 2026 um 09:30 Uhr schrieb Ana Example <ana.example@example.com>:",
+      "historyStartLineNormalized": "Am Mi., 14. Okt. 2026 um 09:30 Uhr schrieb Ana Example <ana.example@example.com>:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "Am Mi., 14. Okt. 2026 um 09:30 Uhr schrieb Ana Example <ana.example@example.com>:",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

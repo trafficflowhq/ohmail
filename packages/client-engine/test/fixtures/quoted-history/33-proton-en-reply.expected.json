@@ -1,0 +1,43 @@
+{
+  "id": "33",
+  "file": "33-proton-en-reply.eml",
+  "shape": "proton-en-reply",
+  "description": "Proton Mail, English: div.protonmail_quote with 'On Thursday, October 22nd, 2026 at 09:14, ... wrote:' + blockquote.protonmail_quote, 'Sent with Proton Mail secure email.'",
+  "client": "proton",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Sent with Proton Mail secure email.",
+      "historyStartLine": "On Monday, October 19th, 2026 at 07:05, David Placeholder <david.placeholder@example.com> wrote:",
+      "historyStartLineNormalized": "On Monday, October 19th, 2026 at 07:05, David Placeholder <david.placeholder@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.protonmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Monday, October 19th, 2026 at 07:05, David Placeholder <david.placeholder@example.com> wrote:",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Sent with Proton Mail secure email."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

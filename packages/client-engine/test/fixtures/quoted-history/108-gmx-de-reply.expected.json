@@ -1,0 +1,43 @@
+{
+  "id": "108",
+  "file": "108-gmx-de-reply.eml",
+  "shape": "gmx-de-reply",
+  "description": "GMX, German: 'Gesendet:/Von:/An:/Betreff:' (the date first) over the original in an unclassed div name=quote",
+  "client": "gmx",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Ben,",
+      "visibleLastLine": "Gruss Clara",
+      "historyStartLine": "Gesendet: Donnerstag, 22. Oktober 2026 um 09:14 Uhr",
+      "historyStartLineNormalized": "Gesendet: Donnerstag, 22. Oktober 2026 um 09:14 Uhr"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-left:2px solid #C3D9E5\"]",
+      "attributionBefore": null,
+      "historyStartText": "Gesendet: Donnerstag, 22. Oktober 2026 um 09:14 Uhr",
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Gruss Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

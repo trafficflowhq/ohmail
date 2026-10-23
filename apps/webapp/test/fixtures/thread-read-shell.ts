@@ -65,7 +65,10 @@ const takeLater = (): unknown[] => {
  * Serve `messages` (thread T, consented sender) once, record the read wire, mount the shell.
  * `threadIds` gives a thread the server's own length, past the members served.
  */
-export async function mountThread(messages: unknown[], opts: { threadIds?: Record<string, number> } = {}): Promise<HTMLElement> {
+export async function mountThread(
+  messages: unknown[],
+  opts: { threadIds?: Record<string, number>; bodies?: Parameters<typeof answerStoreWith>[1] } = {},
+): Promise<HTMLElement> {
   resetResumeLaneForTests();
   seq = 0;
   patches = [];
@@ -81,7 +84,10 @@ export async function mountThread(messages: unknown[], opts: { threadIds?: Recor
     [...ids, ...Array.from({ length: Math.max(0, (opts.threadIds?.[tid] ?? 0) - ids.length) }, (_, i) => `${tid}-elsewhere-${i}`)];
   const creates = [consent(LENA.address), ...messages, ...[...byThread].map(([tid, ids]) => thread(tid, padded(tid, ids)))];
   // Every message's body, so a panel is final (`data-body-ready`) and the read rule may read it.
-  answerStoreWith([], Object.fromEntries([...byThread.values()].flat().map((id) => [id, `the words of ${id}`])));
+  answerStoreWith([], {
+    ...Object.fromEntries([...byThread.values()].flat().map((id) => [id, `the words of ${id}`])),
+    ...opts.bodies,
+  });
   // The page stands until the client writes its first read; after that the drains are empty.
   let served = 0;
   answerSyncWith(() => json({

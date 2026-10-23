@@ -1,0 +1,43 @@
+{
+  "id": "04",
+  "file": "04-outlook-mac-classic-en-reply.eml",
+  "shape": "outlook-mac-classic-en-reply",
+  "description": "Outlook for Mac (classic), English: border-top #B5C4DF div with From/Date/To/Subject, the Gmail original (with its own gmail_quote-free body) below",
+  "client": "outlook_mac",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi David,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "From: David Placeholder <david.placeholder@example.com>",
+      "historyStartLineNormalized": "From: David Placeholder <david.placeholder@example.com>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #B5C4DF\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: David Placeholder <david.placeholder@example.com>",
+      "visibleFirstText": "Hi David,",
+      "visibleLastText": "Harbourline Example Inc."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

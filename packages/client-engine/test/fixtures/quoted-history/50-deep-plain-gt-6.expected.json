@@ -1,0 +1,46 @@
+{
+  "id": "50",
+  "file": "50-deep-plain-gt-6.eml",
+  "shape": "deep-plain-gt-6",
+  "description": "Plain text only, six levels of '>' nesting ('>>>>>>'), mutt attributions at each level, signatures interleaved",
+  "client": "mutt",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "reply",
+  "levels": 6,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder",
+    "Elif Testa",
+    "David Placeholder",
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing-before-signature",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Tuesday at 10am works for me. I'll send an invite.",
+      "historyStartLine": "On Sun, Oct 11, 2026 at 02:27:15PM +0200, Elif Testa wrote:",
+      "historyStartLineNormalized": "On Sun, Oct 11, 2026 at 02:27:15PM +0200, Elif Testa wrote:",
+      "signatureAfterHistory": [
+        "Best regards,",
+        "David Placeholder",
+        "Logistics Coordinator, Brightwater Samples Ltd"
+      ]
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

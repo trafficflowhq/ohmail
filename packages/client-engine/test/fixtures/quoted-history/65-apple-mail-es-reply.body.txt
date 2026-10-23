@@ -1,0 +1,22 @@
+Hola Pablo,
+
+sí, el camión llegará el jueves entre las 8:00 y las 10:00.
+
+El conductor llevará el albarán firmado.
+
+Saludos cordiales,
+Inés Ejemplo
+Ejemplo Logística SL
+
+> El 11 oct 2026, a las 15:00, Pablo Muestra <pablo.muestra@example.net> escribió:
+>
+> Hola Inés,
+>
+> ¿podéis confirmar la entrega del material en el almacén de Valencia para el jueves?
+>
+> Necesitamos la hora aproximada.
+>
+> -- 
+> Un saludo,
+> Pablo Muestra
+> Distribuciones Modelo SA

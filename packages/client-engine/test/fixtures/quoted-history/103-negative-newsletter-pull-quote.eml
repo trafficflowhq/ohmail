@@ -1,0 +1,10 @@
+From: The Repair Letter <letter@example.com>
+To: Ana Example <ana.example@example.com>
+Subject: The Repair Letter, October
+Date: Thu, 22 Oct 2026 10:15:00 +0200
+Message-ID: <qh103@mail.example.org>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<html><body><div style="max-width:600px;margin:0 auto;font-family:Georgia,serif"><table width="100%" cellpadding="0" cellspacing="0"><tr><td><h1>The Repair Letter</h1><p>This month we visited three workshops that repair what they sell.</p><p>Each of them keeps spare parts for ten years, and each of them told us the same thing.</p><blockquote style="border-left:3px solid #cc3333;padding-left:12px;font-style:italic"><p>We fix what we sell, and we sell what we can fix.</p></blockquote></td></tr></table><p style="font-size:11px;color:#888888">Example Repairs Ltd · 1 Sample Street · Exampletown<br><a href="https://example.com/unsubscribe">Unsubscribe</a></p></div></body></html>

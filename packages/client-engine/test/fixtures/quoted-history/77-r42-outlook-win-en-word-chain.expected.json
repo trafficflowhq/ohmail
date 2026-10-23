@@ -1,0 +1,44 @@
+{
+  "id": "77",
+  "file": "77-r42-outlook-win-en-word-chain.eml",
+  "shape": "r42-outlook-win-en-word-chain",
+  "description": "Outlook desktop (Word HTML), English: two border-top From blocks, no quote markup",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Samir Muster",
+    "Piet Voorbeeld"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thanks Samir, that closes it. I will send the sheet to finance this afternoon.",
+      "visibleLastLine": "Piet",
+      "historyStartLine": "From: Samir Muster <samir.muster@example.net>",
+      "historyStartLineNormalized": "From: Samir Muster <samir.muster@example.net>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: Samir Muster <samir.muster@example.net>",
+      "visibleFirstText": "Thanks Samir, that closes it. I will send the sheet to finance this afternoon.",
+      "visibleLastText": "Piet"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "id": "120",
+  "file": "120-owa-colon-answers-inside-quote.eml",
+  "shape": "owa-colon-answers-inside-quote",
+  "description": "Outlook on the web, German: lead 'siehe unten.', red answers that end in ':' under the questions below the divRplyFwdMsg block",
+  "client": "owa",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "Ja, enthalten, Details:",
+      "5000 CHF, aufgeteilt wie folgt:",
+      "Ab 14:00, bitte beachten:"
+    ],
+    "trailingTail": null
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "id": "19",
+  "file": "19-gmail-en-forward-with-note.eml",
+  "shape": "gmail-en-forward-with-note",
+  "description": "Gmail web, English: '---------- Forwarded message ---------' block (From/Date/Subject/To) inside div.gmail_quote, NO blockquote and NO '>' in text/plain, a note above",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Grace,",
+      "visibleLastLine": "Harbourline Example Inc.",
+      "historyStartLine": "---------- Forwarded message ---------",
+      "historyStartLineNormalized": "---------- Forwarded message ---------"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "---------- Forwarded message ---------",
+      "visibleFirstText": "Hi Grace,",
+      "visibleLastText": "Harbourline Example Inc."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+}

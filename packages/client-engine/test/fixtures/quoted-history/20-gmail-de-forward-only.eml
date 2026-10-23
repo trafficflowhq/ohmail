@@ -1,0 +1,38 @@
+From: Ben Sample <ben.sample@example.org>
+To: Clara Muster <clara.muster@example.org>
+Subject: =?utf-8?B?RndkOiBXYXJ0dW5nIEzDvGZ0dW5nc2FubGFnZSAyLiBPRw==?=
+Date: Thu, 15 Oct 2026 12:18:05 +0200
+Message-ID: <81a814c327435911918d@mail.example.org>
+In-Reply-To: <363b4941860d0baf6c48@mail.example.com>
+References: <363b4941860d0baf6c48@mail.example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+	boundary="0000000000006bab0605ec64"
+
+--0000000000006bab0605ec64
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+---------- Weitergeleitete Nachricht ---------
+Von: Ana Example <ana.example@example.com>
+Date: Do., 15. Okt. 2026 um 09:15 Uhr
+Subject: Wartung Lüftungsanlage 2. OG
+To: Ben Sample <ben.sample@example.org>
+
+
+Hallo Herr Sample,
+
+anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.
+
+Die Preise gelten bis zum 30. November 2026.
+
+Freundliche Grüße
+Ana Example
+Projektleitung Haustechnik
+Northwind Example GmbH · Musterstraße 12 · 10115 Berlin
+--0000000000006bab0605ec64
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+<br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">---------- Weitergeleitete Nachricht ---------<br>Von: <strong class="gmail_sendername" dir="auto">Ana Example</strong> <span dir="auto">&lt;ana.example@example.com&gt;</span><br>Date: Do., 15. Okt. 2026 um 09:15 Uhr<br>Subject: Wartung Lüftungsanlage 2. OG<br>To: Ben Sample &lt;ben.sample@example.org&gt;<br></div><br><br><p class="MsoNormal">Hallo Herr Sample,<o:p></o:p></p><p class="MsoNormal"><o:p>&nbsp;</o:p></p><p class="MsoNormal">anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.<o:p></o:p></p><p class="MsoNormal"><o:p>&nbsp;</o:p></p><p class="MsoNormal">Die Preise gelten bis zum 30. November 2026.<o:p></o:p></p><p class="MsoNormal"><o:p>&nbsp;</o:p></p><p class="MsoNormal"><span style="font-size:10.0pt;color:#595959">Freundliche Grüße<o:p></o:p></span></p><p class="MsoNormal"><span style="font-size:10.0pt;color:#595959">Ana Example<o:p></o:p></span></p><p class="MsoNormal"><span style="font-size:10.0pt;color:#595959">Projektleitung Haustechnik<o:p></o:p></span></p><p class="MsoNormal"><span style="font-size:10.0pt;color:#595959">Northwind Example GmbH · Musterstraße 12 · 10115 Berlin<o:p></o:p></span></p></div>
+--0000000000006bab0605ec64--

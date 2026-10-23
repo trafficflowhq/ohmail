@@ -1,0 +1,44 @@
+{
+  "id": "112",
+  "file": "112-gmail-en-reply-lead-photo-inline.eml",
+  "shape": "gmail-en-reply-lead-photo-inline",
+  "description": "Fixture 13 with the lead 'The photo is inline.': no announcement of answers",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "On Wed, Oct 14, 2026 at 11:05 AM Elif Testa <elif.testa@example.net> wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 14, 2026 at 11:05 AM Elif Testa <elif.testa@example.net> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Wed, Oct 14, 2026 at 11:05 AM Elif Testa <elif.testa@example.net> wrote:",
+      "visibleFirstText": "Hi Elif,",
+      "visibleLastText": "Logistics Coordinator, Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Fixture 13 with one change; synthetic."
+}

@@ -1,0 +1,40 @@
+{
+  "id": "118",
+  "file": "118-gmail-ok-done-answers-inside-quote.eml",
+  "shape": "gmail-ok-done-answers-inside-quote",
+  "description": "Gmail, English: lead 'see below.', the answers OK, OK, DONE in red under the quoted questions",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "OK",
+      "OK",
+      "DONE"
+    ],
+    "trailingTail": null
+  }
+}

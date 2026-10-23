@@ -1,0 +1,11 @@
+Hello,
+
+a new message arrived in your support portal.
+
+From: Carla Customer <carla.customer@example.net>
+Subject: Login does not work
+Date: Tuesday, October 20, 2026 4:12 PM
+
+I cannot log in since this morning. Can you reset my account?
+
+Answer it in the portal: https://support.example.com/t/4471

@@ -1,0 +1,43 @@
+{
+  "id": "06",
+  "file": "06-outlook-win-fr-reply.eml",
+  "shape": "outlook-win-fr-reply",
+  "description": "Outlook for Windows, French: 'De :'/'Envoyé :'/'À :'/'Objet :' with a no-break space before the colon (&nbsp; in HTML)",
+  "client": "outlook_win",
+  "ui_language": "fr",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Léa Modèle"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Bonjour Léa,",
+      "visibleLastLine": "Atelier Exemple SARL",
+      "historyStartLine": "De : Léa Modèle <lea.modele@example.org>",
+      "historyStartLineNormalized": "De : Léa Modèle <lea.modele@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "De : Léa Modèle <lea.modele@example.org>",
+      "visibleFirstText": "Bonjour Léa,",
+      "visibleLastText": "Atelier Exemple SARL"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

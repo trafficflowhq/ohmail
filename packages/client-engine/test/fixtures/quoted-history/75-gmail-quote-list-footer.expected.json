@@ -1,0 +1,53 @@
+{
+  "id": "75",
+  "file": "75-gmail-quote-list-footer.eml",
+  "shape": "gmail-quote-list-footer",
+  "description": "Gmail reply on a mailing list: the quote is followed by the list's footer, which stays visible",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "trailing-before-signature",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thanks, Thursday works for me.",
+      "visibleLastLine": "Ben",
+      "historyStartLine": "On Thu, 22 Oct 2026 at 09:14, Ana Example <ana.example@example.com> wrote:",
+      "historyStartLineNormalized": "On Thu, 22 Oct 2026 at 09:14, Ana Example <ana.example@example.com> wrote:",
+      "signatureAfterHistory": [
+        "_______________________________________________",
+        "Verein mailing list",
+        "verein@example.org",
+        "https://lists.example.org/listinfo/verein"
+      ]
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Thu, 22 Oct 2026 at 09:14, Ana Example <ana.example@example.com> wrote:",
+      "visibleFirstText": "Thanks, Thursday works for me.",
+      "visibleLastText": "Ben",
+      "signatureAfterHistory": [
+        "_______________________________________________",
+        "Verein mailing list",
+        "verein@example.org",
+        "https://lists.example.org/listinfo/verein"
+      ]
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

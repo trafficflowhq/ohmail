@@ -1,0 +1,40 @@
+{
+  "id": "122",
+  "file": "122-gmail-en-split-lead-caps-answers.eml",
+  "shape": "gmail-en-split-lead-caps-answers",
+  "description": "Gmail, English: lead 'My answers are, as usual, in red.' (split by commas), the answers YES, CHF 5'000, 14:00 in red inside the quote",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [
+      "YES",
+      "CHF 5'000",
+      "14:00"
+    ],
+    "trailingTail": null
+  }
+}

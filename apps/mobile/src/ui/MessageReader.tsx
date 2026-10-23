@@ -27,6 +27,7 @@ import { Chip, Panel, Screen, Scroller, Tap, TagChip, Txt } from "./base";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { BodyPages } from "./BodyPages";
+import { HistoryFold, HistoryRow } from "./HistoryFold";
 import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
@@ -171,6 +172,9 @@ export function MessageReader({
   }, [memberIds, hydrateHeld]);
   /** The message whose frame has its document's height (`MailBodyFrame`'s `onFinal`). */
   const [frameFinalFor, setFrameFinalFor] = useState<string | null>(null);
+  /** The opened html message's quoted history: where its frame found one, and whether it is open. */
+  const [frameHistory, setFrameHistory] = useState<{ id: string; at: "trailing" | "leading" } | null>(null);
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
   const framed = m != null && m.html != null && m.html !== "" && textFor !== m.id;
   const facts = useRef<{ inOhbox: boolean; unread: (mid: string) => boolean; ready: (mid: string) => boolean }>({
     inOhbox, unread: () => false, ready: () => false,
@@ -313,6 +317,11 @@ export function MessageReader({
   aboveCount.current = above.length;
   /** Waiting for the open anchor: older members above, nothing remembered, not placed yet. */
   const unplaced = inOhbox && above.length > 0 && anchor.holding && !placed;
+  /** The opened html message's history row, when its frame found a history. */
+  const openedHistory = frameHistory !== null && frameHistory.id === m.id ? frameHistory.at : null;
+  const historyRow = (
+    <HistoryRow open={historyFor === m.id} onToggle={() => setHistoryFor(historyFor === m.id ? null : m.id)} />
+  );
   /** A member's panel, above or below the opened message: its header, its body, its own files. */
   const memberPanel = (h: WorldEarlier, group: "above" | "below") => (
     <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
@@ -341,8 +350,10 @@ export function MessageReader({
       <EventCards events={h.events} style={{ marginTop: 10, marginBottom: 0 }} />
       {/* Where its body starts and ends: its first lines, with the header, are the read rule's top. */}
       <View style={{ height: 0, marginTop: 10 }} onLayout={(e) => seen.panelBody(h.id, e.nativeEvent.layout.y)} />
-      <BodyPages variant="streamBody" tone="ink2" text={h.body} />
-      <View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />
+      {/* Its quoted history folds; its end is where its own words end, above the row. */}
+      <HistoryFold foldKey={h.id} html={h.html} end={<View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />}>
+        <BodyPages variant="streamBody" tone="ink2" text={h.body} />
+      </HistoryFold>
       {/* Each member's own files: the reader's open asked for its list. */}
       <AttachmentTiles m={h} />
     </Panel>
@@ -534,8 +545,16 @@ export function MessageReader({
               {/* The html part renders in the frame (the web's rules, `MailBodyFrame`); the
                   text part is the fallback AND the reader's own "Show as text" choice. */}
               {m.html != null && m.html !== "" && textFor !== m.id ? (
-                <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)}
-                  onFinal={(final) => setFrameFinalFor((was) => (final ? m.id : was === m.id ? null : was))} />
+                <>
+                  {openedHistory === "leading" ? historyRow : null}
+                  <MailBodyFrame m={m} onShowAsText={() => setTextFor(m.id)}
+                    onFinal={(final) => setFrameFinalFor((was) => (final ? m.id : was === m.id ? null : was))}
+                    historyOpen={historyFor === m.id}
+                    onHistory={(at) => setFrameHistory(at === null ? null : { id: m.id, at })} />
+                  {/* Where the message's own words end: under the frame, above a trailing row. */}
+                  <View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />
+                  {openedHistory === "trailing" ? historyRow : null}
+                </>
               ) : (
                 <>
                   {m.html != null && m.html !== "" ? (
@@ -549,15 +568,18 @@ export function MessageReader({
                       (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
                       sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
                       at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
-                  <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+                  <HistoryFold foldKey={m.id} html={m.html} end={<View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />}>
+                    <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+                  </HistoryFold>
                 </>
               )}
             </>
           ) : null}
-          {/* Where the message's own words end — the body the read rule's first lines stop at. */}
+          {/* The section's foot, for the tint; a protected message's body ends here too (the body's
+              own end marker reports it otherwise). */}
           <View
             style={{ height: 0 }}
-            onLayout={(e) => { seen.openedEnd(e.nativeEvent.layout.y); setOpenedEndY(e.nativeEvent.layout.y); }}
+            onLayout={(e) => { if (m.protected) seen.openedEnd(e.nativeEvent.layout.y); setOpenedEndY(e.nativeEvent.layout.y); }}
           />
 
           <AttachmentTiles m={m} />

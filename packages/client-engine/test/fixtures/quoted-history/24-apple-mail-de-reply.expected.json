@@ -1,0 +1,43 @@
+{
+  "id": "24",
+  "file": "24-apple-mail-de-reply.eml",
+  "shape": "apple-mail-de-reply",
+  "description": "Apple Mail, German: 'Am 22.10.2026 um 09:14 schrieb Name <address>:' over an Outlook original",
+  "client": "apple",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Frau Example,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "> Am 17.10.2026 um 09:20 schrieb Ana Example <ana.example@example.com>:",
+      "historyStartLineNormalized": "Am 17.10.2026 um 09:20 schrieb Ana Example <ana.example@example.com>:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Am 17.10.2026 um 09:20 schrieb Ana Example <ana.example@example.com>:",
+      "visibleFirstText": "Hallo Frau Example,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

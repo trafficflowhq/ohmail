@@ -1,0 +1,44 @@
+{
+  "id": "83",
+  "file": "83-r42-yahoo-ydp-en-reply-chain.eml",
+  "shape": "r42-yahoo-ydp-en-reply-chain",
+  "description": "Yahoo Mail, English: div#ydp…yahoo_quoted_1.ydp…yahoo_quoted (the generated id prefix), no blockquote, nested twice",
+  "client": "yahoo",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Léa Exemple",
+    "Piet Voorbeeld"
+  ],
+  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Thursday is perfect, thank you.",
+      "visibleLastLine": "Thursday is perfect, thank you.",
+      "historyStartLine": "On Friday, 24 October 2026 at 03:21:00 CEST, Léa Exemple <lea.exemple@example.com> wrote:",
+      "historyStartLineNormalized": "On Friday, 24 October 2026 at 03:21:00 CEST, Léa Exemple <lea.exemple@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "[id$=\"yahoo_quoted_1\"]",
+      "attributionBefore": null,
+      "historyStartText": "On Friday, 24 October 2026 at 03:21:00 CEST, Léa Exemple <lea.exemple@example.com> wrote:",
+      "visibleFirstText": "Thursday is perfect, thank you.",
+      "visibleLastText": "Thursday is perfect, thank you."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

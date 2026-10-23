@@ -1,0 +1,12 @@
+EXAMPLE HELPDESK WEEKLY
+
+This week: how our support team answers your tickets.
+
+From: Support Desk <desk@example.com>
+Sent: Monday, October 19, 2026 9:00 AM
+To: A Customer <customer@example.org>
+Subject: Your ticket is solved
+
+A reply card like this one is what our template builder draws for you.
+
+Read the whole story on our blog.

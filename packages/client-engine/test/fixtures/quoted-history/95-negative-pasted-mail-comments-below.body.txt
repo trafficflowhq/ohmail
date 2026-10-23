@@ -1,0 +1,13 @@
+Hi Tom,
+the supplier sent the message below yesterday.
+
+From: Bob Supplier <bob.supplier@example.com>
+Sent: Tuesday, October 20, 2026 4:12 PM
+To: Dave Example <dave.example@example.org>
+Subject: Price change
+
+Prices go up 5% from 1 December.
+
+I think we should push back. Can you call them tomorrow and ask for a 2% cap?
+
+Thanks, Dave

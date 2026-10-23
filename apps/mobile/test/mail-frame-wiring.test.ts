@@ -80,7 +80,7 @@ describe("the device prerequisites are installed where they must be", () => {
   });
   it("the engine ask and the consent fetch are the frame's only fetching effects", () => {
     expect(FRAME).toContain("loadInlineImages(m.id, sanitized.cids)");
-    expect(FRAME).toContain("fetchRemoteImages(route, m.id, pictureUrls, { consented })");
+    expect(FRAME).toContain("fetchRemoteImages(route, m.id, urls, { consented, budget: log.budget })");
     expect(FRAME).toContain("const route = w.images;");
     expect(FRAME).toContain("imagesSeenBy(route)");
   });
@@ -115,7 +115,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   it("the counted document is the one handed to the WebView, and a drawn one only ever came from a fitted count", () => {
     expect(FRAME).toContain("const current = useMemo(() => (tooLong ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, sanitized.html, theme]);");
     expect(FRAME).toMatch(/current === null \? planFrameLength\(drawnChars \?\? 0, ceiling\) : planFrameCount\(current, sanitized\.oversize === true, ceiling\)/);
-    expect(FRAME).toContain("const kept = drawn !== null && drawn.id === m.id && drawn.html === html ? drawn.doc : null;");
+    expect(FRAME).toContain("const kept = drawn !== null && drawn.id === frameId && drawn.html === html ? drawn.doc : null;");
     expect(FRAME).toContain('const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);');
     expect(FRAME).toContain('const doc = shows.show === "frame" ? shows.doc : null;');
     expect(FRAME).toContain("if (count.reading.fits) setDrawn({ id, html, doc: plan.key });");
@@ -123,11 +123,13 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the pictures are written only into a document whose length was read inside the ceiling first", () => {
-    expect(FRAME).toContain("const bare = useMemo(() => sanitizeMailHtmlPhone(html, {}), [html]);");
+    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeMailHtmlPhone(html, {})), [folding, folded, html]);");
     expect(FRAME).toMatch(/pictured \? drawnLength\(html, pictures, bare, theme\) : null/);
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
     expect(FRAME).toContain("(pictured && !tooLong ? sanitizeMailHtmlPhone(html, pictures) : bare)");
-    expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(2);
+    // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`).
+    expect(FRAME).toContain("const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true }), [html]);");
+    expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(3);
     expect(code(FRAME).split("drawnLength(").length - 1).toBe(1);
   });
 
@@ -151,13 +153,13 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
     expect(code(FRAME).split("startFrameCount(").length - 1).toBe(1);
     expect(FRAME).toMatch(/return \(\) => \{\s*alive = false;\s*cancel\(\);\s*\};\s*\}, \[plan, id, html, setDrawn\]\);/);
     expect(FRAME).toContain("return plan === null ? null : frameReadingOf(plan, counted);");
-    expect(FRAME).toContain("const reading = useFrameCount(plan, m.id, html, setDrawn);");
+    expect(FRAME).toContain("const reading = useFrameCount(plan, frameId, html, setDrawn);");
   });
 
   it("a pictured state refused with nothing kept counts the bare document, never the text part for its pictures' sake", () => {
     expect(FRAME).toContain("const needBare = pictured && kept === null && reading !== null && !reading.fits;");
     expect(FRAME).toContain("(needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null)");
-    expect(FRAME).toContain("const bareReading = useFrameCount(barePlan, m.id, html, setDrawn);");
+    expect(FRAME).toContain("const bareReading = useFrameCount(barePlan, frameId, html, setDrawn);");
     expect(code(FRAME).split("useFrameCount(").length - 1).toBe(3);
   });
 

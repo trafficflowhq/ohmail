@@ -1,0 +1,43 @@
+{
+  "id": "54",
+  "file": "54-inline-interleaved-plain-with-tail.eml",
+  "shape": "inline-interleaved-plain-with-tail",
+  "description": "mutt, plain text only: interleaved answers, a short sign-off, then the UNANSWERED rest of the quote (incl. a deeper '>>' level) trailing below",
+  "client": "mutt",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "us-ascii",
+  "transfer_encoding": {
+    "text/plain": "7bit",
+    "text/html": null
+  },
+  "historyKind": "inline",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing-tail-only",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "David",
+      "historyStartLine": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:",
+      "historyStartLineNormalized": "On Wed, Oct 21, 2026 at 04:12:00PM +0200, Elif Testa wrote:"
+    },
+    "html": null,
+    "inlineAnswers": [
+      "Yes, the first truck can be there at 7:15.",
+      "Yes, I will send it 48 hours before arrival."
+    ],
+    "trailingTail": {
+      "startLine": "> Thanks again for the quick turnaround.",
+      "foldable": true
+    }
+  },
+  "notes": "The interleaved part (attribution down to 'David') must stay; only the trailing unanswered tail may fold."
+}

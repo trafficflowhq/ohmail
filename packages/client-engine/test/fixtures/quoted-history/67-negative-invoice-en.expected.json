@@ -1,0 +1,41 @@
+{
+  "id": "67",
+  "file": "67-negative-invoice-en.eml",
+  "shape": "negative-invoice-en",
+  "description": "An invoice: From:/To:/Date: address rows, no Subject label",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Invoice 2026-1042",
+      "visibleLastLine": "Brightwater Samples Ltd",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Invoice 2026-1042",
+      "visibleLastText": "Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

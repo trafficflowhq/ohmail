@@ -1,0 +1,33 @@
+{
+  "id": "69",
+  "file": "69-negative-wrote-in-prose.eml",
+  "shape": "negative-wrote-in-prose",
+  "description": "Prose that says 'On Monday she wrote:' mid-paragraph and alone on a line, with no quote below",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Ben,",
+      "visibleLastLine": "Ana",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}

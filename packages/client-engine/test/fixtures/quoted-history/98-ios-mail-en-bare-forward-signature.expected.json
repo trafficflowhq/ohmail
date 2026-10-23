@@ -1,0 +1,43 @@
+{
+  "id": "98",
+  "file": "98-ios-mail-en-bare-forward-signature.eml",
+  "shape": "ios-mail-en-bare-forward-signature",
+  "description": "iOS Mail, English: a forward with nothing typed but 'Sent from my iPhone'",
+  "client": "ios",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": true,
+    "text": {
+      "visibleFirstLine": "Sent from my iPhone",
+      "visibleLastLine": "Ben",
+      "historyStartLine": "Sent from my iPhone",
+      "historyStartLineNormalized": "Sent from my iPhone"
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Sent from my iPhone",
+      "visibleLastText": "Ben"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

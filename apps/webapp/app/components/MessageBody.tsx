@@ -12,13 +12,14 @@
  */
 
 import DOMPurify from "dompurify";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { BODY_PAGE_CHARS, useOptionalTheme } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
 import {
   anchorFor,
   BodyText,
+  HistoryToggle,
   OwnEnd,
   inlineImageAdmitted,
   isAttribution,
@@ -37,9 +38,11 @@ import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
+import { QUOTED_HISTORY_LIMITS, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
+import { foldSanitized, type SanitizedFold } from "./quoted-fold";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes
@@ -2103,10 +2106,27 @@ function tableOf(el: Element, depth: number, b: RichBudget, out: BodyNode[], nes
  * walker existed — the fallback is the previous behaviour, not a degraded one.
  */
 export function buildRichNodes(root: Element, own: ReadonlySet<string> = NO_OWN_IMAGES): BodyNode[] | null {
+  const nodes = buildRichNodesOf(root, own);
+  return nodes !== null && nodes.length > 0 ? nodes : null;
+}
+
+/** The walk of one side of a folded body's cut: empty when it holds nothing, `null` past the budget. */
+function buildRichNodesOf(root: Element, own: ReadonlySet<string>): BodyNode[] | null {
   const b: RichBudget = { left: MAX_RICH_NODES, chars: MAX_RICH_CHARS, own };
   const nodes = blocksOf(root, 0, b, 0);
-  if (b.left < 0) return null;
-  return nodes.length > 0 ? nodes : null;
+  return b.left < 0 ? null : nodes;
+}
+
+/**
+ * The quoted-history reading of an html part the reader will not render (past its parse budget),
+ * for the text part that renders instead: read under the detector's own bounds, never sanitized for
+ * display. Past those bounds the answer is "unread" and the text folds only `>` runs.
+ */
+export function unrenderedHtmlVerdict(html: string): QuotedVerdict {
+  if (html.length > QUOTED_HISTORY_LIMITS.chars || !treeWithin(html, { elements: QUOTED_HISTORY_LIMITS.nodes }).fits) return "unread";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const sheets = [...doc.head.querySelectorAll("style")].map((el) => el.textContent ?? "");
+  return quotedHistoryVerdictOfHtml(doc.body as unknown as QuotedDomNode, quotedDomTree, { sheets });
 }
 
 export interface SanitizeOptions {
@@ -2147,6 +2167,11 @@ export interface SanitizeOptions {
    * nothing loads in either position, so a client with no proxy cannot leak by setting it.
    */
   loadPixels?: boolean;
+  /**
+   * Read the body's quoted history too ({@link SanitizedMail.fold}). `false` by default: only the
+   * reader that draws the toggle asks for it.
+   */
+  history?: boolean;
 }
 
 export interface SanitizedMail {
@@ -2225,6 +2250,14 @@ export interface SanitizedMail {
    */
   links: string[];
   /**
+   * THE DOCUMENT WITH ITS QUOTED HISTORY CUT OUT (`quoted-fold.ts`), or `null`: no history, or not
+   * asked for ({@link SanitizeOptions.history}). Its lists are the folded document's own; every
+   * field above keeps its whole-document meaning.
+   */
+  fold: SanitizedFold<BlockedAsset> | null;
+  /** The html's reading of its quoted history, which its text part follows (asked with `history`). */
+  historyAt?: QuotedVerdict;
+  /**
    * The html part was past {@link MAX_HTML_CHARS} and was not rendered at all. Present only
    * in that case, so an ordinary message carries no flag to test.
    */
@@ -2288,7 +2321,17 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // The unresolved `cid:` references — distinct, in document order. See {@link SanitizedMail.cids}.
   const cids: string[] = [];
   const cidsSeen = new Set<string>();
+  // Where the post-pass met each entry, so the folded document keeps only its own (`quoted-fold.ts`).
+  let metAt: Element | null = null;
+  const met = { blocked: new Map<string, Element[]>(), cids: new Map<string, Element[]>(), links: new Map<string, Element[]>() };
+  const note = (m: Map<string, Element[]>, key: string): void => {
+    if (metAt === null) return;
+    const els = m.get(key);
+    if (els) els.push(metAt);
+    else m.set(key, [metAt]);
+  };
   const recordCid = (cid: string): void => {
+    note(met.cids, cid);
     if (cidsSeen.has(cid)) return;
     cidsSeen.add(cid);
     cids.push(cid);
@@ -2298,7 +2341,9 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const linksSeen = new Set<string>();
   const recordLink = (href: string): void => {
     const link = linkHref(href);
-    if (link === null || linksSeen.has(link)) return;
+    if (link === null) return;
+    note(met.links, link);
+    if (linksSeen.has(link)) return;
     linksSeen.add(link);
     links.push(link);
   };
@@ -2309,15 +2354,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // conservative side: these branches produce no document to have read, and a `true` here would
   // send an unparseable message down the frameless path on the strength of nothing.
   if (!sanitizerAvailable()) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null };
   }
   if (html.length > MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, oversize: true };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null, oversize: true };
   }
 
   const seen = new Set<string>();
   const record = (url: string, via: BlockedAsset["via"], pixel: boolean): void => {
     const key = `${via}:${url}`;
+    note(met.blocked, key);
     if (seen.has(key)) return;
     seen.add(key);
     blocked.push({ url, host: hostOfUrl(url), via, pixel });
@@ -2376,6 +2422,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * it annotates is what the reader gets, however that element came to be there.
    */
   const onAttributes = (node: Element): void => {
+    metAt = node;
     const tag = node.tagName.toLowerCase();
     cutAttrText(node);
 
@@ -2639,10 +2686,11 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     }) as unknown as HTMLElement | null;
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
-  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links };
+  if (!sanitized) return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, fold: null };
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
   for (const node of sanitized.querySelectorAll("*")) onAttributes(node);
+  metAt = null;
   markDataTables(sanitized);
 
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
@@ -2663,20 +2711,30 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
   const rigid = isRigidLayout(sanitized, sanitizedSheets);
   const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
+  const whole = sanitized.innerHTML;
+  // THE WALK RUNS ON THE SAME ELEMENT the line above serialized — the sanitized, post-passed
+  // document — and only for a mail the frame will not render. What it emits is data (text runs,
+  // bounded ints, gated hrefs); the serialized string stays the frame's.
+  const rich = designed ? null : buildRichNodes(sanitized, ownImages);
+  // Last, because it cuts the tree: everything above is about the whole document.
+  const folded = opts.history === true
+    ? foldSanitized(sanitized, {
+      prose: rich !== null, blocked, cids, links, met, walk: (holder) => buildRichNodesOf(holder, ownImages),
+    })
+    : null;
   return {
-    html: sanitized.innerHTML,
+    html: whole,
     blocked,
     sheets,
     light: mailIsLight(background),
     reflow: !rigid,
     prose: !designed,
-    // THE WALK RUNS ON THE SAME ELEMENT the line above is about to serialize — the sanitized,
-    // post-passed document — and only for a mail the frame will not render. What it emits is
-    // data (text runs, bounded ints, gated hrefs); the serialized string stays the frame's.
-    rich: designed ? null : buildRichNodes(sanitized, ownImages),
+    rich,
     background,
     cids,
     links,
+    fold: folded?.fold ?? null,
+    historyAt: folded?.historyAt,
   };
 }
 
@@ -3575,7 +3633,8 @@ export function MessageBody({
   const engine = useEngineOrNull();
   const mail = useMemo(() => {
     if (!html) return null;
-    if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
+    // `historyAt`: the html's own reading of its quoted history, which the text part rendered instead follows.
+    if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const, historyAt: "unread" as QuotedVerdict };
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
@@ -3591,17 +3650,17 @@ export function MessageBody({
     // The length first, so a part past it is parsed by nobody; then the tree the first parse in
     // `sanitizeMailHtml` would build, counted under a budget before anything else parses it.
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
-      return { state: "oversize" as const };
+      return { state: "oversize" as const, historyAt: unrenderedHtmlVerdict(html) };
     }
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links } =
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links, fold, historyAt = "unread" } =
       sanitizeMailHtml(html, {
-        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels,
+        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true,
       });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
-    if (oversize) return { state: "oversize" as const };
+    if (oversize) return { state: "oversize" as const, historyAt: "unread" as QuotedVerdict };
     if (clean.trim().length === 0) return null;
-    const doc = buildMailDocument(clean, {
+    const docOpts = {
       // `proxy` is non-null exactly when the reader has consented AND a source could be
       // stated, so this is the one value both the rewrite and the policy were decided from.
       imgSource: proxy ? imgSource : null,
@@ -3615,12 +3674,15 @@ export function MessageBody({
       // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
       // Ignored whenever the filter is on — see FRAME_CSS.
       paper: clampedPaper(background),
-    });
+    };
+    const doc = buildMailDocument(clean, docOpts);
+    // The same document with its quoted history cut out: the frame's folded state.
+    const foldDoc = fold ? buildMailDocument(fold.html, docOpts) : null;
     // Counted over `doc`, the string the frame parses, never over `clean`. Past one frame a letter
     // keeps its own path (the walk, else the text part) and loses only the flip to its layout; a
     // designed mail, or a letter with no text part, renders as text.
     const fits = treeWithin(doc, { elements: MAX_FRAME_ELEMENTS, textChars: MAX_FRAME_TEXT_CHARS }).fits;
-    if (!fits && (!prose || !hasText)) return { state: "oversize" as const };
+    if (!fits && (!prose || !hasText)) return { state: "oversize" as const, historyAt };
     return {
       state: "ok" as const,
       /**
@@ -3659,6 +3721,11 @@ export function MessageBody({
       cids,
       /** The frame's http(s) links, reported while the frame is on screen. */
       links,
+      /** The quoted history's cut (`quoted-fold.ts`): the folded document and its own lists. */
+      fold,
+      historyAt,
+      foldDoc,
+      foldKey: foldDoc === null ? null : frameIdentity(foldDoc),
     };
   }
     // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
@@ -3865,7 +3932,35 @@ export function MessageBody({
 
   // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
   // map of the same pictures, a host's new closure) is the same frame and must not probe it again.
-  const frameKey = mail?.state === "ok" ? mail.frameKey : null;
+  /**
+   * IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE?: Computed HERE, above the three early returns below,
+   * because it is read by a hook and a hook may not sit behind a return. That placement is also what makes it total:
+   * `!mail` (no html, or nothing left after sanitizing), `unsupported` and `oversize` all render {@link BodyText} and
+   * therefore all draw NO IMAGES — the same fact the `ok` branch's `proseView` states, reached by a different road.
+   * Answering only for the `ok` branch would have left three renderings this component treats identically reported as
+   * though they carried a frame. The `ok` branch's own `proseView` is this value; see its note below for the three
+   * terms.
+   */
+  const framelessView =
+    mail?.state !== "ok" ? true : mail.prose && hasText && (!showOriginal || !mail.frameFits);
+  /**
+   * THE QUOTED HISTORY, FOLDED — per message, collapsed on every mount. On a frame the fold applies
+   * only to a body framed by its own classification: "Show original" on a prose letter shows the
+   * sender's document whole, with no toggle. While folded, the frame draws the cut document and
+   * everything that reads the document (its links, the pictures to fetch, the notice) reads the
+   * cut one; opened, the whole one.
+   */
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
+  const foldId = messageId ?? html ?? "";
+  const historyOpen = historyFor === foldId;
+  const sheetId = useId();
+  const frameFold = mail?.state === "ok" && !framelessView && !(mail.prose && hasText) && mail.fold !== null ? mail.fold : null;
+  const frameFolded = frameFold !== null && !historyOpen;
+  const shownDoc = mail?.state === "ok" ? (frameFolded ? mail.foldDoc! : mail.doc) : null;
+  const shownKey = mail?.state === "ok" ? (frameFolded ? mail.foldKey : mail.frameKey) : null;
+  /** What the frame on screen was built from: the cut document's lists while folded. */
+  const shown = mail?.state === "ok" ? (frameFolded ? frameFold : mail) : null;
+  const frameKey = shownKey;
   const docCache = engine && messageId ? mailDocCacheFor<unknown>(engine) : null;
   fitStore.current = frameKey !== null && docCache ? { key: frameKey, cache: docCache } : null;
   seedHeight.current = frameKey !== null && docCache ? docCache.fitOf(frameKey)?.height ?? "" : "";
@@ -3904,17 +3999,6 @@ export function MessageBody({
   }, [loadedKey, measure, frameKey]);
 
   /**
-   * IS THERE A FRAME ON SCREEN, OR IS THIS THE APP'S OWN TYPE?: Computed HERE, above the three early returns below,
-   * because it is read by a hook and a hook may not sit behind a return. That placement is also what makes it total:
-   * `!mail` (no html, or nothing left after sanitizing), `unsupported` and `oversize` all render {@link BodyText} and
-   * therefore all draw NO IMAGES — the same fact the `ok` branch's `proseView` states, reached by a different road.
-   * Answering only for the `ok` branch would have left three renderings this component treats identically reported as
-   * though they carried a frame. The `ok` branch's own `proseView` is this value; see its note below for the three
-   * terms.
-   */
-  const framelessView =
-    mail?.state !== "ok" ? true : mail.prose && hasText && (!showOriginal || !mail.frameFits);
-  /**
    * REPORT IT — see {@link MessageBodyProps.onRenderMode}. In an effect, so nothing is announced for a render React
    * may discard, and so a listener that sets state is never doing it during this component's render. The reported
    * value is derived from a BOOLEAN, so a listener that maps it to a primitive gets React's own bail-out on an
@@ -3931,7 +4015,7 @@ export function MessageBody({
    * desktop shell opens a frame's link only when it is reported. The frameless path draws its own
    * anchors through `BodyText`, which reports those, so a message is one surface either way.
    */
-  useRenderedLinks(mail?.state === "ok" && !framelessView ? mail.links : NO_LINKS);
+  useRenderedLinks(shown !== null && !framelessView ? shown.links : NO_LINKS);
 
   /**
    * ── ASK FOR THE EMBEDDED IMAGES THIS RENDERING IS SHOWING BLANKED — see {@link MessageBodyProps.onCidImages}
@@ -3944,7 +4028,7 @@ export function MessageBody({
    * re-render, an unstable callback — is a cheap no-op by the callee's contract, not by this effect's memory.
    */
   const wantedCids =
-    mail?.state === "ok" && (!framelessView || mail.rich !== null) ? mail.cids : undefined;
+    mail?.state === "ok" && shown !== null && (!framelessView || mail.rich !== null) ? shown.cids : undefined;
   useEffect(() => {
     if (wantedCids && wantedCids.length > 0) onCidImages?.(wantedCids);
   }, [wantedCids, onCidImages]);
@@ -3958,8 +4042,8 @@ export function MessageBody({
    * (`blocked` still lists it for the privacy count), so the list drains. The JOIN is the effect's
    * dependency because the array is a fresh identity every render.
    */
-  const wantedRemote = mail?.state === "ok" && !framelessView && remoteLoaded
-    ? [...new Set(mail.blocked
+  const wantedRemote = shown !== null && !framelessView && remoteLoaded
+    ? [...new Set(shown.blocked
       .filter((b) => b.via === "img" && !b.pixel && !resolvedRemoteImages?.has(b.url))
       .map((b) => b.url))]
     : undefined;
@@ -3978,7 +4062,7 @@ export function MessageBody({
    * is also what those renders have always said: no bar.
    */
   const okMail = mail && mail.state === "ok" ? mail : null;
-  const remote = okMail ? okMail.blocked : NO_ASSETS;
+  const remote = okMail && shown ? shown.blocked : NO_ASSETS;
   const sheets = okMail ? okMail.sheets : NO_SHEETS;
   const pixels = remote.filter((b) => b.pixel).length;
   /**
@@ -4048,7 +4132,7 @@ export function MessageBody({
         {/* Before the mount the sanitizer is not asked yet: this text is a stand-in for the
             frame about to replace it, and its top is no top (the read rule waits, `reader-seen.ts`). */}
         {mounted ? null : <span data-body-pending="" hidden />}
-        <BodyText text={text} />
+        <BodyText text={text} htmlFold={mail.historyAt} />
         <p className="mb-note">
           {mail.state === "oversize" ? COPY.oversize : COPY.unsupported}
         </p>
@@ -4117,6 +4201,10 @@ export function MessageBody({
    * all, and the surround has to match that too or a dark newsletter sits in a light frame.
    */
   const surfaceDark = themeDark && (dark || !adaptable);
+  // Outside the frame: the frame's own document runs no script and draws no app control.
+  const historyToggle = (
+    <HistoryToggle open={historyOpen} controls={sheetId} onToggle={() => setHistoryFor(historyOpen ? null : foldId)} />
+  );
   const adaptToggle = (
     <button
       type="button"
@@ -4187,18 +4275,23 @@ export function MessageBody({
       ) : null}
       {canAdapt && adaptSlot ? createPortal(adaptToggle, adaptSlot) : null}
 
+      {frameFold !== null && frameFold.at === "leading" ? historyToggle : null}
       {proseView ? (
         /* A LETTER, in the app's own type — no frame, no sheet, no measurement pass, and NEVER
            a markup string. `rich` is the walker's node tree (tables, lists, real anchors),
            rendered by `BodyText` element by element; when it is null — the walk refused, or the
            mail had no structure worth keeping — the text part renders exactly as it always has.
            See `proseView` above. */
-        <BodyText text={text} rich={mail.rich} ownImages={ownImages} />
+        mail.fold?.rich
+          ? <BodyText text={text} rich={mail.rich} richHistory={mail.fold.rich} ownImages={ownImages} foldKey={foldId} />
+          : mail.fold
+            ? <BodyText text={text} foldKey={foldId} htmlFold={mail.fold.at} />
+            : <BodyText text={text} rich={mail.rich} ownImages={ownImages} htmlFold={mail.historyAt} />
       ) : (
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light
            hole in a dark panel. It follows the per-message override, not just the theme. */
-        <div className="mb-sheet" data-dark={surfaceDark ? "1" : undefined}>
+        <div className="mb-sheet" id={sheetId} data-dark={surfaceDark ? "1" : undefined}>
           <iframe
             /**
              * A DIFFERENT DOCUMENT IS A DIFFERENT ELEMENT — see {@link frameIdentity}. Re-using
@@ -4207,19 +4300,19 @@ export function MessageBody({
              * take the old frame out of the document instead, which is the one thing that
              * releases the render tree, the layers and the decoded pictures with it.
              */
-            key={mail.frameKey}
+            key={shownKey ?? mail.frameKey}
             ref={attachFrame}
             className="mb-frame"
             title={COPY.frameTitle}
             sandbox={FRAME_SANDBOX}
             referrerPolicy="no-referrer"
-            srcDoc={mail.doc}
+            srcDoc={shownDoc ?? mail.doc}
             onLoad={() => {
               /* THE SENDER'S LINKS leave as the new-window request each `target=_blank` click
                  makes: a browser answers it with a tab, the desktop shell through `popup_route`
                  (`engine.rs`). No listener goes on this document — WebKit calls none in a frame
                  sandboxed without scripts. */
-              setLoadedKey(mail.frameKey);
+              setLoadedKey(shownKey);
               measure();
             }}
           />
@@ -4229,6 +4322,7 @@ export function MessageBody({
           document loaded and measured: before that the frame stands at its default height and its
           foot is no end at all. The prose path marks its own. */}
       {proseView || frameKey === null || loadedKey !== frameKey ? null : <OwnEnd />}
+      {frameFold !== null && frameFold.at === "trailing" ? historyToggle : null}
 
       {/* THE FRAMELESS DEFAULT IS REVERSIBLE, PER MESSAGE — a quiet text control AFTER the body,
           not a button in a bar. Mail that declares no canvas is set in the app's own type by

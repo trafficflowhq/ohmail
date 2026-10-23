@@ -1,0 +1,46 @@
+Hi Elif,
+
+thanks, the second row is fine. I updated our booking.
+
+Best regards,
+David Placeholder
+Logistics Coordinator, Brightwater Samples Ltd
+
+From: Elif Testa <elif.testa@example.net>
+Sent: Friday, October 16, 2026 2:20 PM
+To: David Placeholder <david.placeholder@example.com>
+Subject: RE: Q4 shipping schedule
+
+Hi David,
+
+here are the confirmed quantities for the first two containers:
+
+Container	Pallets	ETA
+XMPU 000001-0	22	Nov 9
+XMPU 000002-6	18	Nov 19
+
+Please check the second row, the ETA moved.
+
+[cid:image001.png@01DD6A2B.4F3C8E10]
+
+[Autumn banner]
+
+Kind regards,
+Elif Testa
+Harbourline Example Inc.
+
+From: David Placeholder <david.placeholder@example.com>
+Sent: Friday, October 16, 2026 9:00 AM
+To: Elif Testa <elif.testa@example.net>
+Subject: Q4 shipping schedule
+
+Hi Elif,
+
+Attached is the draft shipping schedule for Q4. The first container leaves Rotterdam on November 9.
+
+Could you confirm the delivery windows for your two warehouses?
+
+-- 
+Best regards,
+David Placeholder
+Logistics Coordinator, Brightwater Samples Ltd

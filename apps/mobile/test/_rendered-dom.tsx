@@ -31,7 +31,7 @@ export function flushLayout(): void {
 
 /* The style a slot was given, readable from the node: React DOM drops what CSS does not know. */
 const host = (name: string) =>
-  function Host({ style, children, testID, onLayout }: Props) {
+  function Host({ style, children, testID, onLayout, onPress, accessibilityRole, accessibilityLabel, accessibilityState, accessibilityElementsHidden }: Props) {
     const s = flat(style);
     /* The device lays a view out after it is mounted; so does this, once. */
     const latest = useRef(onLayout);
@@ -44,7 +44,15 @@ const host = (name: string) =>
       if (layout.held) layout.queue.push(fire);
       else fire();
     }, []);
-    return createElement("div", { "data-rn": name, "data-testid": testID, "data-style": JSON.stringify(s) }, children);
+    /* What a screen reader is told, and the press, so a test can read and operate a control. */
+    const state = accessibilityState as { expanded?: boolean } | undefined;
+    return createElement("div", {
+      "data-rn": name, "data-testid": testID, "data-style": JSON.stringify(s),
+      "data-role": accessibilityRole, "data-label": accessibilityLabel,
+      "data-expanded": state && "expanded" in state ? String(state.expanded) : undefined,
+      "data-ax-hidden": accessibilityElementsHidden === true ? "" : undefined,
+      onClick: typeof onPress === "function" ? () => (onPress as () => void)() : undefined,
+    }, children);
   };
 
 export const rnDom = {

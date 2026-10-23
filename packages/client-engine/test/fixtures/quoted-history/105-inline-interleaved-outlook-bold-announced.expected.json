@@ -1,0 +1,37 @@
+{
+  "id": "105",
+  "file": "105-inline-interleaved-outlook-bold-announced.eml",
+  "shape": "inline-interleaved-outlook-bold-announced",
+  "description": "Fixture 73 with the answers bold in the body's ink, the lead 'meine Antworten sind fett gedruckt.'",
+  "client": "synthetic",
+  "ui_language": "de",
+  "parts": [
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "notes": "Synthetic.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": null,
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Herr Sample,",
+      "visibleLastText": "Ben Sample"
+    },
+    "inlineAnswers": [
+      "Ja, die Filterreinigung ist Position 3 im Angebot.",
+      "Ja, bitte am Empfang hinterlegen."
+    ],
+    "trailingTail": null
+  }
+}

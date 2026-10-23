@@ -1,0 +1,44 @@
+{
+  "id": "10",
+  "file": "10-owa-en-reply-to-gmail.eml",
+  "shape": "owa-en-reply-to-gmail",
+  "description": "Outlook on the web, English: div#appendonsend + hr + div#divRplyFwdMsg header; the quoted Gmail thread has every class/id rewritten with an x_ prefix (x_gmail_quote, x_gmail_attr)",
+  "client": "owa",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Elif Testa",
+    "David Placeholder"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Elif,",
+      "visibleLastLine": "Logistics Coordinator, Brightwater Samples Ltd",
+      "historyStartLine": "________________________________",
+      "historyStartLineNormalized": "________________________________"
+    },
+    "html": {
+      "historyStartSelector": "#appendonsend",
+      "attributionBefore": null,
+      "historyStartText": "From: Elif Testa <elif.testa@example.net>",
+      "visibleFirstText": "Hi Elif,",
+      "visibleLastText": "Logistics Coordinator, Brightwater Samples Ltd"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A marker list keyed on 'gmail_quote' misses the x_-prefixed copy; the OWA marker is the outer start anyway."
+}

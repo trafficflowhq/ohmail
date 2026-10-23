@@ -56,27 +56,39 @@ export interface RemoteImagesResult {
   consentRefused: boolean;
 }
 
+/** What is left of one message's picture ceilings, spent across every fetch pass for it. */
+export interface PictureBudget {
+  parts: number;
+  bytes: number;
+}
+
+/** A message's whole budget: the engine's inline-image ceilings. */
+export function pictureBudget(): PictureBudget {
+  return { parts: INLINE_IMAGE_MAX_PARTS, bytes: INLINE_IMAGE_MAX_TOTAL_BYTES };
+}
+
 /**
  * Fetch the message's blocked remote PICTURES and mint each to a `data:` URI, in document
  * order so the budget is spent on what the reader sees first. Never rejects; a part that
  * cannot be fetched, is not a raster, or is over a ceiling is absent from the map — a blank
  * box. On a proxy door the press is recorded first (`POST /messages/:id/load-remote`, the
- * server's own gate for `/img`), unless the stored body already carries it.
+ * server's own gate for `/img`), unless the stored body already carries it. `budget`: the message's
+ * own, spent here and carried to its next pass (a fresh whole one by default).
  */
 export async function fetchRemoteImages(
   route: ImageRoute,
   messageId: string,
   urls: readonly string[],
-  opts: { consented: boolean },
+  opts: { consented: boolean; budget?: PictureBudget },
 ): Promise<RemoteImagesResult> {
   const minted = new Map<string, string>();
   if (route.via === "none") return { minted, consentRefused: false };
   if (route.via === "proxy" && !opts.consented && !(await recordConsent(route, messageId))) {
     return { minted, consentRefused: true };
   }
-  let budget = INLINE_IMAGE_MAX_TOTAL_BYTES;
+  const left = opts.budget ?? pictureBudget();
   for (const url of urls) {
-    if (minted.size >= INLINE_IMAGE_MAX_PARTS) break;
+    if (left.parts <= 0) break;
     if (minted.has(url) || !REMOTE_URL.test(url)) continue;
     try {
       const res = route.via === "proxy"
@@ -89,11 +101,12 @@ export async function fetchRemoteImages(
       const blob = await res.blob();
       const type = (blob.type || "").toLowerCase().split(";")[0]!.trim();
       if (!RASTER.has(type)) continue;
-      if (blob.size === 0 || blob.size > INLINE_IMAGE_MAX_BYTES || blob.size > budget) continue;
+      if (blob.size === 0 || blob.size > INLINE_IMAGE_MAX_BYTES || blob.size > left.bytes) continue;
       const uri = `data:${type};base64,${await blobToBase64(blob)}`;
       // The same gate the write into the document applies — minted here, asserted there.
       if (!INLINE_IMAGE_SRC.test(uri)) continue;
-      budget -= blob.size;
+      left.bytes -= blob.size;
+      left.parts -= 1;
       minted.set(url, uri);
     } catch {
       // An unreachable host is a blank box, never an error screen.

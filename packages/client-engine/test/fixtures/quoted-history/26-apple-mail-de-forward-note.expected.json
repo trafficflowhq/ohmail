@@ -1,0 +1,43 @@
+{
+  "id": "26",
+  "file": "26-apple-mail-de-forward-note.eml",
+  "shape": "apple-mail-de-forward-note",
+  "description": "Apple Mail, German: 'Anfang der weitergeleiteten Nachricht:' with Von/Betreff/Datum/An rows inside blockquote type=cite, a note above",
+  "client": "apple",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ana Example"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo Clara,",
+      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
+      "historyStartLine": "> Anfang der weitergeleiteten Nachricht:",
+      "historyStartLineNormalized": "Anfang der weitergeleiteten Nachricht:"
+    },
+    "html": {
+      "historyStartSelector": "blockquote[type=\"cite\"]",
+      "attributionBefore": null,
+      "historyStartText": "Anfang der weitergeleiteten Nachricht:",
+      "visibleFirstText": "Hallo Clara,",
+      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+}

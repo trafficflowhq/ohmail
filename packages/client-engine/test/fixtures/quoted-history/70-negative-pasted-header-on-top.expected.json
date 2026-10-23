@@ -1,0 +1,33 @@
+{
+  "id": "70",
+  "file": "70-negative-pasted-header-on-top.eml",
+  "shape": "negative-pasted-header-on-top",
+  "description": "A header block pasted at the very top of the body, the writer's comments below it",
+  "client": "synthetic",
+  "ui_language": "en",
+  "parts": [
+    "text/plain"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [],
+  "expect": {
+    "fold": "none",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "From: Carla Muster <carla.muster@example.net>",
+      "visibleLastLine": "Ben",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": null,
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": "Lane fixture (QUOTED-HISTORY-COLLAPSE): synthetic."
+}
