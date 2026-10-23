@@ -25,6 +25,7 @@ import { InPaneContext, PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
+import { endIdleVisit } from "./visit-records";
 import { pairBoxOf, pairPadding, pairSlots, paneFootSearch, railHome, scaffoldPlan, type PairShow } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
@@ -47,6 +48,7 @@ export function useListDetail(toRoute: (id: string) => string): {
     open,
     openRow: (id: string) => {
       beginMark("open", id); // ended by the reader's commit effect (MessageReader)
+      endIdleVisit(id); // a press is a fresh open; only a posture remount resumes a visit
       if (plan.panes === 2) router.setParams({ open: id });
       else router.push(toRoute(id));
     },

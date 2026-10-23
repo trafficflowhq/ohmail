@@ -926,8 +926,8 @@ export function OhboxView({
 
   /**
    * THE VISIT'S READ RECORD (`createThreadRead`), one per open conversation: renewed only when the
-   * open conversation changes (keyed by `conversationKeyOf`, so a second click that lands on the
-   * next unread keeps it) and ended by every departure. Nothing is read until the visit is ENTERED;
+   * open conversation changes (keyed by `conversationKeyOf`, so a second click on its row keeps
+   * it) and ended by every departure. Nothing is read until the visit is ENTERED;
    * `entered` bumps a render so the pane looks again at once.
    */
   const visit = useRef(new Map<string, ThreadRead>());
@@ -941,17 +941,20 @@ export function OhboxView({
 
   /**
    * ENTER THE CONVERSATION — ↵, a click or tap on its row, → into the column, or a press, a hand
-   * scroll or a square inside it. An unread message's row takes its hold at once and nothing is
-   * written: what turns read is the rule's (`reader-seen.ts`). A read message holds nothing, as
-   * before. A preview never comes through here — j/k, the after-verb advance, a URL or search
+   * scroll or a square inside it. A row still waiting (an unread message, or an unread letter
+   * anywhere in its conversation: it opens on its newest, read or not) takes its hold at once and
+   * nothing is written: what turns read is the rule's (`reader-seen.ts`). A read conversation holds
+   * nothing, as before. A preview never comes through here — j/k, the after-verb advance, a URL or search
    * landing, an Undo — and nothing is read in one.
    */
+  const waitingRef = useRef((_m: EngineMessage): boolean => false);
+  waitingRef.current = (x) => navRows[rowIndexOf(x.id)]?.members.some((y) => y.unread && !isOwnSent(y)) ?? false;
   const enter = useCallback((m: EngineMessage) => {
     const record = recordIn(visit, m);
     const was = record.entered;
     record.enter(Date.now());
     if (!was) setEntered((n) => n + 1);
-    if (m.unread && heldRead.current !== m.id) hold(m.id);
+    if (heldRead.current !== m.id && (m.unread || waitingRef.current(m))) hold(m.id);
   }, [hold]);
 
   /**
@@ -1283,7 +1286,7 @@ export function OhboxView({
    */
   /**
    * j/k WALK ROWS, NOT MESSAGES. `order` holds each row's OPEN TARGET — for a conversation,
-   * its latest unread — so landing on a grouped row selects the message the row leads with,
+   * its newest letter — so landing on a grouped row selects the message the row leads with,
    * and a folded member is never a keyboard stop. `at` resolves through row MEMBERSHIP, so a
    * selection standing on a member that stopped leading its row (a newer reply arrived) still
    * knows which row it is on.
@@ -2073,7 +2076,7 @@ export function OhboxView({
    * `threadSubject`, falling back to the newest member's subject until the thread row syncs), the newest member's
    * snippet and time, the distinct unread senders on the sender line — the same people as the row's lead circles
    * (`participants` below) — and its squares under the preview (`⤷ N` steps back where they are as many). Click and
-   * ↵ act on the LATEST UNREAD member: the ordinary per-message open, so the thread view and held place behave
+   * ↵ act on the NEWEST LETTER, read or unread (c3): the ordinary per-message open, so the thread view and held place behave
    * exactly as for a plain row. What turns read is the thread-read rule's, or the reader's Mark as read.
    * `selected` is row MEMBERSHIP, so the highlight survives the lead message changing.
    */
@@ -2092,6 +2095,9 @@ export function OhboxView({
     const target = g.openTarget;
     const shown = g.face;
     const voices = groupVoices(g);
+    // The lead circle is the sender line's first voice: the newest unread letter's, else the target's.
+    const leadOf = g.members.filter((m) => m.unread && !isOwnSent(m))
+      .reduce<EngineMessage | null>((a, m) => (a === null || (arrivalMs(m) ?? -Infinity) > (arrivalMs(a) ?? -Infinity) ? m : a), null) ?? target;
     /**
      * THE ROW'S FACES, and they are the SENDER LINE's people whenever there are people on it. Two sources, one
      * precedence, and the order matters. A waiting conversation names its distinct unread senders — so the circles
@@ -2141,7 +2147,7 @@ export function OhboxView({
         memberIds={g.members.map((m) => m.id)}
         stampId={shown.id}
         from={sentLeads ? sent.label : groupSenders(g)}
-        {...(sentLeads ? sent.avatar : avatarOf(target))}
+        {...(sentLeads ? sent.avatar : avatarOf(leadOf))}
         /* The stamp is the newest member's, in whichever form the list is in — the same message
            the relative stamp has always named, so the exact date on hover is that one's too. */
         {...rowStamp(shown, now, absoluteTime, onToggleTime)}

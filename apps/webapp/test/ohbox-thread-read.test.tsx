@@ -169,6 +169,124 @@ describe("a preview reads nothing", () => {
   }, 60_000);
 });
 
+/** A press as a person makes it, held: the pointer (or a finger) goes down and stays. */
+const press = async (el: Element | null | undefined, what: string, type: "pointerdown" | "touchstart" | "touchmove" = "pointerdown"): Promise<void> => {
+  expect(el, `nothing to press: ${what}`).toBeTruthy();
+  await act(async () => { el!.dispatchEvent(new Event(type, { bubbles: true })); });
+  await settle();
+};
+const barButton = (label: string): HTMLElement | undefined =>
+  [...col().querySelectorAll<HTMLElement>(".abar button")].find((b) => b.textContent?.trim() === label);
+
+describe("a press on a verb is not reading: it never enters a preview", () => {
+  it("a mouse press on Later held past the dwell reads nothing", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await press(col().querySelector(".abar .abar-later"), "the bar's Later");
+    await dwell();
+    expect(glances(), "the press on the bar read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("a touch on Later held past the dwell reads nothing, nor does a tap's jitter on it", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    const later = col().querySelector(".abar .abar-later");
+    await press(later, "the bar's Later", "touchstart");
+    await dwell();
+    expect(glances(), "the touch on the bar read the previewed message").toEqual([]);
+    await press(later, "the bar's Later", "touchmove");
+    await dwell();
+    expect(glances(), "a touchmove with no scroll read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("Resurface opened by mouse, the dwell passed, then Tomorrow: nothing read", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    const resurface = col().querySelector(".abar .abar-resurface");
+    await press(resurface, "the bar's Resurface");
+    await click(resurface, "the bar's Resurface");
+    await dwell();
+    const tomorrow = barButton("Tomorrow");
+    await press(tomorrow, "Tomorrow");
+    await click(tomorrow, "Tomorrow");
+    await dwell();
+    expect(glances(), "the chooser's presses read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("Move by mouse, the dwell passed, then → News: nothing read", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    const move = col().querySelector(".abar .abar-move");
+    await press(move, "the bar's Move");
+    await click(move, "the bar's Move");
+    await dwell();
+    const news = [...col().querySelectorAll<HTMLElement>(".abar button")].find((b) => b.textContent?.startsWith("→ News"));
+    await press(news, "→ News");
+    await click(news, "→ News");
+    await dwell();
+    expect(glances(), "the Move presses read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("a press on a message's ⋯ reads nothing", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await press(panel("p4")?.querySelector(".msg-more"), "p4's ⋯");
+    await dwell();
+    expect(glances(), "the press on the ⋯ read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("a single message: a press on its bar's own ground, inside its panel, reads nothing", async () => {
+    bodies(["s1"]);
+    await mountThread([msg("s1", 0, { threadId: "S" })]);
+    await key("j");
+    const bar = panel("s1")?.querySelector(".msg-actions");
+    expect(bar, "the single message's bar sits inside its panel").toBeTruthy();
+    await press(bar, "the single message's bar");
+    await dwell();
+    expect(glances(), "a press on the bar's ground read the previewed message").toEqual([]);
+  }, 60_000);
+
+  it("a press on a message's text enters: what is on screen reads after the dwell", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await press(panel("p4")?.querySelector(".pm-body, .msg-body"), "p4's text");
+    await dwell();
+    expect(glances()).toEqual([["p4"]]);
+  }, 60_000);
+
+  it("a press on the column's own box (its scrollbar) enters", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await press(col(), "the column");
+    await dwell();
+    expect(glances()).toEqual([["p4"]]);
+  }, 60_000);
+
+  it("a touch drag that starts on the bar and scrolls the column enters", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    const later = col().querySelector(".abar .abar-later");
+    await press(later, "the bar's Later", "touchstart");
+    await press(later, "the bar's Later", "touchmove");
+    await act(async () => {
+      const sc = layout.scroller();
+      sc.scrollTop = layout.topOf("p4") - 14;
+      sc.dispatchEvent(new Event("scroll"));
+    });
+    await settle();
+    await dwell();
+    expect(glances()).toEqual([["p4"]]);
+  }, 60_000);
+});
+
 describe("Mark unread in a message's ⋯, beside Reply and Forward", () => {
   it("writes an unread for that message only, the square is solid again, and it is not read back", async () => {
     bodies(["p1", "p2", "p3", "p4"]);
@@ -302,4 +420,71 @@ describe("a reply that arrives into the open conversation", () => {
     await dwell();
     expect(glances()).toEqual([["p1", "p2"], ["p3"]]);
   }, 60_000);
+});
+
+/**
+ * A CONVERSATION ALWAYS OPENS ON ITS NEWEST (the c3 design): the reopen
+ * case, p2 and p3 taller than the view. The first open reads p4; a reopen, by click or by ↵, lands
+ * on p4 again and reads nothing it did not show (it landed on p3, the newest unread, and read it).
+ * p3 reads only once its own top has been on screen, and that read is an open read (the row is held).
+ */
+describe("a conversation opens on its newest, every time", () => {
+  const holding = (host: HTMLElement, id: string): HTMLElement | null =>
+    host.querySelector<HTMLElement>(`[role="listbox"] .row[data-ids~="${id}"]`) ?? rowOf(host, id);
+  const focused = (): string | undefined =>
+    col().querySelector<HTMLElement>('[data-conv-id][aria-current="true"]')?.dataset.convId;
+  const a20 = async (): Promise<HTMLElement> => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { p2: 2400, p3: 2400 } });
+    bodies(["p1", "p2", "p3", "p4", "s1"]);
+    const host = await mountThread([...four(), msg("s1", 40, { threadId: "S" })]);
+    await click(holding(host, "p4"), "the conversation's row");
+    await dwell();
+    expect(focused(), "the first open").toBe("p4");
+    expect(glances()).toEqual([["p4"]]);
+    await click(holding(host, "s1"), "another conversation");
+    await dwell();
+    expect(glances()).toEqual([["p4"], ["s1"]]);
+    return host;
+  };
+
+  it("reopened by click: lands on p4, reads nothing; a second click stays; p3's top in view reads it as an open read", async () => {
+    const host = await a20();
+    expect(holding(host, "p4")?.dataset.id, "the row stands for its newest").toBe("p4");
+    await click(holding(host, "p4"), "the conversation again");
+    expect(focused(), "the reopen lands on the newest").toBe("p4");
+    await dwell();
+    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p4"], ["s1"]]);
+    await click(holding(host, "p4"), "a second click");
+    expect(focused(), "a second click stays on the newest").toBe("p4");
+    await dwell();
+    expect(glances()).toEqual([["p4"], ["s1"]]);
+    await layout.handScroll(layout.topOf("p3") - 10);
+    await settle();
+    await dwell();
+    expect(glances().at(-1)).toEqual(["p3"]);
+    const last = patches.filter((p) => p.via === "glance").at(-1) as { openRead?: boolean };
+    expect(last.openRead, "the conversation is held: the read is an open read").toBe(true);
+  }, 60_000);
+
+  it("reopened by ↵: lands on p4 and reads nothing", async () => {
+    const host = await a20();
+    const rows = [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')];
+    const step = rows.indexOf(holding(host, "p4")!) > rows.indexOf(holding(host, "s1")!) ? "j" : "k";
+    await key("Escape");
+    await key(step);
+    await key("Enter");
+    expect(focused(), "the reopen lands on the newest").toBe("p4");
+    await dwell();
+    expect(glances(), "the reopen reads nothing it did not show").toEqual([["p4"], ["s1"]]);
+  }, 60_000);
+
+  it("the lead circle names the unread letter's sender while the row opens on a newer read one", async () => {
+    // One consented address under two names, so the circles differ by initial.
+    bodies(["l1", "l2"]);
+    const host = await mountThread([msg("l1", 0), msg("l2", 10, { from: { name: "Bob", address: "lena@example.invalid" }, unread: false })]);
+    const row = holding(host, "l1")!;
+    expect(row.dataset.id, "the row opens on its newest letter").toBe("l2");
+    expect(row.querySelector(".av")?.textContent, "the lead circle is the unread sender's").toBe("L");
+  }, 30_000);
 });

@@ -494,8 +494,9 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/onMomentumScrollEnd=\{onScroll\}/);
     expect(reader).toMatch(/jumpEnd\.current = setTimeout\(\(\) => \{ jumpEnd\.current = null; end\(\); \}, RAIL_JUMP_SETTLE_MS\)/);
   });
-  it("looks only while the app is active, its window focused and no modal over it, and again when that changes", () => {
-    expect(reader).toMatch(/active: \(\) => readerSees\(AppState\.currentState\)/);
+  it("looks only while its screen is in front, the app active, its window focused and no modal over it, and again when that changes", () => {
+    expect(reader).toMatch(/const screenShown = useIsFocused\(\);\s+const shown = useRef\(screenShown\);\s+shown\.current = screenShown;/);
+    expect(reader).toMatch(/active: \(\) => shown\.current && readerSees\(AppState\.currentState\)/);
     expect(reader).not.toMatch(/AppState\.currentState === "active"/);
     expect(reader).toMatch(/AppState\.addEventListener\("change", \(s\) => \{ if \(s === "active"\) seen\.poke\(\); \}\)/);
     expect(reader).toMatch(/AppState\.addEventListener\("blur", \(\) => setReaderWindowFocused\(false\)\)/);

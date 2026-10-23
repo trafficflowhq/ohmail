@@ -118,7 +118,7 @@ export const key = async (k: string, init: KeyboardEventInit = {}): Promise<void
 /** The conversation's one Ohbox row. */
 export const theRow = (host: HTMLElement): HTMLElement | null =>
   host.querySelector<HTMLElement>('[role="listbox"] .row');
-/** A row press, as a person makes it: one click opens the conversation (a second would open its next unread). */
+/** A row press, as a person makes it: one click opens the conversation on its newest (a second stays there). */
 export const openTheRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host), "the conversation's row");
 };

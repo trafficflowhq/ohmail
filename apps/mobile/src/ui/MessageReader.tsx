@@ -9,6 +9,7 @@
  * was — continuity as data, not as tree position.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useIsFocused } from "expo-router";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
 import { invitationNote, junkLeaving, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
@@ -43,7 +44,7 @@ import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cove
 import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
-  RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsOf, railOffsetFor, readerChromeOverlap,
+  RAIL_HIT_SLOP, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsOf, railOffsetFor, readerChromeOverlap,
   readerGroups, type MarkKind, type RailItem,
 } from "./reader-marks";
 import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
@@ -185,6 +186,10 @@ export function MessageReader({
   /* A body's first lines, in its own type: the opened message reads at the reader's size, a member at the stream's. */
   const lineOf = useRef({ opened: t.type.readerBody.lineHeight ?? 29, member: t.type.streamBody.lineHeight ?? 25 });
   lineOf.current = { opened: t.type.readerBody.lineHeight ?? 29, member: t.type.streamBody.lineHeight ?? 25 };
+  /* Another screen over this reader (a pushed route, another tab over the pane) hides it: it reads nothing then. */
+  const screenShown = useIsFocused();
+  const shown = useRef(screenShown);
+  shown.current = screenShown;
   const seen = useMemo(
     () => createPhoneThreadRead({
       record,
@@ -193,9 +198,9 @@ export function MessageReader({
       ready: (mid) => facts.current.ready(mid),
       onRead: (ids) => glance.current(ids),
       lines: (mid) => THREAD_TOP_LINES * (mid === id ? lineOf.current.opened : lineOf.current.member),
-      /* In sight: the app in the foreground, its window focused, and no sheet or composer over it.
+      /* In sight: its screen in front, the app in the foreground, its window focused, and no sheet or composer over it.
          AppState stays active under a Modal and under the notification shade (`reader-cover.ts`). */
-      active: () => readerSees(AppState.currentState),
+      active: () => shown.current && readerSees(AppState.currentState),
       onHere: setHere,
     }),
     [id, record],
@@ -840,6 +845,7 @@ function ReaderRail({ items, here, over, onJump }: {
       accessibilityState={{ selected: it.id === here }}
       testID={`rail-${it.id}`}
       onPress={() => onJump(it.id)}
+      hitSlop={RAIL_HIT_SLOP}
       style={{ height: pitch, width: 22, alignItems: "center", justifyContent: "center" }}
     >
       <View

@@ -158,15 +158,27 @@ describe("a conversation opened from its Ohbox row on the phone", () => {
     expect(p.world().ohbox.resurfaced, "Done in the reader left the conversation Resurfaced").toEqual([]);
   });
 
-  it("the reader reads a2 and the row's own target moves to the older unread a1: every remount stays on a2", async () => {
+  it("the reader reads a2 and the row's own target stays on it while the older a1 waits: every remount stays on a2", async () => {
     const p = await phone([create("message", "a1", rowA1()), create("message", "a2", msg("a2", AT + 3_600_000, { unread: true }))]);
     const open = press(p.world(), "a2");
     expect(open).toBe("a2");
     await p.actions.openMessage(open);
     await p.actions.markGlanced([open]);   // the reader's rule, with a2 on screen
-    expect(threadRow(p.engine)?.target, "the premise: the row's own target moved").toBe("a1");
+    expect(threadRow(p.engine)?.target, "the row stands for its newest").toBe("a2");
     const w1 = p.world();
     expect(shownAt(w1, remounts(w1, open))).toEqual(all(remounts(w1, open), "a2"));
+  });
+
+  /** The four-message reopen case: a reopen opened the newest UNREAD member (t3) and read it unseen. */
+  it("four members: the first press and every press after the newest is read open t4", async () => {
+    const p = await phone([1, 2, 3, 4].map((i) => create("message", `t${i}`, msg(`t${i}`, AT + i * 60_000, { unread: true }))));
+    const open = press(p.world(), "t1");
+    expect(open, "the first press").toBe("t4");
+    await p.actions.openMessage(open);
+    await p.actions.markGlanced([open]);
+    p.actions.leaveMessage(open);
+    expect(press(p.world(), "t1"), "the press after t4 is read").toBe("t4");
+    expect(threadRow(p.engine)?.target).toBe("t4");
   });
 
   it("the press's answer for a message its row does not hold is the row's own target", async () => {

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
-import { EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, viewOf } from "../app/shell/reader-seen";
+import { EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, viewOf } from "../app/shell/reader-seen";
 import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
 
 /**
@@ -301,6 +301,58 @@ describe("what enters a preview", () => {
     mount();
     el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(enters).toBe(1);
+  });
+  it("a press on the verb bar, a control in a panel or the reply dock does not enter; a touch there neither", () => {
+    const el = panel("a", 0, 300);
+    bar(700);
+    const more = document.createElement("button");
+    el.appendChild(more);
+    mount();
+    for (const target of [scroller.querySelector(".msg-actions")!, more]) {
+      target.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      target.dispatchEvent(new Event("touchstart", { bubbles: true }));
+      target.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    }
+    expect(enters).toBe(0);
+    el.querySelector(".pm-body")!.dispatchEvent(new Event("touchstart", { bubbles: true }));
+    expect(enters).toBe(1);
+  });
+  it("pressEnters: a message's own panel and the scroller's box, never a control, a gutter or what lies outside", () => {
+    const el = panel("a", 0, 300);
+    bar(700);
+    const add = <K extends keyof HTMLElementTagNameMap>(tag: K, parent: Element, attrs: Record<string, string> = {}): HTMLElement => {
+      const x = document.createElement(tag);
+      for (const [k, v] of Object.entries(attrs)) x.setAttribute(k, v);
+      parent.appendChild(x);
+      return x;
+    };
+    const dock = add("div", scroller, { class: "reply-dock" });
+    const cases: Array<[string, EventTarget | null, boolean]> = [
+      ["the scroller's own box", scroller, true],
+      ["a panel", el, true],
+      ["a panel's text", el.querySelector(".pm-body"), true],
+      ["the verb bar", scroller.querySelector(".msg-actions"), false],
+      ["a word in the verb bar", add("span", scroller.querySelector(".msg-actions")!), false],
+      ["a panel's button", add("button", el), false],
+      ["a panel's role=button", add("span", el, { role: "button" }), false],
+      ["a menu item", add("div", add("div", el, { role: "menu" }), { role: "menuitem" }), false],
+      ["a field", add("input", el), false],
+      ["an editable", add("div", el, { contenteditable: "true" }), false],
+      ["the reply dock", add("textarea", dock), false],
+      ["a gutter between panels", add("div", scroller), false],
+      ["outside the scroller", document.body, false],
+      ["nothing", null, false],
+    ];
+    for (const [what, target, enters] of cases) expect(pressEnters(scroller, target), what).toBe(enters);
+    // What stands around the scroller counts for nothing: a control or a panel above it neither swallows nor enters.
+    const around = document.createElement("div");
+    around.className = "msg-actions";
+    around.setAttribute("data-conv-id", "outer");
+    document.body.appendChild(around);
+    around.appendChild(scroller);
+    expect(pressEnters(scroller, el.querySelector(".pm-body")), "a panel under a control-like ancestor").toBe(true);
+    expect(pressEnters(scroller, scroller.lastElementChild), "a gutter under a panel-like ancestor").toBe(false);
+    around.remove();
   });
   it("a scroll the app stamped does not enter", () => {
     panel("a", 1000, 1300);

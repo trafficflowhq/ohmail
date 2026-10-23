@@ -39,10 +39,12 @@ export interface OhboxRow {
   /** Whose words and stamp the row shows: the newest member a person wrote (Resurfaced: the focus). */
   face: EngineMessage;
   /**
-   * What a click, ↵ and the row's verbs act on: the latest unread member that is not our own Sent
-   * copy; else the face when somebody else wrote it; else the newest member somebody else wrote
-   * (an answered conversation stands for the letter, not our reply, read or flagged unread); else,
-   * our own mail alone, its latest unread, else the face.
+   * What a click, ↵ and the row's verbs act on. While an unread letter waits (not our own Sent
+   * copy): the newest letter, read or unread, so a conversation opens on its newest (c3) and an
+   * older unread member never pulls the open back; an unread acknowledgement somebody sent counts.
+   * Else the face when somebody else wrote it; else the newest member somebody else wrote (an
+   * answered conversation stands for the letter, not our reply); else, our own mail alone, its
+   * latest unread, else the face.
    */
   openTarget: EngineMessage;
   unreadCount: number;
@@ -107,7 +109,7 @@ function rowOf(
   return {
     key, section, members, placing, face,
     openTarget: letters.length > 0
-      ? latestOf(letters)
+      ? latestOf(members.filter((m) => isUnreadLetter(m) || isFromSomeone(m)))
       : isFromSomeone(face) ? face : newestFromSomeone(members) ?? (unread.length > 0 ? latestOf(unread) : face),
     unreadCount: unread.length,
   };
@@ -155,9 +157,9 @@ export function foldOhboxRows(
  * WHAT A CONVERSATION OPENED FROM ITS OHBOX ROW IS ACTED ON — Forward, the Forward key and the phone
  * reader's verbs: the row's own answer, read off the rows the Ohbox draws and never recomputed over
  * the whole thread, so a member the row would not open at cannot become it. The opened message while
- * it is a member of its row (the open reads it, and the row's own target would then move to an older
- * unread member); the row's target when it is not; the opened message when no row holds its
- * conversation. Callers take it once, at the open, so a later change to the row cannot move it.
+ * it is a member of its row (an explicit open of an older member — search, a URL, a notification,
+ * a square — stays on it); the row's target when it is not; the opened message when no row holds
+ * its conversation. Callers take it once, at the open, so a later change to the row cannot move it.
  */
 export function rowOpenTarget(
   reader: EntityReader, opened: EngineMessage, openHeld: string | null = null,

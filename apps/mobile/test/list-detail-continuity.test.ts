@@ -10,7 +10,9 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { paneScrollOf, recordPaneScroll } from "../src/ui/pane-memory";
+import { hasPaneScroll, paneScrollOf, recordPaneScroll } from "../src/ui/pane-memory";
+import { endIdleVisit, hideVisit, resetVisitsForTests, showVisit } from "../src/ui/visit-records";
+import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { paneRouteFor } from "../src/ui/pane-routes";
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -93,5 +95,48 @@ describe("the reader writes and restores its position through pane-memory", () =
     // Read ONCE per mount: a fresh offset each render scrolled the reader back to a stale place.
     expect(src).toContain("const startAt = useMemo(() => ({ x: 0, y: paneScrollOf(scrollKey) }), [scrollKey]);");
     expect(src).toContain("contentOffset={startAt}");
+  });
+
+  /**
+   * A visit's end forgets its place (a conversation opens on its newest): a remount inside the visit (a
+   * fold) resumes, a fresh open lands at its anchor. A place outliving the visit stood the anchor
+   * down on a reopen, and the read rule looked from offset 0 (the four-message reopen case).
+   */
+  it("a visit's end forgets its place: after the grace, after another message, and at a row press", () => {
+    const fake = () => {
+      const runs: (() => void)[] = [];
+      return { after: (_ms: number, run: () => void) => { runs.push(run); return () => undefined; }, fire: () => runs.splice(0).forEach((r) => r()) };
+    };
+    resetVisitsForTests();
+    const t = fake();
+    showVisit("v1", 0);
+    recordPaneScroll("msg:v1", 900);
+    hideVisit("v1", t.after);
+    expect(paneScrollOf("msg:v1"), "inside the grace (a posture remount) the place stays").toBe(900);
+    showVisit("v1", 0);
+    hideVisit("v1", t.after);
+    t.fire();
+    expect(hasPaneScroll("msg:v1"), "the grace passed: the visit and its place ended").toBe(false);
+
+    showVisit("v2", 0);
+    recordPaneScroll("msg:v2", 700);
+    hideVisit("v2", fake().after);
+    showVisit("v3", 0);
+    expect(hasPaneScroll("msg:v2"), "another message opened: the visit and its place ended").toBe(false);
+    hideVisit("v3", fake().after);
+
+    showVisit("v4", 0);
+    recordPaneScroll("msg:v4", 500);
+    endIdleVisit("v4");
+    expect(paneScrollOf("msg:v4"), "a shown visit is not idle: a press on its own row keeps it").toBe(500);
+    hideVisit("v4", fake().after);
+    endIdleVisit("v4");
+    expect(hasPaneScroll("msg:v4"), "a row press inside the grace: a fresh open").toBe(false);
+    resetVisitsForTests();
+  });
+
+  it("the row press ends an idle visit before it opens", () => {
+    const src = withoutComments(read("../src/ui/list-detail.tsx"));
+    expect(src).toMatch(/openRow: \(id: string\) => \{[^}]*endIdleVisit\(id\);[^}]*router/);
   });
 });

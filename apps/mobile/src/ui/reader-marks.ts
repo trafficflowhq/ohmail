@@ -4,6 +4,7 @@
  * thread-read guard reads them without a renderer.
  */
 import type { WorldEarlier, WorldMail } from "../state/live";
+import { MIN_SLOP } from "../theme/tokens";
 
 export type MarkKind = "unread" | "read" | "mine";
 
@@ -79,6 +80,8 @@ export function marksShown<T>(marks: readonly T[], room: number | null): readonl
 export const RAIL_PITCH = 30;
 export const RAIL_PITCH_MIN = 16;
 export const RAIL_TOP = 6;
+/** A square's touch target: its own pitch high, so the squares tile the rail without overlap (`Tap`'s default slop overlapped them). */
+export const RAIL_HIT_SLOP = { top: 0, bottom: 0, left: MIN_SLOP, right: MIN_SLOP } as const;
 
 /**
  * THE RAIL FITS THE READER: `n` squares in `room` dp (the rail's height less the chrome standing over

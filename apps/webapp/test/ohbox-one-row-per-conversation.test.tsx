@@ -251,7 +251,7 @@ describe("the other ways a conversation changes section", () => {
     assertOnceEverywhere(live.frames);
     const end = live.frames.at(-1)!;
     expect(end.rows.filter((r) => r.group === "New").map((r) => r.key)).toEqual(["T", "U", "msg:ben"]);
-    expect(end.rows.find((r) => r.key === "T")!.id, "opened on the unread member").toBe("techcheck");
+    expect(end.rows.find((r) => r.key === "T")!.id, "opens on its newest; the unread older member waits").toBe("giulia");
   });
 
   it("a Resurfaced Done slides the conversation down as ONE row", async () => {

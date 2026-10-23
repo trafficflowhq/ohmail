@@ -179,6 +179,15 @@ async function readAndLeave(id: string, leaveTo: string): Promise<void> {
   for (let i = 0; i < Math.abs(to - from); i++) await press(step);
 }
 
+/** An older member read in the conversation's column (the shell's rule), as the view is told. */
+async function readInColumn(id: string, settled = true): Promise<void> {
+  marked.push({ ids: [id], unread: false });
+  live.find((r) => r.id === id)!.unread = false;
+  await draw();
+  if (settled) await settle();
+  else await frame();
+}
+
 /** A chord, the way the keymap's dispatcher sees it, then the shell's re-render. */
 async function press(key: string, shift = false): Promise<void> {
   await act(async () => {
@@ -310,18 +319,17 @@ describe("a conversation moves as one row", () => {
 
     // The conversation is still waiting — two replies of it are unread — so the row stands.
     // The read message RIDES that row (2026-09-28): the conversation is one row, and
-    // its count is the conversation's length, not what is left unread.
-    expect(idsInGroup("New")).toEqual(["t2", "solo"]);
-    expect(rowEl("t2").textContent).toContain("⤷ 3");
+    // its count is the conversation's length, not what is left unread. The row keeps t3's id:
+    // a conversation opens on its newest, its older unread members wait.
+    expect(idsInGroup("New")).toEqual(["t3", "solo"]);
+    expect(rowEl("t3").textContent).toContain("⤷ 3");
     expect(idsInGroup("Earlier")).toEqual([]);
 
-    // Work through the rest. The last one takes the conversation's row with it.
-    await readAndLeave("t2", "solo");
-    await settle();
-    expect(idsInGroup("New")).toEqual(["t1", "solo"]);
+    // Work through the rest, read in the conversation's column. The last one takes the row with it.
+    await readInColumn("t2");
+    expect(idsInGroup("New")).toEqual(["t3", "solo"]);
 
-    await readAndLeave("t1", "solo");
-    await settle();
+    await readInColumn("t1");
     expect(idsInGroup("New")).toEqual(["solo"]);
     // The whole conversation is one row under Earlier now.
     expect(idsInGroup("Earlier")).toEqual(["t3"]);
@@ -340,14 +348,14 @@ describe("a conversation moves as one row", () => {
       { id: "solo", unread: true, date: "2026-08-02T09:00:00.000Z" },
     ]);
     await readAndLeave("t2", "solo");
-    /* The read member is mid-slide INSIDE the row, so the row's lead has already moved to the
-       unread one left (a grouped row is keyed to its open target). The row itself is not going
-       anywhere and must not be drawn as if it were. */
-    expect(idsInGroup("New")).toEqual(["t1", "solo"]);
-    expect(rowEl("t1").classList.contains("settling")).toBe(false);
+    /* The read member is mid-slide INSIDE the row, and the row keeps its newest as its lead (a
+       conversation opens on its newest) while t1 waits. The row itself is not
+       going anywhere and must not be drawn as if it were. */
+    expect(idsInGroup("New")).toEqual(["t2", "solo"]);
+    expect(rowEl("t2").classList.contains("settling")).toBe(false);
 
     await settle();
-    await readAndLeave("t1", "solo");
+    await readInColumn("t1", false);
     // Now nothing in the row is unread, so the row goes — faced by its newest member now.
     expect(rowHolding("t1").classList.contains("settling")).toBe(true);
   });

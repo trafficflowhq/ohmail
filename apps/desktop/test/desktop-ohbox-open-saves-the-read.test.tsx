@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { FixturesAdapter, MemoryMirrorStore, OhmailEngine, type MirrorRecord } from "@ohmail/client-engine";
+import { FixturesAdapter, MemoryMirrorStore, OhmailEngine, type MirrorRecord, type SyncChange } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../../webapp/messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "../../webapp/test/fixtures/thread-layout.js";
@@ -70,25 +70,30 @@ afterEach(async () => {
 const count = (): number => Number(/(\d+) unread/.exec(host!.textContent ?? "")?.[1] ?? NaN);
 const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`.row[data-id="${id}"]`)!;
 
+/** The window as `DesktopGate` mounts it: the web client's shell over an engine the window built. */
+async function mountWindow(store: LaterTaskDisk): Promise<void> {
+  const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store, storePolicy: { mode: "full" } });
+  const { AppShell } = await import("../../webapp/app/shell/AppShell");
+  window.location.hash = "#/ohbox";
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(h(NextIntlClientProvider, {
+      locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
+      children: h(ThemeProvider, {
+        storageKey: null,
+        children: h(ToastHost, { children: h(AppShell as never, { demo: false, engine } as never) }),
+      }),
+    }));
+  });
+  for (let i = 0; i < 12; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+}
+
 describe("the desktop window's Ohbox", () => {
   it("an open saves the read to the outbox and the wire while the message is still open; a preview writes nothing", async () => {
     const store = new LaterTaskDisk();
-    const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store, storePolicy: { mode: "full" } });
-    const { AppShell } = await import("../../webapp/app/shell/AppShell");
-    window.location.hash = "#/ohbox";
-    host = document.createElement("div");
-    document.body.appendChild(host);
-    root = createRoot(host);
-    await act(async () => {
-      root!.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-        children: h(ThemeProvider, {
-          storageKey: null,
-          children: h(ToastHost, { children: h(AppShell as never, { demo: false, engine } as never) }),
-        }),
-      }));
-    });
-    for (let i = 0; i < 12; i++) await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    await mountWindow(store);
 
     const row = host.querySelector<HTMLElement>('.row[data-unseen="1"][data-id]');
     expect(row, "the fixture Ohbox shows no unread row").not.toBeNull();
@@ -108,5 +113,64 @@ describe("the desktop window's Ohbox", () => {
     expect(store.disk.some((d) => d.startsWith("put ")), "the outbox row never reached the disk").toBe(true);
     expect(rowOf(id).dataset.unseen).toBeUndefined();
     expect(count(), "the count and the row disagree").toBe(before - 1);
+  });
+
+  /**
+   * A conversation opens on its newest, also when opened again (the c3 design): the
+   * fixture's three unread letters threaded into one row. The first open reads the newest; after
+   * another row, the reopen opens the newest again and reads none of the older members, which stay
+   * unread (it opened the newest unread and read it).
+   */
+  it("a reopened conversation lands on its newest and reads nothing it did not show", async () => {
+    // The demo world has no threads: three of its unread letters get one, in the world itself.
+    type ToMessage = { toMessage: (...a: unknown[]) => { id: string; threadId: string | null } };
+    const proto = FixturesAdapter.prototype as unknown as ToMessage;
+    const toMessage = proto.toMessage;
+    vi.spyOn(proto, "toMessage").mockImplementation(function (this: unknown, ...a: unknown[]) {
+      const m = toMessage.apply(this, a);
+      return ["giulia", "petra", "ben"].includes(m.id) ? { ...m, threadId: "T" } : m;
+    });
+    const sync = FixturesAdapter.prototype.sync;
+    vi.spyOn(FixturesAdapter.prototype, "sync").mockImplementation(async function (this: FixturesAdapter, params) {
+      const page = await sync.call(this, params);
+      const creates: SyncChange[] = [...page.changes.creates];
+      const lead = creates.find((c) => c.type === "message" && c.id === "giulia");
+      if (lead) {
+        const m = lead.entity as { accountId: string; subject: string; date: string };
+        creates.push({ ...lead, type: "thread", id: "T", entity: {
+          id: "T", accountId: m.accountId, rootMessageIdHeader: null, subject: m.subject,
+          messageIds: ["ben", "petra", "giulia"], lastMessageAt: m.date, participants: [], updatedAt: lead.updatedAt,
+        } });
+      }
+      return { ...page, changes: { ...page.changes, creates } };
+    });
+    await mountWindow(new LaterTaskDisk());
+    const group = [...host!.querySelectorAll<HTMLElement>('.row[data-unseen="1"][data-ids]')]
+      .find((r) => (r.dataset.ids ?? "").split(" ").length >= 2);
+    expect(group, "the fixture Ohbox shows no unread conversation").toBeTruthy();
+    const newest = group!.dataset.id!;
+    const older = group!.dataset.ids!.split(" ").filter((id) => id !== newest);
+    const holding = (): HTMLElement => host!.querySelector<HTMLElement>(`.row[data-ids~="${newest}"]`)!;
+    const reads = () => wire.filter((w) => w.kind === "mark_seen").flatMap((w) => w.ids);
+    const focused = () => host!.querySelector<HTMLElement>('.read-col [data-conv-id][aria-current="true"]')?.dataset.convId
+      ?? host!.querySelector<HTMLElement>(".read-col [data-conv-id]")?.dataset.convId;
+
+    await act(async () => { holding().click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    await layout.passDwell();
+    expect(focused(), "the first open").toBe(newest);
+    expect(reads(), "the first open reads the newest").toEqual([newest]);
+    const other = [...host!.querySelectorAll<HTMLElement>(".row[data-id]")].find((r) => !(r.dataset.ids ?? r.dataset.id!).split(" ").includes(newest));
+    expect(other, "the fixture Ohbox shows one row only").toBeTruthy();
+    await act(async () => { other!.click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    const before = reads();
+
+    expect(holding().dataset.id, "the row stands for its newest").toBe(newest);
+    await act(async () => { holding().click(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(50); });
+    await layout.passDwell();
+    expect(focused(), "the reopen lands on the newest").toBe(newest);
+    expect(reads().slice(before.length).filter((id) => older.includes(id)), "the reopen read an older member unseen").toEqual([]);
   });
 });

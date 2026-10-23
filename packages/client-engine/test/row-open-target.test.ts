@@ -93,12 +93,13 @@ describe("a row-opened conversation acts on the row's own target", () => {
     expect(rowOpenTarget(readerOf([rowA1, own]), own).id).toBe("x2");
   });
 
-  it("the opened message stays the target after the open reads it, where the row's target moves", () => {
+  it("the opened message stays the target after the open reads it, and an older member opened stays itself", () => {
     const a2 = msg({ id: "a2", at: NEWER, unread: true });
     expect(rowTargetOf(readerOf([rowA1, a2])), "before the open").toBe("a2");
     const read = readerOf([rowA1, { ...a2, unread: false }]);
-    expect(rowTargetOf(read), "the premise: the row's own target moved to the older unread member").toBe("a1");
+    expect(rowTargetOf(read), "the row's own target stays on its newest while the older a1 waits").toBe("a2");
     expect(rowOpenTarget(read, { ...a2, unread: false }, "a2").id).toBe("a2");
+    expect(rowOpenTarget(read, rowA1).id, "an explicit open of the older a1 (search, a URL, a square)").toBe("a1");
   });
 
   it("a Resurfaced conversation ending in our own reply acts on its focus, the pinned original", () => {
@@ -121,5 +122,59 @@ describe("a row-opened conversation acts on the row's own target", () => {
   it("CONTROL: with no row for its conversation, the opened message is the target", () => {
     const junk = msg({ id: "j1", at: NEWER, threadId: "J", folder: FOLDER_OF_VIEW.spam });
     expect(rowOpenTarget(readerOf([rowA1, junk]), junk).id).toBe("j1");
+  });
+});
+
+/**
+ * A CONVERSATION OPENS ON ITS NEWEST (the c3 design): the row stands
+ * for its newest letter, read or unread, so an older unread member never pulls the open back to
+ * itself. The reopen case: four members, the newest read by the first open, the three before it unread.
+ * MUTATION WATCHED: `latestOf(letters)` back in the unread arm answers t3 and l1.
+ */
+describe("the row opens at its newest letter, read or unread", () => {
+  const at = (h: number) => `2026-10-23T0${h}:00:00.000Z`;
+  const KAI = { name: "Kai", address: "kai@example.invalid" };
+
+  it("the reopen case: t1-t3 unread, t4 read -> t4", () => {
+    const ms = [1, 2, 3, 4].map((i) => msg({ id: `t${i}`, at: at(i), unread: i < 4 }));
+    const t4 = ms[3]!;
+    const reader = readerOf(ms);
+    expect(rowTargetOf(reader)).toBe("t4");
+    expect(rowOpenTarget(reader, t4).id).toBe("t4");
+  });
+
+  it("an older unread letter, a newer read one and our own reply -> the newer letter", () => {
+    const reader = readerOf([
+      msg({ id: "l1", at: at(1), unread: true }),
+      msg({ id: "l2", at: at(2), from: KAI }),
+      msg({ id: "r3", at: at(3), folder: SENT, from: ME }),
+    ]);
+    expect(rowTargetOf(reader)).toBe("l2");
+  });
+
+  it("CONTROL: every member unread -> the newest", () => {
+    const ms = [1, 2, 3, 4].map((i) => msg({ id: `t${i}`, at: at(i), unread: true }));
+    expect(rowTargetOf(readerOf(ms))).toBe("t4");
+  });
+
+  it("CONTROL: an unread letter before our own reply -> the letter", () => {
+    const reader = readerOf([msg({ id: "l1", at: at(1), unread: true }), msg({ id: "r2", at: at(2), folder: SENT, from: ME })]);
+    expect(rowTargetOf(reader)).toBe("l1");
+  });
+
+  it("CONTROL: an unread calendar acknowledgement somebody sent, newest -> the acknowledgement", () => {
+    const reader = readerOf([msg({ id: "l1", at: at(1) }), msg({ id: "k2", at: at(2), from: KAI, unread: true, itipReplyHeader: true })]);
+    expect(rowTargetOf(reader)).toBe("k2");
+  });
+
+  it("CONTROL: our own mail alone -> its newest", () => {
+    const reader = readerOf([msg({ id: "o1", at: at(1), folder: SENT, from: ME }), msg({ id: "o2", at: at(2), folder: SENT, from: ME })]);
+    expect(rowTargetOf(reader)).toBe("o2");
+  });
+
+  it("CONTROL: a Resurfaced row keeps its focus, the pinned member", () => {
+    const pin: MessageStateDTO = { messageId: "t1", state: "resurfaced", bubbleUpAt: null, setAt: at(5), updatedAt: at(5) };
+    const ms = [msg({ id: "t1", at: at(1), triage: pin }), msg({ id: "r2", at: at(2), folder: SENT, from: ME })];
+    expect(rowTargetOf(readerOf(ms))).toBe("t1");
   });
 });

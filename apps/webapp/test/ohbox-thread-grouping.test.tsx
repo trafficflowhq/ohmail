@@ -299,12 +299,12 @@ describe("Ohbox conversation grouping", () => {
     expect(rowEl("n2").textContent).toContain("⤷ 4");
   });
 
-  /** The row opens at its latest unread and is stamped with its newest member; the stamp dates the latter. */
+  /** An answered row opens at the letter and is stamped with its newest member, our reply; the stamp dates the latter. */
   it("names the stamped member when it is not the one the row opens", async () => {
     setViewport();
     await render({
       newForYou: [{ id: "n1", unread: true, threadId: "T", date: at(9) }],
-      previouslySeen: [{ id: "r2", unread: false, threadId: "T", date: at(12) }],
+      previouslySeen: [{ id: "r2", unread: false, threadId: "T", date: at(12), folder: "Sent" }],
     });
     expect(idsInGroup("New")).toEqual(["n1"]);
     expect(rowEl("n1").dataset.stampId).toBe("r2");

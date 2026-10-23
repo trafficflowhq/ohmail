@@ -1396,7 +1396,7 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
   const box = ohboxView(pres, openHeld);
   /**
    * ONE ROW PER CONVERSATION ACROSS THE SECTIONS — the fold the web app draws. The row's id, verbs
-   * and open are its open target's (the latest unread member, or a resurfaced row's focus); its
+   * and open are its open target's (the newest letter, read or unread, or a resurfaced row's focus); its
    * sender, snippet and time are its face's, and a conversation wears its stored name. Read state
    * and the counts below stay per message.
    */

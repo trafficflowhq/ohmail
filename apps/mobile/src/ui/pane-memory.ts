@@ -28,3 +28,8 @@ export function paneScrollOf(key: string): number {
 export function hasPaneScroll(key: string): boolean {
   return offsets.has(key);
 }
+
+/** The visit that kept `key` ended: the next open starts at its own anchor. */
+export function forgetPaneScroll(key: string): void {
+  offsets.delete(key);
+}

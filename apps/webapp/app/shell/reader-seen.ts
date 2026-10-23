@@ -24,8 +24,8 @@ import { stampLive } from "./programmatic-scroll";
  * is one no one saw. A framed body is ready only once its frame was measured (its end marker drawn),
  * and a body that still stands in for its frame (`data-body-pending`) is not ready.
  *
- * The evidence code only ENTERS a preview: a pointer press, a wheel or touch on the scroller, and
- * a scroll the person made (a free scroll key, or the frame clause: pointer on a framed body, the
+ * The evidence code only ENTERS a preview: a press or touch on a message's own panel or on the
+ * scroller's box (never on a verb, a menu or a field: `pressEnters`), a wheel, and a scroll the person made (a free scroll key, or the frame clause: pointer on a framed body, the
  * document focused, no key, focus or selection move just before). A stamped app scroll, one while
  * the geometry moved, or one within a second of a resize never enters.
  */
@@ -172,6 +172,20 @@ const editable = (t: EventTarget | null): boolean =>
 
 const NOTHING: ReadonlySet<string> = new Set();
 
+/** A verb, not reading: the bar, the reply dock, a menu, any button or field. */
+const PRESS_CONTROL =
+  ".msg-actions, .reply-dock, [role='menu'], button, [role='button'], [role='menuitem'], input, textarea, select, [contenteditable]";
+
+/** Does a press here enter the visit: on a message's own panel (not a control in it), or on the scroller's own box (its scrollbar)? */
+export function pressEnters(scroller: HTMLElement, target: EventTarget | null): boolean {
+  if (target === scroller) return true;
+  if (!(target instanceof Element) || !scroller.contains(target)) return false;
+  const control = target.closest(PRESS_CONTROL);
+  if (control !== null && scroller.contains(control)) return false;
+  const panel = target.closest("[data-conv-id]");
+  return panel !== null && scroller.contains(panel);
+}
+
 export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
   const { scroller, record } = o;
   const doc = scroller.ownerDocument;
@@ -295,11 +309,16 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
     poke();
   };
 
+  const onPress = (e: Event): void => { if (pressEnters(scroller, e.target)) enter(); };
+  const onTouch = (e: Event): void => { if (pressEnters(scroller, e.target)) onHand(); };
+  /* A drag enters through the scroll it makes, so a tap's jitter on the bar enters nothing. */
+  const onDrag = (): void => { lastEvidence = now(); };
+
   const passive = { passive: true } as const;
   scroller.addEventListener("wheel", onHand, passive);
-  scroller.addEventListener("touchstart", onHand, passive);
-  scroller.addEventListener("touchmove", onHand, passive);
-  scroller.addEventListener("pointerdown", enter, passive);
+  scroller.addEventListener("touchstart", onTouch, passive);
+  scroller.addEventListener("touchmove", onDrag, passive);
+  scroller.addEventListener("pointerdown", onPress, passive);
   scroller.addEventListener("scroll", onScroll, passive);
   win.addEventListener("keydown", onKeyFree);
   win.addEventListener("keydown", onKeyAny, true);
@@ -331,9 +350,9 @@ export function createThreadReadDom(o: ThreadReadDomOptions): ThreadReadDom {
       resized?.disconnect();
       mutated?.disconnect();
       scroller.removeEventListener("wheel", onHand);
-      scroller.removeEventListener("touchstart", onHand);
-      scroller.removeEventListener("touchmove", onHand);
-      scroller.removeEventListener("pointerdown", enter);
+      scroller.removeEventListener("touchstart", onTouch);
+      scroller.removeEventListener("touchmove", onDrag);
+      scroller.removeEventListener("pointerdown", onPress);
       scroller.removeEventListener("scroll", onScroll);
       win.removeEventListener("keydown", onKeyFree);
       win.removeEventListener("keydown", onKeyAny, true);

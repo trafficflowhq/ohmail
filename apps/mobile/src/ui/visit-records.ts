@@ -4,9 +4,14 @@
  * and a record made per mount forgot the visit: a message the person had marked unread was read
  * back by the new mount's first look. A visit's record lives while a reader shows its message; once
  * none does it ends after a grace that outlasts the handoff, and opening another message ends it at
- * once. A new visit to the same message after that is a fresh record.
+ * once. A new visit to the same message after that is a fresh record, and so is its place: the
+ * remembered scroll offset ends with the visit, so a reopen lands at its open anchor (the newest).
  */
 import { createThreadRead, type ThreadRead } from "./reader-seen";
+import { forgetPaneScroll } from "./pane-memory";
+
+/** The reader's place lives as long as its visit (MessageReader's `scrollKey`). */
+const endPlace = (id: string): void => forgetPaneScroll(`msg:${id}`);
 
 /** How long a visit nobody shows waits for the remount a posture change makes. */
 export const VISIT_HANDOFF_MS = 2000;
@@ -43,6 +48,7 @@ export function showVisit(id: string, now: number): void {
     if (k !== id && v.shown === 0) {
       v.end?.();
       visits.delete(k);
+      endPlace(k);
     }
   }
   visitRecordFor(id, now);
@@ -60,8 +66,17 @@ export function hideVisit(id: string, after: After = later): void {
   if (v.shown > 0) return;
   v.end?.();
   v.end = after(VISIT_HANDOFF_MS, () => {
-    if (visits.get(id) === v && v.shown === 0) visits.delete(id);
+    if (visits.get(id) === v && v.shown === 0) { visits.delete(id); endPlace(id); }
   });
+}
+
+/** A row press opens `id` afresh: a visit of it nobody shows (in its handoff grace) ends now, its place with it. */
+export function endIdleVisit(id: string): void {
+  const v = visits.get(id);
+  if (!v || v.shown > 0) return;
+  v.end?.();
+  visits.delete(id);
+  endPlace(id);
 }
 
 /** For the suite: every visit forgotten. */
