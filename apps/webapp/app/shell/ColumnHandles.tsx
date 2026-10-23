@@ -38,6 +38,7 @@ import {
   type ColumnState,
 } from "./column-store";
 import "./column-handles.css";
+import { queryVisible } from "./visible-dom";
 
 /** Where each handle's column actually is, so a measurement never guesses. */
 const RAIL_SEL = ".deck > .rail";
@@ -53,7 +54,7 @@ type Kind = "rail" | "list";
  * ceiling the drag cannot reach is worse than one that claims none.
  */
 function listCeiling(): number {
-  const split = document.querySelector<HTMLElement>(SPLIT_SEL);
+  const split = queryVisible<HTMLElement>(SPLIT_SEL);
   if (!split) return LIST.max;
   const gap = parseFloat(getComputedStyle(split).columnGap);
   const room = split.clientWidth - LIST.viewerMin - (Number.isFinite(gap) ? gap : 0);
@@ -85,7 +86,7 @@ function Handle({ kind, label, state }: HandleProps) {
    * set", never "the number you never chose".
    */
   const measure = useCallback((): number => {
-    const col = document.querySelector<HTMLElement>(kind === "rail" ? RAIL_SEL : LIST_SEL);
+    const col = queryVisible<HTMLElement>(kind === "rail" ? RAIL_SEL : LIST_SEL);
     if (col) {
       // CSS px: the width is written back as `--rail-w`/`--split-user` (`ui-zoom.ts` in @ohmail/ui).
       const w = cssRect(col).width;
@@ -271,7 +272,7 @@ export function ColumnHandles() {
   // which happens on every route change. A dependency list here would be a second, weaker
   // statement of the same thing, and the body is a `querySelector` and an identity compare.
   useEffect(() => {
-    const next = document.querySelector<HTMLElement>(LIST_SEL);
+    const next = queryVisible<HTMLElement>(LIST_SEL);
     setListHost((prev) => (prev === next ? prev : next));
   });
 

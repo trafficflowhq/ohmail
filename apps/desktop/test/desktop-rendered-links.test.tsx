@@ -7,7 +7,7 @@ import { join, relative, resolve } from "node:path";
 import { NextIntlClientProvider } from "next-intl";
 
 import { MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
-import { setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
+import { setRenderedLinksBatchSink, setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
@@ -50,8 +50,13 @@ const OPEN = "window.open";
 
 /** Every command the window sent the shell and every new-window request it made, in order. */
 const sent: Array<{ command: string; payload?: Record<string, unknown> }> = [];
+/** The shell's command; one call carries a batch, `surfaces[i]` drawing `urls[i]`. */
+const LINKS = "rendered_links_batch";
+const batches = (): Array<{ surfaces: string[]; urls: string[][] }> =>
+  sent.filter((s) => s.command === LINKS).map((s) => s.payload as { surfaces: string[]; urls: string[][] });
+/** Every surface's report, in the order the shell applies them. */
 const reports = (): Array<{ surface: string; urls: string[] }> =>
-  sent.filter((s) => s.command === "rendered_links").map((s) => s.payload as { surface: string; urls: string[] });
+  batches().flatMap((b) => b.surfaces.map((surface, i) => ({ surface, urls: b.urls[i]! })));
 const opens = (): string[] => sent.filter((s) => s.command === OPEN).map((s) => String(s.payload?.url));
 const firstOf = (command: string): number => sent.findIndex((s) => s.command === command);
 
@@ -88,6 +93,8 @@ async function mount(element: React.ReactElement): Promise<HTMLElement> {
 
 async function unmount(): Promise<void> {
   if (root) await act(async () => { root!.unmount(); });
+  // The removal rides the next batch, a frame later at most (`rendered-links.ts`).
+  await turns(4);
   root = null;
   mountPoint?.remove();
   mountPoint = null;
@@ -118,7 +125,7 @@ beforeEach(() => {
   // What `main.tsx` arms before the first render: the interceptor, and the sink to the shell.
   enableExternalLinks();
   dispose = interceptLinkClicks(document, { trustSameOrigin: true });
-  setRenderedLinksSink(reportRenderedLinksToShell);
+  setRenderedLinksBatchSink(reportRenderedLinksToShell);
 });
 
 afterEach(async () => {
@@ -161,7 +168,7 @@ describe("a message's links are on the shell's list while it is on screen", () =
     expect(report?.urls).toEqual(["https://example.test/a?b=1&c=2", "https://xn--bcher-kva.example/%C3%BC"]);
     for (const a of el.querySelectorAll<HTMLAnchorElement>("a.msg-link")) await press(a);
     expect(opens()).toEqual(report!.urls);
-    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
+    expect(firstOf(LINKS)).toBeLessThan(firstOf(OPEN));
   });
 
   it("an html letter set in the app's own type reports its anchors the same way", async () => {
@@ -221,7 +228,25 @@ describe("a message's links are on the shell's list while it is on screen", () =
       link!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
     });
     expect(opens()).toEqual([minted]);
-    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
+    expect(firstOf(LINKS)).toBeLessThan(firstOf(OPEN));
+  });
+
+  it("five frames mounted in one commit are one batch, and their unmount is one more", async () => {
+    /* A switch into News mounts a viewer per card near the screen; each used to be its own call
+       across the bridge, in and out. Mutations: flush per report → five calls; flush the removals
+       one by one → five more; drop the removal → the last batch keeps the links. */
+    const el = await mount(h("div", null, ...[1, 2, 3, 4, 5].map((i) =>
+      h(MessageBody, { key: i, messageId: `b${i}`, text: "one two three", html: FRAMED.replace("/a?b=1", `/a${i}?b=1`) }))));
+    expect(el.querySelectorAll("iframe").length).toBe(5);
+    expect(batches().length, "the five frames' reports were not one call").toBe(1);
+    expect(batches()[0]!.surfaces.length).toBe(5);
+    expect(new Set(batches()[0]!.surfaces).size).toBe(5);
+    const links = reports().flatMap((r) => r.urls);
+    expect(links).toContain("https://example.test/a3?b=1&c=2#f");
+    await unmount();
+    expect(batches().length, "the unmount's removals were not one call").toBe(2);
+    expect(batches()[1]!.urls.every((u) => u.length === 0), "the unmount left links on the list").toBe(true);
+    expect([...batches()[1]!.surfaces].sort()).toEqual([...batches()[0]!.surfaces].sort());
   });
 
   it("with no sink armed — the web app's state — nothing is reported", async () => {
@@ -269,7 +294,7 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
     expect(report, "the signature's link never reached the shell").toBeDefined();
     await press(a!);
     expect(opens()).toEqual([OUR_SITE]);
-    expect(firstOf("rendered_links")).toBeLessThan(firstOf(OPEN));
+    expect(firstOf(LINKS)).toBeLessThan(firstOf(OPEN));
     await unmount();
     expect(reports().at(-1), "the unmount left the signature's link on the list").toEqual({ surface: report!.surface, urls: [] });
   });
@@ -371,19 +396,19 @@ describe("the wiring, from source", () => {
 
   it("the desktop entry arms the shell's reporter before the first render", () => {
     const main = source("apps/desktop/src/main.tsx");
-    const armed = main.indexOf("setRenderedLinksSink(reportRenderedLinksToShell)");
+    const armed = main.indexOf("setRenderedLinksBatchSink(reportRenderedLinksToShell)");
     expect(armed, "main.tsx does not arm the sink").toBeGreaterThan(-1);
     expect(armed, "the sink is armed after the first render").toBeLessThan(main.indexOf("createRoot("));
   });
 
   it("the command is named in the window's own native module and nowhere in the shared code", () => {
-    expect(source("apps/desktop/src/native.ts")).toMatch(/"rendered_links"/);
+    expect(source("apps/desktop/src/native.ts")).toMatch(/"rendered_links_batch"/);
     for (const f of [...filesUnder("apps/webapp/app"), ...filesUnder("packages")]) {
-      expect(source(f), `${f} names the shell command`).not.toMatch(/["'`]rendered_links["'`]/);
+      expect(source(f), `${f} names the shell command`).not.toMatch(/["'`]rendered_links(?:_batch)?["'`]/);
     }
     // And both artifacts are read for it: the window must name it, the served page must not.
     expect(source("apps/desktop/scripts/scan-artifact.mjs")).toMatch(
-      /SHELL_COMMAND_MARKERS = \[[^\]]*"rendered_links"/,
+      /SHELL_COMMAND_MARKERS = \[[^\]]*"rendered_links_batch"/,
     );
   });
 

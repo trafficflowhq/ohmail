@@ -12,7 +12,7 @@
  */
 
 import DOMPurify from "dompurify";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { BODY_PAGE_CHARS, useOptionalTheme } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
@@ -38,6 +38,8 @@ import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
+import { useEngineOrNull } from "../shell/engine";
+import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
 
 /**
  * The English sentences — the FALLBACK, not the source: every string comes
@@ -3167,6 +3169,11 @@ export function fitScale(columnPx: number, naturalPx: number, reflow = false): n
   return Math.max(columnPx < WIDE_COLUMN_PX ? MID_FIT_SCALE : MIN_FIT_SCALE, columnPx / naturalPx);
 }
 
+/** A box as the frame's observer and its measurement both state it: whole CSS pixels. */
+function sizeKey(w: number, h: number): string {
+  return `${Math.round(w)}x${Math.round(h)}`;
+}
+
 /**
  * THE DOCUMENT'S IDENTITY — the body frame's key. Writing `srcdoc` on a frame already on screen
  * is a NAVIGATION: the element stays, and so does every document it has held, on that frame's
@@ -3426,6 +3433,15 @@ export interface MessageBodyProps {
 }
 
 /**
+ * FALSE ON THE SERVER AND WHILE HYDRATING, TRUE ON THE CLIENT — `useSyncExternalStore` over a store
+ * that never changes, so React itself decides which snapshot a render reads.
+ */
+const NO_SUBSCRIPTION = () => () => {};
+function useHydrated(): boolean {
+  return useSyncExternalStore(NO_SUBSCRIPTION, () => true, () => false);
+}
+
+/**
  * ONE COMPONENT, EVERY SURFACE THAT RENDERS A MESSAGE. `BodyText`'s header says why: "the
  * fix landing on the pane while the thread below it keeps dumping raw text is a shape this
  * repo has shipped five times". The plain-text path is delegated to `BodyText` verbatim
@@ -3515,11 +3531,12 @@ export function MessageBody({
    * is false and the text fallback renders. Deciding straight off `sanitizerAvailable()` would make the client's
    * FIRST render a frame where the server sent a paragraph, which is a hydration mismatch: React 18 discards the
    * subtree and re-renders it client-side, and logs an error doing it. So the frame appears on the render AFTER
-   * mount, deliberately. The cost is one extra render; the practical flash is none, because the body is hydrated by
-   * an engine that only exists in the browser — `html` is null during every real server render.
+   * hydration, deliberately ({@link useHydrated}): a hydration reads the server's answer first, and every other client
+   * render — a view the shell mounts, a card the stream shows again — builds the frame in its first render, with no
+   * extra one. The practical flash is none either way, because the body is hydrated by an engine that only exists in
+   * the browser — `html` is null during every real server render.
    */
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const mounted = useHydrated();
 
   /**
    * THE POLICY AND THE REWRITE ARE THE SAME DECISION, SO THEY READ ONE VALUE: {@link proxyImgSource} answers "can
@@ -3550,9 +3567,27 @@ export function MessageBody({
   // The prose sink's half of the walk's gate: the same map's values, so `BodyText` draws a `blob:`
   // only when it is this message's own (see `inlineImageAdmitted`).
   const ownImages = useMemo(() => ownImagesOf(cidImages), [cidImages]);
+  /**
+   * THE DOCUMENT IS KEPT PER ENGINE (`mail-doc-cache.ts`): a card or a pane that shows a message
+   * again reads its document back instead of sanitizing it again, in the same render. No engine (a
+   * bare mount) or no message id (the Screener's held card) is the uncached path, as before.
+   */
+  const engine = useEngineOrNull();
   const mail = useMemo(() => {
     if (!html) return null;
     if (!mounted || !sanitizerAvailable()) return { state: "unsupported" as const };
+    const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
+    const inputs: MailDocInputs = {
+      messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
+      loadPixels: loadTrackingPixels, hasText, darkWanted,
+    };
+    const kept = cache?.read(inputs);
+    if (kept) return kept.value;
+    const made = sanitizeView(html);
+    cache?.write(inputs, made, made && made.state === "ok" ? made.doc.length : html.length);
+    return made;
+  // The pass itself, unchanged — what the cache keeps.
+  function sanitizeView(html: string) {
     // The length first, so a part past it is parsed by nobody; then the tree the first parse in
     // `sanitizeMailHtml` would build, counted under a budget before anything else parses it.
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
@@ -3625,6 +3660,7 @@ export function MessageBody({
       /** The frame's http(s) links, reported while the frame is on screen. */
       links,
     };
+  }
     // `darkWanted` is intentionally omitted — it is applied live via toggleAttribute, never by
     // rebuilding the frame; see the note on `doc` above. `cidImages` IS a dep: an arrived
     // embedded image can only reach the frame through a rebuild, and its identity moves once
@@ -3632,7 +3668,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -3714,8 +3750,21 @@ export function MessageBody({
    */
   const attachFrame = useCallback((el: HTMLIFrameElement | null) => {
     frameRef.current = el;
-    if (el && heightRef.current) el.style.height = heightRef.current;
+    /* A first element has no height of its own to carry; the height this document was last fitted
+       to (`mail-doc-cache.ts`) stands in until its load measures it, so a card shown again opens at
+       its size instead of growing from the stylesheet's floor. */
+    const seed = heightRef.current || seedHeight.current;
+    if (el && seed) el.style.height = seed;
   }, []);
+  /** Where the fitted height is kept, and for which document — read by the stable callbacks here. */
+  const seedHeight = useRef<string>("");
+  const fitStore = useRef<{ key: string; cache: MailDocCache<unknown> } | null>(null);
+  /**
+   * THE SIZES THE LAST MEASUREMENT LEFT, in the observer's terms (border box, rounded) — so the
+   * observer below can tell a change from its own first report, or from a pile shown again, without
+   * a layout read.
+   */
+  const sizes = useRef(new WeakMap<Element, string>());
 
   const measure = useCallback(() => {
     const frame = frameRef.current;
@@ -3806,25 +3855,51 @@ export function MessageBody({
       if (scrollers[i]!.scrollTop !== tops[i]) scrollProgrammatically(scrollers[i]!, tops[i]!);
     }
     lastMeasure.current = measureInputs(frame, doc);
+    /* Layout is clean after the read above, so these cost nothing more. */
+    const shell = shellRef.current;
+    if (doc.body) sizes.current.set(doc.body, sizeKey(doc.body.offsetWidth, doc.body.offsetHeight));
+    if (shell) sizes.current.set(shell, sizeKey(shell.offsetWidth, shell.offsetHeight));
+    const store = fitStore.current;
+    if (store && frame.style.height) store.cache.setFit(store.key, { width: frame.clientWidth, height: frame.style.height });
   }, []);
 
   // Keyed on the DOCUMENT, not the `mail` object: a re-sanitize that yields the same bytes (a new
   // map of the same pictures, a host's new closure) is the same frame and must not probe it again.
   const frameKey = mail?.state === "ok" ? mail.frameKey : null;
+  const docCache = engine && messageId ? mailDocCacheFor<unknown>(engine) : null;
+  fitStore.current = frameKey !== null && docCache ? { key: frameKey, cache: docCache } : null;
+  seedHeight.current = frameKey !== null && docCache ? docCache.fitOf(frameKey)?.height ?? "" : "";
   useEffect(() => {
     // THE FRAME ON SCREEN MUST BE THE ONE THIS MAIL LOADED. A fresh element's document is the
     // browser's empty one until `load` fires, and measuring or observing that measures nothing
     // and observes a body that is about to be replaced.
     if (frameKey === null || loadedKey !== frameKey) return;
-    measure();
     const frame = frameRef.current;
     const shell = shellRef.current;
     if (!frame || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => measure());
+    /**
+     * MEASURED ONCE PER LOAD (`onLoad` below), and again only for a real change: the mail's body
+     * grew (a picture arrived) or the column moved. The observer's first report, and every report
+     * after a pile is shown again, carries the sizes the last measurement left (`sizes`), and is
+     * answered with nothing — it used to probe every frame again, a forced layout per frame per
+     * switch.
+     */
+    const ro = new ResizeObserver((entries) => {
+      let changed = false;
+      for (const en of entries) {
+        const b = en.borderBoxSize?.[0];
+        const k = b ? sizeKey(b.inlineSize, b.blockSize) : "";
+        if (k === "" || sizes.current.get(en.target) !== k) {
+          if (k !== "") sizes.current.set(en.target, k);
+          changed = true;
+        }
+      }
+      if (changed) measure();
+    });
     // The mail's own content, and the column it sits in. Deliberately NOT `frame`.
     const body = frame.contentDocument?.body;
-    if (body) ro.observe(body);
-    if (shell) ro.observe(shell);
+    if (body) ro.observe(body, { box: "border-box" });
+    if (shell) ro.observe(shell, { box: "border-box" });
     return () => ro.disconnect();
   }, [loadedKey, measure, frameKey]);
 

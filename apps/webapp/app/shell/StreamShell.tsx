@@ -21,6 +21,7 @@ import {
 } from "react";
 /* Every rect here meets `scrollTop`, so every rect is read in CSS px (`ui-zoom.ts`). */
 import { cssRect, useSeenOnScroll } from "@ohmail/ui";
+import { useVisit } from "./visit";
 
 /**
  * THE COLUMN WIDTH THE MOUNTED CARDS SHARE, measured once per stream.
@@ -137,9 +138,18 @@ export const StreamShell = forwardRef<
      */
     onNear?: (id: string) => void;
     /**
-     * The leave-commit seam — called exactly once, from the unmount cleanup; the views unmount
-     * precisely when the route changes away, so those are one event, and that pair is the
-     * DELIBERATE definition of leaving. Tab-hide is deliberately not it (it fires on every
+     * Cards that came within the same lookahead — a SIGNAL, never a fetch: the view mounts a card's
+     * rendered viewer only near the screen (`StreamCardMemo.viewer`), and this is how it hears which
+     * cards are. Called with the ids of one observer callback; Receipts takes this and not `onNear`,
+     * so its stream still fetches nothing on a scroll.
+     */
+    onApproach?: (ids: string[]) => void;
+    /**
+     * The leave-commit seam — called exactly once per visit, from the effect cleanup that ends it:
+     * the view unmounting, or hidden while the shell keeps it (`kept-piles.tsx`), precisely when the
+     * route changes away, and that pair is the DELIBERATE definition of leaving. What it reports is
+     * that visit's alone: a visit starts from an empty range (`useVisit` below). Tab-hide is
+     * deliberately not it (it fires on every
      * cmd-tab). Closing the tab outright commits nothing — the conservative side: the per-card
      * sweep already wrote what was scrolled past, and a line that failed to advance shows old mail
      * as new, never the reverse. The visible range is TRACKED continuously rather than read here: a
@@ -157,7 +167,7 @@ export const StreamShell = forwardRef<
     contentKey: unknown;
     children: ReactNode;
   }
->(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onLeave, pileIndexOf, contentKey, children }, ref) {
+>(function StreamShell({ ariaLabel, onCurrentChange, onSeen, onNear, onApproach, onLeave, pileIndexOf, contentKey, children }, ref) {
   const divRef = useRef<HTMLDivElement>(null);
   /**
    * ONE READ FOR THE WHOLE COLUMN — see {@link StreamCardWidth}. A layout effect, so the measured
@@ -194,6 +204,8 @@ export const StreamShell = forwardRef<
    * the spy for the life of the view.
    */
   const jumpRef = useRef<{ id: string; until: number } | null>(null);
+  /** The visit's own reset scroll is in flight: the spy's next reading is taken, not announced. */
+  const quietRef = useRef(false);
   /** The anchoring loop's live frame — see {@link ANCHOR_FRAMES}. 0 when nothing is in flight. */
   const anchorRef = useRef(0);
   /** `StreamHandle.whenOffScreen`'s waiters, by card id. */
@@ -222,6 +234,8 @@ export const StreamShell = forwardRef<
   onSeenRef.current = onSeen;
   const onNearRef = useRef(onNear);
   onNearRef.current = onNear;
+  const onApproachRef = useRef(onApproach);
+  onApproachRef.current = onApproach;
   const onLeaveRef = useRef(onLeave);
   onLeaveRef.current = onLeave;
   const pileIndexOfRef = useRef(pileIndexOf);
@@ -294,6 +308,30 @@ export const StreamShell = forwardRef<
   };
   const measureRef = useRef(measure);
   measureRef.current = measure;
+
+  /**
+   * A VISIT STARTS FROM NOTHING (`visit.ts`). The view this stream sits in can be kept mounted
+   * while the reader is elsewhere, and what the last visit displayed must not reach this one's
+   * leave-commit: a revisit that inherited the previous visit's top would anchor the waterline
+   * there and flip mail this visit never put on screen. So the tracked range starts empty, and the
+   * scroller starts where a fresh mount starts, at the top — before the paint, and before the
+   * passive effects below take their first reading.
+   */
+  useVisit(
+    () => {
+      rangeRef.current = { newestSeenId: null, bottomVisibleId: null };
+      curRef.current = null;
+      jumpRef.current = null;
+      const el = divRef.current;
+      // `behavior` explicit: `.stream` scrolls smoothly by default (see `scrollTo` below). The
+      // scroll-spy takes its reading off this scroll and announces nothing (`quietRef`).
+      if (el && el.scrollTop !== 0) {
+        quietRef.current = true;
+        el.scrollTo({ top: 0, behavior: "instant" });
+      }
+    },
+    () => {},
+  );
 
   useEffect(() => {
     observer.observe();
@@ -372,15 +410,20 @@ export const StreamShell = forwardRef<
     const io = new IntersectionObserver(
       (entries) => {
         const fn = onNearRef.current;
-        if (!fn) return;
+        const approach = onApproachRef.current;
+        if (!fn && !approach) return;
+        const near: string[] = [];
         for (const en of entries) {
           if (!en.isIntersecting) continue;
           const id = (en.target as HTMLElement).dataset.sid;
-          if (id && !nearFired.current.has(id)) {
+          if (!id) continue;
+          near.push(id);
+          if (fn && !nearFired.current.has(id)) {
             nearFired.current.add(id);
             fn(id);
           }
         }
+        if (approach && near.length > 0) approach(near);
       },
       { root: el, rootMargin: "100% 0px" },
     );
@@ -628,6 +671,11 @@ export const StreamShell = forwardRef<
         }
         if (!current) current = cards[0]!;
         const id = current.dataset.sid!;
+        if (quietRef.current) {
+          quietRef.current = false;
+          curRef.current = id;
+          return;
+        }
         if (id !== curRef.current) {
           curRef.current = id;
           onCurrentRef.current(id);

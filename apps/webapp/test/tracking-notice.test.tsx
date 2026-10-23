@@ -112,7 +112,7 @@ async function mountCards(cards: CardOpts[]): Promise<HTMLElement> {
           h(StreamCardMemo, {
             key: `m${i}`,
             m: message(`m${i}`, c.amount ? { amount: c.amount } as Partial<EngineMessage> : {}),
-            now, current: false, expanded: false, unread: false,
+            now, current: false, expanded: false, viewer: true, unread: false,
             bodyText: "body", bodyState: "full" as const, bodyHtml: c.html, bodyLoadedRemote: false,
             remoteImages: c.remoteImages,
             loadingLabel: "…", failedLabel: "!", withheldKey: "withheld", onReask: () => {},

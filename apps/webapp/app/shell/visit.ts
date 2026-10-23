@@ -1,0 +1,44 @@
+"use client";
+
+/**
+ * A VISIT TO A PILE IS THE LIFE OF ITS EFFECTS. A pile the shell keeps mounted while the reader is
+ * elsewhere (`AppShell`'s kept piles, under React's `<Activity>`) keeps its state, its refs and its
+ * DOM, and has every effect destroyed when it is hidden and created again when it is shown. So the
+ * effect lifetime is the visit, and what a visit owns — the leave range, the scroll position, a pick,
+ * a lingering bar — is reset where a visit starts and let go where it ends, exactly as an unmount
+ * and a fresh mount did it before.
+ *
+ * `start` runs in a layout effect, before the paint of the commit that shows the pile, and before
+ * any passive effect of the same commit; `end` runs as that effect is destroyed (the pile hidden or
+ * unmounted). Both are read through a ref, so callers pass plain closures.
+ */
+import { useLayoutEffect, useRef } from "react";
+
+export function useVisit(start: () => void, end: () => void): void {
+  const ref = useRef({ start, end });
+  ref.current = { start, end };
+  useLayoutEffect(() => {
+    ref.current.start();
+    return () => ref.current.end();
+  }, []);
+}
+
+/**
+ * RUN `cb` ONCE THE NEXT FRAME HAS BEEN PAINTED — a timer queued from that frame's own callback,
+ * so it runs after the paint. Answers the cancel. Where nothing lays out (no animation frames, or
+ * `el` with no box), `cb` runs at once: there is no frame to paint first.
+ */
+export function afterPaint(el: HTMLElement | null, cb: () => void): () => void {
+  if (typeof requestAnimationFrame !== "function" || !el || el.getClientRects().length === 0) {
+    cb();
+    return () => {};
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const frame = requestAnimationFrame(() => {
+    timer = setTimeout(cb, 0);
+  });
+  return () => {
+    cancelAnimationFrame(frame);
+    if (timer !== null) clearTimeout(timer);
+  };
+}

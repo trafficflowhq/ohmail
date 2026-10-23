@@ -25,6 +25,7 @@ import { useTranslations } from "next-intl";
 import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
 import { railLayout } from "./narrow";
 import { scrollProgrammatically } from "./programmatic-scroll";
+import { queryVisible } from "./visible-dom";
 
 /**
  * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening
@@ -306,7 +307,7 @@ function useListFocusFollow(followId: string | null | undefined, selector: strin
     if (followId == null) return;
     const cur = document.activeElement;
     if (!(cur instanceof HTMLElement) || !cur.matches(".row")) return;
-    const sel = document.querySelector<HTMLElement>(selector);
+    const sel = queryVisible<HTMLElement>(selector);
     if (sel && sel !== cur) sel.focus({ preventScroll: true });
   }, [followId, selector]);
 }
@@ -393,7 +394,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
 
   const focusList = (): void => {
     const sel = latest.current.listFocusSelector ?? ".view .row.sel";
-    if (tryFocus(document.querySelector<HTMLElement>(sel))) return;
+    if (tryFocus(queryVisible<HTMLElement>(sel))) return;
     // No row to stand on (a resting list, a stream): release focus to the body, which IS
     // the list zone by derivation. The view's own cursor highlight carries the indication.
     const cur = document.activeElement;
@@ -403,7 +404,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
   const enterReader = (): void => {
     const r = latest.current.reader;
     if (!r || r.disabled) return;
-    const pane = document.querySelector<HTMLElement>(r.selector);
+    const pane = queryVisible<HTMLElement>(r.selector);
     if (tryFocus(pane)) {
       r.onEnter?.();
       return;
@@ -421,7 +422,7 @@ export function useZoneNav(cfg: ZoneNavConfig = {}): Zone {
     const sheet = document.querySelector<HTMLElement>(READER_OVERLAY);
     const r = latest.current.reader;
     const el =
-      sheet ?? (r ? document.querySelector<HTMLElement>(r.scrollSelector ?? r.selector) : null);
+      sheet ?? (r ? queryVisible<HTMLElement>(r.scrollSelector ?? r.selector) : null);
     if (el) scrollProgrammatically(el, el.scrollTop + dir * READER_SCROLL_STEP);
   };
 

@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { KeymapProvider } from "../app/shell/keymap";
-import { STREAM_MOUNT_INITIAL } from "../app/shell/stream-window";
+import { openingCount } from "../app/shell/stream-window";
 
 /**
  * THE READING STREAM DOES NOT RE-RENDER A CARD WHOSE INPUTS DID NOT CHANGE.
@@ -79,17 +79,21 @@ let roots: Root[] = [];
  *  arrays) over the SAME message references, exactly as `readsPartition` does on each apply. */
 let bump: () => void = () => {};
 let setCurrent: (id: string | null) => void = () => {};
+let setJump: (id: string | null) => void = () => {};
 
 function Harness({ msgs }: { msgs: EngineMessage[] }) {
   const [version, setVersion] = React.useState(0);
   const [cur, setCur] = React.useState<string | null>(null);
+  const [jump, setJumpState] = React.useState<string | null>(null);
   bump = () => setVersion((v) => v + 1);
   setCurrent = setCur;
+  setJump = setJumpState;
   const now = React.useMemo(() => new Date(ISO), []);
   const onCur = React.useCallback((id: string) => setCur(id), []);
   const bodyOf = React.useCallback((m: EngineMessage) => body(m), []);
   const hydrateBody = React.useCallback(() => {}, []);
   const onAction = React.useCallback(() => {}, []);
+  const onJumped = React.useCallback(() => setJumpState(null), []);
   // New partition object each render, and FRESH CLONES of every message inside — the shape a real
   // apply takes once the consent projection (`presentationReader`) has rebuilt the pile. A memo
   // keyed on the message reference cannot survive this; the facts comparator must.
@@ -104,7 +108,7 @@ function Harness({ msgs }: { msgs: EngineMessage[] }) {
     <ReadsView settled owed={false}
       partition={partition} tags={tags} now={now} cur={cur} onCur={onCur}
       aiChip={null} chipState={null} onChipState={() => {}} markSeen={() => {}}
-      bodyOf={bodyOf} hydrateBody={hydrateBody} jumpTo={null} onJumped={() => {}} onAction={onAction}
+      bodyOf={bodyOf} hydrateBody={hydrateBody} jumpTo={jump} onJumped={onJumped} onAction={onAction}
     />
   );
 }
@@ -137,6 +141,8 @@ describe("the reading stream skips cards whose inputs did not change", () => {
     // jsdom has no layout, so `scrollIntoView` is absent; the keep-in-view effect calls it once a
     // card becomes current. A no-op is enough — this test asserts render counts, not scrolling.
     (HTMLElement.prototype as unknown as { scrollIntoView?: () => void }).scrollIntoView ??= () => {};
+    // …and no element scrolling: a jump's landing scroll only has to not throw here.
+    (HTMLElement.prototype as unknown as { scrollTo?: () => void }).scrollTo ??= () => {};
     vi.spyOn(console, "error").mockImplementation(() => {});
     counter.streamCards = 0;
   });
@@ -153,7 +159,7 @@ describe("the reading stream skips cards whose inputs did not change", () => {
     // The stream mounts its opening run, not the pile (`stream-window.ts`; its own guards live
     // in `stream-mount-window.test.tsx`). Ignore the exact count — the invariant under test
     // here is the DELTA on a subsequent apply.
-    expect(counter.streamCards).toBeGreaterThanOrEqual(Math.min(N, STREAM_MOUNT_INITIAL));
+    expect(counter.streamCards).toBeGreaterThanOrEqual(Math.min(N, openingCount(window.innerHeight)));
 
     counter.streamCards = 0;
     await act(() => bump());
@@ -191,6 +197,35 @@ describe("the reading stream skips cards whose inputs did not change", () => {
     // Exactly the one card whose drawing changed — and the sibling case above proves the
     // comparator has not simply started re-rendering everything.
     expect(counter.streamCards).toBe(1);
+  });
+
+  it("a card the lookahead reports re-renders alone — `viewer` is in the comparator", async () => {
+    /* Deep in the pile (a jump moves the window there), the mounted cards are not near; the one
+       the lookahead reports flips `viewer` and is the one card that draws again. Mutation: leave
+       `viewer` out of `areEqual` → zero re-renders and the card never builds its viewer. */
+    const near: Array<(entries: Partial<IntersectionObserverEntry>[]) => void> = [];
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(cb: (entries: Partial<IntersectionObserverEntry>[]) => void, o?: IntersectionObserverInit) {
+        if (o?.rootMargin === "100% 0px") near.push(cb);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const msgs = Array.from({ length: N }, (_, i) => message(i));
+    await mount(<Harness msgs={msgs} />);
+    await act(async () => { setJump("m150"); });
+    // The jump runs on a frame after its commit; let it land.
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    const card = document.querySelector('.scast[data-sid="m152"]');
+    expect(card, "control: the jump mounted the cards around its target").not.toBeNull();
+    counter.streamCards = 0;
+    await act(async () => { near.at(-1)!([{ isIntersecting: true, target: card! }]); });
+    expect(counter.streamCards).toBe(1);
+    counter.streamCards = 0;
+    await act(async () => { near.at(-1)!([{ isIntersecting: true, target: card! }]); });
+    expect(counter.streamCards, "a card already near re-rendered for being reported again").toBe(0);
+    vi.unstubAllGlobals();
   });
 
   it("moving the cursor re-renders exactly the two cards whose `current` flipped", async () => {

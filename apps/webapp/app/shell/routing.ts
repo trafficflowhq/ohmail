@@ -395,12 +395,31 @@ export function normalizedHash(hash: string): string | null {
   return canonical === hash ? null : canonical;
 }
 
+/** The route store's subscribers, told at once when a verb below writes the hash ({@link navigate}). */
+const routeListeners = new Set<() => void>();
+
+/**
+ * WRITE THE HASH AND TELL THE ROUTE IN THE SAME TASK. The browser announces a fragment change with
+ * a `hashchange` it fires after the next frame (traced in Chromium: the event ran 16 ms after the
+ * key), so every press painted the view it was leaving for one more frame. The verbs write the hash
+ * and notify the route store at once, inside the press; the event that follows finds the route
+ * already read and renders nothing. A held pane was asked first (`heldBefore`), as before.
+ */
+function navigate(next: string): void {
+  window.location.hash = next;
+  for (const cb of [...routeListeners]) cb();
+}
+
 export function useHashRoute(): Route {
   const subscribe = useCallback((cb: () => void) => {
     /* A pane holding an unsaved change sees a Back press or a link BEFORE the route does. */
     const onChange = (e: Event): void => { if (!heldOnHashChange(e)) cb(); };
     window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
+    routeListeners.add(cb);
+    return () => {
+      window.removeEventListener("hashchange", onChange);
+      routeListeners.delete(cb);
+    };
   }, []);
   const hash = useSyncExternalStore(
     subscribe,
@@ -493,7 +512,7 @@ export function go(view: Exclude<ViewId, "tag" | "folder">): void {
      site per verb, and the end is the shell's (`useSwitchEnd`). Here rather than in the controls
      because the rail, the palette, the number keys and a deep link all arrive through these. */
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -534,14 +553,14 @@ export function goTag(tagId: string): void {
   const next = `#/tag/${tagId}`;
   if (heldBefore(next, () => goTag(tagId))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 export function goFolder(folderId: string): void {
   const next = `#/folder/${folderId}`;
   if (heldBefore(next, () => goFolder(folderId))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -556,14 +575,14 @@ export function goAddress(address: string): void {
   const next = addressHash(address);
   if (heldBefore(next, () => goAddress(address))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 export function goScreener(segment: ScreenerSegmentId): void {
   const next = segment === "waiting" ? "#/screener" : `#/screener/${segment}`;
   if (heldBefore(next, () => goScreener(segment))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /** The first pile keeps the bare `#/triage`, so every link that already exists still lands. */
@@ -571,7 +590,7 @@ export function goTriage(pile: TriagePileId): void {
   const next = pile === "reply" ? "#/triage" : `#/triage/${pile}`;
   if (heldBefore(next, () => goTriage(pile))) return;
   beginSwitch(switchKeyForHash(next));
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**
@@ -585,7 +604,7 @@ export function goTriage(pile: TriagePileId): void {
 export function goSettings(pane: PaneId): void {
   const next = `#/settings/${pane}`;
   if (heldBefore(next, () => goSettings(pane))) return;
-  window.location.hash = next;
+  navigate(next);
 }
 
 /**

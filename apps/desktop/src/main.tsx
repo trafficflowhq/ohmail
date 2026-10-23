@@ -15,7 +15,7 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
-import { setRenderedLinksSink } from "../../webapp/app/shell/rendered-links";
+import { setRenderedLinksBatchSink } from "../../webapp/app/shell/rendered-links";
 import { stampColumns } from "../../webapp/app/shell/column-store";
 import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";
@@ -120,8 +120,8 @@ interceptLinkClicks(document, { trustSameOrigin: true });
 /* …AND THE LINKS ON SCREEN GO TO THE SHELL AS THEY ARE DRAWN. The shell's new-window door opens
    only a link a renderer reported, or one of the shell's own (`rendered-links.ts`). Armed here,
    before the first render, so a message's links are on the shell's list before anybody can
-   press one. */
-setRenderedLinksSink(reportRenderedLinksToShell);
+   press one; in batches, one bridge call per frame's worth of reports. */
+setRenderedLinksBatchSink(reportRenderedLinksToShell);
 enableDesktopAttachments();
 
 /* THE OMARCHY THEME FEED, armed here for the same reason the two arms above are: it is a

@@ -66,10 +66,10 @@ const WINDOW_COMMANDS: &[&str] = &[
     // that means.
     "open_link",
     // THE LINKS ON SCREEN (`src/rendered_links.rs`): the window's renderers report the http/https
-    // links a surface draws, and the shell keeps them in a bounded list. It opens nothing, and no
-    // command here takes an address to open: a link leaves only as the webview's own new-window
-    // request on the person's click (`src/link_gate.rs`).
-    "rendered_links",
+    // links their surfaces draw, in batches, and the shell keeps them in a bounded list. It opens
+    // nothing, and no command here takes an address to open: a link leaves only as the webview's
+    // own new-window request on the person's click (`src/link_gate.rs`).
+    "rendered_links_batch",
     // One attachment, named by its id with a display name, saved into the PERSON'S Downloads
     // folder — the desktop's answer to the `<a download>` a webview cancels. The engine streams
     // the part to a file `engine.rs` names; it owns the folder, the sanitiser and the numbering.
