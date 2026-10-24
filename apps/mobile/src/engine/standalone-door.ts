@@ -12,7 +12,7 @@ import { asAuthHint, authHintPreset, portMeansImplicitTls, type AuthHint } from 
 import { LOCAL_ENGINE_ORIGIN } from "./boot";
 import { faultDetail, refuse, type Refusal } from "../refusal";
 import type { EngineLogSink } from "./engine-log";
-import { portRefusal, type StandaloneFields } from "../ui/standalone-form";
+import { portRefusal, type GateBlock, type StandaloneFields } from "../ui/standalone-form";
 
 /**
  * WHAT ASKING FOR THIS PHONE ANSWERED — four states, named, and no `null` among them.
@@ -30,8 +30,8 @@ export type ClaimHereOutcome =
   | "held_consented"
   /** Held, over a mailbox this install organized: its claim watch takes it back by itself. */
   | "held_returns"
-  /** The gate cannot read `ohmail/_meta` for a reason fixed on the mail server — the desktop row's sentence. */
-  | "meta_folder_full" | "meta_undeletable"
+  /** The gate refused for a reason fixed on the mail server or the phone's clock — the desktop row's sentence. */
+  | GateBlock
   | "refused";
 
 /**

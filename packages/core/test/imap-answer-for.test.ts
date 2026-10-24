@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FetchMessageObject, ImapFlow } from "imapflow";
-import { answerFor, answerForTheAskedMessage } from "../src/adapters/imap.js";
+import * as imap from "../src/adapters/imap.js";
+
+const { answerFor, answerForTheAskedMessage } = imap;
 
 /**
  * WHICH UNTAGGED FETCH IS `fetchOne`'S ANSWER — the rule `answerForTheAskedMessage` puts on every
@@ -113,5 +115,48 @@ describe("answerForTheAskedMessage — the connection's fetchOne", () => {
     const client = {} as ImapFlow;
     answerForTheAskedMessage(client);
     expect((client as { fetchOne?: unknown }).fetchOne).toBeUndefined();
+  });
+});
+
+describe("readServerDates — INTERNALDATE as an instant, whatever the runtime's Date parses", () => {
+  // Spelled out so the case is red on a build without the export, not a load error.
+  const readServerDates = (c: ImapFlow): void => (imap as { readServerDates?: (c: ImapFlow) => void }).readServerDates!(c);
+  const imapDateTime = (v: unknown): Date | null => (imap as { imapDateTime?: (v: unknown) => Date | null }).imapDateTime!(v);
+  const at = (m: unknown): unknown => {
+    const d = (m as { internalDate?: unknown }).internalDate;
+    return d instanceof Date ? d.getTime() : d;
+  };
+
+  it("turns a string stamp into the server's instant on fetch and fetchOne", async () => {
+    const kept = new Date(Date.UTC(2026, 0, 1));
+    const rows: unknown[] = [
+      { uid: 1, internalDate: " 4-Oct-2026 08:29:08 +0200" },
+      { uid: 2, internalDate: "24-oct-2026 06:29:09 -0130" },
+      { uid: 3, internalDate: kept },
+      { uid: 4, internalDate: "Thursday" },
+      { uid: 5 },
+    ];
+    const client = {
+      async *fetch() { for (const r of rows) yield r; },
+      async fetchOne(seq: string) { return seq === "9" ? false : { uid: 1, internalDate: "01-Jan-2026 00:00:00 +0000" }; },
+    } as unknown as ImapFlow;
+    readServerDates(client);
+    const got: unknown[] = [];
+    for await (const m of client.fetch("1:*", { internalDate: true })) got.push(m);
+    expect(got.map(at)).toEqual([
+      Date.UTC(2026, 9, 4, 6, 29, 8), Date.UTC(2026, 9, 24, 7, 59, 9), kept.getTime(), "Thursday", undefined,
+    ]);
+    expect((got[2] as { internalDate: Date }).internalDate).toBe(kept);
+    expect(at(await client.fetchOne("1", { internalDate: true }))).toBe(Date.UTC(2026, 0, 1));
+    expect(await client.fetchOne("9", { internalDate: true })).toBe(false);
+  });
+
+  it("reads only the RFC 3501 form, never through the runtime's parser", () => {
+    expect(imapDateTime("31-Feb-2026 00:00:00 +0000")).toBeNull();
+    expect(imapDateTime("2026-10-24T06:29:09Z")).toBeNull();
+    expect(imapDateTime("24-Foo-2026 06:29:09 +0000")).toBeNull();
+    expect(imapDateTime("24-Oct-2026 24:00:00 +0000")).toBeNull();
+    expect(imapDateTime(new Date(Number.NaN))).toBeNull();
+    expect(imapDateTime(12)).toBeNull();
   });
 });

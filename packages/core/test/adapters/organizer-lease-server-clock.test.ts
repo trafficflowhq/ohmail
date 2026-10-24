@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { memoryImapServer } from "./_metaworld.js";
+import { greenmailConfig } from "./_imapenv.js";
+import { ImapAdapter } from "../../src/adapters/imap.js";
 import {
   decideLease, peekLease, parseClaim, formatClaim, makeLeaseIo, withServerClock,
   CLAIM_PROTOCOL, DEFAULT_STALE_AFTER_MS, MAX_FUTURE_SKEW_MS,
@@ -316,6 +318,40 @@ describe("the stamp survives every read that builds a claim", () => {
     server.seed(SERVER_PATH, raw, NOW);
     const stated = server.tree.get(SERVER_PATH)!.messages[1];
     expect(stated!.internalDate.getTime(), "a stated stamp was ignored").toBe(NOW.getTime());
+  });
+});
+
+describe("a phone reads the server's stamp too", () => {
+  /** INTERNALDATE as imapflow hands it back when the runtime's Date refuses the RFC 3501 form. */
+  const rfc3501 = (d: Date): string => {
+    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]!;
+    const p = (n: number): string => String(n).padStart(2, "0");
+    return `${String(d.getUTCDate()).padStart(2, " ")}-${mon}-${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} +0000`;
+  };
+
+  it("through the adapter's own connection, the claim carries the server's stamp", async () => {
+    const server = memoryImapServer({ folders: ["ohmail._meta"] });
+    const stamp = new Date(Date.UTC(2026, 9, 4, 6, 29, 8));
+    server.seed("ohmail._meta", formatClaim({
+      protocol: CLAIM_PROTOCOL, installId: "laptop", kind: "local", displayName: "laptop machine",
+      claimedAt: stamp, heartbeat: stamp, nonce: "n-laptop", authorizedAt: null, capabilities: [],
+    }), stamp);
+    const fetch = server.fetch.bind(server);
+    const client = Object.assign(Object.create(server) as object, {
+      capabilities: new Map<string, boolean>(),
+      async logout() { /* noop */ },
+      close() { /* noop */ },
+      async *fetch(...args: Parameters<typeof fetch>) {
+        for await (const m of fetch(...args)) {
+          yield m.internalDate instanceof Date ? { ...m, internalDate: rfc3501(m.internalDate) } : m;
+        }
+      },
+    });
+    const adapter = new ImapAdapter(greenmailConfig(), { client, capabilityOverrides: { condstore: false } });
+    await adapter.connect();
+    const records = await adapter.leasePeekIo().listClaims();
+    expect(records).toHaveLength(1);
+    expect(records[0]!.internalDate?.getTime(), "the phone read the claim with no server stamp").toBe(stamp.getTime());
   });
 });
 

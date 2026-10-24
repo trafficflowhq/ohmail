@@ -234,11 +234,13 @@ export type ClaimHereOutcome =
    */
   | "meta_folder_full"
   | "meta_undeletable"
+  /** The gate refused this phone's clock as too far from the server's (`LeaseClockSkewError`). */
+  | "clock_off"
   /** The door said no for any other reason. The caller says so where a person can read it. */
   | "refused";
 
-/** The two lease refusals a person can act on, which the door answers under their own codes. */
-const NAMED_META_BLOCKS: ReadonlySet<string> = new Set(["meta_folder_full", "meta_undeletable"]);
+/** The lease refusals a person can act on, which the door answers under their own codes. */
+const NAMED_META_BLOCKS: ReadonlySet<string> = new Set(["meta_folder_full", "meta_undeletable", "clock_off"]);
 
 /** A consent press's body, read once by the door: see `readOrganizePress`. */
 interface OrganizePress {
@@ -1359,7 +1361,12 @@ async function composePhoneEngine(
   const unreadableResponse = (op?: string | null): Response => new Response(
     JSON.stringify({
       error: NAMED_META_BLOCKS.has(op ?? "")
-        ? { code: op, message: "the claim folder on this mail server cannot be read until it is fixed there" }
+        ? {
+          code: op,
+          message: op === "clock_off"
+            ? "this phone's clock is too far from the mail server's to organize this mailbox"
+            : "the claim folder on this mail server cannot be read until it is fixed there",
+        }
         : { code: "organizer_unreadable", message: "whether another install organizes this mailbox could not be read" },
     }),
     { status: 503, headers: { "content-type": "application/json" } },
@@ -1451,8 +1458,8 @@ async function composePhoneEngine(
     if (gated !== undefined && !gated.organizing && NAMED_META_BLOCKS.has(gated.unreadableReason ?? "")) {
       log("organizer_consent_lease_read_failed", {
         mailboxId, op: gated.unreadableReason,
-        reason: "this engine's own gate could not read the claim folder for a reason the person must fix "
-          + "on the mail server, so no consent was recorded; the press is answered with that reason",
+        reason: "this engine's own gate refused the claim folder for a reason the person must fix "
+          + "on the mail server or the clock, so no consent was recorded; the press is answered with that reason",
       });
       return unreadableResponse(gated.unreadableReason);
     }
@@ -1869,7 +1876,8 @@ async function composePhoneEngine(
         () => ({ error: undefined }),
       );
       if (body.error?.code === "organizer_unreadable") return "unreadable";
-      if (body.error?.code === "meta_folder_full" || body.error?.code === "meta_undeletable") return body.error.code;
+      const code = body.error?.code;
+      if (code === "meta_folder_full" || code === "meta_undeletable" || code === "clock_off") return code;
       return "refused";
     }
     /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────
