@@ -2118,6 +2118,7 @@ export function MessagePane({
         <ThreadMarks
           messages={conversation.map((m) => (m.id === message.id ? message : m))}
           scroller={scroller}
+          conv={convRef}
           onEnter={threadRead.onEnter}
         />
       ) : null}

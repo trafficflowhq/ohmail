@@ -31,6 +31,16 @@ export function scrollIntoViewProgrammatically(el: Element, opts?: ScrollIntoVie
   for (let a: Element | null = el.parentElement; a; a = a.parentElement) stamp(a);
 }
 
+/**
+ * A PERSON'S WHEEL THAT LANDED BESIDE THE SCROLLER — on the column of squares, which stands outside
+ * it — handed to it. Not the app's scroll, so never stamped: the wheel is sent on to the scroller,
+ * where the reader's rule takes it as the person's gesture, and the scroll follows.
+ */
+export function scrollByHand(el: Element, dy: number, wheel: { deltaY: number; deltaMode: number }): void {
+  el.dispatchEvent(new WheelEvent("wheel", wheel));
+  el.scrollTop += dy;
+}
+
 /** Is `el` still where the app last put it, within a pixel, inside that write's stamp? */
 export function stampLive(el: Element): boolean {
   const s = stamps.get(el);

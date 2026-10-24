@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { act, answerStoreWith, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
+import { act, answerStoreWith, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { ME, arriveLater, click, key, mountThread, msg, patches, readSlot, settle, theRow } from "./fixtures/thread-read-shell.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
@@ -21,7 +21,7 @@ const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids
 const deliberate = () => patches.filter((p) => p.via === undefined);
 const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
 const squares = (): string[] =>
-  [...col().querySelectorAll<HTMLElement>(".thread-marks .tm-sq")].map((s) => [...s.classList].find((c) => c !== "tm-sq")!);
+  [...document.querySelectorAll<HTMLElement>(".thread-marks .tm-sq")].map((s) => [...s.classList].find((c) => c !== "tm-sq")!);
 const panel = (id: string): HTMLElement | null => col().querySelector<HTMLElement>(`[data-conv-id="${id}"]`);
 const unseen = (id: string): boolean => panel(id)?.hasAttribute("data-unseen") ?? false;
 const bodies = (ids: string[]): void => answerStoreWith([], Object.fromEntries(ids.map((id) => [id, `the words of ${id}`])));
@@ -343,7 +343,7 @@ describe("a single message", () => {
     expect(theRow(host)?.querySelector(".row-marks"), "no squares for one message").toBeNull();
     await key("j");
     await key("Enter");
-    expect(col().querySelector(".thread-marks"), "no column").toBeNull();
+    expect(document.querySelector(".thread-marks"), "no column").toBeNull();
     expect(glances(), "the dwell is under way").toEqual([]);
     await dwell();
     expect(glances(), "its end is under the bar, its top was read").toEqual([["s1"]]);
@@ -374,7 +374,83 @@ describe("no subject header, and no words in the column", () => {
     const conv = col().querySelector(".conv")!;
     expect(conv.querySelectorAll("h1, h2, h3").length, "no heading element").toBe(0);
     expect(conv.querySelectorAll('[role="heading"]').length, "one subject line per message").toBe(4);
-    expect(conv.querySelector(".thread-marks")?.textContent).toBe("");
+    expect(document.querySelector(".thread-marks")?.textContent).toBe("");
+  }, 30_000);
+});
+
+describe("the column of squares stands beside the scroller, never in it", () => {
+  /* Owner report, desktop: the squares flickered and jumped while the conversation scrolled.
+     WebKitGTK moves a sticky box inside a scroller apart from the scroll itself, so for a frame
+     the column rode with the panels and snapped back. Outside the scroller nothing moves it. */
+  const bar = (): HTMLElement => document.querySelector<HTMLElement>(".tm-bar")!;
+  const ring = (): string | undefined => document.querySelector<HTMLElement>('.tm-mb[aria-current="location"]')?.dataset.for;
+
+  it("is not inside the reading column; a scroll there moves the panels and the ring, never the squares", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await key("Enter");
+    expect(bar(), "the column of squares").not.toBeNull();
+    expect(col().contains(bar()), "the squares scroll with the panels").toBe(false);
+    expect(bar().closest(".thread-marks")?.parentElement, "beside the column, in its view").toBe(col().parentElement);
+    await layout.handScroll(layout.topOf("p1"));
+    await settle();
+    expect(ring(), "the ring follows the panel in view").toBe("p1");
+  }, 30_000);
+
+  it("a wheel over the squares scrolls the conversation and is the person's, as when they stood in it", async () => {
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await dwell();
+    const from = layout.scroller().scrollTop;
+    expect(from, "opened on the newest, far down").toBeGreaterThan(300);
+    await act(async () => { bar().dispatchEvent(new WheelEvent("wheel", { deltaY: -300, bubbles: true, cancelable: true })); });
+    expect(layout.scroller().scrollTop).toBe(from - 300);
+    await act(async () => { bar().dispatchEvent(new WheelEvent("wheel", { deltaY: 3, deltaMode: 1, bubbles: true, cancelable: true })); });
+    expect(layout.scroller().scrollTop, "lines are 40px").toBe(from - 300 + 120);
+    await settle();
+    await dwell();
+    expect(glances(), "the preview was entered: what is on screen reads").not.toEqual([]);
+  }, 30_000);
+
+  it("comes back with the Ohbox: a conversation still open on return has its squares, and so has the next", async () => {
+    /* Review finding: remounted with the selection set, the column's box was looked for before the
+       reading column's ref was attached, and never again: no squares until the pane remounted. */
+    bodies(["p1", "p2", "p3", "p4", "s1", "s2"]);
+    await mountThread([...four(), msg("s1", 40, { threadId: "S" }), msg("s2", 41, { threadId: "S" })]);
+    await key("j");
+    await key("Enter");
+    expect(squares()).toHaveLength(2);
+    for (const away of ["history", "settings", "screener"]) {
+      await goTo(away);
+      await goTo("ohbox");
+      await settle();
+      expect(squares(), `back from ${away}`).toHaveLength(2);
+    }
+    await key("j");
+    expect(squares(), "the next conversation's own").toHaveLength(4);
+    await key("k");
+    expect(squares()).toHaveLength(2);
+  }, 30_000);
+
+  it("in the reader sheet (a narrow window) the squares stay inside the sheet's conversation", async () => {
+    /* Review finding: the sheet's scroller is `.reader`, not the split's column; the box stood
+       beside it in `.app-root`, under the opaque sheet, and a press closed the sheet. */
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true, writable: true,
+      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
+    });
+    bodies(["p1", "p2", "p3", "p4"]);
+    await mountThread(four());
+    await key("j");
+    await key("Enter");
+    const sheet = document.querySelector<HTMLElement>(".reader");
+    expect(sheet, "the reading sheet").not.toBeNull();
+    const marks = sheet!.querySelector<HTMLElement>(".conv > .thread-marks");
+    expect(marks, "the column, in the sheet's conversation").not.toBeNull();
+    expect(marks!.querySelectorAll(".tm-sq")).toHaveLength(4);
+    expect(document.querySelectorAll(".app-root > .thread-marks"), "nothing beside the sheet").toHaveLength(0);
   }, 30_000);
 });
 

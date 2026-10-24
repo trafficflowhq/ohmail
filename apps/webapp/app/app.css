@@ -5940,23 +5940,44 @@ input.set-tag-input {
   transition-duration: 320ms;
   transition-delay: 0s;
 }
-/* The column of squares: sticky at the scrollport's top with no flow height, in the
-   conversation's own left padding, so it never covers a panel. Thin below a 560px conversation. */
-.conv:has(> .thread-marks) {
+/* The column of squares: the reading column's sibling, laid over the conversation's own left
+   padding (the column's grid area is the conversation's box), so it never covers a panel and no
+   scroll moves it. Sticky inside the scroller, WebKitGTK drew it a frame apart from the scroll.
+   Thin below a 560px conversation. */
+.conv[data-thread-read] {
   padding-left: 34px;
 }
+.view.split:has(> .thread-marks[data-narrow]) > .read-col > .conv[data-thread-read],
 .conv:has(> .thread-marks[data-narrow]) {
   padding-left: 22px;
 }
+.view.split:has(> .thread-marks) {
+  position: relative;
+}
 .thread-marks {
-  position: sticky;
+  position: absolute;
+  grid-row: 1;
+  grid-column: -2 / -1;
   top: 0;
+  left: 0;
   height: 0;
   z-index: 2;
 }
+/* The reader sheet is no split view: there the column stays in the conversation, sticky, its bar
+   in the conversation's left padding. */
+.conv > .thread-marks {
+  position: sticky;
+  grid-row: auto;
+  grid-column: auto;
+  left: auto;
+}
+.conv > .thread-marks > .tm-bar {
+  left: auto;
+  right: 100%;
+}
 .tm-bar {
   position: absolute;
-  right: 100%;
+  left: 0;
   top: 10px;
   width: 34px;
   max-height: calc(100dvh / var(--ui-zoom, 1) - 160px);
