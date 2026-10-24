@@ -538,6 +538,8 @@ export {
   EVIDENCE_WINDOW_MS, THREAD_READ_FADE_MS, THREAD_READ_HOLD_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createThreadRead,
   type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
 } from "./reader-seen-rules.js";
+// The thread's squares: which one is current while the reader scrolls, and where a press lands.
+export { WALK_LINE, threadWalk, type Walk, type WalkGeometry, type WalkPin } from "./thread-walk.js";
 
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {
