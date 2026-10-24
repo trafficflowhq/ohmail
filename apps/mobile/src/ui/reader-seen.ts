@@ -4,6 +4,8 @@ import { THREAD_TOP_LINES, threadWalk, type ThreadPanel, type ThreadRead, type W
 export {
   THREAD_READ_FADE_MS, THREAD_READ_HOLD_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createThreadRead, type ThreadRead,
 } from "@ohmail/client-engine";
+/* …and the engine's date words a held square's sheet says (`reader-marks.ts`'s `markWhen`). */
+export { clock, fullDateTime, weekdayDateClock, zonedDayNumber, zonedFields } from "@ohmail/client-engine";
 
 /**
  * THE THREAD-READ RULE IN THE PHONE'S READER — the engine's `createThreadRead` over React Native's

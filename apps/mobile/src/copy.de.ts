@@ -1988,6 +1988,8 @@ export const DE: Deck = {
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Nachricht ${position} von ${count}, von ${sender}, ${unread ? "ungelesen" : "gelesen"}`,
   readerMarkMine: (position: number, count: number) => `Nachricht ${position} von ${count}, von dir gesendet`,
+  readerMarkYou: "du",
+  readerMarkYesterday: "gestern",
   readerMessageActions: "Nachrichtenaktionen",
   readerUnread: "Ungelesen",
 

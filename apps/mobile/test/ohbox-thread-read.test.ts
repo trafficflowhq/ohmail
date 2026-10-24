@@ -16,7 +16,7 @@ import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, liveMessage, liveOhbox, presentedOf, standsInOhbox, type WorldView } from "../src/state/live";
 import { createPhoneThreadRead } from "../src/ui/reader-seen";
-import { arrivalsToAsk, markUnreadOffered, marksShown, railItemsOf, readerGroups } from "../src/ui/reader-marks";
+import { arrivalsToAsk, markLine, markUnreadOffered, markWhen, marksShown, railItemsMemo, railItemsOf, readerGroups } from "../src/ui/reader-marks";
 import { Copy } from "../src/copy";
 import { standsInOhboxMail } from "../src/ui/pane-routes";
 import { threadBadgeOf } from "../src/ui/row-spoken";
@@ -168,6 +168,13 @@ describe("the reported case: an unread conversation opened from the Ohbox", () =
       const at = items.findIndex((it) => it.id === "p4");
       expect(Copy.readerMarkFrom(at + 1, items.length, items[at]!.sender, true), "the newest is spoken last").toContain("5");
       expect(readerGroups(m, false), "outside the Ohbox the opened message still leads").toEqual({ above: [], below: m.earlier });
+      // What a held square's sheet says: the date, the first line, no clip without a file.
+      expect(items.map((it) => [it.id, it.at && new Date(it.at).toISOString()]), "each square's date").toEqual([
+        ["p1", "2026-08-19T01:00:00.000Z"], ["p2", "2026-08-19T02:00:00.000Z"], ["p3", "2026-08-19T03:00:00.000Z"],
+        ["o1", "2026-08-19T04:00:00.000Z"], ["p4", "2026-08-19T05:00:00.000Z"],
+      ]);
+      expect(items.map((it) => it.line), "each first line: before the bodies land, the server's preview").toEqual(["Q3 plan", "Q3 plan", "Q3 plan", "Re: Q3 plan", "Q3 plan"]);
+      expect(items.every((it) => it.file !== true), "no file, no clip").toBe(true);
       const single = liveMessage(s.boot.engine, "r1", view)!;
       expect(railItemsOf(single), "no rail for a single message").toEqual([]);
     } finally {
@@ -257,4 +264,31 @@ describe("the list's squares", () => {
       s.close();
     }
   }, 30_000);
+});
+
+describe("a held square's sheet: its words", () => {
+  const now = new Date("2026-10-24T12:00:00Z");
+  const words = { today: "today", yesterday: "yesterday" };
+  it("today and yesterday by name with the clock, a date past that, the year outside this one", () => {
+    expect(markWhen("2026-10-24T09:12:00Z", now, "UTC", "en", words)).toBe("today 09:12");
+    expect(markWhen("2026-10-23T23:40:00Z", now, "UTC", "en", words)).toBe("yesterday 23:40");
+    expect(markWhen("2026-10-23T23:40:00Z", now, "Europe/Zurich", "en", words), "the reader's midnight").toBe("today 01:40");
+    expect(markWhen("2026-10-21T14:05:00Z", now, "UTC", "en", words)).toBe("Wed 21 Oct, 14:05");
+    expect(markWhen("2025-12-30T08:00:00Z", now, "UTC", "en", words)).toMatch(/^Tue 30 Dec 2025, 08:00$/);
+    expect(markWhen(null, now, "UTC", "en", words), "no date, no words").toBe("");
+  });
+  it("the first line: its first words, cut at a word near 64 characters", () => {
+    expect(markLine("\n\n  Hi Ben,\nthe plan is in")).toBe("Hi Ben,");
+    const long = "Thanks for the draft, I went through all of it on the train and have three small notes";
+    expect(markLine(long)).toBe("Thanks for the draft, I went through all of it on the train and\u2026");
+    expect(markLine("")).toBe("");
+    expect(markLine(" \n\t\n")).toBe("");
+  });
+  it("one reader's squares are asked again only when a fact they show moved", () => {
+    const railOf = railItemsMemo();
+    const m = { id: "b", unread: false, from: { name: "Ben", address: "ben@example.com" }, body: "hi", earlier: [{ id: "a", subject: "", time: "", body: "", seen: true, sender: "Ada" }] };
+    const first = railOf(m);
+    expect(railOf({ ...m, earlier: [...m.earlier] }), "a new object, the same facts").toBe(first);
+    expect(railOf({ ...m, earlier: [{ ...m.earlier[0]!, body: "the plan" }] })[0]!.line, "a body that arrived").toBe("the plan");
+  });
 });

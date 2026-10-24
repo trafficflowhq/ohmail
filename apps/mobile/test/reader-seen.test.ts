@@ -634,7 +634,7 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/anchorFacts\.current = \(\) => \(facts\.current\.inOhbox && aboveCount\.current > 0 \? seen\.topOf\(id\) : null\);/);
     expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\) \|\| place\.current !== null,/);
     expect(reader, "the oldest member is not flashed before the anchor places the opened one").toMatch(/opacity: unplaced \? 0 : 1/);
-    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); \}\}/);
+    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); markHold\.drop\(\); \}\}/);
   });
   it("a reply that syncs into the open reader is asked its text", () => {
     expect(reader).toMatch(/const fresh = arrivalsToAsk\(m\.earlier, asked\.current\);\s*if \(fresh\.length > 0\) hydrateHeld\(fresh\);/);

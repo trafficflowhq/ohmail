@@ -22,8 +22,8 @@ import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
-import { STRIP_END, STRIP_HIT_SLOP, STRIP_SLOT, STRIP_START, marksShown, stripOffsetFor, type RailItem } from "./reader-marks";
-import { MARK_RING, MarkSquare, ringRadius } from "./MarkSquare";
+import { MARK_HOLD_MS, STRIP_END, STRIP_HIT_SLOP, STRIP_SLOT, STRIP_START, marksShown, stripOffsetFor, type RailItem } from "./reader-marks";
+import { MARK_RING, MarkSheet, MarkSquare, ringRadius, useMarkHold } from "./MarkSquare";
 
 /** The open conversation's squares on its row: the reader's, its ring, and a press on one. */
 export interface RowStripFacts {
@@ -318,10 +318,13 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
 /**
  * THE READER'S SQUARES ON THE ROW — the rail's own, oldest first, the current one ringed, each a
  * press that scrolls the reader to its message. A long conversation scrolls sideways, keeping the
- * ringed square in view. Spoken as the rail's squares are.
+ * ringed square in view. Spoken as the rail's squares are. A finger held on one shows its sheet
+ * under the strip and presses nothing.
  */
 function RowStrip({ items, here, onPress }: RowStripFacts) {
   const t = useTheme();
+  const { held, hold, release, drop } = useMarkHold();
+  const heldItem = held === null ? undefined : items.find((it) => it.id === held);
   const list = useRef<ScrollView>(null);
   const [room, setRoom] = useState(0);
   const n = items.length;
@@ -331,6 +334,7 @@ function RowStrip({ items, here, onPress }: RowStripFacts) {
     list.current?.scrollTo({ x: stripOffsetFor(at, n, room), animated: false });
   }, [at, n, room]);
   return (
+    <View>
     <ScrollView
       ref={list}
       horizontal
@@ -341,6 +345,7 @@ function RowStrip({ items, here, onPress }: RowStripFacts) {
       style={{ marginTop: -4, flexGrow: 0 }}
       contentContainerStyle={{ paddingLeft: STRIP_START, paddingRight: STRIP_END, paddingBottom: 10 }}
       onLayout={(e) => setRoom(e.nativeEvent.layout.width)}
+      onScrollBeginDrag={drop}
     >
       {items.map((it, i) => (
         <Tap
@@ -352,7 +357,11 @@ function RowStrip({ items, here, onPress }: RowStripFacts) {
           accessibilityState={{ selected: it.id === here }}
           testID={`strip-${it.id}`}
           hitSlop={STRIP_HIT_SLOP}
-          onPress={() => onPress(it.id)}
+          onPressIn={() => { if (held !== null && held !== it.id) drop(); }}
+          onPress={() => { drop(); onPress(it.id); }}
+          onLongPress={() => hold(it.id)}
+          delayLongPress={MARK_HOLD_MS}
+          onPressOut={release}
           style={{ width: STRIP_SLOT, height: STRIP_SLOT, alignItems: "center", justifyContent: "center" }}
         >
           <View
@@ -366,6 +375,8 @@ function RowStrip({ items, here, onPress }: RowStripFacts) {
         </Tap>
       ))}
     </ScrollView>
+    {heldItem ? <MarkSheet item={heldItem} style={{ marginHorizontal: 8, marginTop: -4, marginBottom: 10 }} /> : null}
+    </View>
   );
 }
 

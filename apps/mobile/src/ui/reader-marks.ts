@@ -3,7 +3,8 @@
  * draws a conversation in, and when a message's ⋯ offers Mark unread. Pure, so the phone's
  * thread-read guard reads them without a renderer.
  */
-import type { WorldEarlier, WorldMail } from "../state/live";
+import { clock, fullDateTime, weekdayDateClock, zonedDayNumber, zonedFields } from "./reader-seen";
+import type { WorldAttachment, WorldEarlier, WorldMail } from "../state/live";
 import { MIN_SLOP } from "../theme/tokens";
 
 export type MarkKind = "unread" | "read" | "mine";
@@ -12,6 +13,10 @@ export interface RailItem {
   id: string;
   kind: MarkKind;
   sender: string;
+  /** What a held square's sheet says beside the name: the message's date, its first line, a file. */
+  at?: string | null;
+  line?: string;
+  file?: true;
 }
 
 /**
@@ -33,16 +38,87 @@ export function readerGroups<H extends Pick<WorldEarlier, "later">>(
  * opened message in its own place, so a message has the same square everywhere and its spoken
  * position is its place in time. Empty for a single message.
  */
-export function railItemsOf(m: Pick<WorldMail, "id" | "unread" | "ownMail" | "from" | "earlier">): RailItem[] {
+type RailSource = Pick<WorldMail, "id" | "unread" | "ownMail" | "from" | "earlier"> & Partial<Pick<WorldMail, "date" | "body" | "snippet" | "attachments">>;
+
+export function railItemsOf(m: RailSource): RailItem[] {
   if (m.earlier.length === 0) return [];
   const { above, below } = readerGroups(m, true);
+  const facts = (x: { date?: string | null; body?: string; snippet?: string; attachments?: readonly WorldAttachment[] }) => {
+    const line = markLine(x.body) || markLine(x.snippet);
+    return {
+      ...(x.date !== undefined ? { at: x.date } : {}),
+      ...(line !== "" ? { line } : {}),
+      ...(hasFile(x) ? { file: true as const } : {}),
+    };
+  };
   const member = (h: WorldEarlier): RailItem =>
-    ({ id: h.id, kind: !h.seen ? "unread" : h.mine ? "mine" : "read", sender: h.sender ?? "" });
+    ({ id: h.id, kind: !h.seen ? "unread" : h.mine ? "mine" : "read", sender: h.sender ?? "", ...facts(h) });
   return [
     ...above.map(member),
-    { id: m.id, kind: m.unread ? "unread" : m.ownMail ? "mine" : "read", sender: m.from.name },
+    { id: m.id, kind: m.unread ? "unread" : m.ownMail ? "mine" : "read", sender: m.from.name, ...facts(m) },
     ...below.map(member),
   ];
+}
+
+const hasFile = (x: { attachments?: readonly WorldAttachment[] }): boolean => x.attachments?.some((a) => !a.inline) === true;
+
+/** What {@link railItemsOf} reads of a message, flat: the same facts answer the same array. */
+function railFacts(m: RailSource): unknown[] {
+  const out: unknown[] = [m.id, m.unread, m.ownMail, m.from.name, m.date, m.body, m.snippet, hasFile(m)];
+  for (const h of m.earlier) out.push(h.id, h.seen, h.mine, h.later, h.sender, h.date, h.body, hasFile(h));
+  return out;
+}
+
+/**
+ * {@link railItemsOf} for one reader: asked again only when a fact it reads moved (a body, a file, a
+ * mark), so a render that changed none of them keeps the same array and nothing downstream re-runs.
+ */
+export function railItemsMemo(): (m: RailSource) => RailItem[] {
+  let last: { facts: unknown[]; items: RailItem[] } | null = null;
+  return (m) => {
+    const facts = railFacts(m);
+    if (last !== null && last.facts.length === facts.length && last.facts.every((f, i) => Object.is(f, facts[i]))) return last.items;
+    last = { facts, items: railItemsOf(m) };
+    return last.items;
+  };
+}
+
+/** A finger held this long on a square shows its sheet, and presses nothing. */
+export const MARK_HOLD_MS = 380;
+/** The sheet stays this long after the finger lifts. */
+export const MARK_HOLD_KEEP_MS = 1100;
+
+/**
+ * A held square's date, the web chip's words: today 09:12 · yesterday 17:40 · Wed 21 Oct, 14:05,
+ * the year outside this one; "" with no date.
+ */
+export function markWhen(
+  at: string | null | undefined, now: Date, zone: string, locale: string, words: { today: string; yesterday: string },
+): string {
+  const d = at ? new Date(at) : null;
+  if (!d || Number.isNaN(d.getTime())) return "";
+  const ago = zonedDayNumber(now, zone) - zonedDayNumber(d, zone);
+  if (ago === 0) return `${words.today} ${clock(d, zone)}`;
+  if (ago === 1) return `${words.yesterday} ${clock(d, zone)}`;
+  if (zonedFields(d, zone).year !== zonedFields(now, zone).year) return fullDateTime(d, zone, locale);
+  return weekdayDateClock(d, zone, locale);
+}
+
+/** A message's first line for the sheet: its first line with words, cut at a word near 64 characters. */
+export function markLine(text: string | null | undefined): string {
+  const s = text ?? "";
+  let line = "";
+  /* Line by line up to the first with words only: a long quoted history is never read past it. */
+  for (let from = 0; from < s.length && line === "";) {
+    const nl = s.indexOf("\n", from);
+    const to = nl < 0 ? s.length : nl;
+    line = s.slice(from, to).replace(/\s+/g, " ").trim();
+    from = to + 1;
+  }
+  if (line.length <= 64) return line;
+  const cut = line.slice(0, 64);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > 40 ? cut.slice(0, sp) : cut).trimEnd()}\u2026`;
 }
 
 /**

@@ -28,7 +28,10 @@ const listeners = new Set<() => void>();
 const emit = (): void => { for (const l of listeners) l(); };
 
 const sameItems = (a: readonly RailItem[], b: readonly RailItem[]): boolean =>
-  a.length === b.length && a.every((x, i) => x.id === b[i]!.id && x.kind === b[i]!.kind && x.sender === b[i]!.sender);
+  a.length === b.length && a.every((x, i) => {
+    const y = b[i]!;
+    return x.id === y.id && x.kind === y.kind && x.sender === y.sender && x.at === y.at && x.line === y.line && x.file === y.file;
+  });
 
 export function threadPlace(): ThreadPlace | null {
   return place;
@@ -83,13 +86,17 @@ export function takeThreadPending(id: string): void {
   emit();
 }
 
+/** One Set per published squares, not one per row asked. */
+const idsOf = new WeakMap<readonly RailItem[], Set<string>>();
+
 /** The entry when this row is its conversation: the row's id or one of its members is among the squares. */
 export function threadPlaceOf(
   p: ThreadPlace | null,
   row: { id: string; memberIds?: readonly string[] },
 ): ThreadPlace | null {
   if (p === null || p.items.length === 0) return null;
-  const ids = new Set(p.items.map((it) => it.id));
+  let ids = idsOf.get(p.items);
+  if (ids === undefined) idsOf.set(p.items, ids = new Set(p.items.map((it) => it.id)));
   return ids.has(row.id) || (row.memberIds ?? []).some((id) => ids.has(id)) ? p : null;
 }
 

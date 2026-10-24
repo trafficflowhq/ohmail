@@ -45,17 +45,19 @@ import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cove
 import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
-  RAIL_HIT_SLOP, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsOf, railOffsetFor, readerChromeOverlap,
+  MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsMemo, railOffsetFor, readerChromeOverlap,
   readerGroups, type RailItem,
 } from "./reader-marks";
 import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
-import { MARK_RING, MarkSquare, ringRadius } from "./MarkSquare";
+import { MARK_RING, MarkSheet, MarkSquare, ringRadius, useMarkHold, type MarkHold } from "./MarkSquare";
 import {
   bindThreadJump, clearThreadPlace, publishThreadPlace, takeThreadPending, threadPending, threadPlace,
 } from "../state/thread-place";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
+/** No squares: one array, so a reader without them never re-publishes the strip. */
+const NO_RAIL: RailItem[] = [];
 
 /** The window width below which the reader's from-line puts the address under the name. */
 export const FROM_LINE_SPLIT_DP = 360;
@@ -206,7 +208,10 @@ export function MessageReader({
   /* THE CONVERSATION'S SQUARES (the Ohbox only), and A STRIP PRESS THIS OPEN CARRIES: the list row's
      square pressed with no reader mounted opened the row and left that member pending
      (`thread-place.ts`); this reader lands on it. Read once per opened id, taken in an effect. */
-  const railItems = m && inOhbox ? railItemsOf(m) : [];
+  const railOf = useMemo(railItemsMemo, []);
+  const railItems = m && inOhbox ? railOf(m) : NO_RAIL;
+  /* A held square's sheet: the rail's, dropped by the reader's own drag too. */
+  const markHold = useMarkHold();
   const landing = useRef<{ for: string; id: string | null } | null>(null);
   if (m && landing.current?.for !== id) {
     const p = threadPending();
@@ -383,14 +388,13 @@ export function MessageReader({
   /* WHERE THE PERSON STOPPED, for the list row's strip: this conversation's squares and the ring, kept
      after the reader goes. Another open replaces them; one without squares leaves no row ringed. While
      this reader shows squares, a strip press jumps it. */
-  const railKey = railItems.map((it) => `${it.id}:${it.kind}:${it.sender}`).join("\n");
   const hasRail = railItems.length > 0;
   useEffect(() => {
     if (!m) return;
     if (hasRail) publishThreadPlace(railItems, here);
     else if (!threadPlace()?.items.some((it) => it.id === id)) clearThreadPlace();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [railKey, here, id, m === undefined || m === null]);
+  }, [railItems, here, id, m === undefined || m === null]);
   useEffect(() => (hasRail ? bindThreadJump((mid) => jumpRef.current(mid)) : undefined), [hasRail]);
 
   if (!m) {
@@ -497,7 +501,7 @@ export function MessageReader({
       {/* THE RAIL OF SQUARES, in time order — the order the reader draws the conversation in here,
           and the list row's. Only in the Ohbox, and only for a conversation. */}
       {railItems.length > 0 ? (
-        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={jump} />
+        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={jump} marks={markHold} />
       ) : null}
       <Scroller
         key={scrollKey}
@@ -505,7 +509,7 @@ export function MessageReader({
         contentStyle={{ paddingHorizontal: 0 }}
         contentOffset={startAt}
         onScroll={onScroll}
-        onScrollBeginDrag={() => { handOver(); seen.pin(null); }}
+        onScrollBeginDrag={() => { handOver(); seen.pin(null); markHold.drop(); }}
         onScrollEndDrag={onScroll}
         onMomentumScrollEnd={onScroll}
         scrollEventThrottle={16}
@@ -910,12 +914,14 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
  * bottom chrome stands over it — closer squares first, and past that it scrolls, keeping the ringed
  * square in view — so the newest squares are never under the bar or off the screen (`railFit`).
  */
-function ReaderRail({ items, here, over, onJump }: {
-  items: RailItem[];
+function ReaderRail({ items, here, over, onJump, marks }: {
+  items: readonly RailItem[];
   here: string | null;
   /** What of the bottom chrome stands over the rail's foot. */
   over: number;
   onJump: (id: string) => void;
+  /** The held square: the reader's, so its own drag drops the sheet too. */
+  marks: MarkHold;
 }) {
   const t = useTheme();
   const n = items.length;
@@ -929,6 +935,12 @@ function ReaderRail({ items, here, over, onJump }: {
     list.current?.scrollTo({ y: railOffsetFor(at, n, pitch, room), animated: false });
   }, [scrolls, room, at, n, pitch]);
   const ring = Math.min(MARK_RING, pitch);
+  /* A held square's sheet stands right of the rail under its square (over it near the foot), never on a square. */
+  const { held, hold, release, drop } = marks;
+  const heldAt = held === null ? -1 : items.findIndex((it) => it.id === held);
+  const railY = useRef(0);
+  const [sheetH, setSheetH] = useState(0);
+  const win = useWindowDimensions();
   const squares = items.map((it, i) => (
     <Tap
       key={it.id}
@@ -938,7 +950,11 @@ function ReaderRail({ items, here, over, onJump }: {
         : Copy.readerMarkFrom(i + 1, n, it.sender, it.kind === "unread")}
       accessibilityState={{ selected: it.id === here }}
       testID={`rail-${it.id}`}
-      onPress={() => onJump(it.id)}
+      onPressIn={() => { if (held !== null && held !== it.id) drop(); }}
+      onPress={() => { drop(); onJump(it.id); }}
+      onLongPress={() => hold(it.id)}
+      delayLongPress={MARK_HOLD_MS}
+      onPressOut={release}
       hitSlop={RAIL_HIT_SLOP}
       style={{ height: pitch, width: 22, alignItems: "center", justifyContent: "center" }}
     >
@@ -952,11 +968,13 @@ function ReaderRail({ items, here, over, onJump }: {
       </View>
     </Tap>
   ));
+  const under = RAIL_TOP + (heldAt + 1) * pitch - railY.current + 4;
+  const sheetTop = room !== null && sheetH > 0 && under + sheetH > room ? Math.max(0, under - pitch - 8 - sheetH) : under;
   return (
     <View
       accessibilityRole="toolbar"
       accessibilityLabel={Copy.readerMarksAria}
-      style={{ width: 22, alignSelf: "stretch" }}
+      style={{ width: 22, alignSelf: "stretch", zIndex: heldAt >= 0 ? 2 : 0 }}
       onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
     >
       {scrolls && room !== null ? (
@@ -965,12 +983,22 @@ function ReaderRail({ items, here, over, onJump }: {
           style={{ height: room, flexGrow: 0 }}
           contentContainerStyle={{ paddingTop: RAIL_TOP }}
           showsVerticalScrollIndicator={false}
+          onScroll={(e) => { railY.current = e.nativeEvent.contentOffset.y; }}
+          onScrollBeginDrag={drop}
+          scrollEventThrottle={16}
         >
           {squares}
         </ScrollView>
       ) : (
         <View style={{ paddingTop: RAIL_TOP }}>{squares}</View>
       )}
+      {heldAt >= 0 ? (
+        <MarkSheet
+          item={items[heldAt]!}
+          onLayout={(e) => setSheetH(e.nativeEvent.layout.height)}
+          style={{ position: "absolute", left: 28, top: sheetTop, width: Math.min(320, win.width - 60) }}
+        />
+      ) : null}
     </View>
   );
 }

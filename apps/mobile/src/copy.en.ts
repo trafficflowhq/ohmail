@@ -2896,6 +2896,9 @@ const TABLE = {
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Message ${position} of ${count} from ${sender}, ${unread ? "unread" : "read"}`,
   readerMarkMine: (position: number, count: number) => `Message ${position} of ${count}, sent by you`,
+  /** A held square's sheet: the account's own message's name, and the day before today. */
+  readerMarkYou: "you",
+  readerMarkYesterday: "yesterday",
   readerMessageActions: "Message actions",
   readerUnread: "Unread",
 

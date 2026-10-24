@@ -55,6 +55,7 @@ vi.mock("../src/theme", () => ({
     c: new Proxy({}, { get: () => "#000" }),
     radius: new Proxy({}, { get: () => 8 }),
     reduceMotion: true,
+    lift: () => ({}),
   }),
 }));
 vi.mock("expo-router", () => ({
@@ -78,6 +79,7 @@ vi.mock("../src/state/world", () => ({
   }),
 }));
 vi.mock("../src/state/live", () => ({
+  readerZone: () => "UTC",
   ohboxVisitStep: (v: unknown) => ({ next: v, leave: false }),
   moveTargetsFor: () => [],
   moveTargetLabel: () => "",
@@ -108,7 +110,10 @@ vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
 vi.mock("../src/ui/standalone-form", () => ({ readingAtConnectLine: () => "", readingAtConnectNow: () => null }));
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children: ReactNode }) => p.children }));
-vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
+vi.mock("../src/ui/Icon", async () => {
+  const React = await import("react");
+  return { Icon: (p: { name: string }) => React.createElement("i", { "data-icon": p.name }) };
+});
 // The seed offer (#226) reaches the keystore, expo-secure-store and expo-modules-core (`__DEV__`).
 vi.mock("../src/ui/SeedOfferCard", () => ({ useSeedOffer: () => ({ offer: { kind: "waiting" }, owner: null, facts: {} }) }));
 
@@ -116,6 +121,7 @@ const { mount } = await import("./_rendered-dom");
 const { act } = await import("react");
 const { default: OhboxScreen } = await import("../app/(tabs)/index");
 const place = await import("../src/state/thread-place");
+const { ringRadius, squareRadius } = await import("../src/ui/MarkSquare");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const rowOf = (mail: { id: string; memberIds?: string[]; marks?: ("unread" | "read" | "mine")[] }) => ({
@@ -190,6 +196,72 @@ describe("the open conversation's row carries the reader's squares", () => {
   });
 });
 
+describe("a finger held on a strip square shows its sheet under the row", () => {
+  const dated = [
+    { id: "a1", kind: "read", sender: "Ada", at: "2026-10-23T09:40:00Z", line: "the plan is in" },
+    { id: "a2", kind: "mine", sender: "", at: "2026-10-24T08:12:00Z", line: "thanks, see you", file: true },
+    { id: "a3", kind: "read", sender: "Ada", at: "2026-10-21T14:05:00Z", line: "one more thing" },
+  ] as const;
+  const sheet = (id: string): El | null => rowEl(id).querySelector<El>("[data-test='mark-sheet']");
+  it("the hold says who, when and the first line, a clip for a file, under the strip; it presses nothing and goes after the finger", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+      place.publishThreadPlace([...dated], "a3");
+      screen = mount(h(OhboxScreen));
+      expect(squares("a3")[0]!.__props!.delayLongPress, "a hold is 380 ms").toBe(380);
+      act(() => { squares("a3")[0]!.__props!.onLongPress(); });
+      expect(sheet("a3")?.textContent, "who, a friendly date, the first line").toBe("Adayesterday 09:40the plan is in");
+      expect(sheet("a3")!.querySelector("[data-icon='clip']"), "no file, no clip").toBeNull();
+      const strip = rowEl("a3").querySelector<El>("[data-test='row-strip']")!;
+      expect(!strip.contains(sheet("a3")) && (strip.compareDocumentPosition(sheet("a3")!) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0, "under the strip, not on it").toBe(true);
+      expect(lists.opened, "the hold pressed nothing").toEqual([]);
+      act(() => { squares("a3")[0]!.__props!.onPressOut(); });
+      act(() => { squares("a3")[1]!.__props!.onLongPress(); });
+      expect(sheet("a3")?.textContent, "your own, today").toBe("youtoday 08:12thanks, see you");
+      expect(sheet("a3")!.querySelector("[data-icon='clip']"), "the clip").not.toBeNull();
+      act(() => { squares("a3")[1]!.__props!.onPressOut(); });
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(sheet("a3"), "it stays a moment after the finger").not.toBeNull();
+      act(() => { vi.advanceTimersByTime(200); });
+      expect(sheet("a3"), "then goes").toBeNull();
+      act(() => { squares("a3")[2]!.__props!.onLongPress(); });
+      expect(sheet("a3")?.textContent).toBe("AdaWed 21 Oct, 14:05one more thing");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a held sheet goes at once on a press of another square, or a drag of the strip", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      place.publishThreadPlace([...dated], "a2");
+      screen = mount(h(OhboxScreen));
+      act(() => { squares("a3")[0]!.__props!.onLongPress(); squares("a3")[0]!.__props!.onPressOut(); });
+      act(() => { vi.advanceTimersByTime(300); });
+      act(() => { squares("a3")[2]!.__props!.onPressIn(); });
+      expect(sheet("a3"), "the finger down on another square").toBeNull();
+      act(() => { squares("a3")[0]!.__props!.onLongPress(); squares("a3")[0]!.__props!.onPressOut(); });
+      act(() => { squares("a3")[2]!.__props!.onPress(); });
+      expect(sheet("a3"), "the press").toBeNull();
+      act(() => { squares("a3")[1]!.__props!.onLongPress(); squares("a3")[1]!.__props!.onPressOut(); });
+      act(() => { rowEl("a3").querySelector<El>("[data-test='row-strip']")!.__props!.onScrollBeginDrag(); });
+      expect(sheet("a3"), "the drag").toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("paper's soft squares: the square 3 and the ring 7 on paper's 8, both square where the radius is 0", () => {
+    place.publishThreadPlace([...itemsA], "a2");
+    screen = mount(h(OhboxScreen));
+    const ring = squares("a3")[1]!.querySelector<El>("[data-rn='View']")!;
+    const face = ring.querySelector<El>("[data-rn='Animated']")!;
+    expect([face.__props!.style.borderRadius, ring.__props!.style.borderRadius]).toEqual([3, 7]);
+    expect([squareRadius(0), ringRadius(0)], "ohmarchy's 0").toEqual([0, 0]);
+  });
+});
+
 /** The world's reading row for `id`: the conversation as it stands, the reader rail's own source. */
 type Member = { id: string; kind: "unread" | "read" | "mine" };
 const conversation = (opened: string, members: readonly Member[]) => {
@@ -257,6 +329,19 @@ describe("closed, the strip draws the conversation as it stands, not the reader'
     screen!.render(h(OhboxScreen));
     expect(squares("a3").map((s) => s.getAttribute("data-test"))).toEqual(["strip-a1", "strip-a3"]);
     expect(ringed("a3")).toEqual([]);
+  });
+
+  it("a member's body and file landing while the row stays: the held sheet says the first line, with the clip", () => {
+    const sheet = (id: string): El | null => rowEl(id).querySelector<El>("[data-test='mark-sheet']");
+    backFromTheReader();
+    const was = conversation("a3", A1to3);
+    lists.messages = {
+      a3: { ...was, earlier: was.earlier.map((x) => x.id === "a1" ? { ...x, body: "the landed first line", attachments: [{ inline: false }] } : x) },
+    };
+    act(() => place.publishThreadPlace([{ ...itemsA[0], line: "the landed first line", file: true }, itemsA[1], itemsA[2]], "a2"));
+    act(() => { squares("a3")[0]!.__props!.onLongPress(); });
+    expect(sheet("a3")?.textContent).toContain("the landed first line");
+    expect(sheet("a3")!.querySelector("[data-icon='clip']"), "the clip").not.toBeNull();
   });
 });
 

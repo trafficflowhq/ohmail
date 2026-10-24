@@ -38,7 +38,7 @@ vi.mock("react-native", async () => {
   return {
     View,
     Text: (props: any) => React.createElement("span", null, props.children),
-    ScrollView: (props: any) => React.createElement("div", { "data-rn": "RailScroll" }, props.children),
+    ScrollView: (props: any) => React.createElement("div", { "data-rn": "RailScroll", ref: keep(props) }, props.children),
     Animated: {
       View: (props: any) => React.createElement("div", { "data-rn": "Animated" }, props.children),
       Value: class { constructor(_v: number) {} setValue() {} },
@@ -126,7 +126,7 @@ vi.mock("../src/state/world", () => ({
     },
   }),
 }));
-vi.mock("../src/state/live", () => ({ JUNK_REFILL_BOUND_MS: 10_000 }));
+vi.mock("../src/state/live", () => ({ JUNK_REFILL_BOUND_MS: 10_000, readerZone: () => "UTC" }));
 vi.mock("../src/ui/body-note", () => ({ invitationNote: () => null, junkLeaving: () => false, withheldNote: () => "" }));
 vi.mock("../src/ui/attachment-fault-note", () => ({ attachmentFaultNote: () => "" }));
 vi.mock("../src/mail/frame-nav", () => ({ openConfirmedLink: () => undefined }));
@@ -893,7 +893,55 @@ describe("the squares walk the conversation", () => {
     settle(64);
   };
 
+  it("a finger held on a rail square shows its sheet beside the rail, never on it, and presses nothing; it goes after the finger", () => {
+    vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+    const c = conversation();
+    world.mail = { ...c, date: "2026-10-24T09:00:00Z", earlier: c.earlier.map((m, i) => ({ ...m, date: new Date(Date.UTC(2026, 9, 22 + i, 8, 10 + i)).toISOString() })) };
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    const asked = native.asked.length;
+    const tap = all(el).find((x) => x.getAttribute("data-test") === "rail-p2")!;
+    const sheet = (): El | undefined => all(el).find((x) => x.__props?.testID === "mark-sheet");
+    expect(tap.__props!.delayLongPress, "a hold is 380 ms").toBe(380);
+    expect(sheet()).toBeUndefined();
+    act(() => { tap.__props!.onLongPress(); });
+    expect(sheet()?.textContent, "who, when, the first line").toBe("Benyesterday 08:11body of p2");
+    expect(Number(sheet()!.__props!.style.left), "beside the rail, never on its squares").toBeGreaterThanOrEqual(22);
+    expect(native.asked.length, "the hold pressed nothing").toBe(asked);
+    act(() => { tap.__props!.onPressOut(); });
+    act(() => { vi.advanceTimersByTime(1000); });
+    expect(sheet(), "it stays a moment after the finger").toBeDefined();
+    act(() => { vi.advanceTimersByTime(200); });
+    expect(sheet(), "then goes").toBeUndefined();
+  });
+
+  it("a held sheet goes at once on a press of another square, a drag of the reader or of the rail", () => {
+    world.mail = conversation();
+    const el = mountReader("p3");
+    layThree(el);
+    lay(all(el).find((x) => String(x.__props?.accessibilityRole) === "toolbar"), { y: 0, height: 40 }); // 3 squares in 40dp: it scrolls
+    settle();
+    const tap = (mid: string): Record<string, any> => all(el).find((x) => x.getAttribute("data-test") === `rail-${mid}`)!.__props!;
+    const sheet = (): El | undefined => all(el).find((x) => x.__props?.testID === "mark-sheet");
+    const holdP2 = (): void => { act(() => { tap("p2").onLongPress(); tap("p2").onPressOut(); }); expect(sheet()).toBeDefined(); };
+    holdP2();
+    act(() => { vi.advanceTimersByTime(300); });
+    act(() => { tap("p1").onPressIn(); });
+    expect(sheet(), "the finger down on another square").toBeUndefined();
+    holdP2();
+    act(() => { tap("p1").onPress(); });
+    expect(sheet(), "the press").toBeUndefined();
+    holdP2();
+    act(() => { native.props!.onScrollBeginDrag(); });
+    expect(sheet(), "the reader's drag").toBeUndefined();
+    holdP2();
+    act(() => { all(el).find((x) => x.getAttribute("data-rn") === "RailScroll")!.__props!.onScrollBeginDrag(); });
+    expect(sheet(), "the rail's drag").toBeUndefined();
+  });
+
   it("opened on its newest the newest is ringed; the top rings the first, the very end the one-line last", () => {
+    forgetPaneScroll("msg:p3"); // a fresh open: its landing pins the newest
     world.mail = conversation();
     const el = mountReader("p3");
     layThree(el);
@@ -957,6 +1005,16 @@ describe("the squares walk the conversation", () => {
     world.mail = { ...mailOf("o1", []), earlier: [] };
     mountReader("o1");
     expect(place.threadPlace(), "a single message opened: no row carries the strip").toBeNull();
+  });
+
+  it("a member's text or file that arrives after the open reaches the strip's sheet", () => {
+    const c = conversation();
+    world.mail = { ...c, earlier: c.earlier.map((x) => ({ ...x, body: "" })) };
+    mountReader("p3");
+    expect(place.threadPlace()?.items[0]).not.toHaveProperty("line");
+    world.mail = { ...c, earlier: c.earlier.map((x, i) => (i === 0 ? { ...x, attachments: [{ id: "f1", filename: "plan.pdf", size: "1 KB", inline: false, mime: "application/pdf", state: "idle" }] } : x)) };
+    act(() => root!.render(h(MessageReader, { id: "p3" })));
+    expect(place.threadPlace()?.items[0]).toMatchObject({ id: "p1", line: "body of p1", file: true });
   });
 
   it("with the reader mounted beside the list, a strip press jumps it as its own square does", () => {

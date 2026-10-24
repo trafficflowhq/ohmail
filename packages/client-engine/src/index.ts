@@ -377,6 +377,7 @@ export {
   fullDateTime,
   messageStamp,
   weekdayClock,
+  weekdayDateClock,
 } from "./stamp.js";
 
 // Selectors.
