@@ -792,6 +792,8 @@ export interface EngineDraft {
   sendError?: string | null;
   /** Client-local: the user took the AI draft into the editor. */
   accepted?: boolean;
+  /** The server's version of the row's words; absent from an older server or an overlay. */
+  contentRevision?: string;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -1385,6 +1387,11 @@ export type EngineMutation =
        */
       draftId?: string;
       /**
+       * The version of {@link draftId}'s row the editor's words are based on: the send's PUT states
+       * it, and a row moved off it refuses the edit and sends nothing. Not part of the fingerprint.
+       */
+      ifContentRevision?: string;
+      /**
        * Exactly what the user typed, as plain text. No quoted original: see the http adapter.
        *
        * When {@link html} is set this is the LOCAL plain rendering of it, used for the
@@ -1478,6 +1485,8 @@ export type EngineMutation =
       to: EmailAddress[];
       cc: EmailAddress[];
       bcc: EmailAddress[];
+      /** An update's base version ({@link EngineDraft.contentRevision}): a row moved off it refuses the save. */
+      ifContentRevision?: string;
     }
   /**
    * THROW THE DRAFT AWAY — `DELETE /drafts/:id`, and a tombstone in the mirror.

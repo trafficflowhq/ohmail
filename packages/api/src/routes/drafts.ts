@@ -227,8 +227,12 @@ export const draftsRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const patch = await readBody<PatchDraftBody>(req);
-      const { draft, seq } = await drafts(deps).update(serviceContext(deps, req), params.id!, patch);
+      const { ifContentRevision: stated, ...patch } = await readBody<PatchDraftBody & { ifContentRevision?: unknown }>(req);
+      // The version the edit was made on: a draft moved off it refuses the edit (409 draft_changed).
+      const ifContentRevision = readContentRevision(stated);
+      const { draft, seq } = await drafts(deps).update(
+        serviceContext(deps, req), params.id!, patch, ifContentRevision ? { ifContentRevision } : {},
+      );
       return jsonResponse(draft, { status: 200, seq });
     },
   },

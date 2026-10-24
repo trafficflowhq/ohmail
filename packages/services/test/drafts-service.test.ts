@@ -199,3 +199,47 @@ describe("DraftsService — mailboxId is PATCHable while status is 'draft'", () 
     expect(row!.mailboxId).toBe(mbA);
   });
 });
+
+describe("DraftsService — an edit states the version it was made on", () => {
+  async function twoSaves() {
+    const t = await setup();
+    const { draft } = await svc.create(t.ctxA, { mailboxId: t.mbA, subject: "Plans", body: "Typed here." });
+    const first = draft.contentRevision;
+    // Another window saves first, on the same version.
+    const other = await svc.update(t.ctxA, draft.id, { body: "Typed on the other device." }, { ifContentRevision: first });
+    return { ...t, id: draft.id, first, now: other.draft.contentRevision };
+  }
+
+  it("a save on an outdated version is refused 409 draft_changed and writes nothing", async () => {
+    const { ctxA, id, first, now } = await twoSaves();
+    expect(now).not.toBe(first);
+    await expect(svc.update(ctxA, id, { body: "Typed here, and more." }, { ifContentRevision: first }))
+      .rejects.toMatchObject({ httpStatus: 409, code: "draft_changed" });
+    expect((await svc.get(ctxA, id)).body, "the other device's words were overwritten").toBe("Typed on the other device.");
+  });
+
+  it("an outdated version that restates the words the row holds answers as written, no write, no seq", async () => {
+    const { ctxA, id, first, now } = await twoSaves();
+    const same = await svc.update(ctxA, id, { body: "Typed on the other device." }, { ifContentRevision: first });
+    expect({ seq: same.seq, rev: same.draft.contentRevision }).toEqual({ seq: null, rev: now });
+  });
+
+  it("the current version writes; no version stays unconditional", async () => {
+    const { ctxA, id, first, now } = await twoSaves();
+    const ok = await svc.update(ctxA, id, { body: "On the current version." }, { ifContentRevision: now });
+    expect(ok.seq).not.toBeNull();
+    const blind = await svc.update(ctxA, id, { body: "From an older client." });
+    expect({ body: blind.draft.body, moved: blind.draft.contentRevision !== first }).toEqual({ body: "From an older client.", moved: true });
+  });
+
+  it("a plain edit on a version formatted elsewhere answers draft_changed, not validation_failed", async () => {
+    const { ctxA, id, now } = await twoSaves();
+    await svc.update(ctxA, id, { html: "<p><strong>Formatted</strong> elsewhere.</p>" }, { ifContentRevision: now });
+    await expect(svc.update(ctxA, id, { body: "A plain edit." }, { ifContentRevision: now }))
+      .rejects.toMatchObject({ httpStatus: 409, code: "draft_changed" });
+    // On the current version the plain-over-rich refusal stands, as before.
+    const current = (await svc.get(ctxA, id)).contentRevision;
+    await expect(svc.update(ctxA, id, { body: "A plain edit." }, { ifContentRevision: current }))
+      .rejects.toMatchObject({ httpStatus: 400, code: "validation_failed" });
+  });
+});

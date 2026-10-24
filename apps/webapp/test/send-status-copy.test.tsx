@@ -230,6 +230,32 @@ describe("a failed send never relays the wire", () => {
     }
   });
 
+  it("a save refused before the send (validation_failed, from_mailbox_unconfirmed) says not sent and never kept", () => {
+    for (const code of ["validation_failed", "from_mailbox_unconfirmed"] as const) {
+      const send: SendState = { phase: "failed", reason: "the server's own words", code };
+      for (const scope of ["reply", "compose"] as const) {
+        const en1 = render(send, en, "en", scope);
+        expect(en1, `${code} ${scope}`).toMatch(/^Not sent\. This (message|reply) could not be saved first/);
+        for (const lie of ["kept", "Sending didn't work"]) expect(en1, `${code} ${scope}`).not.toContain(lie);
+        act(() => root?.unmount());
+        host?.remove();
+        const de1 = render(send, de, "de", scope);
+        expect(de1, `${code} ${scope}`).toMatch(/^Nicht gesendet\. Diese (Nachricht|Antwort) konnte vorher nicht gespeichert werden/);
+        for (const lie of ["gesichert", "Senden hat nicht geklappt"]) expect(de1, `${code} ${scope}`).not.toContain(lie);
+        act(() => root?.unmount());
+        host?.remove();
+      }
+    }
+  });
+
+  it("a compose send refused over a version changed elsewhere says what was typed here is a new draft", () => {
+    const send: SendState = { phase: "failed", reason: "x", code: "draft_changed" };
+    expect(render(send, en, "en", "compose")).toMatch(/another window or on another device\. What you typed here is kept as a new draft/);
+    act(() => root?.unmount());
+    host?.remove();
+    expect(render(send, de, "de", "compose")).toMatch(/als neuer Entwurf gespeichert/);
+  });
+
   it("control: a refusal with no sentence of its own still says the general line", () => {
     const text = render({ phase: "failed", reason: "x", code: "some_new_code" }, en, "en", "compose");
     expect(text).toBe(en.compose.statusFailed);

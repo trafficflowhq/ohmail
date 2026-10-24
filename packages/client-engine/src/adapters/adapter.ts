@@ -58,6 +58,8 @@ export interface MutationOutcome {
    * mirror for a lookalike row, the matching that sends the wrong message.
    */
   entityId?: string;
+  /** The version a `draft_save` left the row at (`DraftDTO.contentRevision`), when the server said. */
+  revision?: string;
   /**
    * The delivered Message-ID of a send the server confirmed sent — present
    * only on `mail_send` with status `sent` (never unverified/failed/

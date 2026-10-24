@@ -116,6 +116,10 @@ export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; ke
                */
               : send.code === "draft_changed"
                 ? { tone: "warn", key: "statusDraftChanged" }
+                /* The save before the send was refused: nothing went, and the row may not hold these
+                   words, so this never says the draft is kept. */
+                : send.code === "validation_failed" || send.code === "from_mailbox_unconfirmed"
+                  ? { tone: "error", key: "statusNotSavedFirst" }
                 /**
                  * THIS CLIENT COULD NOT SAVE THE DRAFT, so it cannot say which version would
                  * have gone — and it refuses rather than sending a row it never vouched for.

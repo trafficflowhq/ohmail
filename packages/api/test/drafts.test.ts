@@ -397,3 +397,28 @@ describe("DELETE /drafts/:id — a row with a send on record refuses by name, ne
     expect(await db.select().from(drafts).where(eq(drafts.id, draft.id))).toHaveLength(0);
   });
 });
+
+describe("PUT /drafts/:id with ifContentRevision", () => {
+  it("refuses an outdated version 409 draft_changed, admits a restatement without a seq, and a malformed one is 400", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, token: "rev-owner" });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const put = (id: string, body: unknown) => H(req("PUT", `/drafts/${id}`, { bearer: s.token, body: JSON.stringify(body) }), deps);
+    const created = await (await H(req("POST", "/drafts", {
+      bearer: s.token, body: JSON.stringify({ mailboxId, subject: "Plans", body: "Typed here." }),
+    }), deps)).json();
+    const first = created.contentRevision as string;
+    const moved = await put(created.id, { body: "Typed elsewhere.", ifContentRevision: first });
+    expect(moved.status).toBe(200);
+
+    const stale = await put(created.id, { body: "Typed here, and more.", ifContentRevision: first });
+    expect({ status: stale.status, code: (await stale.json()).error?.code }).toEqual({ status: 409, code: "draft_changed" });
+    const [row] = await db.select({ body: drafts.body }).from(drafts).where(eq(drafts.id, created.id));
+    expect(row!.body).toBe("Typed elsewhere.");
+
+    const again = await put(created.id, { body: "Typed elsewhere.", ifContentRevision: first });
+    expect({ status: again.status, seq: again.headers.get("x-sync-seq") }).toEqual({ status: 200, seq: null });
+
+    expect((await put(created.id, { body: "x", ifContentRevision: "not-a-revision" })).status).toBe(400);
+  });
+});
