@@ -103,8 +103,7 @@
    the reading eye travels. `flex-end` because `.mb` is a stretch column and this must size to
    its text. It stays a real `<button>` with `aria-pressed` and this class — the browser
    journeys locate it by class and read that attribute (labels are translated), and the prose
-   tests press it — so the treatment may get quieter but the contract may not move.
-   Guarded structurally by test/history-toggle-pill.test.ts in the webapp suite. */
+   tests press it — so the treatment may get quieter but the contract may not move. */
 .mb-flip {
   align-self: flex-end;
   border: 0;

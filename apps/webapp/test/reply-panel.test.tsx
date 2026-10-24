@@ -47,7 +47,7 @@ import {
  *
  * Driven through the whole shell in demo mode where behaviour is the question (the open, the
  * close and the toggle live in `AppShell`), and through the stylesheet's source where the
- * cascade is (the list-title-size idiom — jsdom drops `clamp()`/`dvh` values from computed
+ * cascade is (jsdom drops `clamp()`/`dvh` values from computed
  * style, so the declaration text is the honest assertion).
  */
 

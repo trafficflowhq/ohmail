@@ -158,8 +158,7 @@ describe("the cold-mirror silhouette in the shared shell", () => {
  * ── THE MOTION, ASSERTED AT THE STYLESHEET ──────────────────────────────────────────────
  *
  * jsdom lays nothing out and runs no animation, so the reduced-motion promise is asserted where
- * it is made — the same way `empty-explainer-gutter.test.ts` asserts its geometry, and read with
- * `readFileSync` because this repo's `grep` skips a whole file on one NUL byte.
+ * it is made, read with `readFileSync` because this repo's `grep` skips a whole file on one NUL byte.
  */
 const bare = (p: string): string =>
   readFileSync(resolve(process.cwd(), p), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");

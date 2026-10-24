@@ -1135,8 +1135,7 @@ describe("the editable surface FILLS its frame — the compose click dead zone (
    * ProseMirror's contenteditable inside it; that wrapper was unclassed and had no flex, so the
    * surface stayed one line tall inside a 220px box and everything below it was inert. So this
    * pins the two facts the fix consists of — the class is on the wrapper (DOM), and the three
-   * rules that pass the height down exist (stylesheet, read the way
-   * `empty-explainer-gutter.test.ts` reads its geometry).
+   * rules that pass the height down exist (stylesheet).
    *
    * MUTATION WATCH: drop `className="rte-body"` from `EditorContent` and the first case goes
    * red; delete the `.rte-body` rule or either flex declaration from `.rte-surface` and the

@@ -102,7 +102,7 @@ describe("AttachmentStrip", () => {
        used to draw a rotating border, which under ohmarchy's square radius token read as a
        spinning box. `pathLength` is the primitive's whole construction — it normalises the
        round and the square frame to one dash space so the segment travels the path instead
-       of the path turning (`test/loaders-do-not-rotate.test.ts` refuses the old shape). */
+       of the path turning. */
     const mark = tile.querySelector(".att-spin")!;
     expect(mark.tagName.toLowerCase()).toBe("svg");
     expect(mark.classList.contains("spin")).toBe(true);
