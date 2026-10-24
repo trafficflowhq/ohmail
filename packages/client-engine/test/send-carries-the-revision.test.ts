@@ -15,7 +15,7 @@ import {
  * The version is READ FROM THE SERVER and never computed here — one implementation of the
  * canonicalization, so a client and a server cannot drift into refusing every send.
  */
-interface Call { method: string; url: string; body: Record<string, unknown> }
+interface Call { method: string; url: string; body: Record<string, unknown>; echo?: string | null }
 
 /** The three answers a send makes, recorded. `revision` is what the row's DTO reports. */
 function harness(over: { revision?: string | null; createRevision?: string | null } = {}) {
@@ -26,7 +26,7 @@ function harness(over: { revision?: string | null; createRevision?: string | nul
     const path = new URL(url, "http://localhost").pathname;
     let body: Record<string, unknown> = {};
     if (typeof init?.body === "string") { try { body = JSON.parse(init.body) as Record<string, unknown>; } catch { /* not json */ } }
-    calls.push({ method: init?.method ?? "GET", url, body });
+    calls.push({ method: init?.method ?? "GET", url, body, echo: new Headers(init?.headers as HeadersInit).get("x-ohmail-echo") });
 
     if (path === "/drafts" && init?.method === "POST") {
       return new Response(JSON.stringify({
@@ -92,6 +92,16 @@ describe("a send carries the draft version its own PUT returned", () => {
 
     expect(calls.some((c) => c.url.endsWith("/send")), "the send never left").toBe(true);
     expect(sendBodyOf(calls).ifContentRevision).toBeUndefined();
+  });
+
+  it("asks the door to answer before its copy echoes only where the host opted in", async () => {
+    const plain = harness();
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: plain.fetchImpl }).mutate(mutation("draft-1"), { idempotencyKey: "k5" });
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: plain.fetchImpl }).mutate(mutation(), { idempotencyKey: "k6" });
+    expect(plain.calls.map((c) => c.echo), "a default adapter marked a send").toEqual(plain.calls.map(() => null));
+    const later = harness();
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: later.fetchImpl, sendEchoLater: true }).mutate(mutation("draft-1"), { idempotencyKey: "k7" });
+    expect(later.calls.map((c) => `${c.method} ${c.echo}`)).toEqual(["PUT later", "POST later"]);
   });
 
   /**

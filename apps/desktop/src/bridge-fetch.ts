@@ -899,6 +899,7 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
   return new HttpAdapter({
     baseUrl: "", fetch: bridgeFetch,
     syncFailureSink: reportWindowSyncFailure, searchPhasesSink: reportWindowSearchPhases,
+    sendEchoLater: true,
     ...(stage ? { stageAttachments: true } : {}),
   });
 }

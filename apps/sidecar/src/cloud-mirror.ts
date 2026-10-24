@@ -508,15 +508,21 @@ export interface CloudMirror {
    * The write-through echo: true once `cloudSeq() >= target`, read at every page the pull
    * commits, so a pull that is still walking cannot hold the answer past `deadlineMs`. The pull
    * itself runs on; only the wait is bounded. A hosted `Retry-After` is honoured, never beaten.
-   * With `followUp` (the route's key), a wait the deadline cut starts that route's follow-up chain.
+   * With `followUp` (the route's key), a wait the deadline cut starts that route's follow-up chain;
+   * with `later` as well, the window's drains wait for that chain ({@link awaitLaterEchoes}).
    */
-  awaitCloudSeq(target: bigint, deadlineMs: number, followUp?: string): Promise<boolean>;
+  awaitCloudSeq(target: bigint, deadlineMs: number, followUp?: string, later?: boolean): Promise<boolean>;
   /**
    * The echo for a write whose answer names no seq: a hosted `/sync` page ASKED after this call
    * that reached the horizon, and with `mailboxes` a mailbox refresh asked after it (one is
    * started here). A pull already in flight counts from its next ask; its earlier ones never do.
    */
-  awaitFreshPull(deadlineMs: number, need?: { sync?: boolean; mailboxes?: boolean }, followUp?: string): Promise<boolean>;
+  awaitFreshPull(deadlineMs: number, need?: { sync?: boolean; mailboxes?: boolean }, followUp?: string, later?: boolean): Promise<boolean>;
+  /**
+   * True once every write answered before its echo (`later`) is held by this copy or its chain has
+   * ended, false at the deadline: a drain after a send carries the send, not the draft row before it.
+   */
+  awaitLaterEchoes(deadlineMs: number): Promise<boolean>;
   /** How many follow-up chains are live (see {@link FOLLOW_UP_STEPS_MS}). */
   followUps(): number;
   /**
@@ -4237,27 +4243,34 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if ((await until(done, Promise.all(needs.filter((n) => !n.covered()).map((n) => n.ask())), end)) === "yes") return;
     }
   };
-  const followUp = (key: string, need: Need): void => {
+  /** The needs of writes answered before their echo, each until its chain ends. */
+  const laterNeeds = new Set<Need>();
+  const followUp = (key: string, need: Need, later: boolean): void => {
     if (aborted || accountErased) return;
+    if (later) laterNeeds.add(need);
     const live = chains.get(key);
     if (live) { live.push(need); return; }
     const needs = [need];
     chains.set(key, needs);
     void runChain(needs, monotonicNow() + capMs).finally(() => {
       if (chains.get(key) === needs) chains.delete(key);
+      for (const n of needs) laterNeeds.delete(n);
       progressed();
     });
   };
-  const echoed = async (need: Need, deadlineMs: number, key: string | undefined): Promise<boolean> => {
+  const echoed = async (need: Need, deadlineMs: number, key: string | undefined, later = false): Promise<boolean> => {
     const ok = await echo(need.covered, need.ask, deadlineMs);
-    if (!ok && key !== undefined) followUp(key, need);
+    if (!ok && key !== undefined) followUp(key, need, later);
     return ok;
   };
+  const laterEchoed = (): boolean => aborted || [...laterNeeds].every((n) => n.covered());
+  const awaitLaterEchoes = async (deadlineMs: number): Promise<boolean> =>
+    laterEchoed() || (await until(laterEchoed, new Promise<never>(() => undefined), monotonicNow() + Math.max(0, deadlineMs))) === "yes";
 
-  const awaitCloudSeq = (target: bigint, deadlineMs: number, key?: string): Promise<boolean> =>
-    echoed({ covered: () => cloudSeq() >= target, ask: () => pullOnce().catch(() => undefined) }, deadlineMs, key);
+  const awaitCloudSeq = (target: bigint, deadlineMs: number, key?: string, later = false): Promise<boolean> =>
+    echoed({ covered: () => cloudSeq() >= target, ask: () => pullOnce().catch(() => undefined) }, deadlineMs, key, later);
 
-  const awaitFreshPull = (deadlineMs: number, need: { sync?: boolean; mailboxes?: boolean } = {}, key?: string): Promise<boolean> => {
+  const awaitFreshPull = (deadlineMs: number, need: { sync?: boolean; mailboxes?: boolean } = {}, key?: string, later = false): Promise<boolean> => {
     const from = asked;
     const sync = need.sync ?? true;
     const boxes = need.mailboxes ?? false;
@@ -4266,7 +4279,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     return echoed({ covered, ask: () => {
       if (boxes && boxesAsk <= from && listed === null) listed = refreshMailboxes().catch(() => undefined).finally(() => { listed = null; });
       return sync ? pullOnce().catch(() => undefined) : (listed ?? Promise.resolve());
-    } }, deadlineMs, key);
+    } }, deadlineMs, key, later);
   };
 
   const awaitFollowUp = (deadlineMs: number): Promise<boolean> => {
@@ -4348,6 +4361,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     cloudSeq,
     awaitCloudSeq,
     awaitFreshPull,
+    awaitLaterEchoes,
     followUps: () => chains.size,
     awaitFollowUp,
     localSeq,

@@ -63,7 +63,7 @@ function hostedCloud() {
   /* `readFirst`: the page is read when ASKED and answered after `syncMs`, so a pull asked before a
      write never carries it. `beyond`: the write answers a seq the feed never reaches. */
   const knobs = { syncMs: 0, readFirst: false, sync429: false, beyond: false };
-  const asks = { sync: 0 };
+  const asks = { sync: 0, marked: 0 };
   let seq = 100_000;
   const log: SyncChange[] = [];
   const commit = (c: Omit<SyncChange, "seq" | "updatedAt">): number => {
@@ -82,6 +82,7 @@ function hostedCloud() {
     authedFetch: async (path: string, init?: RequestInit) => {
       const url = new URL(path, "https://cloud.test");
       const method = (init?.method ?? "GET").toUpperCase();
+      if (new Headers(init?.headers).has("x-ohmail-echo")) asks.marked += 1;
       if (url.pathname === "/mailboxes" && method === "GET") return json(mailboxList([hostedMailbox(MB, "me@ohmail.test")]));
       if (url.pathname === "/sync/snapshot") return new Response("no snapshot", { status: 404 });
       if (url.pathname === "/sync") {
@@ -136,7 +137,8 @@ async function standUp() {
   const mirror = createCloudMirror({ db: opened.db, world, auth: cloud.auth, cursorPath: join(dataDir, "cloud-cursor.json"), pollIntervalMs: 3_600_000 });
   mirrors.push(mirror);
   await mirror.pullOnce();
-  const proxy = createWriteThroughProxy({ auth: cloud.auth, mirror });
+  const events: string[] = [];
+  const proxy = createWriteThroughProxy({ auth: cloud.auth, mirror, log: (e: string) => { events.push(e); } });
   const folderOf = async (): Promise<string | undefined> =>
     (await opened.db.select().from(folderState).where(eq(folderState.messageId, cloud.msgId)))[0]?.desiredFolder;
   const press = (path: string, method: string, body: unknown): Promise<Response> =>
@@ -147,7 +149,7 @@ async function standUp() {
     while (!(await f()) && Date.now() - t < ms) await advance(10);
     return Date.now() - t;
   };
-  return { cloud, mirror, folderOf, press, move, until };
+  return { cloud, mirror, proxy, events, folderOf, press, move, until };
 }
 
 describe("an echo the bound cut is followed up off the request path", () => {
@@ -177,6 +179,7 @@ describe("an echo the bound cut is followed up off the request path", () => {
     const res = await t.move();
     expect(res.status).toBe(200);
     expect(t.mirror.followUps(), "the cut echo left no chain").toBe(1);
+    expect(await t.mirror.awaitLaterEchoes(0), "an unmarked write held the window's drains").toBe(true);
     await settle(early);
     expect(await t.folderOf(), "the pull in flight at the press carried the write").toBe("INBOX");
     const waited = await t.until(async () => (await t.folderOf()) === "ohmail/News", 8_000);
@@ -184,6 +187,36 @@ describe("an echo the bound cut is followed up off the request path", () => {
     expect(waited).toBeLessThan(8_000);
     await t.until(() => t.mirror.followUps() === 0, 1_000);
     expect(t.mirror.followUps(), "a covered chain stays live").toBe(0);
+  }, 15_000);
+
+  it("a write marked `x-ohmail-echo: later` is answered at once; the chain and a waiting drain still carry it", async () => {
+    const t = await standUp();
+    fakeClock();
+    t.cloud.knobs.syncMs = 2_500;
+    t.cloud.knobs.readFirst = true;
+    const asked = t.cloud.asks.sync;
+    const early = t.mirror.pullOnce();
+    while (t.cloud.asks.sync === asked) await turn();
+    const at = Date.now();
+    const res = await settle(t.proxy.forward(new Request(`http://sidecar/messages/${t.cloud.msgId}/move`, {
+      method: "POST", headers: { "content-type": "application/json", "x-ohmail-echo": "later" }, body: JSON.stringify({ folder: "ohmail/News" }),
+    })));
+    expect(res.status).toBe(200);
+    expect(Date.now() - at, "the marked write waited for this computer's copy").toBeLessThan(100);
+    expect(res.headers.get("x-sync-seq"), "a marked answer carried a seq").toBeNull();
+    expect(t.events).not.toContain("cloud_write_echo");
+    expect(t.cloud.asks.marked, "the marker reached the account").toBe(0);
+    expect(t.mirror.followUps(), "the marked write left no chain").toBe(1);
+    let released = false;
+    const held = t.mirror.awaitLaterEchoes(FOLLOW_UP_CAP_MS).then((v) => { released = true; return v; });
+    await advance(100);
+    expect(released, "a drain asked after the send did not wait for it").toBe(false);
+    const drained = drainOnFollowUp(new Map(), "k", t.mirror,
+      async () => ((await t.folderOf()) === "ohmail/News" ? news() : quiet()), quiet());
+    expect((await settle(drained)).changes.updates, "the drain answered before the copy held the write").toHaveLength(1);
+    expect(await settle(held)).toBe(true);
+    expect(await t.folderOf()).toBe("ohmail/News");
+    await settle(early);
   }, 15_000);
 
   it("two cut echoes on one route share one chain, and a second route has its own", async () => {

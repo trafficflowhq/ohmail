@@ -101,6 +101,8 @@ export interface HttpAdapterOptions {
    * neither passes options, so neither stages; the browser opts in.
    */
   stageAttachments?: boolean;
+  /** A send's own writes ask the door to answer before its copy echoes them (`x-ohmail-echo: later`). */
+  sendEchoLater?: boolean;
   /**
    * Where a window's failed pull is reported ({@link EngineAdapter.reportSyncFailure}). Set by the
    * desktop's bridge adapter, which posts the record to the local engine; absent on the hosted
@@ -367,6 +369,7 @@ export class HttpAdapter implements EngineAdapter {
   private readonly extraHeaders: () => Record<string, string>;
   /** See {@link HttpAdapterOptions.stageAttachments}. `false` unless a host asked for it. */
   private readonly stageAttachments: boolean;
+  private readonly sendEchoLater: boolean;
   /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
   private readonly mayAsk: () => boolean;
   /** See {@link HttpAdapterOptions.syncDeadlines}. `null` unless a host asked for them. */
@@ -463,6 +466,7 @@ export class HttpAdapter implements EngineAdapter {
     this.extraHeaders = opts.headers ?? (() => ({}));
     // `=== true` rather than `?? false`, so nothing truthy-but-not-boolean can turn this on.
     this.stageAttachments = opts.stageAttachments === true;
+    this.sendEchoLater = opts.sendEchoLater === true;
     // The capability EXISTS only where a sink was given, so `typeof adapter.reportSyncFailure`
     // answers the engine's question the way `requestPull` does: absent means "no door for this".
     if (opts.syncFailureSink) {
@@ -506,7 +510,7 @@ export class HttpAdapter implements EngineAdapter {
    */
   private async request(
     method: string, path: string,
-    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string } = {},
+    init: { body?: unknown; idempotencyKey?: string; signal?: AbortSignal; pressAgeMs?: number; urgent?: boolean; searchLane?: string; echoLater?: boolean } = {},
   ): Promise<Response> {
     /*
      * THE GATE, AHEAD OF EVERY DOOR AND AHEAD OF EVERY HEADER. A client whose session is
@@ -524,6 +528,7 @@ export class HttpAdapter implements EngineAdapter {
     if (init.pressAgeMs !== undefined) headers["x-ohmail-press-age"] = String(Math.max(0, Math.floor(init.pressAgeMs)));
     // The walker and its question, `<lane>.<generation>` (`ServerSearchOpts.lane`): no query text.
     if (init.searchLane !== undefined) headers["x-ohmail-search-lane"] = init.searchLane;
+    if (init.echoLater === true) headers["x-ohmail-echo"] = "later";
     if (method !== "GET") {
       const csrf = this.getCookie(this.csrfCookieName);
       if (csrf) headers["x-csrf-token"] = csrf;
@@ -2278,6 +2283,7 @@ export class HttpAdapter implements EngineAdapter {
               // The original a forward sends, onto the row it sends.
               ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
             },
+            echoLater: this.sendEchoLater,
           });
           if (put.ok) {
             const echo = await put.json().catch(() => null) as PutEcho | null;
@@ -2478,6 +2484,7 @@ export class HttpAdapter implements EngineAdapter {
         // body, and the envelope was frozen by `Engine.enrich` before it was queued, so a
         // retry hashes identically and replays rather than 409ing on a hash mismatch.
         idempotencyKey,
+        echoLater: this.sendEchoLater,
       });
       if (!created.ok) throw await this.rejectionOf(created);
       this.noteSeq(created);
@@ -2646,6 +2653,7 @@ export class HttpAdapter implements EngineAdapter {
     const res = await this.request("POST", `/drafts/${draftId}/send`, {
       idempotencyKey,
       ...(Object.keys(sendBody).length ? { body: sendBody } : {}),
+      echoLater: this.sendEchoLater,
     }).catch((err: unknown) => {
       // A send step that did not reach the server still carries what the save learned: the
       // newer words were kept back, and the send already holding the row carries the earlier ones.
