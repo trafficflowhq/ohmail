@@ -14,7 +14,7 @@ import { useTranslations } from "next-intl";
 import { Icon, Kbd } from "@ohmail/ui";
 import {
   chordKeys, groupedBindings, useKeymap,
-  type BindingGroup, type DisabledReason, type KeyBinding,
+  type BindingGroup, type BoundKey, type DisabledReason,
 } from "./keymap";
 import { useFocusFollows } from "./focus-follows";
 
@@ -95,7 +95,7 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
     no_erase: tRoot("trash.noErase"),
     trash_unavailable: tRoot("trash.unavailable"),
   };
-  const rows = (items: KeyBinding[]): Row[] => {
+  const rows = (items: BoundKey[]): Row[] => {
     const out: Row[] = [];
     for (const b of items) {
       /* WHY THE ROW SAYS SO. Until this sheet carried the sentence, a greyed row was the ONLY
