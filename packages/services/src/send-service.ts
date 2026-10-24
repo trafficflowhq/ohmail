@@ -181,7 +181,34 @@ export interface SendDeps {
    * the scheduled pass (nobody replays it), every failure stays final with its sentence on the row.
    */
   rearmTransient?: boolean;
+  /**
+   * THE HOST OUTLIVES THE ANSWER (the local engine, self-host): the Sent copy is waited for at most
+   * {@link SEND_COPY_GRACE_MS} and then retried in memory until it lands. Absent (Cloud), the copy
+   * is filed inside the request, bounded by {@link SEND_COPY_DEADLINE_MS}.
+   */
+  copyOutlivesAnswer?: boolean;
+  /**
+   * How long after the reservation an upload may still end, on a host that keeps running (the
+   * local engine sets {@link SEND_SUBMISSION_CEILING_MS}). Past it an upload is stopped before its
+   * end-of-data mark and the send fails. Absent: no ceiling beyond the socket deadlines.
+   */
+  submissionCeilingMs?: number;
+  /** The copy's clock, {@link SEND_COPY_TIMING} by default. A test seam, never a host knob. */
+  copyTiming?: Partial<SendCopyTiming>;
 }
+
+/** The Sent copy's waits: the grace a long-lived host waits, Cloud's deadline, and the retry back-off. */
+export interface SendCopyTiming { graceMs: number; deadlineMs: number; waitsMs: readonly number[] }
+
+/** Cloud waits for the copy inside the request: the 20 s ceiling + this + the finalize stay under 60 s. */
+export const SEND_COPY_DEADLINE_MS = 25_000;
+/** A long-lived host answers after this, with the copy still being retried. */
+export const SEND_COPY_GRACE_MS = 3_000;
+/** The back-off between copy attempts after the first, each on a fresh connection that looks first. */
+export const SEND_COPY_RETRY_WAITS_MS: readonly number[] = [0, 5_000, 30_000, 120_000, 600_000];
+export const SEND_COPY_TIMING: SendCopyTiming = {
+  graceMs: SEND_COPY_GRACE_MS, deadlineMs: SEND_COPY_DEADLINE_MS, waitsMs: SEND_COPY_RETRY_WAITS_MS,
+};
 
 /**
  * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases — the split is the point. `declare` is
@@ -534,6 +561,14 @@ export function sendSurfaceFor(
 export const SEND_STALE_AFTER_MS = 10 * 60 * 1000;
 
 /**
+ * HOW LONG AN UPLOAD MAY RUN on a host that keeps running, from the reservation: short of {@link
+ * SEND_STALE_AFTER_MS}, so the attempt ends before a resolver may decide its row. Past it the end of
+ * the message is never released and the send fails as dropped; a session already released is ended,
+ * its outcome unknown.
+ */
+export const SEND_SUBMISSION_CEILING_MS = 8 * 60 * 1000;
+
+/**
  * HOW MANY ATTEMPTS ONE PRESS MAY HAVE, the first included. A send that failed for a passing reason
  * before any SMTP (its mail server unreachable, busy or slow to answer, or our own per-mailbox IMAP
  * cap full when a forward read its original) is answered retryable, and
@@ -770,6 +805,11 @@ export interface SendResult {
    * send's, so without this field a second press cannot tell that nothing new was sent.
    */
   firstSend?: FirstSendFacts;
+  /**
+   * Where this send's Sent copy stands: `filed`, `pending` (still being retried after the answer),
+   * or `missing` (delivered, and no copy could be written). Present on a `sent` this request delivered.
+   */
+  sentCopy?: "filed" | "pending" | "missing";
 }
 
 /**
@@ -835,6 +875,9 @@ export interface ResolveStaleOutcome {
   seq: number | null;
   by: ResolveStaleBy;
 }
+
+/** The offer states whose attempt provably delivered nothing (mail 0162; `uploading` never released its end). */
+const SENT_NOTHING: ReadonlySet<string> = new Set(["unoffered", "uploading"]);
 
 /** `resumeExisting`'s answer when the key's stale attempt offered nothing and was forgotten. */
 const FORGOTTEN = Symbol("send-forgotten");
@@ -1003,6 +1046,44 @@ export class SendTimedOut extends ServiceError {
   }
 }
 
+/** The connection ended before the whole message reached the server, so it cannot have gone. */
+export const SEND_UPLOAD_DROPPED_SENTENCE =
+  "This was not sent — the connection dropped before the whole message reached your mail server. Send it again.";
+/** The server answered MAIL, RCPT or DATA with a permanent refusal: nothing was accepted. */
+export const SEND_REFUSED_BY_SERVER_SENTENCE =
+  "This was not sent — your mail server refused it. Check the recipients and send it again.";
+
+/** An upload that ended before its end-of-data mark: 424 `send_upload_dropped`, final for its key. */
+export class SendUploadDropped extends ServiceError {
+  readonly transient = false as const;
+  constructor(cause?: unknown) {
+    super("send_upload_dropped", SEND_REFUSED_STATUS, SEND_UPLOAD_DROPPED_SENTENCE, undefined, false);
+    this.name = "SendUploadDropped";
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** A 5xx to MAIL, RCPT or DATA: 424 `send_refused_by_server`, final for its key. */
+export class SendRefusedByServer extends ServiceError {
+  readonly transient = false as const;
+  constructor(cause?: unknown) {
+    super("send_refused_by_server", SEND_REFUSED_STATUS, SEND_REFUSED_BY_SERVER_SENTENCE, undefined, false);
+    this.name = "SendRefusedByServer";
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** The final refusals a replay of the key is told by name; their code is kept on the row. */
+const NAMED_FINAL_CODES: ReadonlySet<string> = new Set(["send_upload_dropped", "send_refused_by_server"]);
+
+/** The named final refusal a `failed` row was closed with, or `null`. */
+function finalRefusal(row: typeof outboundSends.$inferSelect): ServiceError | null {
+  if (row.retryUntil !== null) return null;
+  return row.retryRefusal === "send_upload_dropped" ? new SendUploadDropped()
+    : row.retryRefusal === "send_refused_by_server" ? new SendRefusedByServer()
+      : null;
+}
+
 /** The typed refusal for a dial error the person's mail server caused, or the error unchanged. */
 function asMailServerRefusal(err: unknown): unknown {
   const kind = mailServerRefusalOf(err);
@@ -1043,6 +1124,13 @@ function windowRefusal(err: unknown): ServiceError {
  * fetched is read as the OAuth client's error is read at the dial.
  */
 function notSubmittedRefusal(err: SendNotSubmitted): ServiceError {
+  if (err.step === "data") {
+    // RFC 5321 §4.2.1: a 4xx is "not now", a 5xx is a refusal; no reply at all is a dropped upload.
+    const r = err.responseCode;
+    if (typeof r === "number" && r >= 500 && r < 600) return new SendRefusedByServer(err);
+    if (typeof r === "number" && r >= 400 && r < 500) return new MailServerBusy(err);
+    return new SendUploadDropped(err);
+  }
   if (err.step === "connect") return new MailServerUnreachable(err);
   if (err.step === "secure") return new MailServerRefused("not_secured", err);
   if (err.step === "token") {
@@ -1116,6 +1204,11 @@ function logMailServerRefusal(deps: SendDeps, ctx: ServiceContext, draftId: stri
  * happens to an abandoned promise — see the two call sites in `send`: one closes a leaked socket,
  * the other lets the submission finish.
  */
+/** A wait that never keeps a process alive. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => { (setTimeout(resolve, ms) as { unref?: () => void }).unref?.(); });
+}
+
 async function raceCeiling<T>(work: Promise<T>, ceiling: AttemptCeiling): Promise<{ timedOut: true } | { timedOut: false; value: T }> {
   const outcome = await Promise.race([
     work.then((value) => ({ timedOut: false as const, value })),
@@ -1176,6 +1269,13 @@ type Reservation =
  * `draft` change; a cross-account draft id is a 404.
  */
 export class SendService {
+  /**
+   * The reservations whose submission is still running in this process (every host holds one
+   * `sendService`). A slow upload can outlive {@link SEND_STALE_AFTER_MS}; no resolver here probes or
+   * settles its row meanwhile.
+   */
+  private readonly liveAttempts = new Set<string>();
+
   /**
    * WHAT HAPPENED UNDER THIS KEY — a READ a staged retry makes BEFORE it re-uploads anything, so
    * a storage refusal cannot throw away the only handle on a message that may already have gone.
@@ -1403,9 +1503,10 @@ export class SendService {
       }
       adapter = opened.value;
 
-      // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` after its
-      // attempt died provably offered nothing and may be forgotten (`forgetUnoffered`). A failed
-      // mark offers nothing; a lost compare-and-swap means another resolver owns the row.
+      // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` or
+      // `uploading` after its attempt died provably delivered nothing and may be forgotten
+      // (`forgetUnoffered`). A failed mark offers nothing; a lost compare-and-swap means another
+      // resolver owns the row.
       let marked: boolean;
       try {
         marked = await this.markOffered(ctx, sendId);
@@ -1417,10 +1518,29 @@ export class SendService {
         await adapter.close().catch(() => { /* the connection is already broken */ });
         return { status: "in_flight", providerMessageId: null, draftId, seq: null };
       }
+      this.liveAttempts.add(sendId);
+
+      /**
+       * THE RELEASE: `complete` is committed after the last byte and before the end-of-data mark,
+       * one compare-and-swap on `uploading`. A resolver that decided the row first wins, and then
+       * the mark is never written; a submission past its ceiling is refused here too.
+       */
+      const ceilingAt = deps.submissionCeilingMs === undefined ? null
+        : reservation.reservedAt.getTime() + deps.submissionCeilingMs;
+      const beforeRelease = async (): Promise<void> => {
+        if (ceilingAt !== null && ctx.now().getTime() > ceilingAt) throw new Error("the upload ran past its ceiling");
+        if (!(await this.markComplete(ctx, sendId))) throw new Error("the reservation is no longer this attempt's");
+      };
+      const stop = new AbortController();
+      const ceilingTimer = ceilingAt === null ? null
+        : setTimeout(() => stop.abort(), Math.max(0, ceilingAt - ctx.now().getTime()));
+      (ceilingTimer as { unref?: () => void } | null)?.unref?.();
+      // Only an adapter that can file the copy itself is asked to leave it to us.
+      const callerCopy = typeof adapter.fileSentCopy === "function";
 
       /**
        * THE SUBMISSION — one promise, so the ceiling can stop waiting for it WITHOUT stopping it.
-       * It owns `adapter.close()` in its own `finally`: once the ceiling is reached this function
+       * It owns `adapter.close()`, or hands it to the copy: once the ceiling is reached this function
        * has returned and there is no caller left to run one — and closing the adapter under a
        * live SMTP session is the one thing that could turn a slow send into a failed one. On a
        * host whose process outlives the response this promise runs to completion and calls the
@@ -1428,7 +1548,8 @@ export class SendService {
        * client learns it from `/sync`. On a serverless host the invocation ends and the
        * reservation is left for verify-by-Sent. Neither host resends.
        */
-      const submitting = (async (): Promise<SendResult> => {
+      const submitting = (async (): Promise<{ result: SendResult; copy?: Promise<"filed" | "missing"> }> => {
+        let handedOff = false;
         try {
           let providerMessageId: string;
           /**
@@ -1438,11 +1559,13 @@ export class SendService {
            * below is then skipped and the Sent-folder watch is the only path, exactly as before.
            */
           let appended: AppendedSent | undefined;
+          let unfiled: Buffer | undefined;
           const tSubmit = Date.now();
           try {
-            const res = await adapter.send(msg);
+            const res = await adapter.send(msg, { copy: callerCopy ? "caller" : "inline", beforeRelease, signal: stop.signal });
             providerMessageId = res.providerMessageId;
             appended = res.appended;
+            unfiled = res.unfiledCopy;
           } catch (err) {
             if (err instanceof SentCopyAppendFailed) {
               // SMTP ACCEPTED IT; only the Sent copy failed. Delivered for certain — finalize
@@ -1453,21 +1576,30 @@ export class SendService {
                 draftId, accountId: ctx.accountId, sendId, err: err.cause,
               });
               const seq = await this.finalizeSent(ctx, sendId, err.providerMessageId, draftId, mailboxId);
-              return { status: "sent", providerMessageId: err.providerMessageId, draftId, seq };
+              return { result: { status: "sent", providerMessageId: err.providerMessageId, draftId, seq, sentCopy: "missing" } };
             }
             if (err instanceof SendNotSubmitted) {
-              // NEVER OFFERED: no token, the socket never connected, or the session died securing
-              // the connection or logging in, so the message provably did not leave. Failed with
-              // the step named, never `unverified`, and the same refusals the IMAP leg's dial gets.
+              // NEVER OFFERED, or never released: no token, the socket never connected, the session
+              // died securing or logging in, or the end of the message never left. Failed with the
+              // step named, never `unverified`.
               phases.submitMs = Date.now() - tSubmit;
               throw await this.endInWindow(ctx, deps, reservation, draftId, notSubmittedRefusal(err), phases, started);
             }
-            // SMTP threw → the delivery is AMBIGUOUS (it may have reached the server
-            // before the failure). VERIFY by Sent rather than assume either way; NEVER
-            // blindly resend. Reuse the still-open adapter for the probe.
+            // SMTP threw after the release → the delivery is AMBIGUOUS. The row is `complete`
+            // whatever the adapter did, so a later resolver looks by Message-ID. VERIFY by Sent
+            // rather than assume either way; NEVER blindly resend.
+            await this.markComplete(ctx, sendId).catch(() => false);
+            let probe: SendAdapter = adapter;
+            let reopened = false;
             let inSent: boolean;
             try {
-              inSent = await adapter.messageInSent(mintedMessageId);
+              // A connection that died under the slow submission is dialled again, once.
+              if (adapter.isLive?.() === false) {
+                await adapter.close().catch(() => { /* the connection is already broken */ });
+                probe = await deps.openSendAdapter(mailboxId);
+                reopened = true;
+              }
+              inSent = await probe.messageInSent(mintedMessageId);
             } catch (probeErr) {
               // The mail server failed the check too, so the fate stays unknown: the reservation
               // keeps its key for verify-by-Sent and the answer is the ceiling's `queued`. A probe
@@ -1476,22 +1608,31 @@ export class SendService {
               if (mailServerRefusalOf(probeErr) === null && code !== "EIMAPBOUND") throw probeErr;
               phases.submitMs = Date.now() - tSubmit;
               (deps.log ?? defaultLog).warn("send_sent_probe_failed", { draftId, accountId: ctx.accountId, sendId, err: probeErr });
-              return { status: "queued", providerMessageId: null, draftId, seq: reservation.seq };
+              return { result: { status: "queued", providerMessageId: null, draftId, seq: reservation.seq } };
+            } finally {
+              if (reopened) await probe.close().catch(() => { /* the connection is already broken */ });
             }
             phases.submitMs = Date.now() - tSubmit;
             if (inSent) {
               const seq = await this.finalizeSent(ctx, sendId, mintedMessageId, draftId, mailboxId);
-              return { status: "sent", providerMessageId: mintedMessageId, draftId, seq };
+              return { result: { status: "sent", providerMessageId: mintedMessageId, draftId, seq } };
             }
             const seq = await this.finalizeUnverified(ctx, sendId, draftId);
-            return { status: "unverified", providerMessageId: null, draftId, seq };
+            return { result: { status: "unverified", providerMessageId: null, draftId, seq } };
           }
           phases.submitMs = Date.now() - tSubmit;
 
-          // ── 3. FINALIZE (short tx) ──────────────────────────────────────────────
+          // ── 3. FINALIZE (short tx) — on the 250, before the copy ─────────────────────────
           const tFinalize = Date.now();
           const seq = await this.finalizeSent(ctx, sendId, providerMessageId, draftId, mailboxId);
           phases.finalizeMs = Date.now() - tFinalize;
+          const result: SendResult = { status: "sent", providerMessageId, draftId, seq, sentCopy: "filed" };
+
+          // ── 4. THE SENT COPY, filed by the caller: it owns the connection from here.
+          if (unfiled !== undefined) {
+            handedOff = true;
+            return { result, copy: this.fileCopy(ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId) };
+          }
 
           // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
           //
@@ -1500,9 +1641,11 @@ export class SendService {
           const tProject = Date.now();
           await this.projectSentCopy(ctx, mailboxId, appended, deps);
           phases.projectMs = Date.now() - tProject;
-          return { status: "sent", providerMessageId, draftId, seq };
+          return { result };
         } finally {
-          await adapter.close().catch(() => { /* the connection is already broken */ });
+          this.liveAttempts.delete(sendId);
+          if (ceilingTimer !== null) clearTimeout(ceilingTimer);
+          if (!handedOff) await adapter.close().catch(() => { /* the connection is already broken */ });
         }
       })();
 
@@ -1524,10 +1667,76 @@ export class SendService {
         this.logPhases(deps, ctx, draftId, "queued", phases, started);
         return { status: "queued", providerMessageId: null, draftId, seq: reservation.seq };
       }
-      this.logPhases(deps, ctx, draftId, settled.value.status, phases, started);
-      return settled.value;
+      const { result, copy } = settled.value;
+      if (copy !== undefined) {
+        // The 20 s ceiling ended at the finalize; the copy has its own clock (`fileCopy`).
+        // Cloud waits up to its deadline, a long-lived host only its grace; past either the copy
+        // goes on without the answer.
+        const timing = this.copyTiming(deps);
+        const tProject = Date.now();
+        result.sentCopy = await Promise.race([
+          copy, delay(deps.copyOutlivesAnswer === true ? timing.graceMs : timing.deadlineMs).then(() => "pending" as const),
+        ]);
+        phases.projectMs = Date.now() - tProject;
+      }
+      this.logPhases(deps, ctx, draftId, result.status, phases, started);
+      return result;
     } finally {
       ceiling.cancel();
+    }
+  }
+
+  private copyTiming(deps: SendDeps): SendCopyTiming {
+    return { ...SEND_COPY_TIMING, ...deps.copyTiming };
+  }
+
+  /**
+   * FILE THE SENT COPY OF A DELIVERED SEND, exactly once. First on the submission's own connection;
+   * a connection-class failure closes it, waits out the back-off and dials again, and every retry
+   * looks in Sent by Message-ID before it appends. Cloud stops at {@link SEND_COPY_DEADLINE_MS}; a
+   * host that outlives the answer keeps retrying in memory. Never rejects: the message has left.
+   */
+  private async fileCopy(
+    ctx: ServiceContext, deps: SendDeps, lease: SendAdapter, mailboxId: string,
+    raw: Buffer, messageId: string, draftId: string,
+  ): Promise<"filed" | "missing"> {
+    const timing = this.copyTiming(deps);
+    const log = deps.log ?? defaultLog;
+    const until = deps.copyOutlivesAnswer === true ? null : Date.now() + timing.deadlineMs;
+    let current: SendAdapter | null = lease;
+    let attempt = 0;
+    let lastErr: unknown = null;
+    for (;;) {
+      if (current !== null) {
+        try {
+          if (typeof current.fileSentCopy !== "function") throw new Error("this connection cannot file a Sent copy");
+          const at = await current.fileSentCopy(raw, messageId, { look: current !== lease });
+          await current.close().catch(() => { /* the connection is already broken */ });
+          if (at !== null) await this.projectSentCopy(ctx, mailboxId, at, deps);
+          if (attempt > 0) log.info("send_sent_copy_filed_on_retry", { draftId, accountId: ctx.accountId, attempt });
+          return "filed";
+        } catch (err) {
+          lastErr = err;
+          await current.close().catch(() => { /* the connection is already broken */ });
+        }
+      }
+      current = null;
+      const wait = timing.waitsMs[attempt];
+      const kind = mailServerRefusalOf(lastErr);
+      const retryable = kind === "unreachable" || kind === "timeout" || kind === "busy"
+        || (lastErr as { code?: unknown } | null)?.code === "EIMAPBOUND";
+      if (!retryable || wait === undefined || (until !== null && Date.now() + wait >= until)) {
+        log.warn("send_sent_copy_missing", { draftId, accountId: ctx.accountId, attempts: attempt + 1, err: lastErr });
+        return "missing";
+      }
+      attempt += 1;
+      if (wait > 0) await delay(wait);
+      try {
+        current = await deps.openSendAdapter(mailboxId);
+      } catch (err) {
+        // The dial failed: counted as this attempt, and the next wait follows.
+        lastErr = err;
+      }
     }
   }
 
@@ -1553,7 +1762,8 @@ export class SendService {
       && ctx.now().getTime() + wait * 1000 < deadline;
     // The sentence goes in with the write, because on the scheduled path this row is the only channel.
     const won = await this.finalizeFailed(ctx, reservation.sendId, draftId, refusal.message,
-      rearm ? { until: new Date(deadline), refusal: refusal.code } : null);
+      rearm ? { until: new Date(deadline), refusal: refusal.code } : null,
+      !rearm && NAMED_FINAL_CODES.has(refusal.code) ? refusal.code : null);
     logMailServerRefusal(deps, ctx, draftId, refusal);
     this.logPhases(deps, ctx, draftId, "failed", phases, started);
     const offered = won && rearm;
@@ -2464,6 +2674,9 @@ export class SendService {
       // told why nothing went, final: the generic `failed` names no reason to press again.
       const lapsed = lapsedRefusal(row, ctx.now());
       if (lapsed !== null) throw lapsed;
+      // A dropped upload or a server's refusal is told by name, as the press was.
+      const named = finalRefusal(row);
+      if (named !== null) throw named;
       return { status: "failed", providerMessageId: null, draftId: draftOfTerminalAttempt(row), seq: null };
     }
 
@@ -2492,17 +2705,18 @@ export class SendService {
       return { status: "in_flight", providerMessageId: null, draftId: out.draftId, seq: null };
     }
     if (out.status === "forgotten") return FORGOTTEN;
+    if (out.status === "failed" && out.by === "not_offered") throw new SendUploadDropped();
     return {
       status: out.status, providerMessageId: out.providerMessageId, draftId: out.draftId, seq: out.seq,
     };
   }
 
   /**
-   * Commit `offered` on this attempt's reservation, right before its first SMTP traffic. A
+   * Commit `uploading` on this attempt's reservation, right before its first SMTP traffic. A
    * compare-and-swap on `pending` + `unoffered`: false means the row is no longer this attempt's.
    */
   private async markOffered(ctx: ServiceContext, sendId: string): Promise<boolean> {
-    const won = await asTx(ctx).update(outboundSends).set({ offerState: "offered" })
+    const won = await asTx(ctx).update(outboundSends).set({ offerState: "uploading" })
       .where(and(
         eq(outboundSends.id, sendId), eq(outboundSends.accountId, ctx.accountId),
         eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
@@ -2512,25 +2726,43 @@ export class SendService {
   }
 
   /**
-   * FORGET A RESERVATION THAT OFFERED NOTHING — one transaction, scoped by account: its content
-   * claim, the row (compare-and-swap on `pending` + `unoffered`), the draft from `sending` back to
-   * `draft`, and a draft change. `null` for a scheduled draft or a row holding no claim of its own
-   * (a staged press: its files ride the request, and a replay of a held key carries none), so both
-   * keep verify-by-Sent; a lost swap answers the winner. The caller vouches no attempt is alive
-   * (stale, or inherited by the data-dir lock). Nothing here sends.
+   * Commit `complete` before the end-of-data mark may leave: a compare-and-swap on `pending` +
+   * `uploading`. False means a resolver decided the row first, and the mark must not be released.
+   */
+  private async markComplete(ctx: ServiceContext, sendId: string): Promise<boolean> {
+    const won = await asTx(ctx).update(outboundSends).set({ offerState: "complete" })
+      .where(and(
+        eq(outboundSends.id, sendId), eq(outboundSends.accountId, ctx.accountId),
+        eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "uploading"),
+      ))
+      .returning({ id: outboundSends.id });
+    return won.length > 0;
+  }
+
+  /**
+   * FORGET A RESERVATION THAT SENT NOTHING — one transaction, scoped by account: its content
+   * claim, the row (compare-and-swap on `pending` + the `unoffered` or `uploading` it was read in),
+   * the draft from `sending` back to `draft`, and a draft change. A scheduled draft or a row holding
+   * no claim of its own (a staged press: its files ride the request, and a replay of a held key
+   * carries none) cannot be replayed whole: from `unoffered` it answers `null` and keeps
+   * verify-by-Sent, from `uploading` it ends `failed` as dropped. A lost swap answers the winner. The
+   * caller vouches no attempt is alive (stale, or inherited by the data-dir lock). Nothing here sends.
    */
   private async forgetUnoffered(
     ctx: ServiceContext, row: typeof outboundSends.$inferSelect,
   ): Promise<ResolveStaleOutcome | null> {
     const draftId = draftOfOpenAttempt(row);
-    const done = await asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept"> => {
+    // `uploading` sent nothing either: its end-of-data mark was never released (`markComplete`).
+    const read = row.offerState;
+    const done = await asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept" | "drop"> => {
       const [d] = await tx.select({ sendAt: drafts.sendAt }).from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
-      if (d && d.sendAt !== null) return "kept";
+      const scheduled = d !== undefined && d.sendAt !== null;
+      if (scheduled && read !== "uploading") return "kept";
       const [held] = await dialect(ctx.db).forUpdate(tx.select({ id: outboundSends.id }).from(outboundSends)
         .where(and(
           eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId),
-          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
+          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, read),
         ))
         .limit(1));
       if (!held) return "lost";
@@ -2538,14 +2770,15 @@ export class SendService {
       const [own] = await tx.select({ id: outboundSendFingerprints.id }).from(outboundSendFingerprints)
         .where(and(eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, row.id)))
         .limit(1);
-      if (!own) return "kept";
+      // A scheduled or staged upload that dropped cannot be replayed whole: it ends failed instead.
+      if (scheduled || !own) return read === "uploading" ? "drop" : "kept";
       // The claim first and by name: the device store's cascade is not relied on.
       await tx.delete(outboundSendFingerprints)
         .where(and(eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, row.id)));
       await tx.delete(outboundSends)
         .where(and(
           eq(outboundSends.id, row.id), eq(outboundSends.accountId, ctx.accountId),
-          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, "unoffered"),
+          eq(outboundSends.status, "pending"), eq(outboundSends.offerState, read),
         ));
       await tx.update(drafts).set({ status: "draft", updatedAt: ctx.now() })
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending")));
@@ -2556,6 +2789,12 @@ export class SendService {
     });
     if (done === "kept") return null;
     if (done === "lost") return this.answerWinner(ctx, row);
+    if (done === "drop") {
+      const won = await this.finalizeFailed(ctx, row.id, draftId, SEND_UPLOAD_DROPPED_SENTENCE, null, "send_upload_dropped", "uploading");
+      if (!won) return this.answerWinner(ctx, row);
+      defaultLog.info("send_upload_dropped", { sendId: row.id, accountId: ctx.accountId, draftId, decidedBy: "not_offered" });
+      return { status: "failed", providerMessageId: null, draftId, seq: null, by: "not_offered" };
+    }
     defaultLog.info("send_unoffered_forgotten", {
       sendId: row.id, accountId: ctx.accountId, draftId, decidedBy: "not_offered",
     });
@@ -2575,9 +2814,9 @@ export class SendService {
       .where(and(eq(outboundSends.accountId, ctx.accountId), inArray(outboundSends.id, [...ids])));
     const gone = new Set<string>();
     for (const row of rows) {
-      if (row.status !== "pending" || row.offerState !== "unoffered" || row.draftId === null) continue;
+      if (row.status !== "pending" || !SENT_NOTHING.has(row.offerState) || row.draftId === null) continue;
       const out = await this.forgetUnoffered(ctx, row);
-      if (out?.status === "forgotten") gone.add(row.id);
+      if (out?.status === "forgotten" || (out?.status === "failed" && out.by === "not_offered")) gone.add(row.id);
     }
     return { forgotten: gone.size, remaining: ids.filter((id) => !gone.has(id)) };
   }
@@ -2599,11 +2838,15 @@ export class SendService {
     openAdapter: OpenSendAdapter | null,
     onMiss: "unverified" | "defer" = "unverified",
   ): Promise<ResolveStaleOutcome> {
+    // Its attempt is still running here: nothing is probed or written, as for a young row.
+    if (this.liveAttempts.has(row.id)) {
+      return { status: "pending", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null, by: "deferred" };
+    }
     // 0. THE UNOFFERED ARM (mail 0162), no dial: an attempt that never committed its offer sent
     // nothing, so the row is forgotten and the person's own press, replayed under its key, sends it.
-    // A scheduled draft and a staged press keep the arms below. `unknown` (older rows and code)
-    // reads as offered.
-    if (row.offerState === "unoffered") {
+    // A scheduled draft and a staged press keep the arms below, or end `failed` from `uploading`.
+    // `unknown` and `offered` (older rows and code) and `complete` read as possibly delivered.
+    if (SENT_NOTHING.has(row.offerState)) {
       const forgotten = await this.forgetUnoffered(ctx, row);
       if (forgotten !== null) return forgotten;
     }
@@ -2906,6 +3149,10 @@ export class SendService {
   private async finalizeFailed(
     ctx: ServiceContext, sendId: string, draftId: string, sentence: string,
     offer: { until: Date; refusal: string } | null = null,
+    /** A named final refusal's code, kept so the key's replay is told it (`finalRefusal`). */
+    finalCode: string | null = null,
+    /** Only while the row is still in this offer state. */
+    onlyFrom: string | null = null,
   ): Promise<boolean> {
     // The code KNOWS it did not go. `failed` was declared and handled from day one — and NOTHING
     // EVER WROTE IT: a pre-SMTP failure left a `pending` row, finalized `unverified` — "check your
@@ -2924,8 +3171,11 @@ export class SendService {
       // thing this whole path exists to prevent, one direction reversed.
       // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
-        .set({ status: "failed", retryUntil: offer?.until ?? null, retryRefusal: offer?.refusal ?? null })
-        .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
+        .set({ status: "failed", retryUntil: offer?.until ?? null, retryRefusal: offer?.refusal ?? finalCode })
+        .where(and(
+          eq(outboundSends.id, sendId), eq(outboundSends.status, "pending"),
+          ...(onlyFrom === null ? [] : [eq(outboundSends.offerState, onlyFrom)]),
+        ))
         .returning({ id: outboundSends.id });
       if (won.length === 0) return false;
       await tx.update(drafts)

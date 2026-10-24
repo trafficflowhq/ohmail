@@ -283,4 +283,70 @@ describe("the LOCAL engine sends, end to end against a real SMTP server", () => 
     },
     120_000,
   );
+
+  /**
+   * A SLOW 250 OUTLIVES THE IMAP LEG DIALLED BEFORE IT. The send's IMAP connection sits idle with
+   * nothing selected while SMTP runs, and the socket deadline closes it; the Sent APPEND used to run
+   * on it once and was lost. Through a relay that answers every SMTP line late, at a scaled deadline
+   * (1 s): one delivery, exactly one Sent copy, the draft `sent`.
+   */
+  it(
+    "a slow submission past the IMAP leg's idle deadline: one delivery, one Sent copy, the draft sent",
+    async () => {
+      const net = await import("node:net");
+      const relay = net.createServer((client) => {
+        const upstream = net.connect(SMTP_PORT, SMTP_HOST);
+        client.on("data", (d) => upstream.write(d));
+        upstream.on("data", (d) => { setTimeout(() => { if (!client.destroyed) client.write(d); }, 300); });
+        const end = (): void => { client.destroy(); upstream.destroy(); };
+        client.on("error", end); upstream.on("error", end);
+        client.on("close", end); upstream.on("close", () => setTimeout(end, 400));
+      });
+      await new Promise<void>((r) => relay.listen(0, "127.0.0.1", () => r()));
+      const relayPort = (relay.address() as { port: number }).port;
+      try {
+        const cfg = greenmail();
+        const l = await launch({
+          dataDir: freshDataDir(), cfg, keks: { 1: aKek() }, pass: cfg.auth.pass,
+          // The send leg only (the sync dial carries no smtp): its deadline scaled, its SMTP slowed.
+          adapterFactory: (c) => (c.smtp
+            ? new ImapAdapter({ ...c, smtp: { ...c.smtp, port: relayPort }, timeouts: { connectionMs: 5_000, greetingMs: 5_000, socketMs: 1_000 } })
+            : new ImapAdapter(c)),
+        });
+        expect((await enterCredential(l, cfg)).status).toBe(200);
+        await l.sidecar.start();
+        const draft = await createDraft(l, {
+          subject: "the slow one", html: "<p>Late but whole.</p>", to: [{ name: null, address: cfg.auth.user }],
+        });
+        const res = await sendDraft(l, draft.id);
+        const body = await res.json() as { status: string; providerMessageId?: string; sentCopy?: string };
+        expect(res.status, JSON.stringify(body)).toBe(200);
+        expect(body.status).toBe("sent");
+
+        const inner = body.providerMessageId!.replace(/[<>]/g, "");
+        const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: cfg.secure, auth: cfg.auth, logger: false });
+        await c.connect();
+        rawClients.push(c);
+        const count = async (folder: string): Promise<number> => {
+          const lock = await c.getMailboxLock(folder).catch(() => null);
+          if (lock === null) return 0;
+          try {
+            const hits = await c.search({ header: { "message-id": inner } }, { uid: true });
+            return Array.isArray(hits) ? hits.length : 0;
+          } finally { lock.release(); }
+        };
+        // A copy still being retried after the answer lands within the retry's first wait.
+        for (let i = 0; i < 100 && (await count("Sent")) === 0; i += 1) await new Promise((r) => { setTimeout(r, 100); });
+        expect(await count("Sent"), "exactly one Sent copy").toBe(1);
+        expect(await count("INBOX"), "exactly one delivery").toBe(1);
+        const after = await l.client.fetch(`/drafts/${draft.id}`, {
+          headers: { authorization: `Bearer ${l.sidecar.sessionToken}` },
+        });
+        expect(((await after.json()) as { status: string }).status).toBe("sent");
+      } finally {
+        await new Promise<void>((r) => relay.close(() => r()));
+      }
+    },
+    120_000,
+  );
 });

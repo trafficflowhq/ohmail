@@ -236,7 +236,8 @@ async function admittedSendAdapter(deps: ApiDeps, mailboxId: string): Promise<Se
     throw err;
   }
   return {
-    send: (msg) => adapter.send(msg),
+    // Probe-only: no `fileSentCopy`, so nothing reached through this door files a copy.
+    send: (msg, opts) => adapter.send(msg, opts),
     messageInSent: (messageId) => adapter.messageInSent(messageId),
     close: async () => {
       try {
@@ -935,6 +936,8 @@ export const internalRoutes: Route[] = [
           // cycle after the account reads open — see `accountEligibleFrom` for why the network
           // read is safe where a database read through the outer handle was the deadlock.
           ...(eligible ? { accountEligible: eligible } : {}),
+          // The platform ends this invocation at 60 s: a send that could not finish is not started.
+          budgetMs: 60_000,
           log,
           now: deps.now,
         });

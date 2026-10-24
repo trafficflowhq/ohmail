@@ -230,6 +230,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   "setFlags|messageFlagsAdd": { how: "no_server_sized_result", why: "one message" },
   "setFlags|messageFlagsRemove": { how: "no_server_sized_result", why: "one message" },
   "send|append": { how: "no_server_sized_result", why: "APPEND answers a status line" },
+  "fileSentCopy|append": { how: "no_server_sized_result", why: "APPEND answers a status line" },
   "startIdle|idle": { how: "no_server_sized_result", why: "IDLE is a wait, ended by the driver; the untagged responses it delivers are handled by the watch callbacks, not accumulated here" },
   "noop|noop": { how: "no_server_sized_result", why: "NOOP answers a status line, and the untagged responses it may carry are the driver's to deliver. It is the ONE site here with no deadline of its own: the heartbeat that issues it owns a window shorter than the read deadline, and bounding it here would make the fast detector as slow as the slow one" },
   /*

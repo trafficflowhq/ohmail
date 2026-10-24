@@ -406,6 +406,10 @@ export const draftsRoutes: Route[] = [
           // nothing about them. `sendSurfaceFor` holds that rule; this stays the host's honest
           // statement about its own pipeline.
           surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
+          // WHERE THE SENT COPY IS WAITED FOR: inside the request on Cloud, in memory where the host outlives it.
+          ...(deps.services?.sendCopyOutlivesAnswer === true ? { copyOutlivesAnswer: true } : {}),
+          ...(deps.services?.sendSubmissionCeilingMs !== undefined
+            ? { submissionCeilingMs: deps.services.sendSubmissionCeilingMs } : {}),
           // WHERE STAGED BYTES COME FROM. Absent on a host with no object storage — a local
           // install — and then a request naming staged references is REFUSED rather than sent
           // without its files.
@@ -428,6 +432,7 @@ export const draftsRoutes: Route[] = [
             {
               status: "sent", providerMessageId: result.providerMessageId,
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
+              ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
             },
             { status: 200, seq: result.seq ?? undefined },
           );

@@ -1,5 +1,5 @@
 import { IMAP_READ_DEADLINE_MS } from "./adapters/imap-bounds.js";
-import type { OutboundMessage, SendAdapter } from "./send.js";
+import type { OutboundMessage, SendAdapter, SendOptions } from "./send.js";
 
 /**
  * A connected send adapter that can say whether its connection is still there. `ImapAdapter`
@@ -107,9 +107,14 @@ export class SendConnections {
     if (entry.idle !== null) { this.timers.clear(entry.idle); entry.idle = null; }
     // ONE release per lease: the send path closes in a `finally` and a follower may close again.
     let released = false;
+    const real = entry.real;
     return {
-      send: (msg: OutboundMessage) => entry.real.send(msg),
-      messageInSent: (id: string) => entry.real.messageInSent(id),
+      send: (msg: OutboundMessage, opts?: SendOptions) => real.send(msg, opts),
+      ...(real.fileSentCopy
+        ? { fileSentCopy: (raw: Buffer, id: string, o?: { look?: boolean }) => real.fileSentCopy!(raw, id, o) }
+        : {}),
+      messageInSent: (id: string) => real.messageInSent(id),
+      isLive: () => !released && real.isLive(),
       close: async () => {
         if (released) return;
         released = true;

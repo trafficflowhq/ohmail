@@ -4,8 +4,8 @@ import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
 import { mintMessageId, SendNotSubmitted } from "@trafficflow/core";
-import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendService, SEND_STALE_AFTER_MS } from "../src/index.js";
+import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
+import { SendService, SEND_STALE_AFTER_MS, SEND_SUBMISSION_CEILING_MS } from "../src/index.js";
 import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
 
 /**
@@ -20,6 +20,8 @@ import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
  */
 
 const svc = new SendService();
+/** Another process's resolver (a dead run's successor, or another host): it cannot see `svc`'s live attempts. */
+const elsewhere = new SendService();
 const START = new Date("2026-10-23T12:00:00.000Z");
 const outcome = (p: Promise<unknown>): Promise<unknown> => p.then((r) => r, (e: unknown) => e);
 const until = async (ok: () => boolean | Promise<boolean>): Promise<void> => {
@@ -30,21 +32,34 @@ const until = async (ok: () => boolean | Promise<boolean>): Promise<void> => {
   throw new Error("never");
 };
 
-/** A transport whose dial (or submission) can be held open, as a slow server holds it. */
-function transport(o: { holdDial?: boolean; holdSubmit?: boolean; inSent?: boolean; onDial?: () => Promise<void> } = {}) {
-  const state = { dials: 0, submits: 0, probes: 0, delivered: [] as OutboundMessage[] };
-  const held: Array<() => void> = [];
-  const hold = (): Promise<void> => new Promise<void>((_r, reject) => {
-    held.push(() => reject(Object.assign(new Error("reset"), { code: "ECONNRESET" })));
+/**
+ * A transport whose dial, upload or final reply can be held open, as a slow server holds it. As the
+ * real adapter does, the end-of-data mark waits for `beforeRelease`, and a session that ends before
+ * it is `SendNotSubmitted("data")`. `marks` counts the end-of-data marks the server received.
+ */
+function transport(o: {
+  holdDial?: boolean; holdUpload?: boolean; holdReply?: boolean; inSent?: boolean; onDial?: () => Promise<void>;
+} = {}) {
+  const state = { dials: 0, submits: 0, probes: 0, marks: 0, delivered: [] as OutboundMessage[] };
+  const held: Array<(go: boolean) => void> = [];
+  const hold = (): Promise<void> => new Promise<void>((resolve, reject) => {
+    held.push((go) => (go ? resolve() : reject(Object.assign(new Error("reset"), { code: "ECONNRESET" }))));
   });
   const factory: OpenSendAdapter = async () => {
     state.dials += 1;
     if (o.onDial) await o.onDial();
     if (o.holdDial) await hold();
     return {
-      async send(msg: OutboundMessage) {
+      async send(msg: OutboundMessage, opts?: SendOptions) {
         state.submits += 1;
-        if (o.holdSubmit) await hold();
+        try {
+          if (o.holdUpload) await hold();
+          await opts?.beforeRelease?.();
+        } catch (err) {
+          throw new SendNotSubmitted("data", err);
+        }
+        state.marks += 1;
+        if (o.holdReply) await hold();
         state.delivered.push(msg);
         return { providerMessageId: msg.messageId! };
       },
@@ -52,7 +67,8 @@ function transport(o: { holdDial?: boolean; holdSubmit?: boolean; inSent?: boole
       async close() { /* nothing to tear down */ },
     };
   };
-  return { factory, state, release: () => { for (const r of held.splice(0)) r(); } };
+  /** `go`: the held step carries on; otherwise the connection resets under it. */
+  return { factory, state, release: (go = false) => { for (const r of held.splice(0)) r(go); } };
 }
 
 async function world() {
@@ -150,7 +166,7 @@ describe("a stale reservation that offered nothing", () => {
     expect(replay.state.delivered).toHaveLength(1);
     const now = (await w.row("k2"))!;
     expect({ status: now.status, offerState: now.offerState, fresh: now.id !== left.id })
-      .toEqual({ status: "sent", offerState: "offered", fresh: true });
+      .toEqual({ status: "sent", offerState: "complete", fresh: true });
   });
 
   it("forgetInherited forgets the last run's unoffered rows, keeps the rest, and only for its account", async () => {
@@ -208,22 +224,119 @@ describe("a staged press's reservation is never forgotten", () => {
   });
 });
 
-describe("CONTROLS: a reservation that may have been offered keeps verify-by-Sent", () => {
-  it("a send that reached adapter.send is `offered`, is probed, and becomes `unverified`", async () => {
+describe("an upload that never released its end-of-data mark sent nothing", () => {
+  it("a stale `uploading` row is forgotten without a dial, and the key's replay delivers once", async () => {
     const w = await world();
-    const slow = transport({ holdSubmit: true });
-    const first = outcome(press(w, "k5", slow.factory));
+    const slow = transport({ holdUpload: true });
+    const first = outcome(press(w, "u1", slow.factory));
     await until(() => slow.state.submits === 1);
+    const left = (await w.row("u1"))!;
+    expect(left.offerState).toBe("uploading");
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const probe = transport();
+    const out = await elsewhere.resolveStale(w.ctx, left, w.mailboxId, probe.factory);
+    expect({ status: out.status, by: out.by, dials: probe.state.dials }).toEqual({ status: "forgotten", by: "not_offered", dials: 0 });
+    expect((await w.draft()).status).toBe("draft");
+    slow.release();
+    await first;
+    const replay = transport();
+    expect((await press(w, "u1", replay.factory)).status).toBe("sent");
+    expect(replay.state.delivered).toHaveLength(1);
+    expect(slow.state.marks, "the dropped upload delivered nothing").toBe(0);
+  });
+
+  it("when the cleanup wins the race, the end-of-data mark is never released", async () => {
+    const w = await world();
+    const slow = transport({ holdUpload: true });
+    const first = outcome(press(w, "u2", slow.factory));
+    await until(() => slow.state.submits === 1);
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const out = await elsewhere.resolveStale(w.ctx, (await w.row("u2"))!, w.mailboxId, null, "defer");
+    expect(out.status).toBe("forgotten");
+    slow.release(true);   // the upload's last byte arrives after the row was decided
+    expect(await first).toMatchObject({ code: "send_upload_dropped" });
+    expect(slow.state.marks, "the server never received the end of the message").toBe(0);
+    expect(slow.state.delivered).toHaveLength(0);
+  });
+
+  it("a staged press's dropped upload ends `failed`: never forgotten, never probed", async () => {
+    const w = await world();
+    const slow = transport({ holdUpload: true });
+    const first = outcome(press(w, "u3", slow.factory, { stagedAttachments: staging }, { stagedAttachmentIds: ["t1"] }));
+    await until(() => slow.state.submits === 1);
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const out = await elsewhere.resolveStale(w.ctx, (await w.row("u3"))!, w.mailboxId, null, "defer");
+    expect({ status: out.status, by: out.by }).toEqual({ status: "failed", by: "not_offered" });
+    expect({ status: (await w.row("u3"))!.status, draft: (await w.draft()).status }).toEqual({ status: "failed", draft: "draft" });
+    slow.release(true);
+    await first;
+    expect(slow.state.marks).toBe(0);
+  });
+
+  it("an upload past its ceiling is refused at the release, and the send fails as dropped", async () => {
+    expect(SEND_SUBMISSION_CEILING_MS, "the attempt ends before a resolver may decide its row").toBeLessThan(SEND_STALE_AFTER_MS);
+    const w = await world();
+    const slow = transport({ holdUpload: true });
+    const first = outcome(press(w, "u4", slow.factory, { submissionCeilingMs: SEND_SUBMISSION_CEILING_MS }));
+    await until(() => slow.state.submits === 1);
+    w.advance(SEND_SUBMISSION_CEILING_MS + 1);
+    slow.release(true);
+    expect(await first).toMatchObject({ code: "send_upload_dropped" });
+    expect(slow.state.marks).toBe(0);
+    expect({ status: (await w.row("u4"))!.status, draft: (await w.draft()).status }).toEqual({ status: "failed", draft: "draft" });
+  });
+});
+
+describe("an attempt still running in this process outlives the stale cutoff", () => {
+  it("a replay, a Cancel and a resolver past it answer in flight, and the late 250 finalizes `sent`", async () => {
+    const w = await world();
+    const slow = transport({ holdUpload: true, holdReply: true });
+    const first = outcome(press(w, "live", slow.factory));
+    await until(() => slow.state.submits === 1);
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const probe = transport();
+    expect((await press(w, "live", probe.factory)).status, "mid-upload").toBe("in_flight");
+    slow.release(true);
+    await until(() => slow.state.marks === 1);
+    expect((await press(w, "live", probe.factory)).status, "waiting for the 250").toBe("in_flight");
+    expect((await svc.withdraw(w.ctx, "live", w.draftId, { openSendAdapter: probe.factory })).outcome).toBe("in_flight");
+    expect((await svc.resolveStale(w.ctx, (await w.row("live"))!, w.mailboxId, probe.factory)).by).toBe("deferred");
+    expect({ dials: probe.state.dials, status: (await w.row("live"))!.status }).toEqual({ dials: 0, status: "pending" });
+    slow.release(true);
+    expect(await first).toMatchObject({ status: "sent" });
+    expect({ status: (await w.row("live"))!.status, draft: (await w.draft()).status }).toEqual({ status: "sent", draft: "sent" });
+  });
+});
+
+describe("CONTROLS: a reservation that may have been offered keeps verify-by-Sent", () => {
+  it("a `complete` row (its mark released, no reply yet) is probed and becomes `unverified`", async () => {
+    const w = await world();
+    const slow = transport({ holdReply: true });
+    const first = outcome(press(w, "k5", slow.factory));
+    await until(() => slow.state.marks === 1);
     const left = (await w.row("k5"))!;
-    expect(left.offerState).toBe("offered");
+    expect(left.offerState).toBe("complete");
     w.advance(SEND_STALE_AFTER_MS + 1);
     const probe = transport({ inSent: false });
-    const out = await svc.resolveStale(w.ctx, left, w.mailboxId, probe.factory);
+    const out = await elsewhere.resolveStale(w.ctx, left, w.mailboxId, probe.factory);
     expect({ status: out.status, by: out.by }).toEqual({ status: "unverified", by: "probe" });
     expect(probe.state.probes).toBe(1);
     expect(probe.state.delivered).toHaveLength(0);
     slow.release();
     await first;
+  });
+
+  it("a row an older build marked `offered` is probed as today", async () => {
+    const w = await world();
+    const [s] = await w.db.insert(outboundSends).values({
+      accountId: w.accountId, idempotencyKey: "k6o", draftId: w.draftId,
+      mintedMessageId: mintMessageId("offer.test"), status: "pending", offerState: "offered", createdAt: START,
+    }).returning();
+    await w.db.update(drafts).set({ status: "sending" }).where(eq(drafts.id, w.draftId));
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const probe = transport({ inSent: false });
+    const out = await svc.resolveStale(w.ctx, s!, w.mailboxId, probe.factory);
+    expect({ status: out.status, probes: probe.state.probes }).toEqual({ status: "unverified", probes: 1 });
   });
 
   it("a row from before the column (`unknown`) is probed as today", async () => {
@@ -285,7 +398,7 @@ describe("CONTROLS: a reservation that may have been offered keeps verify-by-Sen
     };
     const first = await outcome(press(w, "k9", factory, { rearmTransient: true }));
     expect((first as { retryable?: boolean }).retryable).toBe(true);
-    expect((await w.row("k9"))!.offerState).toBe("offered");
+    expect((await w.row("k9"))!.offerState).toBe("uploading");
     w.advance(3_000);
     const r = await press(w, "k9", factory, { rearmTransient: true });
     expect(r.status).toBe("sent");

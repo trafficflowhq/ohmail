@@ -424,6 +424,31 @@ describe("runScheduledSendPass", () => {
     expect(healed.state.delivered).toHaveLength(0);
   });
 
+  it("a budgeted pass starts no send that could not finish in time; the rest are appointments again for the next poke", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    const ids = [draftId];
+    for (const body of ["the second letter", "the third letter"]) {
+      ids.push((await draftsSvc.create(ctx, { mailboxId: mb, subject: "later", body, to: [{ name: null, address: "you@example.com" }] })).draft.id);
+    }
+    for (const id of ids) await schedules.schedule(ctx, id, iso(AT));
+    let t = AT.getTime() + 1_000;
+    const fake = fakeAdapter();
+    // Each send's Sent copy is slow: 30 s of the invocation per letter.
+    const slow: OpenSendAdapter = async (m) => {
+      const a = await fake.factory(m);
+      return { ...a, send: async (msg: OutboundMessage) => { t += 30_000; return a.send(msg); } };
+    };
+    const started = t;
+    const r = await runScheduledSendPass(db, { openSendAdapter: slow, now: () => new Date(t), budgetMs: 60_000 });
+    expect(r).toMatchObject({ claimed: 3, sent: 1, deferred: 2 });
+    expect(t - started, "the pass ends inside the invocation").toBeLessThanOrEqual(60_000);
+    const left = await db.select().from(drafts).where(eq(drafts.status, "scheduled"));
+    expect(left.map((d) => d.sendKey === null)).toEqual([false, false]);
+    const next = await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => new Date(t), budgetMs: 60_000 });
+    expect(next).toMatchObject({ claimed: 2, sent: 2 });
+    expect(fake.state.delivered).toHaveLength(3);
+  });
+
   it("an appointment more than a day past due closes with the sentence BEFORE anything dials", async () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT));
