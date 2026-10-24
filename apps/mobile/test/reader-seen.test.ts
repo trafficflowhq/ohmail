@@ -523,6 +523,20 @@ describe("a fold keeps the visit (the reader remounts for the same message)", ()
     expect(reads.flat(), "read back after the fold").not.toContain("open");
   });
 
+  it("a dwell under way when the reader remounts starts over: the new mount does not finish it on its first look", () => {
+    const first = core();
+    laidOut(first);
+    pass(HOLD - 100);
+    expect(reads, "the premise: the dwell is under way").toEqual([]);
+    first.dispose();
+    const again = core();
+    laidOut(again);
+    pass(150);
+    expect(reads, "the dwell carried across the remount").toEqual([]);
+    pass(HOLD);
+    expect(reads).toEqual([["open", "m1"]]);
+  });
+
   it("a real leave ends the visit after the grace; the next visit is a fresh record", () => {
     const first = visitRecordFor("open", clock);
     showVisit("open", clock);
@@ -620,7 +634,7 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/anchorFacts\.current = \(\) => \(facts\.current\.inOhbox && aboveCount\.current > 0 \? seen\.topOf\(id\) : null\);/);
     expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\) \|\| place\.current !== null,/);
     expect(reader, "the oldest member is not flashed before the anchor places the opened one").toMatch(/opacity: unplaced \? 0 : 1/);
-    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); \}\}/);
+    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); markHold\.drop\(\); \}\}/);
   });
   it("a reply that syncs into the open reader is asked its text", () => {
     expect(reader).toMatch(/const fresh = arrivalsToAsk\(m\.earlier, asked\.current\);\s*if \(fresh\.length > 0\) hydrateHeld\(fresh\);/);

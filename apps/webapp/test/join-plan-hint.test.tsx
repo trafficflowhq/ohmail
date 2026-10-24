@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
+
 const KEY = "ohmail.signup.plan";
 const FULL = {
   user: {

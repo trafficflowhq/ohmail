@@ -11,9 +11,16 @@ import {
   buildDiagnosticBundle,
   diagnosticInstall,
   renderDiagnosticBundle,
+  supportBlock,
+  supportFacts,
   type DiagnosticMailboxInput,
   type EntityReader,
+  type SupportMailboxInput,
+  type SupportWords,
 } from "@ohmail/client-engine";
+
+/* The support mail's block helpers, for `ui/help-contact.ts`: this file is the package's one importer here. */
+export { SUPPORT_ADDRESS, supportBody, supportMailto, withSupportBlock, withoutSupportBlock } from "@ohmail/client-engine";
 
 import type { SecureKV } from "../state/servers";
 import { MOBILE_WINDOW } from "./boot";
@@ -111,4 +118,20 @@ export function readablePath(uri: string): string {
   } catch {
     return bare;
   }
+}
+
+/**
+ * SETTINGS › ABOUT › HELP & CONTACT: the support mail's diagnostics block, from the file's own
+ * inputs (the build, the platform, the mailbox rows) through core's narrowing. Classes and an
+ * opaque account id only; `words` are the deck's.
+ */
+export function phoneSupportBlock(
+  state: { mailboxes: readonly SupportMailboxInput[]; accountId: string | null },
+  deps: Pick<PhoneDiagnosticDeps, "platform" | "build">,
+  words: SupportWords,
+): string {
+  return supportBlock(
+    supportFacts({ surface: "phone", build: deps.build, platform: deps.platform, account: state.accountId, mailboxes: state.mailboxes }),
+    words,
+  );
 }

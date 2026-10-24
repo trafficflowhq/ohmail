@@ -106,6 +106,7 @@ import { decideFolderRole, type FolderRole, type RoleContext, type RoleFolder } 
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
 // `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
 import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
+import { mailDate } from "../mail-date.js";
 // THE CEILINGS ON SERVER-CHOSEN VALUES. `imap-bounds.ts` carries the whole argument — the short
 // version is that the user picks their own mail server and the worker process is shared, so every
 // count, size and wait this file accepts from that server is a lever on other people's mail.
@@ -233,7 +234,7 @@ export const SERVER_SENT_COPY_FIND_MS = 5_000;
 
 const toMs = (d: unknown): number | null => {
   if (d == null) return null;
-  const ms = d instanceof Date ? d.getTime() : new Date(d as string).getTime();
+  const ms = typeof d === "number" ? d : mailDate(d)?.getTime() ?? Number.NaN;
   return Number.isFinite(ms) ? ms : null;
 };
 
@@ -1285,6 +1286,54 @@ export function countPlainVanished(client: unknown): boolean {
   return true;
 }
 
+const IMAP_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const IMAP_DATE_TIME = /^\s*(\d{1,2})-([A-Za-z]{3})-(\d{4}) (\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})\s*$/;
+
+/**
+ * An RFC 3501 date-time (`dd-Mon-yyyy HH:MM:SS ±HHMM`) as an instant, read by hand. imapflow reads
+ * INTERNALDATE with `new Date(value)` and keeps the raw string when the runtime refuses it, as the
+ * phone's engine does; every letter a phone stored then had no arrival time. A valid Date passes.
+ */
+export function imapDateTime(v: unknown): Date | null {
+  if (v instanceof Date) return Number.isFinite(v.getTime()) ? v : null;
+  if (typeof v !== "string") return null;
+  const m = IMAP_DATE_TIME.exec(v);
+  if (m === null) return null;
+  const month = IMAP_MONTHS.indexOf(m[2]!.toLowerCase());
+  const [day, year, hh, mm, ss, zh, zm] = [m[1], m[3], m[4], m[5], m[6], m[8], m[9]].map(Number) as [
+    number, number, number, number, number, number, number,
+  ];
+  if (month < 0 || day < 1 || hh > 23 || mm > 59 || ss > 60 || zm > 59) return null;
+  const local = Date.UTC(year, month, day, hh, mm, Math.min(ss, 59));
+  if (new Date(local).getUTCDate() !== day) return null; // 31-Feb is no date
+  return new Date(local - (m[7] === "-" ? -1 : 1) * (zh * 60 + zm) * 60_000);
+}
+
+/** Every INTERNALDATE this connection hands back as a Date, where imapflow left the server's string. */
+export function readServerDates(client: ImapFlow): void {
+  const fix = <T>(m: T): T => {
+    const box = m as { internalDate?: unknown } | null;
+    if (box !== null && typeof box === "object" && typeof box.internalDate === "string") {
+      const at = imapDateTime(box.internalDate);
+      if (at !== null) box.internalDate = at;
+    }
+    return m;
+  };
+  if (typeof client.fetch === "function") {
+    const fetch = client.fetch.bind(client);
+    client.fetch = (async function* (...args: Parameters<ImapFlow["fetch"]>) {
+      for await (const m of fetch(...args)) yield fix(m);
+    }) as unknown as ImapFlow["fetch"];
+  }
+  if (typeof client.fetchOne === "function") {
+    const fetchOne = client.fetchOne.bind(client);
+    client.fetchOne = (async (...args: Parameters<ImapFlow["fetchOne"]>) => {
+      const m = await fetchOne(...args);
+      return m === false ? m : fix(m);
+    }) as ImapFlow["fetchOne"];
+  }
+}
+
 /**
  * `fetchOne` ANSWERS FOR THE MESSAGE IT ASKED ABOUT, NEVER WITH WHATEVER ARRIVED FIRST.
  *
@@ -1802,12 +1851,14 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         this.client = this.opts.client as ImapFlow;
         sliceRowStreams(this.client);
         answerForTheAskedMessage(this.client);
+        readServerDates(this.client);
         countPlainVanished(this.client);
         this.guardAsyncErrors();
       } else {
         this.client = new ImapFlow(imapFlowOptions({ ...this.config, auth: resolvedAuth }, { logger: this.opts.logger }));
         sliceRowStreams(this.client);
         answerForTheAskedMessage(this.client);
+        readServerDates(this.client);
         countPlainVanished(this.client);
         // BEFORE the dial, not after, and the ordering is the whole point. imapflow's own
         // `emitError` routes to `initialReject` only while the connect promise is pending; the
@@ -2598,13 +2649,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // Counted above; another session's flag change carries no envelope and is no item.
         if (!askedRow(m, ANY_UID, "envelope")) continue;
         const from = m.envelope?.from?.[0];
-        const date = m.envelope?.date ?? m.internalDate;
+        const date = mailDate(m.envelope?.date) ?? mailDate(m.internalDate);
         rows.push({
           uid: m.uid,
           seq: m.seq,
           subject: ingestSubject(m.envelope?.subject),
           from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
-          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          date: date?.toISOString() ?? null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,
         });
@@ -2690,13 +2741,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // Counted above; a flag change, or a row for a UID the search did not find, is no item.
         if (!askedRow(m, asked, "envelope")) continue;
         const from = m.envelope?.from?.[0];
-        const date = m.envelope?.date ?? m.internalDate;
+        const date = mailDate(m.envelope?.date) ?? mailDate(m.internalDate);
         rows.push({
           uid: m.uid,
           seq: m.seq,
           subject: ingestSubject(m.envelope?.subject),
           from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
-          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          date: date?.toISOString() ?? null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,
         });

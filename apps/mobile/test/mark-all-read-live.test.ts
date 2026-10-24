@@ -155,6 +155,29 @@ describe("mark all read drives the wire and carries the one undo", () => {
     live.fake.server.close();
   }, CASE_MS);
 
+  it("the count is the web's: a resurfaced letter, New and an unread copy under Earlier, after a reload too", async () => {
+    const live = await scene((f) => {
+      f.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
+      f.addMessage(dto("p1", { unread: true, triage: { state: "resurfaced" } }));
+      f.addMessage(dto("n1", { unread: true, date: "2026-08-19T10:00:00Z" }));
+      f.addMessage(dto("s1", { folder: "Sent", unread: true, date: "2026-08-18T10:00:00Z" }));
+    });
+    const box = liveOhbox(presentedOf(live.engine.read(), view.now), view);
+    expect(box.seen.map((r) => r.id)).toContain("s1");
+    expect([...box.unreadIds].sort()).toEqual(["n1", "p1", "s1"]);
+    expect(box.unread).toBe(3);
+    // A relaunch: a fresh boot over the same server.
+    live.store.close();
+    const { port } = live.fake.server.address() as { port: number };
+    const again = await bootEngine(deps, { origin: `http://127.0.0.1:${port}`, token: "tok-1", accountId: "acct-1" });
+    if (again.kind !== "ready") throw new Error("boot refused");
+    await again.verifyIdentity();
+    await again.engine.start();
+    expect(liveOhbox(presentedOf(again.engine.read(), view.now), view).unread).toBe(3);
+    again.store.close();
+    live.fake.server.close();
+  }, CASE_MS);
+
   it("the streams' press commits the waterline in the same act — and a fresh-only press is silent", async () => {
     const live = await scene((f) => {
       // The PRE-0.22 spelling on purpose: until the organizer renames the folder the pile's rows

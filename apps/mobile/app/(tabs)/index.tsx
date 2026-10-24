@@ -76,14 +76,14 @@ function OhboxBody() {
   /* Its squares are the conversation AS IT STANDS, read the way the reader's rail reads it, so a reply
      or a Mark unread after Back shows; only the ring is the place's (`stripOf`). Asked again when the
      row changes (its members and marks are on it, and the row object is kept while nothing it shows
-     moved), never per ring step. */
+     moved) or the reader's squares do (a body or a file landed: no row fact), never per ring step. */
   const threadRow = thread === null ? null
     : [...resurfaced, ...fresh, ...seen].find((m) => threadPlaceOf(thread, m) !== null) ?? null;
   const threadLive = useMemo(() => {
     const now = threadRow === null ? undefined : w.message(threadRow.id);
     return now === undefined ? undefined : railItemsOf(now);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadRow]);
+  }, [threadRow, thread?.items]);
   /* WHO ORGANIZES THIS MAILBOX, said where the connect lands when it is not this phone. Scoped to
      the standalone session: the notice is about the engine in this app, never another account. */
   useSyncExternalStore(

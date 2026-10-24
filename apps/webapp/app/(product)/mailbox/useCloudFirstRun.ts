@@ -29,6 +29,13 @@ import { StepUpPrompt } from "./StepUpPrompt";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { probeReasonOf } from "./MailboxSection";
 import { plaintextOfferOf } from "../../shell/probe-refusal";
+import { JOIN_ROUTE, leaveFor } from "../login/continuation";
+import { oauthOutcome } from "./oauth-return";
+
+/** The setup page resumes on the step the server says the account is on. */
+const resumeSetup = (): void => leaveFor(JOIN_ROUTE);
+/** Any consent return on this page load, running or answered: its own screen is showing. */
+const oauthReturnPending = (): boolean => oauthOutcome() !== null;
 
 /**
  * `POST /mailboxes` wants a provider id and the two transports; the flow's own shape is already
@@ -234,6 +241,9 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
         required: (err: unknown) => codeOf(err) === "step_up_required",
         prompt: (p) => createElement(StepUpPrompt, p),
       },
+      setupHref: JOIN_ROUTE,
+      resume: resumeSetup,
+      oauthPending: oauthReturnPending,
     } satisfies FirstRunHost;
   }, [ai, complete, connect, countDecision, countWaiting, demo, forgetMailbox, operatorAi, organize, pairNode, probe, writeAi]);
 }

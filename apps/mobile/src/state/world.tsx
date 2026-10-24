@@ -154,6 +154,7 @@ import {
   type StoreSearchWalker,
   type StoreTimelineWalker,
 } from "./live";
+import { NO_WAITING } from "./live";
 import type { Scope } from "./model";
 import {
   closeDeleteSession, flushHeldDeletes, heldDeleteIds, openDeleteSession, sayDeleteReplay,
@@ -626,6 +627,7 @@ const NO_ACTIONS: WorldActions = {
   // Nothing is connected, so nothing is queued: there is no send here to withdraw.
   withdrawSend: () => Promise.resolve("gone" as const),
   leaveSend: () => undefined,
+  cancelWaitingSend: () => Promise.resolve({ said: "gone" as const, kept: null }),
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
@@ -835,6 +837,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const searchRev = useSyncExternalStore(
     useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
     () => (engine ? engine.searchIndexRevision() : 0),
+  );
+
+  /* THE SENDS WAITING TO GO — Drafts lists them as such; the engine keeps the array while it holds. */
+  const waitingSends = useSyncExternalStore(
+    useCallback((cb: () => void) => (engine ? engine.subscribe(cb) : () => undefined), [engine]),
+    () => (engine ? engine.waitingSends() : NO_WAITING),
   );
 
   /* The toast: the NEWEST sentence in each of two slots, and nowhere for a third to wait — the
@@ -1642,6 +1650,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           sendAndDoneOffered: acts.sendAndDoneOffered,
           withdrawSend: (key) => acts.withdrawSend(key),
           leaveSend: (key) => acts.leaveSend(key),
+          cancelWaitingSend: (key) => acts.cancelWaitingSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           draftDiscard: (draftId) => acts.draftDiscard(draftId),
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
@@ -1764,7 +1773,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       signatures, resurfaceTime, rememberResurfaceTime, posture, scopes,
       screenerServer, relayed, leavingWaiting, heldDeletes, heldPlaces,
       mailboxes, ownAddresses: addressesNow.current, mailboxesReadAt: readMailboxesAt,
-      walker, searchWalker, openOffMirror, actions,
+      walker, searchWalker, openOffMirror, actions, waitingSends,
       onPresented: (pres, options, unrouted) => {
         presentedNow.current = pres;
         unroutedNow.current = unrouted ?? pres;
@@ -1777,7 +1786,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, [engine, projector, session, scopes, zone, locale, actions, derivedStamp, freshBeat, clockBeat, searchRev, walker, searchWalker,
     offMirrorRev, foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, leavingWaiting, heldDeletes,
-    heldPlaces, mailboxes, organizerBeat]);
+    heldPlaces, mailboxes, organizerBeat, waitingSends]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the

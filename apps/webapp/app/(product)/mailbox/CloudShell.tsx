@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Spinner } from "@ohmail/ui";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
@@ -26,6 +26,7 @@ import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
 import { LifecycleBanner } from "./LifecycleBanner";
+import { CloudStorageNotice } from "./CloudStorageNotice";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
@@ -33,7 +34,7 @@ import { AccountSection } from "./AccountSection";
 import { PasswordSection } from "./PasswordSection";
 import { MailboxSection } from "./MailboxSection";
 import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
-import { beginOAuthReturn } from "./oauth-return";
+import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcome } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
 import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
@@ -86,11 +87,16 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * is what stops the hydration mismatch `useDemoMode` exists to prevent.
    */
   const resolvedDemo = useResolvedDemoModeFrom(demo);
+  /** A Microsoft sign-in started in `/join` finishes here behind the gate, then goes back there. */
+  const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
   const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
+  const [accountId, setAccountId] = useState<string | null>(null);
   const onConfirmed = useCallback((accountId: string) => {
     bindApiOwner(accountId);
     listenFor(accountId);
+    setAccountId(accountId);
   }, [listenFor]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
@@ -228,6 +234,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
 
   // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
   if (signedOutHere) return <div className="gate" aria-busy="true" />;
+  if (joinWait) return <WaitGate />;
 
   // Three injected panes, for the reason `resolveOwner` is a prop: the
   // shell is shared with the standalone desktop, which builds without
@@ -257,16 +264,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
   /* The server's frame and the client's first are the same empty gate the shell has always
      opened with; the verdict is asked only after hydration, behind the wordmark. */
   if (firstPaint === "hydrating") return <div className="gate" aria-busy="true" aria-live="polite" />;
-  if (firstPaint === "asking") {
-    return (
-      <main className="gate" aria-busy="true">
-        <div className="gate-card">
-          <span className="wordmark"><b><em>oh</em>mail</b></span>
-          <Spinner className="mbx-spin" />
-        </div>
-      </main>
-    );
-  }
+  if (firstPaint === "asking") return <WaitGate />;
 
   return (
     <AccountLocale>
@@ -328,7 +326,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
            cannot disagree. That is what licenses it here and nowhere the node paints at once —
            measured, not assumed: on a prerendered demo page this was a live `GET /account/access`
            the row that found the other five never named. */
-        accountNotice={resolvedDemo ? undefined : <LifecycleBanner />}
+        /* …and under it the one-time notice that letter text was emptied for space, from the same feed. */
+        accountNotice={resolvedDemo ? undefined : <><LifecycleBanner /><CloudStorageNotice /></>}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}
@@ -336,9 +335,25 @@ export function CloudShell({ demo }: { demo: boolean }) {
            each mounts the device-pair ceremony. Same absence rule as the invites pane. */
         devicesSection={devicePairing ? <DevicesSection /> : undefined}
         aboutSection={<AboutSection />}
+        /* Help & contact names ohmail's support, so a self-host build, whose operator runs the server, has none. */
+        support={resolvedDemo || SELF_HOST_BUILD ? undefined : {
+          surface: "web", version: process.env.NEXT_PUBLIC_APP_VERSION, commit: process.env.NEXT_PUBLIC_BUILD, accountId,
+        }}
         /* THE FIRST-RUN STAGE'S CALLS. Withheld on the demo — see `useCloudFirstRun`. */
         {...(firstRun ? { firstRun } : {})}
       />
     </AccountLocale>
+  );
+}
+
+/** The card a browser waits behind before anything of the account paints. */
+function WaitGate() {
+  return (
+    <main className="gate" aria-busy="true">
+      <div className="gate-card">
+        <span className="wordmark"><b><em>oh</em>mail</b></span>
+        <Spinner className="mbx-spin" />
+      </div>
+    </main>
   );
 }

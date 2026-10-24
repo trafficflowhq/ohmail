@@ -12,6 +12,7 @@ import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./c
 import { eraseIdempotentResponses } from "./idempotency.js";
 import { readAccountErasedAt } from "./erasure-fence.js";
 import { rowsAffected as n } from "./rows-affected.js";
+import { lockAccountStorage, recomputeAccountStorage, releaseBodyBytes } from "./storage.js";
 
 /**
  * ERASING OHMAIL'S COPY OF ONE MAILBOX'S MAIL, IN BOUNDED STEPS.
@@ -116,7 +117,7 @@ export async function stampMailboxErasure(
  * it: without that a message-keyed delete is a scan of the whole deployment's table.
  */
 export async function sweepMailboxStep(
-  tx: LedgerTx, args: { accountId: string; mailboxId: string; now: Date },
+  tx: LedgerTx, d: Dialect, args: { accountId: string; mailboxId: string; now: Date },
 ): Promise<MailboxSweepStep> {
   const { accountId, mailboxId, now } = args;
   const deleted: Record<string, number> = {};
@@ -150,14 +151,16 @@ export async function sweepMailboxStep(
   const page = await tx.select({ id: messages.id, threadId: messages.threadId }).from(messages)
     .where(and(eq(messages.accountId, accountId), eq(messages.mailboxId, mailboxId)))
     .limit(ERASE_BATCH);
-  if (page.length > 0) return out({ ...(await eraseMessages(tx, accountId, mailboxId, page, drop)), done: false });
+  if (page.length > 0) return out({ ...(await eraseMessages(tx, d, accountId, mailboxId, page, drop)), done: false });
 
   /* ── THE MAILBOX'S OWN STATE, AND THE FINISH ──
    * These tables scale with a mailbox's folders, lists and correspondents, not with its messages.
    * `mailbox_profile_mirror` and `organizer_requests` carry no foreign key, so nothing else ever
    * removes them; the response cache is a second copy of drafts and is REPLACED, scoped to this
    * mailbox as its primitive states. The `mailbox` receipt comes last so it carries the
-   * erasure's highest seq, and the finish stamp is in the same transaction as it. */
+   * erasure's highest seq, and the finish stamp is in the same transaction as it. The counter is
+   * recounted first (its lock before the receipt's seq): that repairs bytes an older erase left. */
+  await recomputeAccountStorage(tx, d, accountId, now);
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints).where(and(
     eq(outboundSendFingerprints.accountId, accountId), eq(outboundSendFingerprints.mailboxId, mailboxId),
   )));
@@ -194,14 +197,16 @@ export async function sweepMailboxStep(
  * One page of messages and everything keyed on them. The receipts come first, while the ids are
  * still readable: one `delete` change per message, so a mirror tombstones instead of rendering
  * mail the server no longer holds. Child before parent throughout; `approvals` before
- * `routing_decisions`, which it references.
+ * `routing_decisions`, which it references. The counter row is locked before the receipts, the
+ * order ingest takes it in (reserve, then the change), and loses the deleted bodies' bytes.
  */
 async function eraseMessages(
-  tx: LedgerTx, accountId: string, mailboxId: string,
+  tx: LedgerTx, d: Dialect, accountId: string, mailboxId: string,
   page: Array<{ id: string; threadId: string | null }>,
   drop: (table: string, run: Promise<unknown>) => Promise<void>,
 ): Promise<Pick<MailboxSweepStep, "messagesErased" | "draftsUnanchored" | "seq">> {
   const ids = page.map((r) => r.id);
+  await lockAccountStorage(tx, d, accountId);
   const seqs = await recordChanges(tx, ids.map((id) => ({
     accountId, entityType: "message" as const, entityId: id, op: "delete" as const, meta: null,
   })));
@@ -253,7 +258,16 @@ async function eraseMessages(
     .where(inArray(messageInstances.messageId, ids)));
   // The bodies and the read state key off the MESSAGE and carry no `account_id` at all.
   // scoped-by: ids — a page of this mailbox's messages read by the step
-  await drop("message_bodies", tx.delete(messageBodies).where(inArray(messageBodies.messageId, ids)));
+  // The bytes come from the delete itself, so a body a trim emptied meanwhile gives back nothing twice;
+  // so does the count of letters emptied for space, by the marker each deleted row carried.
+  const bodies = await tx.delete(messageBodies).where(inArray(messageBodies.messageId, ids)).returning({
+    bytes: sql<number>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
+    withheld: messageBodies.withheldReason,
+  });
+  await drop("message_bodies", Promise.resolve(bodies));
+  const freed = bodies.reduce((sum, b) => sum + Number(b.bytes), 0);
+  const emptied = bodies.filter((b) => b.withheld === "storage_cap").length;
+  if (freed > 0 || emptied > 0) await releaseBodyBytes(tx, d, accountId, freed, emptied);
   // The search documents (mail 0125) carry the body's words — with the bodies, before `messages`.
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("message_search", tx.delete(messageSearch).where(inArray(messageSearch.messageId, ids)));
@@ -318,7 +332,7 @@ async function eraseExclusiveThreads(
  * transaction; the request never takes it, because a large mailbox does not fit in one.
  */
 export async function sweepMailboxData(
-  tx: LedgerTx, args: { accountId: string; mailboxId: string; now: Date },
+  tx: LedgerTx, d: Dialect, args: { accountId: string; mailboxId: string; now: Date },
 ): Promise<MailboxSweepResult> {
   const stamp = await stampMailboxErasure(tx, args);
   const total: MailboxSweepResult = {
@@ -326,7 +340,7 @@ export async function sweepMailboxData(
   };
   if (stamp.done) return total;
   for (;;) {
-    const step = await sweepMailboxStep(tx, args);
+    const step = await sweepMailboxStep(tx, d, args);
     addStep(total, step);
     if (step.done) return total;
   }
@@ -355,7 +369,8 @@ export interface OwedErasureRun extends MailboxSweepResult {
  * Run up to `maxSteps` steps of ONE owed erasure, each its own transaction, in the lock order
  * every erasure holds: the account row FOR SHARE (an account being erased is its own sweep's to
  * finish), the account's thread-structure lock, then the mailbox row FOR UPDATE, re-read so a
- * step never runs on an erasure somebody else finished. `until` ends the run between steps.
+ * step never runs on an erasure somebody else finished; inside the step, the `account_storage`
+ * row, then the change-log sequence, then the rows it deletes. `until` ends the run between steps.
  */
 export async function eraseOwedMailbox(
   db: Tx, d: Dialect,
@@ -376,7 +391,7 @@ export async function eraseOwedMailbox(
           .limit(1),
         { mode: "update" });
       if (!row || row.erasedAt === null || row.doneAt !== null) return null;
-      return sweepMailboxStep(tx, { accountId: args.accountId, mailboxId: args.mailboxId, now: args.now() });
+      return sweepMailboxStep(tx, d, { accountId: args.accountId, mailboxId: args.mailboxId, now: args.now() });
     });
     if (step === null) { run.skipped = run.steps === 0; return run; }
     run.steps += 1;

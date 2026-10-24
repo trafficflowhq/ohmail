@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AddressObject, Attachment, ParsedMail } from "mailparser";
 import { canonicalId } from "./identity.js";
+import { mailDate } from "./mail-date.js";
 import { ParseDeadlineExceeded, parseBounded, startParseBudget } from "./mime-parse.js";
 import type { NormalizedMessage, EmailAddress, AttachmentMeta } from "./types.js";
 import type { Logger } from "./log.js";
@@ -361,6 +362,13 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
   // with an invented rendition: a second text extraction would show up in the snippet and the
   // search vector, and belongs in a change that can measure it.
   const bodyForCanonical = htmlToTextRefused ? (html ?? text) : text;
+  // The header read by hand first: the phone's Date refuses common forms, and mailparser then says
+  // "now". The last Date line, the one mailparser reads; its own reading is kept when it differs.
+  const dateLines = headers["date"];
+  const dateLine = dateLines?.[dateLines.length - 1];
+  const sent = mailDate(dateLine);
+  const runtimeDate = sent !== null && parsed.date && Number.isFinite(new Date(dateLine!).getTime())
+    && parsed.date.getTime() !== sent.getTime() ? parsed.date : undefined;
   return {
     canonical: canonicalId(parsed.messageId ? scrubNul(parsed.messageId) : null, bodyForCanonical),
     subject: scrubNul(parsed.subject ?? ""),
@@ -370,7 +378,8 @@ export async function normalizeMime(raw: Buffer | string, opts: { log?: Logger }
     // sender chooses, so leaving it out of the logical identity would be the UNSAFE direction: two
     // messages differing only in Cc would be one row and the second would never be shown.
     cc: addrList(parsed.cc),
-    date: parsed.date ?? null,
+    date: sent ?? parsed.date ?? null,
+    ...(runtimeDate ? { runtimeDate } : {}),
     headers,
     textBody: text,
     htmlBody: html,

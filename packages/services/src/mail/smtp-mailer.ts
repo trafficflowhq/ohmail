@@ -115,7 +115,8 @@ export class SmtpMailer implements MailerPort {
 
     let mail: OutboundEmail;
     try {
-      mail = { ...renderTemplate(template, data), from: this.cfg.from, to: recipient, replyTo: this.cfg.replyTo };
+      const rendered = renderTemplate(template, data);
+      mail = { ...rendered, from: this.cfg.from, to: recipient, replyTo: rendered.replyTo ?? this.cfg.replyTo };
     } catch (e) {
       // A template that cannot render is OUR bug, never the server's weather.
       return { status: "failed", retryable: false, error: `render_failed: ${this.safe(e)}` };

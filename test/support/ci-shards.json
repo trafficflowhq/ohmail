@@ -3133,7 +3133,7 @@
       "test/perf-smoke-check.test.ts",
       "test/perf-smoke-summary.test.ts",
       "test/pinned-lookup-answers-later.test.ts",
-      "test/readme-feature-wall.test.ts",
+      "test/readme-assets.test.ts",
       "test/release-asset-set.test.ts",
       "test/release-builds-carry-patches.test.ts",
       "test/release-feeds-builder-provenance.test.ts",

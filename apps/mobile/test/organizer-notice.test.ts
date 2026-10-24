@@ -16,6 +16,7 @@ describe("the notification's body", () => {
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "meta_folder_full" } })).toBe(EN.phoneStateMetaFolderFull);
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: null }, mb2: { unreadableReason: "meta_undeletable" } }))
       .toBe(EN.phoneStateMetaUndeletable);
+    expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "clock_off" } })).toBe(EN.phoneStateClockOff);
   });
   it("says Organizing over every other state, an older engine's included (control)", () => {
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: null } })).toBe(EN.notifBody("mila@example.com"));
@@ -25,5 +26,6 @@ describe("the notification's body", () => {
   it("in German too", () => {
     setActiveLocale("de");
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "meta_folder_full" } })).toBe(DE.phoneStateMetaFolderFull);
+    expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "clock_off" } })).toBe(DE.phoneStateClockOff);
   });
 });

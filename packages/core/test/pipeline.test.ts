@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { planChange, commitChange, applyReconcileAction , UNMETERED_STORAGE_CAP} from "../src/pipeline.js";
 import { FakeRepo, FakeAdapter, dedupKeyFor } from "./fakes.js";
 import type { Change, PipelineDeps } from "../src/ports.js";
 import type { Rule } from "../src/rules.js";
+import { normalizeMime } from "../src/mime.js";
+import { fingerprintDedupKey, messageFingerprint } from "../src/identity.js";
+import { usePhoneDate } from "./_hermes-date.js";
 
 /**
  * The key for the DEFAULT sample. DERIVED and not spelled out: a literal is a second
@@ -583,5 +586,36 @@ describe("people_only keeps the Ohbox relevant and files the rest to the right p
       "Are you free?",
     ].join("\r\n"));
     expect(await run(person, "people_only", "friend@friends.example")).toBe("INBOX");
+  });
+});
+
+/**
+ * A row stored before mail-date.ts carries the `fp1` key of the runtime's own reading of its Date
+ * line. Where mail-date.ts reads that line differently on purpose (a 3-digit year on Node, a
+ * two-digit year the phone read as year 26), a re-read of the letter still finds the row.
+ */
+describe("a letter stored under the runtime's Date reading keeps its row", () => {
+  let restore: () => void = () => {};
+  afterEach(() => restore());
+  const cases: Array<[string, string, boolean]> = [
+    ["a 3-digit year on Node", "Sat, 24 Oct 126 06:29:09 +0200", false],
+    ["a two-digit year on the phone", "Sat, 24 Oct 26 06:29:09 +0200", true],
+  ];
+  it.each(cases)("%s: a paired move is an external move of the one row", async (_, header, phone) => {
+    if (phone) restore = usePhoneDate();
+    const d = makeDeps();
+    d.repo.senders.add("anna@example.com");
+    const raw = Buffer.concat([Buffer.from(`Date: ${header}\r\n`), eml()]);
+    const first = await processChange(createChange("INBOX", raw), d);
+    const n = await normalizeMime(raw);
+    const now = fingerprintDedupKey(messageFingerprint(n));
+    const before = fingerprintDedupKey(messageFingerprint({ ...n, date: new Date(header) }));
+    expect(before).not.toBe(now);
+    expect(await d.repo.upgradeDedupKey(first.messageId, now, before)).toBe(true);
+
+    const res = await processChange({ type: "move", locator: { folder: "Archive", ref: "1:1002" }, raw }, d);
+    expect(res.outcome).toBe("external_move");
+    expect(d.repo.rows.size).toBe(1);
+    expect((await d.repo.findByDedupKey("mb-1", now))?.id).toBe(first.messageId);
   });
 });

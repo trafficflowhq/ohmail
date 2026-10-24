@@ -64,6 +64,9 @@ import { adminOAuthRoutes } from "./admin-oauth.js";
  * and not two; `mailbox-oauth.ts`'s header states why the callback cannot do the work (the
  * `SameSite=Strict` session cookie is withheld on a cross-site top-level navigation). */
 import { mailboxOAuthRoutes } from "./mailbox-oauth.js";
+/* Which provider hosts a domain's mail, from DNS alone, for the connect forms to pre-fill. HOSTED
+ * ONLY: `routes/local.ts` does not name it. */
+import { mailboxDiscoverRoutes } from "./mailbox-discover.js";
 /* THE PAIRING CEREMONY — mint/list/revoke (session + step-up) and the anonymous redeem. On this
  * table it is DEVICE PAIRING and nothing else, enforced by the dependency bag rather than by a
  * variant handler: the hosted deployment wires no `services.inviteRedeem`, so both invite arms
@@ -220,6 +223,7 @@ export const apiRoutes: Route[] = [
   ...pushRoutes,
   ...mailboxRoutes,
   ...mailboxOAuthRoutes,
+  ...mailboxDiscoverRoutes,
   ...rulesRoutes,
   ...messageRoutes,
   ...threadRoutes,

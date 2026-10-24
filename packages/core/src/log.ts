@@ -603,7 +603,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "read", "reaped", "records", "recounted", "refusedUncorroborated", "remaining", "removed",
   "rescreened", "residue", "restored", "retentionMs", "retired", "rulesArmed", "seen",
   "sensitivityExcluded", "size", "staleAfterMs", "steps", "total", "tries", "unrecognised",
-  "voided",
+  "voided", "waitsForErasure",
+  // The storage recount's line (`storage_counter_drift`): the counter minus the stored letters' real
+  // bytes at the check, a signed count of bytes.
+  "drift",
   "epoch", "fact", "imap", "organizerState", "subscription",
   "folderId", "ruleId", "uid", "uidValidity", "generation", "decidedAt",
   // THE ATTACHMENT PART GATE (`attachment_part_mismatch`, `attachment_part_unverified`), added WITH

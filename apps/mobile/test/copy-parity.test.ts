@@ -98,6 +98,7 @@ const SAME_IN_BOTH: Record<string, string> = {
   tagsTitle: "the web client's German calls the group Tags too (rail.tags)",
   /* Two-letter interface conventions German shares. */
   folderDismiss: "OK is OK (rail.folderDismiss)",
+  helpDApp: "App is App in German (help.dApp)",
   languageSystem: "the same word, and the same segment as the control above it",
   pictureQualityOriginal: "Original is Original, as the web's German has it (settings.imageQualityLevel.original)",
   /* A hostname is a hostname. `example.com` is reserved for documentation (RFC 2606), so this

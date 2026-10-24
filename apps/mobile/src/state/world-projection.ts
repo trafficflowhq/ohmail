@@ -59,6 +59,8 @@ import {
   type StoreSearchWalker,
   type StoreTimelineWalker,
   type WorldActions,
+  NO_WAITING,
+  type WaitingSend,
   type WorldView,
 } from "./live";
 import { routingReader } from "./held-routing";
@@ -130,6 +132,8 @@ export interface ProjectionInputs {
   searchWalker: StoreSearchWalker | null;
   openOffMirror: World["store"]["open"];
   actions: WorldActions;
+  /** The sends waiting to go (the engine's `waitingSends`), which Drafts lists as such. */
+  waitingSends?: readonly WaitingSend[];
   /** Told the presented reader and its options each run — the verbs that ask about the lists read them. */
   onPresented(pres: EntityReader, options: ConsentOptions, unrouted?: EntityReader): void;
 }
@@ -305,7 +309,8 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       get drafts() {
         /* A send's state is read against THIS run's clock, never the kept view's: the view is kept
            for the day, and a send left `sending` turns interrupted ten minutes later. */
-        return kept("drafts", [engine, stamp, v, now.getTime()], () => liveDrafts(raw, { ...v, now }));
+        const waiting = inp.waitingSends ?? NO_WAITING;
+        return kept("drafts", [engine, stamp, v, now.getTime(), waiting], () => liveDrafts(raw, { ...v, now }, waiting));
       },
       folders: {
         enabled: foldersOn,

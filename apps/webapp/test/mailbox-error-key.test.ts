@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
-import { probeCopyKey, refusalAuthHint } from "../app/shell/local-server-host";
+import { PRESET_AUTH_REFUSALS, probeCopyKey, refusalAuthHint } from "../app/shell/local-server-host";
+import { PROVIDERS } from "../app/shell/providers";
 
 /**
  * A GOOGLE MAILBOX'S REFUSED PASSWORD IS SAID AS AN APP PASSWORD — the two key choosers. The row's
@@ -45,6 +46,37 @@ describe("probeCopyKey and refusalAuthHint", () => {
     expect(probeCopyKey("connect", false, "imap", "invalid")).toBe("probe_connect");
     for (const bad of [refusal({ authHint: "toString" }), refusal({ authHint: 1 }), refusal(null), { code: "other", details: { authHint: "invalid" } }, null]) {
       expect(refusalAuthHint(bad)).toBeNull();
+    }
+  });
+});
+
+describe("a refused password on a named preset says what that provider wants", () => {
+  const M = en.mailboxes as Record<string, string>;
+  const DM = de.mailboxes as Record<string, string>;
+
+  it("the incoming leg's auth refusal on a preset with its own sentence takes it", () => {
+    expect(probeCopyKey("auth", false, "imap", null, "yahoo")).toBe("probe_auth_yahoo");
+    expect(probeCopyKey("auth", false, "imap", null, "webde")).toBe("probe_auth_webde");
+    expect(probeCopyKey("auth", false, "imap", null, "microsoft")).toBe("probe_auth_microsoft");
+  });
+
+  it("Google's own hint, the outgoing leg, a local server, the generic entry and other reasons keep their keys", () => {
+    expect(probeCopyKey("auth", false, "imap", "invalid", "gmail")).toBe("probe_auth_gmail_invalid");
+    expect(probeCopyKey("auth", false, "smtp", null, "yahoo")).toBe("probe_auth");
+    expect(probeCopyKey("auth", true, "imap", null, "yahoo")).toBe("probe_auth_local");
+    expect(probeCopyKey("auth", false, "imap", null, "imap")).toBe("probe_auth");
+    expect(probeCopyKey("auth", false, "imap", null, "not-a-preset")).toBe("probe_auth");
+    expect(probeCopyKey("timeout", false, "imap", null, "yahoo")).toBe("probe_timeout");
+  });
+
+  it("every such preset is a named one, with its sentence written in both languages", () => {
+    const named = new Set(PROVIDERS.filter((p) => !p.manual).map((p) => p.id));
+    expect(PRESET_AUTH_REFUSALS.size).toBeGreaterThan(5);
+    for (const id of PRESET_AUTH_REFUSALS) {
+      expect(named.has(id), id).toBe(true);
+      expect(M[`probe_auth_${id}`], id).toBeTruthy();
+      expect(DM[`probe_auth_${id}`], id).toBeTruthy();
+      expect(DM[`probe_auth_${id}`], id).not.toBe(M[`probe_auth_${id}`]);
     }
   });
 });

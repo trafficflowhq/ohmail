@@ -6,6 +6,7 @@ import type {
 } from "@trafficflow/db/cloud";
 import type { FetchLike, MicrosoftDeviceClient } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
+import type { MailDnsResolver } from "./mailbox-discovery.js";
 import type { StaffSigningKey } from "./staff-assertion.js";
 
 /**
@@ -121,6 +122,11 @@ declare module "./deps.js" {
      * a 5xx, an `id_token` with no address claim, a grant with no `offline_access`.
      */
     oauthFetch?: FetchLike;
+    /**
+     * The DNS `POST /mailboxes/discover` asks: MX, SRV, and the addresses of an SRV target. A
+     * port for `HostResolver`'s reason, never a default. Absent ⇒ that route answers 503.
+     */
+    mailDns?: MailDnsResolver;
   }
 }
 

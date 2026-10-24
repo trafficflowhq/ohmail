@@ -271,6 +271,25 @@ describe("the bridge", () => {
     // Root-relative, because the engine's own base URL is not a fact this page needs.
     expect(String(request.payload!.url).startsWith("/")).toBe(true);
   });
+
+  it("marks a send's own writes, and only those, for an answer before the copy's echo", async () => {
+    const draft = JSON.stringify({ id: "d-1", mailboxId: "mbx-1", bcc: [], contentRevision: "r1", updatedAt: new Date().toISOString() });
+    const asked = shellAnswering(({ payload }) => {
+      const url = String(payload!.url);
+      if (url.endsWith("/send")) return encode(200, JSON.stringify({ status: "sent", providerMessageId: "<p@x>" }));
+      return encode(url.startsWith("/drafts") ? (payload!.method === "POST" ? 201 : 200) : 200, url.startsWith("/drafts") ? draft : "{}");
+    });
+    const adapter = createEngineAdapter();
+    const fields = { mailboxId: "mbx-1", subject: "s", body: "b", to: [{ name: null, address: "a@x.test" }], cc: [], bcc: [] };
+    await adapter.mutate({ kind: "draft_save", draftId: null, ...fields } as never, { idempotencyKey: "save-1" });
+    await adapter.mutate({ kind: "mail_send", inReplyTo: null, ...fields } as never, { idempotencyKey: "send-1" });
+    await adapter.mutate({ kind: "mail_send", inReplyTo: null, draftId: "d-1", ...fields } as never, { idempotencyKey: "send-2" });
+    const marks = asked.filter((a) => a.command === "engine_request" && a.payload!.method !== "GET").map((a) =>
+      `${String(a.payload!.method)} ${String(a.payload!.url)} ${(a.payload!.headers as [string, string][]).find(([n]) => n === "x-ohmail-echo")?.[1] ?? "-"}`);
+    expect(marks).toEqual([
+      "POST /drafts -", "POST /drafts later", "POST /drafts/d-1/send later", "PUT /drafts/d-1 later", "POST /drafts/d-1/send later",
+    ]);
+  });
 });
 
 describe("the offline guard", () => {

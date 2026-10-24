@@ -228,6 +228,17 @@ vi.mock("../src/bridge-fetch.js", async () => {
   };
 });
 
+/** The build's distribution, for the setup press the store build withholds. */
+let DIST: "direct" | "mas" = "direct";
+vi.mock("../src/distribution.js", async () => {
+  const real = await vi.importActual<typeof import("../src/distribution.js")>("../src/distribution.js");
+  return {
+    ...real,
+    selfUpdates: () => DIST !== "mas",
+    linksOutToBilling: () => DIST !== "mas",
+  };
+});
+
 /** Every command the window sent the shell, in order. The bridge is not otherwise exercised. */
 let invoked: { command: string; payload?: Record<string, unknown> }[] = [];
 
@@ -364,6 +375,7 @@ beforeEach(() => {
   bridgeReply = () => new Response(null, { status: 202 });
   logoutFails = null;
   SHELL_SINK = true;
+  DIST = "direct";
   invoked = [];
   host.__TAURI_INTERNALS__ = {
     transformCallback: () => 1,
@@ -801,11 +813,28 @@ describe("the hand-off row names the door's own place", () => {
     });
   }
 
+  it("a Cloud account with no mailbox is offered the browser setup, by its key", async () => {
+    FACTS = [];
+    const el = await render("cloud", { flavor: "managed" });
+    expect(el.textContent ?? "").toContain(messages.mailboxes.desktopNoneCloud);
+    await act(async () => { buttonSaying(el, "Open setup in browser")!.click(); });
+    expect(invoked).toEqual([{ command: "open_link", payload: { key: "setup" } }]);
+  });
+
+  it("the store build keeps the sentence and offers no setup press", async () => {
+    FACTS = [];
+    DIST = "mas";
+    const el = await render("cloud", { flavor: "managed" });
+    expect(el.textContent ?? "").toContain(messages.mailboxes.desktopNoneCloud);
+    expect(buttonSaying(el, "Open setup in browser")).toBeNull();
+  });
+
   it("a self-hosted install with no mailbox is pointed at its server, not at ohmail on the web", async () => {
     FACTS = [];
     const text = (await render("cloud", { flavor: "selfhost", server: "mail.example.test" })).textContent ?? "";
     expect(text).toContain("Connecting one happens in the web app on mail.example.test.");
     expect(text).not.toContain("ohmail on the web");
+    expect(text).not.toContain("Open setup in browser");
   });
 
   it("a paired install with no mailbox is pointed at the other computer", async () => {

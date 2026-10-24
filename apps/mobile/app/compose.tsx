@@ -41,7 +41,7 @@ function ComposeBody() {
   /** The row the sheet opened on, held: the open is decided once (`compose-route.ts`). */
   const held = useRef<ComposeDraftOpen | null>(null);
   /* `?draft=<id>`: the Drafts card's Edit — the sheet opens bound to that row, or not at all. */
-  const { draft: draftParam, mailto } = useLocalSearchParams<{ draft?: string; mailto?: string }>();
+  const { draft: draftParam, mailto, diag } = useLocalSearchParams<{ draft?: string; mailto?: string; diag?: string }>();
   const leave = () => {
     if (router.canGoBack()) router.back();
     else router.replace("/");
@@ -92,5 +92,8 @@ function ComposeBody() {
   /* THE SHEET IS THE PAGE: its own head is the one title, and the route is a transparent modal
      (`app/_layout.tsx`), so the screen it was opened over stands under it — the list and the rail
      on a two-pane posture, beside the detail pane the sheet rises over. */
-  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={mailtoPrefill(mailto)} />;
+  /* `?diag=`: Settings › Help & contact's block, already in the mailto's body. */
+  const prefill = mailtoPrefill(mailto);
+  const helpBlock = prefill && typeof diag === "string" && diag !== "" ? { diag } : {};
+  return <ComposeSheet m={null} mode="new" onClose={leave} prefill={prefill} {...helpBlock} />;
 }

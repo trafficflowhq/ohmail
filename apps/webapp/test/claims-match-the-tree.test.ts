@@ -68,6 +68,7 @@ const CONFLICT_CLAIMS: Array<[string, RegExp]> = [
 const FILES = [
   "apps/webapp/app/api-client.ts",
   "apps/webapp/app/(product)/join/JoinScreen.tsx",
+  "apps/webapp/app/(product)/join/MailboxStep.tsx",
 ] as const;
 
 describe("what this lane says about the server matches what this tree contains", () => {

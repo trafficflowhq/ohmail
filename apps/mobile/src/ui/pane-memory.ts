@@ -20,6 +20,8 @@ export interface PanePlace {
   dy: number;
   /** The panel's height when the place was taken. */
   h: number;
+  /** The view stood at the content's end (the newest in view): after a reflow it stands at the new end. */
+  end?: true;
 }
 
 const offsets = new Map<string, { y: number; place: PanePlace | null }>();

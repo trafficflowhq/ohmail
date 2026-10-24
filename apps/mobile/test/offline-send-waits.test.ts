@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey, sendWaitsForNetwork } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { answersWaiting, confirmedSendSay, flushQueued, liveActions } from "../src/state/live";
+import { answersWaiting, confirmedSendSay, flushQueued, liveActions, liveDrafts } from "../src/state/live";
 import { cancelAct, cancelSendPress, keptSay, type CloseRoad, type SendVerdict } from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
@@ -51,10 +51,13 @@ async function scene() {
   installNetworkReader(net.reader);
   /** The engine's own answers to a draft's next sends, in order, before the fake answers any. */
   const sendAnswers = new Map<string, Array<() => Response>>();
+  /** While set, a send step that reached the engine waits here: the request is on the wire. */
+  const slow: { gate: Promise<void> | null } = { gate: null };
   const door: LocalEngineDoor = {
     sessionToken: "launch-1",
     async handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
+      if (req.method === "POST" && /^\/drafts\/[^/]+\/send$/.test(url.pathname) && slow.gate) await slow.gate;
       const scripted = req.method === "POST" ? sendAnswers.get(/^\/drafts\/([^/]+)\/send$/.exec(url.pathname)?.[1] ?? "")?.shift() : undefined;
       if (scripted) {
         await req.text();
@@ -94,7 +97,7 @@ async function scene() {
     first.store.close();
     return launch();
   };
-  return { fake, net, ...first, toasts, sendAnswers, relaunch };
+  return { fake, net, ...first, toasts, sendAnswers, relaunch, slow };
 }
 
 /** The send route's re-arm: a passing refusal of the mail server, offered again after the wait it names. */
@@ -416,4 +419,88 @@ describe("the decision, in one place", () => {
     const boot = PAIRING.slice(PAIRING.indexOf("origin: LOCAL_ENGINE_ORIGIN,"));
     expect(boot.slice(0, boot.indexOf("});")), "the standalone door boots with no network reader").toContain("network: networkNow,");
   });
+});
+
+describe("a waiting send in Drafts", () => {
+  type Phone = { engine: Awaited<ReturnType<typeof scene>>["engine"] };
+  const listed = (p: Phone, now = new Date()) =>
+    liveDrafts(p.engine.read(), { now, zone: "UTC", locale: "en" } as unknown as Parameters<typeof liveDrafts>[1], p.engine.waitingSends())
+      .map((d) => [d.subject, d.state]);
+  const rowOf = (p: Phone, key: string) => p.engine.waitingSends().find((w) => w.key === key)!.draftId!;
+
+  it("a new mail and a reply are listed at once as waiting, once each, and never as interrupted", async () => {
+    const s = await scene();
+    s.fake.stampDrafts();
+    s.net.set("offline");
+    await s.actions.sendNew("mb-1", TO, "Offline", "Written on a train.");
+    await s.actions.sendReply("m-1", "An answer.", false);
+    const both = [["Re: Invoice 12", "waiting"], ["Offline", "waiting"]];
+    expect(listed(s), "a waiting send is missing from Drafts or listed as an ordinary draft").toEqual(both);
+    await s.engine.syncOnce();
+    expect(listed(s), "the drain listed a waiting send's row a second time").toEqual(both);
+    expect(listed(s, new Date(Date.now() + 11 * 60_000)), "a waiting send turned interrupted").toEqual(both);
+    s.store.close();
+  }, 60_000);
+
+  for (const relaunched of [false, true]) {
+    it(`Discard cancels it: nothing is sent, nothing failed, nothing left unsaved${relaunched ? ", after a relaunch" : ""}`, async () => {
+      const s = await scene();
+      s.fake.stampDrafts();
+      s.net.set("offline");
+      const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.");
+      const p = relaunched ? await s.relaunch() : s;
+      expect(await p.actions.draftDiscard(rowOf(p, res.key!))).toBe("discarded");
+      expect(s.toasts.at(-1)).toBe(Copy.draftsDiscardedNotSent);
+      expect(listed(p)).toEqual([]);
+      s.net.set("online");
+      const settled = await flushQueued(p.engine, p.actions.releaseConfirmed);
+      expect(settled.get(res.key!), "the cancelled send was said to fail").toBeUndefined();
+      expect(sendsOf(s.fake), "a discarded send went on the return").toHaveLength(0);
+      expect(p.engine.abandoned(), "the discard left a change that could not be saved").toHaveLength(0);
+      expect(s.fake.draftRows()).toHaveLength(0);
+      expect(s.toasts).not.toContain(Copy.replyFailed);
+      p.store.close();
+    }, 60_000);
+  }
+
+  it("Cancel send keeps the words as the same draft, and nothing goes on the return", async () => {
+    const s = await scene();
+    s.fake.stampDrafts();
+    s.net.set("offline");
+    const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.");
+    const row = rowOf(s, res.key!);
+    const end = await cancelSendPress({
+      asking: { current: false }, withdraw: async () => (await s.actions.cancelWaitingSend(res.key!)).said, verdict: () => "unknown",
+      standalone: true, bound: true,
+    });
+    expect(end?.say && sayArg(end.say)).toBe(Copy.sendCancelledInDrafts);
+    const drafts = liveDrafts(s.engine.read(), { now: new Date(), zone: "UTC", locale: "en" } as never, s.engine.waitingSends());
+    expect(drafts.map((d) => [d.id, d.state, d.subject]), "the words did not come back as the same draft")
+      .toEqual([[row, "open", "Second thoughts"]]);
+    s.net.set("online");
+    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    expect(sendsOf(s.fake), "a cancelled send went on the return").toHaveLength(0);
+    s.store.close();
+  }, 60_000);
+
+  it("Discard over a send already on the wire deletes nothing and says it is on its way; it is sent", async () => {
+    const s = await scene();
+    s.fake.stampDrafts();
+    s.net.set("offline");
+    const res = await s.actions.sendNew("mb-1", TO, "Going", "On its way.");
+    const row = rowOf(s, res.key!);
+    let open!: () => void;
+    s.slow.gate = new Promise<void>((r) => { open = r; });
+    s.net.set("online");
+    const flushing = flushQueued(s.engine, s.actions.releaseConfirmed);
+    for (let i = 0; i < 100 && sendsOf(s.fake).length === 0 && s.engine.waitingSends()[0]?.wire !== true; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(await s.actions.draftDiscard(row), "a send on the wire was discarded under it").toBe("alreadySent");
+    open();
+    expect((await flushing).get(res.key!)?.status).toBe("confirmed");
+    expect(s.fake.draft(row)?.status, "the sent row was deleted").toBe("sent");
+    expect(s.fake.deliveries()).toEqual([res.key]);
+    s.store.close();
+  }, 60_000);
 });

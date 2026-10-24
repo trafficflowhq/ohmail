@@ -546,5 +546,17 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"messages\" ADD COLUMN \"server_missing_at\" integer;"
     ]
+  },
+  {
+    "name": "0166_account_storage_facts.sql",
+    "statements": [
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"recounted_at\" integer;",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"recount_drift\" integer;",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"husked_for_space\" integer NOT NULL DEFAULT 0 CONSTRAINT \"account_storage_husked_nonneg\" CHECK (\"husked_for_space\" >= 0);",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"first_husked_at\" integer;",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"last_husked_at\" integer;",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"kept_from\" text;",
+      "ALTER TABLE \"account_storage\" ADD COLUMN \"withheld_on_arrival\" integer NOT NULL DEFAULT 0;"
+    ]
   }
 ] as const;

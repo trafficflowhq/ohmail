@@ -49,6 +49,7 @@ import {
 } from "./cloud-session.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
+import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
 import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
@@ -65,6 +66,7 @@ import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
 import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
+import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint } from "./desktop-first-paint.js";
 import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
@@ -509,7 +511,9 @@ export function DesktopGate() {
    * on some paths only ("Rendered more hooks than during the previous render"). `accountDoor`
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
-  const { manageOffered, withdrawManage } = useDesktopManageOffer(accountDoor);
+  const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
+  /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
+  const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
 
   /**
    * HAS THE SERVICE REFUSED THIS ACCOUNT — subscribed once, for the whole window.
@@ -1310,9 +1314,25 @@ export function DesktopGate() {
            `Notification.requestPermission()` resolves here without granting anything: the master
            switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
         notificationHost={desktopNotificationHost}
+        /* THE EMPTIED-TEXT NOTICE, on the Cloud door only: the same answer the Subscription offer
+           reads carries the storage block. Standalone has none and draws nothing. */
+        {...(accountDoor && storage !== null
+          ? {
+              accountNotice: (
+                <DesktopStorageNotice
+                  facts={storage}
+                  lifecycleState={lifecycleState}
+                  linksOut={billingLinksOut}
+                />
+              ),
+            }
+          : {})}
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
+        /* SETTINGS → HELP & CONTACT. The window holds no account id, so the block says none; a
+           mailto here would come back into this window's composer, so the fallback is copy. */
+        {...(status ? { support: { surface: "desktop" as const, version: BUILD_VERSION, commit: BUILD_SHA || null, accountId: null, mailtoLeaves: false } } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */
@@ -1521,7 +1541,7 @@ export function DesktopGate() {
            leaves for the operator's subscription page, which App Review 3.1.1 does not allow a
            store copy to offer. Withholding the NODE withholds the nav entry too, which is the
            same mechanism the line above uses for a door that serves no page at all. */
-        {...(accountDoor && manageOffered && linksOutToBilling()
+        {...(accountDoor && billingLinksOut
           ? { billingSection: <DesktopSubscription onNowhere={withdrawManage} /> }
           : {})}
         {...(accountDoor

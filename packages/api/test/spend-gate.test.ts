@@ -951,7 +951,9 @@ describe("the route table declares what every handler causes", () => {
     // the exempt list above and this total together.
     // 253 -> 256: the waiting filings — the GET is `read` and joins the exempt list above, the two
     // presses are `work` and join the gated remainder.
-    expect(apiRoutes).toHaveLength(256);
+    // 256 -> 257: `POST /mailboxes/discover`, a `connection` (it makes this process query DNS about
+    // a name the caller chose), so it joins the gated remainder.
+    expect(apiRoutes).toHaveLength(257);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1183,7 +1185,8 @@ describe("the route table declares what every handler causes", () => {
     // each, the remainder does not move.
     // 253 -> 256 with the waiting filings: the GET joins `READ`, the two presses grow the
     // remainder by two.
-    expect(gated.length).toBe(256 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 256 -> 257 with the mail-domain lookup, a `connection`: the remainder grows by one.
+    expect(gated.length).toBe(257 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

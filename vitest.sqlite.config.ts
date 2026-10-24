@@ -441,6 +441,8 @@ export default defineConfig({
       "apps/sidecar/test/phone-own-mail-at-the-gate.imap.test.ts",
       // MAIL ALREADY IN THE INBOX AT THE CONNECT stays in place, and the Ohbox's offer holds its senders.
       "apps/sidecar/test/phone-offer-holds-pre-connect-senders.imap.test.ts",
+      // LETTERS THAT ARRIVED WHILE THE PHONE HAD HANDED BACK, offered after Start, with the phone's Date.
+      "apps/sidecar/test/phone-gap-after-stop.imap.test.ts",
       // A BURST OF ARRIVALS through the phone's own composition, behind a relay that charges the
       // adapter's clock per KB: each pass takes a page and a re-dial never re-dates the whole burst.
       "apps/sidecar/test/phone-arrival-burst.imap.test.ts",

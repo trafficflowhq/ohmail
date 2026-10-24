@@ -5,11 +5,14 @@
  * the sentence saying what is known with its two acts. What the card says is `draft-card.ts`'s;
  * this file lays it out. Discard asks in its own place: one sentence, Keep, Discard, back keeps.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, BackHandler, Platform, View } from "react-native";
 import { router } from "expo-router";
 import { Copy } from "../copy";
-import { useWorld } from "../state/world";
+import { refuse } from "../refusal";
+import { queuedCaptionKey } from "../engine/send-waits";
+import { useNetworkNow } from "../net/network-door";
+import { useWorld, useWorldToast } from "../state/world";
 import { Button, Panel, Rule, Screen, Scroller, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { DetailBar } from "./chrome";
@@ -17,6 +20,7 @@ import {
   backKeeps, discardDecision, draftCardPlan, refusalSentence, sendAgainSentence,
   type DraftDiscardRefusal, type DraftSendAgainRefusal,
 } from "./draft-card";
+import { cancelSendPress } from "./send-cancel";
 
 /** Which question stands on the card — one at a time, a card of open questions is noise. */
 type Asking = "discard" | "sendAgain" | null;
@@ -32,8 +36,12 @@ export function DraftReader({
   onClose?: () => void;
 }) {
   const w = useWorld();
+  const toast = useWorldToast();
+  const network = useNetworkNow();
   const row = w.drafts.find((d) => d.id === id);
   const [busy, setBusy] = useState(false);
+  /** A Cancel send still being asked — `cancelSendPress`'s own latch. */
+  const withdrawing = useRef(false);
   const [asking, setAsking] = useState<Asking>(null);
   /** The last refused discard, stamped so a second refusal is announced again. */
   const [refusal, setRefusal] = useState<{ why: DraftDiscardRefusal; at: number } | null>(null);
@@ -57,7 +65,9 @@ export function DraftReader({
   const refusedAt = refusal?.at ?? null;
   useEffect(() => {
     if (Platform.OS !== "ios") return;
-    if (asking === "discard") AccessibilityInfo.announceForAccessibility(Copy.draftsDiscardWhat);
+    if (asking === "discard") {
+      AccessibilityInfo.announceForAccessibility(row?.waiting ? Copy.draftsDiscardWaitingWhat : Copy.draftsDiscardWhat);
+    }
     if (asking === "sendAgain") AccessibilityInfo.announceForAccessibility(Copy.draftsSendAgainWhat);
   }, [asking]);
   useEffect(() => {
@@ -88,11 +98,14 @@ export function DraftReader({
     );
   }
 
+  const waiting = row.waiting;
+  const settlement = waiting === null ? null : w.sendSettlement(waiting.key);
   const plan = draftCardPlan(row, {
     confirming: asking === "discard",
     confirmingSendAgain: asking === "sendAgain",
     refusal: refusal?.why ?? null,
     sendRefusal: sendRefusal?.why ?? null,
+    queued: queuedCaptionKey(network, settlement?.accepted === true, settlement?.rearmed === true),
   });
 
   const leave = () => {
@@ -108,8 +121,50 @@ export function DraftReader({
     setBusy(true);
     const outcome = await w.actions.draftDiscard(row.id);
     if (outcome === "discarded") { leave(); return; }
-    if (outcome === "stillSending") setRefusal({ why: "stillSending", at: Date.now() });
+    // A send with no row leaves the list once its Cancel is owed: said as the card goes.
+    if (outcome === "cancelUnknown" && row.waiting?.rowless === true) {
+      toast.say(refuse("replyCancelUnreachable"));
+      leave();
+      return;
+    }
+    if (outcome === "stillSending" || outcome === "alreadySent" || outcome === "cancelUnknown") {
+      setRefusal({ why: outcome, at: Date.now() });
+    }
     setBusy(false);
+  };
+
+  /* CANCEL SEND — the composer's press over the waiting send; its words stay a draft. A send with
+     no row comes back under a new one, so this card closes behind it, owed Cancel or not. */
+  const cancelSend = async () => {
+    if (busy || waiting === null) return;
+    setAsking(null);
+    setRefusal(null);
+    const key = waiting.key;
+    const got = { kept: null as "kept" | "notKept" | null };
+    const end = await cancelSendPress({
+      asking: withdrawing,
+      withdraw: async () => {
+        const r = await w.actions.cancelWaitingSend(key);
+        got.kept = r.kept;
+        return r.said;
+      },
+      verdict: () => w.sendOutcome(key),
+      standalone: w.standalone, bound: true,
+    });
+    if (end === null) return;
+    // Words that could not be kept were said by the action; they are in no Drafts row.
+    if (end.said === "close") {
+      if (end.say !== null && got.kept !== "notKept") toast.say(end.say);
+      if (waiting.rowless) leave();
+      return;
+    }
+    // A send with no row leaves the list once its Cancel is owed, so the card goes with it.
+    if (end.said === "unknown" && waiting.rowless) {
+      if (got.kept !== "notKept") toast.say(refuse(got.kept === "kept" ? "replyCancelUnreachableKept" : "replyCancelUnreachable"));
+      leave();
+      return;
+    }
+    setRefusal({ why: end.said === "already_sent" ? "alreadySent" : "cancelUnknown", at: Date.now() });
   };
 
   /* IT WAS SENT — the ledger records the delivery and the row leaves Drafts. */
@@ -142,6 +197,24 @@ export function DraftReader({
           </Txt>
           <Txt variant="caption" tone="ink3" tabular>{row.when}</Txt>
         </View>
+
+        {/* A SEND WAITING TO GO says so, with the one way to stop it; its refusals are said here. */}
+        {plan.waiting !== null ? (
+          <Panel style={{ paddingVertical: 14, marginBottom: 12, gap: 8 }}>
+            <View style={{ paddingHorizontal: 18, gap: 4 }}>
+              <Txt variant="note" tone="ink">{plan.waiting.line}</Txt>
+              <Txt variant="note" tone="ink2">{plan.waiting.caption}</Txt>
+            </View>
+            <View style={{ paddingHorizontal: 18, flexDirection: "row" }}>
+              <Button label={plan.waiting.cancelSend} variant="quiet" disabled={busy} onPress={() => void cancelSend()} />
+            </View>
+            {plan.refusal !== null ? (
+              <Txt variant="note" tone="ink" accessibilityLiveRegion="polite" style={{ paddingHorizontal: 18 }}>
+                {plan.refusal}
+              </Txt>
+            ) : null}
+          </Panel>
+        ) : null}
 
         {/* WHAT IS KNOWN about this send, in the catalogue's own words — never a claim either way. */}
         {plan.held !== null ? (
@@ -293,7 +366,7 @@ export function DraftReader({
                 />
               </View>
             )}
-            {plan.refusal !== null ? (
+            {plan.refusal !== null && plan.waiting === null ? (
               <Txt variant="note" tone="ink" accessibilityLiveRegion="polite">
                 {plan.refusal}
               </Txt>
@@ -303,9 +376,11 @@ export function DraftReader({
 
         {/* Where a draft this phone cannot take whole goes to be finished. */}
         {row.edit === null ? (
-          <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingBottom: 8 }}>
-            {Copy.draftsEditNote}
-          </Txt>
+          waiting === null ? (
+            <Txt variant="hint" tone="ink3" style={{ paddingHorizontal: 18, paddingBottom: 8 }}>
+              {Copy.draftsEditNote}
+            </Txt>
+          ) : null
         ) : null}
       </Scroller>
     </Screen>

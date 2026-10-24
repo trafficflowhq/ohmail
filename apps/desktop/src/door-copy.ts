@@ -190,6 +190,13 @@ const EN = {
   linkNoBrowser: (machine: string, address: string) =>
     `This ${machine} would not open a browser. The address is ${address}.`,
   browserSignInFailed: "The browser sign-in could not be started.",
+  /* The Cloud door's way to an account. The press leads to the purchase step, so a store build
+     says the setup sentence instead (`linksOutToBilling`). */
+  cloudNoAccount: "No account yet?",
+  cloudCreateAccount: "Create one in your browser",
+  cloudJoinNoBrowser: (machine: string) =>
+    `This ${machine} would not open a browser. The page is at ohmail.app/join.`,
+  cloudSetupOnWeb: "Mailboxes are connected in ohmail on the web. Sign in here once yours is connected.",
   /* The one-confirm sign-in: the page names this machine and the person confirms there. The
      address label is for a FRESH door only, and says what the address is for. */
   cloudApproveHint: (machine: string) =>
@@ -920,6 +927,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   cloudApproveNotSaved: ["machine"],
   noBrowser: ["machine"],
   linkNoBrowser: ["machine", "address"],
+  cloudJoinNoBrowser: ["machine"],
   mailboxWhyReadsNamed: ["name"],
   credReadyWhy: ["machine"],
   credAbsentWhy: ["machine"],

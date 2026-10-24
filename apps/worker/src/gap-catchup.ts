@@ -149,6 +149,7 @@ export async function gapCatchupPass(
         });
       }
       if (set === null || (set.file.length === 0 && set.screen.length === 0)) {
+        if (set !== null) await sayUnarrived(tx, deps, mb.id);
         await tx.update(mailboxes).set(close).where(here);
         result.completed++;
         return;
@@ -193,6 +194,32 @@ export async function gapCatchupPass(
     });
   }
   return result;
+}
+
+/**
+ * Letters taken in inside the window with no arrival time: the walk cannot see them (a phone stored
+ * every letter that way before it read INTERNALDATE by hand). Said, never filed; the window closes.
+ */
+async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Promise<void> {
+  const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
+  const [r] = await tx.select({ n: sql<number>`count(*)` }).from(folderState)
+    .innerJoin(messages, eq(messages.id, folderState.messageId))
+    .where(and(
+      eq(messages.accountId, deps.accountId),
+      eq(messages.mailboxId, mailboxId),
+      eq(folderState.lastSetBy, "peer"),
+      eq(folderState.observedFolder, "INBOX"),
+      isNull(messages.arrivedAt),
+      sql`${messages.createdAt} >= ${since}`,
+    ));
+  const count = Number(r?.n ?? 0);
+  if (count > 0) {
+    (deps.log ?? silentLogger).warn("gap_catchup_unarrived", {
+      mailboxId, accountId: deps.accountId, count,
+      reason: "letters taken in while nothing organized this mailbox carry no arrival time, so the window "
+        + "could not offer them; it closes, and they stay in the inbox",
+    });
+  }
 }
 
 /** A gap row in the shape the Screener's writes and groups read. */

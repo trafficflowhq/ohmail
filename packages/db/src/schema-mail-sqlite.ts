@@ -1136,11 +1136,20 @@ export const accountStorage = sqliteTable("account_storage", {
   // bigint: a mailbox measured in bytes outruns int4 at 2 GiB, which is an ordinary mailbox.
   bytes: integer("bytes").notNull().default(0),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // ── Mail 0166: the counter's facts — the pg columns' twins; the month is 'YYYY-MM-01' text. ──
+  recountedAt: integer("recounted_at", { mode: "timestamp_ms" }),
+  recountDrift: integer("recount_drift"),
+  huskedForSpace: integer("husked_for_space").notNull().default(0),
+  firstHuskedAt: integer("first_husked_at", { mode: "timestamp_ms" }),
+  lastHuskedAt: integer("last_husked_at", { mode: "timestamp_ms" }),
+  keptFrom: text("kept_from"),
+  withheldOnArrival: integer("withheld_on_arrival").notNull().default(0),
 }, (t) => ({
   // Declared here so the ORM's view matches the journal; created by mail 0062, which carries
   // the argument. The floor of last resort: no app-side decrement (the repair passes' clamped
   // deltas) can COMMIT a negative byte count.
   ckBytesNonNegative: check("account_storage_bytes_nonneg", sql`${t.bytes} >= 0`),
+  ckHuskedNonNegative: check("account_storage_husked_nonneg", sql`${t.huskedForSpace} >= 0`),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

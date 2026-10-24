@@ -392,7 +392,7 @@ export function paneAskedByUrl(): boolean {
 export const SETTINGS_GROUPS: ReadonlyArray<{ key: "groupMail" | "groupAccount" | "groupAbout"; panes: readonly PaneId[] }> = [
   { key: "groupMail", panes: ["general", "notifications", "mailboxes", "screener", "ai", "away", "rules", "tags", "folders", "signatures", "desktop"] },
   { key: "groupAccount", panes: ["devices", "billing", "invites", "security", "account"] },
-  { key: "groupAbout", panes: ["about"] },
+  { key: "groupAbout", panes: ["about", "help"] },
 ];
 
 export function SettingsView({
@@ -410,6 +410,7 @@ export function SettingsView({
   invitesSection,
   securitySection,
   aboutSection,
+  helpSection,
   autoSuggestSection,
   screeningSection,
   dormancySection,
@@ -565,6 +566,8 @@ export function SettingsView({
    * belong in settings.
    */
   aboutSection?: ReactNode;
+  /** Settings › Help & contact (`HelpContactPane`), built by the shell, which owns the composer it opens. Absent ⇒ no pane. */
+  helpSection?: ReactNode;
   /**
    * THE AUTO-WORK OPT-IN, injected — the Screener pane's one row that can spend money. The same seam as {@link
    * accountSection} and for the same two reasons at once. It needs `app/api-client` (a `dryRun` quote and a consent
@@ -918,6 +921,7 @@ export function SettingsView({
       security: Boolean(securitySection),
       account: Boolean(accountSection),
       about: Boolean(aboutSection),
+      help: Boolean(helpSection),
     },
     t,
   );
@@ -1415,6 +1419,7 @@ export function SettingsView({
             </SettingsSection>
           ) : null}
           {shown === "about" ? aboutSection : null}
+          {shown === "help" ? helpSection : null}
           {shown === "security" ? securitySection : null}
           {shown === "account" ? accountSection : null}
           {/* No `SettingsSection` wrapper here: the node brings its own, because it renders

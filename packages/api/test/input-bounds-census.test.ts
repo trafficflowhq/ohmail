@@ -57,6 +57,7 @@ import {
 } from "../src/trash-window.js";
 import { RETURN_SESSION_ID_MAX_CHARS } from "../src/routes/account.js";
 import { SETTINGS_MAX_MAILBOX_ENTRIES } from "../src/routes/consent.js";
+import { DISCOVER_DOMAIN_MAX_CHARS, DISCOVER_RECORDS_MAX } from "../src/mailbox-discovery.js";
 
 /**
  * ═══ THE INPUT-BOUNDS CENSUS ═══════════════════════════════════════════════════════════════
@@ -646,6 +647,9 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "POST /mailboxes/:id/organize": {
     door: "a mailbox password — proved by one IMAP LOGIN, then stored as one credential column",
   },
+  // The domain lookup: one caller-chosen name, refused past DISCOVER_DOMAIN_MAX_CHARS before
+  // IDNA; what DNS answers is read DISCOVER_RECORDS_MAX records at a time, per question.
+  "POST /mailboxes/discover": { bounds: [DISCOVER_DOMAIN_MAX_CHARS, DISCOVER_RECORDS_MAX] },
 
   // ── rules ───────────────────────────────────────────────────────────────────────────────
   // The DELETE reads the raw body only to HASH it for `Idempotency-Key`, never to interpret it;

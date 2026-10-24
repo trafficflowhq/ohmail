@@ -588,7 +588,9 @@ const ENGINE_IMPORTERS = new Set([
    * THE THREAD-READ RULE'S DOOR — a named consumer of the shared rule (`createThreadRead`, its
    * `ThreadRead` record, the dwell, the top's line count and the fade constants), the rule the web
    * reader runs too, which it re-exports to the reader and its visit records. Pure arithmetic over
-   * line boxes it is handed; no connection, and the pattern scan above holds it to that.
+   * line boxes it is handed; no connection, and the pattern scan above holds it to that. It also
+   * passes the squares' sheet (`reader-marks.ts`) the engine's pure date words, so that file keeps
+   * off this list.
    */
   "src/ui/reader-seen.ts",
   /**

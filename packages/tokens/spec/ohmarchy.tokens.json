@@ -159,7 +159,7 @@
     "--accent-soft": "rgba(32,94,166,0.12)",
     "--accent-hair": "rgba(32,94,166,0.42)",
     "--accent-wash": "rgba(32,94,166,0.06)",
-    "--unread-wash": "#e7f1ff",
+    "--unread-wash": "#ece9de",
     "--mark-read": "0.46",
     "--mark-mine": "0.66",
     "--on-accent": "#FFFCF0",

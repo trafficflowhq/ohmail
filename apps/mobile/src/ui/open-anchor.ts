@@ -14,7 +14,9 @@
  *
  * A NEW WIDTH AIMS AGAIN. A rotation, a fold or a density change reflows every panel, and the offset
  * the view kept then points into another message: `rearm` aims at the kept place (`placeAt`,
- * `placeY`) until the person's own scroll, and while it is on its way (`aiming`) nothing is read.
+ * `placeY`) until the person's own scroll, and until it stands there (`settling`) nothing is read.
+ * A view the person scrolled to the content's end keeps the end, not the panel under its top; an open
+ * clamped at the end keeps its message's top.
  */
 import type { PanePlace } from "./pane-memory";
 
@@ -24,8 +26,11 @@ export const ANCHOR_SETTLE_MS = 1500;
 export interface OpenAnchor {
   /** Still holding the opened message at the top: no hand-over yet. */
   readonly holding: boolean;
-  /** On its way to a place it has not reached: what the view shows is no place the person chose. */
-  readonly aiming: boolean;
+  /**
+   * From the open, a remount or a new width until the view stands at its place; past the bound short of
+   * it, until the person's own scroll. What the view shows meanwhile is no place the person chose.
+   */
+  readonly settling: boolean;
   /** Standing at the place itself, not at a content end short of it. */
   readonly settled: boolean;
   /** A scroll asked and the next look not yet done: a report now is the anchor's, never the person's. */
@@ -44,6 +49,8 @@ export interface OpenAnchor {
 export interface OpenAnchorOptions {
   /** Aim at all (nothing remembered: a remembered offset is the person's own place and wins). */
   holding: boolean;
+  /** A place applies (a landing, a kept place, older members above the opened message); absent, always. */
+  applies?: () => boolean;
   /** Where the scroll view starts. */
   start: number;
   /** Where the view should stand (the opened message's top, less its air), `null` before its layout or where none applies. */
@@ -71,6 +78,10 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
   let holding = o.holding;
   let at = o.start;
   let placed = false;
+  /** The last aim found the view at its place. */
+  let standing = false;
+  /** A scroll report came: `at` is the view's own word, not the kept start. */
+  let reported = false;
   let until = 0;
   let pending: (() => void) | null = null;
 
@@ -82,12 +93,23 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     const y = Math.max(0, t);
     return content > 0 && view > 0 ? Math.min(y, Math.max(0, content - view)) : y;
   };
+  /* The view clamps a kept start past the content's end, and reports nothing where that lands where it stands (0).
+     It applies the start once, at its first layout: content that grows after it does not move the view, so the
+     clamp is taken once, against the first extent known, and stands as the view's own word from then on. */
+  const held = (): number => {
+    if (!reported) {
+      const { content, view } = o.extent();
+      if (content > 0 && view > 0) { at = Math.min(at, Math.max(0, content - view)); reported = true; }
+    }
+    return at;
+  };
   const aim = (): void => {
     pending = null;
     if (!holding) return;
     const w = want();
+    standing = w !== null && Math.abs(held() - w) <= 1;
     if (w === null) return;
-    if (Math.abs(at - w) <= 1) {
+    if (standing) {
       if (!placed) { placed = true; o.onPlaced(); }
       o.onSettle?.();
       return;
@@ -98,11 +120,7 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
   };
   return {
     get holding() { return holding; },
-    get aiming() {
-      if (!holding || now() > until) return false;
-      const w = want();
-      return w !== null && Math.abs(at - w) > 1;
-    },
+    get settling() { return holding && !standing && (o.applies?.() ?? true); },
     get moving() { return pending !== null; },
     get settled() {
       const t = o.target();
@@ -110,6 +128,7 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     },
     rearm: () => {
       holding = true;
+      standing = false;
       until = now() + ANCHOR_SETTLE_MS;
       pending?.();
       aim();
@@ -122,6 +141,7 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     },
     reached: (y) => {
       at = y;
+      reported = true;
       o.stand(y);
     },
     handOver: () => {
@@ -143,15 +163,24 @@ export interface PlacePanel { id: string; top: number; height: number }
 /** The air a jump leaves above a panel's top: a view standing in it stands at that panel. */
 const PLACE_AIR = 8;
 
-/** Where the view at `y` stands: the panel under its top line, and how far into it. */
-export function placeAt(panels: readonly PlacePanel[], y: number): PanePlace | null {
+/** The content and view heights of the scroll view. */
+export interface PlaceExtent { content: number; view: number }
+
+/** Where the view at `y` stands: the panel under its top line, and how far into it; at the end of a content taller than the view, the end. */
+export function placeAt(panels: readonly PlacePanel[], y: number, extent: PlaceExtent): PanePlace | null {
   let at: PlacePanel | null = null;
   for (const p of panels) if (p.top <= y + PLACE_AIR + 1) at = p;
-  return at === null ? null : { id: at.id, dy: y - at.top, h: at.height };
+  /* Above every panel: the first, as far above its top. */
+  at ??= panels[0] ?? null;
+  if (at === null) return null;
+  const max = extent.content - extent.view;
+  const end = extent.content > 0 && extent.view > 0 && max > 1 && y >= max - 1;
+  return end ? { id: at.id, dy: y - at.top, h: at.height, end: true } : { id: at.id, dy: y - at.top, h: at.height };
 }
 
-/** Where `place` stands in today's layout: the same distance above the top, as far into the panel, or past its end. */
-export function placeY(panels: readonly PlacePanel[], place: PanePlace): number | null {
+/** Where `place` stands in today's layout: the content's end, or the same distance above the top, as far into the panel, or past its end. */
+export function placeY(panels: readonly PlacePanel[], place: PanePlace, extent: PlaceExtent): number | null {
+  if (place.end === true) return extent.content > 0 && extent.view > 0 ? Math.max(0, extent.content - extent.view) : null;
   const p = panels.find((x) => x.id === place.id);
   if (!p) return null;
   if (place.dy <= 0 || place.h <= 0 || p.height <= 0) return p.top + place.dy;

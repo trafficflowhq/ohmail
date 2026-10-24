@@ -206,6 +206,8 @@ describe("the SQLite journal, applied", () => {
       "0163_folder_state_fresh_intent.sql",
       // A letter the server lost, kept: the pg column's twin.
       "0164_messages_server_missing.sql",
+      // The storage counter's facts, the pg columns' twins.
+      "0166_account_storage_facts.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -340,6 +342,8 @@ describe("the SQLite journal, applied", () => {
       "0163_folder_state_fresh_intent.sql",
       // A letter the server lost, kept: the pg column's twin.
       "0164_messages_server_missing.sql",
+      // The storage counter's facts, the pg columns' twins.
+      "0166_account_storage_facts.sql",
     ]);
   });
 

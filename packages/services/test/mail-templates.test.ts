@@ -103,6 +103,8 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     anchorDate: "16 September 2026, 00:00 UTC",
     erasureDate: "16 October 2026, 00:00 UTC",
     accountUrl: "https://app.ohmail.app/settings/account",
+    setupUrl: "https://app.ohmail.app/login?next=join",
+    noMailbox: false,
     supportEmail: "support@ohmail.app",
   },
   // The billing link a staff member sends: a language, the app's own billing door, the support
@@ -471,6 +473,50 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
       ...FIXTURES.lifecycle_notice, kind: "closed", erasureDate: null,
     });
     expect(rendered.text).not.toMatch(/erased on|gelöscht/);
+  });
+
+  it("an account with no mailbox is never told ohmail organizes one; it is pointed at the mailbox step and replies reach support", () => {
+    const { setupUrl, accountUrl } = FIXTURES.lifecycle_notice;
+    for (const locale of locales) {
+      for (const kind of ["trial_two_days", "closed"] as const) {
+        const out = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind, locale, noMailbox: true });
+        const said = `${kind}/${locale}`;
+        expect(out.text, said).not.toMatch(/organizing your mailbox|stopped organizing|weiter organisiert|organisiert und synchronisiert nicht mehr/);
+        expect(out.text, said).toMatch(locale === "de" ? /kein Postfach verbunden/ : /no mailbox connected/);
+        expect(out.text, said).toMatch(locale === "de" ? /Antworte einfach auf diese Mail/ : /reply to this mail/);
+        expect(out.replyTo, said).toBe("support@ohmail.app");
+        expect(out.html, said).toContain(`href="${kind === "closed" ? accountUrl : setupUrl}"`);
+      }
+      const trial = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "trial_two_days", locale, noMailbox: true });
+      expect(trial.text).toContain(setupUrl);
+    }
+  });
+
+  it("offers the Microsoft sign-in for Microsoft 365 work or school mail only, and no notice names a personal Microsoft mailbox", () => {
+    // Whether a personal Microsoft account (Outlook.com, Hotmail, Live) can sign in is not proven yet.
+    const personal = /hotmail|outlook\.com|live\.com|\bmsn\b|(?<!connect )outlook(?! verbinden)/i;
+    for (const locale of locales) {
+      for (const kind of kinds) {
+        for (const noMailbox of [true, false]) {
+          const out = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind, locale, noMailbox });
+          expect(`${out.text}\n${out.html}`, `${kind}/${locale}/${noMailbox}`).not.toMatch(personal);
+        }
+      }
+      const trial = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "trial_two_days", locale, noMailbox: true });
+      expect(trial.text).toMatch(locale === "de"
+        ? /Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde sie stattdessen unter Einstellungen → Postfächer mit „Outlook verbinden“/
+        : /Microsoft 365 work or school account, connect it in Settings → Mailboxes with Connect Outlook instead/);
+    }
+  });
+
+  it("an account with a mailbox keeps today's trial mail, its account link and the deployment's reply address", () => {
+    for (const locale of locales) {
+      const out = renderTemplate("lifecycle_notice", { ...FIXTURES.lifecycle_notice, kind: "trial_two_days", locale });
+      expect(out.text).toMatch(locale === "de" ? /Damit ohmail dein Postfach weiter organisiert/ : /To keep ohmail organizing your mailbox/);
+      expect(out.text).toContain(FIXTURES.lifecycle_notice.accountUrl);
+      expect(out.text).not.toContain(FIXTURES.lifecycle_notice.setupUrl);
+      expect(out.replyTo).toBeUndefined();
+    }
   });
 });
 

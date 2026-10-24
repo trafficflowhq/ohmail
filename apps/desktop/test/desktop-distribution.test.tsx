@@ -81,6 +81,35 @@ async function lockAnchors(distribution: string): Promise<string[]> {
   return [...(host as HTMLDivElement).querySelectorAll("button.primary")].map((b) => b.textContent ?? "");
 }
 
+/** The Cloud door's words and presses under one distribution. */
+async function cloudDoor(distribution: string): Promise<{ text: string; buttons: string[] }> {
+  vi.resetModules();
+  vi.doMock("../src/distribution.js", () => ({
+    DISTRIBUTIONS: ["direct", "mas"],
+    DISTRIBUTION: distribution,
+    selfUpdates: () => distribution !== "mas",
+    linksOutToBilling: () => distribution !== "mas",
+  }));
+  const { DoorChooser } = await import("../src/DoorChooser.js") as {
+    DoorChooser: (p: { start: string; onEntered: () => void }) => React.ReactElement;
+  };
+  if (root) await act(() => { root?.unmount(); });
+  host?.remove();
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host as HTMLDivElement);
+  await act(() => {
+    root?.render(h(NextIntlClientProvider, {
+      locale: "en",
+      messages: messages as never,
+      timeZone: "UTC",
+      children: h(DoorChooser, { start: "cloud", onEntered: () => {} }),
+    }));
+  });
+  const el = host as HTMLDivElement;
+  return { text: el.textContent ?? "", buttons: [...el.querySelectorAll("button")].map((b) => b.textContent ?? "") };
+}
+
 describe("the distribution decides two surfaces, and nothing else does", () => {
   it("the predicates answer per distribution, and `direct` is the control", () => {
     expect(selfUpdates("direct")).toBe(true);
@@ -102,6 +131,17 @@ describe("the distribution decides two surfaces, and nothing else does", () => {
     expect(text).toContain(messages.accessLock.kept);
     /* And the other door out is still there: a lock with no way out is a trap. */
     expect(text).toContain(messages.accessLock.signOut);
+  });
+
+  it("the Cloud door links to sign-up on the download build; the store build says the setup sentence only", async () => {
+    const direct = await cloudDoor("direct");
+    expect(direct.buttons).toContain(messages.desktopDoor.cloudCreateAccount);
+    expect(direct.text).not.toContain(messages.desktopDoor.cloudSetupOnWeb);
+
+    const mas = await cloudDoor("mas");
+    expect(mas.buttons).not.toContain(messages.desktopDoor.cloudCreateAccount);
+    expect(mas.text).not.toContain(messages.desktopDoor.cloudNoAccount);
+    expect(mas.text).toContain(messages.desktopDoor.cloudSetupOnWeb);
   });
 
   it("the two other call sites name the predicate, and a file that does not is named", () => {

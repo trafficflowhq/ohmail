@@ -113,6 +113,19 @@ describe("the card, one hold state at a time", () => {
     });
   });
 
+  it("a waiting send says so with Cancel send, no held acts, and Discard asks about the send too", () => {
+    const row = { heldSays: null, waiting: { key: "k-1", wire: false, rowless: false } };
+    const plan = draftCardPlan(row, { ...IDLE, queued: "replyQueuedOffline" });
+    expect(plan.waiting).toEqual({ line: Copy.draftsWaiting, caption: Copy.replyQueuedOffline, cancelSend: Copy.cancelSend });
+    expect([plan.held, plan.acts]).toEqual([null, null]);
+    expect(draftCardPlan(row, { ...IDLE, confirming: true }).discard).toMatchObject({ what: Copy.draftsDiscardWaitingWhat });
+    expect(draftCardPlan({ ...row, waiting: { ...row.waiting, wire: true } }, { ...IDLE, queued: "replyQueuedOffline" }).waiting?.caption,
+      "a send on the wire was said to wait for the network").toBe(Copy.replySendingLong);
+    expect(draftCardPlan(row, { ...IDLE, refusal: "alreadySent" }).refusal).toBe(Copy.replyAlreadySent);
+    expect(draftCardPlan(row, { ...IDLE, refusal: "cancelUnknown" }).refusal).toBe(Copy.replyCancelUnreachable);
+    expect(draftCardPlan(rowOf({}), IDLE).waiting).toBeNull();
+  });
+
   it("back keeps while a question stands, and belongs to the navigator otherwise", () => {
     expect(backKeeps(true)).toBe(true);
     expect(backKeeps(false)).toBe(false);

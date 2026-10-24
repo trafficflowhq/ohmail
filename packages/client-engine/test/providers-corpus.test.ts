@@ -2,7 +2,10 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { portMeansImplicitTls, providerById } from "../src/providers.js";
+import {
+  discoveryRequestFor, passwordLabelKey, portMeansImplicitTls, presetForAddress, providerById, readDiscovery,
+  serverGuessFor,
+} from "../src/providers.js";
 
 /**
  * ONE providers.ts BRANCH PER CORPUS PROVIDER, with a recorded server behind it. The corpus is the
@@ -51,4 +54,40 @@ describe("providers.ts against the recorded provider shapes", () => {
       });
     });
   }
+});
+
+describe("the presets an address or a domain lookup suggests", () => {
+  it("WEB.DE, t-online and bluewin addresses pre-fill their own servers", () => {
+    expect(presetForAddress("info@web.de")?.id).toBe("webde");
+    expect(presetForAddress("Hello@T-Online.de")?.id).toBe("tonline");
+    expect(presetForAddress("contact@bluewin.ch")?.id).toBe("bluewin");
+    expect(serverGuessFor("info@web.de")).toEqual({
+      imapHost: "imap.web.de", imapPort: "993", imapTls: true, smtpHost: "smtp.web.de", smtpPort: "587", from: "webde",
+    });
+  });
+
+  it("the lookup is sent the domain, never the part before the @", () => {
+    expect(discoveryRequestFor(" Lena.Meier@Praxis-Sonnhalde.CH ")).toEqual({ domain: "praxis-sonnhalde.ch" });
+    expect(JSON.stringify(discoveryRequestFor("lena.meier@praxis-sonnhalde.ch"))).not.toContain("lena");
+    expect(discoveryRequestFor("lena.meier")).toBeNull();
+    expect(discoveryRequestFor("lena@")).toBeNull();
+  });
+
+  it("an answer is read field by field: a named preset, Proton only when true, a server only when whole", () => {
+    expect(readDiscovery({ preset: "gmail", proton: false, imap: null, smtp: null }))
+      .toEqual({ preset: providerById("gmail"), proton: false, imap: null, smtp: null });
+    const server = { host: "mail.atelier-vogel.ch", port: 993, secure: true };
+    expect(readDiscovery({ preset: "imap", proton: "yes", imap: server, smtp: { host: "", port: 587, secure: false } }))
+      .toEqual({ preset: null, proton: false, imap: server, smtp: null });
+    expect(readDiscovery({ preset: "a-newer-provider", proton: true, imap: { ...server, port: "993" }, smtp: { ...server, port: 70000 } }))
+      .toEqual({ preset: null, proton: true, imap: null, smtp: null });
+    for (const bad of [null, "gmail", 42, ["gmail"]]) expect(readDiscovery(bad)).toBeNull();
+  });
+
+  it("the password field says app password exactly where the preset takes one", () => {
+    expect(passwordLabelKey(providerById("yahoo"))).toBe("passwordApp");
+    expect(passwordLabelKey(providerById("gmx"))).toBe("passwordPlain");
+    expect(passwordLabelKey(providerById("tonline"))).toBe("passwordPlain");
+    expect(passwordLabelKey(providerById("imap"))).toBe("passwordPlain");
+  });
 });

@@ -2451,6 +2451,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-ohbox .read-col .empty {
   padding-top: 96px;
 }
+/* The Ohbox with no mailbox: the card's one verb on its own line under the sentence. */
+.empty-connect .btn {
+  display: flex;
+  width: fit-content;
+  margin: 16px auto 0;
+}
 
 /* ================= the open message's marks =================
    Under the subject sit two different things that used to share one wrapping `.chips` row. The
@@ -4482,6 +4488,14 @@ input.set-tag-input {
   font-size:calc(11px + var(--type-up));
   letter-spacing: 0;
 }
+/* Proton: a quiet tile under the grid that opens a note rather than making a choice. */
+.pvp-aside {
+  margin-top: 8px;
+}
+.pvp-other[aria-expanded="true"] {
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
 /* the load-bearing panel: what to fetch from the provider BEFORE typing anything,
    and the one sentence that stops an account password landing here */
 .pvp-note {
@@ -6049,7 +6063,7 @@ input.set-tag-input {
   align-self: stretch;
   justify-self: stretch;
   pointer-events: none;
-  border-radius: var(--r-ctl);
+  border-radius: calc(var(--r-ctl) * 5 / 8);
 }
 .view.split > .thread-marks .tm-mb:hover {
   background: none;
@@ -6073,7 +6087,7 @@ input.set-tag-input {
   content: "";
   width: 18px;
   height: 18px;
-  border-radius: calc(var(--r-ctl) * 4 / 8);
+  border-radius: calc(var(--r-ctl) * 7 / 8);
   box-shadow: inset 0 0 0 1.5px var(--ink3);
   opacity: 0;
   pointer-events: none;
@@ -6086,7 +6100,7 @@ input.set-tag-input {
   display: block;
   width: 10px;
   height: 10px;
-  border-radius: calc(var(--r-ctl) * 2 / 8);
+  border-radius: calc(var(--r-ctl) * 3 / 8);
   background: var(--accent);
   transition: opacity 850ms cubic-bezier(.22, .61, .36, 1);
 }
@@ -6126,6 +6140,13 @@ input.set-tag-input {
   width: auto;
   height: 20px;
   min-height: 0;
+  border-radius: calc(var(--r-ctl) * 5 / 8);
+}
+/* A held finger shows the chip: no callout, no text selection over the squares. */
+.tm-mb {
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 /* THE CHIP (o9): the sender and the stamp of the square the pointer rests on or keyboard focus
    holds. One fixed box in the body (the column and the list clip their overflow), placed by
@@ -6139,9 +6160,10 @@ input.set-tag-input {
   z-index: var(--z-fr);
   translate: -100% -50%;
   pointer-events: none;
-  white-space: nowrap;
-  padding: 2px 8px;
-  font-size: calc(11.5px + var(--type-up));
+  width: max-content;
+  max-width: 272px;
+  padding: 3px 9px;
+  font-size: calc(12px + var(--type-up));
   line-height: 18px;
   color: var(--ink);
   background: var(--float);
@@ -6149,10 +6171,38 @@ input.set-tag-input {
   border-radius: var(--r-ctl);
   animation: tm-tip-in .12s var(--swift);
 }
+/* Two lines (o10): who and when, a clip where there is a file; under them the first line. */
+.tm-tip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
 .tm-tip b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 600;
 }
-.tm-tip span {
+.tm-tip-when {
+  flex: none;
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+}
+.tm-tip-head .tm-tip-clip {
+  align-self: center;
+  width: 12px;
+  height: 12px;
+  stroke-width: 1.4;
+  color: var(--ink3);
+}
+.tm-tip-line {
+  max-width: 252px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(11.5px + var(--type-up));
   color: var(--ink3);
 }
 .tm-tip[data-place="right"] {
@@ -7595,6 +7645,19 @@ body.dnd-active * { cursor: grabbing !important; }
 .sig-remove:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* Help & contact's copy controls, where a mailto would not leave the window (`HelpContactPane.tsx`). */
+.help-copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+/* A mail to support: the diagnostics block's strip under the editor (`SupportDiagnostics.tsx`). */
+.support-diag-what {
+  margin: 4px 0 2px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
 }
 /* The PLAIN shape of the block: the text is editable in place, a bare textarea wearing the
    block's own chrome, so editing does not jump the reader into a different-looking control. A

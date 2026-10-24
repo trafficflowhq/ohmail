@@ -36,7 +36,7 @@ import { FIXTURE_DOOR } from "./_door.js";
  *  · make `assertLocatorEpoch` a no-op ⇒ every move-epoch case red.
  */
 
-interface FakeMsg { uid: number; seq?: number; subject: string; date: Date; seen?: boolean; messageId?: string }
+interface FakeMsg { uid: number; seq?: number; subject: string; date: Date | string; seen?: boolean; messageId?: string }
 
 function makeFakeClient(
   byFolder: Record<string, FakeMsg[]>,
@@ -141,6 +141,15 @@ describe("listFolderPage — the bounded, read-only Junk window read", () => {
     expect(top.messageIdHeader).toBe("<mid-300@example.com>");
     expect(top.seen).toBe(false);
     expect(top.date).toBe(new Date(Date.UTC(2026, 0, 1) + 300 * 60_000).toISOString());
+  });
+
+  it("a row whose dates the phone's imapflow left as strings (its Date refused them) carries the sent instant", async () => {
+    const { adapter } = await adapterOver({ Junk: [
+      { uid: 1, subject: "s", date: "24 Oct 2026 06:29:09 +0200" },
+      { uid: 2, subject: "t", date: new Date(-61321087851000) }, // "Sat, 24 Oct 26 06:29:09 +0200" on Hermes: year 26
+    ] });
+    const page = await adapter.listFolderPage("Junk", {});
+    expect(page!.items.map((i) => i.date)).toEqual(["2026-10-24T04:29:09.000Z", "2026-10-24T04:29:09.000Z"]);
   });
 
   it("`beforeSeq` pages STRICTLY older, and the last page says so with a null cursor", async () => {

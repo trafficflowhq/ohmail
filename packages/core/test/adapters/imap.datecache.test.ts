@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ImapAdapter, arrivalKey, orderCandidates, parseRef } from "../../src/adapters/imap.js";
 import type { ImapCursor } from "../../src/adapters/imap-types.js";
 import { greenmailConfig } from "./_imapenv.js";
+import { usePhoneDate } from "../_hermes-date.js";
 
 /**
  * the two properties that keep the date ordering AFFORDABLE, and the rule itself.
@@ -25,6 +26,8 @@ function emptyCursor(): ImapCursor {
  */
 function fakeClient(opts: {
   uids: number[]; uidValidity?: bigint; onDateLookup?: () => void; onEnumerate?: () => void;
+  /** INTERNALDATE as the driver hands it back; a string is what imapflow keeps when `Date` refuses it. */
+  stamp?: (uid: number) => Date | string;
 }) {
   const calls: Array<{ range: unknown; query: Record<string, unknown> }> = [];
   const src = Buffer.from("Message-ID: <n@x>\r\nSubject: n\r\n\r\nbody");
@@ -58,13 +61,13 @@ function fakeClient(opts: {
         if (query?.source) {
           for (const uid of asked) {
             yield { uid, flags: new Set<string>(), envelope: { messageId: `<m${uid}@x>` }, source: src,
-              internalDate: new Date(Date.UTC(2026, 0, 1) + uid * 1000) };
+              internalDate: opts.stamp?.(uid) ?? new Date(Date.UTC(2026, 0, 1) + uid * 1000) };
           }
         } else if (query?.internalDate && !query?.source) {
           // The DATE lookup. Deliberately anti-correlated with UID.
           opts.onDateLookup?.();
           for (const uid of asked) {
-            yield { uid, internalDate: new Date(Date.UTC(2026, 0, 1) + (10_000 - uid) * 86_400_000) };
+            yield { uid, internalDate: opts.stamp?.(uid) ?? new Date(Date.UTC(2026, 0, 1) + (10_000 - uid) * 86_400_000) };
           }
         } else if (query?.size) {
           for (const uid of asked) yield { uid, size: src.length };
@@ -92,6 +95,23 @@ function expand(range: unknown): number[] {
 /** Every FETCH that asked for INTERNALDATE without asking for bodies — the date lookup. */
 const dateCalls = (calls: Array<{ range: unknown; query: Record<string, unknown> }>) =>
   calls.filter((c) => c.query?.internalDate && !c.query?.source);
+
+describe("an INTERNALDATE the runtime's Date could not parse", () => {
+  // A phone's JS engine refuses the RFC 3501 form; imapflow then keeps the raw string.
+  const STAMP = [" 4-Oct-2026 08:29:08 +0200", "24-Oct-2026 06:29:09 +0000"];
+
+  it("still reaches the change as the server's instant", async () => {
+    const fake = fakeClient({ uids: [1, 2], stamp: (uid) => STAMP[uid - 1]! });
+    const adapter = new ImapAdapter(greenmailConfig(), { client: fake.client, capabilityOverrides: { condstore: false } });
+    await adapter.connect();
+    const cur = emptyCursor();
+    cur.folders["INBOX"] = { uidValidity: "100", uidNext: 1, highestModseq: "0", known: [] };
+    const b = await adapter.changesSince(cur);
+    const got = b.creates.map((c) => (c.internalDate instanceof Date ? c.internalDate.getTime() : null)).sort();
+    expect(got, "the arrival time was dropped").toEqual([Date.UTC(2026, 9, 4, 6, 29, 8), Date.UTC(2026, 9, 24, 6, 29, 9)]);
+    await adapter.close();
+  });
+});
 
 describe("the date lookup is cached and chunked", () => {
   it("a second pass asks for NOTHING it already knows, and only about UIDs that arrived since", async () => {
@@ -290,6 +310,14 @@ describe("arrivalKey and orderCandidates (the rule, without a server)", () => {
   it("falls back to INTERNALDATE with no Date: header, and to the header with no INTERNALDATE", () => {
     expect(arrivalKey(new Date(internal), null)).toBe(internal);
     expect(arrivalKey(null, new Date(earlier))).toBe(earlier);
+  });
+
+  it("reads the strings the phone's imapflow leaves (its Date refuses them) as their instants", () => {
+    const restore = usePhoneDate();
+    try {
+      expect(arrivalKey(null, "24 Oct 2026 06:29:09 +0200")).toBe(Date.UTC(2026, 9, 24, 4, 29, 9));
+      expect(arrivalKey("24-Oct-2026 06:29:09 +0200", null)).toBe(Date.UTC(2026, 9, 24, 4, 29, 9));
+    } finally { restore(); }
   });
 
   it("never throws on junk, and sorts it oldest", () => {

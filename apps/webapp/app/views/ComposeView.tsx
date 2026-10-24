@@ -42,6 +42,7 @@ import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { draftNoteKey, worthSaving, type ComposeElsewhere } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
+import { SupportDiagnostics } from "../shell/SupportDiagnostics";
 import { SIG_FOLLOWING } from "../shell/signature";
 import { useFocusFollows } from "../shell/focus-follows";
 
@@ -942,6 +943,15 @@ export function ComposeView({
             onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
           />
 
+          {fields.diag ? (
+            <SupportDiagnostics
+              block={fields.diag}
+              value={{ text: fields.body, html: fields.html }}
+              disabled={inFlight}
+              onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
+            />
+          ) : null}
+
           {/* THE SIGNATURE — a distinct, removable block BELOW the writing area, never pasted
               into the prose. It follows the From selector (switching the sender swaps it to
               that mailbox's text) unless the user removed or edited it — their choice wins
@@ -1004,7 +1014,9 @@ export function ComposeView({
                 because it arrives while somebody may be typing into a letter that no longer exists. */}
             {elsewhere !== null ? (
               <p className="compose-note" role="alert">
-                {t(elsewhere.why === "deleted" ? "deletedElsewhere" : elsewhere.earlier ? "sentElsewhereKept" : "sentElsewhere")}
+                {t(elsewhere.why === "changed" ? (elsewhere.kept ? "changedElsewhere" : "changedElsewhereUnsaved")
+                  : elsewhere.why === "deleted" ? (elsewhere.earlier ? "deletedElsewhereKept" : "deletedElsewhere")
+                  : elsewhere.earlier ? "sentElsewhereKept" : "sentElsewhere")}
               </p>
             ) : null}
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the
@@ -1031,9 +1043,11 @@ export function ComposeView({
                     warning exaggerates. */}
                 <p className="set-note-inline" id="compose-cancel-what">
                   {elsewhere !== null
-                    ? t(elsewhere.why === "deleted"
-                      ? (elsewhere.typedSince ? "cancelWhatDeletedElsewhereTyped" : "cancelWhatDeletedElsewhere")
-                      : (elsewhere.typedSince ? "cancelWhatSentElsewhereTyped" : "cancelWhatSentElsewhere"))
+                    ? t(elsewhere.why === "changed"
+                      ? "cancelWhatChangedElsewhere"
+                      : elsewhere.why === "deleted"
+                        ? (elsewhere.typedSince ? "cancelWhatDeletedElsewhereTyped" : "cancelWhatDeletedElsewhere")
+                        : (elsewhere.typedSince ? "cancelWhatSentElsewhereTyped" : "cancelWhatSentElsewhere"))
                     : discardKeeps
                       ? t("cancelWhatHeld")
                       : plan.mutation.draftId ? t("cancelWhat") : t("cancelWhatLocal")}
@@ -1184,8 +1198,9 @@ export function ComposeView({
                   Nothing is offered for an unchanged SENT letter — it already went. */}
               {elsewhereNote && elsewhere !== null ? (
                 <span className="send-note" role="status">
-                  {t(elsewhere.why === "deleted" ? "deletedElsewhereSend" : "sentElsewhereSend")}
-                  {(elsewhere.typedSince || elsewhere.why === "deleted") && onSendAsNew ? (
+                  {t(elsewhere.why === "changed" ? "changedElsewhereSend"
+                    : elsewhere.why === "deleted" ? "deletedElsewhereSend" : "sentElsewhereSend")}
+                  {(elsewhere.typedSince || elsewhere.why !== "sent") && onSendAsNew ? (
                     <Button variant="ghost" onClick={() => { setElsewhereNote(false); onSendAsNew(); }}>
                       {t("sendAsNew")}
                     </Button>
@@ -1237,7 +1252,10 @@ export function ComposeView({
               )}
             </div>
 
-            <SendStatus send={shown} scope="compose" lane={COMPOSE_SEND_KEY} showing={showing} />
+            {/* A fork is said once: the alert above says it, not the send's line too. */}
+            {elsewhere?.why === "changed" && shown.code === "draft_changed" ? null : (
+              <SendStatus send={shown} scope="compose" lane={COMPOSE_SEND_KEY} showing={showing} />
+            )}
             {/* THE VERBS, off the SAME narrowed state the sentence renders from: an unresolved send
                 that does not name this message says nothing here, so it offers no answer either. */}
             {heldResolve !== null && shown.phase === "unverified" ? (

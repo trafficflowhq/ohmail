@@ -215,6 +215,8 @@ export function mailServer() {
   const withdrawnKeys = new Set<string>();
   /** `false`: the withdraw route answers 404, a server that predates it. */
   let withdrawRoute = true;
+  /** `true`: a created row carries `status: "draft"` and its stamps, as `DraftsService.create` writes it. */
+  let stampedDrafts = false;
   /**
    * THE SERVER'S CONTENT CLAIM (`SEND_DUPLICATE_WINDOW_MS`): within the hour, the same message
    * from the same mailbox under a NEW key is refused 409 `duplicate_send`, naming the first send.
@@ -659,7 +661,8 @@ export function mailServer() {
         if (again !== undefined && drafts.has(again)) { json(200, drafts.get(again), seq); return; }
         const parsed = JSON.parse(body) as Record<string, unknown>;
         draftSeq += 1;
-        const row = { id: `d-${draftSeq}`, ...parsed, bcc: parsed.bcc ?? [] };
+        const at = new Date().toISOString();
+        const row = { id: `d-${draftSeq}`, ...(stampedDrafts ? { status: "draft", createdAt: at, updatedAt: at } : {}), ...parsed, bcc: parsed.bcc ?? [] };
         drafts.set(row.id, row);
         if (idem !== null) { createdByKey.set(idem, row.id); createHash.set(idem, body); }
         // The route's own change: the row reaches the mirror on the next drain, as every write's does.
@@ -1003,6 +1006,8 @@ export function mailServer() {
     answerNext: (method: string, prefix: string, status: number, body: unknown) => failures.push({ method, prefix, status, body }),
     /** Cut the network behind the send route (`sendsOffline`); `false` puts it back. */
     sendOffline: (on = true) => { sendsOffline = on; },
+    /** Created rows carry their status and stamps, so a drain lists them in Drafts. */
+    stampDrafts: (on = true) => { stampedDrafts = on; },
     /** Answer as a server without the sent-row belt: a PUT over a sent row rewrites it, 200. */
     unbeltedSentRows: (on = true) => { unbelted = on; },
     /** The next N sends answer 200 `{status:"unverified"}` — SMTP's unknowable outcome. */

@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HttpAdapter, OhmailEngine, type EngineMutation } from "@ohmail/client-engine";
+import { HttpAdapter, OhmailEngine, draftsList, type EngineMutation } from "@ohmail/client-engine";
 
 import { WindowOutboxStore } from "../../desktop/src/window-outbox-store.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
+import { DEFAULT_ECHO_DEADLINE_MS } from "../src/cloud-proxy.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -20,8 +21,9 @@ afterEach(async () => {
   for (const s of sidecars.splice(0)) await s.stop().catch(() => undefined);
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
-const json = (v: unknown, status = 200): Response =>
-  new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
+const json = (v: unknown, status = 200, headers: Record<string, string> = {}): Response =>
+  new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const MBX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const DRAFT = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const SEND = {
@@ -35,12 +37,72 @@ interface Server {
   refresh: "minted" | "refused";
   creates: Array<{ key: string | null; answered: number }>;
   sends: Array<{ key: string | null; answered: number }>;
+  /* Opt-in, for the timing cases: Cloud's seq on each write (200 ms trips, the send 800 ms), a
+     `/sync` read when asked and answered `syncMs` later, a parent to reply to, the moments, and
+     every request that reached Cloud with the echo marker. */
+  seq?: number;
+  syncMs?: number;
+  t?: Record<string, number>;
+  marked?: string[];
+  /* Opt-in: the draft row in the feed, through draft, sending and sent, as the hosted change log carries it. */
+  row?: { status: string; seq: number; created: number } | null;
+}
+const PARENT = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const THREAD = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+const cursorOf = (n: number): string => Buffer.from(String(n), "utf8").toString("base64url");
+const sinceOf = (c: string | null): number => (!c || c === "0" ? 0 : Number(Buffer.from(c, "base64url").toString("utf8")) || 0);
+function parentPage(since: number, head: number, row: Server["row"] = null) {
+  const iso = new Date().toISOString();
+  const creates = since >= 2 ? [] : [
+    { type: "thread", op: "create", id: THREAD, seq: 1, updatedAt: iso, entity: { id: THREAD, accountId: "acct", subject: "Invoice 12", messageIds: [PARENT], participants: [], lastMessageAt: iso, unreadCount: 0, muted: false, folder: "INBOX", updatedAt: iso } },
+    { type: "message", op: "create", id: PARENT, seq: 2, updatedAt: iso, entity: {
+      id: PARENT, accountId: "acct", mailboxId: MBX, threadId: THREAD, messageIdHeader: `<${PARENT}@x.test>`, subject: "Invoice 12",
+      from: { name: null, address: "ada@fake.test" }, to: [], cc: [], arrivedAt: iso, date: iso, folder: "INBOX", snippet: "",
+      unread: false, lastReadAt: null, hasAttachments: false, attachmentCount: 0,
+      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+      triage: null, labels: [], remoteContent: "none", updatedAt: iso } },
+  ];
+  const updates: unknown[] = [];
+  if (row && row.seq > since) {
+    const entity = { id: DRAFT, mailboxId: MBX, threadId: null, inReplyToMessageId: null, forwardOfMessageId: null, subject: "Invoice 12",
+      body: "hello", html: null, to: [{ name: null, address: "ada@fake.test" }], cc: [], bcc: [], rationale: null, status: row.status,
+      sendAt: null, sendError: null, createdAt: iso, updatedAt: iso, contentRevision: `r${row.seq}` };
+    (since < row.created ? creates : updates).push({ type: "draft", op: since < row.created ? "create" : "update", id: DRAFT, seq: row.seq, updatedAt: iso, entity });
+  }
+  return { changes: { creates, updates, moves: [], deletes: [] }, cursor: cursorOf(head), hasMore: false, serverTime: iso };
 }
 
 function serverFetch(s: Server): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     const method = (init?.method ?? "GET").toUpperCase();
+    if (new Headers(init?.headers).has("x-ohmail-echo")) s.marked?.push(`${method} ${url.pathname}`);
+    const t = s.t ?? {};
+    if (url.pathname === "/drafts" && method === "POST" && s.seq !== undefined) {
+      t.createAt ??= performance.now();
+      await sleep(200);
+      s.seq += 1;
+      if (s.row !== undefined) s.row = { status: "draft", seq: s.seq, created: s.seq };
+      t.createAnswered ??= performance.now();
+      return json({ id: DRAFT, mailboxId: MBX, subject: "Invoice 12", bcc: [], contentRevision: "r1", updatedAt: new Date().toISOString() }, 201, { "x-sync-seq": String(s.seq) });
+    }
+    if (url.pathname === `/drafts/${DRAFT}/send` && method === "POST" && s.seq !== undefined) {
+      t.sendAt ??= performance.now();
+      if (s.row) s.row = { ...s.row, status: "sending", seq: ++s.seq };
+      await sleep(800);
+      s.seq += 1;
+      if (s.row) s.row = { ...s.row, status: "sent", seq: s.seq };
+      t.sendAnswered ??= performance.now();
+      return json({ status: "sent", providerMessageId: "<p1@fake.test>" }, 200, { "x-sync-seq": String(s.seq) });
+    }
+    if (url.pathname === "/sync" && s.seq !== undefined) {
+      if (url.searchParams.get("types") === "rule") return json({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "0", hasMore: false, serverTime: new Date().toISOString() });
+      const head = s.seq;
+      const row = s.row ? { ...s.row } : null;
+      if (s.syncMs) await sleep(s.syncMs);
+      return json(parentPage(sinceOf(url.searchParams.get("since")), head, row));
+    }
+    if (url.pathname === "/sync/snapshot" && s.seq !== undefined) return new Response("no snapshot", { status: 404 });
     if (url.pathname === "/drafts" && method === "POST") {
       const row = { key: new Headers(init?.headers).get("idempotency-key"), answered: 0 };
       s.creates.push(row);
@@ -95,9 +157,9 @@ async function launch(dataDir: string, s: Server, tokens: { accessToken: string;
   return { sidecar, bridge, stop };
 }
 
-function windowOver(bridge: (p: string, i?: unknown) => Promise<Response>, scope: string, clock: { ms: number }) {
+function windowOver(bridge: (p: string, i?: unknown) => Promise<Response>, scope: string, clock: { ms: number }, sendEchoLater = false) {
   return new OhmailEngine({
-    adapter: new HttpAdapter({ baseUrl: "", fetch: bridge as never }),
+    adapter: new HttpAdapter({ baseUrl: "", fetch: bridge as never, ...(sendEchoLater ? { sendEchoLater } : {}) }),
     store: new WindowOutboxStore({ scope, write: bridge, read: bridge }),
     now: () => new Date(clock.ms),
   });
@@ -208,5 +270,60 @@ describe("an unsent send whose draft create was answered is counted as waiting",
     const delivered = s.sends.filter((x) => x.answered === 200);
     expect(delivered, "not delivered exactly once").toHaveLength(1);
     expect(delivered[0]!.key, "delivered under another key").toBe(s.creates[0]!.key);
+  });
+});
+
+describe("a send waits for the account, never for this computer's copy", () => {
+  const REPLY = { ...SEND, inReplyTo: PARENT, threadId: THREAD, subject: "Re: Invoice 12" } as unknown as EngineMutation;
+  const SAVE = { kind: "draft_save", draftId: null, mailboxId: MBX, subject: "Invoice 12", body: "hello",
+    to: [{ name: null, address: "ada@fake.test" }], cc: [], bcc: [] } as unknown as EngineMutation;
+
+  /** The desktop's window over a started Cloud door whose copy holds the parent; then the copy turns slow. */
+  async function pressOnSlowCopy(prefix: string, m: EngineMutation, copyMs = 3_000, row = false) {
+    const dataDir = await freshDataDir(prefix); dirs.push(dataDir);
+    const s: Server = { create: "ok", send: "ok", refresh: "minted", creates: [], sends: [], seq: 1_000, syncMs: 0, t: {}, marked: [],
+      ...(row ? { row: null } : {}) };
+    const a = await launch(dataDir, s, { accessToken: "held-access", refreshToken: "held-refresh" });
+    await a.sidecar.start();
+    const w = windowOver(a.bridge, a.sidecar.servedMailboxId(), { ms: Date.now() }, true);
+    await w.start();
+    for (let i = 0; i < 50 && !(await a.bridge(`/messages/${PARENT}`)).ok; i++) await sleep(100);
+    expect((await a.bridge(`/messages/${PARENT}`)).ok, "control: the copy holds the parent").toBe(true);
+    await w.syncOnce();
+    await sleep(300);
+    s.syncMs = copyMs;
+    const r = await w.mutate(m);
+    return { r, w, t: s.t!, settled: performance.now(), marked: s.marked! };
+  }
+
+  for (const copyMs of [80, 1_000]) {
+    it(`a message just sent is never listed in Drafts as unsent (copy /sync ${copyMs} ms)`, { timeout: 60_000 }, async () => {
+      const { r, w } = await pressOnSlowCopy("ohmail-send-ghost-", SEND, copyMs, true);
+      expect(r.status).toBe("confirmed");
+      const listed: number[] = [];
+      for (let at = 0; at < 3_000; at += 25) {
+        if (draftsList(w.read()).some((d) => d.id === DRAFT)) listed.push(at);
+        await sleep(25);
+      }
+      expect(w.read().get<{ status?: string }>("draft", DRAFT)?.status, "the drain after the send never carried it").toBe("sent");
+      expect(listed, "the sent message was listed in Drafts as unsent (ms after the confirm)").toEqual([]);
+    });
+  }
+
+  for (const [name, m] of [["a new message", SEND], ["a reply", REPLY]] as const) {
+    it(`${name}: the send leaves on the draft's answer and settles on the send's`, { timeout: 60_000 }, async () => {
+      const { r, t, settled, marked } = await pressOnSlowCopy("ohmail-send-echo-", m);
+      expect(r.status).toBe("confirmed");
+      // Waiting for the copy waits out the whole bound (the copy's pull takes 3 s); a quick send is ~0.05 s.
+      expect(t.sendAt! - t.createAnswered!, "the send waited for this computer's copy of the draft").toBeLessThan(DEFAULT_ECHO_DEADLINE_MS);
+      expect(settled - t.sendAnswered!, "the press waited for this computer's copy of the send").toBeLessThan(DEFAULT_ECHO_DEADLINE_MS);
+      expect(marked, "the echo marker reached the account").toEqual([]);
+    });
+  }
+
+  it("control: an autosave's draft create still waits for the copy", { timeout: 60_000 }, async () => {
+    const { r, t, settled } = await pressOnSlowCopy("ohmail-save-echo-", SAVE);
+    expect(r.status).toBe("confirmed");
+    expect(settled - t.createAnswered!).toBeGreaterThanOrEqual(DEFAULT_ECHO_DEADLINE_MS - 100);
   });
 });

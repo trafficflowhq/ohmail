@@ -5,6 +5,8 @@ import {
   type FingerprintInput,
 } from "../src/identity.js";
 import type { AttachmentMeta, EmailAddress } from "../src/types.js";
+import { normalizeMime } from "../src/mime.js";
+import { isHuskSameMessage } from "../src/husk-restore.js";
 
 /** A complete fingerprint input with everything empty — the base every case perturbs by ONE field. */
 function input(over: Partial<FingerprintInput> = {}): FingerprintInput {
@@ -231,5 +233,16 @@ describe("verifiesLegacyIdentity — step 2 of the dual-key lookup", () => {
     // a message whose Date changed but whose four columns agree still verifies.
     expect(verifiesLegacyIdentity(stored, { ...observed, date: new Date("1999-01-01T00:00:00Z") }))
       .toBe(true);
+  });
+});
+
+describe("a husk stored under the runtime's own Date reading", () => {
+  it("is the same message when only that reading differs, with no Message-ID to vouch", async () => {
+    const header = "Sat, 24 Oct 126 06:29:09 +0200";
+    const fresh = await normalizeMime(`Date: ${header}\r\nFrom: a@example.com\r\nSubject: s\r\n\r\nhi\r\n`);
+    const before = fingerprintDedupKey(messageFingerprint({ ...fresh, date: new Date(header) }));
+    expect(before).not.toBe(fingerprintDedupKey(messageFingerprint(fresh)));
+    expect(isHuskSameMessage({ id: "m", dedupKey: before, messageIdHeader: null }, fresh)).toBe(true);
+    expect(isHuskSameMessage({ id: "m", dedupKey: "fp1:other", messageIdHeader: null }, fresh)).toBe(false);
   });
 });

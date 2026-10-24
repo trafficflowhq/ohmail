@@ -379,6 +379,16 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
       why: "`DesktopAbout`; a standalone install is not the hosted service and says so",
     },
   },
+  help: {
+    managedWeb: { state: "present", why: "Write to us opens this account's composer to support@ohmail.app" },
+    selfHostWeb: {
+      state: "absent",
+      why: "the operator runs this server, not ohmail, so the build passes no `support` and names no ohmail address",
+    },
+    desktopCloud: { state: "present", why: "the shell's own composer, through the door's mailbox; with none, the address to copy" },
+    desktopSelfHost: { state: "present", why: "the shell's own composer, through the door's mailbox; with none, the address to copy" },
+    desktopStandalone: { state: "present", why: "the shell's own composer, through the install's own mailbox; with none, the address to copy" },
+  },
   security: {
     managedWeb: { state: "present", why: "recovery codes and the authenticator, step-up gated in place" },
     selfHostWeb: { state: "present", why: "the same ceremony against this server" },
@@ -486,6 +496,7 @@ const EMPTY_SNAPSHOT = JSON.stringify({
 const MAILBOXES = JSON.stringify({
   items: [{ id: "mbx-1", address: "someone@example.com", status: "connected", lastSyncAt: null }],
 });
+let mailboxesBody = MAILBOXES;
 /**
  * A consent row as a HOSTED table answers it. A door built from `localRoutes` — the standalone
  * engine, a self-hosted server — answers the same shape WITHOUT `foldersEnabledAt`
@@ -544,7 +555,7 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         enginePaths.push(url);
         if (url === "/health") return encode(200, JSON.stringify({ signedIn }));
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
-        if (url.startsWith("/mailboxes")) return encode(200, MAILBOXES);
+        if (url.startsWith("/mailboxes")) return encode(200, mailboxesBody);
         if (url.startsWith("/consent")) return encode(200, consentBody);
         if (url.startsWith("/away-responder")) return encode(200, AWAY);
         // The Subscription pane's one read. A URL here is the managed answer; `MANAGE_ABSENT`
@@ -601,6 +612,7 @@ async function navFor(status: EngineStatus, signedIn: boolean): Promise<string[]
 
 afterEach(async () => {
   consentBody = CONSENT;
+  mailboxesBody = MAILBOXES;
   manageLink = "https://account.example/manage?t=abc";
   metered = true;
   enginePaths.length = 0;
@@ -809,6 +821,17 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
   it("…and on an engine too old to carry the field at all", async () => {
     const nav = await navFor(CLOUD_ENGINE_TOO_OLD, true);
     expect(nav.sort()).toEqual(drawnOn("desktopCloud").map(label).sort());
+  });
+
+  /* A window mailto comes back into this window's composer, which cannot send either. */
+  it("Help & contact with no mailbox to send from offers the address to copy, never a mailto", async () => {
+    mailboxesBody = JSON.stringify({ items: [] });
+    await navFor(CLOUD_SERVING, true);
+    const help = [...mountPoint!.querySelectorAll<HTMLElement>(".set-nav button")].find((b) => b.textContent?.trim() === label("help"))!;
+    await act(async () => { help.click(); });
+    await settle(5);
+    expect(mountPoint!.querySelector('a[href^="mailto:"]')).toBeNull();
+    expect([...mountPoint!.querySelectorAll("button")].some((b) => b.textContent === "Copy address")).toBe(true);
   });
 
   it("the standalone door", async () => {

@@ -38,7 +38,7 @@ export const DE: Deck = {
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
-    "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie. Melde dich im Web an, öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
+    "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie. Melde dich im Web an und verbinde dort dein Postfach, dann öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
 
   doorOwnServer: "Dein eigener Server",
   doorOwnServerSay:
@@ -192,6 +192,8 @@ export const DE: Deck = {
     "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
   phoneStateMetaUndeletable:
     "Wird nicht synchronisiert — der Mailserver lässt ohmail seine eigenen Nachrichten in ohmail/_meta nicht entfernen. Gib diesem Ordner die Berechtigung zum Löschen oder frag deinen Anbieter. ohmail macht dann von selbst weiter.",
+  phoneStateClockOff:
+    "Wird nicht synchronisiert — die Uhr dieses Handys weicht zu stark von der des Mailservers ab, als dass ohmail dieses Postfach sicher organisieren könnte. Stell die Uhr richtig; ohmail macht dann von selbst weiter.",
 
   /* Die Absagen der eigenständigen Tür. Keine davon trägt je das Passwort. */
   standaloneNoEngine:
@@ -986,6 +988,27 @@ export const DE: Deck = {
     + "geschrieben wurde; es wurde nichts gesendet.",
   diagnosticFailed: "Die Datei konnte nicht geschrieben werden. Es wurde nichts gesendet.",
 
+  /* --------------------------------------------- help & contact */
+
+  helpRow: "Hilfe & Kontakt",
+  helpRowSub: "support@ohmail.app · ein Mensch antwortet per Mail",
+  helpSubject: "Hilfe zu ohmail",
+  helpDiag: "Diagnose",
+  helpDiagWhat:
+    "Dieser Block enthält die App-Version und den Build, die Plattform, deine Konto-ID, welche Art "
+    + "Postfach verbunden ist und die Art seines letzten Sync-Fehlers. Er enthält nie Adressen, Hosts, "
+    + "Betreffe, Ordnernamen oder Mailinhalte.",
+  helpRemove: "Entfernen",
+  helpRemoved: "Diagnose entfernt.",
+  helpAddBack: "Wieder einfügen",
+  helpDApp: "App",
+  helpDBuild: "Build",
+  helpDPlatform: "Plattform",
+  helpDAccount: "Konto",
+  helpDMailbox: "Postfach",
+  helpDLastSync: "Letzter Sync-Fehler",
+  helpDNone: "keiner",
+
   /* --------------------------------------------- organizing in the background */
 
   stateOrganizing: "Organisiert",
@@ -1169,7 +1192,7 @@ export const DE: Deck = {
   liveBodyLoading: "Die ganze Nachricht wird geladen…",
   liveBodyFailed: "Nur die Vorschau ließ sich laden. Öffne sie erneut, um es nochmal zu versuchen.",
   liveBodyWithheld:
-    "Nicht gespeichert — dein Speicherplatz war voll, als sie ankam. Das hier ist die Vorschau; die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver.",
+    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. Ein größerer Tarif speichert ab jetzt mehr Text; diesen bringt er nicht zurück.",
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
@@ -1436,6 +1459,7 @@ export const DE: Deck = {
   cancelSend: "Senden abbrechen",
   sendCancelled: "Senden abgebrochen. Es wurde nichts gesendet.",
   sendCancelledInDrafts: "Senden abgebrochen. Die Nachricht liegt in den Entwürfen.",
+  sendCancelledNotKept: "Senden abgebrochen. Es wurde nichts gesendet, aber der Text konnte nicht als Entwurf behalten werden.",
   replySending: "Wird gesendet …",
   replySent: "Antwort gesendet.",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
@@ -1446,6 +1470,8 @@ export const DE: Deck = {
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht ist schon unterwegs.",
   replyCancelUnreachable: "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
+  replyCancelUnreachableKept: "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal. Der Text bleibt als Entwurf erhalten.",
+  replyCancelUnreachableNotKept: "Der Server war zum Abbrechen nicht erreichbar, und der Text konnte nicht als Entwurf behalten werden. ohmail fragt weiter nach und sendet das nicht noch einmal.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
   replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
@@ -1629,9 +1655,10 @@ export const DE: Deck = {
 
   draftsTitle: "Entwürfe",
   draftsExplainer: "Nachrichten, die du begonnen und nicht gesendet hast.",
-  draftsMeta: (total: number, held: number): string => {
+  draftsMeta: (total: number, held: number, waiting: number): string => {
     const drafts = total === 1 ? "1 Entwurf" : `${total} Entwürfe`;
-    return held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
+    const said = held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
+    return waiting === 0 ? said : `${said} · ${waiting} ${waiting === 1 ? "wartet" : "warten"} auf den Versand`;
   },
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Account und sind deshalb auf jedem Gerät da, auf dem du deine Mails liest.",
@@ -1647,6 +1674,9 @@ export const DE: Deck = {
   draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",
   draftsDiscard: "Verwerfen",
   draftsDiscardWhat: "Das löscht die einzige Kopie.",
+  draftsWaiting: "Wartet auf den Versand",
+  draftsDiscardWaitingWhat: "Das bricht das Senden ab und löscht die einzige Kopie.",
+  draftsDiscardedNotSent: "Verworfen. Es wurde nichts gesendet.",
   draftsDiscardConfirm: "Verwerfen",
   draftsDiscardCancel: "Behalten",
   draftsDiscardStillSending:
@@ -1986,6 +2016,8 @@ export const DE: Deck = {
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Nachricht ${position} von ${count}, von ${sender}, ${unread ? "ungelesen" : "gelesen"}`,
   readerMarkMine: (position: number, count: number) => `Nachricht ${position} von ${count}, von dir gesendet`,
+  readerMarkYou: "du",
+  readerMarkYesterday: "gestern",
   readerMessageActions: "Nachrichtenaktionen",
   readerUnread: "Ungelesen",
 
@@ -2040,6 +2072,23 @@ export const DE: Deck = {
   stripLater: "Später",
   stripCaughtUp: (date: string) => `ohmail holt die Nachrichten nach, die seit dem ${date} angekommen sind.`,
   stripDismiss: "Verstanden",
+  storageNoticeEmptied: (cap: string, count: number) =>
+    `Damit die ${cap} GB deines Tarifs reichen, speichert ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr.`,
+  storageNoticeEmptiedBefore: (count: number) =>
+    `Damit der Speicher deines Tarifs damals reichte, hat ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr gespeichert.`,
+  storageNoticeKeptFrom: (month: string) => `Für Nachrichten ab ${month} bleibt der Text gespeichert.`,
+  storageNoticeKeptFromExcept: (month: string, count: number) =>
+    `Für Nachrichten ab ${month} bleibt der Text gespeichert, außer bei ${count === 1 ? "einer Nachricht, die ankam" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen`}, als dein Speicher voll war.`,
+  storageNoticeOnArrival: (count: number) =>
+    count === 1
+      ? "Eine Nachricht, die ankam, als dein Speicher voll war, ist ohne ihren Text gespeichert."
+      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen, als dein Speicher voll war, sind ohne ihren Text gespeichert.`,
+  storageNoticeSafe: "Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver und bleiben hier gelistet und auffindbar.",
+  storageNoticeTrial: "Ein größerer Tarif speichert ab jetzt mehr Text. Bereits entfernten Text bringt er nicht zurück.",
+  storageNoticeActive:
+    "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text. Bereits entfernten Text bringt das nicht zurück.",
+  storageNoticeManage: "Abo verwalten",
+  storageNoticeDismiss: "Schließen",
 
   renderErrorTitle: "Auf diesem Bildschirm ist etwas schiefgegangen.",
   renderErrorWhere: (surface: string) => `${surface} konnte nicht gezeichnet werden.`,

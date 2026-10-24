@@ -5921,7 +5921,7 @@ fn set_badge<R: tauri::Runtime>(app: tauri::AppHandle<R>, count: u32) -> Result<
 /// The table is also why the addresses live HERE rather than in the frontend: the bundle is
 /// asserted to name no host at all, which is the claim the whole preview artifact rests on.
 #[cfg(feature = "local-engine")]
-const LINKS: [(&str, &str); 9] = [
+const LINKS: [(&str, &str); 11] = [
     ("account", "https://ohmail.app/mailbox#/settings"),
     ("security", "https://ohmail.app/mailbox#/settings"),
     ("billing", "https://ohmail.app/mailbox#/settings"),
@@ -5951,6 +5951,10 @@ const LINKS: [(&str, &str); 9] = [
     ("approve", "https://ohmail.app/approve"),
     ("privacy", "https://ohmail.app/privacy"),
     ("subprocessors", "https://ohmail.app/subprocessors"),
+    // The Cloud door's way to an account: sign-up, and setup behind a sign-in. `next=join` is a
+    // constant like every character here; `engine_tests.rs` admits it for `setup` by name.
+    ("join", "https://ohmail.app/join"),
+    ("setup", "https://ohmail.app/login?next=join"),
 ];
 
 /// The address a key names, or `None`. Split out so the rule is testable without a browser.

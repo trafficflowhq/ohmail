@@ -11,7 +11,7 @@ import { dayStamp } from "../../shell/format";
 import { durableSessionSet } from "../../shell/durable";
 import { readOwner } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
-import { RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../shell/wall-lift";
+import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../shell/wall-lift";
 import { leaveForManagePage } from "./SubscriptionSection";
 
 /**
@@ -26,7 +26,7 @@ import { leaveForManagePage } from "./SubscriptionSection";
  */
 
 /** A return this long after the last read asks again while nothing is drawn; while one is, the debounce. */
-export const QUIET_RETURN_MS = 15 * 60_000;
+export { QUIET_RETURN_MS };
 
 /** How close to the end of a trial the strip appears. The day-12 reminder mail is the other half. */
 export const TRIAL_NOTICE_DAYS = 2;

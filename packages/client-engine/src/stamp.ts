@@ -74,6 +74,11 @@ export function dateClock(instant: Date, zone: string, locale = "en"): string {
   return `${f.day} ${named(locale, { month: "short" }, instant, zone)}, ${clock(instant, zone)}`;
 }
 
+/** "Wed 21 Oct, 14:05" — a day this year named in full, at a time. */
+export function weekdayDateClock(instant: Date, zone: string, locale = "en"): string {
+  return `${named(locale, { weekday: "short" }, instant, zone)} ${dateClock(instant, zone, locale)}`;
+}
+
 /**
  * AN INSTANT NAMED IN A SENTENCE — a set time (a resurface, a scheduled send, an away end date) or
  * a past one (a last visit, a stale mirror's "as of", an outage's "since") — by the bands at the

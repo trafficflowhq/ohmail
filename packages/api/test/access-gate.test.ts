@@ -5,7 +5,7 @@ import {
 } from "@trafficflow/api";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { UNMETERED, mailboxes, messages, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
+import { UNMETERED, accountStorage, mailboxes, messages, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import {
   spendOf, entitlementsPort as entitlementsPortOf,
@@ -153,6 +153,50 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const r = await accessHandler();
     const res = await r.handler(req("GET", "/account/access", { bearer: s.token }), deps, {});
     expect((await res.json()).aiEnabled).toBe(false);
+  });
+
+  it("a METERED account with a cap reads its storage: bytes, cap and the letters emptied for space", async () => {
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: 2_000_000_000, canAddMailbox: true, aiEnabled: true } }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await db.insert(accountStorage).values({
+      accountId: s.accountId, bytes: 1_868_000_000, huskedForSpace: 80_000,
+      firstHuskedAt: new Date("2026-10-20T03:00:00.000Z"), lastHuskedAt: new Date("2026-10-24T03:00:00.000Z"),
+      keptFrom: "2019-04-01", withheldOnArrival: 12,
+    });
+    const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+    expect(body.storage).toEqual({
+      usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
+      firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 12,
+    });
+  });
+
+  it("…an account with no counter row yet reads zero, never an absent block", async () => {
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: 5_000, canAddMailbox: true, aiEnabled: true } }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+    expect(body.storage).toEqual({
+      usedBytes: 0, limitBytes: 5_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null, withheldOnArrival: 0,
+    });
+  });
+
+  it("no storage block without a cap, for a refused account, or on a host with no program", async () => {
+    for (const port of [
+      stubPort({ access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: null, canAddMailbox: true, aiEnabled: true } }) }),
+      refusing("payment_required"),
+      undefined,
+    ]) {
+      const { db, deps } = await depsWith(port);
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      await db.insert(accountStorage).values({ accountId: s.accountId, bytes: 10, huskedForSpace: 3 });
+      const res = await H(req("GET", "/account/access", { bearer: s.token }), deps);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(Object.keys(body)).not.toContain("storage");
+    }
   });
 
   it("a REFUSAL is never reported as unmetered — the arm the middleware hides", async () => {

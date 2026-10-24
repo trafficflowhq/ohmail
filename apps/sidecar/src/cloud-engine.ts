@@ -2021,14 +2021,19 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           : undefined;
         try {
           const ctx = ctxFor(core.accountId, core.userId, core.sessionId);
-          const ask = (): Promise<SyncResponse> => syncService.getChanges(ctx, {
-            since,
-            ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
-            ...(types && types.length > 0 ? { types } : {}),
-          });
+          // A bootstrap (no cursor) never waits; a resumed drain waits for a send's echo, and with nothing new may wait on.
+          const resumed = since !== undefined && since !== "0";
+          const end = performance.now() + FOLLOW_UP_CAP_MS;
+          const ask = async (): Promise<SyncResponse> => {
+            if (resumed) await liveMirror.awaitLaterEchoes(end - performance.now());
+            return syncService.getChanges(ctx, {
+              since,
+              ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+              ...(types && types.length > 0 ? { types } : {}),
+            });
+          };
           let result = await ask();
-          // A bootstrap (no cursor) never waits; a resumed drain with nothing new may.
-          if (since !== undefined && since !== "0") {
+          if (resumed) {
             result = await drainOnFollowUp(heldDrains, JSON.stringify([since, limitRaw, typesRaw]), liveMirror, ask, result);
           }
           return json(result);

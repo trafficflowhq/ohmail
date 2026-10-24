@@ -785,8 +785,11 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
 export interface ReplyEditorMeta {
   subject?: string;
   sig?: SignatureState;
-  /** The account row this browser last wrote or opened for the lane, at its stored stamp. */
-  row?: { id: string; at: string };
+  /**
+   * The account row this browser last wrote or opened for the lane, at its stored stamp; `holds` hashes
+   * its text, `pending` the text of a later save the outbox took and the row was not yet seen holding.
+   */
+  row?: { id: string; at: string; holds?: string; pending?: string };
   /** What the editor showed while it held text — see {@link LaneEnvelope}. */
   envelope?: LaneEnvelope;
 }
@@ -843,7 +846,13 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
-      ...(typeof row?.id === "string" && typeof row.at === "string" ? { row: { id: row.id, at: row.at } } : {}),
+      ...(typeof row?.id === "string" && typeof row.at === "string"
+        ? { row: {
+          id: row.id, at: row.at,
+          ...(typeof row.holds === "string" ? { holds: row.holds } : {}),
+          ...(typeof row.pending === "string" ? { pending: row.pending } : {}),
+        } }
+        : {}),
       ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
         : sig?.kind === "edited" && typeof sig.text === "string"
           ? { sig: { kind: "edited" as const, text: sig.text } }
@@ -1468,6 +1477,8 @@ export function useMailSend(
   const queued = useRef(new Map<string, string>());
   /** `Idempotency-Key → the frozen mutation`, so a late confirmation knows what it delivered. */
   const inFlight = useRef(new Map<string, MailSend>());
+  /** Each lane's last press: its key, and whether it minted it (not resumed, not joined). */
+  const pressKey = useRef(new Map<string, { key: string; minted: boolean }>());
   /**
    * THE LOCK — a ref, and it has to be, which a test proved rather than a comment claimed. `send` first gated on
    * `states[key]`, i.e. React state captured at RENDER. Two calls inside one tick therefore both read `idle`, both
@@ -1933,7 +1944,10 @@ export function useMailSend(
       // is where all of it lives — so a confirmation from a flush minutes later clears the
       // draft and discharges the debt exactly as the first press would have.
       if (res.status === "confirmed") {
-        settle(key, m, res.andDone, res.earlierWordsKept === true && res.firstSend !== undefined, res.firstSend !== undefined);
+        // A `firstSend` under the key this lane's press minted is that press's own delivery, answered late.
+        const p = pressKey.current.get(key);
+        const earlier = res.firstSend !== undefined && !(p?.minted === true && p.key === res.key);
+        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier);
       } else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -2537,6 +2551,7 @@ export function useMailSend(
       const resumed = resumeSendLock(key, id, now, owed, owner.current);
       const standing = standingSendKey(engine, key);
       const sendKey = standing ?? resumed ?? crypto.randomUUID();
+      pressKey.current.set(key, { key: sendKey, minted: standing === null && resumed === null });
       if (sendKey !== resumed) {
         claimSendLock({
           v: SEND_LOCK_FORMAT, lane: key, key: sendKey, at: now, draftId: m.draftId ?? null, fp,

@@ -515,6 +515,8 @@ export class MailService {
       locale: "en" | "de";
       anchor: Date;
       erasureAt: Date | null;
+      /** The account has never had a mailbox (the pass reads it at send time). */
+      noMailbox?: boolean;
     },
   ): Promise<MailSendResult> {
     return this.guarded(ctx, input.to, "transactional", (to) =>
@@ -523,7 +525,11 @@ export class MailService {
         locale: input.locale,
         anchorDate: formatUtc(input.anchor),
         erasureDate: input.erasureAt ? formatUtc(input.erasureAt) : null,
-        accountUrl: `${trimSlash(this.cfg.appUrl)}/settings/account`,
+        // The app routes by hash; a `/settings/account` path is the web app's 404.
+        accountUrl: `${trimSlash(this.cfg.appUrl)}/#/settings/account`,
+        // Sign-in if needed, then the signup wizard's mailbox step, which asks for a lapsed step-up in place.
+        setupUrl: `${trimSlash(this.cfg.appUrl)}/login?next=join`,
+        noMailbox: input.noMailbox === true,
         supportEmail: this.cfg.supportEmail,
       }, {
         idempotencyKey: `lifecycle:${hashToken(`${to}|${input.kind}|${input.anchor.toISOString()}`)}`,

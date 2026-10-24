@@ -6,13 +6,18 @@ import {
   isOwnSent,
   newestFromSomeone,
   ohboxView,
+  pileOfState,
   resurfacedFocus,
   resurfacedThreads,
+  threadOf,
+  winningStates,
+  type OhboxView,
   type ResurfacedThreadRow,
 } from "./selectors.js";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage } from "./types.js";
+import { FOLDER_OF_VIEW, type EngineMessage } from "./types.js";
 
 /*
  * ONE ROW PER CONVERSATION, ACROSS SECTIONS (owner 2026-09-28). The Ohbox draws a conversation at
@@ -193,6 +198,39 @@ export function triageSubjectIds(reader: EntityReader, ids: readonly string[]): 
 }
 
 /**
+ * What a Park on `messageId` files. Standing in an Ohbox row: every member of it that stands in the
+ * Ohbox, our own reply included, so the row leaves (a Resurfaced row's pins, and its INBOX and own Sent
+ * members not filed in a pile). Parked: every parked member of its conversation, so the un-press
+ * mirrors the press. In another pile, in no row, or unknown to the reader: itself.
+ */
+export function parkSubjectIds(
+  reader: EntityReader, messageId: string, openHeld: string | null = null,
+): string[] {
+  const m = reader.get<EngineMessage>("message", messageId);
+  if (!m) return [messageId];
+  const claims = winningStates(reader);
+  const stateOf = (x: EngineMessage): string | undefined => claims.get(x.id)?.state ?? x.triage?.state;
+  if (stateOf(m) === "set_aside") {
+    const rest = threadOf(reader, messageId).filter((x) => x.id !== messageId && stateOf(x) === "set_aside");
+    return [messageId, ...rest.map((x) => x.id)];
+  }
+  if (pileOfState(stateOf(m) ?? "")) return [messageId];
+  const key = conversationKeyOf(m);
+  const rows = ohboxRows(reader, openHeld);
+  for (const section of SECTIONS) {
+    const row = rows[section].find((r) => r.key === key);
+    if (!row || !row.members.some((x) => x.id === messageId)) continue;
+    const pins = new Set((row.resurfaced?.pinned ?? []).map((x) => x.id));
+    const inbox = canonicalDestination(FOLDER_OF_VIEW.ohbox);
+    const standing = row.members.filter((x) => pins.has(x.id) || (
+      !pileOfState(stateOf(x) ?? "") && (isOwnSent(x) || canonicalDestination(x.folder) === inbox)
+    )).map((x) => x.id);
+    return standing.includes(messageId) ? standing : [messageId];
+  }
+  return [messageId];
+}
+
+/**
  * Our own mail facing the Ohbox row `m` stands for, when `m` is that row's open target with no
  * unread letter (our own Sent copy flagged unread is none) and `m` not held open; else null.
  * The web's row press records it, and Move seeds its subjects from it, so a Move on an answered
@@ -238,4 +276,21 @@ export function ohboxRows(
   );
   rowsCache.set(reader, { v, openHeld, rows });
   return rows;
+}
+
+/**
+ * THE OHBOX'S UNREAD — the one set the rail, the list header, mark-all-read, the dock badge and the
+ * phone's tab all count: every member of every Resurfaced row, New and Earlier, once each, by the
+ * mailbox's own flag (`m.unread`, never `presentsUnread`). The rail used to count New alone, so a
+ * letter brought back by Resurface > Now stood in the header's number and not in the rail's.
+ */
+export function ohboxUnreadIds(
+  resurfacedRows: readonly { members: readonly EngineMessage[] }[],
+  view: Pick<OhboxView, "newForYou" | "previouslySeen">,
+): string[] {
+  const ids = new Set<string>();
+  for (const row of resurfacedRows) for (const m of row.members) if (m.unread) ids.add(m.id);
+  for (const m of view.newForYou) if (m.unread) ids.add(m.id);
+  for (const m of view.previouslySeen) if (m.unread) ids.add(m.id);
+  return [...ids];
 }

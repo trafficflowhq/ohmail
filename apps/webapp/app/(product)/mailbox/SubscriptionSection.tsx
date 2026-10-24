@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
-import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
+import { account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
+import { formatStorageBytes, storageKeptLine, storageState } from "../../shell/storage-state";
 import { SELF_HOST_BUILD } from "../../hello";
 import { readOwner } from "../../shell/owner-cookie";
 
@@ -22,6 +23,19 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const lang = useLocale() === "de" ? "de" : "en";
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  /* THE STORED LETTER TEXT, from the access feed the pane is offered on: the numbers, and once any
+     letter's text was emptied for space, how many. Absent block, absent row. */
+  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
+  const storage = accessStorage(entry?.answer);
+  const said = storageState(storage);
+  /* Once letters are emptied: how many of the oldest, then the month text is kept from with the letters
+     that arrived while the storage was full; those alone say that the letters stay on the server. */
+  const kept = storage !== null && said?.kind === "emptied" ? storageKeptLine(storage, lang) : null;
+  const emptiedLine = said?.kind === "emptied" ? [
+    said.count > 0 ? t(said.current ? "webStorageEmptied" : "webStorageEmptiedBefore", { count: said.count }) : null,
+    kept === null ? null : t(kept.key, kept.values),
+    said.count > 0 ? null : t("storageNoticeSafe"),
+  ].filter((line) => line !== null).join(" ") : null;
   /** The pane can be left mid-press; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -61,6 +75,17 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
           </button>
         }
       />
+      {storage !== null ? (
+        <SettingsRow
+          label={t("webStorage")}
+          description={said === null
+            ? t("webStorageSub")
+            : emptiedLine ?? t(said.kind === "full" ? "webStorageFull" : "webStorageNear")}
+          value={t("webStorageOf", {
+            used: formatStorageBytes(storage.usedBytes, lang), cap: formatStorageBytes(storage.limitBytes, lang),
+          })}
+        />
+      ) : null}
     </SettingsSection>
   );
 }

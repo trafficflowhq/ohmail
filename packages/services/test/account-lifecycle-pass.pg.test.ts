@@ -80,15 +80,15 @@ function fakePort(byAccount: Map<string, AccessLifecycle>): {
 }
 
 function fakeMail(status: "sent" | "failed" = "sent") {
-  const sent: Array<{ to: string; kind: string; locale: string; anchor: string }> = [];
+  const sent: Array<{ to: string; kind: string; locale: string; anchor: string; noMailbox?: boolean }> = [];
   return {
     sent,
     mail: {
       sendLifecycleNotice: async (
         _ctx: unknown,
-        input: { to: string; kind: string; locale: string; anchor: Date; erasureAt: Date | null },
+        input: { to: string; kind: string; locale: string; anchor: Date; erasureAt: Date | null; noMailbox?: boolean },
       ) => {
-        sent.push({ to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString() });
+        sent.push({ to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString(), noMailbox: input.noMailbox });
         return { status };
       },
     } as unknown as AccountLifecyclePassDeps["mail"],
@@ -173,6 +173,31 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
     const [a] = await db.select().from(accounts).where(eq(accounts.id, held.accountId));
     expect(a!.erasedAt).toBeNull();
     expect(await db.select().from(users).where(eq(users.accountId, held.accountId))).toHaveLength(1);
+  });
+
+  it("a trial with no mailbox gets the no-mailbox notice and one with a mailbox today's, each once", async () => {
+    const bare = await seedAccount();
+    const kept = await seedAccount();
+    await db.insert(mailboxes).values({
+      accountId: kept.accountId, provider: "imap", address: `kept-${randomUUID().slice(0, 8)}@wall.test`,
+    });
+    const trial: AccessLifecycle = {
+      state: "trialing", closedReason: null, trialEndsAt: new Date(NOW.getTime() + DAY).toISOString(),
+      graceUntil: null, closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
+    };
+    const { port } = fakePort(new Map([[bare.accountId, trial], [kept.accountId, trial]]));
+    const mine = (m: ReturnType<typeof fakeMail>) => m.sent.filter((s) => s.to === bare.email || s.to === kept.email)
+      .map((s) => ({ to: s.to, kind: s.kind, noMailbox: s.noMailbox }));
+    const m1 = fakeMail();
+    await sweepThenErase({ port, mail: m1.mail, now: () => NOW });
+    expect(mine(m1)).toEqual(expect.arrayContaining([
+      { to: bare.email, kind: "trial_two_days", noMailbox: true },
+      { to: kept.email, kind: "trial_two_days", noMailbox: false },
+    ]));
+    expect(mine(m1)).toHaveLength(2);
+    const m2 = fakeMail();
+    await sweepThenErase({ port, mail: m2.mail, now: () => NOW });
+    expect(mine(m2), "one mail per account per kind").toEqual([]);
   });
 
   it("the erasure-week notice arrives inside the window, anchored on the plane's own instant", async () => {

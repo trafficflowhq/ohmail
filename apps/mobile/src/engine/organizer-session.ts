@@ -12,6 +12,7 @@ import { faultDetail, refuse, type Refusal } from "../refusal";
 import type {
   ClaimHereOutcome, PhoneServerSettings, StandaloneEngine, StopOrganizingOutcome,
 } from "./standalone-door";
+import { gateBlockOf, type GateBlock } from "../ui/standalone-form";
 import {
   createBackgroundOrganizing,
   type AppPhase,
@@ -255,7 +256,7 @@ export interface StandaloneHere {
   readonly releaseRefusal: "sibling_lapse" | null;
   readonly heldBy: StandDownHolder | null;
   /** The engine's gate refused `ohmail/_meta` for a reason fixed on the mail server, or `null`. */
-  readonly metaBlocked: "meta_folder_full" | "meta_undeletable" | null;
+  readonly metaBlocked: GateBlock | null;
   /** `null` until the engine has said — see the body. */
   readonly reachable: boolean | null;
   /** ISO 8601, or `null` while reachable. The FIRST observation of the current outage. */
@@ -358,8 +359,7 @@ export function standaloneHere(): StandaloneHere | null {
       /* THE GATE'S OWN REFUSAL, read whether or not the engine still says organizing: a holder whose
          poll gate refuses keeps `organizing` (Stop reads it) while nothing is filed. The desktop's
          overlay reads its reason first too (PHONE-START-HERE-META-FOLDER-FULL). */
-      const blocked = entries.map(([, s]) => s.unreadableReason).find((r) => r === "meta_folder_full" || r === "meta_undeletable");
-      metaBlocked = blocked === "meta_folder_full" || blocked === "meta_undeletable" ? blocked : null;
+      metaBlocked = entries.map(([, s]) => gateBlockOf(s.unreadableReason)).find((r) => r !== null) ?? null;
       if (!organizing) {
         const stood = entries.map(([, state]) => state).find((state) => state.reason !== null
           || state.holderState === "held" || state.holderState === "stopped");
@@ -557,8 +557,8 @@ export type PressOutcome =
   | "held_consented"
   /** HELD, over a mailbox this install organized: the claim watch takes it back by itself. */
   | "held_returns"
-  /** The gate cannot read `ohmail/_meta` for a reason fixed on the server; the press says which. */
-  | "meta_folder_full" | "meta_undeletable"
+  /** The gate refused for a reason fixed on the server or the phone's clock; the press says which. */
+  | GateBlock
   | "refused";
 
 let instruction: OrganizeInstruction = "idle";
@@ -682,7 +682,8 @@ async function startHere(press: () => Promise<ClaimHereOutcome> = claimHereStand
   /* CARRIED, not folded. The door says `unreadable` exactly where it could not check, and the
      panel owes that its own sentence — see {@link PressOutcome}. */
   if (outcome === "unreadable") return "unreadable";
-  if (outcome === "meta_folder_full" || outcome === "meta_undeletable") return outcome;
+  const block = gateBlockOf(outcome);
+  if (block !== null) return block;
   if (outcome !== "claimed") return "refused";
   /* AND THE SESSION COMES BACK WITH THE CLAIM. The stop disposed it, taking the notification, the
      foreground service and both watches with it — so a start that only claimed would leave the

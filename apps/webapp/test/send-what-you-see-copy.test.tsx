@@ -75,7 +75,7 @@ describe("a draft that moved under the press", () => {
 
   it("says so in German", () => {
     const text = render(phaseFor(refused()), de, "de");
-    expect(text).toContain("in einem anderen Fenster geändert");
+    expect(text).toContain("in einem anderen Fenster oder auf einem anderen Gerät geändert");
     expect(text).toContain("Nicht gesendet");
   });
 

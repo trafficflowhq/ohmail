@@ -286,10 +286,12 @@ import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
+import { useSetupResume } from "./setup-resume";
 import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
+import { HelpContactPane, type SupportHost } from "./HelpContactPane";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -592,6 +594,7 @@ export function AppShell({
   invitesSection,
   securitySection,
   aboutSection,
+  support,
   desktopSection,
   devicesSection,
   defaultMailSection,
@@ -743,6 +746,11 @@ export function AppShell({
    * from `GET /mailboxes`, which this shared shell may not call. Absent ⇒ the demo body.
    */
   aboutSection?: ReactNode;
+  /**
+   * Which surface, build and account this is, for Settings › Help & contact. The pane lives in
+   * the shell because Write to us opens the shell's own composer. Absent ⇒ no pane (the demo).
+   */
+  support?: SupportHost;
   /**
    * The pane only a shell with a native process behind it can have: which
    * door this install came in by, which mailbox it opens, and the actions
@@ -1002,6 +1010,7 @@ export function AppShell({
             invitesSection={invitesSection}
             securitySection={securitySection}
             aboutSection={aboutSection}
+            support={support}
             desktopSection={desktopSection}
             devicesSection={devicesSection}
             defaultMailSection={defaultMailSection}
@@ -1074,7 +1083,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1096,6 +1105,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   invitesSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
+  support?: SupportHost;
   desktopSection?: { label: string; node: ReactNode };
   devicesSection?: ReactNode;
   defaultMailSection?: ReactNode;
@@ -1273,6 +1283,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
   const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
   const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp, windowOwners);
+  /* An account with no mailbox is sent to the door's setup page, once per tab (`setup-resume.ts`). */
+  const setupDoor = resolvedDemo ? undefined : firstRun;
+  useSetupResume(setupDoor, {
+    mailboxes: facts, consentAnswered: consent.onboardingKnown, onboardingCompletedAt: consent.onboardingCompletedAt,
+  });
+  /** Where "connect a mailbox" goes on this door; absent: Settings → Mailboxes. */
+  const setupHref = setupDoor?.setupHref;
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
    * has yet completed for this engine", which is exactly the window in which ZERO folder
@@ -1727,7 +1744,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, parkSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1923,7 +1940,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
-    composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
+    composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -1946,6 +1963,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
+    parkSetFor: route.view === "ohbox" ? parkSetFor : undefined,
     readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
@@ -1970,11 +1988,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-    aboutSection, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
+    aboutSection, helpOffered: support != null, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
-    ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
+    ohbox, resurfacedRows, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
     barPanel, focused, forwardTargetFor, fr, frValues, mirrorHolds, picker, railOpen, readerCrossed, readerFor, readerMessage, readerGone,
     selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
@@ -2277,7 +2295,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
             1024px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
-        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} />}
+        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} setupHref={setupHref} />}
         {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
         <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
 
@@ -2444,7 +2462,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 <PullNewMail variant="rail" binding={pullBinding} />
                 {/* A send that left its editor finishes here, above the mailbox's own line. */}
                 <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
-                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} />}
+                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
                 <UnsavedChanges variant="rail" />
@@ -2542,6 +2560,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
+                {...(setupHref ? { setupHref } : {})}
                 /* THE AWAY-RESPONDER NOTICE — the one state in which this product sends mail
                    on its own, made visible on the pane its owner actually reads. Same gate as
                    the settings row (`awaySection` below): absent on the demo, absent on a
@@ -2585,7 +2604,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                      * where somebody has a screen full of decisions already.
                      */
                     const offer = faceOffer.eligible && applyFaceAllDevices !== null
-                      && !route.firstRun
+                      && !route.firstRun && (facts?.length ?? 0) > 0 // waits for a mailbox, every door
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
                     return (
@@ -3510,6 +3529,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                     aboutSection
                   )
                 }
+                helpSection={demo || !support ? undefined : (
+                  <HelpContactPane host={support} mailboxes={facts} onWrite={writeSupport} />
+                )}
                 /* THE ROUTE'S PANE — `#/settings/<pane>` controls the section; the bare hash
                    leaves the view's own deep-link logic (`?settings=`) in charge. A nav click
                    writes the hash (`goSettings`), so sections stack in history and Back/Forward

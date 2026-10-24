@@ -878,6 +878,13 @@ describe("the baseline cutoff is frozen", () => {
       // A letter the server lost, kept: one nullable ADD COLUMN IF NOT EXISTS on messages, and the
       // two filing-class CHECKs re-added under their names, NOT VALID. No data. Safe over any history.
       "0164_messages_server_missing",
+      // An erased mailbox's bytes leave the storage counter: the counter rows of accounts with an
+      // erased mailbox, locked and recounted from their bodies. No object. Safe over any history.
+      "0165_account_storage_recount",
+      // The storage counter's facts: seven ADD COLUMN IF NOT EXISTS on account_storage (two with a
+      // constant default), its CHECK dropped and re-added, the count of letters already emptied
+      // filled from their marker, and a grant guarded on the staff role. Safe over any history.
+      "0166_account_storage_facts",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

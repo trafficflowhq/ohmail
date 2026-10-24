@@ -741,21 +741,96 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     await key("Enter");
     expect(chip(), "no chip before anything is pointed at").toBeNull();
     await point(railButton("p2"), "pointerover");
-    expect(chip()?.textContent, "the rail square's sender and stamp").toMatch(/^Lena · .*\d\d:10$/);
+    expect(chip()?.textContent, "the rail square's sender, its friendly date, its first line").toMatch(/^Lenayesterday \d\d:10the words of p2$/);
     await point(railButton("p2"), "pointerout");
     expect(chip(), "gone with the pointer").toBeNull();
     await act(async () => { railButton("p3")!.focus(); });
-    expect(chip()?.textContent, "keyboard focus names the square too").toMatch(/^Lena · .*\d\d:20$/);
+    expect(chip()?.textContent, "keyboard focus names the square too").toMatch(/^Lenayesterday \d\d:20/);
     await act(async () => { railButton("p3")!.blur(); });
     expect(chip()).toBeNull();
     await point(stripButton(host, "p1"), "pointerover");
-    expect(chip()?.textContent, "the strip's square").toMatch(/^Lena · .*\d\d:00$/);
+    expect(chip()?.textContent, "the strip's square").toMatch(/^Lenayesterday \d\d:00/);
     expect(chip()?.getAttribute("data-place"), "under the strip").toBe("under");
     await point(stripButton(host, "p1"), "pointerout");
     await act(async () => { stripButton(host, "p4")!.focus(); });
-    expect(chip()?.textContent).toMatch(/^Lena · .*\d\d:30$/);
+    expect(chip()?.textContent).toMatch(/^Lenayesterday \d\d:30/);
     expect(chip()?.getAttribute("aria-hidden"), "the square's own label is its name").toBe("true");
     expect(document.querySelectorAll(".tm-mb[title]").length, "a native tooltip would name it twice").toBe(0);
+  }, 30_000);
+
+  /** A finger on `el`: down, then up after `ms`. */
+  const touch = async (el: Element | null, type: "pointerdown" | "pointerup"): Promise<void> => {
+    expect(el, `nothing to touch (${type})`).toBeTruthy();
+    const e = new MouseEvent(type, { bubbles: true });
+    Object.defineProperty(e, "pointerType", { value: "touch" });
+    await act(async () => { el!.dispatchEvent(e); });
+  };
+
+  it("a finger held on a square shows its chip and never presses it; a tap still presses; the chip goes after the finger", async () => {
+    const host = await shortLast();
+    await key("j");
+    await key("Enter");
+    const at = layout.scroller().scrollTop;
+    const was = ring();
+    await point(railButton("p2"), "pointerover");
+    await point(railButton("p2"), "pointerout");
+    await touch(railButton("p2"), "pointerdown");
+    await tick(300);
+    expect(chip(), "not before the hold's 380 ms").toBeNull();
+    await tick(100);
+    expect(chip()?.textContent, "the hold names the square").toMatch(/^Lenayesterday \d\d:10/);
+    await touch(railButton("p2"), "pointerup");
+    await click(railButton("p2"), "the click that ends the hold");
+    expect(layout.scroller().scrollTop, "the hold pressed the square").toBe(at);
+    expect(ring()).toBe(was);
+    expect(chip(), "the chip stays a moment after the finger").not.toBeNull();
+    await tick(1200);
+    expect(chip(), "then goes").toBeNull();
+    await touch(stripButton(host, "p2"), "pointerdown");
+    await touch(stripButton(host, "p2"), "pointerup");
+    await click(stripButton(host, "p2"), "a tap on p2 in the strip");
+    expect(chip(), "a tap shows no chip").toBeNull();
+    expect(layout.scroller().scrollTop, "a tap presses").toBe(P2_LANDS);
+  }, 30_000);
+
+  it("in the reader sheet, a tap on another square while a hold's chip stays drops that chip and presses", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true, writable: true,
+      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
+    });
+    await shortLast();
+    await key("j");
+    await key("Enter");
+    const sq = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`.reader .thread-marks .tm-mb[data-for="${id}"]`);
+    await touch(sq("p1"), "pointerdown");
+    await tick(400);
+    expect(chip()?.textContent, "the hold names p1").toMatch(/^Lenayesterday \d\d:00/);
+    await touch(sq("p1"), "pointerup");
+    await click(sq("p1"), "the click that ends the hold");
+    await tick(300);
+    await touch(sq("p3"), "pointerdown");
+    await touch(sq("p3"), "pointerup");
+    await click(sq("p3"), "a tap on p3 within the chip's stay");
+    expect(chip(), "the held square's chip went with the new press").toBeNull();
+    expect(document.querySelector<HTMLElement>('.reader .tm-mb[aria-current="location"]')?.dataset.for, "the tap pressed p3").toBe("p3");
+    await tick(2000);
+    expect(chip()).toBeNull();
+  }, 30_000);
+
+  it("the chip names your own message 'you' and shows a clip for a message with a file", async () => {
+    bodies(["p1", "o1", "p3"]);
+    await mountThread([
+      msg("p1", 0, { hasAttachments: true, attachmentCount: 1 }),
+      msg("o1", 15, { unread: false, folder: "Sent", from: { name: "Walker", address: ME } }), msg("p3", 20),
+    ]);
+    await key("j");
+    await key("Enter");
+    await point(railButton("o1"), "pointerover");
+    expect(chip()?.querySelector(".tm-tip-head b")?.textContent, "your own message").toBe("you");
+    expect(chip()?.querySelector(".tm-tip-head svg"), "no file, no clip").toBeNull();
+    await point(railButton("o1"), "pointerout");
+    await point(railButton("p1"), "pointerover");
+    expect(chip()?.querySelector(".tm-tip-head svg"), "the clip").not.toBeNull();
   }, 30_000);
 
   it("selecting another conversation takes the strip off the row", async () => {

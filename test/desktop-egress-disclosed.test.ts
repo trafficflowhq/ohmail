@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { ROOT, publicRel } from "./support/public-root.mjs";
 
 /**
- * WHAT THE DESKTOP CONTACTS, AS EACH PUBLISHED ACCOUNT OF IT SAYS. The README's local-mode list
- * spells it out; the Flathub listing, the Linux package description, the Flathub reviewers' notes and
- * SECURITY.md say it again to readers who never open the README. Each names what leaves beside the
+ * WHAT THE DESKTOP CONTACTS, AS EACH PUBLISHED ACCOUNT OF IT SAYS. The local-mode list in
+ * docs/how-it-works.md spells it out; the Flathub listing, the Linux package description, the Flathub
+ * reviewers' notes and SECURITY.md say it again to readers who never open it. Each names what leaves beside the
  * mail server: the pictures in a message the person opens, the one-click unsubscribe a screen-out
  * sends, the DNS lookup of the key a sender's domain signs with (set off by whoever wrote, at
  * ingest), and the model provider when one is on. A new kind of egress is added to all of them.
@@ -31,8 +31,7 @@ function bullet(text: string, marker: string): string {
 }
 
 const ACCOUNTS: [string, () => string][] = [
-  ["README.md, local mode", () => paragraph(read(publicRel("README.md")), "**Local mode**")],
-  ["README.ohmarchy.md, local mode", () => paragraph(read(publicRel("README.ohmarchy.md")), "**Local mode**")],
+  ["docs/how-it-works.md, local mode", () => paragraph(read(publicRel("docs/how-it-works.md")), "**Local mode**")],
   ["SECURITY.md, local mode", () => bullet(read(publicRel("SECURITY.md")), "In **local mode**")],
   ["the Flathub listing", () => {
     const xml = read("apps/desktop/flatpak/app.ohmail.Desktop.metainfo.xml");

@@ -598,16 +598,16 @@ describe("what a site may do under each answer", () => {
  */
 const SETTLE_SITES: Array<[file: string, count: number, sites: string]> = [
   ["compose-autosave.ts", 1, "the adopt-on-mount arm for a row the mirror calls `sent`"],
-  ["shell-compose.ts", 3,
-    "`onSendSettled`'s confirmed compose, `discardDraft`'s 409 `send_recorded` answer, and "
-    + "`onSendOutcome`'s refused send that names its row (`refusedWithRow`)"],
+  ["shell-compose.ts", 2,
+    "`onSendSettled`'s confirmed compose and `onSendOutcome`'s refused send that names its row "
+    + "(`refusedWithRow`); a Discard empties the editor before the wire, so its 409 restores nothing"],
   // The shell frame keeps none: both endings moved with the verbs (ARCH-022), and a zero here is
   // the claim that no third ending was written back beside the JSX.
   ["AppShell.tsx", 0, "nothing — the endings live with the verbs"],
 ];
 
 /** The SUM, apart from the rows, for `CALL_SITES_TOTAL`'s reason. */
-const SETTLE_SITES_TOTAL = 4;
+const SETTLE_SITES_TOTAL = 3;
 
 describe("a compose's ending is written in one place", () => {
   it("(a) the settleCompose call-site count per file", () => {
@@ -656,24 +656,9 @@ describe("a compose's ending is written in one place", () => {
       + "the reopen's parked arm, Write-to, and the mailto seam",
     ).toBe(3);
 
-    const body = sliceOfDeclaration(shell, "discardDraft");
-    expect(
-      body,
-      "the Drafts list's Delete forgets the binding on its own again — before the server has "
-      + "answered, which is the window the 409 lands in",
-    ).not.toContain("autosave.release()");
-    const guard = body.indexOf('if (res.status !== "confirmed") return;');
-    expect(guard, "the confirmed-only branch is gone, so a refusal forgets the row anyway")
-      .toBeGreaterThan(-1);
-    expect(
-      body.slice(0, guard),
-      "the binding is forgotten BEFORE the server has answered — the window the 409 lands in",
-    ).not.toContain("releaseBindingRef.current()");
-    expect(
-      body.slice(guard),
-      "nothing forgets the binding even once the delete is confirmed, so the compose goes on "
-      + "PATCHing a row that is gone",
-    ).toContain("releaseBindingRef.current()");
+    /* The Drafts list's Delete empties every editor bound to the row before the request goes, by
+       design (`compose-draft-gone-elsewhere.test.tsx` drives it): a refusal leaves the row in Drafts
+       and the editor empty, so nothing can write a second row for it. */
   });
 
   it("(c) the census REFUSES an anchor that finds nothing", () => {
@@ -687,7 +672,7 @@ describe("a compose's ending is written in one place", () => {
     const shell = SHELL("shell-compose.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
     /* The positive half — the name `(b)` DOES use resolves to a slice with the arm in it. */
-    expect(sliceOfDeclaration(shell, "discardDraft")).toContain("releaseBindingRef.current()");
+    expect(sliceOfDeclaration(shell, "discardDraft")).toContain("emptyEditorsOf(draftId, heldRow)");
   });
 });
 
@@ -895,43 +880,23 @@ describe("every write site, under every answer the predicate can give", { timeou
     expect(saves(out.dispatched), "the delivered row was written to").toHaveLength(0);
   });
 
-  it("(c2) restoredBy409 re-adopts the row and writes nothing for unchanged text", async () => {
+  it("(c2) a Discard lets go of the row before the wire, and nothing is written for the letter after", async () => {
     /**
-     * ── THE DELETE THAT LOST THE RACE ─────────────────────────────────────────────────────────
-     *
-     * The Delete passed the local check and lost the race: the server kept the row and answered
-     * 409. The binding had already been forgotten, so the compose sat populated holding no row and
-     * two seconds later wrote a second one. Re-ADOPTED rather than re-made, and the save signature
-     * is reset with it so the pause that follows writes nothing for text the row already holds —
-     * a PUT there would be refused anyway, on a row with a send on record.
-     *
-     * Mutation: make `restoredBy409` a no-op, or `release()` instead of `adopt()`.
+     * The Drafts list's Discard empties the editor before the request goes; a 409 that keeps the row
+     * leaves it in Drafts and the composer holds nothing, so the pause writes no row and no update.
+     * Mutation: drop `release()`'s `abandonedAt` mark, or re-adopt the row on the refusal.
      */
     const out = await drive({
       rows: [{ id: "d1", status: "draft" }], heldRow: "d1",
       after: async (api) => {
-        expect(api.draftId, "the ordinary row was not adopted, so this case measures nothing")
-          .toBe("d1");
-        /* The shell's unconditional release, as it was — the state the 409 used to land in.
-           Read back through storage rather than through `api.draftId`: this callback holds the
-           object from the render BEFORE the release, so its field is a snapshot. */
+        expect(api.draftId, "the ordinary row was not adopted, so this case measures nothing").toBe("d1");
         api.release();
-        expect(window.localStorage.getItem(composeRowKey()), "the release did not forget the row")
-          .toBeNull();
-        api.settleCompose({ kind: "restoredBy409", rowId: "d1" });
       },
     });
-    expect(
-      out.api.draftId,
-      "the row the server kept was not re-adopted — the compose holds no row and the next pause "
-      + "writes a second one for the same message",
-    ).toBe("d1");
     const before = out.dispatched.length;
     await new Promise((r) => setTimeout(r, 2_400));
-    expect(
-      saves(out.dispatched.slice(before)),
-      "the re-adopted row was written to for text it already holds",
-    ).toHaveLength(0);
+    expect({ row: out.api.draftId, stored: window.localStorage.getItem(composeRowKey()), saves: saves(out.dispatched.slice(before)).length },
+      "the released letter was written again, or the composer still holds the row").toEqual({ row: null, stored: null, saves: 0 });
   });
   it("the CREATE arm: free writes exactly one row; parked/record writes none", async () => {
     const free = await drive({ rows: [] });

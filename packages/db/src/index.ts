@@ -282,7 +282,11 @@ export {
   evictOldestBodies, reserveBodyBytesEvicting,
   EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO, EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES,
   type EvictionResult,
-  recomputeAccountStorage,
+  recomputeAccountStorage, lockAccountStorage, type AccountRecount,
+  // Mail 0166: a letter withheld for space on arrival joins the count the trim and the erase keep.
+  recordWithheldForSpace,
+  // The person's own read of the counter row (`GET /account/access`).
+  storageFactsOf, type StorageFacts,
 } from "./storage.js";
 
 /** One definition of "transaction pooler", shared by every host that must refuse one. */

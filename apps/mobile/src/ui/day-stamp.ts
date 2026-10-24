@@ -27,3 +27,16 @@ export function dayStamp(iso: string | null | undefined, locale: string, zone?: 
     return at.toLocaleDateString();
   }
 }
+
+/**
+ * "2019-04" as the reader's month, "April 2019": the month text is kept from. Mid-month at noon UTC,
+ * formatted in UTC, so no zone moves it. A runtime that refuses the locale gets the month as it came.
+ */
+export function monthStamp(yearMonth: string, locale: string): string {
+  const [y, m] = yearMonth.split("-").map(Number);
+  try {
+    return new Date(Date.UTC(y!, m! - 1, 15, 12)).toLocaleDateString(locale, { month: "long", year: "numeric", timeZone: "UTC" });
+  } catch {
+    return yearMonth;
+  }
+}

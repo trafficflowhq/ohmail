@@ -399,6 +399,11 @@ export interface ConsentState {
    */
   onboardingCompletedAt: string | null;
   /**
+   * {@link onboardingCompletedAt} came from the LIVE read. The boot cache sets `known` without it, so a
+   * null there is a resting value, not an answer.
+   */
+  onboardingKnown: boolean;
+  /**
    * The screening mode — `'window'` (cutline `screeningBaselineAt − dormancyDays`) or
    * `'all_time'` (no cutline; nothing lands in History unscreened). The third piece of the
    * cutline arithmetic this object was missing: a client holding two of the three partitions
@@ -483,6 +488,7 @@ const RESTING: ConsentState = {
   // {@link ConsentState.onboardingCompletedAt}: it is the value that would OPEN a setup dialog,
   // which is why the mount site gates on `known` as well and never on this alone.
   onboardingCompletedAt: null,
+  onboardingKnown: false,
   // WINDOWED AT REST — the behaviour every build had before the mode existed, so an API too old
   // to carry it and a failed read land on exactly what that server actually does.
   screeningScope: "window",
@@ -889,6 +895,7 @@ export function useConsentState(
           // nobody has finished or cancelled setup. Both leave the flow eligible to open, which
           // is only reachable at all once `known` is true one line above.
           onboardingCompletedAt: wire.onboardingCompletedAt ?? null,
+          onboardingKnown: true,
           // NORMALISED, not trusted — `locale`'s rule: the column's CHECK and `consentSettings`
           // both close the set, and anything else is a server this build does not understand,
           // which must land on the pre-mode behaviour rather than on an unknown partition.

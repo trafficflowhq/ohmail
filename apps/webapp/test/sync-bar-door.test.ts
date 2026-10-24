@@ -48,8 +48,9 @@ const STOPPED: MailState = {
   owed: false,
 };
 
+let current: MailState = STOPPED;
 vi.mock("../app/shell/MailStateProvider", () => ({
-  useMailState: () => ({ state: STOPPED, refresh: () => {} }),
+  useMailState: () => ({ state: current, refresh: () => {} }),
 }));
 
 // Flipped per test. `apiConfigured()` is SyncBar's only import from the Cloud client, so a
@@ -62,6 +63,7 @@ vi.mock("../app/api-client", () => ({
 const roots: Root[] = [];
 beforeEach(() => {
   cloudDoor = true;
+  current = STOPPED;
 });
 afterEach(() => {
   roots.forEach((r) => r.unmount());
@@ -69,7 +71,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-async function render(variant?: "rail"): Promise<HTMLElement> {
+async function render(variant?: "rail", setupHref?: string): Promise<HTMLElement> {
   const { SyncBar } = await import("../app/shell/SyncBar.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -82,7 +84,7 @@ async function render(variant?: "rail"): Promise<HTMLElement> {
         messages,
         timeZone: "UTC",
         now: new Date("2026-08-09T00:00:00.000Z"),
-        children: variant ? h(SyncBar, { variant }) : h(SyncBar, null),
+        children: h(SyncBar, { ...(variant ? { variant } : {}), ...(setupHref ? { setupHref } : {}) }),
       }),
     );
   });
@@ -125,5 +127,24 @@ describe("stopped, on the LOCAL door (standalone desktop)", () => {
     const c = await render("rail");
     expect(login(c), "the rail form sent a standalone install to /login").toBeNull();
     expect(c.querySelector(".rail-sync"), "the rail strip stayed silent on a stopped loop").not.toBeNull();
+  });
+});
+
+describe("no mailbox: the link goes where this door connects one", () => {
+  const link = (c: HTMLElement) => c.querySelector<HTMLAnchorElement>("a");
+
+  it("on the web, the setup page", async () => {
+    current = { ...STOPPED, key: "noMailbox" };
+    for (const variant of [undefined, "rail"] as const) {
+      const c = await render(variant, "/join");
+      expect(link(c)?.getAttribute("href")).toBe("/join");
+      expect(link(c)?.textContent).toBe(messages.sync.connect);
+    }
+  });
+
+  it("in the desktop window, Settings → Mailboxes", async () => {
+    current = { ...STOPPED, key: "noMailbox" };
+    const c = await render();
+    expect(link(c)?.getAttribute("href")).toBe("#/settings/mailboxes");
   });
 });

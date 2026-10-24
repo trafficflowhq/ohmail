@@ -897,7 +897,7 @@ function endsAtServer(press: SignOutPress): boolean {
 export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAdapter {
   const stage = options.stageAttachments === true;
   return new HttpAdapter({
-    baseUrl: "", fetch: bridgeFetch,
+    baseUrl: "", fetch: bridgeFetch, sendEchoLater: true,
     syncFailureSink: reportWindowSyncFailure, searchPhasesSink: reportWindowSearchPhases,
     ...(stage ? { stageAttachments: true } : {}),
   });

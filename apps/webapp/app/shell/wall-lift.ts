@@ -20,6 +20,8 @@ export const WALL_READ_MS = 60_000;
 export const LIFT_READ_BOUND_MS = 10_000;
 /** Focus and visibility fire together on a tab switch; one read answers both. The access door joins inside it too. */
 export const RETURN_DEBOUNCE_MS = 1_500;
+/** The floor for a return while nothing is drawn: the strip's, and the desktop's account read once answered. */
+export const QUIET_RETURN_MS = 15 * 60_000;
 
 /**
  * WHERE THIS DEVICE LAST FOUND THE ACCOUNT — `open` or `closed`, per owner, written on every

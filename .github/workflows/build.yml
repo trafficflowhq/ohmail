@@ -595,6 +595,8 @@ jobs:
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
+              'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
@@ -1594,6 +1596,8 @@ jobs:
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
+              'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
@@ -2338,6 +2342,8 @@ jobs:
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
+              'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"
@@ -3431,6 +3437,8 @@ jobs:
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
               'https://ohmail.app/subprocessors'*) : ;;
+              'https://ohmail.app/join'*) : ;;
+              'https://ohmail.app/login?next=join'*) : ;;
               *) echo "  unexpected first-party URL: $u" >&2; BAD=1 ;;
             esac
           done <<< "$FIRST_PARTY"

@@ -126,6 +126,16 @@ describe("the accept path — a rendered template arrives on the wire", () => {
     expect(data).toContain("To: member@family.example");
     expect(data).toContain("Reply-To: owner@mail.example.com");
   });
+
+  it("a template's own reply address wins over the configured one", async () => {
+    const s = await sink();
+    await mailerFor(s.port, { replyTo: "owner@mail.example.com" }).send("member@family.example", "lifecycle_notice", {
+      kind: "trial_two_days", locale: "en", anchorDate: "26 October 2026, 18:05 UTC", erasureDate: null,
+      accountUrl: "https://ohmail.app/#/settings/account", setupUrl: "https://ohmail.app/#/first-run/again",
+      noMailbox: true, supportEmail: "support@ohmail.app",
+    });
+    expect(s.messages[0]).toContain("Reply-To: support@ohmail.app");
+  });
 });
 
 describe("`sent` is TRANSPORT ACCEPTANCE, never optimism — the confers-verified coupling", () => {

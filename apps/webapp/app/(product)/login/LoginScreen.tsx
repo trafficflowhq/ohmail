@@ -21,7 +21,7 @@ import {
   type TwofaChallenge,
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
-import { LOGIN_INVITE_KEY, signupPosture } from "../../invite-posture";
+import { LOGIN_INVITE_KEY, anyoneCanSignUp, signupPosture } from "../../invite-posture";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
 import { readOwnerMarker } from "../../shell/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
@@ -431,6 +431,9 @@ export function LoginScreen(
                 `invite-posture.ts`. */}
             <p className="login-invite-note">
               {t(LOGIN_INVITE_KEY[posture])}{" "}
+              {anyoneCanSignUp(posture)
+                ? <><Link href="/join">{t("createAccount")}</Link>{" · "}</>
+                : null}
               <Link href="/join">{t("haveInvite")}</Link>
             </p>
           </form>

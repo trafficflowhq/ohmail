@@ -204,6 +204,84 @@ describe("a folded row that holds the person's own reply", () => {
   });
 });
 
+/* Park on one member left the rest standing as the same Ohbox row. The reader's Park names no
+   members; it takes the row its message stands in. */
+describe("Park on a message of a folded Ohbox row", () => {
+  const OTHER = { name: "Other", address: "other@fake.test" };
+  const ME = { name: "Me", address: "owner@fake.test" };
+  const scenePark = () => scene([], [
+    { ...dto("m1", { subject: "Weekly", from: SENDER, date: "2026-08-19T08:00:00Z" }), threadId: "t1" },
+    { ...dto("m2", { subject: "Re: Weekly", from: OTHER, date: "2026-08-19T09:00:00Z" }), threadId: "t1" },
+    { ...dto("m9", { subject: "Garden", from: OTHER, date: "2026-08-18T08:00:00Z" }), threadId: "t9" },
+  ]);
+  const triaged = (s: Scene, before: number) => writes(s).slice(before)
+    .filter((r) => r.url.endsWith("/triage")).map((r) => `${r.url.split("/")[2]} ${(JSON.parse(r.body) as { state: string }).state}`).sort();
+
+  it("parks every Ohbox member with one sentence, and its Undo brings both back", async () => {
+    const s = await scenePark();
+    try {
+      const before = writes(s).length; const said = s.said.length;
+      expect(await s.actions.pileToggle("m2", "setAside")).toBe(true);
+      await until("both parks on the wire", () => triaged(s, before).length >= 2);
+      expect(triaged(s, before)).toEqual(["m1 set_aside", "m2 set_aside"]);
+      expect(pills(s, said)).toHaveLength(1);
+      const box = liveOhbox(s.engine.read(), view);
+      expect([...box.fresh, ...box.seen].map((r) => r.id), "the row left the Ohbox").toEqual(["m9"]);
+      offer(s).opts!.undo!();
+      await until("both back on the wire", () => triaged(s, before).length >= 4);
+      expect(triaged(s, before).filter((x) => x.endsWith(" none"))).toEqual(["m1 none", "m2 none"]);
+    } finally { s.close(); }
+  });
+
+  it("an answered conversation: my reply parks with the letters, so the row leaves; Undo brings all three back", async () => {
+    const s = await scene([], [
+      { ...dto("m1", { subject: "Weekly", from: SENDER, date: "2026-08-19T08:00:00Z" }), threadId: "t1" },
+      { ...dto("m3", { subject: "Re: Weekly", folder: "Sent", unread: false, from: ME, date: "2026-08-19T08:30:00Z" }), threadId: "t1" },
+      { ...dto("m2", { subject: "Re: Weekly", from: OTHER, date: "2026-08-19T09:00:00Z" }), threadId: "t1" },
+      { ...dto("m9", { subject: "Garden", from: OTHER, date: "2026-08-18T08:00:00Z" }), threadId: "t9" },
+    ]);
+    try {
+      const before = writes(s).length;
+      expect(await s.actions.pileToggle("m2", "setAside")).toBe(true);
+      await until("three parks on the wire", () => triaged(s, before).length >= 3);
+      expect(triaged(s, before)).toEqual(["m1 set_aside", "m2 set_aside", "m3 set_aside"]);
+      const box = liveOhbox(s.engine.read(), view);
+      expect([...box.fresh, ...box.seen].map((r) => r.id), "the row left the Ohbox").toEqual(["m9"]);
+      offer(s).opts!.undo!();
+      await until("all back on the wire", () => triaged(s, before).length >= 6);
+      expect(triaged(s, before).filter((x) => x.endsWith(" none"))).toEqual(["m1 none", "m2 none", "m3 none"]);
+    } finally { s.close(); }
+  });
+
+  it("a second Park on the parked message unparks the whole conversation", async () => {
+    const s = await scenePark();
+    try {
+      const before = writes(s).length;
+      await s.actions.pileToggle("m2", "setAside");
+      await until("both parks on the wire", () => triaged(s, before).length >= 2);
+      const mid = writes(s).length; const said = s.said.length;
+      expect(await s.actions.pileToggle("m2", "setAside")).toBe(true);
+      await until("both unparks on the wire", () => triaged(s, mid).length >= 2);
+      expect(triaged(s, mid)).toEqual(["m1 none", "m2 none"]);
+      expect(pills(s, said)).toEqual(["Out of Parked"]);
+      const box = liveOhbox(s.engine.read(), view);
+      const back = [...box.fresh, ...box.seen].find((r) => r.id !== "m9");
+      expect([...(back?.memberIds ?? [])].sort(), "the row is back whole").toEqual(["m1", "m2"]);
+    } finally { s.close(); }
+  });
+
+  it("CONTROL: a lone message parks itself alone", async () => {
+    const s = await scenePark();
+    try {
+      const before = writes(s).length;
+      expect(await s.actions.pileToggle("m9", "setAside")).toBe(true);
+      await until("the park on the wire", () => triaged(s, before).length >= 1);
+      await tick(100);
+      expect(triaged(s, before)).toEqual(["m9 set_aside"]);
+    } finally { s.close(); }
+  });
+});
+
 /* THE ROW'S HALF, read as CODE: every verb `MailRow`'s press sends carries the row's members. */
 describe("MailRow's press", () => {
   const src = withoutCommentsAndLiterals(readFileSync(fileURLToPath(new URL("../src/ui/MailRow.tsx", import.meta.url)), "utf8"));

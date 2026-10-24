@@ -34,6 +34,8 @@ export interface ProviderPreset {
   prereqLabel?: string;
   /** The account the person signs in to the provider with, as its sentences name it ("Google"). */
   account?: string;
+  /** `true` ⇒ the provider takes an app password, never the account's own: see {@link passwordLabelKey}. */
+  appPassword?: true;
   /**
    * `true` ⇒ a refused sign-in on this provider's hosts arrives with an `authHint` ({@link AUTH_HINTS}),
    * and the surfaces say its own sentence and links rather than the generic one.
@@ -59,6 +61,7 @@ export const PROVIDERS: ProviderPreset[] = [
     prereqUrl: "https://myaccount.google.com/signinoptions/twosv",
     prereqLabel: "Turn on 2-Step Verification",
     account: "Google",
+    appPassword: true,
     authHints: true,
   },
   {
@@ -84,6 +87,7 @@ export const PROVIDERS: ProviderPreset[] = [
       "tenants an administrator has disabled IMAP entirely, and then it cannot connect at all.",
     helpUrl: "https://support.microsoft.com/account-billing/manage-app-passwords-for-two-step-verification-d6dc8c6d-4bf7-4851-ad95-6d07799387e9",
     helpLabel: "Microsoft app passwords",
+    appPassword: true,
   },
   {
     id: "icloud",
@@ -95,6 +99,7 @@ export const PROVIDERS: ProviderPreset[] = [
       "usually the full @icloud.com address, even if you sign in to Apple with a different one.",
     helpUrl: "https://account.apple.com/account/manage",
     helpLabel: "Apple ID · app-specific passwords",
+    appPassword: true,
   },
   {
     id: "yahoo",
@@ -106,6 +111,7 @@ export const PROVIDERS: ProviderPreset[] = [
       "will not work for IMAP.",
     helpUrl: "https://login.yahoo.com/account/security",
     helpLabel: "Yahoo Account Security",
+    appPassword: true,
   },
   {
     id: "fastmail",
@@ -117,6 +123,7 @@ export const PROVIDERS: ProviderPreset[] = [
       "“Mail (IMAP/SMTP)”. Fastmail lets you revoke it on its own later.",
     helpUrl: "https://app.fastmail.com/settings/security/apppasswords",
     helpLabel: "Fastmail app passwords",
+    appPassword: true,
   },
   {
     id: "gmx",
@@ -141,17 +148,70 @@ export const PROVIDERS: ProviderPreset[] = [
     helpLabel: "Infomaniak · mail settings",
   },
   {
+    id: "webde",
+    label: "WEB.DE",
+    imap: { host: "imap.web.de", port: 993, secure: true },
+    smtp: { host: "smtp.web.de", port: 587, secure: false },
+    // WEB.DE's settings exist only in German, so the English names its menu as it reads there.
+    note:
+      "WEB.DE ships with IMAP switched off. Turn it on first under Einstellungen → POP3/IMAP " +
+      "Abruf, then use your ordinary WEB.DE password here. If the account has two-factor " +
+      "authentication, create an application-specific password for it instead.",
+    helpUrl: "https://hilfe.web.de/pop-imap/einschalten.html",
+    helpLabel: "WEB.DE · enabling IMAP",
+  },
+  {
+    id: "tonline",
+    label: "t-online",
+    imap: { host: "secureimap.t-online.de", port: 993, secure: true },
+    smtp: { host: "securesmtp.t-online.de", port: 465, secure: true },
+    note:
+      "Telekom Mail signs mail apps in with its own e-mail password, not your Telekom login " +
+      "password. Set one in the Telekom E-Mail Center first, then use it here with your full " +
+      "t-online.de address.",
+    helpUrl: "https://www.telekom.de/hilfe/festnetz-internet-tv/e-mail/e-mail-server-e-mail-protokolle-und-e-mail-einrichtung/imap/einrichtung-imap",
+    helpLabel: "Telekom help · setting up IMAP",
+  },
+  {
+    id: "bluewin",
+    label: "bluewin",
+    imap: { host: "imaps.bluewin.ch", port: 993, secure: true },
+    smtp: { host: "smtpauths.bluewin.ch", port: 465, secure: true },
+    note: "Use your full bluewin address and its e-mail password, the password of the mailbox itself.",
+  },
+  {
     id: "imap",
     label: "Any other IMAP mailbox",
     imap: { host: "", port: 993, secure: true },
     smtp: { host: "", port: 587, secure: false },
     note:
-      "Your own domain, your own server, or a provider not listed. You need the IMAP host, the " +
-      "SMTP host, and a password for the mailbox. Your provider's help pages call these " +
-      "“incoming” and “outgoing” servers.",
+      "A provider not listed here, or your own server. You need the IMAP host, the SMTP host, and " +
+      "a password for the mailbox; your provider's help pages call these “incoming” and " +
+      "“outgoing” servers. If your domain's mail is hosted by Google Workspace or Microsoft 365, " +
+      "choose Gmail or Microsoft instead.",
     manual: true,
   },
 ];
+
+/**
+ * PROTON MAIL IS NOT A PRESET. It reaches other mail apps only through Proton Bridge, which runs
+ * on the person's own computer, and ohmail does not connect through Bridge — so it is a note the
+ * picker shows (`providerPicker.protonNote`), never a choice, and never on the parity list.
+ */
+export const PROTON = {
+  label: "Proton Mail",
+  domains: ["proton.me", "protonmail.com", "protonmail.ch", "pm.me"],
+} as const;
+
+/** Is this a Proton Mail address? Its own domains only; a custom domain on Proton is the lookup's to say. */
+export const isProtonAddress = (address: string): boolean => {
+  const domain = domainOfAddress(address);
+  return domain !== null && (PROTON.domains as readonly string[]).includes(domain);
+};
+
+/** The `providerPicker` key of the password field's label: "App password" only where that is what it takes. */
+export const passwordLabelKey = (p: ProviderPreset): "passwordApp" | "passwordPlain" =>
+  p.appPassword ? "passwordApp" : "passwordPlain";
 
 /**
  * WHY A PROVIDER REFUSED A SIGN-IN — the engine's closed set (`googleAuthHint`, core), mirrored here
@@ -208,7 +268,7 @@ export const hostsFor = (
 /**
  * THE LABEL A RENDER SITE PUTS ON SCREEN — which is not always {@link ProviderPreset.label}.
  *
- * Seven of the eight labels are brand names and are the same string in every language. The
+ * Every label but one is a brand name and the same string in every language. The
  * generic entry's is a SENTENCE ("Any other IMAP mailbox"), and it stayed English in a German
  * session because both render sites read it straight off this table. They now go through here
  * with the `providerPicker` translator, so the picker tile and the connected-mailbox row take
@@ -253,6 +313,9 @@ const PRESET_DOMAINS: ReadonlyArray<{ id: string; domains: readonly string[] }> 
   { id: "fastmail", domains: ["fastmail.com", "fastmail.fm"] },
   { id: "gmx", domains: ["gmx.net", "gmx.de", "gmx.ch", "gmx.at", "gmx.com"] },
   { id: "infomaniak", domains: ["infomaniak.com", "infomaniak.ch", "ik.me", "ikmail.com"] },
+  { id: "webde", domains: ["web.de"] },
+  { id: "tonline", domains: ["t-online.de"] },
+  { id: "bluewin", domains: ["bluewin.ch"] },
 ];
 
 /**
@@ -313,3 +376,48 @@ export const serverGuessFor = (address: string): ServerGuess => {
     from: preset.manual === true ? null : preset.id,
   };
 };
+
+/**
+ * WHAT `POST /mailboxes/discover` IS SENT: the domain of a typed address, and never the part
+ * before the @ — the server refuses a body that carries anything else. `null` for no domain.
+ */
+export const discoveryRequestFor = (address: string): { domain: string } | null => {
+  const domain = domainOfAddress(address.trim());
+  return domain ? { domain } : null;
+};
+
+/** A server the lookup found: where to pre-fill, never what is dialled. */
+export interface DiscoveredServer {
+  readonly host: string;
+  readonly port: number;
+  readonly secure: boolean;
+}
+
+/** The lookup's answer as a form reads it. */
+export interface Discovery {
+  /** The named preset whose provider hosts the domain's mail, or `null`. */
+  readonly preset: ProviderPreset | null;
+  /** Proton hosts it: show {@link PROTON}'s note, not a form. */
+  readonly proton: boolean;
+  readonly imap: DiscoveredServer | null;
+  readonly smtp: DiscoveredServer | null;
+}
+
+const discoveredServer = (value: unknown): DiscoveredServer | null => {
+  if (typeof value !== "object" || value === null) return null;
+  const { host, port, secure } = value as Record<string, unknown>;
+  return typeof host === "string" && host !== "" && typeof port === "number" && Number.isInteger(port)
+    && port > 0 && port < 65_536 && typeof secure === "boolean"
+    ? { host, port, secure } : null;
+};
+
+/**
+ * The lookup's answer, read field by field: a preset id this table does not name (a newer server's)
+ * is no preset, and a server missing any part is no server. `null` for a body that is not an object.
+ */
+export function readDiscovery(wire: unknown): Discovery | null {
+  if (typeof wire !== "object" || wire === null || Array.isArray(wire)) return null;
+  const w = wire as Record<string, unknown>;
+  const preset = PROVIDERS.find((p) => !p.manual && p.id === w.preset) ?? null;
+  return { preset, proton: w.proton === true, imap: discoveredServer(w.imap), smtp: discoveredServer(w.smtp) };
+}

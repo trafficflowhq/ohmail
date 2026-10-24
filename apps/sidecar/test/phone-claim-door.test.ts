@@ -38,7 +38,7 @@ import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { makeAuthConfig } from "@trafficflow/services/mail";
 import { IMAP_META_DEADLINE_MS } from "@trafficflow/core/adapters/imap";
 import type { RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { LeaseUnavailableError, formatClaim } from "@trafficflow/core/adapters/organizer-lease";
+import { LeaseClockSkewError, LeaseUnavailableError, formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
 
 /**
@@ -166,9 +166,10 @@ class MemoryMeta {
    */
   unreadable = false;
   /** The gate's read refused by name (`meta_folder_full`, …); the peek still answers. */
-  refusedAs: "meta_folder_full" | "meta_undeletable" | null = null;
+  refusedAs: "meta_folder_full" | "meta_undeletable" | "clock_skew" | null = null;
   async ensureMetaFolder(): Promise<void> {}
   async listClaims(): Promise<RawClaimMessage[]> {
+    if (this.refusedAs === "clock_skew") throw new LeaseClockSkewError("clock off", { skewMs: 240_000, bound: "ahead", boundMs: 150_000 });
     if (this.refusedAs !== null) throw new LeaseUnavailableError("refused by name", { op: this.refusedAs });
     if (this.unreadable) {
       throw new LeaseUnavailableError("ohmail/_meta could not be read", { op: "list_claims" });
@@ -1636,7 +1637,10 @@ describe.runIf(ON_DEVICE_STORE)("the peek's third answer, at the consent door", 
     },
   );
 
-  it("refuses a press under the reason this engine's own gate was refused, where the look would admit it", async () => {
+  it.each([
+    ["meta_folder_full", "meta_folder_full"],
+    ["clock_skew", "clock_off"],
+  ] as const)("refuses a press under the reason this engine's own gate was refused (%s), where the look would admit it", async (refusal, code) => {
     const exec = nodeExecutor();
     const meta = new MemoryMeta();
     live = await startPhoneEngine(deps(exec, { adapterFactory: claimable(meta) }));
@@ -1647,16 +1651,16 @@ describe.runIf(ON_DEVICE_STORE)("the peek's third answer, at the consent door", 
          organize_consented_at = ? where id = ?`,
       [Date.now(), id],
     );
-    meta.refusedAs = "meta_folder_full";
+    meta.refusedAs = refusal;
     await live.resume().catch(() => undefined);
-    for (let i = 0; i < 160 && live.runtimes().organizer[id]?.unreadableReason !== "meta_folder_full"; i++) {
+    for (let i = 0; i < 160 && live.runtimes().organizer[id]?.unreadableReason !== code; i++) {
       await new Promise((r) => { setTimeout(r, 25); });
     }
-    expect(live.runtimes().organizer[id]?.unreadableReason, "the gate's refusal never reached the runtime").toBe("meta_folder_full");
+    expect(live.runtimes().organizer[id]?.unreadableReason, "the gate's refusal never reached the runtime").toBe(code);
     const res = await pressLocal(live, id);
     expect(res.status, "a press over a gate refused by name was admitted, and would organize nothing").toBe(503);
-    expect((await res.json() as { error?: { code?: string } }).error?.code).toBe("meta_folder_full");
-    await expect(live.claimHere({ by: "press" })).resolves.toBe("meta_folder_full");
+    expect((await res.json() as { error?: { code?: string } }).error?.code).toBe(code);
+    await expect(live.claimHere({ by: "press" })).resolves.toBe(code);
   }, 20_000);
 });
 

@@ -58,7 +58,7 @@ const TABLE = {
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
-    "Our hosted service does the organizing; this phone keeps a copy. Sign in on the web, open Settings → Devices, and scan the code it shows.",
+    "Our hosted service does the organizing; this phone keeps a copy. Sign in on the web and connect your mailbox there, then open Settings → Devices and scan the code it shows.",
 
   doorOwnServer: "Your own server",
   doorOwnServerSay:
@@ -332,6 +332,9 @@ const TABLE = {
     "Not syncing — the ohmail/_meta folder on that server holds more messages than ohmail can read. Move mail that was filed into it to another folder and leave the messages ohmail wrote (their subject starts with \"ohmail\"). ohmail starts again on its own.",
   phoneStateMetaUndeletable:
     "Not syncing — the mail server will not let ohmail remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider. ohmail starts again on its own.",
+  /* The desktop's `sync.blocked_clock_off`, for this phone. */
+  phoneStateClockOff:
+    "Not syncing — this phone's clock is too far from the mail server's, so ohmail cannot organize this mailbox safely. Set the clock; ohmail starts again on its own.",
 
   /* The standalone door's own refusals. Each one names what is missing; none of them ever
      carries the password, which is not an argument any of these takes. */
@@ -1477,6 +1480,27 @@ const TABLE = {
     + "was sent.",
   diagnosticFailed: "The file could not be written. Nothing was sent.",
 
+  /* --------------------------------------------- help & contact */
+
+  helpRow: "Help & contact",
+  helpRowSub: "support@ohmail.app · a person answers by mail",
+  helpSubject: "Help with ohmail",
+  helpDiag: "Diagnostics",
+  helpDiagWhat:
+    "This block holds the app version and build, the platform, your account id, which kind of mailbox "
+    + "is connected and the kind of its last sync error. It never holds addresses, hosts, subjects, "
+    + "folder names or any mail content.",
+  helpRemove: "Remove",
+  helpRemoved: "Diagnostics removed.",
+  helpAddBack: "Add back",
+  helpDApp: "App",
+  helpDBuild: "build",
+  helpDPlatform: "Platform",
+  helpDAccount: "Account",
+  helpDMailbox: "Mailbox",
+  helpDLastSync: "Last sync error",
+  helpDNone: "none",
+
   /* --------------------------------------------- organizing in the background */
 
   /**
@@ -1778,7 +1802,7 @@ const TABLE = {
    * needs, and the preview above the note is real.
    */
   liveBodyWithheld:
-    "Not stored — your storage space was full when this arrived. This is the preview; the message itself is safe in your mailbox on your mail server.",
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. A bigger plan keeps more text from now on; it does not bring this text back.",
   /**
    * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
    * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
@@ -2105,6 +2129,7 @@ const TABLE = {
   cancelSend: "Cancel send",
   sendCancelled: "Send cancelled. Nothing was sent.",
   sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
+  sendCancelledNotKept: "Send cancelled. Nothing was sent, but the words could not be kept as a draft.",
   replySending: "Sending…",
   replySent: "Reply sent.",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
@@ -2123,6 +2148,9 @@ const TABLE = {
   replyAlreadySent: "Too late to cancel. This message is already on its way.",
   /* The server could not be asked about a send that may have left; the Cancel is asked again. */
   replyCancelUnreachable: "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again.",
+  /* A send with no row, cancelled from Drafts while the server could not be asked. */
+  replyCancelUnreachableKept: "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again. The words are kept as a draft.",
+  replyCancelUnreachableNotKept: "Couldn't reach the server to cancel, and the words could not be kept as a draft. ohmail will keep asking and will not send this again.",
   replyFailed: "Sending didn't work. Try again.",
   /* A send that never got past securing the connection or signing in: nothing left, and why. */
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
@@ -2410,9 +2438,10 @@ const TABLE = {
    * (`metaUnreadOf`), and this one carries the fact the screen exists for: how many of these
    * are sends nobody has confirmed.
    */
-  draftsMeta: (total: number, held: number): string => {
+  draftsMeta: (total: number, held: number, waiting: number): string => {
     const drafts = total === 1 ? "1 draft" : `${total} drafts`;
-    return held === 0 ? drafts : `${drafts} · ${held} not confirmed`;
+    const said = held === 0 ? drafts : `${drafts} · ${held} not confirmed`;
+    return waiting === 0 ? said : `${said} · ${waiting} waiting to send`;
   },
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
@@ -2432,6 +2461,10 @@ const TABLE = {
   draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
   draftsDiscard: "Discard",
   draftsDiscardWhat: "This deletes the only copy.",
+  /** PHONE-ONLY: a send on this phone's queue, listed in Drafts until it goes. */
+  draftsWaiting: "Waiting to send",
+  draftsDiscardWaitingWhat: "This cancels the send and deletes the only copy.",
+  draftsDiscardedNotSent: "Discarded. Nothing was sent.",
   draftsDiscardConfirm: "Discard",
   draftsDiscardCancel: "Keep",
   draftsDiscardStillSending:
@@ -2893,6 +2926,9 @@ const TABLE = {
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Message ${position} of ${count} from ${sender}, ${unread ? "unread" : "read"}`,
   readerMarkMine: (position: number, count: number) => `Message ${position} of ${count}, sent by you`,
+  /** A held square's sheet: the account's own message's name, and the day before today. */
+  readerMarkYou: "you",
+  readerMarkYesterday: "yesterday",
   readerMessageActions: "Message actions",
   readerUnread: "Unread",
 
@@ -2962,6 +2998,29 @@ const TABLE = {
   stripLater: "Later",
   stripCaughtUp: (date: string) => `ohmail is catching up on mail that arrived since ${date}.`,
   stripDismiss: "Got it",
+  /**
+   * THE EMPTIED-TEXT NOTICE (`ui/StorageNotice.tsx`): what happened, that the letters stay complete
+   * on the mail server, and what keeps more text from now on. Never that emptied text comes back.
+   */
+  storageNoticeEmptied: (cap: string, count: number) =>
+    `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
+  storageNoticeEmptiedBefore: (count: number) =>
+    `To stay within your plan's storage at the time, ohmail stopped storing the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
+  storageNoticeKeptFrom: (month: string) => `Text is kept for letters from ${month} on.`,
+  /** The month's sentence with the letters that arrived while the storage was full excepted. */
+  storageNoticeKeptFromExcept: (month: string, count: number) =>
+    `Text is kept for letters from ${month} on, apart from ${count === 1 ? "one letter that" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that`} arrived while your storage was full.`,
+  /** Those letters alone, when no month is recorded. */
+  storageNoticeOnArrival: (count: number) =>
+    count === 1
+      ? "One letter that arrived while your storage was full is stored without its text."
+      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that arrived while your storage was full are stored without their text.`,
+  storageNoticeSafe: "Those letters stay complete in your mailbox on your mail server, and stay listed and findable here.",
+  storageNoticeTrial: "A bigger plan keeps more text from now on. It does not bring back text that was already emptied.",
+  storageNoticeActive:
+    "A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.",
+  storageNoticeManage: "Manage subscription",
+  storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one
      verb. The cause goes to the device's log, never to the screen. */
   renderErrorTitle: "Something went wrong on this screen.",

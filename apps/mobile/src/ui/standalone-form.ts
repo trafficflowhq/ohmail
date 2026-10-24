@@ -351,11 +351,19 @@ export type PhoneClaim =
   /** Somebody else holds it and named nothing — an install from before the holder columns. */
   | { k: "theirsUnnamed"; kind: HolderKind }
   /**
-   * THIS PHONE'S GATE CANNOT READ `ohmail/_meta` for a reason fixed on the mail server — ahead of
-   * `ours` and `free`, the desktop's precedence. `holding`: this install still holds the claim, so
+   * THIS PHONE'S GATE CANNOT READ `ohmail/_meta` for a reason fixed on the mail server, or refuses
+   * this phone's clock — ahead of `ours` and `free`, the desktop's precedence. `holding`: this install still holds the claim, so
    * Stop stays offered; it reads `ours` again at the first healthy pass.
    */
-  | { k: "blocked"; reason: "meta_folder_full" | "meta_undeletable"; holding: boolean };
+  | { k: "blocked"; reason: GateBlock; holding: boolean };
+
+/** The gate's refusals a person fixes outside ohmail: on the mail server (`_meta`), or the phone's clock. */
+export type GateBlock = "meta_folder_full" | "meta_undeletable" | "clock_off";
+
+/** The engine's `unreadableReason` when it is one of those, else `null`. */
+export function gateBlockOf(reason: unknown): GateBlock | null {
+  return reason === "meta_folder_full" || reason === "meta_undeletable" || reason === "clock_off" ? reason : null;
+}
 
 /** The chip's caption. `null` for `unknown`: no chip at all rather than a chip that guesses. */
 export function claimChipLabel(claim: PhoneClaim): string | null {
@@ -388,9 +396,10 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
   }
 }
 
-/** The desktop row's sentence for the gate's two named `_meta` refusals. */
-export function metaBlockedLine(reason: "meta_folder_full" | "meta_undeletable"): string {
-  return reason === "meta_folder_full" ? Copy.phoneStateMetaFolderFull : Copy.phoneStateMetaUndeletable;
+/** The desktop row's sentence for the gate's named refusals. */
+export function metaBlockedLine(reason: GateBlock): string {
+  return reason === "meta_folder_full" ? Copy.phoneStateMetaFolderFull
+    : reason === "meta_undeletable" ? Copy.phoneStateMetaUndeletable : Copy.phoneStateClockOff;
 }
 
 /**
@@ -602,7 +611,7 @@ export function claimHere(
     /** `sibling_lapse`: a copy of this install holds the claim and the stop waits for it to lapse. */
     releaseRefusal?: "sibling_lapse" | null;
     /** The gate's named `_meta` refusal ({@link StandaloneHere}); absent reads as none. */
-    metaBlocked?: "meta_folder_full" | "meta_undeletable" | null;
+    metaBlocked?: GateBlock | null;
     /**
      * WHO ELSE HOLDS IT, from the engine's stand-down or its last look. `holderState` decides
      * whether that holder still organizes: `none` or `stopped` is nobody, as {@link claimFrom}
@@ -743,7 +752,7 @@ export function claimNoteLine(
  * and rendered each on its own, so the two could both be standing at once over one card.
  */
 export type PressSaid = "startRefused" | "startUnreadable" | "startMetaFolderFull" | "startMetaUndeletable"
-  | "startHeldConsented" | "startHeldReturns" | "stopRefused" | null;
+  | "startClockOff" | "startHeldConsented" | "startHeldReturns" | "stopRefused" | null;
 
 /** What a START press answered, as the line beside the verb records it; `null` owes no sentence. */
 export function pressSaidOf(outcome: string): PressSaid {
@@ -751,9 +760,10 @@ export function pressSaidOf(outcome: string): PressSaid {
     : outcome === "unreadable" ? "startUnreadable"
       : outcome === "meta_folder_full" ? "startMetaFolderFull"
         : outcome === "meta_undeletable" ? "startMetaUndeletable"
-          : outcome === "held_consented" ? "startHeldConsented"
-            : outcome === "held_returns" ? "startHeldReturns"
-              : null;
+          : outcome === "clock_off" ? "startClockOff"
+            : outcome === "held_consented" ? "startHeldConsented"
+              : outcome === "held_returns" ? "startHeldReturns"
+                : null;
 }
 
 /**
@@ -788,8 +798,9 @@ export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null
   }
   /* A press refused over a `_meta` the gate cannot read says the desktop row's sentence — once: a
      chip already saying it needs no second copy beside it. */
-  if (said === "startMetaFolderFull" || said === "startMetaUndeletable") {
-    return claim.k === "blocked" ? null : metaBlockedLine(said === "startMetaFolderFull" ? "meta_folder_full" : "meta_undeletable");
+  if (said === "startMetaFolderFull" || said === "startMetaUndeletable" || said === "startClockOff") {
+    return claim.k === "blocked" ? null : metaBlockedLine(said === "startMetaFolderFull" ? "meta_folder_full"
+      : said === "startMetaUndeletable" ? "meta_undeletable" : "clock_off");
   }
   /* HELD, CONSENT KEPT: both facts, while a holder still stands. Once nothing holds it the card
      offers Start again and the sentence would describe a holder that left. */

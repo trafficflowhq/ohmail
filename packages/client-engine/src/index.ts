@@ -377,6 +377,7 @@ export {
   fullDateTime,
   messageStamp,
   weekdayClock,
+  weekdayDateClock,
 } from "./stamp.js";
 
 // Selectors.
@@ -480,7 +481,9 @@ export {
 // The Ohbox as ROWS, one per conversation across its sections — the fold every surface draws.
 export {
   foldOhboxRows,
+  parkSubjectIds,
   ohboxRows,
+  ohboxUnreadIds,
   ownFaceOfRow,
   rowOpenTarget,
   triageSubjectIds,
@@ -686,6 +689,9 @@ export {
   type AbandonedMutation,
   // A verb waiting on the queue as the strip lists it — `OhmailEngine.queuedDiscards`.
   type QueuedChange,
+  // A send that waits to go, as Drafts lists it — `OhmailEngine.waitingSends`.
+  type WaitingSend,
+  NO_WAITING,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
   OUTBOX_REPLAY_DEADLINE_MS,
@@ -789,6 +795,7 @@ export {
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
   INLINE_IMAGE_MAX_TOTAL_BYTES,
+  type KeptAsNewDraft,
 } from "./engine.js";
 
 /* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer
@@ -870,18 +877,25 @@ export {
    for why the phone is the reason it lives here. */
 export {
   AUTH_HINTS,
+  PROTON,
   PROVIDERS,
   appPasswordPresetFor,
   asAuthHint,
   authHintPreset,
   authHintWantsLinks,
+  discoveryRequestFor,
   hostsFor,
+  isProtonAddress,
+  passwordLabelKey,
   portMeansImplicitTls,
   presetForAddress,
   providerById,
   providerLabel,
+  readDiscovery,
   serverGuessFor,
   type AuthHint,
+  type DiscoveredServer,
+  type Discovery,
   type ProviderPreset,
   type ServerGuess,
 } from "./providers.js";
@@ -1002,6 +1016,16 @@ export {
   readSelfCheck,
   renderDiagnosticBundle,
   selfCheckSaid,
+  supportBlock,
+  supportBody,
+  supportFacts,
+  supportMailto,
+  withSupportBlock,
+  withoutSupportBlock,
+  SUPPORT_ADDRESS,
+  type SupportFacts,
+  type SupportMailboxInput,
+  type SupportWords,
   type DiagnosticBundle,
   type DiagnosticInput,
   type DiagnosticInstallRecord,

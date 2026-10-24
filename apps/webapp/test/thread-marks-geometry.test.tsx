@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -8,6 +8,9 @@ import { threadWalk, type EngineMessage } from "@ohmail/client-engine";
 import { MessageRow } from "@ohmail/ui";
 import { ThreadMarksBar, ThreadTip, tipAt, type TipPlace } from "../app/shell/ThreadMarks";
 import messages from "../messages/en.json";
+import de from "../messages/de.json";
+import { mapOmarchyThemePair, omarchyMap } from "../../../packages/tokens/omarchy/map";
+import { omarchyRuleText } from "../../../packages/tokens/omarchy/rule";
 
 /**
  * THE COLUMN OF SQUARES NEVER COVERS A MESSAGE — MEASURED IN A REAL ENGINE. jsdom lays nothing out,
@@ -277,6 +280,7 @@ async function seam(viewport: number, list: number, face: "ohmarchy" | "paper") 
         paper: r("article.pm").left,
         corner: getComputedStyle(document.querySelector(".tm-sq")!).borderTopLeftRadius,
         ringCorner: getComputedStyle(mb, "::after").borderTopLeftRadius,
+        hoverCorner: getComputedStyle(mb, "::before").borderTopLeftRadius,
         pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
       };
     }, 560);
@@ -300,8 +304,10 @@ describe("the seam: list | gap | 18px rail | gap | paper, even in both faces", (
         expect(m.barLeft, "the press area covers the column handle's gap").toBeGreaterThanOrEqual(m.listRight + m.gap - 0.5);
         expect(m.barRight, "the press area ends at the paper").toBeLessThanOrEqual(m.paper + 0.5);
         expect(m.slot, "a slot's pitch").toBe(m.narrow ? 30 : 24);
-        expect(m.corner, "a square's corner from the radius token").toBe(face === "ohmarchy" ? "0px" : "2px");
-        expect(m.ringCorner, "the ring's corner").toBe(face === "ohmarchy" ? "0px" : "4px");
+        // Paper's soft squares (owner 2026-10-24, o10 v1): 3 on the 10px square, the ring concentric at 7.
+        expect(m.corner, "a square's corner from the radius token").toBe(face === "ohmarchy" ? "0px" : "3px");
+        expect(m.ringCorner, "the ring's corner").toBe(face === "ohmarchy" ? "0px" : "7px");
+        expect(m.hoverCorner, "the rail's hover box").toBe(face === "ohmarchy" ? "0px" : "5px");
         expect(m.pageOverflow).toBeLessThanOrEqual(0);
       }, 60_000);
 });
@@ -374,6 +380,8 @@ describe("the open row's strip", () => {
           strip: bar.getBoundingClientRect(),
           list: list.getBoundingClientRect(),
           button: { w: b.width, h: b.height },
+          corner: getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius,
+          paperCorner: (document.documentElement.removeAttribute("data-face"), getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius),
           sideways: bar.scrollWidth > bar.clientWidth,
           listOverflow: list.scrollWidth - list.clientWidth,
           pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
@@ -384,6 +392,7 @@ describe("the open row's strip", () => {
       expect(m.strip.right, "the strip stays in the list column").toBeLessThanOrEqual(m.list.right + 0.5);
       expect(m.button.h, "a square's button").toBe(20);
       expect(m.button.w).toBeGreaterThanOrEqual(16);
+      expect([m.corner, m.paperCorner], "the strip's hover box: square in ohmarchy, paper's 5").toEqual(["0px", "5px"]);
       expect(m.sideways, "thirty squares scroll sideways").toBe(true);
       expect(m.listOverflow, "the strip widens the list").toBeLessThanOrEqual(0);
       expect(m.pageOverflow).toBeLessThanOrEqual(0);
@@ -399,12 +408,27 @@ describe("the open row's strip", () => {
  * list's gap and the open row's end, never over message text; under the row's strip it stays inside
  * the list column. Measured with the real stylesheets: the chip's own box, where `tipAt` puts it.
  */
-const chipMarkup = (m: EngineMessage, place: TipPlace): string => renderToStaticMarkup(
-  <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+const chipMarkup = (m: EngineMessage, place: TipPlace, locale: "en" | "de" = "en"): string => renderToStaticMarkup(
+  <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : messages} timeZone="UTC">
     <ThreadTip m={m} place={place} now={new Date("2026-10-24T12:00:00.000Z")} />
   </NextIntlClientProvider>,
 );
+const LONG = "Thanks for the draft, I went through all of it on the train and have three small notes for the second part";
+/** p3 with a first line past the chip's 64 characters and a file. */
+const CHIPPED = { ...MEMBERS[2]!, snippet: LONG, hasAttachments: true, attachmentCount: 1 } as EngineMessage;
 type R = { left: number; right: number; top: number; bottom: number; width: number; height: number };
+
+describe("the chip's words", () => {
+  const at = (iso: string, over: Record<string, unknown> = {}) => ({ ...MEMBERS[0]!, date: iso, snippet: "See you at ten", ...over }) as EngineMessage;
+  const words = (html: string) => html.replace(/<[^>]+>/g, "|").split("|").filter((w) => w.trim() !== "");
+  it("today and yesterday by name with the clock, your own as you, no clip without a file, in English and German", () => {
+    expect(words(chipMarkup(at("2026-10-24T09:12:00.000Z"), "left"))).toEqual(["Sender p1", expect.stringMatching(/^today \d\d:12$/), "See you at ten"]);
+    expect(chipMarkup(at("2026-10-24T09:12:00.000Z"), "left")).not.toContain("<svg");
+    expect(words(chipMarkup(at("2026-10-23T12:40:00.000Z", { folder: "Sent" }), "left"))).toEqual(["you", expect.stringMatching(/^yesterday \d\d:40$/), "See you at ten"]);
+    expect(words(chipMarkup(at("2026-10-23T12:40:00.000Z", { folder: "Sent" }), "left", "de"))).toEqual(["du", expect.stringMatching(/^gestern \d\d:40$/), "See you at ten"]);
+    expect(words(chipMarkup(at("2026-10-24T09:12:00.000Z", { snippet: "" }), "left")), "no first line, no second line").toHaveLength(2);
+  });
+});
 
 describe("the chip names a square, beside the rail or under the strip, over no message", () => {
   for (const face of ["ohmarchy", "paper"] as const)
@@ -413,7 +437,7 @@ describe("the chip names a square, beside the rail or under the strip, over no m
         const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
         try {
           await page.setContent(split_(viewport, list, face));
-          await page.evaluate((html) => { document.body.insertAdjacentHTML("beforeend", html); }, chipMarkup(MEMBERS[2]!, "left"));
+          await page.evaluate((html) => { document.body.insertAdjacentHTML("beforeend", html); }, chipMarkup(CHIPPED, "left"));
           const at = await page.evaluate(() => {
             const rect = (el: Element) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
             const b = document.querySelectorAll(".tm-mb")[2]!;
@@ -429,13 +453,33 @@ describe("the chip names a square, beside the rail or under the strip, over no m
             return {
               chip: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
               over: words.some((p) => r.left < p.right - 0.5 && p.left < r.right - 0.5 && r.top < p.bottom - 0.5 && p.top < r.bottom - 0.5),
+              // the rail's 18px column at each square: the chip never stands on a mark or its ring
+              overMark: [...document.querySelectorAll(".tm-sq")].some((q) => {
+                const s = q.getBoundingClientRect();
+                const cx = s.left + s.width / 2;
+                return r.left < cx + 9 && cx - 9 < r.right && r.top < s.bottom + 4 && s.top - 4 < r.bottom;
+              }),
               position: getComputedStyle(c).position,
-              text: c.textContent,
+              name: c.querySelector(".tm-tip-head b")?.textContent,
+              when: c.querySelector(".tm-tip-when")?.textContent,
+              clip: c.querySelector(".tm-tip-head svg") !== null,
+              line: c.querySelector<HTMLElement>(".tm-tip-line")?.textContent ?? "",
+              lineCut: (() => { const l = c.querySelector<HTMLElement>(".tm-tip-line")!; return getComputedStyle(l).textOverflow; })(),
+              lines: (() => { const a = c.querySelector(".tm-tip-head")!.getBoundingClientRect(); const b = c.querySelector(".tm-tip-line")!.getBoundingClientRect(); return b.top >= a.bottom - 0.5; })(),
+              width: r.width,
             };
           }, pos);
           const railLeft = at.square.left + at.square.width / 2 - 9;
           expect(m.position).toBe("fixed");
-          expect(m.text).toMatch(/^Sender p3 · /);
+          expect(m.name, "the sender, bold").toBe("Sender p3");
+          expect(m.when, "a friendly date past yesterday: weekday, day, month, clock").toMatch(/^Thu 22 Oct, \d\d:00$/);
+          expect(m.clip, "a clip where the message has a file").toBe(true);
+          expect(m.lines, "two lines: who and when over the first line").toBe(true);
+          expect(m.line.length, "the first line, cut near 64 characters").toBeLessThanOrEqual(65);
+          expect(m.line.endsWith("…") && LONG.startsWith(m.line.slice(0, -1))).toBe(true);
+          expect(m.lineCut).toBe("ellipsis");
+          expect(m.width, "the chip's measure").toBeLessThanOrEqual(272.5);
+          expect(m.overMark, "the chip stands on a mark").toBe(false);
           expect(railLeft - m.chip.right, "chip → rail").toBeCloseTo(6, 1);
           expect((m.chip.top + m.chip.bottom) / 2, "on the square's line").toBeCloseTo(at.button.top + at.button.height / 2, 0);
           expect(m.over, "the chip covers message text").toBe(false);
@@ -477,9 +521,98 @@ describe("the chip names a square, beside the rail or under the strip, over no m
         const b = c.getBoundingClientRect();
         return { left: b.left, right: b.right, top: b.top };
       }, pos);
-      expect(r.top - at.button.bottom, "under the square").toBeCloseTo(4, 1);
+      expect(r.top - at.button.bottom, "under the square, never on it").toBeCloseTo(4, 1);
       expect(r.left, "inside the list column").toBeGreaterThanOrEqual(at.list.left + 8 - 0.5);
       expect(r.right, "inside the list column").toBeLessThanOrEqual(at.list.right - 8 + 0.5);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+});
+
+/* An OKLab point of an `rgb(r, g, b)` colour (Ottosson). */
+function oklab(rgb: string): [number, number, number] {
+  const lin = (v: number): number => (v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  const [r, g, b] = rgb.match(/\d+/g)!.slice(0, 3).map((v) => lin(Number(v)));
+  const l = Math.cbrt(0.4122214708 * r! + 0.5363325363 * g! + 0.0514459929 * b!);
+  const m = Math.cbrt(0.2119034982 * r! + 0.6806995451 * g! + 0.1073969566 * b!);
+  const s = Math.cbrt(0.0883024619 * r! + 0.2817188376 * g! + 0.6299787005 * b!);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+/** How far `c` stands off the line from `from` to `to` in OKLab: 0 is a plain mix of the two. */
+function offLine(c: string, from: string, to: string): number {
+  const [C, F, T] = [oklab(c), oklab(from), oklab(to)];
+  const d = T.map((v, i) => v - F[i]!), x = C.map((v, i) => v - F[i]!);
+  const t = x.reduce((a, v, i) => a + v * d[i]!, 0) / d.reduce((a, v) => a + v * v, 0);
+  return Math.hypot(...x.map((v, i) => v - t * d[i]!));
+}
+const hexOf = (rgb: string): string => "#" + rgb.match(/\d+/g)!.slice(0, 3).map((v) => Number(v).toString(16).padStart(2, "0")).join("");
+
+describe("under ohmarchy's light themes an unread message sits on a surface tone, not the accent", () => {
+  /* Flexoki Light's unread messages were light blue: the wash took the accent's hue. The shipped
+     sheet, then every theme's light scheme as the desktop's live feed writes it (its own, or the
+     counterpart it derives). */
+  const rawDir = resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw");
+  const THEMES: [string, string][] = [["the shipped sheet", ""]];
+  for (const f of readdirSync(rawDir).filter((n) => n.endsWith(".colors.toml")).sort()) {
+    const pair = mapOmarchyThemePair({ colorsToml: readFileSync(resolve(rawDir, f), "utf8") });
+    if (pair && (pair.mode === "light" || pair.counterpart))
+      THEMES.push([f.replace(/\.colors\.toml$/, ""), omarchyRuleText(pair.native.tokens, pair.mode, pair.counterpart?.tokens ?? null)]);
+  }
+  const TEXT = ["--ink", "--ink2", "--ink3", "--accent-ink"] as const;
+
+  it("every light theme: the unread panel is the panel taken toward its ink, apart from the read one, its text at 4.5:1", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } });
+    try {
+      await page.setContent(`<!doctype html><html data-face="ohmarchy" data-theme="light"><head><meta charset="utf-8">
+        <style>${SHEETS}${css("packages/tokens/src/ohmarchy.css")}.conv *{transition:none!important}</style><style id="live"></style></head>
+        <body style="margin:0"><section class="view split" style="grid-template-columns:1004px;height:700px;margin-left:420px">
+        <div class="read-col"><div class="conv" data-thread-read="">${MEMBERS.map((m) => panel(m.id)).join("")}</div></div></section>
+        <i id="probe"></i></body></html>`);
+      await page.evaluate(() => document.querySelector('[data-conv-id="p1"]')!.setAttribute("data-unseen", ""));
+      const law = omarchyMap();
+      const faults: string[] = [];
+      for (const [name, rule] of THEMES) {
+        const r = await page.evaluate(([rule, slots]) => {
+          document.getElementById("live")!.textContent = rule;
+          const probe = document.getElementById("probe")!;
+          const colour = (slot: string): string => { probe.style.color = `var(${slot})`; return getComputedStyle(probe).color; };
+          return {
+            unread: getComputedStyle(document.querySelector('[data-conv-id="p1"]')!).backgroundColor,
+            read: getComputedStyle(document.querySelector('[data-conv-id="p3"]')!).backgroundColor,
+            text: Object.fromEntries(slots.map((s) => [s, colour(s)])),
+          };
+        }, [rule, [...TEXT]] as const);
+        const [unread, read] = [hexOf(r.unread), hexOf(r.read)];
+        const off = offLine(r.unread, r.read, r.text["--ink"]!);
+        if (off > 0.004) faults.push(`${name}: the unread panel ${unread} carries a hue of its own (${off.toFixed(4)} off the panel-ink line)`);
+        if (law.contrast(unread, read) < 1.08) faults.push(`${name}: unread ${unread} and read ${read} look alike`);
+        for (const slot of TEXT) {
+          const c = law.contrast(hexOf(r.text[slot]!), unread);
+          if (c < 4.5) faults.push(`${name}: ${slot} reads ${c.toFixed(2)}:1 on the unread panel`);
+        }
+      }
+      expect(THEMES.length, "no live theme reached the page: this proves nothing").toBeGreaterThan(5);
+      expect(faults).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("RED CONTROL: an accent-tinted unread panel is caught", async () => {
+    const page = await browser!.newPage({ viewport: { width: 800, height: 600 } });
+    try {
+      // The wash light themes shipped before: Flexoki Light's accent hue, pale.
+      await page.setContent(`<!doctype html><html data-face="ohmarchy" data-theme="light" style="--unread-wash:#e7f1ff"><head><meta charset="utf-8">
+        <style>${SHEETS}${css("packages/tokens/src/ohmarchy.css")}.conv *{transition:none!important}</style></head>
+        <body><div class="read-col"><div class="conv" data-thread-read="">${panel("p1")}${panel("p3")}</div></div></body></html>`);
+      const r = await page.evaluate(() => {
+        document.querySelector('[data-conv-id="p1"]')!.setAttribute("data-unseen", "");
+        const bg = (id: string): string => getComputedStyle(document.querySelector(`[data-conv-id="${id}"]`)!).backgroundColor;
+        return { unread: bg("p1"), read: bg("p3"), ink: getComputedStyle(document.body).color };
+      });
+      expect(offLine(r.unread, r.read, r.ink), "the measurement does not see the accent's blue").toBeGreaterThan(0.004);
     } finally {
       await page.close();
     }

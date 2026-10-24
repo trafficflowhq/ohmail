@@ -23,6 +23,8 @@ export interface WiredPanes {
   security: boolean;
   account: boolean;
   about: boolean;
+  /** Help & contact: only where the host says which build and account it is (`SupportHost`). */
+  help: boolean;
 }
 
 /**
@@ -54,5 +56,6 @@ export function settingsPanes(w: WiredPanes, t: (key: string) => string): Array<
     ...(w.security ? [["security", t("security")] as [PaneId, string]] : []),
     ...(w.account ? [["account", t("account")] as [PaneId, string]] : []),
     ...(w.about ? [["about", t("about")] as [PaneId, string]] : []),
+    ...(w.help ? [["help", t("help")] as [PaneId, string]] : []),
   ];
 }

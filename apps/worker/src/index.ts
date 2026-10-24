@@ -5459,8 +5459,9 @@ export async function startWorkerWithLock(
         // ── TRIM THE ROLLING WINDOW: at the storage cap, the oldest stored bodies husk ──────
         //
         // Its OWN runner call and loop, like every pass here: one account's failure must not skip
-        // the rest. For every account under its high-water mark the pass is two indexed reads and
-        // no more; over it, bounded rounds of bounded batches, resuming next cycle
+        // the rest. For every account under its high-water mark the pass is one primary-key read and
+        // no more, plus one recount a day in the trim's band (`STORAGE_RECOUNT_EVERY_MS`, its drift
+        // logged as `storage_counter_drift`); over it, bounded rounds of bounded batches, resuming next cycle
         // (`storage-evict.ts` carries the hysteresis argument). Registered in this SERIAL
         // per-account section deliberately — the repair passes order body-row-then-counter, the
         // evictor counter-then-body-rows, and serial execution per account is what keeps the two
@@ -5468,11 +5469,11 @@ export async function startWorkerWithLock(
         run: async (accountId) => {
           // MIXED: the cap is the entitlements program's answer; the pass tags its own db calls.
           await runTailStage("cycle.storageEvictPass", "mixed", async () => {
-            const { ran, evicted, freedBytes, capped } = await storageEvictPass(
+            const { ran, evicted, freedBytes, capped, waitsForErasure } = await storageEvictPass(
               db as unknown as Tx, { accountId, log, storageCap: storageCapFor, dbCall: asDatabaseFault }, new Date(),
             );
-            if (ran && evicted > 0) {
-              log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
+            if ((ran && evicted > 0) || waitsForErasure) {
+              log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped, waitsForErasure });
             }
           }, (err) => {
             log.error("storage_evict_failed", {

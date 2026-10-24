@@ -116,8 +116,15 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   // `account_storage` (mail 0062) — the stored-body byte counter. Usage data by the isolation
   // rule's own words (staff see usage, never content): an id, a byte count, a
   // timestamp — nothing derived from what any message says. Granted because the alert pass
-  // runs on this role and its `storage_at_cap` rule counts this table.
-  "public.account_storage": ["account_id", "bytes", "updated_at"],
+  // runs on this role and its `storage_at_cap` rule counts this table. Mail 0166 adds the counter's
+  // facts, on the same terms: the last recount and its drift, how many letters' text is not held
+  // for space, the first and latest trim, the month from which text is kept, and how many letters
+  // arrived while the storage was full.
+  "public.account_storage": [
+    "account_id", "bytes", "updated_at",
+    "recounted_at", "recount_drift", "husked_for_space", "first_husked_at", "last_husked_at", "kept_from",
+    "withheld_on_arrival",
+  ],
   // Funnel top — invite/waitlist DATES ONLY, so the console can see the signup funnel on an
   // invite-only beta. Both tables were fully un-granted; the only reason they are named now is
   // that their whole point — how many invites outstanding, how many waiting — is invisible

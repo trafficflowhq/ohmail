@@ -190,6 +190,15 @@ describe("readMailboxes — the wire, and what it refuses to guess", () => {
     expect(out?.map((b) => b.smtpMaxSizeBytes)).toEqual([50 * 1024 * 1024, null, null, null, null]);
   });
 
+  it("reads the error code and the sign-in kind the support mail's block classes, only as the wire sent them", async () => {
+    const out = await readMailboxes(session(ok([
+      { id: "m1", address: "a@b.test", errorCode: "auth", authKind: "oauth" },
+      { id: "m2", address: "b@b.test", errorCode: null, authKind: 7 },
+      { id: "m3", address: "c@b.test" },
+    ])));
+    expect(out?.map((b) => [b.errorCode, b.authKind])).toEqual([["auth", "oauth"], [undefined, undefined], [undefined, undefined]]);
+  });
+
   it("asks the PAIRED origin and nothing else, and does not buy the counts aggregate", async () => {
     const s = session(ok([]));
     await readMailboxes(s);

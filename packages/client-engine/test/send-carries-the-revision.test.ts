@@ -15,7 +15,7 @@ import {
  * The version is READ FROM THE SERVER and never computed here — one implementation of the
  * canonicalization, so a client and a server cannot drift into refusing every send.
  */
-interface Call { method: string; url: string; body: Record<string, unknown> }
+interface Call { method: string; url: string; body: Record<string, unknown>; echo?: string | null }
 
 /** The three answers a send makes, recorded. `revision` is what the row's DTO reports. */
 function harness(over: { revision?: string | null; createRevision?: string | null } = {}) {
@@ -26,7 +26,7 @@ function harness(over: { revision?: string | null; createRevision?: string | nul
     const path = new URL(url, "http://localhost").pathname;
     let body: Record<string, unknown> = {};
     if (typeof init?.body === "string") { try { body = JSON.parse(init.body) as Record<string, unknown>; } catch { /* not json */ } }
-    calls.push({ method: init?.method ?? "GET", url, body });
+    calls.push({ method: init?.method ?? "GET", url, body, echo: new Headers(init?.headers as HeadersInit).get("x-ohmail-echo") });
 
     if (path === "/drafts" && init?.method === "POST") {
       return new Response(JSON.stringify({
@@ -94,6 +94,16 @@ describe("a send carries the draft version its own PUT returned", () => {
     expect(sendBodyOf(calls).ifContentRevision).toBeUndefined();
   });
 
+  it("asks the door to answer before its copy echoes only where the host opted in", async () => {
+    const plain = harness();
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: plain.fetchImpl }).mutate(mutation("draft-1"), { idempotencyKey: "k5" });
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: plain.fetchImpl }).mutate(mutation(), { idempotencyKey: "k6" });
+    expect(plain.calls.map((c) => c.echo), "a default adapter marked a send").toEqual(plain.calls.map(() => null));
+    const later = harness();
+    await new HttpAdapter({ baseUrl: "http://localhost", fetch: later.fetchImpl, sendEchoLater: true }).mutate(mutation("draft-1"), { idempotencyKey: "k7" });
+    expect(later.calls.map((c) => `${c.method} ${c.echo}`)).toEqual(["PUT later", "POST later"]);
+  });
+
   /**
    * THE SERVER'S REFUSAL REACHES THE SURFACE AS ITS OWN CODE, not as a retryable in-flight
    * answer: a `draft_changed` that came back retryable would be replayed by the outbox for ever
@@ -123,5 +133,66 @@ describe("a send carries the draft version its own PUT returned", () => {
     expect(err, "a refused send resolved as though it had gone").not.toBeNull();
     expect(err!.code).toBe("draft_changed");
     expect(err!.retryable).toBe(false);
+  });
+});
+
+describe("a save states the version its words were written on", () => {
+  const R = (c: string): string => c.repeat(64);
+  /** A row at `now`; a PUT stating another version is refused 409 draft_changed, as the route does. */
+  function row(start: string) {
+    const calls: Call[] = [];
+    let now = start;
+    let step = 0;
+    const fetchImpl: FetchLike = async (url, init) => {
+      const path = new URL(url, "http://localhost").pathname;
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) as Record<string, unknown> : {};
+      calls.push({ method: init?.method ?? "GET", url, body });
+      if (path.startsWith("/drafts/") && init?.method === "PUT") {
+        if (body.ifContentRevision !== undefined && body.ifContentRevision !== now) {
+          return new Response(JSON.stringify({ error: { code: "draft_changed", message: "changed elsewhere" } }),
+            { status: 409, headers: { "content-type": "application/json" } });
+        }
+        now = R(String.fromCharCode(100 + ++step));
+        return new Response(JSON.stringify({ id: "draft-1", bcc: [], mailboxId: "mbx-1", contentRevision: now }),
+          { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (path.endsWith("/send")) {
+        return new Response(JSON.stringify({ status: "sent", providerMessageId: "<id@x>" }),
+          { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    };
+    return { calls, fetchImpl, moveElsewhere: (to: string) => { now = to; }, now: () => now };
+  }
+  const save = (body: string, ifContentRevision?: string): EngineMutation => ({
+    kind: "draft_save", draftId: "draft-1", mailboxId: "mbx-1", subject: "s", body, to: [], cc: [], bcc: [],
+    ...(ifContentRevision ? { ifContentRevision } : {}),
+  } as EngineMutation);
+
+  it("the save carries the version and answers the new one", async () => {
+    const r = row(R("a"));
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: r.fetchImpl });
+    const out = await a.mutate(save("one", R("a")), { idempotencyKey: "s1" });
+    expect({ stated: r.calls[0]!.body.ifContentRevision, revision: out.revision }).toEqual({ stated: R("a"), revision: r.now() });
+  });
+
+  it("two saves queued on one version: the second states the version the first one made", async () => {
+    const r = row(R("a"));
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: r.fetchImpl });
+    await a.mutate(save("one", R("a")), { idempotencyKey: "s1" });
+    const second = await a.mutate(save("two", R("a")), { idempotencyKey: "s2" });
+    expect(second.revision, "this client's own earlier save refused its next one").toBe(r.now());
+  });
+
+  it("a version moved by another device refuses the save, and a send's save sends nothing", async () => {
+    const r = row(R("a"));
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: r.fetchImpl });
+    r.moveElsewhere(R("z"));
+    const saved = await a.mutate(save("mine", R("a")), { idempotencyKey: "s1" }).then(() => null, (e: unknown) => e);
+    expect((saved as MutationRejectedError | null)?.code).toBe("draft_changed");
+    const sent = await a.mutate({ ...mutation("draft-1"), ifContentRevision: R("a") } as EngineMutation, { idempotencyKey: "k9" })
+      .then(() => null, (e: unknown) => e as MutationRejectedError);
+    expect({ code: sent?.code, retryable: sent?.retryable, row: sent?.entityId, sends: r.calls.filter((c) => c.url.endsWith("/send")).length })
+      .toEqual({ code: "draft_changed", retryable: false, row: "draft-1", sends: 0 });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import { accounts, accountStorage, devices, mailboxes, sessions, users } from "@trafficflow/db";
 import { accountLifecycleNotices, authEvents, creditRefundObligations } from "@trafficflow/db/cloud";
 import type { ApiDeps } from "@trafficflow/api";
@@ -152,12 +153,32 @@ describe("GET /admin/accounts/:id — the account page", () => {
     });
     expect(d.mailboxes.find((m) => m.address === "a1@acme.example")!.consentOnRecord).toBe(false);
     expect(d.lifecycleNotices.map((n) => n.kind)).toEqual(["reopened", "closed"]);
-    expect(d.storage).toEqual({ bytes: 4096, updatedAt: at(-7).toISOString() });
+    // Never checked and nothing emptied: the facts say so rather than inventing a reading.
+    expect(d.storage).toEqual({
+      bytes: 4096, updatedAt: at(-7).toISOString(), checkedAt: null, drift: null,
+      emptiedForSpace: 0, firstEmptiedAt: null, lastEmptiedAt: null, keptFrom: null, withheldOnArrival: 0,
+    });
     expect(d.devices.map((x) => x.kind).sort()).toEqual(["desktop-linux", "other"]);
     expect(d.sessions).toEqual({ active: { full: 2, enrollment: 1 }, revoked30d: 1, lastSeenAt: at(-2).toISOString() });
     expect(d.authEvents.map((e) => e.event)).toEqual(["other", "login"]);
     expect(d.owedReversals).toEqual({ count: 2, oldestOwedAt: at(-70).toISOString(), tries: 3, lastFault: "timeout" });
     expect(JSON.stringify(d)).not.toContain("never shown");
+  });
+
+  it("says what the storage counter knows: emptied for space, since when, kept from, arrivals, and its last check", async () => {
+    const w = await world();
+    await w.deps.db.update(accountStorage).set({
+      bytes: 3_000_000_000, huskedForSpace: 4_321, firstHuskedAt: at(-60 * 24 * 3), lastHuskedAt: at(-30),
+      keptFrom: "2026-05-01", withheldOnArrival: 12, recountedAt: at(-20), recountDrift: 1_250,
+    }).where(eq(accountStorage.accountId, A));
+    const d = await read<AccountDetailV2>(w, `/admin/accounts/${A}`);
+    expect(d.storage).toEqual({
+      bytes: 3_000_000_000, updatedAt: at(-7).toISOString(), checkedAt: at(-20).toISOString(), drift: 1_250,
+      emptiedForSpace: 4_321, firstEmptiedAt: at(-60 * 24 * 3).toISOString(), lastEmptiedAt: at(-30).toISOString(),
+      keptFrom: "2026-05", withheldOnArrival: 12,
+    });
+    // An account with no counter row has no storage block at all.
+    expect((await read<AccountDetailV2>(w, `/admin/accounts/${C}`)).storage).toBeNull();
   });
 
   it("masks every login address for ops", async () => {

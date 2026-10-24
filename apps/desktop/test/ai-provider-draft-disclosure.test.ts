@@ -28,7 +28,7 @@ function constant(name: string): number {
   return Number(found);
 }
 
-/* @reads: apps/webapp/app/shell/InlineReply.tsx README.md README.ohmarchy.md */
+/* @reads: apps/webapp/app/shell/InlineReply.tsx docs/how-it-works.md */
 const INLINE_REPLY = readFileSync(
   fileURLToPath(new URL("../../webapp/app/shell/InlineReply.tsx", import.meta.url)),
   "utf8",
@@ -84,14 +84,11 @@ describe("the provider form says what a draft sends", () => {
     );
   });
 
-  it("both README faces list the same providers, OpenCode Go included", () => {
-    const section = (file: string): string => {
-      const text = readFileSync(fileURLToPath(new URL(`../../../${file}`, import.meta.url)), "utf8");
-      const start = text.indexOf("### Model providers and keys");
-      expect(start, file).toBeGreaterThanOrEqual(0);
-      return text.slice(start, text.indexOf("\n### ", start + 1));
-    };
-    expect(section("README.ohmarchy.md")).toBe(section("README.md"));
-    expect(section("README.md")).toContain("**Your OpenCode Go key**");
+  it("docs/how-it-works.md lists the providers, OpenCode Go included", () => {
+    const text = readFileSync(fileURLToPath(new URL("../../../docs/how-it-works.md", import.meta.url)), "utf8");
+    const start = text.indexOf("## Model providers and keys");
+    expect(start, "docs/how-it-works.md has no providers section").toBeGreaterThanOrEqual(0);
+    const end = text.indexOf("\n## ", start + 1);
+    expect(text.slice(start, end < 0 ? undefined : end)).toContain("**Your OpenCode Go key**");
   });
 });

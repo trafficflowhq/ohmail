@@ -140,10 +140,12 @@ const ROSTER: MailboxFacts[] = [{
   organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
 }];
 
-async function shell(onUnread: (n: number) => void): Promise<HTMLElement> {
+async function shell(
+  onUnread: (n: number) => void, engine?: OhmailEngine,
+): Promise<HTMLElement> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const engine = engineOver(await storeWith());
+  engine ??= engineOver(await storeWith());
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -187,6 +189,35 @@ describe("the badge rule", () => {
       .find((b) => (b.textContent ?? "").includes("Ohbox"));
     expect(ohboxItem, "the rail's Ohbox item").toBeTruthy();
     expect(ohboxItem!.querySelector(".cnt")?.textContent).toBe("2");
+  });
+
+  it("a letter brought back by Resurface > Now counts on the rail as in the header, after a reload too", async () => {
+    const store = await storeWith();
+    const engine = engineOver(store);
+    const calls: number[] = [];
+    let container = await shell((n) => calls.push(n), engine);
+    await act(async () => {
+      await engine.mutate({ kind: "triage_set", messageId: "m1", state: "bubbled_up", bubbleUpAt: "2026-09-05T09:00:00.000Z" });
+      await engine.mutate({ kind: "triage_set", messageId: "m1", state: "resurfaced" });
+    });
+    const counts = () => {
+      const rail = [...container.querySelectorAll(".rail .ritem")].find((b) => (b.textContent ?? "").includes("Ohbox"));
+      return {
+        rail: rail?.querySelector(".cnt")?.textContent,
+        header: container.querySelector(".vhead .meta")?.textContent,
+        markAll: container.querySelector(".mark-all-read")?.getAttribute("aria-label"),
+        sink: calls[calls.length - 1],
+      };
+    };
+    const want = { rail: "2", header: "2 unread", markAll: "Mark all 2 unread messages read", sink: 2 };
+    await waitFor(() => container.querySelector(".row[data-id=\"m1\"]") !== null, "the resurfaced row listed");
+    expect(counts()).toEqual(want);
+    // A reload: a fresh engine and shell over the same mirror.
+    await act(async () => { roots.pop()!.unmount(); });
+    document.body.innerHTML = "";
+    container = await shell((n) => calls.push(n), engineOver(store));
+    await waitFor(() => counts().header === "2 unread", "the header after the reload");
+    expect(counts()).toEqual(want);
   });
 
   it("the sentence is on the notifications pane, stating the rule", async () => {

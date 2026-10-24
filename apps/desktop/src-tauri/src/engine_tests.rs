@@ -3945,9 +3945,13 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     // The queries this table is allowed to carry, written out. It used to be "none at all", which
     // was the right rule right up until one destination needed to name a Settings pane — and the
     // property that rule was standing in for is not "no query", it is "no query anything outside
-    // this file could have shaped". So the ban stays, with the admitted values named: a new entry
-    // that invents a query still fails here, and so does an existing one that grows a parameter.
-    const ALLOWED_QUERIES: [&str; 2] = ["settings=mailboxes", "settings=devices"];
+    // this file could have shaped". So the ban stays, with the admitted values named per key: a new
+    // entry that invents a query still fails here, and so does an existing one that grows a parameter.
+    const ALLOWED_QUERIES: [(&str, &str); 3] = [
+        ("mailboxes", "settings=mailboxes"),
+        ("devices", "settings=devices"),
+        ("setup", "next=join"),
+    ];
     for (key, url) in LINKS {
         assert_eq!(link_for(key), Some(url));
         // Every destination is ours, over TLS.
@@ -3957,7 +3961,7 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
         let before_hash = url.split_once('#').map_or(url, |(head, _)| head);
         if let Some((_, query)) = before_hash.split_once('?') {
             assert!(
-                ALLOWED_QUERIES.contains(&query),
+                ALLOWED_QUERIES.iter().any(|&(k, q)| k == key && q == query),
                 "{key} carries the query {query}, which this table does not admit"
             );
         }
@@ -3965,6 +3969,21 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     assert_eq!(link_for("https://elsewhere.test"), None);
     assert_eq!(link_for(""), None);
     assert_eq!(link_for("Account"), None);
+}
+
+/// THE CLOUD DOOR'S TWO WAYS TO AN ACCOUNT: the sign-up page, and setup behind a sign-in. Both
+/// fixed here; neither takes a value from the window.
+#[test]
+fn sign_up_and_setup_are_fixed_pages() {
+    assert_eq!(link_for("join"), Some("https://ohmail.app/join"));
+    assert_eq!(link_for("setup"), Some("https://ohmail.app/login?next=join"));
+    const GOOD: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEF_";
+    const ID: &str = "4f9a3c1e-2b7d-4e8f-9a01-23456789abcd";
+    for key in ["join", "setup"] {
+        assert_eq!(open_target(key, None, None).unwrap(), link_for(key).unwrap());
+        assert!(open_target(key, Some(GOOD), None).is_err(), "{key} took a sign-in commitment");
+        assert!(open_target(key, None, Some(ID)).is_err(), "{key} took a request id");
+    }
 }
 
 /// THE SELF-HOSTED DOOR'S MAILBOXES PAGE IS ITS OWN SERVER'S, AND NO OTHER DOOR HAS ONE.

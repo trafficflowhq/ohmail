@@ -2397,9 +2397,10 @@ describe("the consent the door already took", () => {
   /* PHONE-START-HERE-META-FOLDER-FULL: a folder the door could not read FOR A NAMED REASON is not
      "still connecting" — the press says the desktop row's sentence, the one a person can act on. */
   it.each([
-    ["meta_folder_full", "phoneStateMetaFolderFull"],
-    ["meta_undeletable", "phoneStateMetaUndeletable"],
-  ] as const)("a 503 %s says the desktop row's sentence", async (code, say) => {
+    ["meta_folder_full", "phoneStateMetaFolderFull", "ohmail/_meta"],
+    ["meta_undeletable", "phoneStateMetaUndeletable", "ohmail/_meta"],
+    ["clock_off", "phoneStateClockOff", "this phone's clock"],
+  ] as const)("a 503 %s says the desktop row's sentence", async (code, say, words) => {
     const log = doorLog();
     log.organizeStatus = 503;
     log.organizeErrorCode = code;
@@ -2408,7 +2409,7 @@ describe("the consent the door already took", () => {
     expect(out.kind).toBe("refused");
     if (out.kind === "refused") {
       expect(out.reason.say, "a named refusal read as a look still connecting").toBe(say);
-      expect(sayRefusal(out.reason)).toContain("ohmail/_meta");
+      expect(sayRefusal(out.reason)).toContain(words);
     }
     session.store.close();
   });

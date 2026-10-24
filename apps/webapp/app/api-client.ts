@@ -22,6 +22,7 @@ import { refusedFactsOf, verdictOf } from "./access-verdict";
 import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wall-lift";
 import { durableSessionRemove, durableSessionSet } from "./shell/durable";
 import { planHintOf, type PlanHint } from "./plan-hint";
+import { storageFactsOf, type StorageFacts } from "./shell/storage-state";
 import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
@@ -2390,7 +2391,17 @@ export type AccountAccess =
        * `since` is when the wall stood the mailboxes down, else when the account closed. No count.
        */
       caughtUp?: { since: string };
+      /**
+       * THE PERSON'S STORED LETTER TEXT against the plan's cap, for a metered account with a cap.
+       * Untyped on the wire: read it through {@link accessStorage}, never directly.
+       */
+      storage?: unknown;
     };
+
+/** The answer's storage block, narrowed (`shell/storage-state.ts`), or `null` where there is none. */
+export function accessStorage(a: AccountAccess | null | undefined): StorageFacts | null {
+  return a != null && a.metered ? storageFactsOf(a.storage) : null;
+}
 
 /**
  * What `DELETE /mailboxes/:id?erase=1` answers — 202, with what the erasure WILL remove. The

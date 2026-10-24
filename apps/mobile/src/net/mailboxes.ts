@@ -151,6 +151,9 @@ export interface PhoneMailbox {
    * `stuck` is the server's own split, never a threshold this phone computes.
    */
   filing?: PhoneFiling;
+  /** `MailboxDTO.errorCode` and `authKind`, read only to class the support mail's block; absent where the wire sent none. */
+  errorCode?: string;
+  authKind?: string;
 }
 
 export interface PhoneFiling {
@@ -298,6 +301,8 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
+        ...(typeof r.errorCode === "string" && r.errorCode !== "" ? { errorCode: r.errorCode } : {}),
+        ...(typeof r.authKind === "string" && r.authKind !== "" ? { authKind: r.authKind } : {}),
       });
     }
     return out;
@@ -468,9 +473,10 @@ export async function organizeHere(
     if (code === "organizer_unreadable") {
       return { kind: "refused", reason: refuse("organizeHereStillLooking") };
     }
-    /* The gate cannot read `ohmail/_meta` for a reason fixed on the server: the desktop row's words. */
+    /* The gate refused for a reason fixed on the server or the phone's clock: the desktop row's words. */
     if (code === "meta_folder_full") return { kind: "refused", reason: refuse("phoneStateMetaFolderFull") };
     if (code === "meta_undeletable") return { kind: "refused", reason: refuse("phoneStateMetaUndeletable") };
+    if (code === "clock_off") return { kind: "refused", reason: refuse("phoneStateClockOff") };
   }
   /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 400 is a screening answer the door
      would not store, 404 an engine older than the local spelling; none is a state this app can

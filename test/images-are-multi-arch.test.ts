@@ -283,12 +283,14 @@ describe("the published images are multi-arch, and stay that way", () => {
       ["docs/self-host/README.md", selfhostReadme, /only ever booted on amd64/],
       ["docs/self-host/VPS.md", vps, /earlier ones were only built/],
       ["docs/self-host/UMBREL.md", umbrel, /booted only the amd64 stack/],
-      [publicRel("README.md"), projectReadme, /only ever booted on amd64/],
     ] as const) {
       const t = flow(text);
       expect(t, `${name} claims the double boot without dating it`)
         .toMatch(/from 0\.\d+\.\d+ on/i);
       expect(t, `${name} does not say what earlier releases were`).toMatch(before);
     }
+    // The project README points at the self-host guide and makes no boot claim of its own; one added
+    // there belongs in the list above, with its date and what came before.
+    expect(flow(projectReadme), "the README claims a boot; add it to the list above").not.toMatch(/\bboot/i);
   });
 });

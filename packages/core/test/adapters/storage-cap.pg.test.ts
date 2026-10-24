@@ -5,7 +5,8 @@ import { runMigrations } from "@trafficflow/db/admin";
 import {
   accounts, accountStorage, mailboxes, messages, messageBodies, messageSearch, attachments, folderState,
   changeLog, bodyBytesOf, storageUsageOf, applyBodyBytesDelta, reserveBodyBytes, evictOldestBodies,
-  recomputeAccountStorage,
+  recomputeAccountStorage, stampMailboxErasure, sweepMailboxStep, eraseOwedMailbox, recordChanges,
+  type LedgerTx,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -37,17 +38,18 @@ import type { Change } from "../../src/ports.js";
  */
 const AVAILABLE = await realPgAvailable();
 
-function eml(o: { from?: string; subject?: string; body?: string; messageId?: string } = {}): Buffer {
+function eml(o: { from?: string; subject?: string; body?: string; messageId?: string; date?: Date } = {}): Buffer {
   const {
     from = "cap@example.com", subject = "storage cap probe",
     body = "x".repeat(1000), messageId = `cap-${randomUUID()}@example.com`,
   } = o;
+  const date = o.date === undefined ? "Tue, 14 Jul 2026 09:41:07 +0000" : o.date.toUTCString();
   return Buffer.from([
     `Message-ID: <${messageId}>`,
     `From: ${from}`,
     "To: reader@example.test",
     `Subject: ${subject}`,
-    "Date: Tue, 14 Jul 2026 09:41:07 +0000",
+    `Date: ${date}`,
     "Content-Type: text/plain; charset=utf-8",
     "", body,
   ].join("\r\n"));
@@ -201,6 +203,174 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
     expect(husk!.withheldReason).toBe("storage_cap");
     expect(husk!.text).toBe("");
     void first;
+  });
+
+  /** The account's counter row, facts included. */
+  const factsOf = async (accountId: string) => {
+    const [r] = await owned.db.select().from(accountStorage).where(eq(accountStorage.accountId, accountId));
+    return r!;
+  };
+  /** Letters whose text is not held for space, counted from the bodies themselves. */
+  const emptiedOf = async (accountId: string): Promise<number> => {
+    const [r] = await owned.db.execute<{ n: string }>(sql`
+      select count(*)::bigint as n from message_bodies b join messages m on m.id = b.message_id
+       where m.account_id = ${accountId} and b.withheld_reason = 'storage_cap'`) as unknown as Array<{ n: string }>;
+    return Number(r!.n);
+  };
+
+  it("a letter withheld for space on arrival is counted once; its duplicate is not", async () => {
+    const w = await world();
+    await ingest(w, create(eml({ body: "seed".padEnd(2_000, ".") })), UNMETERED_STORAGE_CAP);
+    const used = await storageUsageOf(owned.db, w.accountId);
+    await owned.db.transaction(async (tx) =>
+      evictOldestBodies(tx as never, dialect(owned.db), w.accountId, { targetBytes: 0, maxBodies: 100 }));
+    await owned.db.transaction(async (tx) =>
+      reserveBodyBytes(tx as never, dialect(owned.db), w.accountId, used, null));
+    // The trim emptied the seed (dated July 2026): text is kept from August on.
+    expect(await factsOf(w.accountId)).toMatchObject({ huskedForSpace: 1, keptFrom: "2026-08-01", withheldOnArrival: 0 });
+
+    const r = await ingest(w, create(eml({ subject: "no room", body: "d".repeat(3_000), date: new Date(Date.UTC(2026, 8, 3)) })), used);
+    expect((await factsOf(w.accountId)).huskedForSpace, "the arrival withheld for space was not counted").toBe(2);
+    expect((await factsOf(w.accountId)).withheldOnArrival, "the arrival was not counted apart").toBe(1);
+    expect((await factsOf(w.accountId)).keptFrom, "a letter withheld on arrival moved the month text is kept from").toBe("2026-08-01");
+    // The same body again: the 1:1 conflict inserts nothing, so nothing more is withheld.
+    const again = await makeDrizzleRepo(owned.db).insertMessageBody(
+      r.messageId, { text: "d".repeat(3_000), html: null, headers: {} }, { accountId: w.accountId, capBytes: used });
+    expect(again).toBe("withheld");
+    expect(await factsOf(w.accountId)).toMatchObject({ huskedForSpace: 2, withheldOnArrival: 1 });
+    expect(await emptiedOf(w.accountId)).toBe(2);
+  });
+
+  it("after the cap drops, a letter withheld on arrival never moves kept_from past the letters that keep their text", async () => {
+    // A downgrade, or a storage add-on removed: the cap falls to a quarter of what is stored. One new
+    // letter arrives, the inline trim cannot make room for it, then the background trim and the daily recount.
+    const w = await world();
+    const d = dialect(owned.db);
+    for (let i = 0; i < 200; i++) {
+      await ingest(w, create(eml({ body: "o".repeat(1_000), date: new Date(Date.UTC(2022, 11, 1 + 7 * i)) })), UNMETERED_STORAGE_CAP);
+    }
+    const cap = 50_000;
+    const arrival = await ingest(w, create(eml({ body: "n".repeat(1_000), date: new Date(Date.UTC(2026, 9, 20)) })), cap);
+    const [body] = await owned.db.select().from(messageBodies).where(eq(messageBodies.messageId, arrival.messageId));
+    expect(body!.withheldReason, "the new letter found room after all").toBe("storage_cap");
+    for (let r = 0; r < 4; r++) {
+      await owned.db.transaction(async (tx) =>
+        evictOldestBodies(tx as never, d, w.accountId, { targetBytes: cap * 0.9, maxBodies: 500 }));
+    }
+    await owned.db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as never, d, w.accountId, new Date("2026-10-24T08:00:00Z")));
+
+    // The trim emptied the 155 oldest letters, the newest of them dated 13 November 2025.
+    const facts = await factsOf(w.accountId);
+    expect(facts).toMatchObject({ huskedForSpace: 156, withheldOnArrival: 1, keptFrom: "2025-12-01" });
+    expect(await emptiedFrom(w.accountId, facts.keptFrom), "an emptied letter dated from kept_from, besides the arrival").toBe(1);
+    const [early] = await owned.db.execute<{ n: string }>(sql`
+      select count(*)::bigint as n from message_bodies b join messages m on m.id = b.message_id
+       where m.account_id = ${w.accountId} and b.withheld_reason is null and octet_length(b.text) > 0
+         and coalesce(m.date, m.created_at) < ${facts.keptFrom}::date - interval '1 month'`) as unknown as Array<{ n: string }>;
+    expect(Number(early!.n), "kept_from is past letters that keep their text by more than its own month").toBe(0);
+  });
+
+  it("the recount writes the real bytes and count, the month text is kept from, and what had drifted", async () => {
+    const w = await world();
+    const d = dialect(owned.db);
+    for (const [month, size] of [[0, 1_000], [2, 2_000], [4, 3_000]] as const) {
+      await owned.db.transaction(async (tx) => {
+        const t = tx as unknown as typeof owned.db;
+        await reserveBodyBytes(t as never, d, w.accountId, size, null);
+        const [m] = await t.insert(messages).values({
+          accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(),
+          subject: "recount", date: new Date(Date.UTC(2026, month, 20)),
+        }).returning();
+        await t.insert(messageBodies).values({ messageId: m!.id, text: "r".repeat(size), html: null, headers: {} });
+      });
+    }
+    await owned.db.transaction(async (tx) =>
+      evictOldestBodies(tx as never, d, w.accountId, { targetBytes: 5_000, maxBodies: 100 }));
+    expect((await factsOf(w.accountId)).keptFrom, "the trim's month").toBe("2026-02-01");
+    // A letter that arrived while the storage was full, dated after that month: emptied, never trimmed.
+    const [late] = await owned.db.insert(messages).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(),
+      subject: "recount", date: new Date(Date.UTC(2026, 6, 20)),
+    }).returning();
+    await owned.db.insert(messageBodies).values({ messageId: late!.id, text: "", html: null, headers: {}, withheldReason: "storage_cap" });
+    // The counter wrong in every fact it keeps; the month later than the newest letter the trim emptied.
+    await owned.db.update(accountStorage).set({ bytes: 5_777, huskedForSpace: 9, keptFrom: "2026-06-01", withheldOnArrival: 5 })
+      .where(eq(accountStorage.accountId, w.accountId));
+
+    const AT = new Date("2026-10-24T08:00:00.000Z");
+    const found = await owned.db.transaction(async (tx) => recomputeAccountStorage(tx as never, d, w.accountId, AT));
+    // Text is kept from the month after the newest letter emptied before that month (January's);
+    // the July letter is past it, so it is the one withheld on arrival and moves nothing.
+    expect(found).toEqual({ bytes: 5_000, drift: 777, huskedForSpace: 2, keptFrom: "2026-02-01", withheldOnArrival: 1 });
+    expect(await factsOf(w.accountId)).toMatchObject({
+      bytes: 5_000, huskedForSpace: 2, keptFrom: "2026-02-01", withheldOnArrival: 1, recountedAt: AT, recountDrift: 777,
+    });
+    expect(await emptiedOf(w.accountId)).toBe(2);
+
+    // A second check finds nothing to correct; a counter LOW reads as a negative drift.
+    expect((await owned.db.transaction(async (tx) => recomputeAccountStorage(tx as never, d, w.accountId, AT))).drift).toBe(0);
+    await owned.db.update(accountStorage).set({ bytes: 4_000 }).where(eq(accountStorage.accountId, w.accountId));
+    expect((await owned.db.transaction(async (tx) => recomputeAccountStorage(tx as never, d, w.accountId, AT))).drift).toBe(-1_000);
+    expect(await storageUsageOf(owned.db, w.accountId)).toBe(5_000);
+  });
+
+  /** Letters emptied for space dated on or after `keptFrom` (all of them when it is null): always 0. */
+  const emptiedFrom = async (accountId: string, keptFrom: string | null): Promise<number> => {
+    const [r] = await owned.db.execute<{ n: string }>(sql`
+      select count(*)::bigint as n from message_bodies b join messages m on m.id = b.message_id
+       where m.account_id = ${accountId} and b.withheld_reason = 'storage_cap'
+         and (${keptFrom}::date is null or coalesce(m.date, m.created_at) >= ${keptFrom}::date)`) as unknown as Array<{ n: string }>;
+    return Number(r!.n);
+  };
+  const trimAndRecount = async (accountId: string, cap: number, at: Date) => {
+    const d = dialect(owned.db);
+    await owned.db.transaction(async (tx) =>
+      evictOldestBodies(tx as never, d, accountId, { targetBytes: Math.floor(cap * 0.9), maxBodies: 500 }));
+    const before = (await factsOf(accountId)).keptFrom;
+    await owned.db.transaction(async (tx) => recomputeAccountStorage(tx as never, d, accountId, at));
+    return { afterTrim: before, afterRecount: (await factsOf(accountId)).keptFrom };
+  };
+
+  it("kept_from bounds every emptied letter through a newest-first import across the cap", async () => {
+    // The backfill fetches newest first: past the cap every arrival is older than every kept letter.
+    // The background trim runs every ten arrivals; the last two arrive under its mark, then the daily recount.
+    const w = await world();
+    const cap = 50_000;
+    const d = dialect(owned.db);
+    for (let i = 0; i < 62; i++) {
+      await ingest(w, create(eml({ body: "n".repeat(1_000), date: new Date(Date.UTC(2026, 6 - i, 10)) })), cap);
+      if (i % 10 === 9) {
+        await owned.db.transaction(async (tx) =>
+          evictOldestBodies(tx as never, d, w.accountId, { targetBytes: cap * 0.9, maxBodies: 500 }));
+      }
+      const { keptFrom } = await factsOf(w.accountId);
+      expect(await emptiedFrom(w.accountId, keptFrom), `arrival ${i}: an emptied letter dated from ${keptFrom}`).toBe(0);
+    }
+    expect(await emptiedOf(w.accountId)).toBeGreaterThan(0);
+    await owned.db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as never, d, w.accountId, new Date("2026-10-24T08:00:00Z")));
+    const { keptFrom } = await factsOf(w.accountId);
+    expect(keptFrom).not.toBeNull();
+    expect(await emptiedFrom(w.accountId, keptFrom), "the recount named a month whose letters were emptied").toBe(0);
+  });
+
+  it("a letter with an old Date header arriving after a trim does not move kept_from back", async () => {
+    const w = await world();
+    const cap = 20_000;
+    for (let i = 0; i < 24; i++) {
+      await ingest(w, create(eml({ body: "w".repeat(1_000), date: new Date(Date.UTC(2025, 0, 1 + 7 * i)) })), UNMETERED_STORAGE_CAP);
+    }
+    const trimmed = await trimAndRecount(w.accountId, cap, new Date("2026-10-23T08:00:00Z"));
+    expect(trimmed.afterTrim).not.toBeNull();
+    expect(trimmed.afterRecount).toBe(trimmed.afterTrim);
+    // Small, so the account stays under the trim's mark and only the daily recount runs.
+    await ingest(w, create(eml({ body: "o".repeat(200), date: new Date(Date.UTC(2001, 0, 1)) })), cap);
+    await owned.db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as never, dialect(owned.db), w.accountId, new Date("2026-10-24T08:00:00Z")));
+    const later = (await factsOf(w.accountId)).keptFrom;
+    expect(later, "a letter dated 2001 moved the month back").toBe(trimmed.afterTrim);
+    expect(await emptiedFrom(w.accountId, later)).toBe(0);
   });
 
   it("TWO RACING INGESTS at one slot of headroom admit exactly one — the reserve's whole claim", async () => {
@@ -361,7 +531,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
       await lockTaken;
       // Start the recompute; with the fix it blocks acquiring the row lock the writer holds.
       const recomputeDone = recomputer.db.transaction(async (tx) =>
-        recomputeAccountStorage(tx as never, dialect(owned.db), w.accountId));
+        recomputeAccountStorage(tx as never, dialect(owned.db), w.accountId, new Date()));
 
       // Observe the WAIT — the premise of the whole test; without it the two could serialize and
       // the assertions below would pass for the wrong reason.
@@ -395,7 +565,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
         select coalesce(sum(octet_length(b.text) + coalesce(octet_length(b.html), 0)), 0)::bigint as sum
           from message_bodies b join messages m on m.id = b.message_id
          where m.account_id = ${w.accountId}`) as unknown as Array<{ sum: string }>;
-      expect(written).toBe(Number(recount!.sum));
+      expect(written.bytes).toBe(Number(recount!.sum));
       expect(await storageUsageOf(owned.db, w.accountId)).toBe(Number(recount!.sum));
       // And it is strictly more than before — a stale-snapshot overwrite would land on `before`.
       expect(Number(recount!.sum)).toBe(before + bytes);
@@ -404,4 +574,176 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
       await recomputer.close().catch(() => {});
     }
   }, 30_000);
+
+  /**
+   * THE ERASE AGAINST INGEST AND THE TRIM. An erase step locks the counter before the change-log
+   * sequence, the order ingest takes them in (reserve, then the deltas), and gives back exactly the
+   * bytes of the rows its delete removed. Each case forces its interleaving and asserts the wait.
+   *
+   * MUTATION WATCHED: take the counter lock after the step's `recordChanges` → the first case
+   * deadlocks (40P01).
+   */
+  describe("an erase step beside ingest and the trim", () => {
+    const BODY = "e".repeat(1_000);
+    const NOW = new Date("2026-10-24T10:00:00.000Z");
+
+    async function sibling(accountId: string): Promise<string> {
+      const [mb] = await owned.db.insert(mailboxes)
+        .values({ accountId, provider: "imap", address: `${randomUUID()}@cap.test` }).returning();
+      return mb!.id;
+    }
+    /** One counted letter: its message, its body and its reservation, in the caller's transaction. */
+    async function letter(tx: unknown, accountId: string, mailboxId: string, daysAgo: number): Promise<string> {
+      const t = tx as typeof owned.db;
+      await reserveBodyBytes(t as never, dialect(owned.db), accountId, BODY.length, null);
+      const [m] = await t.insert(messages).values({
+        accountId, mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "erase race",
+        date: new Date(NOW.getTime() - daysAgo * 86_400_000),
+      }).returning();
+      await t.insert(messageBodies).values({ messageId: m!.id, text: BODY, html: null, headers: {} });
+      return m!.id;
+    }
+    async function letters(accountId: string, mailboxId: string, n: number, daysAgo: number): Promise<void> {
+      for (let i = 0; i < n; i++) await owned.db.transaction((tx) => letter(tx, accountId, mailboxId, daysAgo + i));
+    }
+    const stamp = (accountId: string, mailboxId: string) => owned.db.transaction(async (tx) => {
+      await stampMailboxErasure(tx as never, { accountId, mailboxId, now: NOW });
+    });
+    const real = async (accountId: string): Promise<number> => {
+      const [r] = await owned.db.execute<{ sum: string }>(sql`
+        select coalesce(sum(octet_length(b.text) + coalesce(octet_length(b.html), 0)), 0)::bigint as sum
+          from message_bodies b join messages m on m.id = b.message_id
+         where m.account_id = ${accountId}`) as unknown as Array<{ sum: string }>;
+      return Number(r!.sum);
+    };
+    const sawLockWait = async (): Promise<boolean> => {
+      for (let i = 0; i < 100; i++) {
+        const rows = await owned.db.execute<{ n: string }>(sql`
+          select count(*)::bigint as n from pg_locks
+           where not granted and locktype in ('transactionid', 'tuple')`) as unknown as Array<{ n: string }>;
+        if (Number(rows[0]!.n) > 0) return true;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return false;
+    };
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => { open = resolve; });
+      return { open, opened };
+    };
+
+    it("ingest holding the counter first: the erase waits on it, no deadlock, the counter exact", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 3, 10);
+      await stamp(w.accountId, w.mailboxId);
+      const writer = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const writing = writer.db.transaction(async (tx) => {
+          const id = await letter(tx, w.accountId, sib, 0);
+          locked.open();
+          await held.opened;
+          await recordChanges(tx as unknown as LedgerTx, [{
+            accountId: w.accountId, entityType: "message", entityId: id, op: "create", meta: null,
+          }]);
+        });
+        await locked.opened;
+        const erasing = eraseOwedMailbox(eraser.db as never, dialect(eraser.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([writing, erasing]);
+        expect(waited, "the erase step must wait on the counter the ingest holds").toBe(true);
+        expect([a.status, b.status], String((a as PromiseRejectedResult).reason ?? (b as PromiseRejectedResult).reason))
+          .toEqual(["fulfilled", "fulfilled"]);
+        expect((b as PromiseFulfilledResult<{ done: boolean }>).value.done).toBe(true);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(1_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await writer.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+
+    it("the erase step holding the counter first: ingest waits on it, no deadlock, the counter exact", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 3, 10);
+      await stamp(w.accountId, w.mailboxId);
+      const writer = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const erasing = eraser.db.transaction(async (tx) => {
+          const step = await sweepMailboxStep(tx as unknown as LedgerTx, dialect(eraser.db),
+            { accountId: w.accountId, mailboxId: w.mailboxId, now: NOW });
+          locked.open();
+          await held.opened;
+          return step;
+        });
+        erasing.catch(() => locked.open());
+        await locked.opened;
+        const writing = writer.db.transaction(async (tx) => {
+          const id = await letter(tx, w.accountId, sib, 0);
+          await recordChanges(tx as unknown as LedgerTx, [{
+            accountId: w.accountId, entityType: "message", entityId: id, op: "create", meta: null,
+          }]);
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([erasing, writing]);
+        expect(waited, "the ingest must wait on the counter the erase step holds").toBe(true);
+        expect([a.status, b.status]).toEqual(["fulfilled", "fulfilled"]);
+        expect(await storageUsageOf(owned.db, w.accountId), "the step kept its bodies' bytes")
+          .toBe(await real(w.accountId));
+        const rest = await eraseOwedMailbox(owned.db as never, dialect(owned.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        expect(rest.done).toBe(true);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(1_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await writer.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+
+    it("an erase step against a trim of the same bodies releases them once", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 4, 100);   // the oldest: the trim takes these
+      await letters(w.accountId, sib, 2, 1);
+      await stamp(w.accountId, w.mailboxId);
+      const evictor = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const trimming = evictor.db.transaction(async (tx) => {
+          const r = await evictOldestBodies(tx as never, dialect(evictor.db), w.accountId,
+            { targetBytes: 4_000, maxBodies: 100 });
+          locked.open();
+          await held.opened;
+          return r;
+        });
+        await locked.opened;
+        const erasing = eraseOwedMailbox(eraser.db as never, dialect(eraser.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([trimming, erasing]);
+        expect(waited).toBe(true);
+        expect([a.status, b.status]).toEqual(["fulfilled", "fulfilled"]);
+        expect((a as PromiseFulfilledResult<{ evicted: number }>).value.evicted).toBe(2);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(2_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await evictor.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+  });
 });

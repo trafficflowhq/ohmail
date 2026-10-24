@@ -59,6 +59,8 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "providerPicker.note_gmail": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_app_password_required": "Google accounts that cannot create App Passwords",
   "mailboxes.probe_auth_gmail_imap_disabled": "the Google account IMAP is turned off for",
+  "mailboxes.probe_auth_microsoft": "work accounts at Microsoft",
+  "mailboxes.probe_auth_yahoo": "the name of Yahoo's own account security page",
 };
 
 /** The phone's twins of the two forwarded-mail sentences above. */

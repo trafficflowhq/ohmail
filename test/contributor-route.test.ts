@@ -10,7 +10,7 @@ import { ROOT, publicPath } from "./support/public-root.mjs";
  * THE WEEKLY FRESH-CLONE JOB RUNS WHAT THE DOCUMENTS SAY, WORD FOR WORD (1.0 criterion 7).
  *
  * `.github/workflows/contributor.yml` clones the repository on a clean Linux, macOS and Windows runner and runs
- * the README's build, CONTRIBUTING's install, the suite and the desktop app's checks: per platform one build job
+ * the build in docs/install.md, CONTRIBUTING's install, the suite and the desktop app's checks: per platform one build job
  * and the suite in PARTS jobs, each its own fresh clone. Each of those is a bash
  * block marked `<!-- run by .github/workflows/contributor.yml: <id> -->` (with ` in <dir>` when it runs in a
  * directory) and a step named `<doc> · <id>` whose run is that block. The commands live in the workflow, where
@@ -21,19 +21,19 @@ import { ROOT, publicPath } from "./support/public-root.mjs";
 const yaml = createRequire(__filename)("js-yaml") as { load(text: string): unknown; dump(v: unknown): string };
 
 export const MARKER = /^\s*<!-- run by \.github\/workflows\/contributor\.yml: ([a-z0-9-]+)(?: in ([\w./-]+))? -->$/;
-export const DOCS = ["README.md", "CONTRIBUTING.md", "apps/desktop/README.md"] as const;
+export const DOCS = ["docs/install.md", "CONTRIBUTING.md", "apps/desktop/README.md"] as const;
 
 /** The suite's parts per platform, one job each: run 39637951099 measured it serial at 310 min on Windows, 156 on
  *  macOS and 268 with the services on Linux, so one job per platform ran up against its timeout. */
 export const PARTS: Record<string, number> = { linux: 2, macos: 2, windows: 4 };
 /** The first line of a block a part runs: unset, it is the whole suite. */
 export const PART_DEFAULT = ': "${PART:=1}" "${PARTS:=1}"';
-const BUILD = ["README.md · interface", "README.md · engine", "CONTRIBUTING.md · install", "CONTRIBUTING.md · desktop", "apps/desktop/README.md · verify"];
+const BUILD = ["docs/install.md · interface", "docs/install.md · engine", "CONTRIBUTING.md · install", "CONTRIBUTING.md · desktop", "apps/desktop/README.md · verify"];
 const suiteOf = (os: string) => (os === "linux" ? "CONTRIBUTING.md · suite-services" : "CONTRIBUTING.md · suite");
 /** Each job's steps in order: the three setup steps by kind, every other step by its block's label. */
 export const ROUTE: Record<string, string[]> = Object.fromEntries(
   Object.entries(PARTS).flatMap(([os, n]) => [
-    [`${os}-build`, ["checkout", "setup-node", ...(os === "linux" ? ["README.md · linux-packages"] : []), "Toolchain", ...BUILD]],
+    [`${os}-build`, ["checkout", "setup-node", ...(os === "linux" ? ["docs/install.md · linux-packages"] : []), "Toolchain", ...BUILD]],
     ...Array.from({ length: n }, (_, k) => [`${os}-suite-${k + 1}`, ["checkout", "setup-node", "CONTRIBUTING.md · install", suiteOf(os)]]),
   ]),
 );
@@ -156,8 +156,8 @@ export function routeFindings(inputs: Inputs): string[] {
   // The things a step must equal, read off the other files.
   const node = /\(CI runs (\d+\.\d+\.\d+)\)/.exec(inputs.docs["CONTRIBUTING.md"] ?? "")?.[1];
   if (!node) out.push("CONTRIBUTING.md names no Node CI runs");
-  const ubuntu = /\bon Ubuntu\s+(\d+\.\d+)/.exec(inputs.docs["README.md"] ?? "")?.[1];
-  if (!ubuntu) out.push("README.md names no Ubuntu release");
+  const ubuntu = /\bon Ubuntu\s+(\d+\.\d+)/.exec(inputs.docs["docs/install.md"] ?? "")?.[1];
+  if (!ubuntu) out.push("docs/install.md names no Ubuntu release");
   const toolchain = ((build.jobs?.linux?.steps ?? []) as Step[]).find((s) => s.name === "Toolchain")?.run;
   if (typeof toolchain !== "string") out.push("build.yml's linux job has no Toolchain step");
 
@@ -281,7 +281,7 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
     });
 
     const plants: Array<[string, () => Inputs, RegExp]> = [
-      ["a block edited: --ignore-scripts dropped", () => withDoc("README.md", "cd apps/desktop\nnpm ci --ignore-scripts", "cd apps/desktop\nnpm ci"), /README\.md · interface: the run is not the block .*\(linux-build, macos-build, windows-build\)$/],
+      ["a block edited: --ignore-scripts dropped", () => withDoc("docs/install.md", "cd apps/desktop\nnpm ci --ignore-scripts", "cd apps/desktop\nnpm ci"), /docs\/install\.md · interface: the run is not the block .*\(linux-build, macos-build, windows-build\)$/],
       ["a command appended to a step", () => {
         const w = wf();
         const s = step(w, "windows-suite-3", "CONTRIBUTING.md · install");
@@ -301,9 +301,9 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
       }, /^macos-build: the steps are/],
       ["env on a document step", () => {
         const w = wf();
-        step(w, "linux-build", "README.md · engine").env = { X: "1" };
+        step(w, "linux-build", "docs/install.md · engine").env = { X: "1" };
         return withWf(w);
-      }, /^README\.md · engine: the step carries env \(linux-build\)$/],
+      }, /^docs\/install\.md · engine: the step carries env \(linux-build\)$/],
       ["if on a document step", () => {
         const w = wf();
         step(w, "macos-suite-1", "CONTRIBUTING.md · suite").if = "always()";
@@ -354,7 +354,7 @@ describe("contributor.yml runs the documents' marked blocks, and nothing else", 
         (w.on as Record<string, unknown>).pull_request = null;
         return withWf(w);
       }, /^the triggers are pull_request, schedule, workflow_dispatch/],
-      ["the Linux label differing from the README's Ubuntu", () => withDoc("README.md", "on Ubuntu\n24.04:", "on Ubuntu\n26.04:"), /^runs-on is ubuntu-24\.04, not ubuntu-26\.04 \(linux-build, linux-suite-1, linux-suite-2\)$/],
+      ["the Linux label differing from docs/install.md's Ubuntu", () => withDoc("docs/install.md", "on Ubuntu\n24.04:", "on Ubuntu\n26.04:"), /^runs-on is ubuntu-24\.04, not ubuntu-26\.04 \(linux-build, linux-suite-1, linux-suite-2\)$/],
       ["shards to 14, in the block and the steps alike", () => {
         const w = wf();
         const to = (t: string) => t.replace('"$PARTS" 15', '"$PARTS" 14');

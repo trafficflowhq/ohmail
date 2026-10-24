@@ -1,7 +1,9 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { PROVIDERS, portMeansImplicitTls, providerById } from "../app/shell/providers.js";
+import {
+  PROTON, PROVIDERS, isProtonAddress, portMeansImplicitTls, presetForAddress, providerById,
+} from "../app/shell/providers.js";
 
 /**
  * Stage-2 the onboarding surface's checkable claims.
@@ -62,6 +64,18 @@ describe("provider parity — onboarding offers exactly what the landing promise
     // your own server"), so it is expected here and excluded from the named comparison.
     const offered = PROVIDERS.filter((p) => !p.manual).map((p) => p.label).sort();
     expect(offered).toEqual(landing);
+  });
+
+  it("Proton is information, never a connectable preset, and so never on the list", () => {
+    // It reaches other mail apps only through Proton Bridge on the person's own computer; the
+    // picker shows it as a note, and the parity above would otherwise promise it connects.
+    expect(PROVIDERS.filter((p) => /proton/i.test(`${p.id} ${p.label}`))).toEqual([]);
+    for (const m of ["../messages/en.json", "../messages/de.json"]) {
+      const list = JSON.parse(read(m)) as { providers: Record<string, string> };
+      expect(Object.values(list.providers).filter((v) => v.includes(PROTON.label)), m).toEqual([]);
+    }
+    expect(isProtonAddress("info@proton.me")).toBe(true);
+    expect(presetForAddress("info@proton.me")).toBeNull();
   });
 
   it("and the landing's 'any IMAP mailbox' promise has a manual entry behind it", () => {
@@ -131,10 +145,15 @@ describe("the presets cannot be a downgrade or a dead end", () => {
   });
 
   it("every provider that needs an app password says so, with somewhere to get one", () => {
+    const apps = PROVIDERS.filter((x) => x.appPassword);
+    expect(apps.map((p) => p.id).sort()).toEqual(["fastmail", "gmail", "icloud", "microsoft", "yahoo"]);
+    for (const p of apps) {
+      expect(p.note, p.id).toMatch(/app(?:-specific)? password/i);
+      expect(p.helpUrl, p.id).toMatch(/^https:\/\//);
+    }
     for (const p of PROVIDERS.filter((x) => !x.manual)) {
       expect(p.note.length, p.id).toBeGreaterThan(40);
-      expect(p.helpUrl, p.id).toMatch(/^https:\/\//);
-      expect(p.helpLabel, p.id).toBeTruthy();
+      if (p.helpUrl) expect(p.helpLabel, p.id).toBeTruthy();
     }
   });
 
@@ -148,7 +167,8 @@ describe("the presets cannot be a downgrade or a dead end", () => {
 
 describe("refusals are the server's sentence, never a client copy of it", () => {
   const client = read("../app/api-client.ts");
-  const join = read("../app/(product)/join/JoinScreen.tsx");
+  // The wizard, with its mailbox step (moved to its own file).
+  const join = read("../app/(product)/join/JoinScreen.tsx") + read("../app/(product)/join/MailboxStep.tsx");
 
   /**
    * EVERY webapp source file, not two of them.

@@ -11,9 +11,10 @@
  * fragment said. Cloud-only — it needs `app/api-client`, which the publish denies from the shell.
  */
 
-import { apiConfigured, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
-import { readOwner } from "../../shell/owner-cookie";
+import { ApiError, apiConfigured, codeOf, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
+import { readOwner, readOwnerMarker } from "../../shell/owner-cookie";
 import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { resolveOwnerOutcome } from "../session-outcome";
 
 /**
  * WHAT THE CONSENT REDIRECT LEFT IN THE QUERY.
@@ -69,6 +70,8 @@ export type OAuthOutcome =
 
 let outcome: OAuthOutcome | null = null;
 let started = false;
+/** Where this page load's return lands, once {@link beginOAuthReturn} has read it. */
+let landing: OAuthLanding | null = null;
 const listeners = new Set<() => void>();
 
 function publish(next: OAuthOutcome): void {
@@ -96,6 +99,119 @@ export function noOAuthOutcome(): null {
 }
 
 /**
+ * WHERE A RETURN LANDS, a closed set: `settings` (Settings → Mailboxes, the default), `join` (the sign-up
+ * wizard's mailbox step) or `first-run` (the setup stage). Microsoft's bounce always comes back to `/`, and
+ * an error bounce carries no `state`, so the start writes its landing into this tab before it leaves.
+ */
+export type OAuthLanding = "settings" | "join" | "first-run";
+const LANDINGS: ReadonlySet<string> = new Set<OAuthLanding>(["settings", "join", "first-run"]);
+const OAUTH_LANDING_KEY = "ohmail.oauth.landing";
+
+/**
+ * EVERY START WRITES ITS OWN LANDING, keyed by the `state` it was issued, so a `join` left behind by a
+ * wizard start abandoned at Microsoft never takes a later Settings sign-in to `/join`.
+ */
+export function rememberOAuthLanding(where: OAuthLanding, state: string): void {
+  if (typeof sessionStorage === "undefined") return;
+  durableSessionSet(OAUTH_LANDING_KEY, JSON.stringify({ landing: where, state }), "oauth.landing");
+}
+
+/**
+ * Read once and removed. A code return lands where the start of THAT ceremony asked; an error return names
+ * no ceremony and lands where this tab's last start asked. Anything unreadable, or a removal the jar refused,
+ * is Settings.
+ */
+function takeOAuthLanding(back: NonNullable<OAuthReturn>): OAuthLanding {
+  if (typeof sessionStorage === "undefined") return "settings";
+  try {
+    const raw = sessionStorage.getItem(OAUTH_LANDING_KEY);
+    if (raw === null) return "settings";
+    if (durableSessionRemove(OAUTH_LANDING_KEY, "oauth.landing") === "lost") return "settings";
+    const rec = JSON.parse(raw) as { landing?: unknown; state?: unknown };
+    if (typeof rec.landing !== "string" || !LANDINGS.has(rec.landing)) return "settings";
+    if (back.kind === "pending" && rec.state !== back.state) return "settings";
+    return rec.landing as OAuthLanding;
+  } catch {
+    return "settings";
+  }
+}
+
+/** `useSyncExternalStore`'s snapshot for the shell: is this load finishing a sign-in for `/join`? */
+export function oauthLandsInJoin(): boolean {
+  return landing === "join";
+}
+
+/** The server render lands nowhere. */
+export function noJoinLanding(): boolean {
+  return false;
+}
+
+/**
+ * WHAT `/join` IS HANDED: the outcome's kind and reason. Never the address — the wizard reads the mailbox
+ * back from `GET /mailboxes` — and a server sentence only for a reason the wizard does not word itself.
+ */
+export type JoinOAuthOutcome =
+  | { kind: "connected" }
+  | { kind: "refused"; reason: string }
+  | { kind: "failed"; reason: string | null; message?: string };
+const JOIN_OUTCOME_KEY = "ohmail.oauth.join";
+
+/**
+ * The `complete` refusals the wizard words itself. The server's sentences for these were written for
+ * Settings ("Start again from Settings."), which is the wrong screen inside `/join`.
+ */
+export const JOIN_FAILURE_REASONS: ReadonlySet<string> = new Set([
+  "state_invalid", "state_expired", "account_mismatch", "provider_unavailable",
+  "exchange_failed", "no_refresh_token", "no_address", "oauth_unconfigured",
+]);
+const REASON_SHAPE = /^[a-z0-9_]{1,48}$/;
+
+function joinFailureOf(err: unknown): JoinOAuthOutcome {
+  const code = codeOf(err);
+  const stated = err instanceof ApiError ? (err.details as { reason?: unknown } | null | undefined)?.reason : undefined;
+  // The client's refusal for a jar that names another account is the server's mismatch, one step earlier.
+  const reason = code === "owner_mismatch" ? "account_mismatch"
+    : code === "oauth_unconfigured" ? "oauth_unconfigured"
+    : typeof stated === "string" ? stated : code;
+  if (JOIN_FAILURE_REASONS.has(reason)) return { kind: "failed", reason };
+  const message = messageOf(err);
+  return {
+    kind: "failed", reason: REASON_SHAPE.test(reason) ? reason : null,
+    // Kept only where it cannot name the mailbox.
+    ...(message.includes("@") ? {} : { message }),
+  };
+}
+
+/** Store the outcome for the wizard and go back to it. `replace`: the bounce is no page to return to. */
+function handBackToJoin(back: JoinOAuthOutcome): void {
+  durableSessionSet(JOIN_OUTCOME_KEY, JSON.stringify(back), "oauth.join");
+  window.location.replace("/join");
+}
+
+/** The wizard's read of what its sign-in came back with; once, then gone. */
+export function takeJoinOAuthOutcome(): JoinOAuthOutcome | null {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(JOIN_OUTCOME_KEY);
+    if (raw === null) return null;
+    if (durableSessionRemove(JOIN_OUTCOME_KEY, "oauth.join") === "lost") return null;
+    const rec = JSON.parse(raw) as { kind?: unknown; reason?: unknown; message?: unknown };
+    if (rec.kind === "connected") return { kind: "connected" };
+    if (rec.kind === "refused" && typeof rec.reason === "string") return { kind: "refused", reason: rec.reason };
+    if (rec.kind !== "failed") return null;
+    return {
+      kind: "failed", reason: typeof rec.reason === "string" ? rec.reason : null,
+      ...(typeof rec.message === "string" ? { message: rec.message } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The values a return carries that must leave the address bar before the POST. */
+const ONE_TIME = ["oauth", "state", "code", "reason"];
+
+/**
  * Put the browser where the answer will be, and take the single-use values out of the URL. One `replaceState`
  * doing both, because they are the same edit: `?settings=mailboxes` is read at mount and kept (a pane name is
  * not a credential); `#/settings` is SET rather than trusted — the fragment is what the redirect chain can
@@ -103,19 +219,30 @@ export function noOAuthOutcome(): null {
  * the authorization code is single-use and must not sit in an address bar for the length of an IMAP probe, and
  * a reload must not re-POST a spent state. `replaceState` and not `location.hash = …`: assigning the hash
  * pushes a history entry, and Back returning to a URL with a spent code is the reload case again. A
- * `hashchange` is dispatched by hand for any router that already read the old fragment.
+ * `hashchange` is dispatched by hand for any router that already read the old fragment. A `first-run` landing
+ * opens the setup stage the same way, without the pane.
  */
-function landOnMailboxesPane(): void {
+function landOn(where: "settings" | "first-run"): void {
   if (typeof window === "undefined" || !window.history?.replaceState) return;
   const url = new URL(window.location.href);
-  url.searchParams.set("settings", "mailboxes");
-  for (const k of ["oauth", "state", "code", "reason"]) url.searchParams.delete(k);
-  const changed = url.hash !== "#/settings";
+  if (where === "settings") url.searchParams.set("settings", "mailboxes");
+  else url.searchParams.delete("settings");
+  for (const k of ONE_TIME) url.searchParams.delete(k);
+  const hash = where === "settings" ? "#/settings" : "#/first-run";
+  const changed = url.hash !== hash;
   /* The router's own `history.state` is kept, as every writer under this app keeps it: a state
      without the app router's marker makes it adopt the URL it was given and restore it over the
      next hash change (the away notice's link opened nothing that way). */
-  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}#/settings`);
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${hash}`);
   if (changed) window.dispatchEvent(new Event("hashchange"));
+}
+
+/** A `join` landing waits on `/` behind the shell's gate: nothing single-use, no pane and no route left. */
+function waitForJoin(): void {
+  if (typeof window === "undefined" || !window.history?.replaceState) return;
+  const url = new URL(window.location.href);
+  for (const k of [...ONE_TIME, "settings"]) url.searchParams.delete(k);
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
 }
 
 /**
@@ -178,12 +305,17 @@ export function beginOAuthReturn(): OAuthOutcome | null {
   if (!back) return null;
 
   started = true;
+  const where = takeOAuthLanding(back);
+  landing = where;
+  const join = where === "join";
   // THE ROUTE FIRST. Whatever happens next — a refusal, a dead network, an exception — the browser is
   // already on the screen the answer belongs to, which is the half of this that was missing.
-  landOnMailboxesPane();
+  if (where === "join") waitForJoin();
+  else landOn(where);
 
   if (back.kind === "error") {
     publish({ kind: "refused", reason: back.reason });
+    if (join) handBackToJoin({ kind: "refused", reason: OAUTH_REASONS.has(back.reason) ? back.reason : "consent_failed" });
     return outcome;
   }
 
@@ -196,14 +328,21 @@ export function beginOAuthReturn(): OAuthOutcome | null {
 
   publish({ kind: "running" });
   void (async () => {
+    let handed: JoinOAuthOutcome;
     try {
+      /* A session born in the sign-up wizard can reach here with no `tf_owner` in the jar, and the
+         account gate refuses a pending client that cannot read one. The session read writes it back. */
+      if (join && readOwnerMarker().kind === "absent") await resolveOwnerOutcome().catch(() => null);
       const out = await mailboxApi.oauthComplete({ state: back.state, code: back.code });
       // `created` distinguishes a first connect from a reconnect, and the two are different things to
       // somebody who came here to fix a mailbox that had stopped.
       publish({ kind: "connected", address: out.mailbox.address, created: out.created });
+      handed = { kind: "connected" };
     } catch (err) {
       publish({ kind: "failed", message: messageOf(err) });
+      handed = joinFailureOf(err);
     }
+    if (join) handBackToJoin(handed);
   })();
   return outcome;
 }
@@ -212,5 +351,6 @@ export function beginOAuthReturn(): OAuthOutcome | null {
 export function resetOAuthReturn(): void {
   started = false;
   outcome = null;
+  landing = null;
   listeners.clear();
 }

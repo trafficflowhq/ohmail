@@ -15,6 +15,7 @@ import { accessLock, onAccessLock } from "../net/access-lock";
 import { readAccess } from "../net/account";
 import type { ConnectedSession } from "../net/pairing";
 import "../state/access-verdict-native";
+import "../state/storage-notice-native";
 import { recordVerdict, storedVerdict, verdictsReady, verdictsSettled } from "../state/access-verdict";
 import { gateFor } from "../state/gate";
 import { useTheme } from "../theme";
@@ -23,6 +24,7 @@ import { Panel, Screen } from "./base";
 import { awaitFirstPaint, paintsAtOnce, type FirstPaintInputs } from "./first-paint";
 import { Wordmark } from "./Icon";
 import { LifecycleStrip } from "./LifecycleStrip";
+import { StorageNotice } from "./StorageNotice";
 import { BootShell } from "./Skeleton";
 
 /** The 402 sink's slot, subscribed — the transport writes it from outside React. */
@@ -112,6 +114,7 @@ export function Gated({ children }: { children: ReactNode }) {
   return (
     <>
       <LifecycleStrip session={session} />
+      <StorageNotice session={session} />
       {children}
     </>
   );
