@@ -1008,3 +1008,5 @@ export {
   type SelfCheckSaid,
   type SelfCheckUnreadable,
 } from "./diagnostics.js";
+// The filing refusal classes every client words, and their narrowing. See `filing-reasons.ts`.
+export { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "./filing-reasons.js";

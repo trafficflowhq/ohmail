@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { Copy } from "../src/copy";
 import { phoneOrganizer } from "../src/state/live";
-import { readMailboxes } from "../src/net/mailboxes";
+import { leaveFilings, readFilings, readMailboxes, retryFilings } from "../src/net/mailboxes";
 
 /**
  * ═══ THE PHONE READS THE MAILBOX IT IS SHOWING ═══════════════════════════════════════════════
@@ -355,3 +355,58 @@ describe("the world layer's shape — asserted over source, and said to be", () 
       .toContain("const NO_OWN_ADDRESSES: readonly string[] = [];");
   });
 });
+
+/* FOLDER-MISSING-FILINGS: the phone read no filing facts and had no way to ask about them. */
+describe("the filings that wait — the facts and the block's three requests", () => {
+  const asked: string[] = [];
+  const session = (status: number, body: unknown) => ({
+    profile: { origin: "https://srv.test", accountId: "a" },
+    fetch: vi.fn(async (url: string, init?: RequestInit) => {
+      asked.push(`${init?.method ?? "GET"} ${url} ${typeof init?.body === "string" ? init.body : ""}`.trim());
+      if (status === 0) throw new Error("offline");
+      return { status, json: async () => body } as unknown as Response;
+    }),
+  }) as unknown as Parameters<typeof readMailboxes>[0];
+
+  it("keeps the server's filing figures, and none where the wire sends none", async () => {
+    const out = await readMailboxes(session(200, { items: [
+      { id: "m1", address: "a@b.test", filing: { due: 1, deferred: 2, stuck: 2, stuckSince: "2026-10-24T04:02:00.000Z",
+        stuckRefusalClass: "no_such_folder", lastRefusalClass: "no_such_folder", nextAttemptAt: "", asOf: "2026-10-24T04:46:00.000Z", attempts: 3 } },
+      { id: "m2", address: "c@d.test" },
+      { id: "m3", address: "e@f.test", filing: { due: -1, deferred: "2" } },
+    ] }));
+    expect(out![0]!.filing).toEqual({
+      due: 1, deferred: 2, stuck: 2, stuckSince: "2026-10-24T04:02:00.000Z", stuckRefusalClass: "no_such_folder",
+      lastRefusalClass: "no_such_folder", nextAttemptAt: null, asOf: "2026-10-24T04:46:00.000Z",
+    });
+    expect(out![1]).not.toHaveProperty("filing");
+    expect(out![2]!.filing).toMatchObject({ due: 0, deferred: 0, stuck: 0 });
+  });
+
+  it("reads the groups of one mailbox, and a foreign or malformed answer is could-not-ask", async () => {
+    const groups = [{ folder: "ohmail/Screened", count: 2, deletes: 0, since: "2026-10-24T04:02:00.000Z", through: "2026-10-24T04:06:00.000Z",
+      nextAttemptAt: null, at: "INBOX", reasons: [{ reason: "no_such_folder", count: 2 }] }];
+    asked.length = 0;
+    expect(await readFilings(session(200, { mailboxId: "m1", groups }), "m1")).toEqual(groups);
+    expect(asked).toEqual(["GET https://srv.test/mailboxes/m1/filings"]);
+    expect(await readFilings(session(200, { mailboxId: "m2", groups }), "m1")).toBeNull();
+    expect(await readFilings(session(200, { mailboxId: "m1", groups: [{ count: 1 }] }), "m1")).toBeNull();
+    expect(await readFilings(session(500, {}), "m1")).toBeNull();
+    expect(await readFilings(session(0, {}), "m1")).toBeNull();
+  });
+
+  it("Try again and Leave answer their counts, a 409 says another install organizes it, anything else did not go through", async () => {
+    asked.length = 0;
+    expect(await retryFilings(session(202, { reset: 2, skipped: 0 }), "m1", "ohmail/Screened")).toEqual({ k: "retried", count: 2 });
+    expect(await leaveFilings(session(200, { settled: 2, remaining: 0 }), "m1", "ohmail/Screened", "2026-10-24T04:06:00.000Z"))
+      .toEqual({ k: "left", count: 2 });
+    expect(asked).toEqual([
+      `POST https://srv.test/mailboxes/m1/filings/retry {"folder":"ohmail/Screened"}`,
+      `POST https://srv.test/mailboxes/m1/filings/leave {"folder":"ohmail/Screened","through":"2026-10-24T04:06:00.000Z"}`,
+    ]);
+    expect(await retryFilings(session(409, {}), "m1", "x")).toEqual({ k: "elsewhere" });
+    expect(await leaveFilings(session(400, {}), "m1", "x", "y")).toEqual({ k: "failed" });
+    expect(await retryFilings(session(0, {}), "m1", "x")).toEqual({ k: "failed" });
+  });
+});
+

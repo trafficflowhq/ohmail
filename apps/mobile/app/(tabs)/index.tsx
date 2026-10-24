@@ -31,6 +31,7 @@ import { MessageReader } from "../../src/ui/MessageReader";
 import { OrganizerStrip, useStandaloneClaim } from "../../src/ui/OrganizerStrip";
 import { knockSlotOf, noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
 import { WaitingStrip } from "../../src/ui/WaitingStrip";
+import { FilingStrip } from "../../src/ui/FilingStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine, readingAtConnectNow } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -122,6 +123,8 @@ function OhboxBody() {
             <OrganizerStrip />
             {/* What waits on the computer that organizes this mailbox — the web's Rules list. */}
             <WaitingStrip />
+            {/* The filings the mail server has not taken yet — the web's strip, linking to Settings. */}
+            <FilingStrip link />
             {knock.k === "state" ? <StateKnock say={notOrganizingSay(knock.why)} />
               : knock.k === "knock" ? <Doorbell initials={shown.doorbell.initials} count={shown.doorbell.count} /> : null}
           </>

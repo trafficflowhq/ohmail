@@ -145,6 +145,37 @@ export interface PhoneMailbox {
   syncBlockedSince?: string | null;
   /** Cloud's own scan, from a Cloud-paired desktop host only; forwarded only when the row has the key. */
   hostedLastSyncAt?: string | null;
+  /**
+   * THE FILINGS THAT WAIT ON THE MAIL SERVER — `MailboxDTO.filing`, the aggregate the web's strip
+   * reads. Absent where the wire sent none (an older server, or a row nothing filed): silence.
+   * `stuck` is the server's own split, never a threshold this phone computes.
+   */
+  filing?: PhoneFiling;
+}
+
+export interface PhoneFiling {
+  due: number;
+  deferred: number;
+  stuck: number;
+  stuckSince: string | null;
+  stuckRefusalClass: string | null;
+  lastRefusalClass: string | null;
+  nextAttemptAt: string | null;
+  asOf: string | null;
+}
+
+/** A whole count of 0 or more, else 0. */
+const countOf = (v: unknown): number => (Number.isInteger(v) && (v as number) >= 0 ? (v as number) : 0);
+const wordOf = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+
+function filingOf(raw: unknown): PhoneFiling | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const f = raw as Record<string, unknown>;
+  return {
+    due: countOf(f.due), deferred: countOf(f.deferred), stuck: countOf(f.stuck),
+    stuckSince: instantOf(f.stuckSince), stuckRefusalClass: wordOf(f.stuckRefusalClass),
+    lastRefusalClass: wordOf(f.lastRefusalClass), nextAttemptAt: instantOf(f.nextAttemptAt), asOf: instantOf(f.asOf),
+  };
 }
 
 /** A non-empty string or `null` — an empty string is not an instant. */
@@ -266,6 +297,7 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...("lastSyncAt" in r ? { lastSyncAt: instantOf(r.lastSyncAt) } : {}),
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
+        ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
       });
     }
     return out;
@@ -605,3 +637,69 @@ export async function checkMailbox(session: ConnectedSession, mailboxId: string)
 export function selfChecksThisSession(): Record<string, unknown> {
   return Object.fromEntries(lastReadings);
 }
+
+/**
+ * SETTINGS → THIS PHONE → THE FILINGS THAT WAIT — `GET /mailboxes/:id/filings` and its two presses,
+ * the routes the web's block reads (`MailboxFilings.tsx`). `null` is "could not ask", never
+ * "nothing waits". Neither press moves mail: Try again re-arms the schedule (the engine in this
+ * process rings its organizer), Leave settles the intent on the folder the mail is in.
+ */
+export interface PhoneFilingsGroup {
+  folder: string;
+  count: number;
+  deletes: number;
+  since: string | null;
+  through: string | null;
+  nextAttemptAt: string | null;
+  at: string | null;
+  reasons: Array<{ reason: string | null; count: number }>;
+}
+
+export async function readFilings(session: ConnectedSession, mailboxId: string): Promise<PhoneFilingsGroup[] | null> {
+  try {
+    const res = await session.fetch(`${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/filings`, { method: "GET" });
+    if (res.status !== 200) return null;
+    const b = (await res.json()) as { mailboxId?: unknown; groups?: unknown } | null;
+    if (!b || b.mailboxId !== mailboxId || !Array.isArray(b.groups)) return null;
+    const out: PhoneFilingsGroup[] = [];
+    for (const g of b.groups as Array<Record<string, unknown> | null>) {
+      const folder = wordOf(g?.folder);
+      if (g === null || folder === null || !Array.isArray(g.reasons)) return null;
+      out.push({
+        folder, count: countOf(g.count), deletes: countOf(g.deletes), since: instantOf(g.since),
+        through: instantOf(g.through), nextAttemptAt: instantOf(g.nextAttemptAt), at: wordOf(g.at),
+        reasons: (g.reasons as Array<Record<string, unknown> | null>).map((r) => ({ reason: wordOf(r?.reason), count: countOf(r?.count) })),
+      });
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** What a press on the block answered: its count, another install organizes it now (409), or no answer. */
+export type FilingsPress = { k: "retried" | "left"; count: number } | { k: "elsewhere" } | { k: "failed" };
+
+async function filingsPress(
+  session: ConnectedSession, mailboxId: string, verb: "retry" | "leave", body: Record<string, string>,
+): Promise<FilingsPress> {
+  try {
+    const res = await session.fetch(
+      `${requestBase(session)}/mailboxes/${encodeURIComponent(mailboxId)}/filings/${verb}`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    );
+    if (res.status === 409) return { k: "elsewhere" };
+    if (res.status !== 200 && res.status !== 202) return { k: "failed" };
+    const b = (await res.json()) as { reset?: unknown; settled?: unknown } | null;
+    return verb === "retry" ? { k: "retried", count: countOf(b?.reset) } : { k: "left", count: countOf(b?.settled) };
+  } catch {
+    return { k: "failed" };
+  }
+}
+
+export const retryFilings = (session: ConnectedSession, mailboxId: string, folder: string): Promise<FilingsPress> =>
+  filingsPress(session, mailboxId, "retry", { folder });
+
+export const leaveFilings = (session: ConnectedSession, mailboxId: string, folder: string, through: string): Promise<FilingsPress> =>
+  filingsPress(session, mailboxId, "leave", { folder, through });
+
