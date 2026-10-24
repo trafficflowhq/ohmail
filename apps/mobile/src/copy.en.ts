@@ -2199,7 +2199,24 @@ const TABLE = {
     `This can't be kept as a draft — it's past the ${size} limit. Shorten it, or close again to discard it.`,
   composeKeepTooLongBound: (size: string) =>
     `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it, or close again to discard the changes.`,
-  composeKeepFiles: "Drafts do not keep attachments. Close again to discard them.",
+  composeKeepFiles: (names: string, size: string) =>
+    `Not kept with the draft: ${names}. This phone keeps up to ${size} of attachments with drafts. Close again to keep it without them.`,
+  /* A DRAFT ROW HOLDS NO BYTES: the attachments stay on this phone, and the sentence says where. */
+  composeKeptHere: "Kept in Drafts. Its attachments are kept on this phone only.",
+  composeKeptQueuedHere: "Kept as a draft, its attachments on this phone only. It reaches Drafts once this phone is back online.",
+  /* THE LETTERS A HARD STOP LEFT, said once at the next launch (`compose/letter-restore.ts`). */
+  lettersKept: (n: number) => (n === 1
+    ? "A letter you were writing when ohmail stopped is in Drafts."
+    : `${n} letters you were writing when ohmail stopped are in Drafts.`),
+  lettersKeptWithout: (n: number, names: string) => (n === 1
+    ? `A letter you were writing when ohmail stopped is in Drafts, without ${names}: past what this phone keeps with drafts.`
+    : `${n} letters you were writing when ohmail stopped are in Drafts, without ${names}: past what this phone keeps with drafts.`),
+  letterSendUnclear: (n: number) => (n === 1
+    ? "A letter you sent as ohmail stopped is in Drafts. Check Sent before you send it again."
+    : `${n} letters you sent as ohmail stopped are in Drafts. Check Sent before you send them again.`),
+  letterSendUnconfirmed: (n: number) => (n === 1
+    ? "A letter whose send was never confirmed is in Drafts. Check Sent before you send it again."
+    : `${n} letters whose sends were never confirmed are in Drafts. Check Sent before you send them again.`),
   composeNeedRecipient: "Add someone to send it to.",
   composeNoMailbox: "No mailbox on this phone can send yet.",
   composeNoMailboxHint: "Once this phone has mail, you can write from that mailbox.",

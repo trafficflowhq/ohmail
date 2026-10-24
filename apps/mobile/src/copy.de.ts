@@ -1510,7 +1510,22 @@ export const DE: Deck = {
     `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze es, oder schließe noch einmal, um es zu verwerfen.`,
   composeKeepTooLongBound: (size: string) =>
     `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze sie, oder schließe noch einmal, um die Änderungen zu verwerfen.`,
-  composeKeepFiles: "Entwürfe behalten keine Anhänge. Schließe noch einmal, um sie zu verwerfen.",
+  composeKeepFiles: (names: string, size: string) =>
+    `Nicht beim Entwurf behalten: ${names}. Dieses Handy behält bis zu ${size} Anhänge bei Entwürfen. Schließe noch einmal, um ihn ohne sie zu behalten.`,
+  composeKeptHere: "In den Entwürfen behalten. Die Anhänge bleiben nur auf diesem Handy.",
+  composeKeptQueuedHere: "Als Entwurf behalten, die Anhänge nur auf diesem Handy. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
+  lettersKept: (n: number) => (n === 1
+    ? "Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen."
+    : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen.`),
+  lettersKeptWithout: (n: number, names: string) => (n === 1
+    ? `Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`
+    : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`),
+  letterSendUnclear: (n: number) => (n === 1
+    ? "Eine Nachricht, die du gesendet hast, als ohmail beendet wurde, liegt in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest."
+    : `${n} Nachrichten, die du gesendet hast, als ohmail beendet wurde, liegen in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest.`),
+  letterSendUnconfirmed: (n: number) => (n === 1
+    ? "Eine Nachricht, deren Senden nie bestätigt wurde, liegt in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest."
+    : `${n} Nachrichten, deren Senden nie bestätigt wurde, liegen in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest.`),
   composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
   composeNoMailbox: "Noch kann kein Postfach auf diesem Handy senden.",
   composeNoMailboxHint: "Sobald dieses Handy Mails hat, kannst du von diesem Postfach aus schreiben.",

@@ -567,6 +567,12 @@ const ENGINE_IMPORTERS = new Set([
    */
   "src/compose/attach.ts",
   /**
+   * THE LETTER BEING WRITTEN, ON THE PHONE'S DISK — names the engine's two client-local record
+   * types (`compose_letter`, `compose_file`) and nothing else. It writes through the store handed
+   * in (`commitLocal`); no transport, and the pattern scan above holds it to that.
+   */
+  "src/compose/letter-store.ts",
+  /**
    * THE MAILTO ADAPTER — a named consumer of the one mailto parser (`parseMailto`, pure, the
    * desktop's own). It reads a string it is handed; the pattern scan above holds it to that.
    */
