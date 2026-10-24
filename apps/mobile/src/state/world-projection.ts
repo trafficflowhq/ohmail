@@ -124,7 +124,7 @@ export interface ProjectionInputs {
   onPresented(pres: EntityReader, options: ConsentOptions): void;
 }
 
-export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">;
+export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">;
 
 /** How many derivations this projector ran, by list — the ratchet's counter, and the `ui_vitals` line's source. */
 export interface ProjectorStats { runs: number; lists: Record<string, number> }
