@@ -8,9 +8,10 @@
  * imports; this module imports no react-native and no expo.
  */
 import {
-  IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin,
+  IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin, zonedFields,
   type ComposeAttachment, type ImageQualityLevel, type ImageQualityRule,
 } from "@ohmail/client-engine";
+import { Copy } from "../copy";
 import type { PhoneMailbox } from "../net/mailboxes";
 
 /* The level vocabulary, for the setting and the sheet — this module is the phone's door to it. */
@@ -23,6 +24,11 @@ export interface PhoneComposeAttachment extends ComposeAttachment {
   sizeBytes: number;
   /** Where the picker left the file — what a picture is shrunk from. Never sent. */
   uri?: string;
+  /**
+   * The name was made at the pick ({@link photoName}), not handed by the picker: a re-pick of the
+   * same picture is named anew, so the duplicate check reads its bytes alone. Never sent.
+   */
+  nameFromPick?: true;
 }
 
 /**
@@ -88,8 +94,8 @@ export type AttachPickOutcome =
 export interface AttachPicker {
   /** The document picker — any file type, multiple selection. */
   pickFiles(): Promise<AttachPickOutcome>;
-  /** The photo library — images, multiple selection, bytes in hand. */
-  pickPhotos(): Promise<AttachPickOutcome>;
+  /** The photo library — images, multiple selection, bytes in hand; `zone` dates a nameless photo. */
+  pickPhotos(zone: string): Promise<AttachPickOutcome>;
 }
 
 /**
@@ -125,7 +131,8 @@ export interface AttachAdmit {
 
 /**
  * ADMIT PICKED FILES AGAINST THE LIST AS IT STANDS — the webapp pipeline's order: a duplicate
- * (same filename AND same bytes, the web's identity) is skipped and named; a file that would put
+ * (same filename AND same bytes, the web's identity; the same bytes alone where either name was
+ * made at the pick, `nameFromPick`) is skipped and named as listed; a file that would put
  * the running total over the cap is refused and counted; the rest append in pick order. The cap
  * binds DURING the walk, not after it — an over-cap file never occupies memory or a row.
  */
@@ -144,8 +151,10 @@ export function admitPicked(
       unreadable += 1;
       continue;
     }
-    if (next.some((a) => a.filename === file.filename && a.contentBase64 === file.contentBase64)) {
-      duplicates.push(file.filename);
+    const same = next.find((a) => a.contentBase64 === file.contentBase64
+      && (a.filename === file.filename || a.nameFromPick === true || file.nameFromPick === true));
+    if (same !== undefined) {
+      duplicates.push(same.filename);
       continue;
     }
     if (file.sizeBytes > capBytes || total + file.sizeBytes > capBytes) {
@@ -182,6 +191,49 @@ export function toComposeAttachments(
     contentType,
     contentBase64,
   }));
+}
+
+const PHOTO_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/heic": "heic",
+  "image/heif": "heif", "image/gif": "gif", "image/webp": "webp",
+};
+/* Android's photo picker hands the media number ("19.jpg"); iOS and the cache hand a UUID. */
+const MEDIA_NUMBER = /^\d+(\.\w+)?$/;
+const CACHE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.\w+)?$/i;
+
+/** The picker handed no name of the photo's own: none, a media number or a cache UUID. */
+export function pickerGaveNoName(picked: string | null | undefined): boolean {
+  const given = typeof picked === "string" ? picked.trim() : "";
+  return given === "" || MEDIA_NUMBER.test(given) || CACHE_UUID.test(given);
+}
+
+/**
+ * THE NAME A PICKED PHOTO IS LISTED AND SENT UNDER. A real name is kept; a missing one, a media
+ * number or a cache UUID becomes "Photo YYYY-MM-DD HH.MM.SS.<ext>" at the pick, in the reader's
+ * zone, the extension from the file's type. A name already in `taken` (this pick) gets " (2)".
+ */
+export function photoName(
+  picked: string | null | undefined,
+  mime: string | null | undefined,
+  at: Date,
+  zone: string,
+  taken: ReadonlySet<string>,
+): string {
+  const given = typeof picked === "string" ? picked.trim() : "";
+  let name = given;
+  if (pickerGaveNoName(given)) {
+    const ext = PHOTO_EXT[(mime ?? "").toLowerCase()] ?? /\.(\w+)$/.exec(given)?.[1]?.toLowerCase() ?? "jpg";
+    const f = zonedFields(at, zone);
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    name = Copy.photoNamed(`${f.year}-${p2(f.month)}-${p2(f.day)} ${p2(f.hour)}.${p2(f.minute)}.${p2(f.second)}.${ext}`);
+  }
+  if (!taken.has(name)) return name;
+  const dot = name.lastIndexOf(".");
+  const [stem, tail] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let n = 2; ; n += 1) {
+    const next = `${stem} (${n})${tail}`;
+    if (!taken.has(next)) return next;
+  }
 }
 
 /** Decoded byte length of a base64 string, without decoding it — the adapter's own accounting. */

@@ -1295,7 +1295,7 @@ export function ComposeSheet({
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
     const outcome: AttachPickOutcome =
-      which === "files" ? await picker.pickFiles() : await picker.pickPhotos();
+      which === "files" ? await picker.pickFiles() : await picker.pickPhotos(zone);
     if (outcome.kind === "cancelled") return;
     if (outcome.kind === "unavailable") {
       // The platform refused the picker itself — said by name, never a press that does nothing.
