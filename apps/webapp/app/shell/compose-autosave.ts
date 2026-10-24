@@ -350,6 +350,8 @@ export interface ComposeAutosave {
   epochNow: () => number;
   /** The row version the text on screen is based on, for the send's save; `null` = not known. */
   baseNow: () => string | null;
+  /** A save holds the words on screen: the row's, a create's, one waiting on the outbox, or this message's own send. */
+  holdsOnScreen: () => boolean;
   /**
    * The engine's kept-as-new-draft list ({@link OhmailEngine.keptAsNewDrafts}), handed in by the surface
    * on each change: this composer takes its own, and each is said once.
@@ -1091,6 +1093,14 @@ export function useComposeAutosave(opts: {
           sentAlready = row !== null && era === epoch.current && result.error?.code === "draft_sent";
           if (sentAlready) { outcome = { kind: "nothing" }; return; }
           if (!gone && era === epoch.current) setSaveRefused(true);
+          // A waiting update of these words is no longer what the row will hold.
+          if (era === epoch.current && pendingLand.current?.row === row) {
+            pendingLand.current = null;
+            const prev = readComposeRowHolds();
+            markComposeRowHolds({
+              row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), ...(base.current ? { rev: base.current } : {}),
+            });
+          }
           outcome = { kind: "failed", reason: result.error?.message ?? null };
           return;
         }
@@ -1523,9 +1533,19 @@ export function useComposeAutosave(opts: {
   settleComposeRef.current = settleCompose;
   const epochNow = useCallback((): number => epoch.current, []);
   const baseNow = useCallback((): string | null => base.current, []);
+  const holdsOnScreen = (): boolean => {
+    const f = fieldsRef.current;
+    if (!worthSaving(f)) return true;
+    const sig = signatureOf(f);
+    // The row's or a create's, an update on the outbox, or the message let go of unchanged.
+    if (keptNow(sig) || pendingLand.current?.signature === sig || abandonedAt.current === sig) return true;
+    // Carried by this message's own send, on its way or held.
+    if (sendInFlightRef.current && carried(draftIdRef.current)) return true;
+    return holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: readComposeRow(), session: composeSessionId() }).kind === "parked";
+  };
 
   return {
     draftId, adopt, release, discard, flush, sending, notSent, holdsCreate, awaitCreate, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
-    baseNow, keptAsNew,
+    baseNow, keptAsNew, holdsOnScreen,
   };
 }

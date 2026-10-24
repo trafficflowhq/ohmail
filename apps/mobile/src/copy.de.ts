@@ -132,6 +132,9 @@ export const DE: Deck = {
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
   phoneStateStopPendingWhy: "Ein Stopp steht bereits aus; es wartet auf das Postfach.",
+  phoneStateSettingsUnsynced: "Organisiert, aber die Einstellungen dieses Postfachs lassen sich auf dem Mailserver nicht speichern oder lesen. ohmail versucht es weiter.",
+  phoneStateSettingsUnsyncedCode: (code: string) =>
+    `Organisiert, aber die Einstellungen dieses Postfachs lassen sich auf dem Mailserver nicht speichern oder lesen (${code}). ohmail versucht es weiter.`,
   phoneStateStopSiblingLapse: "Eine andere Kopie dieses Handys hält den Anspruch auf das Postfach noch; der Stopp endet, wenn dieser Anspruch verfällt.",
   /* Ohne Desktop-Zwilling: nur auf dem Handy kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",
@@ -1501,6 +1504,10 @@ export const DE: Deck = {
   replySentElsewhere: "Nicht gesendet: Dieser Entwurf ging bereits von einem anderen Gerät aus.",
   composeSentElsewhere: "Dieser Entwurf wurde von einem anderen Gerät gesendet. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
   composeSendAsNew: "Als neue Nachricht senden",
+  replyChangedElsewhere: "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du geschrieben hast, ist als neuer Entwurf gesichert.",
+  replyChangedElsewhereUnsaved: "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du geschrieben hast, ist noch hier und noch nicht gespeichert.",
+  replyChangedElsewhereLater: "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du geschrieben hast, bleibt auf diesem Telefon und wird als neuer Entwurf gesichert, sobald das geht.",
+  composeKeptChangedElsewhere: "Dieser Entwurf wurde auf einem anderen Gerät geändert. Was du hier geschrieben hast, ist als neuer Entwurf gesichert.",
   replyDeletedElsewhere: "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät gelöscht.",
   composeDeletedElsewhere: "Dieser Entwurf wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
   composeNotSentOffline: "Nicht gesendet. Dieses Handy erreicht deinen Mailserver nicht. Die Nachricht liegt in den Entwürfen — sende sie erneut, sobald du wieder online bist.",
@@ -2040,6 +2047,7 @@ export const DE: Deck = {
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"}, seit das wieder aufgetaucht ist`,
   mailRowMarksAria: (count: number, unread: number) =>
     `${count} Nachrichten, älteste zuerst: ${unread === 0 ? "alle gelesen" : `${unread} ungelesen`}`,
+  rowMarksMore: (n: number) => `+${n}`,
   readerMarksAria: "Nachrichten in diesem Gespräch",
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Nachricht ${position} von ${count}, von ${sender}, ${unread ? "ungelesen" : "gelesen"}`,

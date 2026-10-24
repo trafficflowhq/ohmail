@@ -10,3 +10,14 @@
 export function topPad(insetTop: number, gap: number): number {
   return insetTop + gap;
 }
+
+/**
+ * The side margins of a card drawn above the screens (`Gated`'s account notices), outside the
+ * `Screen` that pays the side insets and the rail: past each side inset and the rail's column on its
+ * side (`listNavClearance`), and never closer to the edge than the card's own gutter.
+ */
+export function cardSides(
+  inset: { left: number; right: number }, rail: { left: number; right: number }, gap: number,
+): { marginLeft: number; marginRight: number } {
+  return { marginLeft: inset.left + Math.max(gap, rail.left), marginRight: inset.right + Math.max(gap, rail.right) };
+}

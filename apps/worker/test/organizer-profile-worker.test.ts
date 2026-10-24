@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
-  accounts, accountSettings, auditLog, awayResponders, changeLog, contacts, folderState, latestProfileFoundMarker,
+  accounts, accountSettings, auditLog, awayResponders, changeLog, contacts, folderState, idempotencyKeys, latestProfileFoundMarker,
   mailboxCredentials, mailboxes, messages, notifyRules, profileImportResolutionExists,
   recordProfileImportResolution, rules, tags,
 } from "@trafficflow/db";
@@ -2593,6 +2593,10 @@ describe("the serialized document carries configuration and NOTHING else", () =>
        the fingerprint, read by every reader as the window in force. The fixture records a real
        baseline, so a dropped key is red here too. */
     "screening", "screening.baselineAt", "screening.dormancyDays", "screening.scope",
+    /* The request ids this organizer applied (`meta-request:<id>`), an ENVELOPE key out of the
+       fingerprint: a reader knows its own applied press is in this copy. Opaque ids, written plain
+       (`applied[]`). The fixture claims one, so a dropped key is red here too. */
+    "applied",
   ]);
 
   it("key census exact, and sentinels planted in every non-config table stay out of the message", async () => {
@@ -2639,11 +2643,27 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     })
       .where(eq(mailboxes.id, mb!.id));
 
-    const { payload, screening } = await serializeOrganizerProfileCounted(db, accountId, mb!.id);
+    // The requests it answered: an applied one, a refusal, an expired one and an erased one.
+    const at = new Date();
+    const key = (id: string, applied: boolean, expiresAt: Date, erasedAt: Date | null = null) => ({
+      accountId, key: `meta-request:${id}`, requestHash: "h", responseStatus: 200,
+      responseJson: applied ? { applied: true, requestId: id } : { applied: false, requestId: id, reason: "conflict" },
+      seq: null, expiresAt, erasedAt,
+    });
+    const later = new Date(at.getTime() + 3_600_000);
+    const APPLIED = randomUUID();
+    await db.insert(idempotencyKeys).values([
+      key(APPLIED, true, later), key(randomUUID(), false, later),
+      key(randomUUID(), true, new Date(at.getTime() - 1000)), key(randomUUID(), true, later, at),
+      { ...key(randomUUID(), true, later), key: "some-post-key" },
+    ]);
+
+    const { payload, screening, applied } = await serializeOrganizerProfileCounted(db, accountId, mb!.id, { applied: true, now: at });
+    expect(applied, "only applied, unexpired, unerased meta-request ids").toEqual([APPLIED]);
     expect(payload.signature, "the serializer did not reach the mailbox's own signature")
       .toBe("-- \nMila Brunner");
     expect(screening).toEqual({ baselineAt: "2026-07-01T00:00:00.000Z", dormancyDays: 30, scope: "window" });
-    const doc = makeProfileDoc(payload, { updatedAt: new Date(), producer: { kind: "cloud", version: "dev" }, screening });
+    const doc = makeProfileDoc(payload, { updatedAt: new Date(), producer: { kind: "cloud", version: "dev" }, screening, applied });
     const raw = formatProfileMessage(doc, { installId: INSTALL });
 
     // The census, TWICE, and the first one is the sharper tripwire: `makeProfileDoc`
@@ -2652,7 +2672,7 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     // would stay green. The raw payload's census is where such a column is caught.
     const ENVELOPE = new Set([
       "v", "updatedAt", "producer", "producer.kind", "producer.version", "producer.stamped",
-      "screening", "screening.baselineAt", "screening.dormancyDays", "screening.scope",
+      "screening", "screening.baselineAt", "screening.dormancyDays", "screening.scope", "applied",
     ]);
     expect([...keyPaths(payload)].sort(), "the serializer reached a column v1 never admitted")
       .toEqual([...V1_KEY_PATHS].filter((k) => !ENVELOPE.has(k)).sort());
@@ -2670,6 +2690,7 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     if (parsed === null || isMalformedProfile(parsed)) throw new Error("expected a readable document");
     expect(profileFingerprint(parsed.doc!)).toBe(profileFingerprint(payload));
     expect(parsed.doc!.screening).toEqual(screening);
+    expect(parsed.doc!.applied).toEqual([APPLIED]);
   }, 30_000);
 });
 
@@ -2709,6 +2730,32 @@ describe("FIX-026: a pile of settings copies is tidied, not rewritten", () => {
   }
   const planned = (events: string[]): Array<Record<string, unknown>> => events
     .filter((e) => e.startsWith("profile_tidy_planned ")).map((e) => JSON.parse(e.slice("profile_tidy_planned ".length)));
+
+  it("an applied request id rides the next write and never causes one", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    await db.insert(tags).values({ accountId: mb.accountId, name: "mine", hue: "moss" });
+    let t = Date.UTC(2026, 8, 28, 0, 0, 0);
+    const sync = clockedSync(db, fleet, mb, [], () => new Date(t));
+    await sync.onOrganize();
+    const meta = fleet.metaFor(mb.mailboxId);
+    const written = meta.profileAppends;
+    expect(profileDocs(fleet, mb.mailboxId).at(-1)!.doc!.applied).toEqual([]);
+    const id = randomUUID();
+    await db.insert(idempotencyKeys).values({
+      accountId: mb.accountId, key: `meta-request:${id}`, requestHash: "h", responseStatus: 200,
+      responseJson: { applied: true, requestId: id }, seq: null, expiresAt: new Date(t + 86_400_000),
+    });
+    t += 60_000;
+    await sync.onOrganize();
+    expect(meta.profileAppends, "an applied id alone wrote a copy").toBe(written);
+    await db.insert(tags).values({ accountId: mb.accountId, name: "two", hue: "moss" });
+    t += 60_000;
+    await sync.onOrganize();
+    expect(meta.profileAppends).toBe(written + 1);
+    expect(profileDocs(fleet, mb.mailboxId).at(-1)!.doc!.applied).toEqual([id]);
+  }, 30_000);
 
   it("five copies of what the store says — found_own, planned removable 4, removed 4, and no APPEND", async () => {
     const fleet = new FakeAdapterFleet();

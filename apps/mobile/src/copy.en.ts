@@ -226,6 +226,10 @@ const TABLE = {
      still ours and "Organizing" would say the press did nothing. */
   phoneStateStopPending: "Stop pending",
   phoneStateStopPendingWhy: "A stop is already pending; waiting for the mailbox.",
+  /* The desktop's `desktopStateSettingsUnreadable`, write-accurate: the block covers reads and appends. */
+  phoneStateSettingsUnsynced: "Organizing, but this mailbox's settings can't be saved to or read from the mail server. ohmail keeps trying.",
+  phoneStateSettingsUnsyncedCode: (code: string) =>
+    `Organizing, but this mailbox's settings can't be saved to or read from the mail server (${code}). ohmail keeps trying.`,
   /* The stop waits on a copy of this phone's claim — the desktop's `stopOrganizingSiblingLapse`. */
   phoneStateStopSiblingLapse: "Another copy of this phone still holds the mailbox's claim; the stop finishes when that claim lapses.",
   /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —
@@ -2187,6 +2191,10 @@ const TABLE = {
   replySentElsewhere: "Not sent: this draft already went from another device.",
   composeSentElsewhere: "This draft was sent from another device. Anything you type now is kept as a new draft.",
   composeSendAsNew: "Send as a new letter",
+  replyChangedElsewhere: "Not sent: this draft was changed on another device. What you typed is kept as a new draft.",
+  replyChangedElsewhereUnsaved: "Not sent: this draft was changed on another device. What you typed is still here and not saved yet.",
+  replyChangedElsewhereLater: "Not sent: this draft was changed on another device. What you typed is kept on this phone and saved as a new draft when it can be.",
+  composeKeptChangedElsewhere: "This draft was changed on another device. What you typed here is kept as a new draft.",
   replyDeletedElsewhere: "Not sent: this draft was deleted on another device.",
   composeDeletedElsewhere: "This draft was deleted on another device. Anything you type now is kept as a new draft.",
   /* The refused send while this phone cannot reach its mail server — said in the composer. */
@@ -2959,6 +2967,8 @@ const TABLE = {
   /** The row's squares, said: how many messages, and how many of them unread. */
   mailRowMarksAria: (count: number, unread: number) =>
     `${count} messages, oldest first: ${unread === 0 ? "all read" : `${unread} unread`}`,
+  /** The older squares a narrow row does not draw; never read aloud (the row says the count). */
+  rowMarksMore: (n: number) => `+${n}`,
   /* THE READER'S SQUARES AND ⋯ — `ui/MessageReader.tsx`. */
   readerMarksAria: "Messages in this conversation",
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>

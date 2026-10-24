@@ -239,20 +239,21 @@ describe("the red control: the pre-ladder stylesheet re-applied is caught by the
   }, 60_000);
 });
 
-/* THE DESKTOP'S OUTER EDGE UNDER THE OMARCHY FEED (owner reports 2026-10-24/25, a 1488px window):
-   the feed maps Hyprland's gaps_out to the deck's edge; a gaps_out read as 0 put the rail, list and
-   reader flush to the window, then one ring off it. Every tile's ring stays inside the window, and
-   the frame is never narrower than the gap between two tiles. */
+/* THE DESKTOP'S OUTER EDGE UNDER THE OMARCHY FEED (owner reports 2026-10-24/25, a 1488px window).
+   Hyprland measures a gap to the border's OUTER edge: 10 from the screen to a ring, 10 between two
+   rings. Each tile's ring stands outside its box, so the frame is read the same way here: the window
+   to a ring's outer edge, and one ring's outer edge to the next, both the theme's gap. */
 const GRUVBOX = readFileSync(resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw/gruvbox.colors.toml"), "utf8");
 const hypr = (css: string): string => `{"option": "general:gaps_out", "css": "${css}", "set": true }`;
 
+/** The three tiles under the feed's gaps, or under the static face alone (`null`). */
 async function tileEdges(
-  hyprGapsOut: string,
+  hyprGapsOut: string | null,
   hyprGapsIn = '{"option": "general:gaps_in", "css": "5 5 5 5", "set": true }',
   hyprBorderSize = '{"option": "general:border_size", "int": 2, "set": true }',
 ) {
   const mapped = mapOmarchyThemePair({ colorsToml: GRUVBOX, hyprGapsIn, hyprGapsOut, hyprBorderSize })!;
-  const live = omarchyRuleText(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
+  const live = hyprGapsOut === null ? "" : omarchyRuleText(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
   const html = PAGE(`${css("packages/tokens/src/ohmarchy.css")}\n${live}`)
     .replace("<html>", '<html data-face="ohmarchy" data-theme="dark">');
   const ctx = await browser!.newContext({ viewport: { width: 1488, height: 932 }, deviceScaleFactor: 1 });
@@ -272,21 +273,20 @@ async function tileEdges(
   }
 }
 
-describe("the desktop's tiles keep their rings inside the window under the Omarchy feed", () => {
+describe("the desktop's frame under the ohmarchy face is Hyprland's, measured to the rings", () => {
   const noGapsToggle = ['{"option": "general:gaps_in", "css": "0 0 0 0", "set": true }', '{"option": "general:border_size", "int": 0, "set": true }'] as const;
-  const shapes: (readonly [string, ...string[]])[] = [[hypr("0 0 0 0")], [hypr("10 10 10 10")], [hypr("0 10 10 10")], [hypr("4 4 4 4")], [hypr("10")], ['{"option": "general:gaps_out", "int": 0, "set": true }'], [hypr("0 0 0 0"), ...noGapsToggle]];
+  const shapes: (readonly [string | null, ...string[]])[] = [[null], [hypr("0 0 0 0")], [hypr("10 10 10 10")], [hypr("0 10 10 10")], [hypr("5 10 15 20")], [hypr("4 4 4 4")], [hypr("10")], ['{"option": "general:gaps_out", "int": 0, "set": true }'], [hypr("0 0 0 0"), ...noGapsToggle]];
   for (const shape of shapes)
-    it(`${shape.join(" ")}: the window's frame is the gap between two tiles`, async () => {
+    it(`${shape[0] === null ? "the static face" : shape.join(" ")}: the window edge to a ring equals ring to ring`, async () => {
       const tiles = await tileEdges(...shape);
-      const [rail, list] = tiles;
-      const between = list!.r.left - rail!.r.right;
-      expect(between, "the tile gap").toBe(10);
-      for (const t of tiles) {
-        expect(t.ring, `${t.sel} draws no ring: this proves nothing`).toBeGreaterThan(0);
+      const [rail, list, reader] = tiles;
+      for (const t of tiles) expect(t.ring, `${t.sel} draws no ring: this proves nothing`).toBeGreaterThan(0);
+      expect(list!.r.left - list!.ring - (rail!.r.right + rail!.ring), "rail ring to list ring").toBe(10);
+      expect(reader!.r.left - reader!.ring - (list!.r.right + list!.ring), "list ring to reader ring").toBe(10);
+      for (const t of tiles)
         for (const side of ["left", "top", "right", "bottom"] as const)
           if (!(t.sel === ".list-col" && (side === "left" || side === "right")))
             if (!(t.sel === ".deck > .rail" && side === "right") && !(t.sel === ".read-col" && side === "left"))
-              expect(t.box[side], `${t.sel}'s edge at the ${side}`).toBe(between);
-      }
+              expect(t.box[side] - t.ring, `window edge to ${t.sel}'s ring at the ${side}`).toBe(10);
     }, 60_000);
 });

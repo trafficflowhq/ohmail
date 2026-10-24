@@ -460,10 +460,12 @@ export function rulesInPlay(input: {
   const reading = new Set(input.subject.map((m) => m.mailboxId));
   const profiles = mailboxProfiles(input.reader);
   const index = consentIndex(local, profiles);
-  const rules = [
-    ...local,
-    ...profiles.filter((p) => reading.has(p.mailboxId)).flatMap((p) => p.rules.filter((r) => r.enabled)),
-  ];
+  const theirs = profiles.filter((p) => reading.has(p.mailboxId)).flatMap((p) => p.rules.filter((r) => r.enabled));
+  const rules = [...local, ...theirs];
+  // The local rows speak for the subject only where a row of it is judged by them (no copy).
+  const documented = new Set(profiles.map((p) => p.mailboxId));
+  const localJudges = input.subject.length === 0 || input.subject.some((m) => !documented.has(m.mailboxId));
+  const quiet = new Set<RuleDTO>(localJudges ? [] : local);
   const counts = new Map<string, number>();
   const insideSenders = new Set<string>();
   let insideCount = 0;
@@ -483,10 +485,10 @@ export function rulesInPlay(input: {
   }
   // THE RULE THE SUBJECT'S MAIL FOLLOWS is named even while its letters sit where an older rule
   // filed them: it is where their mail goes, and the rows alone would leave it unsaid.
-  const own = twinWinner(ruleTwins(local, input.scope, input.match));
+  const own = localJudges ? twinWinner(ruleTwins(local, input.scope, input.match)) : null;
   const named = rules.filter((r) => {
     if (counts.has(r.id) || r === own) return true;
-    if (r.kind !== "sender" || ruleTerms(r).body === null) return false;
+    if (r.kind !== "sender" || ruleTerms(r).body === null || quiet.has(r)) return false;
     return input.scope === "sender" ? ruleMatchKey(r.match) === input.match : false;
   });
   named.sort((a, b) => (outranks(a, b) ? -1 : outranks(b, a) ? 1 : 0));

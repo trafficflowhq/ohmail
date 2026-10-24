@@ -12,6 +12,8 @@ import messages from "../messages/en.json";
 import { composeRowKey } from "../app/shell/compose";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
+import * as shell from "./_draft-shell.js";
+import { typeInto as typeIntoRich } from "./fixtures/rich-editor-driver";
 
 /**
  * `if (res.status !== "confirmed") return;` stood at the Drafts list's delete: three of the four
@@ -303,4 +305,111 @@ describe("Every ending of a draft discard says what happened", () => {
       "a request the server recorded for another install was reported as nothing happening",
     ).toContain("Asked for");
   }, 30_000);
+});
+
+describe("Discard of a draft whose send waits cancels that send first", () => {
+  afterEach(async () => { await shell.unmountAll(); });
+  const D = "d-letter";
+  const letter = { ...shell.replyDraft(D, "m1", "Shall we meet at noon?"), inReplyToMessageId: null, threadId: null, subject: "Plans for Friday" };
+  const rounds = async (n: number): Promise<void> => {
+    for (let i = 0; i < n; i++) await shell.act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+  };
+  const sends = (s: shell.DraftShell) => s.sent.filter((m) => m.kind === "mail_send").length;
+  const discards = (s: shell.DraftShell) => s.sent.filter((m) => m.kind === "draft_discard").length;
+  const said = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+  const drafts = messages.drafts as Record<string, string>;
+  const rowState = (s: shell.DraftShell, id: string) => s.el.querySelector(`.draft-row[data-id="${id}"] .draft-state`)?.textContent ?? null;
+  const toDrafts = async (): Promise<void> => {
+    await shell.act(async () => { window.location.hash = "#/drafts"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
+  };
+  /** The letter pressed Send on while the mail server answers "try again": its send waits on the outbox. */
+  async function waiting(s: shell.DraftShell): Promise<void> {
+    await shell.waitFor(() => s.el.querySelector(`.draft-row[data-id="${D}"] .draft-open`) != null, "the letter in Drafts");
+    await shell.press(s.el.querySelector(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
+    await shell.waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the composer");
+    Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 1 });
+    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
+      .find((b) => (b.textContent ?? "").trim().startsWith("Send") && !/later/i.test(b.textContent ?? ""));
+    await shell.press(send ?? null, "Send");
+    await shell.waitFor(() => s.engine.waitingSends().length === 1, "the send waiting");
+    s.refuseSend.on = false;
+  }
+  async function discard(s: shell.DraftShell): Promise<void> {
+    await toDrafts();
+    await shell.waitFor(() => s.el.querySelector(`.draft-row[data-id="${D}"] .draft-discard`) != null, "the row's Discard");
+    await shell.press(s.el.querySelector(`.draft-row[data-id="${D}"] .draft-discard`), "Discard");
+    expect(s.el.querySelector(".draft-confirm")?.textContent).toContain(drafts.discardWhatWaiting);
+    const confirm = [...s.el.querySelectorAll<HTMLButtonElement>(".draft-confirm button")].find((b) => (b.textContent ?? "").trim() === drafts.discardConfirm);
+    await shell.press(confirm ?? null, "confirm");
+    await rounds(20);
+  }
+  async function reconnect(s: shell.DraftShell): Promise<void> {
+    await shell.act(async () => { window.dispatchEvent(new Event("online")); await s.engine.flushPending().catch(() => undefined); });
+    await rounds(20);
+  }
+
+  it("the row says it waits; Discard withdraws the send, deletes the row, sends nothing and says no failure", async () => {
+    const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
+    s.withdrawAnswer.outcome = "withdrawn";
+    await waiting(s);
+    await toDrafts();
+    await shell.waitFor(() => rowState(s, D) === drafts.waitingToSend, "the row says it waits");
+    await discard(s);
+    await reconnect(s);
+    expect({ sends: sends(s), discards: discards(s), gone: s.store.isTombstoned("draft", D), waiting: s.engine.waitingSends().length, said: said() })
+      .toEqual({ sends: 1, discards: 1, gone: true, waiting: 0, said: drafts.discardedNotSent });
+  }, 60_000);
+
+  it("a Cancel nobody can answer deletes nothing, and says so in the row", async () => {
+    const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
+    await waiting(s);
+    await discard(s);
+    expect({ discards: discards(s), listed: s.el.querySelector(`.draft-row[data-id="${D}"]`) != null, why: s.el.querySelector(".draft-refusal")?.textContent })
+      .toEqual({ discards: 0, listed: true, why: drafts.discardCancelUnknown });
+  }, 60_000);
+
+  it("a send already on the wire again is not discarded under it", async () => {
+    const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
+    s.withdrawAnswer.outcome = "withdrawn";
+    await waiting(s);
+    let release!: () => void;
+    s.sendGate.wait = new Promise<void>((r) => { release = r; });
+    void s.engine.flushPending().catch(() => undefined);
+    await shell.waitFor(() => sends(s) === 2, "the retry on the wire");
+    await discard(s);
+    expect({ discards: discards(s), why: s.el.querySelector(".draft-refusal")?.textContent }).toEqual({ discards: 0, why: drafts.discardStillSending });
+    await shell.act(async () => { s.sendGate.wait = null; release(); });
+  }, 60_000);
+
+  it("a send restored from the last session is withdrawn too", async () => {
+    const first = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never]);
+    await waiting(first);
+    const store = first.store;
+    await shell.unmountAll();
+    shell.stubDom();
+    const s = await shell.mountShell("#/drafts", [shell.message("m1")], [letter as never], { store });
+    s.withdrawAnswer.outcome = "withdrawn";
+    await shell.waitFor(() => s.engine.waitingSends().length === 1, "the restored send waiting");
+    await discard(s);
+    await reconnect(s);
+    expect({ sends: sends(s), discards: discards(s), gone: s.store.isTombstoned("draft", D) }).toEqual({ sends: 0, discards: 1, gone: true });
+  }, 60_000);
+
+  it("a reply queued offline with no row of its own is not listed in Drafts as an interrupted send", async () => {
+    const s = await shell.mountShell("#/ohbox", [shell.message("m1")]);
+    await shell.waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
+    await shell.press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await shell.act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })); });
+    await shell.waitFor(() => shell.replySurface(s.el) != null, "the reply editor");
+    s.offline.on = true;
+    await shell.act(async () => { typeIntoRich(shell.replySurface(s.el)!, "See you Thursday"); });
+    const send = [...s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")].find((b) => (b.textContent ?? "").startsWith("Send"));
+    await shell.press(send ?? null, "Send");
+    await shell.waitFor(() => s.engine.waitingSends().length === 1, "the reply waiting");
+    const paint = s.engine.waitingSends()[0]!.paintId;
+    await toDrafts();
+    await rounds(10);
+    expect({ rowless: s.engine.waitingSends()[0]!.draftId, listed: [...s.el.querySelectorAll(".draft-row")].map((r) => r.getAttribute("data-id")).includes(paint) })
+      .toEqual({ rowless: null, listed: false });
+  }, 60_000);
 });

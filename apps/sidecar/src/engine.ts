@@ -194,10 +194,12 @@ import { bubbleUpPass } from "@trafficflow/worker/bubble-up";
    store is the authority and no worker will walk the backlog, so without it a Screener decision
    re-presented the old mail while the mailbox kept it where it was. */
 import { ruleRetroPass } from "@trafficflow/worker/rule-retro";
+import { arrivalBackfill, type ArrivalBackfill, type ArrivalReader } from "./arrival-backfill.js";
 /* MAIL FROM A GAP, the worker's pass for the same reason: on this door no worker rules the mail
    that arrived while nothing organized the mailbox. */
 import {
-  gapCatchupPass, gapKeyFrom, gapOpenStart, NO_FOLDER_READ, travellingGapColumns, type TravelledGap,
+  GAP_CLOCK_ALLOWANCE_MS, gapCatchupPass, gapKeyFrom, gapOpenStart, handBackStart, instantOf, markOrganizedThrough,
+  NO_FOLDER_READ, travellingGapColumns, type TravelledGap,
 } from "@trafficflow/worker/gap-catchup";
 import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import {
@@ -376,6 +378,12 @@ export interface SidecarConfig {
    * `phone/blank-repair.ts`), so it never runs one, whole or in part.
    */
   blankRepair?: BlankRepairMode;
+  /**
+   * Fill arrival times the store lost (`arrival-backfill.ts`), for rows taken in at or after
+   * `floor`. Only the phone passes it: its engine stored every letter without one before it read
+   * INTERNALDATE by hand. Absent, nothing is asked.
+   */
+  arrivalBackfill?: { floor: Date };
   /**
    * Diagnostics. NEVER stdout in the real process — stdout is the frame stream.
    *
@@ -2666,6 +2674,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * once, a release or a look that opens a window, and a recorded press. A pass that ran leaves nothing owed.
      */
     const gapOwed = new Set<string>();
+    /** The mailboxes whose window waiting for arrival times was said, so it is said once. */
+    const arrivalsSaid = new Set<string>();
     const onceForTheAccount = async (fn: () => Promise<void>): Promise<void> => {
       if (accountPass) { await accountPass; return; }
       const run = fn().finally(() => { accountPass = null; });
@@ -2923,8 +2933,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * A failure leaves the window standing, so the next drain resumes.
      */
     const gapCatchupDue = async (): Promise<void> => {
-      const readyRts = runtimes.all()
+      const owedRts = runtimes.all()
         .filter((rt) => rt.organizer.organizing && gapCatchupReady.has(rt.mailboxId) && gapOwed.has(rt.mailboxId));
+      /* A WINDOW WAITS FOR ITS LETTERS' ARRIVAL TIMES while this store is still asking for them (the
+         phone's backfill); it stays owed. */
+      const readyRts: typeof owedRts = [];
+      for (const rt of owedRts) {
+        const waits = await rt.arrivalsWithheld?.().catch(() => false) ?? false;
+        if (!waits) { arrivalsSaid.delete(rt.mailboxId); readyRts.push(rt); continue; }
+        if (arrivalsSaid.has(rt.mailboxId)) continue;
+        arrivalsSaid.add(rt.mailboxId);
+        log("gap_catchup_withheld", {
+          mailboxId: rt.mailboxId, outcome: "arrivals",
+          reason: "the letters in the open gap window are still being given their arrival times, so the "
+            + "window waits for them",
+        });
+      }
       const ready = readyRts.map((rt) => rt.mailboxId);
       if (ready.length === 0) return;
       try {
@@ -4794,6 +4818,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * pass loses a newer renewal, and the cost is a flip early by one pass's duration.
        */
       let lastLeaseRenewalAt: Date | null = null;
+      /** The server's stamp on the claim the last gate wrote; null when it gave none or did not organize. */
+      let claimServerAt: Date | null = null;
+      /** The arrival times this store lost, asked a page per drain (the phone only). */
+      const arrivals: ArrivalBackfill | null = config.arrivalBackfill === undefined ? null : arrivalBackfill({
+        db: db as unknown as Tx, accountId: world.accountId, mailboxId: mb.id, floor: config.arrivalBackfill.floor,
+        lane: async (fn) => { await loopTurn(); return inStoreLane("ingest", fn); }, log,
+      });
       /**
        * THE LAST DRAIN ENDED ON A DECLINED WRITE — the lease was asked at a command and did not
        * admit it. Reset by every drain pass; while set, the pass writes nothing more to the mailbox
@@ -5285,9 +5316,21 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * never back over it. `since` is `at`: the turn ends now. The engine's own clock, the one its
        * claim was stamped with.
        */
-      const lettingGo = (): { gap: { since: string; by: string; at: string } } => {
-        const at = now().toISOString();
-        return { gap: { since: at, by: installId, at } };
+      const lettingGo = async (): Promise<{ gap: { since: string; by: string; at: string } }> => {
+        const at = now().getTime();
+        /* FROM THIS TENURE'S LAST FINISHED DRAIN, never after `at` (mail 0169); unknown, `at` less the
+           clock allowance. The phone's hand-back keeps the row's value for the next one. */
+        let through: Date | null = null;
+        try {
+          const [row] = await db.select({ t: mailboxes.organizedThrough }).from(mailboxes).where(eq(mailboxes.id, mb.id));
+          through = instantOf(row?.t);
+        } catch (err) {
+          log("organizer_gap_read_failed", {
+            err, reason: "where this tenure's last drain began could not be read, so the gap starts at the allowance",
+          });
+        }
+        const since = Math.min(through?.getTime() ?? at - GAP_CLOCK_ALLOWANCE_MS, at);
+        return { gap: { since: new Date(since).toISOString(), by: installId, at: new Date(at).toISOString() } };
       };
       /** Such an exit's settings write did not land: said once, and the claim goes back regardless. */
       const settingsNotLeft = (
@@ -5584,14 +5627,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 // `standDownMemory`'s released arm.
                 organizerReleasedAt: now(),
                 organizerEventAt: now(),
-                /* AND THE GAP WINDOW OPENS AT THE PERSON'S PRESS, not one look later (mail 0151) —
-                   unless this row saw another holder since: a sibling's refusal or a recorded holder
-                   starts it at the store's clock, never back over that tenure. The columns are read
-                   before this statement clears them. */
+                /* AND THE GAP WINDOW OPENS WHERE THIS TENURE'S LAST FINISHED DRAIN BEGAN, never after the
+                   person's press (mail 0151, 0169) — unless this row saw another holder since: a
+                   sibling's refusal or a recorded holder starts it at the store's clock, never back
+                   over that tenure. The columns are read before this statement clears them. */
                 gapSince: sql`coalesce(${mailboxes.gapSince}, case when ${mailboxes.releaseRefusal} is null
                   and ${mailboxes.organizedByKind} is null and ${mailboxes.organizedByName} is null
-                  and ${mailboxes.organizedByInstallId} is null then ${mailboxes.releaseRequestedAt} end,
+                  and ${mailboxes.organizedByInstallId} is null then ${handBackStart(dialect(db), sql`${mailboxes.releaseRequestedAt}`)} end,
                   ${dialect(db).now()})`,
+                organizedThrough: null,
               })
               // At the reading's precision: the store keeps microseconds, the pass read a `Date`.
               .where(and(
@@ -5848,6 +5892,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            network never offered the correction to the lease, and spending it there would lose the
            one renewal it licenses until the person set their clock again. */
         seenClockCorrections = correctionsNow;
+        claimServerAt = outcome.organize ? outcome.claimServerAt ?? null : null;
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
           /*
@@ -5927,6 +5972,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    */
                   organizerEventAt: sql`case when ${mailboxes.organizerRole} = 'reader'
                     then ${dialect(db).ts(now())} else ${mailboxes.organizerEventAt} end`,
+                  // Mail 0169 — a new tenure: no drain of it has finished yet.
+                  organizedThrough: null,
                 })
                 .where(eq(mailboxes.id, mb.id))
                 .returning({ status: mailboxes.status });
@@ -6143,6 +6190,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 and ${mailboxes.organizerState} is not distinct from ${outcome.state ?? null}
                 then ${mailboxes.organizerEventAt} else ${dialect(db).ts(now())} end`,
               gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null,
+              organizedThrough: null,
             })
             .where(eq(mailboxes.id, mb.id));
             // The gap columns: another install's claim won, a held look, so the window closes.
@@ -6727,6 +6775,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (cycles > 0 && census.observed > 0
           && (await unlessItWaits((onWait) => opened.foldIfLogGrew(onWait)))?.folded) checkpoints += 1;
         if (cycles > 0 && census.observed > 0) await upkeep(() => statisticsUpkeep.noteIngested(census.observed));
+        /* THIS DRAIN TOOK MAIL IN AND EMPTIED THE INBOUND BACKLOG under its gate's claim, so a hand-back's
+           window may start at that claim's server stamp (mail 0169). */
+        if (organizing && inboundDrained && !drainDeclined && census.observed > 0 && claimServerAt !== null) {
+          const through = claimServerAt;
+          await upkeep(() => markOrganizedThrough(db as unknown as Tx, mb.id, through)).catch((err: unknown) => {
+            log("organized_through_write_failed", {
+              err, reason: "where a hand-back's gap window starts could not be recorded; the last value stands",
+            });
+          });
+        }
         /* RETENTION, the hosted horizon on this store: hourly, one batch, never while mail comes in.
            Asked before the lane, which would itself read as mail coming in. See `local-retention.ts`. */
         if (cycles > 0 && localRetentionDue(db)) {
@@ -6881,6 +6939,19 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              complete with half of it still on its way — while outbound filing the reconciler still
              owes (the OTHER reason the loop keeps going) is not import and must not withhold the
              stamp. See `sync-stamp.ts`. */
+          /* ARRIVAL TIMES THIS STORE LOST, one bounded page, for every role: a read of INTERNALDATE on the
+             gated connection, the writes in the store's lane. An open window's intake goes first. */
+          tail.phase("arrival-backfill");
+          const readArrivals = (conn as Partial<ArrivalReader>).readArrivals;
+          if (arrivals !== null && typeof readArrivals === "function" && !drainDeclined && !handedBack) {
+            assertSameConnection(gen, conn);
+            await arrivals.step({ readArrivals: (f, v, u) => readArrivals.call(conn, f, v, u) }).catch((err: unknown) => {
+              log("arrival_backfill_failed", {
+                err, mailboxId: mb.id, phase: "store", attempts: 1,
+                reason: "the letters still missing an arrival time could not be read from the store; the next drain asks again",
+              });
+            });
+          }
           tail.phase("stamp");
           if (cycles > 0) {
             const stamps = await upkeep(() => stampSynced(db, mb.id, now(), inboundDrained, passStartedWall));
@@ -8123,7 +8194,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (opts.leaveSettings !== true || !organizer.organizing) return;
           let written: Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> = "not_saved";
           try {
-            written = await profileSync.flushBeforeLeaving(leasePermit, adapter, lettingGo());
+            written = await profileSync.flushBeforeLeaving(leasePermit, adapter, await lettingGo());
           } catch { /* never thrown by its contract; said below as not saved if it is */ }
           settingsNotLeft(written, "quit");
         };
@@ -8553,6 +8624,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
          */
         noteWorldMoved,
         ring: onMailboxSignal,
+        /* Only while this connection can ask: an adapter with no date read never fills them. */
+        arrivalsWithheld: async () => arrivals !== null
+          && typeof (adapter as Partial<ArrivalReader>).readArrivals === "function" && await arrivals.withholds(),
         unquiesce() {
           if (!heldForRemoval) return;
           heldForRemoval = false;
@@ -8623,7 +8697,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                They carry the instant this install let go (the latch above stopped its drains), one
                key for the whole hand-back, so a second connection's flush finds it written. */
             let settingsLeft = undefined as Awaited<ReturnType<typeof profileSync.flushBeforeLeaving>> | undefined;
-            const leaving = lettingGo();
+            const leaving = await lettingGo();
             const ask = async (conn: MailboxAdapter) => {
               if (organizer.organizing && organizer.claimed) {
                 settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn, leaving);

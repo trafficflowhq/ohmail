@@ -62,8 +62,9 @@
     "--r-avatar": "0",
     "--focus-w": "2px",
     "--focus-offset": "0px",
-    "--gap-tile": "10px",
-    "--gap-edge": "10px",
+    "--gap-tile": "14px",
+    "--gap-edge": "12px",
+    "--gap-rail": "12px",
     "--font-ui": "'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
     "--font-size-base": "12px",
     "color-scheme": "dark"
@@ -126,8 +127,9 @@
     "--r-avatar": "0",
     "--focus-w": "2px",
     "--focus-offset": "0px",
-    "--gap-tile": "10px",
-    "--gap-edge": "10px",
+    "--gap-tile": "14px",
+    "--gap-edge": "12px",
+    "--gap-rail": "12px",
     "--font-ui": "'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
     "--font-size-base": "12px",
     "color-scheme": "light"

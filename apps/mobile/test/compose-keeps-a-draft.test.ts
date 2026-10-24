@@ -18,7 +18,7 @@ import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions, type ToastOpts } from "../src/state/live";
-import { keepAct, unmountKeep, worthKeeping } from "../src/ui/compose-keep";
+import { baseAfter, baseFor, keepAct, unmountKeep, waitedFor, worthKeeping } from "../src/ui/compose-keep";
 import { openLetterKeeper } from "../src/compose/letter-keeper";
 import { KEPT_FILES_MAX_BYTES, letterDoor, type LetterJournal } from "../src/compose/letter-store";
 import { DRAFT_BODY_MAX_BYTES } from "@ohmail/client-engine";
@@ -227,5 +227,23 @@ describe("past the draft limit the composer says so, and nothing typed is lost u
     expect(auto).toContain("if (savingFor.current === onScreen) return;");
     expect(auto).toContain("autosaveKeep(saved, onScreen,");
     expect(auto).not.toContain("saved.current = onScreen;");
+  });
+});
+
+describe("a bound sheet states the version its words are based on", () => {
+  const opened = { row: "d-9", rev: "rev-0" };
+  it("a confirmed save names the next version; a queued one keeps the base; a new row without one states none", () => {
+    expect(baseAfter(opened, { draftId: "d-9", revision: "rev-1" })).toEqual({ row: "d-9", rev: "rev-1" });
+    expect(baseAfter(opened, { draftId: "d-9" })).toEqual(opened);
+    expect(baseAfter(opened, { draftId: null })).toEqual(opened);
+    expect(baseAfter(opened, { draftId: "d-new" })).toEqual({ row: "d-new", rev: null });
+  });
+  it("only the base's own row is stated", () => {
+    expect([baseFor(opened, "d-9"), baseFor(opened, "d-other"), baseFor(opened, null)]).toEqual(["rev-0", null, null]);
+  });
+  it("the sheet's own saves of its row are kept by key, and a new row starts its own", () => {
+    const twice = baseAfter(baseAfter(opened, { draftId: "d-9", key: "k1" }), { draftId: "d-9", revision: "rev-1", key: "k2" });
+    expect([waitedFor(twice, "d-9"), waitedFor(twice, "d-other")]).toEqual([["k1", "k2"], []]);
+    expect(waitedFor(baseAfter(twice, { draftId: "d-new", key: "k3" }), "d-new")).toEqual(["k3"]);
   });
 });

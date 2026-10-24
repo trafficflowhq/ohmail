@@ -227,7 +227,12 @@
       /* the new slots (paper defaults live in ohmarchy.tokens.json) */
       "--r-ctl": "0", "--r-card": "0", "--r-overlay": "0", "--r-pill": "0", "--r-avatar": "0",
       "--focus-w": "2px", "--focus-offset": "0px",
-      "--gap-tile": "10px", "--gap-edge": "10px",
+      /* the gaps are between tile BOXES; Hyprland's 10 and 10 are measured to the
+         2px ring's outer edge, and the ring stands outside the box (twice between
+         two tiles, once at the edge) */
+      "--gap-tile": "14px", "--gap-edge": "12px",
+      /* a tile's box to a ringless rail beside it: one ring and the tile's 10 */
+      "--gap-rail": "12px",
       "--font-ui": "'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
       "--font-size-base": "12px",
       "color-scheme": mode,

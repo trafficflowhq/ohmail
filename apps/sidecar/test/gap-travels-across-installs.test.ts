@@ -12,6 +12,7 @@
 import { rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { eq } from "drizzle-orm";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@trafficflow/worker/gap-catchup";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, rules } from "@trafficflow/db";
 import type {
@@ -550,9 +551,10 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     await x.organizing();
     expect(x.engine.runtimes().organizer[x.id]?.organizing, "premise: X organizes").toBe(true);
     expect(meta.newest().installId, "premise: X published its settings").toBe("install-x");
-    // A letter of X's turn that X keeps in the inbox: B takes it in only when it wakes.
+    // A letter of X's turn that X keeps in the inbox: B takes it in only when it wakes. Older than the
+    // clock allowance a start with no server stamp reaches back by (mail 0169).
     await sleep(20);
-    b.server.pending.push(letter(new Date()));
+    b.server.pending.push(letter(new Date(Date.now() - 2 * GAP_CLOCK_ALLOWANCE_MS)));
     await sleep(20);
     return { meta, b, x };
   }
@@ -578,10 +580,11 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     b.clock.skewMs = 15 * 60_000;
     await b.engine.resume();
     const since = b.gap().since!;
-    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before);
+    // X's claims carry no server stamp: the start is the instant X let go less the clock allowance.
+    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before - GAP_CLOCK_ALLOWANCE_MS);
     const key = meta.newest().doc.gap;
     expect(key, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
-    expect(key!.since, "the moment is not the instant X let go").toBe(key!.at);
+    expect(Date.parse(key!.since), "the moment is not the instant X let go").toBe(Date.parse(key!.at) - GAP_CLOCK_ALLOWANCE_MS);
     expect(Date.parse(key!.at)).toBeGreaterThanOrEqual(before);
     expect(Date.parse(key!.at)).toBeLessThanOrEqual(after);
     expect(since, "B counted from its own look, not from the instant X let go").toBe(Date.parse(key!.since));
@@ -839,9 +842,9 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     const x = await desktop(meta, "install-x");
     expect(x.s.organizerState().organizing, "premise: X organizes").toBe(true);
     expect(meta.newest().installId, "premise: X published its settings").toBe("install-x");
-    // B sleeps through X's turn; a letter of it stays in the inbox.
+    // B sleeps through X's turn; a letter of it, older than the clock allowance, stays in the inbox.
     await sleep(20);
-    b.server.pending.push(letter(new Date()));
+    b.server.pending.push(letter(new Date(Date.now() - 2 * GAP_CLOCK_ALLOWANCE_MS)));
     await sleep(20);
     const mark = meta.trace.length;
     const before = Date.now();
@@ -860,10 +863,10 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     b.clock.skewMs = 15 * 60_000;
     await b.s.syncUntilQuiet();
     const since = (await b.gap()).since!;
-    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before);
+    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before - GAP_CLOCK_ALLOWANCE_MS);
     const key = meta.newest().doc.gap;
     expect(key, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
-    expect(key!.since, "the moment is not the instant X let go").toBe(key!.at);
+    expect(Date.parse(key!.since), "the moment is not the instant X let go").toBe(Date.parse(key!.at) - GAP_CLOCK_ALLOWANCE_MS);
     expect(Date.parse(key!.at)).toBeLessThanOrEqual(after);
     expect(since, "B counted from its own look, not from the instant X let go").toBe(Date.parse(key!.since));
     b.clock.skewMs = 0;

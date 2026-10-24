@@ -187,12 +187,16 @@ export const STRIP_END = 14;
 /** Its presses reach down over its air, never up into the row above them nor into a neighbour. */
 export const STRIP_HIT_SLOP = { top: 4, bottom: 10, left: 0, right: 0 } as const;
 
-/** Where a strip that scrolls stands so square `index` is in view, centred where it can be. */
-export function stripOffsetFor(index: number, n: number, room: number): number {
+/**
+ * Where a strip that scrolls stands so square `index` is in view, centred where it can be. After a
+ * reply arrives (`newest`) it goes on towards the end, so the newest square is whole, as far as
+ * square `index` stays in view.
+ */
+export function stripOffsetFor(index: number, n: number, room: number, newest = false): number {
   const content = STRIP_START + n * STRIP_SLOT + STRIP_END;
   const max = Math.max(0, content - room);
-  const centre = STRIP_START + index * STRIP_SLOT + STRIP_SLOT / 2 - room / 2;
-  return Math.max(0, Math.min(max, centre));
+  const centre = Math.max(0, Math.min(max, STRIP_START + index * STRIP_SLOT + STRIP_SLOT / 2 - room / 2));
+  return newest ? Math.max(centre, Math.min(max, STRIP_START + index * STRIP_SLOT)) : centre;
 }
 
 /** A body's states the read rule takes as final: the text is all there is to show. */

@@ -1,4 +1,4 @@
-import { useId, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { AddressText } from "../primitives/AddressText.js";
 import { Avatar } from "../primitives/Avatar.js";
 import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
@@ -191,9 +191,10 @@ export interface MessageRowProps {
   /**
    * THE CONVERSATION'S SQUARES — one per message, oldest first: `unread` solid accent, `read` the
    * same square dimmed, `mine` hollow (the account's own). A line of 8px squares under the
-   * preview; where the row is too narrow the oldest give way and the newest stay. Marks, never a
-   * count. Where their number equals {@link threadCount} the `⤷ N` badge stands back: the squares
-   * say how long the conversation is. Absent or fewer than two ⇒ no line.
+   * preview; where the row is too narrow the oldest give way whole, the newest stay, and a quiet
+   * `+N` counts the ones that gave way. Where their number equals {@link threadCount} the `⤷ N`
+   * badge stands back: the squares say how long the conversation is. Absent or fewer than two ⇒ no
+   * line.
    */
   marks?: readonly ("unread" | "read" | "mine")[];
   /** The squares in words, from the host's catalogue — what the row speaks for them. */
@@ -293,6 +294,45 @@ export interface MessageRowProps {
   follow?: ReactNode;
   onClick?: () => void;
   className?: string;
+}
+
+/**
+ * THE ROW'S OWN SQUARES, each whole or not at all. The run is laid out newest first and wraps
+ * (row.css): a square that does not fit whole leaves the one visible line, so the oldest give way,
+ * and their number leads the line as a quiet `+N`. Recounted after every commit and on every resize
+ * of the run, the count's own width included.
+ */
+function RowMarks({ squares }: { squares: NonNullable<MessageRowProps["marks"]> }) {
+  const run = useRef<HTMLSpanElement>(null);
+  const [hidden, setHidden] = useState(0);
+  /* Reads the DOM only, so the observer may keep the first render's copy. */
+  const recount = (): void => {
+    const el = run.current;
+    const newest = el?.lastElementChild as HTMLElement | null | undefined;
+    if (!el || !newest) return;
+    const n = el.children.length;
+    const need = n * newest.offsetWidth + (n - 1) * (parseFloat(getComputedStyle(el).columnGap) || 0);
+    let off = 0;
+    // Without the count's own width every square fits: no count.
+    if (need > el.parentElement!.getBoundingClientRect().width + 0.01)
+      for (const sq of el.children) if ((sq as HTMLElement).offsetTop > newest.offsetTop) off++;
+    setHidden(off);
+  };
+  useLayoutEffect(recount);
+  useEffect(() => {
+    if (!run.current || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(recount);
+    ro.observe(run.current);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <span className="row-marks" aria-hidden="true">
+      {hidden > 0 ? <span className="rm-more">+{hidden}</span> : null}
+      <span className="row-marks-in" ref={run}>
+        {squares.map((k, i) => <i key={i} className={`rm-sq ${k}`} style={{ order: -i }} />)}
+      </span>
+    </span>
+  );
 }
 
 /**
@@ -549,13 +589,7 @@ export function MessageRow(props: MessageRowProps) {
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
       {preview ? <span className="prev" style={{ display: "block" }}>{preview.slice(0, ROW_PREVIEW_MAX_CHARS)}</span> : null}
-      {squares && follow == null ? (
-        <span className="row-marks" aria-hidden="true">
-          <span className="row-marks-in">
-            {squares.map((k, i) => <i key={i} className={`rm-sq ${k}`} />)}
-          </span>
-        </span>
-      ) : null}
+      {squares && follow == null ? <RowMarks squares={squares} /> : null}
       {chips.length ? <span className="sr-chips">{chips}</span> : null}
     </>
   );

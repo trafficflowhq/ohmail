@@ -507,6 +507,7 @@ describe("the phone's two copy decks", () => {
     folderInMailbox: { why: "a folder's name and a mailbox's label in brackets, with no words of its own" },
     doorbellMore: { why: "a plus sign and a number — the faces the doorbell stack did not draw, "
       + "with no word in it to translate" },
+    rowMarksMore: { why: "a plus sign and a number: the older squares a narrow row did not draw" },
     buildVersion: { why: "the word Version is the same in both, and the rest is a number" },
     searchServerMs: { why: "a number and the unit ms, the same symbol in both languages" },
     buildVersionWithCode: { why: "the same, with the build number" },

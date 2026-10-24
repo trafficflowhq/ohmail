@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import {
   DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, createParentFirst, enumerateMetaFolder,
   isMalformed, makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
@@ -60,6 +59,12 @@ export const PROFILE_LIST_MAX = {
   notifyRules: 2_000,
   tagNames: 2_000,
 } as const;
+
+/**
+ * THE LONGEST `applied` LIST ONE DOCUMENT CARRIES — the newest request ids this organizer applied
+ * and still remembers. A reader reads a list at this length as unable to say what it left out.
+ */
+export const PROFILE_APPLIED_MAX = 1000;
 
 /** The canonical forms this build can take a fingerprint in. */
 export type ProfileCanonicalVersion = 1 | 2;
@@ -263,6 +268,12 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
   screening?: ProfileScreening;
   /** Where the last hand-back left the gap ({@link ProfileGap}); absent = unstated. */
   gap?: ProfileGap;
+  /**
+   * THE REQUESTS THIS ORGANIZER HAS APPLIED that its store still remembers (`meta-request:<id>`),
+   * newest first, at most {@link PROFILE_APPLIED_MAX}: a reader knows its own applied press is in
+   * this copy. An ENVELOPE key, out of the fingerprint; absent = unstated (an older organizer).
+   */
+  applied?: string[];
 }
 
 /** A payload with nothing in it — what a mailbox with no configuration serializes to. */
@@ -704,7 +715,10 @@ export function compareProfileFingerprints(a: string, b: string): "same" | "diff
  */
 export function makeProfileDoc(
   payload: OrganizerProfilePayload,
-  meta: { updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap },
+  meta: {
+    updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap;
+    applied?: readonly string[];
+  },
   version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
   const canonical = canonicalizeProfilePayload(payload, version);
@@ -719,6 +733,8 @@ export function makeProfileDoc(
     }),
     // ENVELOPE too, after `screening`: only a release flush supplies it.
     ...(meta.gap === undefined ? {} : { gap: { since: meta.gap.since, by: meta.gap.by, at: meta.gap.at } }),
+    // ENVELOPE, after `gap`: the organizer's own bookkeeping, never the person's configuration.
+    ...(meta.applied === undefined ? {} : { applied: meta.applied.slice(0, PROFILE_APPLIED_MAX) }),
     screener: canonical.screener,
     rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
@@ -799,6 +815,8 @@ const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
   "screening.baselineAt", "screening.scope",
   // Two instants and an install id, which every claim header already carries in clear.
   "gap.since", "gap.by", "gap.at",
+  // Request ids the organizer applied: opaque ids, never a person's words.
+  "applied[]",
 ]);
 
 const hex4 = (unit: number): string => `\\u${unit.toString(16).padStart(4, "0")}`;
@@ -845,7 +863,8 @@ function serializeValue(value: unknown, path: string, indent: string): string | 
  */
 export function serializeProfileDoc(doc: OrganizerProfileDoc): string {
   const out = serializeValue(doc, "", "")!;
-  if (!isDeepStrictEqual(JSON.parse(out), JSON.parse(JSON.stringify(doc)))) {
+  // Text, not util.isDeepStrictEqual: the phone's `util` polyfill lacks it. Both sides keep key order.
+  if (JSON.stringify(JSON.parse(out)) !== JSON.stringify(doc)) {
     throw new Error("the settings document did not serialize to itself");
   }
   return out;
@@ -970,6 +989,17 @@ export function readProfileGap(raw: unknown, installId: string | null): ProfileG
   }
   if (o.by !== installId) return { refused: "gap.by is not the install that wrote the message" };
   return { since: o.since, by: o.by, at: o.at };
+}
+
+const APPLIED_ID = /^[A-Za-z0-9._-]{1,128}$/;
+
+/**
+ * THE ENVELOPE'S `applied` KEY: a list of id-shaped strings within the cap, else `undefined` —
+ * malformed reads as unstated, never as a refused document.
+ */
+export function readProfileApplied(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw) || raw.length > PROFILE_APPLIED_MAX) return undefined;
+  return raw.every((x) => typeof x === "string" && APPLIED_ID.test(x)) ? [...raw as string[]] : undefined;
 }
 
 /** The tolerant reader of one section entry. Drops entries missing their natural key. */
@@ -1152,6 +1182,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   const screeningRefused = screening !== undefined && "refused" in screening ? screening.refused : undefined;
   const gap = readProfileGap(rawDoc.gap, installId);
   const gapRefused = gap !== undefined && "refused" in gap ? gap.refused : undefined;
+  const applied = readProfileApplied(rawDoc.applied);
   const producerRaw = typeof rawDoc.producer === "object" && rawDoc.producer !== null
     ? rawDoc.producer as Record<string, unknown> : {};
   const doc: OrganizerProfileDoc = {
@@ -1165,6 +1196,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     },
     ...(screening === undefined || screeningRefused !== undefined ? {} : { screening: screening as ProfileScreening }),
     ...(gap === undefined || gapRefused !== undefined ? {} : { gap: gap as ProfileGap }),
+    ...(applied === undefined ? {} : { applied }),
     ...payload,
   };
   return {

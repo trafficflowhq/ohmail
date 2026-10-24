@@ -130,6 +130,10 @@ describe.runIf(ON_DEVICE_STORE)("the phone's change log has a retention, on the 
     }
     exec.direct(`insert into account_sync_state (account_id, next_seq) values (?, ?)
       on conflict (account_id) do update set next_seq = excluded.next_seq`, [acct, seq + 1]);
+    for (const [k, at] of [["meta-request:old", Date.now() - DAY], ["meta-request:live", Date.now() + DAY]] as const) {
+      exec.direct(`insert into idempotency_keys (account_id, key, request_hash, response_status, response_json, expires_at)
+        values (?, ?, 'h', 200, '{"applied":true}', ?)`, [acct, k, at]);
+    }
     const engine = await launch(exec);
     return { engine, exec, acct, first: top + 1, last: seq, lines };
   }
@@ -144,6 +148,8 @@ describe.runIf(ON_DEVICE_STORE)("the phone's change log has a retention, on the 
     expect(kept, "the churn below the floor was not compacted on the device store").toBeLessThanOrEqual(101);
     expect(kept).toBeGreaterThanOrEqual(100);
     expect(p.lines, "the pass failed on the device store's dialect").not.toContain("local_retention_failed");
+    expect(p.exec.direct("select key from idempotency_keys where account_id = ?", [p.acct]).map((r) => r.key),
+      "the device store keeps every request key it ever claimed").toEqual(["meta-request:live"]);
   }, 60_000);
 
   it("rows inside the grace all survive the same drain", async () => {

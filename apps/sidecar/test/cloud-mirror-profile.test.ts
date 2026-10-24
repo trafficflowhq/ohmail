@@ -67,6 +67,7 @@ const PROFILE: MailboxProfileDTO = {
   mailboxId: MAILBOX,
   rules: [profileRule(0, "letters@paper.test"), profileRule(2, "digest@weekly.test")],
   asOf: AS_OF, from: { kind: "local", name: "Studio", since: "2026-09-01T00:00:00.000Z" }, updatedAt: AS_OF,
+  applied: ["req-1"],
 };
 
 const change = (op: SyncChange["op"], seq: number, entity?: unknown): SyncChange =>
@@ -127,6 +128,7 @@ describe("the Cloud mirror carries the organizer's arrangement", () => {
       [`profile:${MAILBOX}:2`, "digest@weekly.test"],
     ]);
     expect(served?.asOf).toBe(AS_OF);
+    expect(served?.applied).toEqual(["req-1"]);
   });
 
   it("a delete takes it away again", async () => {

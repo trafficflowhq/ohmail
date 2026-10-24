@@ -34,6 +34,7 @@ const READS: Record<string, Answer> = {
   "enumerateUids|fetch": { how: "asked_rows", carries: ["uid"] },
   "enumerateNewestUids|fetch": { how: "asked_rows", carries: ["uid"] },
   "arrivalDatesFor|fetch": { how: "asked_rows", carries: ["date"] },
+  "readArrivals|fetch": { how: "asked_rows", carries: ["date"] },
   "fetchCapped|fetch": { how: "asked_rows", carries: ["size", "uid"] },
   "fetchUnsized|fetch": { how: "asked_rows", carries: ["source"] },
   "fetchSized|fetch": { how: "asked_rows", carries: ["source"] },

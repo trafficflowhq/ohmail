@@ -140,12 +140,14 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
       "'JetBrainsMono Nerd Font','JetBrainsMono NF',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
     );
     expect(live["--font-size-base"]).toBe("12px");
-    expect(live["--gap-tile"]).toBe("10px"); // gaps_in 5 × 2 — the rhythm between two tiles
-    expect(live["--gap-edge"]).toBe("10px"); // gaps_out
+    // Box gaps: gaps_in 5 × 2 between the two 2px rings, gaps_out 10 to the ring's outer edge.
+    expect(live["--gap-tile"]).toBe("14px");
+    expect(live["--gap-edge"]).toBe("12px");
+    expect(live["--gap-rail"]).toBe("12px"); // one ring and the tile gap's 10, beside the squares' rail
     expect(live["--focus-w"]).toBe("2px"); // border_size
     // Everything else — the palette law's output — is untouched by the overlay.
     for (const [slot, value] of Object.entries(untouched)) {
-      if (["--font-ui", "--font-size-base", "--gap-tile", "--gap-edge", "--focus-w"].includes(slot))
+      if (["--font-ui", "--font-size-base", "--gap-tile", "--gap-edge", "--gap-rail", "--focus-w"].includes(slot))
         continue;
       expect(live[slot], slot).toBe(value);
     }
@@ -161,6 +163,8 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
     expect(live["--lift-3"].startsWith("0 0 0 4px ")).toBe(true);
     // lift-0 is shell.toml's own 1px control ring, not the window border.
     expect(live["--lift-0"].startsWith("0 0 0 1px ")).toBe(true);
+    // The heavier rings stand in the gaps, which keep 10 between and around them.
+    expect([live["--gap-tile"], live["--gap-edge"], live["--gap-rail"]]).toEqual(["18px", "14px", "14px"]);
   });
 
   it("the edge is never narrower than the tile gap, whatever gaps_out reads", () => {
@@ -168,13 +172,18 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
     // one ring off it; the design's frame is the even gap between the tiles.
     const edge = (system: Parameters<typeof parseSystem>[0]) => mappedWith(system)["--gap-edge"];
     const zero = '{"option": "general:gaps_out", "css": "0 0 0 0", "set": true }';
-    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: zero, hyprBorderSize: VM.border })).toBe("10px");
-    expect(edge({ hyprGapsOut: zero })).toBe("10px"); // the static tile gap
-    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "0 10 10 10"}' })).toBe("10px");
-    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "4 4 4 4"}' })).toBe("10px");
-    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}', hyprGapsOut: VM.gapsOut })).toBe("16px");
-    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}' })).toBe("16px"); // gaps_out unread
-    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "20 20 20 20"}' })).toBe("20px");
+    // Each edge is the visible gap plus the 2px ring standing outside the tile's box.
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: zero, hyprBorderSize: VM.border })).toBe("12px");
+    expect(edge({ hyprGapsOut: zero })).toBe("12px"); // the static tile gap
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "0 10 10 10"}' })).toBe("12px");
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "5 10 15 20"}' })).toBe("12px");
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "4 4 4 4"}' })).toBe("12px");
+    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}', hyprGapsOut: VM.gapsOut })).toBe("18px");
+    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}' })).toBe("18px"); // gaps_out unread
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "20 20 20 20"}' })).toBe("22px");
+    // The rail beside a tile keeps the tile gap, not the edge's.
+    expect(mappedWith({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "20 20 20 20"}' })["--gap-rail"]).toBe("12px");
+    expect(mappedWith({ hyprGapsIn: '{"css": "8 8 8 8"}', hyprGapsOut: VM.gapsOut })["--gap-rail"]).toBe("18px");
   });
 
   it("Omarchy's no-gaps toggle keeps the design gap around and between the tiles", () => {
@@ -184,11 +193,12 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
       const t = mappedWith(system);
       return [t["--gap-tile"], t["--gap-edge"]];
     };
-    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 0}' })).toEqual(["10px", "10px"]);
-    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: VM.border })).toEqual(["10px", "10px"]);
-    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero })).toEqual(["10px", "10px"]);
-    expect(gaps({ hyprGapsIn: '{"css": "2 2 2 2"}', hyprGapsOut: '{"css": "1 1 1 1"}' })).toEqual(["10px", "10px"]);
-    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 12}' })).toEqual(["10px", "12px"]);
+    // 10 between and around the rings: box gaps of 10 + 2 rings and 10 + 1 ring.
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 0}' })).toEqual(["14px", "12px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: VM.border })).toEqual(["14px", "12px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero })).toEqual(["14px", "12px"]);
+    expect(gaps({ hyprGapsIn: '{"css": "2 2 2 2"}', hyprGapsOut: '{"css": "1 1 1 1"}' })).toEqual(["14px", "12px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 12}' })).toEqual(["34px", "22px"]);
   });
 
   it("with nothing known, the static theme rides unmodified", () => {

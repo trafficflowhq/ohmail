@@ -20,7 +20,8 @@ import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
 import { mailboxIsGoneForWrites, type FenceVerdict, type SyncWriteFence } from "./sync.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import { gapKeyFrom, travellingGapColumns } from "./gap-window.js";
+import { gapKeyFrom, handBackStart, travellingGapColumns } from "./gap-window.js";
+export { markOrganizedThrough } from "./gap-window.js";
 
 // The always-on worker reads its per-mailbox credentials from `mailbox_credentials`
 // (envelope-encrypted at rest) instead of a single env mailbox. This module is
@@ -1240,6 +1241,8 @@ export async function markMailboxStoodDown(
       then ${mailboxes.organizerEventAt} else ${dialect(db as unknown as Tx).ts(opts.now ?? new Date())} end`,
     // Another install's claim won: a held look, so the gap window and its offer close (mail 0151).
     gapSince: null, gapLetters: null, gapPressedAt: null, gapStrangers: null,
+    // Mail 0169 — this tenure's drains are no longer a start for anybody's window.
+    organizedThrough: null,
   }).where(lifecycleWhere(mailboxId, opts.fence)).returning({ id: mailboxes.id, accountId: mailboxes.accountId }),
   // The handover, then the arrangement's doorbell: a reader serves the organizer's document for
   // this mailbox from here on, and a surface learns it from the delta, not at its next boot.
@@ -1317,16 +1320,18 @@ export async function markMailboxReleased(
     retryAfter: null,
     // Mail 0088 — the fifth writer of the triple. See `markMailboxStoodDown`'s note.
     organizerEventAt: now,
-    /* THE GAP WINDOW OPENS AT THE PERSON'S PRESS (mail 0151) — but never earlier than a holder this
-       row recorded since the promotion: a release withheld behind another install's live claim
-       starts at `now()`, so the window never reaches back over that tenure. The holder columns are
-       the look's, written on every visit that withholds. The wall's park opens no window: organizing
-       resumes by its join. `coalesce` keeps an earlier start. */
+    /* THE GAP WINDOW OPENS WHERE THIS TENURE'S LAST FINISHED DRAIN BEGAN (mail 0169), never after
+       the person's press (mail 0151) — but never earlier than a holder this row recorded since the
+       promotion: a release withheld behind another install's live claim starts at `now()`, so the
+       window never reaches back over that tenure. The holder columns are the look's, written on
+       every visit that withholds. The wall's park opens no window: organizing resumes by its join.
+       `coalesce` keeps an earlier start. */
     ...(opts.cause === "account_parked" ? {} : {
       gapSince: sql`coalesce(${mailboxes.gapSince}, case when ${mailboxes.organizedByKind} is null
         and ${mailboxes.organizedByName} is null and ${mailboxes.organizedByInstallId} is null
-        then ${mailboxes.releaseRequestedAt} end, now())`,
+        then ${handBackStart(dialect(db as unknown as Tx), sql`${mailboxes.releaseRequestedAt}`)} end, now())`,
     }),
+    organizedThrough: null,
   }).where(and(
     lifecycleWhere(mailboxId, opts.fence),
     /* THE REQUEST MUST STILL BE STANDING (the default cause). A worker carries a release decision
@@ -1531,6 +1536,8 @@ export async function clearOrganizerStandDown(
       organizerReleasedAt: null,
       // Mail 0135 — the resume this promotion answers is spent with its stamp.
       organizerParkedAt: null,
+      // Mail 0169 — a new tenure: no drain of it has finished yet.
+      organizedThrough: null,
       // Mail 0088 — the second writer of the (role, state, holder) triple: another door reads
       // `elsewhere` off this stamp. AN EVENT IS A FLIP, NEVER A RE-RUN: a row already `organizer`
       // (a press standing past the promotion that spent an older one) keeps its instant, or a

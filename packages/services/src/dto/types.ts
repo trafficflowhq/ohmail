@@ -531,6 +531,8 @@ export interface MailboxProfileDTO {
   asOf: ISODateTime;
   from: { kind: string | null; name: string | null; since: ISODateTime | null };
   updatedAt: ISODateTime;
+  /** The request ids the organizer says this copy includes, newest first; `null` = unstated. */
+  applied: string[] | null;
 }
 
 export interface ApprovalDTO {

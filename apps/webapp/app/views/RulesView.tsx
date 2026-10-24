@@ -243,9 +243,21 @@ export interface RulesViewProps {
   mailboxLabel?: (mailboxId: string) => string | null;
   /** The rule verbs on this browser's queue (`engine.queuedRuleWrites()`); `rules` shows each rule as it runs. */
   queued?: readonly QueuedRuleWrite[];
+  /** `published`: `rules` is the organizer's copy (`rulesShown`), made and changed on `holder`. */
+  source?: "local" | "published";
+  /** Rows no press here can name: listed, without controls. */
+  doorless?: ReadonlySet<string>;
+  /** The organizer's name, where it has one. */
+  holder?: string | null;
 }
 
-export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, posture, waiting = [], mailboxLabel, queued = [] }: RulesViewProps) {
+const NO_ROWS: ReadonlySet<string> = new Set();
+
+export function RulesView({
+  rules: allRules, onRevoke, onRetarget, pastMail, posture, waiting = [], mailboxLabel, queued = [],
+  source = "local", doorless = NO_ROWS, holder = null,
+}: RulesViewProps) {
+  const published = source === "published";
   /* ONE ROW PER KEY, the twin the router runs; the rest are counted on it and go with it. */
   const { shown: rules, copies, others } = useMemo(() => actingRules(allRules), [allRules]);
   const { onRow, apart } = useMemo(() => waitingByRow(waiting, rules, allRules), [waiting, rules, allRules]);
@@ -468,7 +480,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
   /** The holder's name, or the words for an unnamed one. */
   const holderOf = (w: WaitingOnOrganizerView): string => w.holder.name ?? t("theOrganizer");
   /** What a request said and where it stands, in one line — null for a row nothing waits on. */
-  const waitingLine = (w: WaitingOnOrganizerView | undefined): string | null => {
+  const waitingLine = (w: WaitingOnOrganizerView | undefined, onARow = false): string | null => {
     if (!w) return null;
     const holder = holderOf(w);
     if (w.state === "refused") {
@@ -476,8 +488,10 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     }
     const date = ruleDate(w.decidedAt);
     const dest = (w.target as { destination?: string }).destination;
+    // On the organizer's list a create riding a row it already has is a change to that row.
+    const create = w.kind === "rule.create" && !(published && onARow);
     const said = w.kind === "rule.delete" ? t("waitingRemoval", { holder, date })
-      : dest ? t(w.kind === "rule.create" ? "waitingCreate" : "waitingChange", { holder, place: placeLabel(dest), date })
+      : dest ? t(create ? "waitingCreate" : "waitingChange", { holder, place: placeLabel(dest), date })
         : t("waitingRemoval", { holder, date });
     return w.slow ? `${said} ${t("waitingSlow", { holder })}` : said;
   };
@@ -485,7 +499,8 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
   const apartLine = (w: WaitingOnOrganizerView): { what: string; line: string } => {
     const r = (w.target as { rule?: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null } }).rule;
     const what = r ? whatOf({ kind: r.kind, match: r.match, subjectContains: r.subjectContains, bodyContains: r.bodyContains } as RuleDTO) : t("theOrganizer");
-    if (w.state !== "refused" && w.kind === "rule.delete") {
+    // On the organizer's list a removal with no row is still waiting there, not done here.
+    if (w.state !== "refused" && w.kind === "rule.delete" && !published) {
       return {
         what,
         line: t("waitingRemovedHere", {
@@ -501,10 +516,15 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     void onRetarget(rule.id, canonicalDestination(rule.destination) as Folder, false).then((r) =>
       report(r, t("toastLifted"), retargetSaid, t("toastRetargetFailed")));
   };
+  const holderName = holder ?? t("theOrganizer");
   const leftBehind = Math.max(0, allRules.length - PROFILE_RULES_SENT_MAX);
-  const boundNote = leftBehind > 0
-    ? <SettingsNote>{t("profileBound", { max: PROFILE_RULES_SENT_MAX, count: leftBehind })}</SettingsNote>
-    : null;
+  // The organizer's copy carries at most the bound: at it, older rules there are not listed here.
+  const boundNote = published
+    ? (allRules.length >= PROFILE_RULES_SENT_MAX
+      ? <SettingsNote>{t("profileBoundHeld", { max: PROFILE_RULES_SENT_MAX, holder: holderName })}</SettingsNote> : null)
+    : leftBehind > 0
+      ? <SettingsNote>{t("profileBound", { max: PROFILE_RULES_SENT_MAX, count: leftBehind })}</SettingsNote>
+      : null;
   const waitingGroup = apart.length > 0 ? (
     <div className="rules-waiting" role="list" aria-label={t("waitingGroup")}>
       {/* NO `index`: this group stands outside the window's index space. At phone width the page is
@@ -544,8 +564,8 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
 
   const showSearch = rules.length >= 2;
   const showFacets = groups.length >= 2;
-  /* A rule whose verb is still queued here is not revoked again by the bulk press. */
-  const bulkable = filtered.filter((r) => !queuedOn.has(r.id));
+  /* A rule whose verb is still queued here is not revoked again by the bulk press, nor one no press names. */
+  const bulkable = filtered.filter((r) => !queuedOn.has(r.id) && !doorless.has(r.id));
   const showBulk = bulkable.length >= 2;
 
   /** One rule's row and its confirm. `index` is its slot; `size`/`position` place it in its group. */
@@ -556,7 +576,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
       ? t("meta", { origin, date: ruleDate(rule.createdAt) })
       : t("metaPaused", { origin, date: ruleDate(rule.createdAt) });
     const openHere = open !== null && "ruleId" in open && open.ruleId === rule.id;
-    const waits = waitingLine(onRow.get(rule.id));
+    const waits = waitingLine(onRow.get(rule.id), true);
     // A verb on this browser's queue: the row is the rule as it runs, and its controls wait with it.
     const q = queuedOn.get(rule.id);
     const queuedLine = q === undefined ? null
@@ -567,6 +587,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     const twins = copies.get(rule.id) ?? 0;
     const behind = others.get(rule.id) ?? [];
     const inert = sharedProviderInert(rule);
+    const held = doorless.has(rule.id);
     // Twins filing elsewhere, or paused where this row runs, are rules of their own: named, not counted.
     const twinNote = twins === 0 ? null : twinsDiffer(rule, behind)
       ? t("otherTwins", {
@@ -577,7 +598,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
     return (
       <Fragment key={rule.id}>
         <div
-          className={`rules-item${openHere ? " editing" : ""}${waits || queuedLine || rank || twins > 0 || inert ? " noted" : ""}`}
+          className={`rules-item${openHere ? " editing" : ""}${waits || queuedLine || rank || twins > 0 || inert || held ? " noted" : ""}`}
           data-rule-id={rule.id}
           data-index={index}
           role="listitem"
@@ -595,7 +616,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
               </span>
             ) : null}
             {/* The way back sits under the sentence it answers, not beside Change and Revoke. */}
-            {rank?.kind === "outranked" ? (
+            {rank?.kind === "outranked" && !held ? (
               <Button variant="ghost" className="rules-lift" disabled={lockedWhy !== null || q !== undefined} onClick={() => lift(rule)}>
                 {t("liftAction")}
               </Button>
@@ -606,12 +627,13 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
               </span>
             ) : null}
             {twinNote ? <span className="meta rules-copies">{twinNote}</span> : null}
+            {held ? <span className="meta rules-held" data-held="">{t("madeOnHolder", { holder: holderName })}</span> : null}
             {waits ? <span className="meta rules-waits" role="status">{waits}</span> : null}
             {queuedLine ? (
               <span className="meta rules-waits" role="status" data-queued={q!.serverFailed ? "failing" : "unsent"}>{queuedLine}</span>
             ) : null}
           </span>
-          <span className="acts">
+          {held ? null : <span className="acts">
             <Button
               variant="ghost"
               disabled={lockedWhy !== null || q !== undefined}
@@ -643,7 +665,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
             >
               {t("revoke")}
             </Button>
-          </span>
+          </span>}
         </div>
 
         {openHere && open.mode === "revoke" ? (
@@ -717,7 +739,7 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
 
   return (
     <SettingsSection className="rules-view">
-      <p className="set-note-inline">{t("intro")}</p>
+      <p className="set-note-inline">{published ? t("introHeld", { holder: holderName }) : t("intro")}</p>
       {lockedWhy ? <p id="rules-locked-why" className="set-note-inline rules-locked" role="note">{lockedWhy}</p> : null}
       {refusal ? (
         <p className="set-note-inline rules-refusal" role="alert">

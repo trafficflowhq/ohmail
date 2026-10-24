@@ -96,7 +96,17 @@ describe("R5-04: an iPad window clears its controls where the system says they e
     expect(topInsetWithControls(24, slideOver, 68)).toBe(68);
     expect(topInsetWithControls(24, full, 24), "a full window whose controls sit in the inset").toBe(24);
     expect(topInsetWithControls(24, full, 74)).toBe(74);
-    expect(topInsetWithControls(30, slideOver, 12), "never under the system's own inset").toBe(30);
+    expect(topInsetWithControls(30, full, 12), "never under the system's own inset").toBe(30);
+  });
+
+  /* R6-08: resizable windows at 375 and 695 pt read only the status bar; the list head sat under the controls. */
+  it("on a windowed iPad a reading short of the strip is taken as the strip", () => {
+    for (const width of [375, 695]) {
+      const win = { ...pad, window: { width, height: 1180 } };
+      expect(topInsetWithControls(24, win, 24), `${width} pt`).toBe(24 + IPAD_WINDOW_CONTROLS_PT);
+      expect(topInsetWithControls(0, win, 0), `${width} pt`).toBe(IPAD_WINDOW_CONTROLS_PT);
+      expect(topInsetWithControls(24, win, IPAD_WINDOW_CONTROLS_PT), "a reading at the strip stands").toBe(IPAD_WINDOW_CONTROLS_PT);
+    }
   });
 
   it("without a reading, a windowed iPad keeps the frame strip and a phone is untouched", () => {

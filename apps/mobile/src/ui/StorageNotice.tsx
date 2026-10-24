@@ -9,7 +9,7 @@ import { useCallback, useState, useSyncExternalStore } from "react";
 import { Linking, View } from "react-native";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
-import { Button, Panel, Txt } from "./base";
+import { Button, Panel, Txt, useCardSides, useTopPad } from "./base";
 import {
   storageNoticeCap, storageNoticeHeld, storageNoticeKey, storageNoticeOf, storageNoticeText, storageRefillOf,
 } from "./storage-notice";
@@ -32,6 +32,9 @@ export function StorageNotice({ session }: { session: ConnectedSession | null })
   useSyncExternalStore(onStorageNotices, storageNoticesHeld, storageNoticesHeld);
   const [minting, setMinting] = useState(false);
   const [refused, setRefused] = useState<Exclude<ManageLink["kind"], "url"> | null>(null);
+  /* Drawn outside the Screen, so it pays the status bar, the side insets and the rail itself. */
+  const top = useTopPad(8);
+  const sides = useCardSides(16);
 
   const notice = storageNoticeOf(entry, (level, cap) => storageNoticeHeld(owner, level, cap, storageNoticePutAway));
   if (notice === null || session === null) return null;
@@ -50,7 +53,7 @@ export function StorageNotice({ session }: { session: ConnectedSession | null })
   };
 
   return (
-    <Panel style={{ marginHorizontal: 16, marginTop: 8, padding: 14, gap: 8 }}>
+    <Panel style={{ ...sides, marginTop: top, padding: 14, gap: 8 }}>
       <Txt variant="body" accessibilityRole="summary">
         {storageNoticeText(notice, Copy, locale, refill)}
       </Txt>

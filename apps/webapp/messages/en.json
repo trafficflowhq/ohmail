@@ -3774,6 +3774,8 @@
   "reply": {
     "deletedElsewhere": "This reply's draft was deleted on another device. Anything you type now is kept as a new draft.",
     "deletedElsewhereKept": "This reply's draft was deleted on another device before your last changes here were saved. They are kept as a new draft.",
+    "changedElsewhere": "This reply's draft was changed in another window or on another device. What you typed here is kept as a new draft.",
+    "changedElsewhereUnsaved": "This reply's draft was changed in another window or on another device. What you typed here is still here and not saved yet.",
     "sentElsewhereKept": "This reply was sent from another device before your last changes here were saved. They are kept as a new draft.",
     "toastSavedAsDraft": "Your unsent reply was saved in Drafts.",
     "to": "Reply to {name}",
@@ -3948,7 +3950,10 @@
     "otherTwins": "Also for this sender: {list}. Revoke removes {count, plural, one {that rule} other {those rules}} too.",
     "twinPlace": "files into {place}",
     "twinPaused": "files into {place}, paused",
-    "profileBound": "Your other computers receive your newest {max, number} rules; {count, plural, one {1 older one stays} other {# older ones stay}} on this one."
+    "profileBound": "Your other computers receive your newest {max, number} rules; {count, plural, one {1 older one stays} other {# older ones stay}} on this one.",
+    "introHeld": "{holder} organizes your mail, and these are the rules it files by. A change you make here goes to {holder}.",
+    "madeOnHolder": "Made on {holder}; change or revoke it there.",
+    "profileBoundHeld": "{holder} sends its newest {max, number} rules; any older ones are not listed here."
   },
   "drafts": {
     "title": "Drafts",
@@ -3959,6 +3964,7 @@
     "openTitle": "Open this draft",
     "openRecoverTitle": "Open this message — we're not sure it was sent",
     "heldReopenBlocked": "Finish or put aside the message you are writing — opening this held one would replace it.",
+    "reopenBlockedUnsaved": "Finish or put aside the message you are writing — its last changes are not saved, and opening another would replace them.",
     "bodyUnavailable": "This draft’s text hasn’t reached this device yet. Try again in a moment.",
     "heldChecking": "We're not sure this was sent. We're checking your Sent folder.",
     "heldNotInSent": "We're not sure this was sent. It isn't in your Sent folder.",
@@ -3972,9 +3978,13 @@
     "isReply": "Reply",
     "discard": "Discard",
     "discardWhat": "This deletes the only copy.",
+    "discardWhatWaiting": "Its send is waiting to go. This cancels the send and deletes the only copy.",
     "discardConfirm": "Discard",
     "discardCancel": "Keep",
     "discardStillSending": "Not discarded — this message is still being sent, or its send is still being confirmed. Try again in a few minutes.",
+    "discardCancelUnknown": "Not discarded — its send could not be cancelled yet. Try again.",
+    "discardedNotSent": "Discarded. Nothing was sent.",
+    "waitingToSend": "Waiting to send.",
     "discardUnknownJar": "Not discarded — this browser can't read its own send records, so it can't tell whether this message is still going out. Discard it from a browser that can.",
     "discardRefused": "Not discarded: {reason}",
     "discardRefusedUnnamed": "That didn't go through, and the server didn't say why. The draft is still here.",

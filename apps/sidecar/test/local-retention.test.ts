@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import type { ChangeBatch, ImapCapabilities, ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { accountSyncState, changeLog, seqBounds, type Tx } from "@trafficflow/db";
+import { accountSyncState, changeLog, idempotencyKeys, seqBounds, type Tx } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { LOCAL_RETENTION_EVERY_MS, localRetentionDue, runLocalRetention } from "../src/local-retention.js";
 import { inStoreLane } from "../src/store-lanes.js";
@@ -100,8 +100,14 @@ describe("the local store's change log has a retention", () => {
 
   it("one drain raises the floor, keeps one row an entity, and a cursor below it is told to start again", async () => {
     const { sidecar, lines, planted } = await world(40);
+    const key = (k: string, expiresAt: Date) => ({
+      accountId: sidecar.world.accountId, key: k, requestHash: "h", responseStatus: 200, responseJson: { applied: true }, seq: null, expiresAt,
+    });
+    await sidecar.db.insert(idempotencyKeys).values([key("meta-request:old", new Date(Date.now() - DAY)), key("meta-request:live", new Date(Date.now() + DAY))]);
     await sidecar.start();
     const acct = sidecar.world.accountId;
+    const keys = await sidecar.db.select({ k: idempotencyKeys.key }).from(idempotencyKeys).where(eq(idempotencyKeys.accountId, acct));
+    expect(keys.map((r) => r.k), "the local store keeps every request key it ever claimed").toEqual(["meta-request:live"]);
     const floor = await floorOf(sidecar);
     expect(floor, "the floor never rose: the local store keeps its whole change log for ever").toBeGreaterThan(0n);
     const kept = await sidecar.db.select({ n: sql<number>`count(*)` }).from(changeLog).where(and(

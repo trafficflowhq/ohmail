@@ -1185,13 +1185,9 @@ export function OhboxView({
    */
   const prevReaderId = useRef<string | null>(readerId);
   /**
-   * THE CURSOR DOES NOT RIDE THE ROW INTO EARLIER. Leaving here files the held row under Earlier,
-   * and a cursor left on it read three ways once the window widened: the column showed the filed
-   * letter, focus stood on the row that took its place, and `j` walked on inside Earlier. So the
-   * cursor steps to the row `j` would have reached — where focus lands — and opens nothing.
-   * Assigned in render beside `order`, which is the walk it reads.
+   * THE CURSOR STAYS ON THE ROW READ. Leaving files the held row under Earlier and the cursor goes
+   * with it, as at a split width: a verb pressed next acts on the letter just read, never a neighbour.
    */
-  const walkAfterRef = useRef<(id: string) => string | null>(() => null);
   useEffect(() => {
     const was = prevReaderId.current;
     const closed = was !== null && readerId === null;
@@ -1204,9 +1200,7 @@ export function OhboxView({
     }
     if (typeof window === "undefined" || !window.matchMedia) return;
     if (!readColumnHidden()) return;
-    const stepTo = heldRead.current === was ? walkAfterRef.current(was) : null;
     leaveRead();
-    if (stepTo !== null) onSelectRef.current(stepTo);
   }, [readerId, leaveRead]);
 
   /**
@@ -1325,10 +1319,6 @@ export function OhboxView({
     return k < 0 ? -1 : navRows.length + k;
   };
   const at = orderIndexOf(selected?.id ?? null);
-  walkAfterRef.current = (id) => {
-    if (selected?.id !== id || at < 0) return null;
-    return order[at + 1] ?? order[at - 1] ?? null;
-  };
   /**
    * ONE WALK, FOUR KEYCAPS. ↓/↑ are `j`/`k` — same steps, same entry moves, same
    * `selectByUser`: a preview, which reads nothing, however long it rests.

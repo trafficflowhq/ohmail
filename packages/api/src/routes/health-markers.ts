@@ -869,6 +869,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0168_drafts_forward_parts — a forward's kept files. LOUD: `materializeDraft` and the send
   // select `drafts` whole. Deploy order migration → API → worker.
   ["drafts", "forward_parts"],
+  // mail 0169_mailboxes_organized_through — where a hand-back's gap window starts. LOUD: the
+  // mailbox reads select the row whole. Deploy order migration → API → worker.
+  ["mailboxes", "organized_through"],
 ] as const;
 
 /**
@@ -1295,7 +1298,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0168_drafts_forward_parts";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0169_mailboxes_organized_through";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

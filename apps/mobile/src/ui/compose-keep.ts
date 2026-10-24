@@ -69,3 +69,33 @@ export async function autosaveKeep(
 ): Promise<void> {
   if ((await keep()) === "kept") saved.current = onScreen;
 }
+
+/**
+ * THE VERSION A BOUND SHEET'S WORDS ARE BASED ON: the row it holds and that row's version as last
+ * known. A confirmed save names the next version; a queued save keeps the base (the adapter moves it
+ * along this phone's own saves when it lands); a row named without a version states none.
+ */
+export interface DraftBase {
+  row: string | null;
+  rev: string | null;
+  /** The keys of this sheet's own saves of the row: the engine's kept copy of one of them is this sheet's. */
+  waited?: readonly string[];
+}
+
+export function baseAfter(b: DraftBase, r: { draftId: string | null; revision?: string; key?: string | null }): DraftBase {
+  if (r.draftId === null) return b;
+  const same = r.draftId === b.row;
+  const next: DraftBase = r.revision ? { row: r.draftId, rev: r.revision } : same ? { row: b.row, rev: b.rev } : { row: r.draftId, rev: null };
+  const waited = [...(same ? b.waited ?? [] : []), ...(r.key ? [r.key] : [])].slice(-16);
+  return waited.length > 0 ? { ...next, waited } : next;
+}
+
+/** The keys of this sheet's own saves of `row`. */
+export function waitedFor(b: DraftBase, row: string | null): readonly string[] {
+  return row !== null && row === b.row ? b.waited ?? [] : [];
+}
+
+/** The version a save or send of `row` states: only the base's own row's. */
+export function baseFor(b: DraftBase, row: string | null): string | null {
+  return row !== null && row === b.row ? b.rev : null;
+}

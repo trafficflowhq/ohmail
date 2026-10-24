@@ -267,6 +267,12 @@ export const mailboxes = pgTable("mailboxes", {
    * press puts in the Screener. Written beside {@link gapLetters} (0 when none), cleared with it.
    */
   gapStrangers: integer("gap_strangers"),
+  /**
+   * Mail 0169 — the server's stamp (INTERNALDATE) on this install's claim at the start of its last
+   * organizing drain that took mail in and finished the inbound backlog: where a hand-back's gap
+   * window starts. Written by that drain, cleared with every role change; NULL = unknown.
+   */
+  organizedThrough: timestamp("organized_through", { withTimezone: true }),
   // Mail 0065 — the provider's OWN Junk and Trash folders, as discovered at connect. Canonical
   // `/`-delimited paths, resolved by `ImapAdapter.findSpecialFolders` (SPECIAL-USE first, then
   // the name belts) and re-written on every connect, so a mailbox that gains or renames the

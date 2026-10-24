@@ -1114,6 +1114,7 @@ describe("what the panel that names this phone reads", () => {
       writeOffsHeld: false,
       /* 0 while unsaid: silence never reads as mail set aside. */
       setAside: 0,
+      profileBlocked: null,
     });
   });
 
@@ -1226,6 +1227,7 @@ describe("what the panel that names this phone reads", () => {
       writeOffsHeld: false,
       /* 0 while unsaid: silence never reads as mail set aside. */
       setAside: 0,
+      profileBlocked: null,
     });
   });
 

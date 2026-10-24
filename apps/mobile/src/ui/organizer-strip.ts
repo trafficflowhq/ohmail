@@ -73,7 +73,9 @@ export function organizerStripOf(
     case "blocked":
       return said(false);
     case "ours":
-      return claim.releasePending ? said(false) : null;
+      if (claim.releasePending) return said(false);
+      /* Organizing over a settings document that cannot be kept is news the list says too; the label is the whole sentence. */
+      return claim.settingsBlocked ? { ...said(false), note: null } : null;
     default:
       return null;
   }

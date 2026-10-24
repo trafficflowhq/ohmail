@@ -101,7 +101,7 @@ import { forwardFilesPlan } from "../compose/forward-files";
 import { sayRefusal, type Refusal } from "../refusal";
 import { usePrefs } from "../state/store";
 import { cancelAct, cancelSendOffered, cancelSendPress, keptSay } from "./send-cancel";
-import { autosaveKeep, keepAct, unmountKeep, worthKeeping } from "./compose-keep";
+import { autosaveKeep, baseAfter, baseFor, keepAct, unmountKeep, waitedFor, worthKeeping, type DraftBase } from "./compose-keep";
 import { composeSenderOf } from "./compose-sender";
 import { editWhileIdle } from "./compose-edit";
 import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
@@ -119,7 +119,7 @@ import { heldSheetFooter, sendPressAct } from "./send-press";
 import { sendAgainSentence, type DraftSendAgainRefusal } from "./draft-card";
 import { holdReader, holdWhileOpen } from "./reader-held";
 import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
-import { failedSendLine } from "./send-failed";
+import { changedElsewhere, failedSendLine } from "./send-failed";
 import type { StayedWhy } from "../state/sender-stayed";
 import { stayedRows } from "./sender-stayed-lines";
 import { useKeyboardLift } from "./keyboard-lift";
@@ -1298,6 +1298,11 @@ export function ComposeSheet({
    * Send is pressed with the network gone. `null` until a refusal names one.
    */
   const [draftId, setDraftId] = useState<string | null>(draft?.id ?? null);
+  /** The version of that row the words on screen are based on: a row moved elsewhere is never written over. */
+  const base = useRef<DraftBase>({ row: draft?.id ?? null, rev: draft?.revision ?? null });
+  /** The row was changed elsewhere and these words went to a new draft: said here, toasts render under the sheet. */
+  const [forked, setForked] = useState(false);
+  const rebase = (r: { draftId: string | null; revision?: string; key?: string | null }): void => { base.current = baseAfter(base.current, r); };
   /** What the bound row last held from this sheet — the seed until the first save. */
   const saved = useRef<string | null>(draft ? JSON.stringify([draft.to, draft.subject, draft.body, draft.cc, draft.bcc]) : null);
   /** The last press was refused, and which sentence it earned — said in the sheet, see `send-failed.ts`. */
@@ -1448,7 +1453,8 @@ export function ComposeSheet({
     void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
       mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
       mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
-      rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; },
+      revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId), forked: () => setForked(true),
+      rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; rebase(r); },
     })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot); }).catch(() => undefined).finally(() => {
       if (savingFor.current === snapshot) savingFor.current = null;
     });
@@ -1517,6 +1523,15 @@ export function ComposeSheet({
       if (said.draftId !== null) setDraftId(said.draftId);
       // The re-armed Send says why it is back, in the words the refusal earned.
       setFailNote(said.failure ?? "replyFailed");
+      /* CHANGED ELSEWHERE: the row holds the other version; the words on screen are kept as a new draft. */
+      if (changedElsewhere(said.failure)) {
+        setDraftId(null);
+        void w.actions.draftKeep({
+          mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
+          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: 0, draftId: null, quiet: true, ...keptOnRow,
+          row: (r) => { if (r.draftId !== null) { setDraftId(r.draftId); rebase(r); } },
+        }).then((kept) => { if (kept === "kept") setFailNote("replyChangedElsewhere"); });
+      }
     }
     else if (settled === "unverified") {
       keeper?.sendAnswered({ outcome: "unverified", ...(said.draftId !== null ? { draftId: said.draftId } : {}) });
@@ -1692,7 +1707,8 @@ export function ComposeSheet({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
           ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
           ...keptOnRow,
-          rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
+          revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
+          rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
         });
         keeping.current = false;
         if (kept !== "kept") keeper?.keepAnswered(null);
@@ -1750,7 +1766,8 @@ export function ComposeSheet({
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
       ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true, ...keptOnRow,
-      rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
+      revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId),
+      rebind: setDraftId, row: (r) => { rebase(r); keeper?.keepAnswered(r); },
     });
     keeper?.release();
   };
@@ -1770,10 +1787,10 @@ export function ComposeSheet({
     const asNew = sendAsNew.current;
     sendAsNew.current = false;
     const toRow = async (draftId: string | null) => fresh
-      ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
+      ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId))
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,
-          forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {})
+          forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId))
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
     const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
     /* MARKED BEFORE THE DISPATCH: a hard stop from here on leaves the next launch a sent letter, which
@@ -1798,6 +1815,9 @@ export function ComposeSheet({
     if (result.outcome === "unverified" && result.draftId) setHeldId(result.draftId);
     // A refused send binds the row it left and says why, here: nothing outside this sheet shows.
     if (result.outcome === "failed" && result.draftId) setDraftId(result.draftId);
+    if (result.outcome === "failed" && result.draftId) rebase({ draftId: result.draftId, ...(result.revision ? { revision: result.revision } : {}) });
+    // Changed elsewhere with no new row to name: the row holds the other version, and is not this letter's.
+    else if (result.outcome === "failed" && changedElsewhere(result.failure)) setDraftId(null);
     if (result.outcome === "failed" && result.failure) setFailNote(result.failure);
   };
 
@@ -1880,6 +1900,13 @@ export function ComposeSheet({
       </Txt>
     ) : null,
   ].filter((n) => n !== null);
+  if (forked) {
+    noteItems.unshift(
+      <Txt key="forked" variant="caption" tone="ink2" accessibilityRole="alert">
+        {Copy.composeKeptChangedElsewhere}
+      </Txt>,
+    );
+  }
   const notesBlock = noteItems.length === 0 ? null : (
     <View style={{ gap: 10 }} onLayout={(e) => setNotesHeight(Math.round(e.nativeEvent.layout.height))}>
       {noteItems}

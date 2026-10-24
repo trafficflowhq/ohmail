@@ -1,9 +1,11 @@
 /**
  * A SURFACE THAT DRAWS FILES OR EVENT CARDS SUBSCRIBES TO THEM (re-exported by `world.tsx`). A
- * list, a part's byte state and the calendar texts land as engine notifications that move no stamp
- * the world derives from, so a card whose texts arrived after the body would never draw. The
- * fingerprint is over these ids alone: each list's state, each part's byte state, and the identity
- * of the calendar texts map, which the engine replaces when texts land.
+ * list, a part's byte state, the embedded pictures and the calendar texts land as engine
+ * notifications that move no stamp the world derives from, so a card whose texts arrived after the
+ * body would never draw. The fingerprint is over these ids alone: each list's state, each part's
+ * byte state, and the identity of the inline-image and calendar-text maps, which the engine replaces
+ * when they land (the web's `attachments.ts` fingerprint). The picture map lands after its part reads
+ * ready, so without its own term the reader never redraws with it.
  */
 import { useCallback, useSyncExternalStore } from "react";
 import { useConnection } from "../net/connection";
@@ -25,7 +27,7 @@ export function useFilesStamp(ids: readonly string[]): string {
     return key.split("\u0000").map((id) => {
       const held = engine.attachmentsOf(id, { includeInlineParts: true });
       if (held.state !== "ready") return `${id}:${held.state}`;
-      return `${id}:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}:cal${serialOf(engine.calendarTextsOf(id))}`;
+      return `${id}:${held.items.map((i) => `${i.id}=${i.state}`).join(",")}:img${serialOf(engine.inlineImagesOf(id))}:cal${serialOf(engine.calendarTextsOf(id))}`;
     }).join("|");
   }, [engine, key]);
   return useSyncExternalStore(

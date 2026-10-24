@@ -22,9 +22,9 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
  *
  * Read the top New letter at a wide window, narrow to 390 (the crossing raises the sheet), close
  * it with Escape — at that width closing is leaving, so the letter files under Earlier — and widen
- * again. The reader showed the letter Earlier now holds, the focus box stood on the row that took
- * its place in New, and `j` walked on inside Earlier past the rest of New. The window is moved the
- * way a browser moves it: every media query answers the new width and hears its change.
+ * again. The column, the cursor and the focus box all stay on the letter read, now under Earlier,
+ * and the keys walk on from its place there. The window is moved the way a browser moves it:
+ * every media query answers the new width and hears its change.
  */
 (globalThis as unknown as { React: unknown }).React = React;
 
@@ -280,7 +280,7 @@ const settle = async (ms = 400): Promise<void> => {
 };
 
 describe("a resize keeps the open letter, the cursor and the list one state", () => {
-  it("read at 1880, narrowed to 390, closed, widened: the column, the cursor and j agree with the list", async () => {
+  it("read at 1880, narrowed to 390, closed, widened: the column, the cursor and k stay with the row read", async () => {
     await setWidth(1880);
     const container = await shell();
     expect(rowIds(container).slice(0, 4), "newest first").toEqual(["m1", "m2", "m3", "m4"]);
@@ -296,17 +296,13 @@ describe("a resize keeps the open letter, the cursor and the list one state", ()
     await settle();
     await setWidth(1880);
     await settle();
-    const col = columnSubject(container);
-    expect(col === null || !earlierIds(container).includes(col),
-      `the column shows ${col}, a letter the list filed under Earlier`).toBe(true);
-    const cur = selRow(container);
-    const foc = focusedRow();
-    if (foc !== null) expect(foc, "the focus box and the list cursor name two rows").toBe(cur);
-    expect(col, "the column and the list cursor name two letters").toBe(cur);
-    await key("j");
+    expect(earlierIds(container), "the read letter is not under Earlier").toEqual(["m1"]);
+    expect(selRow(container), "the cursor left the row read").toBe("m1");
+    expect(focusedRow(), "the focus box left the row read").toBe("m1");
+    expect(columnSubject(container), "the column and the list cursor name two letters").toBe("m1");
+    await key("k");
     await settle(100);
-    expect(selRow(container), "j did not walk on to the next letter in New").toBe("m3");
-    expect(earlierIds(container).includes(selRow(container)!), "j jumped into Earlier").toBe(false);
+    expect(selRow(container), "k from the read letter did not walk back into New").toBe("m4");
   }, 20_000);
 
   it("control: a resize with nothing open opens nothing, and j enters at the top of New", async () => {

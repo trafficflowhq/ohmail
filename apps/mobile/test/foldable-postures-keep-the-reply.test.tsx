@@ -29,17 +29,23 @@ const nav = vi.hoisted(() => ({
   push: [] as string[], replace: [] as string[], dismissTo: [] as string[], events: [] as string[],
   focused: true, params: { open: "" as string },
 }));
-vi.mock("expo-router", () => ({
-  router: {
-    push: (p: string) => nav.push.push(p),
-    replace: (p: { pathname: string }) => { nav.replace.push(p.pathname); nav.events.push("replace"); },
-    dismissTo: (p: { pathname: string }) => { nav.dismissTo.push(p.pathname); nav.events.push("dismissTo"); },
-    setParams: (p: { open: string }) => { nav.params = p; },
-  },
-  useLocalSearchParams: () => nav.params,
-  usePathname: () => "/",
-  useIsFocused: () => nav.focused,
-}));
+vi.mock("expo-router", async () => {
+  const { createContext, useContext } = await import("react");
+  /* A tab's own focus, where a test mounts two tabs; elsewhere the pair's (`nav.focused`). */
+  const TabFocused = createContext<boolean | null>(null);
+  return {
+    TabFocused,
+    router: {
+      push: (p: string) => nav.push.push(p),
+      replace: (p: { pathname: string }) => { nav.replace.push(p.pathname); nav.events.push("replace"); },
+      dismissTo: (p: { pathname: string }) => { nav.dismissTo.push(p.pathname); nav.events.push("dismissTo"); },
+      setParams: (p: { open: string }) => { nav.params = p; },
+    },
+    useLocalSearchParams: () => nav.params,
+    usePathname: () => "/",
+    useIsFocused: () => useContext(TabFocused) ?? nav.focused,
+  };
+});
 vi.mock("../src/copy", () => ({ Copy: new Proxy({}, { get: (_t, k) => String(k) }) }));
 vi.mock("../src/theme", () => ({
   useTheme: () => ({ c: { hairSoft: "#ccc", tint: "#eee", ink3: "#666", canvas: "#fff" }, radius: { pill: 99 }, zLayer: { tabBar: 5 } }),
@@ -67,6 +73,7 @@ vi.mock("../src/ui/posture", async () => ({
 }));
 
 const { ListDetail } = await import("../src/ui/list-detail");
+const { TabFocused } = (await import("expo-router")) as unknown as { TabFocused: import("react").Context<boolean | null> };
 const { usePaneMove } = await import("../src/ui/pane-move");
 
 const vertical = (x: number, h: number, state: "flat" | "half"): FoldFeature =>
@@ -185,6 +192,35 @@ describe("a fold and an unfold never re-parent the list (R4-01)", () => {
     expect(styleOf(slot(r.el, 2)).display, "the reader's slot is hidden once the param clears").toBe("none");
     expect(styleOf(slot(r.el, 0)).flex).toBe(1);
     expect(listMounts).toHaveLength(1);
+    r.unmount();
+  });
+
+  /* Every tab stays mounted, each with its own selection: a sender left open in the Screener,
+     then a conversation opened in the Ohbox, then a fold (tester C, round 6). */
+  it("a fold moves only the focused tab's reading; a tab left behind moves its own when it is back", () => {
+    const sel = { ohbox: "m1", screener: "s1" };
+    let front: keyof typeof sel = "ohbox";
+    const routes = { ohbox: (id: string) => `/message/${id}`, screener: (k: string) => `/sender/waiting/${k}` };
+    const Tabs = (_: { tick: number }) => (
+      <>
+        {(["screener", "ohbox"] as const).map((tab) => (
+          <TabFocused.Provider key={tab} value={front === tab}>
+            <ListDetail open={sel[tab] === "" ? null : sel[tab]} onClose={() => { sel[tab] = ""; }}
+              toRoute={routes[tab]} list={<List />} renderDetail={(id) => <Reader id={id} />} />
+          </TabFocused.Provider>
+        ))}
+      </>
+    );
+    setPose("inner");
+    const r = mount(<Tabs tick={tick++} />);
+    setPose("outer");
+    r.render(<Tabs tick={tick++} />);
+    expect(nav.push, "the conversation is on top, and Back under it is the list, not the sender").toEqual(["/message/m1"]);
+    expect(sel, "the Screener keeps its sender until it is the tab in front").toEqual({ ohbox: "", screener: "s1" });
+    front = "screener";
+    r.render(<Tabs tick={tick++} />);
+    expect(nav.push).toEqual(["/message/m1", "/sender/waiting/s1"]);
+    expect(sel.screener).toBe("");
     r.unmount();
   });
 });

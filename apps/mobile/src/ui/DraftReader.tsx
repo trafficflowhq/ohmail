@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, BackHandler, Platform, View } from "react-native";
-import { router } from "expo-router";
+import { router, useIsFocused } from "expo-router";
 import { Copy } from "../copy";
 import { refuse } from "../refusal";
 import { queuedCaptionKey } from "../engine/send-waits";
@@ -82,6 +82,17 @@ export function DraftReader({
     AccessibilityInfo.announceForAccessibility(sendAgainSentence(sendRefusal.why));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendRefusedAt]);
+
+  /* A ROW THAT LEFT AFTER ITS EDIT went with the composer (its send said so): once this card is shown
+     again, it leaves for the list instead of standing on the gone sentence. */
+  const shown = useIsFocused();
+  const edited = useRef(false);
+  useEffect(() => {
+    if (row !== undefined || !edited.current || !shown) return;
+    edited.current = false;
+    onGone?.(id);
+    onClose?.();
+  }, [row, shown, id, onGone, onClose]);
 
   if (!row) {
     /* Discarded, answered, or drained away while this route was open. The honest gone sentence,
@@ -328,7 +339,7 @@ export function DraftReader({
                 label={Copy.draftsEdit}
                 variant="quiet"
                 disabled={busy}
-                onPress={() => router.push({ pathname: "/compose", params: { draft: row.id } })}
+                onPress={() => { edited.current = true; router.push({ pathname: "/compose", params: { draft: row.id } }); }}
               />
             </View>
           ) : null}

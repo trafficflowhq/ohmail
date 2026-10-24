@@ -25,8 +25,14 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow 
    first set and screens the second only while both sizes are the counts they were shown. */
 
 /* Where a look opens the window: a leaf, so both engines read one arbitration. */
-import { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap } from "./gap-window.js";
-export { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap };
+import {
+  GAP_CLOCK_ALLOWANCE_MS, gapKeyFrom, gapOpenStart, handBackStart, instantOf, markOrganizedThrough, travellingGapColumns,
+  type TravelledGap,
+} from "./gap-window.js";
+export {
+  GAP_CLOCK_ALLOWANCE_MS, gapKeyFrom, gapOpenStart, handBackStart, instantOf, markOrganizedThrough, travellingGapColumns,
+  type TravelledGap,
+};
 
 /** Rows read per page of the walk. */
 export const GAP_CATCHUP_BATCH = 100;
@@ -202,6 +208,7 @@ export async function gapCatchupPass(
  */
 async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Promise<void> {
   const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
+  const allowance = dialect(tx).interval(GAP_CLOCK_ALLOWANCE_MS);
   const [r] = await tx.select({ n: sql<number>`count(*)` }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .where(and(
@@ -210,7 +217,7 @@ async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Pr
       eq(folderState.lastSetBy, "peer"),
       eq(folderState.observedFolder, "INBOX"),
       isNull(messages.arrivedAt),
-      sql`${messages.createdAt} >= ${since}`,
+      sql`${messages.createdAt} >= ${since} - ${allowance}`,
     ));
   const count = Number(r?.n ?? 0);
   if (count > 0) {
@@ -305,7 +312,8 @@ async function selectGapCandidates(
   const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
   /* INSIDE THE WINDOW, read off the row itself: a NULL arrival or a closed window matches nothing.
      INTAKE TOO, whatever the arrival says: a letter this store first took in while its row said
-     another install held the mailbox predates the window, so it is never gap mail. */
+     another install held the mailbox predates the window, so it is never gap mail. The start may be
+     on the server's clock and intake is on the store's, so intake is read with the lease's allowance. */
   const filters = [
     eq(messages.accountId, o.accountId),
     eq(messages.mailboxId, o.mailboxId),
@@ -313,7 +321,7 @@ async function selectGapCandidates(
     eq(folderState.observedFolder, "INBOX"),
     eq(folderState.desiredFolder, "INBOX"),
     sql`${messages.arrivedAt} >= ${since}`,
-    sql`${messages.createdAt} >= ${since}`,
+    sql`${messages.createdAt} >= ${since} - ${d.interval(GAP_CLOCK_ALLOWANCE_MS)}`,
     isNull(messages.sensitivityCategory),
     eq(messages.noAi, false),
     isNull(messages.deletedAt),

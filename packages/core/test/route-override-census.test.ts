@@ -111,8 +111,23 @@ function adoptArms(): { arm: ts.CaseClause; sf: ts.SourceFile }[] {
   return arms;
 }
 
+/** The arm feeds it itself, or through the shared adoption door, which must feed it (asserted below). */
+const feeds = (arm: ts.Node): boolean =>
+  callsName(arm, "recordExternalOverride") || callsName(arm, "adoptExternalPlacement");
+
 describe("rule 1 — every adoption arm feeds the override", () => {
   const arms = adoptArms();
+
+  it("the shared adoption door feeds it", () => {
+    const sf = parse(join(REPO, "packages/core/src/pipeline.ts"));
+    let door: ts.Node | undefined;
+    const find = (n: ts.Node): void => {
+      if (ts.isFunctionDeclaration(n) && n.name?.text === "adoptExternalPlacement") door = n;
+      ts.forEachChild(n, find);
+    };
+    find(sf);
+    expect(door !== undefined && callsName(door, "recordExternalOverride")).toBe(true);
+  });
 
   it("finds the adoption arm at all — a census over nothing is a census that cannot fire", () => {
     expect(arms.map(({ arm, sf }) => site(sf, arm).fn)).toEqual(["commitChange"]);
@@ -120,14 +135,14 @@ describe("rule 1 — every adoption arm feeds the override", () => {
 
   it("every arm calls `recordExternalOverride`, or is exempt BY NAME with a reason", () => {
     const unguarded = arms
-      .map(({ arm, sf }) => ({ ...site(sf, arm), feeds: callsName(arm, "recordExternalOverride") }))
+      .map(({ arm, sf }) => ({ ...site(sf, arm), feeds: feeds(arm) }))
       .filter((s) => !s.feeds && EXEMPT_ADOPT_ARMS[s.fn] === undefined);
     expect(unguarded).toEqual([]);
   });
 
   it("every exemption still matches an arm — a stale exemption is a hole that reads as a decision", () => {
     const exemptFns = new Set(
-      arms.filter(({ arm }) => !callsName(arm, "recordExternalOverride"))
+      arms.filter(({ arm }) => !feeds(arm))
         .map(({ arm, sf }) => site(sf, arm).fn),
     );
     const stale = Object.keys(EXEMPT_ADOPT_ARMS).filter((fn) => !exemptFns.has(fn));
@@ -135,7 +150,7 @@ describe("rule 1 — every adoption arm feeds the override", () => {
   });
 
   it("at least one arm DOES feed it — the exemption list cannot swallow the whole rule", () => {
-    const feeding = arms.filter(({ arm }) => callsName(arm, "recordExternalOverride"));
+    const feeding = arms.filter(({ arm }) => feeds(arm));
     expect(feeding.length).toBeGreaterThanOrEqual(1);
   });
 });

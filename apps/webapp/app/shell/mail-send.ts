@@ -217,6 +217,8 @@ export interface MailSendApi {
    * only the server knows what it did with it.
    */
   withdraw: (lane: string) => Promise<CancelSaid>;
+  /** {@link withdraw} for one waiting send by its key: this mount's own press through its lane, any other on the engine. */
+  withdrawKey: (key: string) => Promise<CancelSaid>;
   /** A surface showing this lane's send line, while mounted — see {@link ShowSend}. */
   showing: ShowSend;
   /** The sends the sidebar's foot shows now — see {@link SendLineItem}. */
@@ -798,9 +800,9 @@ export interface ReplyEditorMeta {
   /**
    * The account row this browser last wrote or opened for the lane, at its stored stamp; `holds` hashes
    * its text, `pending` the text of a later save the outbox took and the row was not yet seen holding;
-   * `made`: a create of this lane made it.
+   * `made`: a create of this lane made it; `rev` the row version the lane's words are based on.
    */
-  row?: { id: string; at: string; holds?: string; pending?: string; made?: true };
+  row?: { id: string; at: string; holds?: string; pending?: string; made?: true; rev?: string };
   /** What the editor showed while it held text — see {@link LaneEnvelope}. */
   envelope?: LaneEnvelope;
   /** The keys of the creates the lane claims (`draft-creates.ts`), at most eight: keys only, never words. */
@@ -870,6 +872,7 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
           ...(typeof row.holds === "string" ? { holds: row.holds } : {}),
           ...(typeof row.pending === "string" ? { pending: row.pending } : {}),
           ...(row.made === true ? { made: true as const } : {}),
+          ...(typeof row.rev === "string" ? { rev: row.rev } : {}),
         } }
         : {}),
       ...(Array.isArray(parsed.creates) && parsed.creates.every((k) => typeof k === "string") && parsed.creates.length > 0
@@ -2700,6 +2703,21 @@ export function useMailSend(
     return "close";
   }, [engine, setPhase]);
 
+  const withdrawKey = useCallback(async (key: string): Promise<CancelSaid> => {
+    const lane = queued.current.get(key);
+    if (lane !== undefined) return withdraw(lane);
+    if (typeof engine.foreignCancelRefused === "function" && engine.foreignCancelRefused(key)) return "elsewhere";
+    const outcome = await engine.withdrawQueued(key);
+    if (outcome === "on_the_wire" || outcome === "unknown") return cancelSaidOf(engine, key, outcome);
+    // `gone` ended elsewhere: its record is not this Cancel's to release (`withdraw`'s rule).
+    const record = outcome === "gone" ? null : recordForEndedSend(key, owner.current);
+    if (record !== null) {
+      releaseSendLock(record.lane, record.fp, sendLockOwed(engine), owner.current);
+      setPhase(record.lane, IDLE);
+    }
+    return "close";
+  }, [engine, withdraw, setPhase]);
+
   /**
    * The foot line's items — see {@link SendLineItem}. Every one stands on its own: the line shows each
    * kind present (`SendingLine.lineRows`), so a standing ending hides no later send. A lane an editor
@@ -2790,6 +2808,7 @@ export function useMailSend(
       stateOf: stateFor,
       send,
       withdraw,
+      withdrawKey,
       showing,
       line, subscribeLine, lineVersion, mountLine, dismissLine, pressHere,
       /** See {@link sendUnsettledFromLastSession} — the mount's own keys are what it excludes. */
@@ -2800,6 +2819,6 @@ export function useMailSend(
           sendPendingInDurableOutbox(engine, lane), owner.current, standingOf(engine),
         ),
     }),
-    [stateFor, send, withdraw, showing, line, subscribeLine, lineVersion, mountLine, dismissLine, pressHere],
+    [stateFor, send, withdraw, withdrawKey, showing, line, subscribeLine, lineVersion, mountLine, dismissLine, pressHere],
   );
 }

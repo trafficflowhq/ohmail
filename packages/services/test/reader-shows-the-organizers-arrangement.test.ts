@@ -84,6 +84,27 @@ describe("a reader presents the mailbox by the organizer's document", () => {
     expect(placeOf(store, ids.stranger), "nobody decided on this sender").toBe("ohmail/Screener");
   });
 
+  it("the rule's own age and the requests the copy includes reach the client; an older copy says neither", async () => {
+    const w = await makeCtx(NOW);
+    await readsOnly(w);
+    const AGE = "2026-09-20T10:00:00.000Z";
+    const doc = DOC(LET_IN);
+    await mirrorDoc(w, {
+      ...doc, applied: ["req-1", "req-2"],
+      rules: (doc.rules as Array<Record<string, unknown>>).map((r) => ({ ...r, updatedAt: AGE })),
+    });
+    const entity = profileChanges((await snapshot(w)).changes)[0]!.entity as { applied: unknown; rules: Array<{ createdAt: string }> };
+    expect(entity.applied).toEqual(["req-1", "req-2"]);
+    expect(entity.rules[0]!.createdAt).toBe(AGE);
+
+    const older = await makeCtx(NOW);
+    await readsOnly(older);
+    await mirrorDoc(older, DOC(LET_IN));
+    const plain = profileChanges((await snapshot(older)).changes)[0]!.entity as { applied: unknown; rules: Array<{ createdAt: string }> };
+    expect(plain.applied).toBeNull();
+    expect(plain.rules[0]!.createdAt).toBe(NOW.toISOString());
+  });
+
   it("an organizer's page 1 carries none, and its own rules decide", async () => {
     const w = await makeCtx(NOW);
     // A stale document from before this install took the mailbox over.

@@ -26,6 +26,8 @@ import {
   ruleFingerprint,
   rulesInPlay,
   rulesList,
+  rulesShown,
+  outrankCoveringDomains,
   triageSubjectIds,
   type EngineMessage,
   type EngineMutation,
@@ -140,6 +142,8 @@ export function verdictSentence(
 
 export interface ShellVerbsInput {
   engine: OhmailEngine;
+  /** The Rules page lists the organizer's copy (`rulesShown`): a Change ranks and counts over it. */
+  rulesReaderOnly?: boolean;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
   reader: EntityReader;
   t: ReturnType<typeof useTranslations>;
@@ -208,7 +212,7 @@ export interface ShellVerbsInput {
 export type ShellVerbs = ReturnType<typeof useShellVerbs>;
 
 export function useShellVerbs({
-  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
+  engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly = false,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
   markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
@@ -919,12 +923,24 @@ export function useShellVerbs({
 
   const revokeRule = useStableCallback((ruleId: string) => engine.mutate({ kind: "rule_delete", ruleId }));
 
-  const retargetRule = useStableCallback((ruleId: string, destination: Folder, refile: boolean | "walk") =>
-    engine.mutate(ruleRetarget(ruleId, destination, refile)));
+  /** The organizer's copy as the page lists it, read at the press; `null` where the page lists the local rows. */
+  const shownAtPress = (): RuleDTO[] | null => {
+    if (!rulesReaderOnly) return null;
+    const shown = rulesShown(engine.read(), {
+      readerOnly: true, queued: engine.queuedRuleWrites?.() ?? [], applied: engine.appliedRuleRequests?.() ?? [], now: nowAt(),
+    });
+    return shown.source === "published" ? shown.rules : null;
+  };
+  const retargetRule = useStableCallback((ruleId: string, destination: Folder, refile: boolean | "walk") => {
+    const m = ruleRetarget(ruleId, destination, refile);
+    const shown = shownAtPress();
+    // The lift over the rules the page shows: the engine's own lift reads only the local rows.
+    return engine.mutate(shown === null ? m : outrankCoveringDomains(shown, m));
+  });
   /* Read at the press, over the mirror as it is then — the count a Change states, in the mailboxes a walk reaches. */
   const rulePastMailOf = useStableCallback((rule: RuleDTO, destination: Folder | null) => {
     const reader = engine.read();
-    return rulePastMail(rule, rulesList(reader), reader.list<EngineMessage>("message"), destination, walkedMailboxes(rosterRef.current));
+    return rulePastMail(rule, shownAtPress() ?? rulesList(reader), reader.list<EngineMessage>("message"), destination, walkedMailboxes(rosterRef.current));
   });
 
   const toggleTag = useStableCallback((messageId: string, tagId: string, assigned: boolean) => {

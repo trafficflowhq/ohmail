@@ -25,7 +25,11 @@ const here = (over: Partial<Parameters<typeof claimHere>[0]> = {}) => ({
   organizing: false, releaseRequestedAt: null, heldBy: null, ...over,
 });
 
-function door(unreadableReason: string | null, answer: ClaimHereOutcome = "refused", organizing = false): StandaloneEngine {
+function door(
+  unreadableReason: string | null, answer: ClaimHereOutcome = "refused", organizing = false,
+  profileBlocked?: { code: string | null; confirmed: boolean } | null,
+  releaseRequestedAt: string | null = null,
+): StandaloneEngine {
   const no = async (): Promise<never> => { throw new Error("not driven by this case"); };
   return {
     accountId: "engine-account", address: "held@example.test", sessionToken: "t", handle: no,
@@ -35,8 +39,11 @@ function door(unreadableReason: string | null, answer: ClaimHereOutcome = "refus
     resume: async () => [{ mailboxId: "m1", served: 1 }],
     claimHere: async () => answer, heldElsewhere: async () => null, stopOrganizing: no,
     runtimes: () => ({
-      organizer: { m1: { organizing, heldBy: null, reason: null, releaseRequestedAt: null, claimed: true, unreadableReason } },
-      connection: { m1: { reachable: true, unreachableSince: null, signInRefused: false, firstSync: "finished" } },
+      organizer: { m1: { organizing, heldBy: null, reason: null, releaseRequestedAt, claimed: true, unreadableReason } },
+      connection: { m1: {
+        reachable: true, unreachableSince: null, signInRefused: false, firstSync: "finished",
+        ...(profileBlocked !== undefined ? { profileBlocked } : {}),
+      } },
     }),
   };
 }
@@ -123,5 +130,49 @@ describe("an organizing phone whose poll gate refuses", () => {
     expect(claim.k).toBe("ours");
     expect(claimChipLabel(claim)).toBe(EN.phoneStateOrganizing);
     expect(organizerStripOf(claim, { ...facts, stoppedHere: false }), "Organizing draws no strip").toBeNull();
+  });
+});
+
+/* PHONE-HIDES-PROFILE-BLOCKED: the engine raises `profileBlocked` once profile writes keep failing
+   (the phone's append threw for three weeks with no code); the phone said only Organizing. */
+describe("an organizing phone whose settings document cannot be kept", () => {
+  it.each([
+    ["profile_gap_too_deep", EN.phoneStateSettingsUnsyncedCode("profile_gap_too_deep")],
+    [null, EN.phoneStateSettingsUnsynced],
+  ] as const)("code %s: the state carries it and the chip and strip say it, Stop stays", (code, said) => {
+    expect(holdStandaloneDoor(door(null, "refused", true, { code, confirmed: true }))).toBe(true);
+    const read = standaloneHere();
+    expect(read?.profileBlocked, "the engine's block never reached the phone's state").toEqual({ code });
+    const claim = claimHere(read!, "idle", false);
+    expect(claim.k).toBe("ours");
+    expect(claimChipLabel(claim), "the chip said Organizing over failing profile writes")
+      .toBe(said);
+    expect(mayStopHere(claim)).toBe(true);
+    expect(organizerStripOf(claim, { ...facts, stoppedHere: false }))
+      .toEqual({ label: said, note: null, late: null, start: false });
+  });
+
+  it("the sentence names the code where there is one, and claims no read", () => {
+    expect(EN.phoneStateSettingsUnsyncedCode("profile_gap_too_deep")).toContain("(profile_gap_too_deep)");
+    expect(DE.phoneStateSettingsUnsyncedCode("profile_gap_too_deep")).toContain("(profile_gap_too_deep)");
+    expect(EN.phoneStateSettingsUnsynced).not.toMatch(/can't read/);
+  });
+
+  it("a stop not yet honoured keeps its own chip", () => {
+    expect(holdStandaloneDoor(door(null, "refused", true, { code: null, confirmed: true }, "2026-10-25T08:00:00.000Z")))
+      .toBe(true);
+    expect(claimChipLabel(claimHere(standaloneHere()!, "idle", false))).toBe(EN.phoneStateStopPending);
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["null", null],
+    ["unconfirmed", { code: "profile_gap_too_deep", confirmed: false }],
+  ] as const)("CONTROL: %s reads Organizing and draws no strip", (_, block) => {
+    expect(holdStandaloneDoor(door(null, "refused", true, block))).toBe(true);
+    expect(standaloneHere()?.profileBlocked).toBeNull();
+    const claim = claimHere(standaloneHere()!, "idle", false);
+    expect(claimChipLabel(claim)).toBe(EN.phoneStateOrganizing);
+    expect(organizerStripOf(claim, { ...facts, stoppedHere: false })).toBeNull();
   });
 });

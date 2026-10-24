@@ -39,7 +39,13 @@ export interface ReplyRowDoors {
   /** A write this lane may not make now: its send is on the way, or a row it cannot write stands. */
   refuses: (lane: string) => boolean;
   /** A write answered: the lane holds the row, with its stored stamp; `text` the body written, `confirmed` or queued; `made` by its create. */
-  took: (lane: string, row: string, text: string, confirmed: boolean, made: boolean) => void;
+  took: (lane: string, row: string, text: string, confirmed: boolean, made: boolean, revision?: string) => void;
+  /** The row version the lane's words are based on, or `null` when not known. */
+  baseOf: (lane: string, row: string) => string | null;
+  /** The row moved elsewhere since that version: the lane lets go of it (or binds the engine's kept row). */
+  changed: (lane: string, row: string) => void;
+  /** The words of a row changed elsewhere were written as a new draft (`kept`), or are still only on screen. */
+  forked: (lane: string, kept: boolean) => void;
 }
 
 /** What a row holds, in the fields the editor writes. */
@@ -82,6 +88,12 @@ export interface ReplyAutosave {
   notSent: (lane: string) => void;
   /** A door bound the row a create this lane claims made: the claim is spent, the binding stays. */
   takeOwn: (lane: string, row: string) => void;
+  /** The lane's words, refused over a row changed elsewhere, are written as a new draft. */
+  fork: (lane: string) => void;
+  /** The keys of the lane's own saves of its row the outbox took, under its binding. */
+  waitedOf: (lane: string) => ReadonlySet<string>;
+  /** The editor shows the row's words again: the lane's earlier waiting saves are not these words. */
+  opened: (lane: string) => void;
 }
 
 function signatureOf(f: ReplyDraftForm): string {
@@ -145,6 +157,10 @@ export function useReplyAutosave(
   const taken = useRef(new Set<string>());
   /** Lanes whose send was cancelled after it took their creates back: the close's write may create. */
   const owed = useRef(new Set<string>());
+  /** Lanes whose save was refused over a row changed elsewhere: their words go to a new draft next. */
+  const forkOwed = useRef(new Set<string>());
+  /** See {@link ReplyAutosave.waitedOf}: by lane, with the binding they were written under. */
+  const waited = useRef(new Map<string, { on: number; keys: Set<string> }>());
   const bindingOf = (l: string): number => bound.current.get(l) ?? 0;
   /** The lane's claims under its binding, beside its meta: a reload claims them again. */
   const storeClaims = useCallback((l: string) => {
@@ -203,8 +219,11 @@ export function useReplyAutosave(
       claim(lane, key, { sig, binding: on, sends: at, held: false, seq });
     }
     try {
+      const stated = row !== null ? doorsRef.current.baseOf(lane, row) : null;
       const result = await engine.mutate({
         kind: "draft_save", draftId: row,
+        // The version these words were written on: a row moved off it refuses them.
+        ...(stated ? { ifContentRevision: stated } : {}),
         ...(f.mailboxId ? { mailboxId: f.mailboxId } : {}),
         threadId: f.threadId, inReplyToMessageId: lane,
         subject: f.subject, body: f.body, html: f.html ? f.html : null,
@@ -213,7 +232,18 @@ export function useReplyAutosave(
       inAir.current.delete(lane);
       // Answered here: only a create the outbox holds stays claimed.
       if (key !== undefined && result.status !== "queued") unclaim(lane, key);
-      if (result.status === "rolled_back") return false;
+      if (row !== null && result.status === "queued" && on === bindingOf(lane)) {
+        const w = waited.current.get(lane);
+        waited.current.set(lane, { on, keys: new Set([...(w?.on === on ? w.keys : []), result.key]) });
+      }
+      if (result.status === "rolled_back") {
+        // The row moved elsewhere: it is the other version's now, and these words become a new draft.
+        if (row !== null && result.error?.code === "draft_changed" && on === bindingOf(lane)) {
+          doorsRef.current.changed(lane, row);
+          forkOwed.current.add(lane);
+        }
+        return false;
+      }
       // Its message ended while it was in the air (a Discard): the row it made is a copy.
       if (key !== undefined && result.status === "confirmed" && result.entityId && ended.current.get(lane)?.has(on)) {
         dropCopy(engine, lane, result.entityId, sentRows.current.get(lane) ?? null);
@@ -235,8 +265,9 @@ export function useReplyAutosave(
          lane's send takes it back (`sending`). */
       // A door bound another row while it was in the air: the row made here is a draft of its own.
       if (row === null && !current) return false;
-      if (row === null && result.status === "confirmed" && result.entityId) doorsRef.current.took(lane, result.entityId, f.body, true, true);
-      else if (row !== null) doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false);
+      if (row === null && result.status === "confirmed" && result.entityId) {
+        doorsRef.current.took(lane, result.entityId, f.body, true, true, result.revision);
+      } else if (row !== null) doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false, result.revision);
       saved.current.set(lane, sig);
       if (result.status === "confirmed") {
         reached.current.set(lane, seq);
@@ -259,10 +290,31 @@ export function useReplyAutosave(
     if (!writable(f, allowCreate)) {
       return Promise.resolve(signatureOf(f) === saved.current.get(lane) && doorsRef.current.rowOf(lane) !== null);
     }
-    const p = write(f).finally(() => { writes.current.delete(lane); inAir.current.delete(lane); });
+    const p = write(f).finally(() => {
+      writes.current.delete(lane);
+      inAir.current.delete(lane);
+      if (forkOwed.current.has(lane)) forkRef.current(lane);
+    });
     writes.current.set(lane, p);
     return p;
   }, [writable, write]);
+
+  /** THE FORK: the lane's last words, written as a new draft now that the other version holds the row. */
+  const forkRef = useRef<(lane: string) => void>(() => {});
+  forkRef.current = (l: string) => {
+    forkOwed.current.delete(l);
+    saved.current.delete(l);
+    sealed.current.delete(l);
+    const f = formRef.current?.lane === l ? formRef.current : lastOf.current.get(l);
+    if (f === undefined || f === null || !replyWorthCreating(f)) return;
+    void writeNow(f, true).then((kept) => doorsRef.current.forked(l, kept));
+  };
+  const fork = useCallback((l: string) => { forkRef.current(l); }, []);
+  const waitedOf = useCallback((l: string): ReadonlySet<string> => {
+    const w = waited.current.get(l);
+    return w !== undefined && w.on === bindingOf(l) ? w.keys : new Set<string>();
+  }, []);
+  const opened = useCallback((l: string) => { waited.current.delete(l); }, []);
 
   const signature = form === null ? null : signatureOf(form);
   const lane = form?.lane ?? null;
@@ -448,7 +500,9 @@ export function useReplyAutosave(
         if (at === "keep") continue;
         if (at === "drop") { dropCopy(engine, lane, made.id, sentRows.current.get(lane) ?? null); continue; }
         if (at === "take") {
-          doorsRef.current.took(lane, made.id, engine.read().get<EngineDraft>("draft", made.id)?.body ?? "", true, true);
+          doorsRef.current.took(
+            lane, made.id, engine.read().get<EngineDraft>("draft", made.id)?.body ?? "", true, true, made.revision ?? undefined,
+          );
           if (c.sig !== "") saved.current.set(lane, c.sig);
           reached.current.set(lane, c.seq);
           if (c.sig !== "") confirmedSig.current.set(lane, c.sig);
@@ -490,6 +544,7 @@ export function useReplyAutosave(
   useEffect(() => () => { createsOff.current?.(); createsOff.current = null; }, [engine]);
   const asSaved = useCallback((l: string, body: string) => { quiet.current.set(l, body); }, []);
   return {
-    seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, ownsRow, restore, awaits, settled, notSent, takeOwn,
+    seal, sending, cancelled, baseline, forget, asSaved, rebind, owns, ownsRow, restore, awaits, settled, notSent, takeOwn, fork,
+    waitedOf, opened,
   };
 }

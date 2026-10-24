@@ -42,6 +42,7 @@
   /* layout tile gaps — ohmarchy's Hyprland gaps (gaps_in 5 × 2 / gaps_out 10) */
   --gap-tile: 16px;
   --gap-edge: 16px;
+  --gap-rail: 16px;
   /* UI type — on Omarchy 3c feeds these live from fc-match / shell.toml */
   --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
   --font-size-base: 14px;

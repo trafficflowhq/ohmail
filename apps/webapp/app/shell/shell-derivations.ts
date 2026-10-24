@@ -12,6 +12,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  NO_WAITING,
   OHBOX_VISIT_ID,
   consentPartition,
   draftsList,
@@ -678,7 +679,14 @@ export function useShellDerivations({
    */
   const fallbackMailboxId = useMemo(() => sendingMailboxId(reader), [reader, derived]);
 
-  const drafts = useMemo(() => draftsList(reader), [reader, derived]);
+  /* A SEND STILL WAITING IS NOT INTERRUPTED: its own placeholder row is not listed (the foot line carries
+     it), and the rows it names are said to wait (`waitingRows`). */
+  const waiting = typeof engine.waitingSends === "function" ? engine.waitingSends() : NO_WAITING;
+  const drafts = useMemo(() => {
+    const paints = new Set(waiting.flatMap((w) => (w.paintId !== null && w.paintId !== w.draftId ? [w.paintId] : [])));
+    return draftsList(reader).filter((d) => !paints.has(d.id));
+  }, [reader, derived, waiting]);
+  const waitingRows = useMemo(() => new Set(waiting.flatMap((w) => (w.draftId !== null ? [w.draftId] : []))), [waiting]);
 
   const scheduled = useMemo(() => scheduledSendsList(reader), [reader, derived]);
 
@@ -725,6 +733,7 @@ export function useShellDerivations({
     threadSubjectOf,
     fallbackMailboxId,
     drafts,
+    waitingRows,
     scheduled,
   };
 }

@@ -3774,6 +3774,8 @@
   "reply": {
     "deletedElsewhere": "Der Entwurf dieser Antwort wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
     "deletedElsewhereKept": "Der Entwurf dieser Antwort wurde auf einem anderen Gerät gelöscht, bevor deine letzten Änderungen hier gespeichert waren. Sie werden als neuer Entwurf gespeichert.",
+    "changedElsewhere": "Der Entwurf dieser Antwort wurde in einem anderen Fenster oder auf einem anderen Gerät geändert. Was du hier geschrieben hast, ist als neuer Entwurf gespeichert.",
+    "changedElsewhereUnsaved": "Der Entwurf dieser Antwort wurde in einem anderen Fenster oder auf einem anderen Gerät geändert. Was du hier geschrieben hast, ist noch hier und noch nicht gespeichert.",
     "sentElsewhereKept": "Diese Antwort wurde von einem anderen Gerät gesendet, bevor deine letzten Änderungen hier gespeichert waren. Sie werden als neuer Entwurf gespeichert.",
     "toastSavedAsDraft": "Deine ungesendete Antwort wurde in den Entwürfen gespeichert.",
     "to": "Antwort an {name}",
@@ -3948,7 +3950,10 @@
     "otherTwins": "Außerdem für diesen Absender: {list}. Aufheben entfernt {count, plural, one {diese Regel} other {diese Regeln}} mit.",
     "twinPlace": "sortiert in {place}",
     "twinPaused": "sortiert in {place}, pausiert",
-    "profileBound": "Deine anderen Computer bekommen deine neuesten {max, number} Regeln; {count, plural, one {1 ältere bleibt} other {# ältere bleiben}} auf diesem."
+    "profileBound": "Deine anderen Computer bekommen deine neuesten {max, number} Regeln; {count, plural, one {1 ältere bleibt} other {# ältere bleiben}} auf diesem.",
+    "introHeld": "{holder} organisiert deine Mails; das sind die Regeln, nach denen dort abgelegt wird. Was du hier änderst, geht an {holder}.",
+    "madeOnHolder": "Auf {holder} erstellt; dort änderst oder hebst du sie auf.",
+    "profileBoundHeld": "Von {holder} kommen die neuesten {max, number} Regeln; ältere sind hier nicht aufgeführt."
   },
   "drafts": {
     "title": "Entwürfe",
@@ -3959,6 +3964,7 @@
     "openTitle": "Diesen Entwurf öffnen",
     "openRecoverTitle": "Diese Nachricht öffnen — wir sind nicht sicher, ob sie gesendet wurde",
     "heldReopenBlocked": "Schreib die Nachricht fertig oder leg sie beiseite — diese festgehaltene zu öffnen würde sie ersetzen.",
+    "reopenBlockedUnsaved": "Schreib die Nachricht fertig oder leg sie beiseite — ihre letzten Änderungen sind nicht gespeichert, und eine andere zu öffnen würde sie ersetzen.",
     "bodyUnavailable": "Der Text dieses Entwurfs ist auf diesem Gerät noch nicht angekommen. Versuch es gleich noch einmal.",
     "heldChecking": "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. Wir schauen in deinem Gesendet-Ordner nach.",
     "heldNotInSent": "Wir sind nicht sicher, ob diese Nachricht gesendet wurde. In deinem Gesendet-Ordner ist sie nicht.",
@@ -3972,9 +3978,13 @@
     "isReply": "Antwort",
     "discard": "Verwerfen",
     "discardWhat": "Das löscht die einzige Kopie.",
+    "discardWhatWaiting": "Ihr Versand wartet noch. Das bricht den Versand ab und löscht die einzige Kopie.",
     "discardConfirm": "Verwerfen",
     "discardCancel": "Behalten",
     "discardStillSending": "Nicht verworfen — diese Nachricht wird gerade gesendet, oder ihr Versand wird noch bestätigt. Versuch es in ein paar Minuten noch einmal.",
+    "discardCancelUnknown": "Nicht verworfen — der Versand ließ sich noch nicht abbrechen. Versuch es noch einmal.",
+    "discardedNotSent": "Verworfen. Nichts wurde gesendet.",
+    "waitingToSend": "Wartet auf den Versand.",
     "discardUnknownJar": "Nicht verworfen — dieser Browser kann seine eigenen Versand-Aufzeichnungen nicht lesen und weiß deshalb nicht, ob diese Nachricht noch unterwegs ist. Verwirf sie in einem Browser, der das kann.",
     "discardRefused": "Nicht verworfen: {reason}",
     "discardRefusedUnnamed": "Das hat nicht geklappt, und der Server hat nicht gesagt warum. Der Entwurf liegt weiter hier.",

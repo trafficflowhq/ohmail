@@ -571,5 +571,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"drafts\" ADD COLUMN \"forward_parts\" text;"
     ]
+  },
+  {
+    "name": "0169_mailboxes_organized_through.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"organized_through\" integer;"
+    ]
   }
 ] as const;

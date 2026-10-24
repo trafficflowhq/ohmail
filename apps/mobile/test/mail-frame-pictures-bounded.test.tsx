@@ -5,18 +5,30 @@
  * re-renders the frame, and that re-render must not start a fresh budget, ask a failed url again, or
  * record the press again. Only the door's fetch is a counting double; the frame, the sanitizer and the
  * fetch are the real ones.
+ *
+ * And an embedded (cid:) picture reaches the drawn document once its bytes land, through the reader's
+ * own subscription over a real engine.
  */
-import { createElement as h, act } from "react";
+import { createElement as h, act, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { INLINE_IMAGE_MAX_PARTS } from "@ohmail/client-engine";
+import { INLINE_IMAGE_MAX_PARTS, MemoryMirrorStore, OhmailEngine, type EngineAdapter, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
 import { mount } from "./_rendered-dom";
 
 vi.mock("react-native", async () => {
   const { rnDom } = await import("./_rendered-dom");
-  return { ...rnDom, useWindowDimensions: () => ({ width: 400, height: 800, scale: 2, fontScale: 1 }), Linking: { openURL: async () => undefined } };
+  return {
+    ...rnDom, useWindowDimensions: () => ({ width: 400, height: 800, scale: 2, fontScale: 1 }), Linking: { openURL: async () => undefined },
+    AppState: { addEventListener: () => ({ remove: () => {} }), currentState: "active" },
+  };
 });
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
-vi.mock("react-native-webview", () => ({ WebView: () => h("div", { "data-webview": "" }) }));
+vi.mock("react-native-webview", () => ({
+  WebView: ({ source }: { source?: { html?: string } }) => h("div", { "data-webview": "", "data-html": source?.html ?? "" }),
+}));
+const live = vi.hoisted(() => ({ engine: null as unknown, actions: null as unknown }));
+vi.mock("../src/net/connection", () => ({
+  useConnection: () => ({ state: live.engine ? { k: "live", session: { engine: live.engine } } : { k: "none" } }),
+}));
 vi.mock("../src/mail/frame-ceiling-native", () => ({ phoneFrameCeiling: () => 512 * 1024 * 1024 }));
 vi.mock("../src/mail/frame-nav", () => ({ frameNavDecision: () => ({ kind: "none" }), openConfirmedLink: () => undefined }));
 vi.mock("../src/theme", () => ({
@@ -42,12 +54,14 @@ const fakeFetch = async (url: string, init?: { method?: string }) => {
 };
 const route = { via: "proxy" as const, base: "https://door.example.net", fetch: fakeFetch, flavor: "managed" };
 vi.mock("../src/state/world", () => ({
-  useWorld: () => ({ images: route, actions: { loadInlineImages: () => undefined } }),
+  useWorld: () => ({ images: route, actions: live.actions ?? { loadInlineImages: () => undefined } }),
   useWorldToast: () => ({ say: () => undefined }),
 }));
 
 const { MailBodyFrame } = await import("../src/ui/MailBodyFrame");
 const { Copy } = await import("../src/copy");
+const { liveActions, liveMessage } = await import("../src/state/live");
+const { useFilesStamp } = await import("../src/state/files-stamp");
 
 const good = (i: number) => `https://img.example.com/art/g${i}.png`;
 const bad = (i: number) => `https://down.example.org/art/f${i}.png`;
@@ -70,7 +84,10 @@ async function settle(): Promise<void> {
 }
 
 let mounted: ReturnType<typeof mount> | null = null;
-afterEach(() => { mounted?.unmount(); mounted = null; door.gets = []; door.posts = 0; door.failing = new Set(); });
+afterEach(() => {
+  mounted?.unmount(); mounted = null; door.gets = []; door.posts = 0; door.failing = new Set();
+  live.engine = null; live.actions = null;
+});
 
 const pressShowImages = (el: HTMLElement): void => {
   const btn = [...el.querySelectorAll<HTMLElement>('[data-role="button"]')].find((e) => e.textContent === Copy.mailShowImages);
@@ -121,5 +138,61 @@ describe("the frame's pictures stay under one budget per message", () => {
     mounted.render(h(MailBodyFrame, { m, onShowAsText: () => undefined, historyOpen: true }));
     await settle();
     expect([...door.gets].sort()).toEqual([good(1), good(2), good(3)]);
+  });
+});
+
+describe("an embedded picture draws once its bytes land", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const DATA = `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`;
+  const REMOTE = "https://img.example.com/art/banner.png";
+  const NOW = new Date("2026-10-25T09:00:00.000Z");
+  const view = { now: NOW, zone: "UTC" };
+  const html = `<p>Picture below.</p><p><img src="cid:pic@e2e.example" alt="a coloured block"></p><img src="${REMOTE}" width="300" height="200">`;
+
+  async function letter(): Promise<OhmailEngine> {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const at = NOW.toISOString();
+    await store.applyChanges([
+      { type: "message", op: "create", id: "m-cid", seq: 1, updatedAt: at, entity: {
+        id: "m-cid", accountId: "acct-1", mailboxId: "mb-1", threadId: "th-cid", messageIdHeader: null, subject: "an inline picture",
+        from: { name: "Chiara", address: "chiara@example.test" }, to: [], cc: [], date: at, folder: "INBOX", snippet: "Picture below.",
+        unread: false, hasAttachments: false, attachmentCount: 0, sensitivity: {}, triage: null, labels: [], remoteContent: "none", updatedAt: at,
+      } as unknown as EngineMessage },
+      { type: "rule", op: "create", id: "r-1", seq: 2, updatedAt: at, entity: {
+        id: "r-1", kind: "sender", match: "chiara@example.test", destination: "INBOX", enabled: true, createdAt: at } },
+    ] as SyncChange[]);
+    const adapter = {
+      sync: async () => ({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: store.getCursor(), hasMore: false, serverTime: at }),
+      mutate: async () => ({ changes: [], seq: null }),
+      fetchBody: async () => ({ text: "Picture below.", html, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
+      listAttachments: async () => [{ id: "a1", filename: "attachment-a1.bin", contentType: "image/png", sizeBytes: PNG.length, inline: true, contentId: "pic@e2e.example", messageId: "m-cid" }],
+      // Node's Blob (jsdom's has no `arrayBuffer()`), typed as the server types it.
+      fetchAttachment: async () => new Response(PNG, { headers: { "content-type": "image/png" } }).blob(),
+    } as unknown as EngineAdapter;
+    return new OhmailEngine({ store, now: () => NOW, adapter });
+  }
+
+  /** The reader's own reads: the row from the engine, redrawn by the files subscription. */
+  function Reader({ engine, id }: { engine: OhmailEngine; id: string }): ReactNode {
+    useFilesStamp([id]);
+    return h(MailBodyFrame, { m: liveMessage(engine, id, view)!, onShowAsText: () => undefined });
+  }
+
+  it("the cid part's data: URI reaches the WebView's document; the remote picture stays blocked", async () => {
+    const engine = await letter();
+    const actions = liveActions({ engine, toast: () => undefined, uuid: () => "00000000-0000-4000-8000-000000000001", zone: "UTC" } as never);
+    live.engine = engine;
+    live.actions = actions;
+    await actions.openMessage("m-cid");
+    await settle();
+    mounted = mount(h(Reader, { engine, id: "m-cid" }));
+    await settle();
+    expect(engine.inlineImagesOf("m-cid").get("pic@e2e.example"), "the premise: the engine minted the picture").toBe(DATA);
+    const drawn = mounted.el.querySelector("[data-webview]")?.getAttribute("data-html") ?? "";
+    expect(drawn, "the frame drew a document").toContain("Picture below.");
+    expect(drawn, "the minted picture is in the drawn document").toContain(`src="${DATA}"`);
+    expect(drawn).not.toContain(REMOTE);
+    expect(door.gets).toHaveLength(0);
   });
 });

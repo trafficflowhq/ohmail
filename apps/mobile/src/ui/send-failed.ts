@@ -16,3 +16,7 @@ export function failedSendLine(kind: FailedSendCopy, connection: ConnectionSay |
   if (kind === "replyTooLong") return Copy.replyTooLong(draftLimitLabel());
   return Copy[kind];
 }
+
+/** The refusal over a row another device changed: the row holds their version, never this letter's. */
+export const changedElsewhere = (kind: FailedSendCopy | null | undefined): boolean =>
+  kind === "replyChangedElsewhere" || kind === "replyChangedElsewhereUnsaved";

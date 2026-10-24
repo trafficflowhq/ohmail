@@ -11,6 +11,8 @@ import { createElement as h, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pan = vi.hoisted(() => ({ configs: [] as Record<string, any>[] }));
+/** Where each strip was scrolled to, in order. */
+const scrolls = vi.hoisted(() => [] as number[]);
 
 vi.mock("react-native", async () => {
   const React = await import("react");
@@ -20,7 +22,10 @@ vi.mock("react-native", async () => {
   return {
     View: host("View"),
     Text: host("Text"),
-    ScrollView: host("ScrollView"),
+    ScrollView: (props: any) => {
+      if (props.ref) props.ref.current = { scrollTo: (o: { x: number }) => { scrolls.push(o.x); } };
+      return host("ScrollView")(props);
+    },
     Pressable: host("Pressable"),
     Animated: {
       View: host("Animated"),
@@ -47,7 +52,7 @@ vi.mock("../src/ui/base", async () => {
   return {
     Badge: () => null, TagChip: () => null, Button: () => null, Empty: () => null, Tail: () => null,
     Panel: box("Panel"), Screen: box("Screen"), Tap: box("Tap"), TapRow: box("TapRow"),
-    Txt: (p: any) => React.createElement("span", null, p.children),
+    Txt: (p: any) => React.createElement("span", { ref: keep(p) }, p.children),
   };
 });
 vi.mock("../src/theme", () => ({
@@ -122,6 +127,8 @@ const { act } = await import("react");
 const { default: OhboxScreen } = await import("../app/(tabs)/index");
 const place = await import("../src/state/thread-place");
 const { ringRadius, rowSquareRadius, squareRadius } = await import("../src/ui/MarkSquare");
+const { MailRow } = await import("../src/ui/MailRow");
+const { STRIP_END, STRIP_SLOT, STRIP_START } = await import("../src/ui/reader-marks");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const rowOf = (mail: { id: string; memberIds?: string[]; marks?: ("unread" | "read" | "mine")[] }) => ({
@@ -372,5 +379,97 @@ describe("a drag that starts on the strip scrolls the strip, never swipes the ro
     expect(claims("a3"), "a drag that started on the strip swiped the row").toBe(false);
     touchDown("a3", rowEl("a3").querySelector<El>("[data-rn='TapRow']")!);
     expect(claims("a3"), "the control: a drag on the row swipes it").toBe(true);
+  });
+});
+
+describe("a closed row's own squares are whole: the newest kept, the older counted as +N", () => {
+  const kindsOf = (n: number): ("read" | "mine" | "unread")[] =>
+    Array.from({ length: n }, (_, i) => (["read", "mine", "unread"] as const)[i % 3]!);
+  const kindOf = (s: El): string => s.__props!.style.borderWidth ? "mine" : s.__props!.style.opacity === 1 ? "unread" : "read";
+  const box = (): El => screen!.el.querySelector<El>("[data-test='row-marks']")!;
+  /** The count beside the squares: the one text in the row that reads +N. */
+  const countEl = (): Element | undefined => [...screen!.el.querySelectorAll("span")].find((s) => /^\+\d+$/.test(s.textContent ?? ""));
+  /** The device's layout pass at `width` dp: the line, then the squares' box beside the count (7dp a character, 4dp gap). */
+  const layOut = (width: number): number => {
+    act(() => { (box().parentElement as El).__props?.onLayout?.({ nativeEvent: { layout: { width } } }); });
+    let room = width;
+    for (let pass = 0; pass < 4; pass++) {
+      const more = countEl()?.textContent ?? "";
+      room = more === "" ? width : width - 4 - 7 * more.length;
+      act(() => { box().__props!.onLayout({ nativeEvent: { layout: { width: room } } }); });
+    }
+    return room;
+  };
+  const readOut = (n: number, width: number) => {
+    const room = layOut(width);
+    const shown = ([...box().children] as El[]).map(kindOf);
+    const more = countEl()?.textContent ?? "";
+    return { room, shown, more, hidden: more === "" ? 0 : Number(more.slice(1)), line: box().parentElement as El };
+  };
+  const mountRow = (n: number): void => {
+    screen = mount(h(MailRow, { m: rowOf({ id: "x", marks: kindsOf(n) }) as never, onPress: () => undefined }));
+  };
+
+  // The two-pane list's column, then a narrow phone held upright.
+  for (const width of [245, 330]) {
+    for (const n of [7, 30, 100]) {
+      it(`${n} messages in a ${width}dp line`, () => {
+        mountRow(n);
+        const r = readOut(n, width);
+        expect(r.shown.length * 11 - 3, "no square drawn in part").toBeLessThanOrEqual(r.room);
+        expect(r.shown.length + r.hidden, "the squares and the count say every message").toBe(n);
+        expect(r.shown, "the newest are the ones kept").toEqual(kindsOf(n).slice(n - r.shown.length));
+        const allFit = n * 11 - 3 <= width;
+        expect(r.more === "", "a count only where the squares do not all fit").toBe(allFit);
+        if (!allFit) {
+          expect(countEl()!.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING, "the count stands at the line's start").toBeTruthy();
+          expect(r.shown.length, "it takes no more room than it needs").toBe(Math.floor((r.room + 3) / 11));
+          expect(r.line.__props!.style.height, "the count does not grow the row").toBe(8);
+          const count = (countEl() as El).__props!;
+          expect([count.variant, count.style?.lineHeight], "the count is a caption on the phone's type step, no leading of its own").toEqual(["caption", undefined]);
+        }
+      });
+    }
+  }
+
+  it("a wider list drops the count, a narrower one brings it back", () => {
+    mountRow(100);
+    expect(readOut(100, 245).hidden).toBeGreaterThan(0);
+    const wide = readOut(100, 1200);
+    expect([wide.more, wide.shown.length]).toEqual(["", 100]);
+    const back = readOut(100, 245);
+    expect(back.shown.length + back.hidden).toBe(100);
+    expect(back.hidden).toBeGreaterThan(0);
+  });
+});
+
+describe("the open strip keeps the newest square whole when a reply arrives", () => {
+  const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i + 1}`, kind: "read" as const, sender: "Ada" }));
+  const row = (n: number, here: string) =>
+    h(MailRow, { m: rowOf({ id: `c${n}` }) as never, onPress: () => undefined, strip: { items: items(n), here, onPress: () => undefined } });
+  /** Square `i`'s slot in the strip's view, scrolled to `x`. */
+  const slot = (i: number, x: number): [number, number] => [STRIP_START + i * STRIP_SLOT - x, STRIP_START + (i + 1) * STRIP_SLOT - x];
+  const open = (n: number, here: string, room: number): void => {
+    scrolls.length = 0;
+    screen = mount(row(n, here));
+    act(() => { screen!.el.querySelector<El>("[data-test='row-strip']")!.__props!.onLayout({ nativeEvent: { layout: { width: room } } }); });
+  };
+
+  it("a 17th square arriving in a 330dp strip is drawn whole, the ringed one still in view", () => {
+    open(16, "c2", 330);
+    screen!.render(row(17, "c2"));
+    const x = scrolls.at(-1)!;
+    const [l, r] = slot(16, x);
+    expect(l >= 0 && r <= 330, `the newest square at ${l}..${r} of 330`).toBe(true);
+    const [cl, cr] = slot(1, x);
+    expect(cl >= 0 && cr <= 330, "the ringed square stays in view").toBe(true);
+    expect(x, "never past the strip's end").toBeLessThanOrEqual(STRIP_START + 17 * STRIP_SLOT + STRIP_END - 330);
+  });
+
+  it("where both cannot be in view, the ringed square wins", () => {
+    open(99, "c2", 330);
+    screen!.render(row(100, "c2"));
+    const [cl, cr] = slot(1, scrolls.at(-1)!);
+    expect(cl >= 0 && cr <= 330).toBe(true);
   });
 });

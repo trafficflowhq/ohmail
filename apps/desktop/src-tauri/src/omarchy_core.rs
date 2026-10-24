@@ -51,6 +51,10 @@ const STDOUT_MAX: usize = 4 * 1024;
 /// How often the watch re-reads, and how long "quiet" is (one interval).
 pub const POLL: Duration = Duration::from_millis(500);
 
+/// Polls between two reads of Hyprland's live gaps and border (2 s): `hyprctl keyword`, `eval`
+/// or a reloaded config moves them with no file under the state dir changing.
+pub const HYPR_EVERY: u32 = 4;
+
 /// The Omarchy 4 state directory — `$XDG_STATE_HOME`/`~/.local/state` + `omarchy/current` —
 /// IF this system is an Omarchy one: the staged `theme` DIRECTORY inside it is the v4 active-
 /// theme mechanism itself (a directory, not the symlink older docs assumed), so its presence
@@ -86,15 +90,24 @@ fn read_capped(path: &Path, cap: u64) -> Option<String> {
 /// Past this many staged Hyprland toggles the directory is not Omarchy's.
 const TOGGLES_MAX: usize = 64;
 
-/// What the poll compares: the active theme's identity and content, and the Hyprland toggles
-/// Omarchy stages beside it, by VALUE. A toggle (the window-gaps one) changes the gaps the
-/// payload reads without touching a theme file.
+/// What the poll compares: the active theme's identity and content, the Hyprland toggles
+/// Omarchy stages beside it, and Hyprland's live gaps, by VALUE. A toggle (the window-gaps one)
+/// or a gaps change alone changes what the payload reads without touching a theme file.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Sample {
     name: Option<String>,
     colors: Option<String>,
     shell: Option<String>,
     hypr_toggles: Vec<(String, Option<String>)>,
+    hypr: Option<String>,
+}
+
+impl Sample {
+    /// The same sample with Hyprland's live answers in it (`hypr_reading`).
+    pub fn with_hypr(mut self, hypr: Option<String>) -> Self {
+        self.hypr = hypr;
+        self
+    }
 }
 
 /// Read the current sample. Never fails — an unreadable file is an absent ingredient.
@@ -104,6 +117,7 @@ pub fn sample(current: &Path) -> Sample {
         colors: read_capped(&current.join("theme").join("colors.toml"), FILE_MAX),
         shell: read_capped(&current.join("theme").join("shell.toml"), FILE_MAX),
         hypr_toggles: hypr_toggles(current),
+        hypr: None,
     }
 }
 
@@ -131,7 +145,8 @@ fn hypr_toggles(current: &Path) -> Vec<(String, Option<String>)> {
 
 /// One tool's stdout, verbatim, bounded — or `None` for a tool that is missing, failed, or
 /// answered something no real invocation answers. `fc-match` and `hyprctl` both exit fast;
-/// they are run only at gather time (a theme or toggle change), never on the poll.
+/// they run at gather time (a theme, toggle or gaps change), and `hyprctl` every `HYPR_EVERY`
+/// polls for `hypr_reading`.
 fn tool_stdout(cmd: &str, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new(cmd).args(args).output().ok()?;
     if !out.status.success() {
@@ -142,6 +157,17 @@ fn tool_stdout(cmd: &str, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(text)
+}
+
+/// Hyprland's live gaps and border, the three answers `gather` sends, joined: compared on the
+/// poll, never parsed here. `None` when Hyprland answers none of them.
+fn hypr_reading() -> Option<String> {
+    let answers = ["general:gaps_in", "general:gaps_out", "general:border_size"]
+        .map(|option| tool_stdout("hyprctl", &["getoption", option, "-j"]));
+    if answers.iter().all(Option::is_none) {
+        return None;
+    }
+    Some(answers.map(Option::unwrap_or_default).join("\n"))
 }
 
 /// The payload the window maps: the theme's own files plus the system facts, all raw. `None`
@@ -205,10 +231,16 @@ impl Debounce {
 /// caller's thread — the caller decides the thread and what `emit` does (the app emits a
 /// Tauri event; the verification harness prints a line).
 pub fn watch<F: FnMut(serde_json::Value)>(current: &Path, poll: Duration, mut emit: F) -> ! {
-    let mut debounce = Debounce::new(sample(current));
+    let mut hypr = hypr_reading();
+    let mut debounce = Debounce::new(sample(current).with_hypr(hypr.clone()));
+    let mut tick: u32 = 0;
     loop {
         std::thread::sleep(poll);
-        if debounce.step(sample(current)) {
+        tick = tick.wrapping_add(1);
+        if tick % HYPR_EVERY == 0 {
+            hypr = hypr_reading();
+        }
+        if debounce.step(sample(current).with_hypr(hypr.clone())) {
             if let Some(payload) = gather(current) {
                 emit(payload);
             }

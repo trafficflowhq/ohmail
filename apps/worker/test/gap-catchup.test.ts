@@ -15,7 +15,8 @@ import {
 import { applyOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { OHBOX_UNSCREENED_GROUPS_MAX as GROUPS } from "@trafficflow/core/adapters/drizzle-repo";
 import type { Logger, SweepClearance } from "@trafficflow/core/mail";
-import { gapCatchupPass } from "../src/gap-catchup.js";
+import { clockSkewBoundMs, DEFAULT_STALE_AFTER_MS } from "@trafficflow/core/adapters/organizer-lease";
+import { GAP_CLOCK_ALLOWANCE_MS, gapCatchupPass } from "../src/gap-catchup.js";
 import { markMailboxStoodDown } from "../src/mailboxes.js";
 
 /**
@@ -159,11 +160,14 @@ describe("letters from a gap are counted for the person and filed only on their 
     const counted = await seedArrival(w, { from: "letters@news.test" });
     // Taken in while the row said another install held the mailbox, its arrival dated inside the window.
     const heldFirstSeen = await seedArrival(w, { from: "letters@news.test", takenInAt: BEFORE_GAP });
+    // Taken in a minute before a start on the server's clock, by a store whose clock runs behind it.
+    const skewedIntake = await seedArrival(w, { from: "letters@news.test", takenInAt: new Date(GAP.getTime() - 60_000) });
     expect(await run(w)).toMatchObject({ offered: 1 });
-    expect((await offerOf(w)).letters, "the held-first-seen letter was counted").toBe(1);
+    expect((await offerOf(w)).letters, "the held-first-seen letter was counted, or the skewed intake left out").toBe(2);
     await press(w);
-    expect(await run(w)).toMatchObject({ moved: 1, completed: 1 });
+    expect(await run(w)).toMatchObject({ moved: 2, completed: 1 });
     expect(await placement(w, counted)).toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, skewedIntake)).toEqual({ d: NEWS, by: "us" });
     expect(await placement(w, heldFirstSeen), "a letter taken in while held was filed").toEqual({ d: INBOX, by: "peer" });
   });
 
@@ -265,6 +269,10 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await run(big, { batch: 1, maxPages: 1 })).toEqual({ offered: 0, moved: 0, completed: 1 });
     expect(await offerOf(big), "a window past its bound stayed open to be walked again")
       .toEqual({ since: null, letters: null, pressed: null });
+  });
+
+  it("reads intake with the lease's own clock allowance", () => {
+    expect(GAP_CLOCK_ALLOWANCE_MS).toBe(clockSkewBoundMs(DEFAULT_STALE_AFTER_MS));
   });
 
   it("closes a window whose letters carry no arrival time, and says how many; CONTROL — an arrival is offered", async () => {

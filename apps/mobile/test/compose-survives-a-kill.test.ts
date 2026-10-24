@@ -12,6 +12,7 @@ import type { MobileEngineDeps } from "../src/engine/boot";
 import type { LetterWords } from "../src/compose/letter-keeper";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { deviceDisk } from "./helpers/device-disk";
+import { wordsOf } from "../src/compose/letter-store";
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 const holdTheClock = (): void => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); };
@@ -37,7 +38,9 @@ async function server() {
 }
 
 /** One launch over `disk`: a fresh module graph, a process whose wire dies with it, `world.tsx`'s letters. */
-async function launch(disk: ReturnType<typeof deviceDisk>, origin: string, opts: { offline?: boolean } = {}) {
+async function launch(
+  disk: ReturnType<typeof deviceDisk>, origin: string, opts: { offline?: boolean; revisionOf?: (id: string) => string | undefined } = {},
+) {
   vi.resetModules();
   const { bootEngine } = await import("../src/engine/boot");
   const { serialSqlExecutor } = await import("../src/engine/sql-queue");
@@ -50,6 +53,14 @@ async function launch(disk: ReturnType<typeof deviceDisk>, origin: string, opts:
   const fetch = (url: string, init?: RequestInit): Promise<Response> => {
     if (dead) return never();
     if (net.offline && init?.method === "POST") return Promise.reject(new TypeError("Network request failed"));
+    // The send route's version check (SendService), which the fake's own send route does not make.
+    const send = /^\/drafts\/([^/]+)\/send$/.exec(new URL(url).pathname);
+    const stated = send && typeof init?.body === "string" ? (JSON.parse(init.body) as { ifContentRevision?: string }).ifContentRevision : undefined;
+    if (send && stated && opts.revisionOf && opts.revisionOf(decodeURIComponent(send[1]!)) !== stated) {
+      return Promise.resolve(new Response(JSON.stringify({ error: { code: "draft_changed", message: "This draft changed elsewhere." } }), {
+        status: 409, headers: { "content-type": "application/json" },
+      }));
+    }
     return globalThis.fetch(url, init).then((r) => (dead ? never<Response>() : r));
   };
   const files = disk.opener(serialSqlExecutor);
@@ -64,17 +75,18 @@ async function launch(disk: ReturnType<typeof deviceDisk>, origin: string, opts:
   const letters = letterDoor(boot.store);
   keeping.openLetterSession({ door: letters, uuid });
   const actions = live.liveActions({ engine, uuid, zone: "UTC", toast, letters });
+  const restoreDeps = {
+    door: letters,
+    outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+    keep: (k: Parameters<typeof actions.draftKeep>[0]) => actions.draftKeep(k),
+    hasMessage: (id: string) => engine.read().get("message", id) !== undefined,
+    drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+    firstSync: () => engine.syncOnce().then(() => undefined),
+    parse: live.keptRecipients,
+  };
   /** `world.tsx`'s restore, as the session runs it. */
   const restore = async () => {
-    const r = await restoring.restoreLetters({
-      door: letters, owned: keeping.ownedLetters(),
-      outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
-      keep: (k) => actions.draftKeep(k),
-      hasMessage: (id) => engine.read().get("message", id) !== undefined,
-      drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
-      firstSync: () => engine.syncOnce().then(() => undefined),
-      parse: live.keptRecipients,
-    });
+    const r = await restoring.restoreLetters({ ...restoreDeps, owned: keeping.ownedLetters() });
     const say = restoring.sayLetterRestore(r);
     if (say !== null) toast(say);
     return r;
@@ -82,7 +94,11 @@ async function launch(disk: ReturnType<typeof deviceDisk>, origin: string, opts:
   /** `world.tsx`'s reconnect flush, letters settled by key. */
   const flush = async () => {
     const settled = await live.flushQueued(engine, actions.releaseConfirmed);
-    restoring.settleLetters(letters, keeping.ownedLetters(), settled);
+    const loose = restoring.settleLetters(letters, keeping.ownedLetters(), settled);
+    if (loose.length > 0) {
+      const r = await restoring.restoreLetters({ ...restoreDeps, owned: keeping.ownedLetters(), only: new Set(loose.map((x) => x.letter)) });
+      toast(refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater"));
+    }
     return settled;
   };
   /** The sheet, opened: its letter on this launch's disk. */
@@ -504,6 +520,44 @@ describe("a letter being written survives a hard stop", () => {
       expect(next.letters.letterOf(String(row.id))?.forwardKept, "the restore dropped the choice").toEqual(["att-2"]);
       expect(row.forwardParts, "the restored row does not hold the kept files").toEqual(["att-2"]);
       expect(next.letters.letterOf(sentFrom)?.forwardKept).toEqual(["att-1"]);
+    } finally { fake.server.close(); }
+  }, 60_000);
+
+  it("a waiting send refused over a row changed on another device, its sheet closed: its words become a new draft, and the next launch leaves the other version alone", async () => {
+    const { fake, origin } = await server();
+    fake.addDraft({
+      id: "d-9", mailboxId: "mb-1", threadId: null, inReplyToMessageId: null, subject: "Plans", body: "Half a thought", to: TO, cc: [], bcc: [],
+      rationale: null, status: "draft", createdAt: "2026-09-01T09:00:00.000Z", updatedAt: "2026-09-20T14:29:00.000Z", contentRevision: "rev-0",
+    } as unknown as Record<string, unknown> & { id: string });
+    const revisionOf = (id: string) => (fake.draft(id) as { contentRevision?: string } | undefined)?.contentRevision;
+    const PHONE = "Half a thought, and the phone's closing line";
+    const DESKTOP = "Rewritten on the desktop";
+    const disk = deviceDisk();
+    try {
+      const first = await launch(disk, origin, { revisionOf });
+      await first.engine.syncOnce();
+      const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(WORDS) });
+      letter.edit({ ...WORDS, body: PHONE });
+      letter.flush();
+      first.net.offline = true;
+      const res = await letter.sendVia(() => first.actions.sendNew("mb-1", TO, "Plans", PHONE, null, null, [], "d-9", { cc: [], bcc: [] }, "rev-0"));
+      expect(res.outcome, "the send did not wait").toBe("queued");
+      letter.release();
+      const put = await globalThis.fetch(`${origin}/drafts/d-9`, {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subject: "Plans", body: DESKTOP, to: TO, cc: [], bcc: [], ifContentRevision: revisionOf("d-9") }),
+      });
+      expect(put.status).toBe(200);
+      first.net.offline = false;
+      await first.flush();
+      expect({ theirs: fake.draft("d-9")?.body, mine: drafts(fake).filter((r) => r.body === PHONE).length, sent: fake.deliveries().length, said: first.said.at(-1) })
+        .toEqual({ theirs: DESKTOP, mine: 1, sent: 0, said: sayArg(refuse("replyChangedElsewhere")) });
+      expect(await first.letters.landed()).toBe("stored");
+      kill(first, disk);
+
+      const next = await launch(disk, origin, { revisionOf });
+      await next.restore();
+      expect({ theirs: fake.draft("d-9")?.body, rows: drafts(fake).length }).toEqual({ theirs: DESKTOP, rows: 2 });
     } finally { fake.server.close(); }
   }, 60_000);
 });

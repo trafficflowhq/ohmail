@@ -3,7 +3,7 @@ import { memoryImapServer } from "./_metaworld.js";
 import { greenmailConfig } from "./_imapenv.js";
 import { ImapAdapter } from "../../src/adapters/imap.js";
 import {
-  decideLease, peekLease, parseClaim, formatClaim, makeLeaseIo, withServerClock,
+  decideLease, peekLease, parseClaim, formatClaim, makeLeaseIo, runLeaseGate, withServerClock,
   CLAIM_PROTOCOL, DEFAULT_STALE_AFTER_MS, MAX_FUTURE_SKEW_MS,
   type ClaimRecord, type LeaseSelf, type OrganizerClaim,
 } from "../../src/adapters/organizer-lease.js";
@@ -352,6 +352,35 @@ describe("a phone reads the server's stamp too", () => {
     const records = await adapter.leasePeekIo().listClaims();
     expect(records).toHaveLength(1);
     expect(records[0]!.internalDate?.getTime(), "the phone read the claim with no server stamp").toBe(stamp.getTime());
+  });
+});
+
+describe("the gate passes on the server's stamp of the claim it wrote", () => {
+  const ID = { installId: "desktop", mailboxId: "mbx" };
+  const toServerPath = (c: string): string => c.split("/").join(".");
+
+  it("as claimServerAt, the INTERNALDATE the server gave this gate's own append", async () => {
+    const stamped = new Date(NOW.getTime() - 7_000);
+    const server = memoryImapServer({
+      folders: ["ohmail._meta"],
+      afterAppend: (s, path) => { const f = s.tree.get(path)!; f.messages[f.messages.length - 1]!.internalDate = stamped; },
+    });
+    const gate = await runLeaseGate({ capabilities: [], io: makeLeaseIo(server, toServerPath, ID), self: selfOf("desktop"), now: NOW });
+    expect(gate.verdict.verdict).toBe("organize");
+    expect(gate.claimServerAt?.getTime(), "the gate did not pass on its claim's server stamp").toBe(stamped.getTime());
+  });
+
+  it("and null where the server gives none", async () => {
+    const server = memoryImapServer({ folders: ["ohmail._meta"] });
+    const fetch = server.fetch.bind(server);
+    const bare = Object.assign(Object.create(server) as object, {
+      async *fetch(...args: Parameters<typeof fetch>) {
+        for await (const m of fetch(...args)) { const { internalDate: _, ...rest } = m; yield rest; }
+      },
+    }) as typeof server;
+    const gate = await runLeaseGate({ capabilities: [], io: makeLeaseIo(bare, toServerPath, ID), self: selfOf("desktop"), now: NOW });
+    expect(gate.verdict.verdict).toBe("organize");
+    expect(gate.claimServerAt).toBeNull();
   });
 });
 
