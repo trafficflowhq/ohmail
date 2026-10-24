@@ -150,6 +150,8 @@ export default defineConfig({
       "packages/services/test/send-rearm.test.ts",
       // A reservation that offered nothing, forgotten and sent again under its key: the phone forgets on this store.
       "packages/services/test/send-offer-state.test.ts",
+      // A slow submission's Sent copy, its dropped upload and its dead probe: the phone sends on this store.
+      "packages/services/test/send-service.test.ts",
       // A forward that met the mailbox's own IMAP cap, through the route and the door the Desktop and
       // phone serve it with: offered again on this store, and its replay sends it once.
       "packages/api/test/send-rearm-forward-cap.test.ts",

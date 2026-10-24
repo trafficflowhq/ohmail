@@ -148,7 +148,7 @@ describe("POST /drafts/:id/send when the mail server cannot be reached", () => {
     expect(w.faults.map((f) => f.status)).toEqual([500]);
   });
 
-  it("CONTROL: an SMTP 550 for the message itself keeps its classification — unverified, not unreachable", async () => {
+  it("CONTROL: an SMTP 550 for the recipient is the server's refusal — not unreachable, not our fault", async () => {
     const fakeImap = {
       list: async () => [{ path: "INBOX", delimiter: "/", flags: new Set<string>() }],
       on: () => undefined,
@@ -162,10 +162,10 @@ describe("POST /drafts/:id/send when the mail server cannot be reached", () => {
     });
     await credentials(w, await closedPort(), await refusingSmtp());
     const res = await press(w, "rcpt-550");
-    expect(res.status).toBe(200);
-    expect((await res.json() as { status?: string }).status).toBe("unverified");
+    expect(res.status).toBe(424);
+    expect((await res.json() as { error?: { code?: string } }).error?.code).toBe("send_refused_by_server");
     const [row] = await w.db.select().from(outboundSends).where(eq(outboundSends.draftId, w.draftId));
-    expect(row!.status).toBe("unverified");
+    expect(row!.status).toBe("failed");
     expect(w.faults).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { Transform, type Readable, type Writable } from "node:stream";
 import {
   ImapFlow, type FetchMessageObject, type FetchOptions, type FetchQueryObject, type ImapFlowOptions,
   type ListResponse, type MailboxObject, type SequenceString, type StatusObject,
@@ -76,7 +77,7 @@ import {
   type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
   type KnownEntry,
-  type OutboundMessage, type SendResult, type FetchedPart, type FetchPartOptions, type StreamedPart,
+  type OutboundMessage, type SendOptions, type SendResult, type FetchedPart, type FetchPartOptions, type StreamedPart,
   type FetchRawOptions, type NetTimeouts, type FetchByUidOptions, type TargetedFetch,
   type ImapAuth, type ImapOAuthAuth, type ResolvedImapAuth,
   FILING_BATCH_MAX, type MoveManyResult,
@@ -1787,6 +1788,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     this.learnPassiveFolders(list);
     if (this.config.smtp) {
       this.transporter = nodemailer.createTransport(smtpTransportOptions(this.config));
+      this.transporter.use("stream", releaseGatePlugin as never);
     }
     // LAST. Everything above is still owned by the promise the caller is awaiting; from here on a
     // failure has nowhere to be reported except the `close`/`error` listeners.
@@ -5105,7 +5107,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return fallback;
   }
 
-  async send(msg: OutboundMessage): Promise<SendResult> {
+  async send(msg: OutboundMessage, opts: SendOptions = {}): Promise<SendResult> {
     if (!this.transporter) throw new Error("send(): SMTP not configured (ImapConfig.smtp is required)");
     const messageId = msg.messageId ?? `<${randomUUID()}@${this.config.sentDomain ?? "trafficflow.ch"}>`;
     // ONE options object drives BOTH the SMTP delivery and the Sent-folder copy, on purpose: the
@@ -5113,6 +5115,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // built from the same `bcc`, so a bcc recipient is on the RCPT list AND absent from the Sent
     // copy's headers — there is no way for the two to disagree about who was blind-copied.
     const mail = outboundToMail(msg, messageId);
+    // Read by `releaseGatePlugin`; `armed` stays false on a transporter built without it.
+    const gate: ReleaseGate = { armed: false, released: false, settled: false, beforeRelease: opts.beforeRelease };
+    (mail as Record<symbol, unknown>)[RELEASE_GATE] = gate;
+    const stop = (): void => {
+      gate.stopped = true;
+      if (!gate.released) gate.stream?.destroy(new Error("the upload was stopped before its end"));
+      // Released: the wait for the 250 ends with the socket, and the outcome stays ambiguous.
+      else for (const sink of gate.sinks ?? []) sink.destroy(new Error("the send was stopped at its ceiling"));
+    };
+    if (opts.signal?.aborted === true) stop();
+    else opts.signal?.addEventListener("abort", stop, { once: true });
 
     // OAUTH SMTP IS A PER-MESSAGE OVERRIDE, NOT TRANSPORTER STATE. The transporter (built at
     // `connect()`) carries NO static auth for an OAuth config — see `smtpTransportOptions`, whose
@@ -5137,7 +5150,17 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // A session that never got past securing or login offered nothing: a definite non-delivery.
       const step = submissionNeverOffered(err);
       if (step !== null) throw new SendNotSubmitted(step, err);
+      // The end-of-data mark was never released, so the server cannot have accepted the message.
+      if (gate.armed && !gate.released) throw new SendNotSubmitted("data", err);
       throw err;
+    } finally {
+      gate.settled = true;
+      opts.signal?.removeEventListener("abort", stop);
+    }
+    if (opts.copy === "caller") {
+      let unfiledCopy: Buffer;
+      try { unfiledCopy = await buildRaw(mail); } catch (err) { throw new SentCopyAppendFailed(messageId, err); }
+      return { providerMessageId: messageId, sentLocator: null, raw: null, unfiledCopy };
     }
     // A server that filed the submission itself already holds the one Sent copy: find it, never
     // add a second. Not found in time ⇒ no locator, and the Sent-folder pass writes the row.
@@ -5174,6 +5197,44 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // reconstructable afterwards: the UID is only in the APPEND response, and the bytes are what
     // decides the message's identity. See {@link SendResult.raw}.
     return { providerMessageId: messageId, sentLocator, raw };
+  }
+
+  /**
+   * File a delivered message's Sent copy (`send` with `copy: "caller"`). `look`: search Sent for
+   * the Message-ID first and append only when absent, so a retry adds no second copy. A server that
+   * files submissions itself is only looked in. `null`: the copy is there with nothing to project.
+   * Throws when the connection is gone or the APPEND fails.
+   */
+  async fileSentCopy(
+    raw: Buffer, messageId: string, opts: { look?: boolean } = {},
+  ): Promise<{ locator: NativeLocator; raw: Buffer } | null> {
+    this.assertUsable();
+    if (this.connectionGone()) throw connectionGoneError();
+    if (this.serverFilesSubmissions()) {
+      const found = await this.findServerSentCopy(messageId);
+      if (found === null && this.connectionGone()) throw connectionGoneError();
+      return found;
+    }
+    const sentCanonical = await this.resolveSentFolder();
+    if (opts.look === true) {
+      const inner = messageId.replace(/[<>]/g, "").trim();
+      const clock = ImapDeadline.in(SERVER_SENT_COPY_FIND_MS, "read_deadline", () => this.now());
+      const found = inner ? await this.serverCopyAt(sentCanonical, inner, messageId, clock) : undefined;
+      if (found !== undefined) return found;
+    }
+    const appended = await this.bounded(
+      this.client.append(this.toServerPath(sentCanonical), raw, ["\\Seen"]), sentCanonical,
+    );
+    const locator: NativeLocator = appended && typeof appended !== "boolean" && appended.uid != null && appended.uidValidity != null
+      ? { folder: sentCanonical, ref: makeRef(appended.uidValidity, appended.uid) }
+      : { folder: sentCanonical, ref: "0:0" };
+    return { locator, raw };
+  }
+
+  /** The connection is known dead: closed, retired, or the driver's own `usable` cleared. */
+  private connectionGone(): boolean {
+    return !this.established || this.closing || this.retiredBecause !== null
+      || (this.client as unknown as { usable?: unknown } | undefined)?.usable === false;
   }
 
   /** Does this server file every SMTP submission into Sent itself? See {@link FILES_SUBMISSIONS_CAPABILITIES}. */
@@ -5270,8 +5331,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       // failure into an honest "no such folder / nothing to do" answer, which is right for a
       // missing or unselectable mailbox and WRONG for a deadline: it would report a server that
       // stopped answering as an empty result, which is the silent degrade this whole file exists
-      // to replace with a refusal. See `imap-bounds.ts`.
-      if (err instanceof ImapBoundExceeded) throw err;
+      // to replace with a refusal. See `imap-bounds.ts`. A dead connection is the same: no answer.
+      if (err instanceof ImapBoundExceeded || this.connectionGone()) throw err;
       return false;
     }
     try {
@@ -5504,6 +5565,100 @@ export function outboundToMail(msg: OutboundMessage, messageId: string): Mail.Op
         }
       : {}),
   };
+}
+
+/** Where a send hangs its {@link ReleaseGate} on the mail options; nodemailer copies it to `mail.data`. */
+const RELEASE_GATE = Symbol("ohmail.releaseGate");
+
+interface ReleaseGate {
+  /** The plugin put the gate on this message's stream. */
+  armed: boolean;
+  /** `beforeRelease` resolved and the end-of-data mark may follow. */
+  released: boolean;
+  /** `sendMail` has returned; a late flush releases nothing. */
+  settled: boolean;
+  beforeRelease?: (() => Promise<void>) | undefined;
+  /** The gated stream, so a stop can end the upload before its mark. */
+  stream?: Transform;
+  /** The socket under the DATA stream, held at the release, so a stop after it can end the session. */
+  sinks?: Writable[];
+  stopped?: boolean;
+}
+
+/** The gate hands on at most this much per write, so the pipe's backpressure keeps the rest here. */
+const GATE_PIECE_BYTES = 16 * 1024;
+
+/** A stream's pipe destinations (Node and readable-stream keep them on `_readableState.pipes`). */
+function pipesOf(s: unknown): Array<Readable & Writable> {
+  const pipes = (s as { _readableState?: { pipes?: unknown } } | null)?._readableState?.pipes;
+  return (Array.isArray(pipes) ? pipes : pipes ? [pipes] : []) as Array<Readable & Writable>;
+}
+
+/** Bytes still queued in user space below the gate: in the DATA stream and the socket it writes to. */
+function queuedBelow(gated: Readable): number {
+  let queued = 0;
+  for (const data of pipesOf(gated)) {
+    queued += (data.writableLength ?? 0) + (data.readableLength ?? 0);
+    for (const sink of pipesOf(data)) queued += sink.writableLength ?? 0;
+  }
+  return queued;
+}
+
+function connectionGoneError(): Error {
+  return Object.assign(new Error("the connection to the mail server is closed"), { code: "NoConnection" });
+}
+
+/**
+ * THE END-OF-DATA MARK WAITS FOR THE CALLER. A pass-through transform, last on the message stream,
+ * whose flush waits until the socket has taken every byte (nothing left queued in user space below
+ * the gate) and then for `beforeRelease`; nodemailer writes the `.` only after it. A session that
+ * ends before then provably delivered nothing, and a rejected `beforeRelease` refuses the release.
+ * What the OS send buffer still holds at the release is out of sight.
+ */
+function releaseGatePlugin(
+  mail: { data: Record<symbol, unknown>; message: { processFunc(fn: (input: Readable) => Readable): void } },
+  done: (err?: Error | null) => void,
+): void {
+  const gate = mail.data[RELEASE_GATE] as ReleaseGate | undefined;
+  if (gate !== undefined) {
+    gate.armed = true;
+    mail.message.processFunc((input) => {
+      const gated = new Transform({
+        // An attachment arrives as one chunk; whole, the socket would queue all of it at once.
+        transform(chunk: Buffer, _enc, cb) {
+          for (let i = 0; i < chunk.length; i += GATE_PIECE_BYTES) this.push(chunk.subarray(i, i + GATE_PIECE_BYTES));
+          cb();
+        },
+        flush(cb) {
+          const refuse = (err: unknown): void => { cb(err instanceof Error ? err : new Error(String(err))); };
+          const release = (): void => {
+            if (gate.settled || gate.stopped === true) { refuse(new Error("the send had already ended")); return; }
+            (gate.beforeRelease ?? (async () => undefined))().then(() => {
+              if (gate.settled) { refuse(new Error("the send had already ended")); return; }
+              gate.released = true;
+              cb();
+            }, refuse);
+          };
+          // Small messages fit the stream buffers before DATA is accepted: wait for the consumer.
+          const drained = (): void => {
+            if (gated.destroyed || gate.settled) { refuse(new Error("the send had already ended")); return; }
+            if (gated.readableFlowing === true && gated.readableLength === 0 && queuedBelow(gated) === 0) {
+              gate.sinks = pipesOf(gated).flatMap((data) => pipesOf(data));
+              release();
+              return;
+            }
+            setTimeout(drained, 5);
+          };
+          drained();
+        },
+      });
+      input.on("error", (err) => gated.destroy(err));
+      gate.stream = gated;
+      if (gate.stopped === true) gated.destroy(new Error("the upload was stopped before its end"));
+      return input.pipe(gated);
+    });
+  }
+  done();
 }
 
 function buildRaw(mail: Mail.Options): Promise<Buffer> {

@@ -11,11 +11,11 @@ import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js
 /**
  * THE SMTP LEG, AGAINST A LOOPBACK SINK THAT FAILS ONCE. Through the real route and the production
  * factory (its IMAP leg a double): a 454 at AUTH is the server's "not now", offered again under the
- * same key and sent once; a 535 is a refusal, final at one AUTH. Everything that happens at or after
- * the envelope stays on the ambiguous path whatever the server answered — data taken and the
- * connection dropped, a 4xx or 5xx after DATA, a 4xx at RCPT — never `failed`, never re-armed: the
- * sink sees one DATA transaction and the replay dials nothing. A close before the greeting stays
- * ambiguous too: nodemailer gives it no code, and the never-offered evidence reads codes only.
+ * same key and sent once; a 535 is a refusal, final at one AUTH. A 450 at RCPT came before any data
+ * and is "not now" too. Everything after the end of the message was released stays on the ambiguous
+ * path whatever the server answered — data taken and the connection dropped, a 4xx or 5xx after
+ * DATA — never `failed`, never re-armed: the sink sees one DATA transaction and the replay dials
+ * nothing. A close before the greeting released nothing, so it is a dropped send, final.
  */
 
 const app = createApp(apiRoutes);
@@ -154,6 +154,14 @@ describe("the SMTP leg against a sink that fails once", () => {
     expect(await answer(await press(w, "k1"))).toMatchObject({ status: 409, wire: "failed" });
     expect(smtp.seen).toMatchObject({ connections: 1, auths: 1, datas: 0 });
   });
+
+  it("a 450 at RCPT came before any data: offered again and sent once", async () => {
+    const smtp = await sink({ rcpt: (n) => (n === 1 ? "450 4.2.1 mailbox busy" : undefined) });
+    const w = await world(smtp.port);
+    expect(await answer(await press(w, "k1"))).toEqual({ status: 424, wire: null, code: "send_busy", retryable: true, header: "2" });
+    expect(await answer(await press(w, "k1"))).toMatchObject({ status: 200, wire: "sent" });
+    expect(smtp.seen).toMatchObject({ rcpts: 2, datas: 1, messages: 1 });
+  });
 });
 
 describe("at or after the envelope the fate stays unknown, whatever the server said", () => {
@@ -161,7 +169,6 @@ describe("at or after the envelope the fate stays unknown, whatever the server s
     ["the data taken and the connection dropped", { afterData: () => "drop" }],
     ["a 451 after DATA", { afterData: () => "451 4.3.0 try again later" }],
     ["a 554 after DATA", { afterData: () => "554 5.7.1 rejected" }],
-    ["a 450 at RCPT", { rcpt: () => "450 4.2.1 mailbox busy" }],
   ];
   for (const [what, script] of cases) {
     it(`${what}: unverified, never failed, one DATA transaction at most, and the replay dials nothing`, async () => {
@@ -180,14 +187,13 @@ describe("at or after the envelope the fate stays unknown, whatever the server s
     });
   }
 
-  it("a close before the greeting carries no code, so it is not proved unoffered: unverified, never retried", async () => {
+  it("a close before the greeting released nothing: a dropped send, final, and the replay says so", async () => {
     const smtp = await sink({ closeBeforeGreeting: () => true });
     const w = await world(smtp.port);
-    const first = await answer(await press(w, "k1"));
-    expect(first.wire).toBe("unverified");
-    expect((await w.row()).status).toBe("unverified");
+    expect(await answer(await press(w, "k1"))).toEqual({ status: 424, wire: null, code: "send_upload_dropped", retryable: false, header: null });
+    expect((await w.row()).status).toBe("failed");
     const connections = smtp.seen.connections;
-    expect((await answer(await press(w, "k1"))).wire).toBe("unverified");
+    expect(await answer(await press(w, "k1"))).toMatchObject({ status: 424, code: "send_upload_dropped" });
     expect(smtp.seen.connections).toBe(connections);
   });
 });
