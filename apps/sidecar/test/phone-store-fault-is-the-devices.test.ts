@@ -1,15 +1,20 @@
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isNull, sql } from "drizzle-orm";
+import { eq, isNull, sql } from "drizzle-orm";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapCursor, MailboxAdapter, NativeLocator, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { createLogger, storeFaultOf } from "@trafficflow/core/mail";
-import { mailboxes, messageFailures, messages } from "@trafficflow/db";
+import {
+  accounts, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
+} from "@trafficflow/db";
+import { screenUnscreened, type ServiceContext } from "@trafficflow/services/mail";
 import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@trafficflow/worker/dead-letter";
 import { createSidecar, type Sidecar } from "../src/engine.js";
-import { oneTransactionAtATime, openPhoneStore, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
+import {
+  oneTransactionAtATime, openPhoneStore, STORE_TURN_WAIT, type PhoneSqlExecutor, type PhoneSqlRows,
+} from "../src/mobile.js";
 
 /**
  * A DEVICE-STORE FAULT IS THE DEVICE'S, WHATEVER ITS TEXT SAYS (REVIEW-02512 LOW 3). The phone's store
@@ -84,6 +89,15 @@ describe("the class a device-store fault gets", () => {
 
   it("the store's transaction-wait refusal (real) is the device's, marked where it is made", async () => {
     expect(classifyIngestFault(await realTransactionWaitRefusal())).toEqual(HELD);
+  });
+
+  it("the transaction-wait refusal names itself on its log line, and stays the device's", async () => {
+    const refusal = await realTransactionWaitRefusal();
+    const lines: string[] = [];
+    createLogger({ service: "sidecar", sink: (l) => { lines.push(l); } }).error("sync_cycle_failed", { err: refusal });
+    expect(JSON.parse(lines[0]!)).toMatchObject({ errorClass: "StoreStatementFaultError", causeCode: STORE_TURN_WAIT });
+    expect(STORE_TURN_WAIT).toBe("store_turn_wait");
+    expect(classifyIngestFault(refusal)).toEqual(HELD);
   });
 
   it("a SQLite refusal whose class did not survive is the store's, even unmarked", () => {
@@ -163,25 +177,44 @@ function inbox(): () => MailboxAdapter & { leaseIo(): LeaseIo; leasePeekIo(): Le
  * message's subject while `faults` lasts — a store that has room for a small failure row and not for
  * one message's write, which is how a nearly full device behaves.
  */
-function faultingExecutor(fault: () => unknown, faults: { left: number }): PhoneSqlExecutor {
+/** A device's pace: `delayMs` per statement, and the most statements one transaction carried. */
+interface Pace { delayMs: number; inTx: number; maxInTx: number; open: boolean }
+
+function faultingExecutor(
+  fault: () => unknown, faults: { left: number; marker?: string },
+  pace: Pace = { delayMs: 0, inTx: 0, maxInTx: 0, open: false },
+): PhoneSqlExecutor {
   const raw = new sqlite.DatabaseSync(":memory:");
   let tail: Promise<unknown> = Promise.resolve();
-  const serial = <T>(job: () => T): Promise<T> => { const n = tail.then(job, job); tail = n.catch(() => undefined); return n; };
+  const serial = <T>(job: () => T): Promise<T> => {
+    const paced = async () => { if (pace.delayMs > 0) await new Promise((r) => setTimeout(r, pace.delayMs)); return job(); };
+    const n = tail.then(paced, paced);
+    tail = n.catch(() => undefined);
+    return n;
+  };
+  const counted = (q: string) => {
+    if (/^\s*begin/i.test(q)) { pace.open = true; pace.inTx = 0; } else if (/^\s*(commit|end|rollback)\s*;?\s*$/i.test(q)) {
+      pace.open = false;
+      pace.maxInTx = Math.max(pace.maxInTx, pace.inTx);
+    } else if (pace.open) pace.inTx++;
+  };
   const check = (params: readonly unknown[] | undefined) => {
-    if (faults.left > 0 && (params ?? []).some((p) => typeof p === "string" && p.includes("the faulted one"))) {
+    const marker = faults.marker ?? "the faulted one";
+    if (faults.left > 0 && (params ?? []).some((p) => typeof p === "string" && p.includes(marker))) {
       faults.left--;
       throw fault();
     }
   };
   return {
     all: (sql, params): Promise<PhoneSqlRows> => serial(() => {
+      counted(sql);
       check(params);
       const st = raw.prepare(sql);
       const columns = st.columns().map((c) => c.name);
       const objects = st.all(...(params as never[])) as Record<string, unknown>[];
       return { columns, rows: objects.map((o) => columns.map((c) => o[c])) };
     }),
-    run: (sql, params) => serial(() => { check(params); raw.prepare(sql).run(...(params as never[])); }),
+    run: (sql, params) => serial(() => { counted(sql); check(params); raw.prepare(sql).run(...(params as never[])); }),
     batch: (statements) => serial(() => {
       raw.exec("BEGIN IMMEDIATE");
       try {
@@ -445,6 +478,119 @@ describe.runIf(ON_DEVICE_STORE)("a transaction the store refused for its wait ne
     await outer;
     await new Promise((r) => setTimeout(r, 100));
     expect((raw.prepare("SELECT count(*) AS n FROM refused_probe").get() as { n: number }).n).toBe(0);
+    await opened.close?.().catch(() => undefined);
+  });
+});
+
+/** An organizer mailbox with `count` Ohbox letters from `senders` strangers, seeded at full speed. */
+async function organizerOhbox(db: unknown, count: number, senders: number) {
+  const d = db as {
+    insert: (t: unknown) => { values: (v: unknown) => { returning: () => Promise<{ id: string }[]> } };
+    transaction: (fn: (tx: unknown) => Promise<unknown>) => Promise<unknown>;
+  };
+  const [account] = await d.insert(accounts).values({ name: "screen-batch" }).returning();
+  const accountId = account!.id;
+  const [mailbox] = await d.insert(mailboxes).values({
+    accountId, provider: "imap", address: "owner@fixtures.example", organizerRole: "organizer",
+  }).returning();
+  const ids: string[] = [];
+  await d.transaction(async (raw) => {
+    const tx = raw as typeof d;
+    for (let i = 0; i < count; i++) {
+      const [thread] = await tx.insert(threads).values({ accountId, subject: `t${i}` }).returning();
+      const at = new Date(Date.now() - i * 3_600_000);
+      const [m] = await tx.insert(messages).values({
+        accountId, mailboxId: mailbox!.id, threadId: thread!.id, bodyHash: `h${i}`, dedupKey: `d${i}`,
+        subject: `Note ${i}`, fromAddress: `p${i % senders}@people.example`, date: at, createdAt: at, arrivedAt: at,
+        unread: false, messageIdHeader: `m${i}@batch.example`, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
+      }).returning();
+      ids.push(m!.id);
+      await tx.insert(messageBodies).values({ messageId: m!.id, text: "body", html: null, headers: {} }).returning();
+      await tx.insert(folderState).values({
+        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
+        reconcileStatus: "reconciled", conflict: false,
+      }).returning();
+    }
+  });
+  return { accountId, mailboxId: mailbox!.id, ids };
+}
+
+type TxHandle = { transaction: (fn: (tx: { run: (q: unknown) => Promise<unknown> }) => Promise<unknown>) => Promise<unknown> };
+const pressCtx = (db: unknown, accountId: string): ServiceContext =>
+  ({ db, accountId, userId: null, now: () => new Date(), requestId: "screen-batch" }) as unknown as ServiceContext;
+
+describe.runIf(ON_DEVICE_STORE)("a thousand-letter Screen press on a device-slow store", () => {
+  it("a drain's transaction during the press is served, and the press holds its turn for a few statements", async () => {
+    const pace: Pace = { delayMs: 0, inTx: 0, maxInTx: 0, open: false };
+    const exec = faultingExecutor(() => new Error("unused"), { left: 0 }, pace);
+    const opened = await openPhoneStore(exec, 3_000);
+    const w = await organizerOhbox(opened.db, 1_000, 150);
+    pace.delayMs = 2;
+    pace.maxInTx = 0;
+    const press = screenUnscreened(pressCtx(opened.routeDb, w.accountId));
+    await new Promise((r) => setTimeout(r, 50));
+    const drain = await (opened.ingestDb as unknown as TxHandle)
+      .transaction(async (tx) => tx.run(sql`select 1`)).then(() => "served", (e: unknown) => e);
+    const pressed = await press;
+    const inPress = pace.maxInTx;
+    expect({ drain, total: pressed.total }).toEqual({ drain: "served", total: 1_000 });
+    expect(inPress).toBeLessThanOrEqual(40);
+    await opened.close?.().catch(() => undefined);
+  });
+
+  it("CONTROL: a throw mid-press rolls the press back whole and the next transaction is served at once", async () => {
+    const faults: { left: number; marker?: string } = { left: 0 };
+    const exec = faultingExecutor(() => new Error("planted"), faults);
+    const opened = await openPhoneStore(exec, 3_000);
+    const w = await organizerOhbox(opened.db, 1_000, 150);
+    faults.marker = [...w.ids].sort()[450]!;
+    faults.left = 1;
+    const failed = await screenUnscreened(pressCtx(opened.routeDb, w.accountId)).then(() => null, (e: unknown) => e);
+    expect(failed).toBeInstanceOf(Error);
+    const db = opened.db as unknown as { select: (f?: unknown) => { from: (t: unknown) => { where: (c: unknown) => Promise<unknown[]> } } };
+    const left = {
+      screened: (await db.select({ id: folderState.messageId }).from(folderState).where(eq(folderState.desiredFolder, "ohmail/Screener"))).length,
+      moves: (await db.select({ seq: changeLog.seq }).from(changeLog).where(eq(changeLog.op, "move"))).length,
+      audits: (await db.select({ id: auditLog.id }).from(auditLog).where(eq(auditLog.accountId, w.accountId))).length,
+    };
+    expect(left).toEqual({ screened: 0, moves: 0, audits: 0 });
+    const t0 = Date.now();
+    await (opened.ingestDb as unknown as TxHandle).transaction(async (tx) => tx.run(sql`select 1`));
+    expect(Date.now() - t0).toBeLessThan(1_000);
+    expect((await screenUnscreened(pressCtx(opened.routeDb, w.accountId))).total).toBe(1_000);
+    await opened.close?.().catch(() => undefined);
+  });
+});
+
+describe.runIf(ON_DEVICE_STORE)("a transaction that holds the store past a waiter's wait names itself", () => {
+  async function store() {
+    const lines: Array<[string, Record<string, unknown>]> = [];
+    const exec = faultingExecutor(() => new Error("unused"), { left: 0 });
+    const opened = await openPhoneStore(exec, 50, undefined, undefined, (event, detail) => { lines.push([event, detail]); });
+    return { opened, lines };
+  }
+
+  it("a route holder that refused an ingest waiter logs held, then released with how long it held", async () => {
+    const { opened, lines } = await store();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const holder = (opened.routeDb as unknown as TxHandle).transaction(async (tx) => { await tx.run(sql`select 1`); await gate; });
+    const waiter = await (opened.ingestDb as unknown as TxHandle).transaction(async () => undefined).then(() => null, (e: unknown) => e);
+    expect(waiter).toBeInstanceOf(StoreStatementFaultError);
+    release();
+    await holder;
+    expect(lines.map(([e, d]) => [e, d.kind, d.refused])).toEqual([
+      ["store_turn_held", "route", 1], ["store_turn_released", "route", 1],
+    ]);
+    expect(lines[1]![1].elapsedMs).toBeGreaterThanOrEqual(50);
+    await opened.close?.().catch(() => undefined);
+  });
+
+  it("CONTROL: a holder that refused no one logs nothing", async () => {
+    const { opened, lines } = await store();
+    await (opened.routeDb as unknown as TxHandle).transaction(async (tx) => { await tx.run(sql`select 1`); });
+    await (opened.ingestDb as unknown as TxHandle).transaction(async (tx) => { await tx.run(sql`select 1`); });
+    expect(lines).toEqual([]);
     await opened.close?.().catch(() => undefined);
   });
 });
