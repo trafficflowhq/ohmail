@@ -28,6 +28,8 @@ export interface OpenAnchor {
   readonly aiming: boolean;
   /** Standing at the place itself, not at a content end short of it. */
   readonly settled: boolean;
+  /** A scroll asked and the next look not yet done: a report now is the anchor's, never the person's. */
+  readonly moving: boolean;
   /** A new width: hold the place again, as on the open. */
   rearm: () => void;
   /** A layout moved the opened message, the content or the view: aim again, and keep aiming until reached. */
@@ -101,6 +103,7 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
       const w = want();
       return w !== null && Math.abs(at - w) > 1;
     },
+    get moving() { return pending !== null; },
     get settled() {
       const t = o.target();
       return t !== null && Math.abs(at - Math.max(0, t)) <= 1;

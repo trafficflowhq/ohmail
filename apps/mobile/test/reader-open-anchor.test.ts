@@ -129,6 +129,24 @@ describe("the open anchor on a fresh start", () => {
     expect(placed).toBe(1);
   });
 
+  it("a scroll report while it aims is its own (moving) until the view stands where it asked", () => {
+    openedTop = 1600;
+    told.content = 2600;
+    native.content = 1000;
+    expect(anchor.moving, "nothing asked yet").toBe(false);
+    anchor.layout();
+    expect(anchor.moving, "a scroll asked").toBe(true);
+    frameFor(48);
+    expect(native.at, "clamped short of it").toBe(200);
+    expect(anchor.moving, "still on its way past the clamp").toBe(true);
+    mount();
+    frameFor(100);
+    expect(native.at).toBe(1592);
+    expect(anchor.moving, "it stands there: a report now is not the anchor's").toBe(false);
+    anchor.layout();
+    expect(anchor.moving, "a layout that leaves it in place asks nothing").toBe(false);
+  });
+
   it("the person's own scroll before the layout settles ends the anchor", () => {
     snippets();
     frameFor(100);
@@ -182,7 +200,7 @@ describe("the reader wires the anchor", () => {
   const reader = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageReader.tsx", import.meta.url)), "utf8"));
   it("every scroll report goes through the anchor's reached offset; no requested offset is stood on", () => {
     expect(reader).toMatch(/onScroll = \(e: NativeSyntheticEvent<NativeScrollEvent>\) => anchor\.reached\(e\.nativeEvent\.contentOffset\.y\)/);
-    expect(reader).toMatch(/onContentSizeChange=\{\(cw, h\) => \{ box\.current\.content = h; widthSeen\("content", cw\); anchor\.layout\(\); \}\}/);
+    expect(reader).toMatch(/onContentSizeChange=\{\(cw, h\) => \{ box\.current\.content = h; seen\.content\(h\); widthSeen\("content", cw\); anchor\.layout\(\); \}\}/);
     expect(reader).not.toMatch(/scrollTo\(\{ y, animated: false \}\);\s*stand\(y\)/);
   });
   it("a member's top starts at its text: the body's margin stands above the marker, not under it", () => {

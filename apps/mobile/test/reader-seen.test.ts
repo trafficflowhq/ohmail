@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { THREAD_READ_HOLD_MS, createThreadRead, type ThreadRead } from "@ohmail/client-engine";
+import { THREAD_READ_HOLD_MS, createThreadRead, threadWalk, type ThreadRead } from "@ohmail/client-engine";
 import { createPhoneThreadRead, type PhoneThreadRead } from "../src/ui/reader-seen";
 import {
   RAIL_PITCH, RAIL_PITCH_MIN, RAIL_TOP, openedBodyFinal, railFit, railOffsetFor, readerChromeOverlap,
@@ -149,16 +149,111 @@ describe("a message turns read once its top has been in view for the dwell", () 
     expect(reads).toEqual([["m1"]]);
   });
 
-  it("the ring follows the panel most in view, and the jump lands on a panel's top", () => {
+  it("the ring walks the conversation, and a panel's top is where a jump finds it", () => {
     const c = core();
     laidOut(c);
+    c.content(1300);
     flush();
-    expect(heres.at(-1)).toBe("m1");
+    expect(heres.at(-1), "at the top the first panel").toBe("open");
     expect(c.topOf("m2")).toBe(820);
     expect(c.topOf("open")).toBe(0);
-    c.onScroll(820);
+    c.onScroll(500);
     flush();
-    expect(heres.at(-1)).toBe("m2");
+    expect(heres.at(-1), "at the end the last").toBe("m2");
+  });
+});
+
+/**
+ * THE WALK (o9): the ring is the LAST message whose top has crossed a reading line 30 % down the
+ * view; at the top only the first, at the very end the last even when it is one line, never a step
+ * back on a one-way scroll. Time order: m1 and m2 (900dp each) above the opened message, which is
+ * one line (30dp) at the bottom. Content 1936 in an 800dp view: the scroll's range is 1136.
+ */
+describe("the ring walks the conversation from first to last", () => {
+  const TOPS = [0, 912, 1846];
+  const MAX = 1136;
+  function walked(): PhoneThreadRead {
+    const c = core();
+    c.viewport(800);
+    c.chrome(0);
+    c.offset("padded", 0);
+    c.offset("above", 0);
+    member(c, "m1", 0, 900, "above");
+    member(c, "m2", 912, 900, "above");
+    c.offset("opened", 1846);
+    c.openedFrom(0, 20);
+    c.openedBody(20);
+    c.openedEnd(30);
+    c.content(1936);
+    flush();
+    return c;
+  }
+  const ringAt = (c: PhoneThreadRead, y: number): string | null => { c.onScroll(y); flush(); return heres.at(-1) ?? null; };
+
+  it("at the top the first message, at the very end the last one, one line long", () => {
+    const c = walked();
+    expect(ringAt(c, 0)).toBe("m1");
+    expect(ringAt(c, MAX), "the one-line newest at the bottom end").toBe("open");
+  });
+
+  it("never a step back: down it only moves forward, up only back, and every message has its turn", () => {
+    const c = walked();
+    const order = ["m1", "m2", "open"];
+    const down: number[] = [];
+    for (let y = 0; y <= MAX; y += 4) down.push(order.indexOf(ringAt(c, y) ?? ""));
+    expect(down.every((v, i) => i === 0 || v >= down[i - 1]!), "a step back on the way down").toBe(true);
+    expect([...new Set(down)]).toEqual([0, 1, 2]);
+    const up: number[] = [];
+    for (let y = MAX; y >= 0; y -= 4) up.push(order.indexOf(ringAt(c, y) ?? ""));
+    expect(up.every((v, i) => i === 0 || v <= up[i - 1]!), "a step forward on the way up").toBe(true);
+    expect([...new Set(up)]).toEqual([2, 1, 0]);
+  });
+
+  it("a press lands its message's top on the line — the engine's walk — and holds the ring until the person drags", () => {
+    const c = walked();
+    const y = c.scrollFor("m2");
+    expect(y).toBe(threadWalk({ tops: TOPS, max: MAX, view: 800, opened: 2 }).scrollFor(1));
+    c.pin("m1");
+    c.asked(MAX);
+    expect(ringAt(c, MAX), "pinned: the app's own scroll does not move the ring").toBe("m1");
+    c.pin(null);
+    flush();
+    expect(heres.at(-1), "the drag gives the ring back to the walk").toBe("open");
+    expect(ringAt(c, y!)).toBe("m2");
+  });
+
+  it("a scroll the app did not make — a screen reader's, a status-bar tap, a wheel — lets the pin go", () => {
+    const c = walked();
+    c.asked(MAX);
+    c.pin("open");
+    c.onScroll(MAX - 300, true);
+    flush();
+    expect(heres.at(-1), "an app scroll on its way keeps the pin").toBe("open");
+    expect(ringAt(c, MAX), "the view at the offset the app asked keeps the pin").toBe("open");
+    expect(ringAt(c, 0), "no drag, but not the app's: the walk rings where the view stands").toBe("m1");
+    expect(ringAt(c, MAX), "and goes on walking").toBe("open");
+    expect(ringAt(c, 0)).toBe("m1");
+  });
+
+  it("a conversation that fits its view rings the message the reader opened", () => {
+    const c = core();
+    c.viewport(800);
+    c.offset("padded", 0);
+    c.offset("above", 0);
+    member(c, "m1", 0, 200, "above");
+    c.offset("opened", 246);
+    c.openedFrom(0, 20);
+    c.openedEnd(200);
+    c.offset("below", 480);
+    member(c, "m2", 0, 200);
+    c.content(700);
+    flush();
+    expect(heres.at(-1)).toBe("open");
+  });
+
+  it("before the layout there is no landing to ask for", () => {
+    const c = core();
+    expect(c.scrollFor("m1")).toBeNull();
   });
 });
 
@@ -373,6 +468,7 @@ describe("nothing is read before its body is laid out and its top was on screen 
     const c = core();
     laidOut(c);
     member(c, "m3", 840, 2000);
+    c.content(3300);
     flush();
     c.onScroll(600); // the last throttled event mid-jump: m2's top in view
     pass(HOLD - 300);
@@ -524,7 +620,7 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/anchorFacts\.current = \(\) => \(facts\.current\.inOhbox && aboveCount\.current > 0 \? seen\.topOf\(id\) : null\);/);
     expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\) \|\| place\.current !== null,/);
     expect(reader, "the oldest member is not flashed before the anchor places the opened one").toMatch(/opacity: unplaced \? 0 : 1/);
-    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.poke\(\); \}\}/);
+    expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.pin\(null\); \}\}/);
   });
   it("a reply that syncs into the open reader is asked its text", () => {
     expect(reader).toMatch(/const fresh = arrivalsToAsk\(m\.earlier, asked\.current\);\s*if \(fresh\.length > 0\) hydrateHeld\(fresh\);/);
