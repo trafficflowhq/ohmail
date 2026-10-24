@@ -148,7 +148,8 @@ describe("the presets cannot be a downgrade or a dead end", () => {
 
 describe("refusals are the server's sentence, never a client copy of it", () => {
   const client = read("../app/api-client.ts");
-  const join = read("../app/(product)/join/JoinScreen.tsx");
+  // The wizard, with its mailbox step (moved to its own file).
+  const join = read("../app/(product)/join/JoinScreen.tsx") + read("../app/(product)/join/MailboxStep.tsx");
 
   /**
    * EVERY webapp source file, not two of them.

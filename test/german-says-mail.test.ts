@@ -53,6 +53,7 @@ const THIRD_PARTY_KONTO: Record<string, string> = {
   "reply.forwardAsk.verification": "a mail verifying an account at some other service",
   "reply.forwardAsk.security_alert": "a security alert about an account at some other service",
   "providerPicker.note_microsoft": "the Microsoft account's security defaults, and work accounts at Microsoft",
+  "join.mailboxMicrosoftAfterSetup": "the Microsoft account an app password is allowed on",
   "providerPicker.note_yahoo": "the Yahoo account's security page and its password",
   "providerPicker.note_infomaniak": "the Infomaniak account's two-factor setting",
   "providerPicker.help_yahoo": "the name of Yahoo's own account security page",

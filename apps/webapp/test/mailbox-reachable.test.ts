@@ -36,8 +36,8 @@ const messages = JSON.parse(read("../messages/en.json")) as Record<string, Recor
 describe("a signed-in account can connect a mailbox without leaving the shell", () => {
   it("THE REGRESSION: POST /mailboxes has a caller outside the onboarding wizard", () => {
     // The single fact whose absence caused the outage. If this is ever true only of
-    // JoinScreen again, the dead end is back.
-    const callers = ["../app/(product)/join/JoinScreen.tsx", "../app/(product)/mailbox/MailboxSection.tsx"]
+    // the wizard's mailbox step again, the dead end is back.
+    const callers = ["../app/(product)/join/MailboxStep.tsx", "../app/(product)/mailbox/MailboxSection.tsx"]
       .filter((p) => /mailboxApi\.create\(|mailboxes\.create\(/.test(read(p)));
     expect(callers).toHaveLength(2);
   });

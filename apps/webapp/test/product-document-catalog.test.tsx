@@ -75,8 +75,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  Raised 2026-10-18 (both): the splash's waiting line and the sign-in's sentence for a pending
  *  sign-out (resume, carried whole).
  *  Raised 2026-10-23 (both): the reader's Mark unread and the conversation squares' spoken labels
- *  (message, carried whole). */
-const INLINE_CEILING_BYTES = { en: 37_030, de: 42_330 } as const;
+ *  (message, carried whole).
+ *  Raised 2026-10-25 (both): the mailbox step's Microsoft sign-in, its refusal hint, the sentences
+ *  for a sign-in that came back unconnected, and its ways out (join, carried whole). */
+const INLINE_CEILING_BYTES = { en: 38_700, de: 44_260 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>

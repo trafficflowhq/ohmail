@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Spinner } from "@ohmail/ui";
 import { AppShell } from "../../shell/AppShell";
 import type { MailboxFacts } from "../../shell/mail-state";
@@ -33,7 +33,7 @@ import { AccountSection } from "./AccountSection";
 import { PasswordSection } from "./PasswordSection";
 import { MailboxSection } from "./MailboxSection";
 import { SubscriptionSection, useManageOffer } from "./SubscriptionSection";
-import { beginOAuthReturn } from "./oauth-return";
+import { beginOAuthReturn, noJoinLanding, oauthLandsInJoin, subscribeOAuthOutcome } from "./oauth-return";
 import { useCloudFirstRun } from "./useCloudFirstRun";
 import { useFirstPaintGate } from "./useFirstPaintGate";
 import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
@@ -86,6 +86,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * is what stops the hydration mismatch `useDemoMode` exists to prevent.
    */
   const resolvedDemo = useResolvedDemoModeFrom(demo);
+  /** A Microsoft sign-in started in `/join` finishes here behind the gate, then goes back there. */
+  const joinWait = useSyncExternalStore(subscribeOAuthOutcome, oauthLandsInJoin, noJoinLanding);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
   const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
   const onConfirmed = useCallback((accountId: string) => {
@@ -228,6 +230,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
 
   // After every hook: the tab is leaving, and nothing of the mailbox may paint again.
   if (signedOutHere) return <div className="gate" aria-busy="true" />;
+  if (joinWait) return <WaitGate />;
 
   // Three injected panes, for the reason `resolveOwner` is a prop: the
   // shell is shared with the standalone desktop, which builds without
@@ -257,16 +260,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
   /* The server's frame and the client's first are the same empty gate the shell has always
      opened with; the verdict is asked only after hydration, behind the wordmark. */
   if (firstPaint === "hydrating") return <div className="gate" aria-busy="true" aria-live="polite" />;
-  if (firstPaint === "asking") {
-    return (
-      <main className="gate" aria-busy="true">
-        <div className="gate-card">
-          <span className="wordmark"><b><em>oh</em>mail</b></span>
-          <Spinner className="mbx-spin" />
-        </div>
-      </main>
-    );
-  }
+  if (firstPaint === "asking") return <WaitGate />;
 
   return (
     <AccountLocale>
@@ -340,5 +334,17 @@ export function CloudShell({ demo }: { demo: boolean }) {
         {...(firstRun ? { firstRun } : {})}
       />
     </AccountLocale>
+  );
+}
+
+/** The card a browser waits behind before anything of the account paints. */
+function WaitGate() {
+  return (
+    <main className="gate" aria-busy="true">
+      <div className="gate-card">
+        <span className="wordmark"><b><em>oh</em>mail</b></span>
+        <Spinner className="mbx-spin" />
+      </div>
+    </main>
   );
 }

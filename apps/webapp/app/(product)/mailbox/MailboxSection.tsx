@@ -55,8 +55,8 @@ import {
 } from "../../api-client";
 import {
   OAUTH_REASONS, beginOAuthReturn, noOAuthOutcome, oauthOutcome, subscribeOAuthOutcome,
-  rememberOAuthOwner,
 } from "./oauth-return";
+import { connectsBySignIn, startMicrosoftSignIn, useMicrosoftDoor } from "./microsoft-door";
 import {
   appPasswordPresetFor, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel,
   type AuthHint, type ProviderPreset,
@@ -576,27 +576,6 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
    */
   const [outlookOffer, setOutlookOffer] = useState(false);
   /**
-   * IS THE OUTLOOK DOOR ARMED ON THIS DEPLOYMENT (cloud 0009). `false` until the server says otherwise, and it FAILS
-   * CLOSED — the opposite of the billing gate two fields up, and deliberately. That gate withholds a connect only
-   * when it can prove the account is dead, because withholding one the server would allow is the worse error. Here
-   * the worse error is the one this flag exists to remove: a "Connect Outlook" button on a deployment whose Entra
-   * registration is disabled or half-entered, which answers a raw 503 the moment it is pressed. So an unread or
-   * unreadable capability leaves the door HIDDEN, and only an explicit `available: true` shows it. The value is a
-   * deployment fact — it flips only when an operator saves the admin form — so it is read once on mount and never
-   * polled.
-   */
-  const [oauthAvailable, setOauthAvailable] = useState(false);
-  /**
-   * THE SECOND MICROSOFT DOOR — the device-code flow, on servers whose operator has no Entra registration of their
-   * own. Read from the same capability call as `oauthAvailable` and FAILS CLOSED for the identical reason: an unread
-   * or unreadable answer leaves this false, so no affordance appears for a ceremony this deployment cannot run. The
-   * two doors are independent — an install may have neither, either, or both — and they are NOT two buttons. One
-   * "Connect Outlook" affordance is offered when either is armed, and `startOutlook` picks: the operator's OWN
-   * registration wins when it is present, because it is theirs and it does not put their users behind a client id
-   * shared with every other install. The device flow is what makes the door exist at all for everybody else.
-   */
-  const [deviceAvailable, setDeviceAvailable] = useState(false);
-  /**
    * THE LIVE DEVICE CEREMONY, or null. What is on screen and what the poll loop is polling.
    *
    * `state` is our own handle, never the device code — that never leaves the server. `userCode` and
@@ -996,37 +975,20 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
         /* the ceremony's own error path says so — and an unread session gates nothing */
       }
     })();
-    // Whether this deployment can run the Microsoft consent at all. A read of a deployment fact, so
-    // once on mount — not on the list poll. A failure leaves `oauthAvailable` false (the button
-    // hidden), which is the honest state: a door whose availability we could not confirm must not be
-    // shown, exactly as a dormant registration's must not.
-    void (async () => {
-      try {
-        const { available, device: deviceDoor } = await mailboxApi.oauthAvailability();
-        if (!alive.current) return;
-        setOauthAvailable(available);
-        // The device-code door, from the same payload. `?? false` rather than a truthiness read of a
-        // possibly-absent field: an older server that predates this key answers without it, and the
-        // honest reading of a missing capability is that the deployment does not have it.
-        const armed = deviceDoor ?? false;
-        setDeviceAvailable(armed);
-        /*
-         * PICK UP A CEREMONY THIS TAB WAS ALREADY RUNNING. A reload inside the fifteen minutes
-         * somebody spends approving a code used to lose the handle and strand the grant; the handle
-         * is kept in `sessionStorage` and restored here, after which the ordinary poll loop takes
-         * over and re-supplies the code and the URI from the server.
-         *
-         * Gated on the door still being armed, and only when nothing is already on screen: an
-         * operator who unset the variable mid-ceremony should not be handed a code that can no
-         * longer be completed.
-         */
-        /* The resume lives in its own effect below: it needs BOTH the armed flag and the account
-           id, and those two land from two independent reads whose order is not guaranteed. */
-      } catch {
-        /* unreadable ⇒ leave it hidden; a dead config read must not offer a button that 503s */
-      }
-    })();
   }, [refresh]);
+
+  /**
+   * WHICH MICROSOFT DOORS THIS DEPLOYMENT HAS (`microsoft-door.ts`), read once on mount after the reads
+   * above and failing closed. `available` is the redirect ceremony; `device` the device-code flow, on
+   * servers whose operator has no Entra registration of their own. An install may have neither, either or
+   * both, and they are NOT two buttons: one "Connect Outlook" affordance is offered when either is armed,
+   * and `startOutlook` picks — the operator's OWN registration wins, because it does not put their users
+   * behind a client id shared with every other install. A ceremony this tab was already running is picked
+   * up by its own effect below: it needs both this read and the session's, whose order is not guaranteed.
+   */
+  const door = useMicrosoftDoor();
+  const oauthAvailable = door.available;
+  const deviceAvailable = door.device;
 
   /**
    * Re-read the entitlement on every return to the list, not only on mount.
@@ -1116,19 +1078,12 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   };
 
   /**
-   * BEGIN the Microsoft consent — one call, then a TOP-LEVEL navigation. `mailboxId` is passed only for a RECONNECT,
-   * and only to preselect the account at the consent screen. It does not choose which row the ceremony writes; the
-   * address in Microsoft's `id_token` does, and mail 0021's unique index is what makes "the row for that address" a
-   * single row. `window.location.assign` and not a `fetch` that follows a redirect: a fetch cannot change the
-   * top-level document, Microsoft's consent screen refuses to be framed, and a popup is blocked in the common case.
-   * So the server hands back a URL and the browser goes there. A 503 `oauth_unconfigured` renders THE SERVER'S
-   * SENTENCE.
-   */
-
-  /**
-   * `api-client.ts`'s header is explicit that re-deriving these here is how somebody is told the wrong thing — and
-   * here the wrong thing would be "Microsoft refused you" about a deployment whose operator has not finished pasting
-   * a client secret in.
+   * BEGIN the Microsoft consent, through the shared door (`microsoft-door.ts`): one call, then a TOP-LEVEL
+   * navigation. `mailboxId` is passed only for a RECONNECT, and only to preselect the account at the consent
+   * screen; mail 0021's unique index makes "the row for that address" a single row. A 503 `oauth_unconfigured`
+   * renders THE SERVER'S SENTENCE: `api-client.ts`'s header is explicit that re-deriving these here is how
+   * somebody is told the wrong thing — and here the wrong thing would be "Microsoft refused you" about a
+   * deployment whose operator has not finished pasting a client secret in.
    */
   const startOutlook = (mailboxId?: string): void => {
     setError(null);
@@ -1147,35 +1102,17 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     // BEFORE the first await, like the probe's. A start the person walked away from may not
     // leave the origin: this is the one that ends up at Microsoft's sign-in page.
     const seq = ++oauthSeq.current;
-    void (async () => {
-      try {
-        const { authorizeUrl, state } = await mailboxApi.oauthStart({
-          ...(mailboxId ? { mailboxId } : {}),
-          // Where the ceremony should land. The server validates it as a same-site relative path and
-          // ignores anything else, so this is a preference and never a redirect target we control.
-          // `/` and not `/mailbox`: the latter is an internal rewrite target that `middleware.ts`
-          // 308s back to `/`, so naming it only ever added a redirect hop (see `OAUTH_RETURN_PATH`).
-          returnTo: "/",
-        });
-        /*
-         * WRITE DOWN WHOSE CEREMONY THIS IS, before leaving the origin.
-         *
-         * The consent flow comes back minutes later, and the completion used to pend whatever the
-         * cookie jar named ON RETURN — so a sign-in elsewhere in the meantime sent the completion
-         * under the wrong account. The server compares and refuses, correctly, but it consumes the
-         * single-use `state` first, so the person who did everything right loses their ceremony and
-         * has to start over with nothing on screen saying why. Keyed by that same `state`; read and
-         * removed by `beginOAuthReturn`.
-         */
-        if (!alive.current || seq !== oauthSeq.current) return;
-        rememberOAuthOwner(state, boundApiOwner());
-        if (typeof window !== "undefined") window.location.assign(authorizeUrl);
-      } catch (err) {
-        if (!alive.current || seq !== oauthSeq.current) return;
-        setOauthBusy(null);
-        setError(messageOf(err));
-      }
-    })();
+    void startMicrosoftSignIn({
+      landing: "settings",
+      ...(mailboxId ? { mailboxId } : {}),
+      // Whose ceremony this is, written down before leaving the origin (`rememberOAuthOwner`).
+      owner: () => boundApiOwner(),
+      stillWanted: () => alive.current && seq === oauthSeq.current,
+    }).catch((err: unknown) => {
+      if (!alive.current || seq !== oauthSeq.current) return;
+      setOauthBusy(null);
+      setError(messageOf(err));
+    });
   };
 
   /**
@@ -1853,8 +1790,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
    * Gating on the redirect flow alone would have shown an app-password form as the only way in on exactly the
    * installs where the device flow is the only way in.
    */
-  const microsoftOauth =
-    typed.provider?.id === "microsoft" && (oauthAvailable || deviceAvailable) && !msAppPassword;
+  const microsoftOauth = connectsBySignIn(typed.provider?.id, oauthAvailable || deviceAvailable, msAppPassword);
 
   /**
    * TEST CONNECTION: This form had no way to check a mailbox's login before storing it, and `POST /mailboxes/probe`
