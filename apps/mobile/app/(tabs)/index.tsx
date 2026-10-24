@@ -31,6 +31,8 @@ import { MessageReader } from "../../src/ui/MessageReader";
 import { OrganizerStrip, useStandaloneClaim } from "../../src/ui/OrganizerStrip";
 import { knockSlotOf, noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
 import { WaitingStrip } from "../../src/ui/WaitingStrip";
+import { useSeedOffer } from "../../src/ui/SeedOfferCard";
+import { unscreenedOffered } from "../../src/state/seed-offer";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine, readingAtConnectNow } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -76,6 +78,7 @@ function OhboxBody() {
   const { claim, strip } = useStandaloneClaim();
   const reading = readingAtConnectNow(w.standalone ? readingAtConnectSaid() : null, claim);
   const knock = knockSlotOf(w.mailboxes.known ? noneOrganizedWhy(w.mailboxes.rows) : null, strip !== null);
+  const seed = useSeedOffer();
 
   // Unknown ≠ empty: before this mirror has ever settled a drain, a zero-row Ohbox shows
   // the shape of what is coming, never "All quiet" — `state/surface.ts` is the whole rule.
@@ -117,7 +120,8 @@ function OhboxBody() {
                 />
               </Panel>
             ) : null}
-            <UnscreenedOffer offer={shown.ohbox.unscreened} screen={w.actions.screenUnscreened} />
+            {/* Only once the sent-mail seed is settled: pressed first it holds whom the seed lets through. */}
+            <UnscreenedOffer offer={unscreenedOffered(seed.offer, shown.ohbox.unscreened)} screen={w.actions.screenUnscreened} />
             {/* Who organizes this mailbox, where it is news — the Settings card's own claim. */}
             <OrganizerStrip />
             {/* What waits on the computer that organizes this mailbox — the web's Rules list. */}

@@ -91,6 +91,7 @@ function pictureQualityLabel(level: ImageQualityLevel): string {
 }
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { SavedSettingsPanel } from "../src/ui/ProfileImportCard";
+import { SeedReopenPanel } from "../src/ui/SeedOfferCard";
 import { writePhoneDiagnostics } from "../src/engine/diagnostics";
 import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/diagnostics-native";
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
@@ -199,6 +200,9 @@ function SettingsBody() {
 
         {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
         <SavedSettingsPanel />
+
+        {/* the people this account wrote to, offered again where this door organizes a mailbox */}
+        <SeedReopenPanel />
 
         {/* appearance */}
         <Panel style={{ paddingBottom: 16, marginBottom: 14 }}>

@@ -162,6 +162,7 @@ import {
   routingReader,
   subscribeRoutingPlaces,
 } from "./held-routing";
+import { worldSeedOf, type WorldSeed } from "./seed-offer";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
@@ -477,6 +478,8 @@ export interface World {
    * the account stored and rejects on a refusal.
    */
   autoAct: { on: boolean; suggestOn: boolean; pending: boolean; set(on: boolean): Promise<boolean> } | null;
+  /** The sent-mail seed as the consent read last said it (`state/seed-offer.ts`). */
+  seed: WorldSeed;
   message(id: string): WorldMail | undefined;
   /**
    * WHAT A PRESS ON AN OHBOX ROW OPENS: the engine's `rowOpenTarget` for the pressed row's message
@@ -711,6 +714,7 @@ function emptyWorld(actions: WorldActions): World {
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     autoAct: null,
+    seed: { known: false },
     message: () => undefined,
     rowOpenTarget: (id) => id,
     filesOf: () => undefined,
@@ -754,7 +758,7 @@ export function useEngineQueuesAsk(): () => void {
 }
 
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
-function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">): World {
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
   return Object.assign(out, facts);
 }
@@ -970,6 +974,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
   const [autoAct, setAutoAct] = useState<{ on: boolean; suggestOn: boolean } | null>(null);
   const [autoActPending, setAutoActPending] = useState(false);
+  /* The sent-mail seed off the same read; unknown until one lands, reset per session. */
+  const [seed, setSeed] = useState<WorldSeed>({ known: false });
   /**
    * THE PIN AS IT STANDS RIGHT NOW, readable at write-completion time (review-caught). The
    * selector is live while the PATCH flies, so the pin may have moved since the press; a closure
@@ -1090,6 +1096,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // user's write, and nothing on this phone writes a capability.
       setFoldersStorable(ans.storable);
       setAutoAct(ans.autoAct === null ? null : { on: ans.autoAct, suggestOn: ans.autoSuggestOn });
+      setSeed(worldSeedOf(ans.seed));
     });
     /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
        superseded session's late answer applies nothing. Its own request rather than a field on
@@ -1188,6 +1195,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // Account A's act consent says nothing about account B's.
     setAutoAct(null);
     setAutoActPending(false);
+    setSeed({ known: false });
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
@@ -1768,13 +1776,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         applyAll: applyFaceAllDevices,
       },
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
+      seed,
       sendOutcome: outcomeOf,
       sendSettlement: settlementOf,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
-    autoAct, autoActPending, setAutoActOn]);
+    autoAct, autoActPending, setAutoActOn, seed]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

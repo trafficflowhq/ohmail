@@ -2034,6 +2034,35 @@ export const DE: Deck = {
   pfiReplaceNoteBare:
     "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
   pfiReplacedTitle: "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach.",
+  seedTitle: (n: number) => `Du hast ${n === 1 ? "1 Person" : `${n} Leuten`} geschrieben.`,
+  seedLede:
+    "Jemandem zu schreiben ist das deutlichste Zeichen, dass du eine Antwort willst. Alle unten angehakten kommen von jetzt an in deine Ohbox. Nimm den Haken weg bei allen, die du lieber screenen willst.",
+  seedTruncated: (scanned: number) =>
+    `Gelesen aus deinen ${scanned} neuesten gesendeten Nachrichten. Wem du davor geschrieben hast, landet weiter im Screener, wenn er sich wieder meldet.`,
+  seedFilterPlaceholder: "Jemanden finden …",
+  seedSelectShown: (n: number) => (n === 1 ? "Alle 1 angezeigte anhaken" : `Alle ${n} angezeigten anhaken`),
+  seedDeselectShown: (n: number) => (n === 1 ? "Haken weg bei 1 angezeigten" : `Haken weg bei allen ${n} angezeigten`),
+  seedWrote: (n: number) => (n === 1 ? "1 Nachricht" : `${n} Nachrichten`),
+  seedAlreadyDecided: "schon entschieden",
+  seedExcludedSummary: (n: number) => (n === 1 ? "1 Adresse wurde ausgelassen" : `${n} Adressen wurden ausgelassen`),
+  seedExcludedRobot: "sieht nach einer Maschinenadresse aus",
+  seedExcludedMachineSent: "in einer automatischen Antwort von dir gefunden",
+  seedExcludedOwn: "eine deiner eigenen Adressen",
+  seedWillDo: (n: number) =>
+    `Das legt eine Regel für ${n === 1 ? "die 1 angehakte Person" : `die ${n} angehakten Personen`} an. Was von ihnen im Screener wartet, kommt in deine Ohbox; der Rest deiner Mails bleibt, wo dein Mailserver ihn hat.`,
+  seedConfirm: (n: number) => `${n === 1 ? "1 Person" : `${n} Leute`} durchlassen`,
+  seedConfirming: "Wird gespeichert …",
+  seedLater: "Nicht jetzt",
+  seedNothingToDecide: "In deinen gesendeten Mails wartet niemand auf eine Entscheidung.",
+  seedClose: "Schließen",
+  seedLoading: "Deine gesendeten Mails werden gelesen …",
+  seedErrorTitle: "Das hat nicht funktioniert.",
+  seedErrorGeneric: "Beim Lesen deiner gesendeten Mails ist etwas schiefgegangen.",
+  seedErrorRetry: "Deine Haken sind noch da. Drück einfach nochmal auf den Button.",
+  seedSettingsLabel: "Leute, denen du schreibst",
+  seedReopenBody:
+    "Schau nochmal auf die Leute, denen du geschrieben hast, und entscheide, wer durchkommt. Wen du schon entschieden hast, bleibt wie er ist; das hier nimmt nur Leute dazu, für die du noch nicht geantwortet hast — und genau die bringt ein neu verbundenes Postfach mit.",
+  seedReopenAction: "Ansehen",
   toastMoveQueuedWithRule: (place: string, holder: string) =>
     `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
   toastMoveQueuedWithRuleUnknown: (place: string) =>
