@@ -105,6 +105,7 @@ import { decideFolderRole, type FolderRole, type RoleContext, type RoleFolder } 
 // The HARD per-message ceiling `normalizeMime` enforces after a download — imported so
 // `fetchCapped` can enforce the same number BEFORE the download, from RFC822.SIZE alone.
 import { MAX_RAW_MESSAGE_BYTES } from "../mime.js";
+import { mailDate } from "../mail-date.js";
 // THE CEILINGS ON SERVER-CHOSEN VALUES. `imap-bounds.ts` carries the whole argument — the short
 // version is that the user picks their own mail server and the worker process is shared, so every
 // count, size and wait this file accepts from that server is a lever on other people's mail.
@@ -232,7 +233,7 @@ export const SERVER_SENT_COPY_FIND_MS = 5_000;
 
 const toMs = (d: unknown): number | null => {
   if (d == null) return null;
-  const ms = d instanceof Date ? d.getTime() : new Date(d as string).getTime();
+  const ms = typeof d === "number" ? d : mailDate(d)?.getTime() ?? Number.NaN;
   return Number.isFinite(ms) ? ms : null;
 };
 
@@ -2544,13 +2545,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // Counted above; another session's flag change carries no envelope and is no item.
         if (!askedRow(m, ANY_UID, "envelope")) continue;
         const from = m.envelope?.from?.[0];
-        const date = m.envelope?.date ?? m.internalDate;
+        const date = mailDate(m.envelope?.date) ?? mailDate(m.internalDate);
         rows.push({
           uid: m.uid,
           seq: m.seq,
           subject: ingestSubject(m.envelope?.subject),
           from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
-          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          date: date?.toISOString() ?? null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,
         });
@@ -2636,13 +2637,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // Counted above; a flag change, or a row for a UID the search did not find, is no item.
         if (!askedRow(m, asked, "envelope")) continue;
         const from = m.envelope?.from?.[0];
-        const date = m.envelope?.date ?? m.internalDate;
+        const date = mailDate(m.envelope?.date) ?? mailDate(m.internalDate);
         rows.push({
           uid: m.uid,
           seq: m.seq,
           subject: ingestSubject(m.envelope?.subject),
           from: { name: ingestDisplayName(from?.name), address: from?.address?.trim().toLowerCase() ?? "" },
-          date: date instanceof Date && Number.isFinite(date.getTime()) ? date.toISOString() : null,
+          date: date?.toISOString() ?? null,
           messageIdHeader: m.envelope?.messageId ?? null,
           seen: m.flags?.has("\\Seen") ?? false,
         });

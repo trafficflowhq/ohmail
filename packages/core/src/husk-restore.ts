@@ -4,7 +4,7 @@ import {
   type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
-import { fingerprintDedupKey, messageFingerprint, normalizeMessageId } from "./identity.js";
+import { fingerprintDedupKey, messageFingerprint, normalizeMessageId, runtimeDedupKey } from "./identity.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { reindexMessageSearch } from "./message-search.js";
 import type { NormalizedMessage } from "./types.js";
@@ -30,7 +30,7 @@ export interface JunkHuskIdentity {
 
 /** The two-witness identity check — see the module header for why it is load-bearing. */
 export function isHuskSameMessage(husk: JunkHuskIdentity, fresh: NormalizedMessage): boolean {
-  if (fingerprintDedupKey(messageFingerprint(fresh)) === husk.dedupKey) return true;
+  if (fingerprintDedupKey(messageFingerprint(fresh)) === husk.dedupKey || runtimeDedupKey(fresh) === husk.dedupKey) return true;
   const stored = normalizeMessageId(husk.messageIdHeader);
   const got = normalizeMessageId(fresh.canonical.messageIdHeader);
   return stored !== null && got !== null && stored === got;

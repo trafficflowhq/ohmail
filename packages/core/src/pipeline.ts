@@ -3,7 +3,7 @@ import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
 import { searchBodyOf } from "./message-search.js";
 import {
-  fingerprintDedupKey, legacyDedupKey, messageFingerprint, verifiesLegacyIdentity,
+  fingerprintDedupKey, legacyDedupKey, messageFingerprint, runtimeDedupKey, verifiesLegacyIdentity,
 } from "./identity.js";
 import { classifySensitivity, type SensitivityResult } from "./sensitive.js";
 import {
@@ -814,6 +814,11 @@ async function resolveExisting(
   const fpKey = fingerprintDedupKey(messageFingerprint(normalized));
   const onFingerprint = await repo.findByDedupKey(mailboxId, fpKey);
   if (onFingerprint) return { key: fpKey, existing: onFingerprint };
+
+  // Step 1b: the key a row stored before mail-date.ts carries, its Date line read by the runtime.
+  const priorKey = runtimeDedupKey(normalized);
+  const prior = priorKey === null ? null : await repo.findByDedupKey(mailboxId, priorKey);
+  if (prior) return { key: priorKey!, existing: prior, upgrade: { messageId: prior.id, from: priorKey!, to: fpKey } };
 
   const legacyKey = legacyDedupKey(normalized.canonical);
   const candidate = await repo.findByDedupKey(mailboxId, legacyKey);

@@ -348,6 +348,12 @@ export interface NormalizedMessage {
    */
   cc: EmailAddress[];
   date: Date | null;
+  /**
+   * The runtime's own reading of the Date line, present only where `mail-date.ts` reads it differently
+   * on purpose (a 3-digit year; a two-digit year the phone read as year 26): rows stored before carry
+   * the `fp1` key of this date ({@link runtimeDedupKey}).
+   */
+  runtimeDate?: Date;
   headers: Record<string, string[]>;   // lowercased header name -> raw values
   textBody: string;
   htmlBody: string | null;

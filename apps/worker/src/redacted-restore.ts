@@ -2,7 +2,7 @@ import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { applyBodyBytesDelta, auditLog, bodyBytesOf, messageBodies, messages, recordChange, type Tx, auditAction} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime,
+  fingerprintDedupKey, messageFingerprint, normalizeMessageId, normalizeMime, runtimeDedupKey,
   prepareHtmlForStorage, reindexMessageSearch, silentLogger,
   type Logger, type NativeLocator, type NormalizedMessage,
 } from "@trafficflow/core";
@@ -298,7 +298,7 @@ async function restoreOne(
 /** Two independent witnesses that the re-read is the row's message — identical to
  * `sensitive-backfill.ts#isSameMessage`, and load-bearing for the same reason. */
 function isSameMessage(row: CandidateRow, fresh: NormalizedMessage): boolean {
-  if (fingerprintDedupKey(messageFingerprint(fresh)) === row.dedupKey) return true;
+  if (fingerprintDedupKey(messageFingerprint(fresh)) === row.dedupKey || runtimeDedupKey(fresh) === row.dedupKey) return true;
   const stored = normalizeMessageId(row.messageIdHeader);
   const got = normalizeMessageId(fresh.canonical.messageIdHeader);
   return stored !== null && got !== null && stored === got;

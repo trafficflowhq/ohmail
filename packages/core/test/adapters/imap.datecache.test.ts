@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { ImapAdapter, arrivalKey, orderCandidates, parseRef } from "../../src/adapters/imap.js";
 import type { ImapCursor } from "../../src/adapters/imap-types.js";
 import { greenmailConfig } from "./_imapenv.js";
+import { usePhoneDate } from "../_hermes-date.js";
 
 /**
  * the two properties that keep the date ordering AFFORDABLE, and the rule itself.
@@ -290,6 +291,14 @@ describe("arrivalKey and orderCandidates (the rule, without a server)", () => {
   it("falls back to INTERNALDATE with no Date: header, and to the header with no INTERNALDATE", () => {
     expect(arrivalKey(new Date(internal), null)).toBe(internal);
     expect(arrivalKey(null, new Date(earlier))).toBe(earlier);
+  });
+
+  it("reads the strings the phone's imapflow leaves (its Date refuses them) as their instants", () => {
+    const restore = usePhoneDate();
+    try {
+      expect(arrivalKey(null, "24 Oct 2026 06:29:09 +0200")).toBe(Date.UTC(2026, 9, 24, 4, 29, 9));
+      expect(arrivalKey("24-Oct-2026 06:29:09 +0200", null)).toBe(Date.UTC(2026, 9, 24, 4, 29, 9));
+    } finally { restore(); }
   });
 
   it("never throws on junk, and sorts it oldest", () => {

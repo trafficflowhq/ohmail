@@ -181,6 +181,15 @@ export function fingerprintDedupKey(fingerprint: string): string {
   return `${FINGERPRINT_VERSION}:${fingerprint}`;
 }
 
+/**
+ * The `fp1` key a row stored before `mail-date.ts` carries when the runtime read the Date line
+ * differently (`runtimeDate`); null when it read it the same. The same message's identity, its
+ * own bytes: only the date reading differs.
+ */
+export function runtimeDedupKey(m: FingerprintInput & Pick<NormalizedMessage, "runtimeDate">): string | null {
+  return m.runtimeDate === undefined ? null : fingerprintDedupKey(messageFingerprint({ ...m, date: m.runtimeDate }));
+}
+
 /** True for a key in the new format. `dedup_key NOT LIKE 'fp1:%'` is the same question in SQL. */
 export function isFingerprintDedupKey(key: string): boolean {
   return key.startsWith(`${FINGERPRINT_VERSION}:`);

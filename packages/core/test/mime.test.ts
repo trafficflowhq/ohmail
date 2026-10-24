@@ -10,6 +10,8 @@ import {
 } from "../src/mime.js";
 import { bodyHash, legacyDedupKey, messageFingerprint } from "../src/identity.js";
 import { createLogger, type Logger } from "../src/log.js";
+import { usePhoneDate } from "./_hermes-date.js";
+import { mailDate } from "../src/mail-date.js";
 
 const EML = [
   "Message-ID: <Greeting-1@Example.com>",
@@ -831,5 +833,73 @@ describe("normalizeMime reports each parse's time to the caller's log", () => {
     const m = await normalizeMime(raw);
     expect(m.subject).toBe("t");
     expect(lines).toEqual([]);
+  });
+});
+
+/** The Date header on the phone: forms Hermes refuses or misreads (measured, `_hermes-date.ts`) still give the sent instant. */
+describe("normalizeMime reads the Date header on the phone's Date", () => {
+  const at = Date.UTC(2026, 9, 24, 4, 29, 9);
+  const cases: Array<[string, number]> = [
+    ["24 Oct 2026 06:29:09 +0200", at], ["4 Oct 2026 06:29:09 +0200", Date.UTC(2026, 9, 4, 4, 29, 9)],
+    ["24 Oct 2026 04:29:09 GMT", at], ["Sat, 24 Oct 2026 06:29 +0200", at - 9000],
+    ["Sat, 24 Oct 2026 04:29:09 UT", at], ["Sat, 24 Oct 2026 04:29:09 Z", at],
+    ["Sat, 24 Oct 2026 06:29:09 +02:00", at], ["Sat, 24 oct 2026 06:29:09 +0200", at],
+    ["Sat, 24 Oct 26 06:29:09 +0200", at], ["24 Oct 26 06:29:09 +0200", at],
+    ["Sun, 24 Oct 99 06:29:09 +0200", Date.UTC(1999, 9, 24, 4, 29, 9)],
+  ];
+  let restore: () => void = () => {};
+  afterEach(() => restore());
+  it.each(cases)("Date: %s", async (header, want) => {
+    restore = usePhoneDate();
+    const m = await normalizeMime(`Date: ${header}\r\nFrom: a@example.com\r\nSubject: d\r\n\r\nhi\r\n`);
+    expect(m.date?.getTime()).toBe(want);
+  });
+});
+
+/** The Date header on Node: read as Node and mailparser read it, so stored `fp1` keys keep matching. */
+describe("mailDate reads what the runtime read, and the zone names it refuses", () => {
+  const at = Date.UTC(2026, 9, 24, 4, 29, 9);
+  const raw = (...dates: string[]) => `${dates.map((d) => `Date: ${d}\r\n`).join("")}From: a@example.com\r\n\r\nhi\r\n`;
+
+  it("strips a hostile nested comment in linear time", () => {
+    const n = 20_000;
+    const hostile = `Sat, 24 Oct 2026 06:29:09 +0200 ${"(".repeat(n)}${")".repeat(n)}`;
+    const t0 = performance.now();
+    mailDate(hostile);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(mailDate("Sat, 24 Oct 2026 06:29:09 +0200 (CEST (summer \\) time))")?.getTime()).toBe(at);
+    expect(mailDate("Sat, 24 Oct 2026 06:29:09 +0200 (unclosed")?.getTime()).toBe(new Date("Sat, 24 Oct 2026 06:29:09 +0200 (unclosed").getTime());
+  });
+
+  it("reads the last of two Date lines, as mailparser does", async () => {
+    const m = await normalizeMime(raw("Sat, 24 Oct 2026 06:29:09 CET", "Sat, 24 Oct 2026 06:29:15 +0200"));
+    expect(m.date?.getTime()).toBe(at + 6000);
+  });
+
+  it("keeps fractional seconds and reads years 0-99 of any width as two-digit years", () => {
+    expect(mailDate("Sat, 24 Oct 2026 06:29:09.1239 +0200")?.getTime()).toBe(at + 123);
+    expect(mailDate("Sat, 24 Oct 0026 06:29:09 +0200")?.getTime()).toBe(at);
+    expect(mailDate("Mon, 01 Jan 0001 00:00:00 +0000")?.getTime()).toBe(Date.UTC(2001, 0, 1));
+  });
+
+  it("reads the common zone names at their offsets and leaves an unknown one to the runtime", async () => {
+    expect(mailDate("Sat, 24 Oct 2026 06:29:09 CEST")?.getTime()).toBe(at);
+    expect(mailDate("Sat, 24 Oct 2026 05:29:09 MEZ")?.getTime()).toBe(at);
+    expect(mailDate("Sat, 24 Oct 2026 13:29:09 JST")?.getTime()).toBe(at);
+    expect(mailDate("Fri, 23 Oct 2026 20:29:09 AKDT")?.getTime()).toBe(at);
+    expect(mailDate("Sat, 24 Oct 2026 01:59:09 NDT")?.getTime()).toBe(at);
+    // IST is India, Ireland or Israel: unread here, so Node stores the parse time as before.
+    expect(mailDate("Sat, 24 Oct 2026 06:29:09 IST")).toBe(null);
+    const before = Date.now();
+    const m = await normalizeMime(raw("Sat, 24 Oct 2026 06:29:09 IST"));
+    expect(m.date!.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("keeps the runtime's own reading beside a deliberate correction", async () => {
+    const m = await normalizeMime(raw("Sat, 24 Oct 126 06:29:09 +0200"));
+    expect(m.date?.getTime()).toBe(at);
+    expect(m.runtimeDate?.getTime()).toBe(new Date("Sat, 24 Oct 126 06:29:09 +0200").getTime());
+    expect((await normalizeMime(raw("Sat, 24 Oct 2026 06:29:09 +0200"))).runtimeDate).toBeUndefined();
+    expect((await normalizeMime(raw("Sat, 24 Oct 2026 06:29:09 CEST"))).runtimeDate).toBeUndefined();
   });
 });
