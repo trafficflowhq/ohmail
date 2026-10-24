@@ -251,6 +251,26 @@ describe("letters from a gap are counted for the person and filed only on their 
       .toEqual({ since: null, letters: null, pressed: null });
   });
 
+  it("closes a window whose letters carry no arrival time, and says how many; CONTROL — an arrival is offered", async () => {
+    const unarrived = (lines: ReturnType<typeof captured>["lines"]) => lines.filter((l) => l.event === "gap_catchup_unarrived");
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    await seedArrival(w, { from: "letters@news.test", arrivedAt: null });
+    await seedArrival(w, { from: "letters@news.test", arrivedAt: null, takenInAt: BEFORE_GAP });
+    const c = captured();
+    expect(await run(w, { log: c.log })).toEqual({ offered: 0, moved: 0, completed: 1 });
+    expect(await offerOf(w)).toEqual({ since: null, letters: null, pressed: null });
+    expect(unarrived(c.lines).map((l) => l.fields), "letters the window could not see went unreported")
+      .toEqual([expect.objectContaining({ mailboxId: w.mailboxId, accountId: w.accountId, count: 1 })]);
+
+    const control = await newWorld();
+    await seedRule(control, "letters@news.test");
+    await seedArrival(control, { from: "letters@news.test" });
+    const cc = captured();
+    expect(await run(control, { log: cc.log })).toEqual({ offered: 1, moved: 0, completed: 0 });
+    expect(unarrived(cc.lines)).toEqual([]);
+  });
+
   it("does not count a reader's window, and does nothing where no window is open", async () => {
     const reader = await newWorld({ role: "reader" });
     await seedRule(reader, "letters@news.test");
