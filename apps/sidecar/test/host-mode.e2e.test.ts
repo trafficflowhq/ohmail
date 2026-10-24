@@ -182,7 +182,7 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
     expect(body.features).toEqual({
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
-      remoteImages: true, accountHeader: true,
+      remoteImages: true, accountHeader: true, forwardParts: true,
     });
   });
 

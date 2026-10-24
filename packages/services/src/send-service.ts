@@ -261,6 +261,12 @@ export interface SendInput {
    */
   forwardOf?: string | null;
   /**
+   * WHICH OF THE ORIGINAL'S PARTS GO — attachment ids, only beside `forwardOf`. Absent: every part
+   * (the first `FORWARD_MAX_PARTS` by id). Present: exactly these, selected among the original's
+   * own rows; one that is not refuses `forward_parts_changed` (409) and nothing is reserved.
+   */
+  forwardParts?: readonly string[];
+  /**
    * The person confirmed forwarding a `no_forward` original after the client's one-sentence ask.
    * Without it such a forward is refused (403); with it the forward proceeds like any other.
    */
@@ -318,6 +324,12 @@ function composeForward(
   };
 }
 
+function forwardPartsChanged(): ServiceError {
+  return new ServiceError(
+    "forward_parts_changed", 409,
+    "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
+  );
+}
 function forwardOriginalUnavailable(): ServiceError {
   return new ServiceError("forward_original_unavailable", 409, "The original could not be loaded, so it was not forwarded.");
 }
@@ -645,6 +657,8 @@ export function sendContentFingerprint(input: {
   body: string;
   inReplyToMessageId: string | null;
   forwardOf: string | null;
+  /** The forwarded parts a send named, when it named them; absent keeps every older digest. */
+  forwardParts?: readonly string[] | null;
   sendAt: Date | null;
   /**
    * Inline files, digested by CONTENT. Staged files never reach here — a send carrying them is
@@ -675,6 +689,7 @@ export function sendContentFingerprint(input: {
     input.forwardOf ?? null,
     input.sendAt ? input.sendAt.toISOString() : null,
     files,
+    ...(input.forwardParts ? [[...new Set(input.forwardParts)].sort()] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
@@ -695,6 +710,7 @@ function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): 
     body: d.body,
     inReplyToMessageId: d.inReplyToMessageId ?? null,
     forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
+    ...(input.forwardParts ? { forwardParts: input.forwardParts } : {}),
     sendAt: d.sendAt ?? null,
     attachments: (input.attachments ?? []).map((a) => ({
       filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
@@ -2046,6 +2062,20 @@ export class SendService {
             "The original could not be loaded, so it was not forwarded.",
           );
         }
+        /* THE PARTS THE PERSON KEPT, chosen only among this original's rows (never by id alone,
+           which would name another account's file); the checks above ran on every row. */
+        let sentRows = attRows;
+        if (input.forwardParts !== undefined) {
+          const want = [...new Set(input.forwardParts)];
+          // scoped-by: orig was loaded by (id, accountId) earlier in this send
+          sentRows = want.length === 0 ? [] : await tx.select({
+            id: attachments.id, contentSha256: attachments.contentSha256,
+            filename: attachments.filename, contentType: attachments.contentType,
+            partId: attachments.partId, contentId: attachments.contentId, inline: attachments.inline,
+          }).from(attachments).where(and(eq(attachments.messageId, orig.id), inArray(attachments.id, want)))
+            .orderBy(asc(attachments.id)).limit(FORWARD_MAX_PARTS);
+          if (sentRows.length !== want.length) throw forwardPartsChanged();
+        }
         const words: ForwardWords = loadable
           ? { kind: "stored" }
           : { kind: "mailbox", banner, clock, note: d.body, noteHtml: html, blankNote };
@@ -2059,7 +2089,7 @@ export class SendService {
           mailboxId: orig.mailboxId,
           messageId: orig.id,
           locator: orig.locator as NativeLocator,
-          parts: attRows.map((a) => ({
+          parts: sentRows.map((a) => ({
             id: a.id,
             contentSha256: a.contentSha256,
             partId: a.partId,

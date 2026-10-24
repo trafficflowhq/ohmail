@@ -879,3 +879,97 @@ describe("a forward is refused only when neither its words nor its files can be 
     expect(mb.parts).toEqual([]);
   });
 });
+
+/**
+ * THE PARTS THE PERSON KEPT (`forwardParts`). Absent: every part, as before. Present: exactly the
+ * named parts, selected only among the original's own rows; a name that is not one of them refuses
+ * before anything is reserved, and never reaches the fetch.
+ */
+describe("forwardParts — only the files the person kept leave", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
+  const C = "cccccccc-0000-4000-8000-000000000003";
+  async function threeParts(opts: { noForward?: boolean } = {}) {
+    const w = await world(opts);
+    for (const [id, partId] of [[A, "2"], [B, "3"], [C, "4"]] as const) {
+      await w.db.insert(attachments).values({
+        id, accountId: w.ctx.accountId, messageId: w.originalId, filename: `f-${partId}.bin`,
+        contentType: "application/octet-stream", sizeBytes: 1, partId, inline: false,
+      });
+    }
+    return { w, send: sendSpy(), fetch: fetchSpy({ "2": new Uint8Array([2]), "3": new Uint8Array([3]), "4": new Uint8Array([4]) }) };
+  }
+  const go = (s: Awaited<ReturnType<typeof threeParts>>, key: string, input: Record<string, unknown>) =>
+    sendService.send(s.w.ctx, s.w.draftId, key,
+      { openSendAdapter: s.send.openSendAdapter, openFetchAdapter: s.fetch.openFetchAdapter },
+      { forwardOf: s.w.originalId, ...input });
+
+  it("sends only the named subset, in id order", async () => {
+    const s = await threeParts();
+    expect((await go(s, "fp-1", { forwardParts: [C, A] })).status).toBe("sent");
+    expect(s.fetch.asked).toEqual(["2", "4"]);
+    expect(s.send.delivered[0]!.attachments?.map((a) => a.filename)).toEqual(["part-2.bin", "part-4.bin"]);
+  });
+
+  it("an empty list sends the quote with none of the files", async () => {
+    const s = await threeParts();
+    expect((await go(s, "fp-2", { forwardParts: [] })).status).toBe("sent");
+    expect(s.fetch.asked).toEqual([]);
+    expect(s.send.delivered[0]!.attachments ?? []).toEqual([]);
+    expect(s.send.delivered[0]!.text).toContain("Here is the plan.");
+  });
+
+  it("the field absent sends every part, as before", async () => {
+    const s = await threeParts();
+    expect((await go(s, "fp-3", {})).status).toBe("sent");
+    expect(s.fetch.asked).toEqual(["2", "3", "4"]);
+  });
+
+  it("a part of another message or another account refuses 409 before anything is reserved or fetched", async () => {
+    const s = await threeParts();
+    const other = await seedMessage(s.w.db, { accountId: s.w.ctx.accountId, subject: "other" });
+    const [mine] = await s.w.db.insert(attachments).values({
+      accountId: s.w.ctx.accountId, messageId: other.id, filename: "other.bin",
+      contentType: "application/octet-stream", sizeBytes: 1, partId: "2", inline: false,
+    }).returning();
+    const stranger = await seedSession(s.w.db, { now: FIXED_NOW });
+    const theirs = await seedMessage(s.w.db, { accountId: stranger.accountId, subject: "theirs" });
+    const [foreign] = await s.w.db.insert(attachments).values({
+      accountId: stranger.accountId, messageId: theirs.id, filename: "theirs.bin",
+      contentType: "application/octet-stream", sizeBytes: 1, partId: "2", inline: false,
+    }).returning();
+    for (const [key, id] of [["fp-4a", mine!.id], ["fp-4b", foreign!.id]] as const) {
+      const err = await go(s, key, { forwardParts: [A, id] }).catch((e: unknown) => e as { httpStatus?: number; code?: string });
+      expect((err as { httpStatus?: number }).httpStatus).toBe(409);
+      expect((err as { code?: string }).code).toBe("forward_parts_changed");
+    }
+    expect(s.fetch.asked).toEqual([]);
+    expect(s.send.delivered).toHaveLength(0);
+    expect(await s.w.db.select().from(outboundSends)).toHaveLength(0);
+    const [row] = await s.w.db.select().from(drafts).where(eq(drafts.id, s.w.draftId));
+    expect(row!.status).toBe("draft");
+  });
+
+  it("a no_forward original still refuses 403 first, whatever parts are named", async () => {
+    const s = await threeParts({ noForward: true });
+    const err = await go(s, "fp-5", { forwardParts: ["dddddddd-0000-4000-8000-000000000009"] })
+      .catch((e: unknown) => e as { httpStatus?: number });
+    expect((err as { httpStatus?: number }).httpStatus).toBe(403);
+  });
+
+  it("two forwards of one letter with different selections are two messages, not a duplicate", async () => {
+    const s = await threeParts();
+    expect((await go(s, "fp-6a", { forwardParts: [A] })).status).toBe("sent");
+    const [d2] = await s.w.db.insert(drafts).values({
+      accountId: s.w.ctx.accountId, mailboxId: (await s.w.db.select().from(drafts))[0]!.mailboxId,
+      subject: "Fwd: Q3 plan", body: "Passing this along.", to: [{ name: null, address: "sam@example.test" }],
+      cc: [], bcc: [], status: "draft", createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
+    }).returning();
+    const res = await sendService.send(s.w.ctx, d2!.id, "fp-6b",
+      { openSendAdapter: s.send.openSendAdapter, openFetchAdapter: s.fetch.openFetchAdapter },
+      { forwardOf: s.w.originalId, forwardParts: [B] });
+    expect(res.status).toBe("sent");
+    expect(res.firstSend).toBeUndefined();
+    expect(s.send.delivered).toHaveLength(2);
+  });
+});

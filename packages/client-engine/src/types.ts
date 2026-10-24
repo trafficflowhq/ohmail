@@ -1364,6 +1364,12 @@ export type EngineMutation =
        */
       forwardOf?: string | null;
       /**
+       * WHICH OF THE ORIGINAL'S FILES GO — attachment ids, only beside {@link forwardOf}. Absent:
+       * every part (the request is the one it always was). Present: exactly these, `[]` none. The
+       * server refuses an id that is not one of the original's parts (409, nothing sent).
+       */
+      forwardParts?: string[];
+      /**
        * The person confirmed forwarding a `no_forward` original after the one-sentence ask. The
        * server refuses such a forward without it (403) and admits it with it; ignored otherwise.
        */
