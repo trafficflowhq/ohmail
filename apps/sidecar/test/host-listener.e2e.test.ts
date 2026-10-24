@@ -398,7 +398,7 @@ describe("armed with origin and port — the door the phone reaches", () => {
     expect(body.features).toEqual({
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
-      remoteImages: true, accountHeader: true,
+      remoteImages: true, accountHeader: true, forwardParts: true,
     });
 
     // Graceful shutdown: stop admitting, release the socket, and be idempotent about it.

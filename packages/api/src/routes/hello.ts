@@ -62,6 +62,8 @@ export const helloRoutes: Route[] = [
           // Not `hello.features.accountHeader` — see the header. This composition sets the
           // account header because `createApp.handle` does, and that is not the host's to choose.
           accountHeader: true,
+          // The send route takes `forwardParts`; a fact of this build, as `accountHeader` is.
+          forwardParts: true,
         },
       });
     },

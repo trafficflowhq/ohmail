@@ -842,6 +842,7 @@ export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
    cap rule, here because the webapp AND the phone composer read it. See its header. */
 export {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  COMPOSE_FORWARD_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_MIME_ENVELOPE_BYTES,
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,

@@ -56,7 +56,7 @@ describe("GET /hello — the frozen wire shape", () => {
     );
     expect(Object.keys(body.auth).sort()).toEqual(["password", "publicSignup", "totp", "webauthn"]);
     expect(Object.keys(body.features).sort())
-      .toEqual(["accountHeader", "ai", "pairing", "remoteImages", "sse", "staging"]);
+      .toEqual(["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "sse", "staging"]);
     expect(body).toEqual({
       product: "ohmail",
       flavor: "managed",
@@ -67,6 +67,8 @@ describe("GET /hello — the frozen wire shape", () => {
       // cannot. It is a constant this build emits because `createApp.handle` sets the header.
       features: {
         sse: false, staging: true, ai: true, pairing: false, remoteImages: true, accountHeader: true,
+        // A forward may name the parts it sends (`forwardParts`); a fixed fact of this build.
+        forwardParts: true,
       },
     });
   });

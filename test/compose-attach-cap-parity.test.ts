@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   attachmentBudgetFor, effectiveAttachmentCap, sendSurfaceFor,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES,
-  SEND_UNMEASURED_MESSAGE_BYTES,
+  SEND_UNMEASURED_MESSAGE_BYTES, FORWARD_MAX_TOTAL_BYTES,
 } from "@trafficflow/services/mail";
-import { SEND_INLINE_MAX_TOTAL_BYTES } from "@ohmail/client-engine";
+import { COMPOSE_FORWARD_MAX_TOTAL_BYTES, SEND_INLINE_MAX_TOTAL_BYTES } from "@ohmail/client-engine";
 import {
   composeAttachCap,
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
@@ -151,6 +151,10 @@ describe("the two cap rules are the same rule", () => {
     // refuses inline at would build a request nothing accepts, and one that staged at a LOWER
     // threshold would send small files through storage they do not need.
     expect(SEND_INLINE_MAX_TOTAL_BYTES).toBe(SEND_ATTACHMENT_MAX_TOTAL_BYTES);
+  });
+
+  it("the forwarded-files ceiling a composer states is the one the send refuses past", () => {
+    expect(COMPOSE_FORWARD_MAX_TOTAL_BYTES).toBe(FORWARD_MAX_TOTAL_BYTES);
   });
 
   it("the STAGED surface is the uncapped one, so the form's promise is the mailbox's own", () => {
