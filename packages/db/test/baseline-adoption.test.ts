@@ -895,6 +895,9 @@ describe("the baseline cutoff is frozen", () => {
       // A forward's kept files: one nullable ADD COLUMN IF NOT EXISTS on drafts, no default, no data.
       // Safe over any history.
       "0168_drafts_forward_parts",
+      // Where a hand-back's gap window starts, and how far back its clock allowance reaches: two
+      // nullable ADD COLUMN IF NOT EXISTS on mailboxes. No data. Safe over any history.
+      "0169_mailboxes_organized_through",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

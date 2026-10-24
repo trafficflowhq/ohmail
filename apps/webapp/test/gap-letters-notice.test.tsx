@@ -45,9 +45,9 @@ async function show(offer: GapOffer, locale: "en" | "de" = "en") {
 }
 
 describe("the gap offer's three sentences", () => {
-  it("rules only: the sentence it always said, and File sends strangers 0", async () => {
+  it("rules only: no device organized the letters, and File sends strangers 0", async () => {
     const v = await show({ id: "mb", address: "me@x.test", count: 2, strangers: 0 });
-    expect(v.text).toBe("2 letters arrived in me@x.test while no device was organizing it. File them by your rules?");
+    expect(v.text).toBe("2 letters arrived in me@x.test, and no device organized them. File them by your rules?");
     expect(v.buttons.map((b) => b.textContent)).toEqual(["File them", "Leave them"]);
     await act(async () => { v.buttons[0]!.click(); });
     expect(v.sent).toEqual([{ id: "mb", answer: { file: true, count: 2, strangers: 0 } }]);
@@ -77,5 +77,17 @@ describe("the gap offer's three sentences", () => {
     const only = await show({ id: "mb2", address: "me@x.test", count: 0, strangers: 1 }, "de");
     expect(only.text).toContain("In den Screener legen?");
     expect(only.buttons[0]!.textContent).toBe("In den Screener");
+  });
+
+  /* A letter another device took in while the holder's last pass had not reached it is offered too
+     (mail 0169), so no sentence says nothing was organizing the mailbox when the letters arrived. */
+  it("every sentence, in both languages, says no device organized the letters, never that none was organizing", async () => {
+    for (const [locale, said] of [["en", "and no device organized"], ["de", "und kein Gerät hat sie organisiert"]] as const) {
+      for (const [count, strangers] of [[2, 0], [0, 1], [1, 2]]) {
+        const v = await show({ id: `mb-${locale}-${count}-${strangers}`, address: "me@x.test", count: count!, strangers: strangers! }, locale);
+        expect(v.text).toContain(said);
+        expect(v.text).not.toMatch(/while no device was organizing|während kein Gerät/);
+      }
+    }
   });
 });

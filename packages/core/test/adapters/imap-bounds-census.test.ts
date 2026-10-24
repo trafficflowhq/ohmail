@@ -171,6 +171,10 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
     how: "bounded_by_input",
     why: "chunked over `misses`, a subset of the UID list `enumerateUids` already bounded",
   },
+  "readArrivals|fetch": {
+    how: "bounded_read",
+    why: "boundedCollect per chunk at twice the UIDs asked (page_rows), under the read clock; the caller names the UIDs, a page of its own rows",
+  },
   "fetchByUid|fetch": {
     how: "bounded_by_input",
     why: "four sites, all over `wanted` / `take` / `withheld` / `bare` — UID arrays the CALLER names, bounded by the API door that produced them",
@@ -270,6 +274,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   "messageInSent|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "serverCopyAt|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "deleteFolderByPath|getMailboxLock": { how: "no_server_sized_result", why: "EXAMINE" },
+  "readArrivals|getMailboxLock": { how: "no_server_sized_result", why: "EXAMINE" },
   "moveAllByPath|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "moveMany|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "move|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },

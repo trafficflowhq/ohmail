@@ -212,6 +212,8 @@ describe("the SQLite journal, applied", () => {
       "0167_rules_refile.sql",
       // A forward's kept files, the pg column's twin.
       "0168_drafts_forward_parts.sql",
+      // Where a hand-back's gap window starts: the pg column's twin.
+      "0169_mailboxes_organized_through.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -352,6 +354,8 @@ describe("the SQLite journal, applied", () => {
       "0167_rules_refile.sql",
       // A forward's kept files, the pg column's twin.
       "0168_drafts_forward_parts.sql",
+      // Where a hand-back's gap window starts: the pg column's twin.
+      "0169_mailboxes_organized_through.sql",
     ]);
   });
 

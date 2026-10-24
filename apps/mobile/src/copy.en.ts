@@ -1573,16 +1573,16 @@ const TABLE = {
   organizerNotificationsSettings: "Open notification settings",
   /* The gap offer (mail 0151): counted by the person's rules, and nothing moves without the press. */
   gapLetters: (count: number, address: string) => count === 1
-    ? `1 letter arrived in ${address} while no device was organizing it. File it by your rules?`
-    : `${count} letters arrived in ${address} while no device was organizing it. File them by your rules?`,
+    ? `1 letter arrived in ${address}, and no device organized it. File it by your rules?`
+    : `${count} letters arrived in ${address}, and no device organized them. File them by your rules?`,
   /* Letters from senders the person has not decided about (mail 0158): the Screener, never the rules. */
   gapStrangers: (count: number, address: string) => count === 1
-    ? `1 letter from a sender you have not decided about arrived in ${address} while no device was organizing it. Put it in the Screener?`
-    : `${count} letters from senders you have not decided about arrived in ${address} while no device was organizing it. Put them in the Screener?`,
+    ? `1 letter from a sender you have not decided about arrived in ${address}, and no device organized it. Put it in the Screener?`
+    : `${count} letters from senders you have not decided about arrived in ${address}, and no device organized them. Put them in the Screener?`,
   gapBoth: (letters: number, strangers: number, address: string) =>
     `${letters === 1 ? "1 letter" : `${letters} letters`} for your rules and `
-    + `${strangers === 1 ? "1 from a sender" : `${strangers} from senders`} you have not decided about arrived in ${address} `
-    + "while no device was organizing it. File them by your rules, and put the new senders in the Screener?",
+    + `${strangers === 1 ? "1 from a sender" : `${strangers} from senders`} you have not decided about arrived in ${address}, `
+    + "and no device organized them. File them by your rules, and put the new senders in the Screener?",
   gapFile: "File",
   gapScreen: "Screen",
   gapLeave: "Leave",

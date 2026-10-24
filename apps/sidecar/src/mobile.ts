@@ -27,7 +27,7 @@ import {
   INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
   dialect, type LogMark,
 } from "@trafficflow/db/dialect";
-import { migrateSqlite } from "@trafficflow/db/sqlite-migrate";
+import { migrateSqlite, SQLITE_MIGRATIONS_TABLE } from "@trafficflow/db/sqlite-migrate";
 import { markStoreStatement, StoreStatementFaultError } from "@trafficflow/core/mail";
 import { statementKind, storeWriteGauge } from "./store-writes.js";
 import type { LeasePeekAnswer, OrganizerKind, StandDownReason } from "@trafficflow/core/adapters/organizer-lease";
@@ -1077,6 +1077,26 @@ export async function startPhoneEngineFromSealed(deps: SealedPhoneDeps): Promise
  * launch and a relaunch. Everything below this line is the same code either way, including the
  * refusals, which run BEFORE the store is touched.
  */
+/**
+ * WHEN THIS STORE BEGAN KEEPING ARRIVAL TIMES: mail 0119's own entry in the migration ledger, else
+ * the baseline's (a store made after it). Rows taken in before it keep their header-keyed place.
+ */
+async function arrivalBackfillFloor(exec: PhoneSqlExecutor): Promise<Date | null> {
+  try {
+    const { rows } = await exec.all(
+      `select name, applied_at from ${SQLITE_MIGRATIONS_TABLE} where name in ('0119_messages_arrived_at.sql', '0001_baseline.sql')`, [],
+    );
+    const at = (name: string): number | null => {
+      const v = Number(rows.find((r) => r[0] === name)?.[1]);
+      return Number.isFinite(v) && v > 0 ? v : null;
+    };
+    const floor = at("0119_messages_arrived_at.sql") ?? at("0001_baseline.sql");
+    return floor === null ? null : new Date(floor);
+  } catch {
+    return null;
+  }
+}
+
 async function composePhoneEngine(
   deps: SealedPhoneDeps & { readonly address?: string },
   imap: SidecarImapConfig | null,
@@ -1127,6 +1147,7 @@ async function composePhoneEngine(
   (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
   const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal, log);
+  const arrivalFloor = await arrivalBackfillFloor(deps.exec);
   /**
    * THE DIAL, AND WHO SUPPLIES IT. A configured start uses what it was given; a sealed start reads
    * the row. A store with nothing to read ends here, with the store CLOSED — an engine left open
@@ -1191,6 +1212,8 @@ async function composePhoneEngine(
        size ceiling. The phone has the fix that stops new blanks; the desktop app, Cloud and the
        self-host organizer repair the old ones. See `SidecarConfig.blankRepair`. */
     blankRepair: "off",
+    /* THE ARRIVAL TIMES THIS PHONE LOST, for rows taken in since mail 0119 (`arrival-backfill.ts`). */
+    ...(arrivalFloor === null ? {} : { arrivalBackfill: { floor: arrivalFloor } }),
   });
 
   /**

@@ -12,6 +12,7 @@
 import { rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { eq } from "drizzle-orm";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@trafficflow/worker/gap-catchup";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes, rules } from "@trafficflow/db";
 import type {
@@ -539,10 +540,12 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
   }, 60_000);
 
   /* ── A TURN B SLEPT THROUGH ENDS WITHOUT A PRESS (RULING-026 lane A, as amended) ─────────────────
-     X organizes after B's own hand-back while B sleeps, keeps a letter in the inbox, and lets go the
-     way an install ordinarily does: the app quits, or the phone leaves the foreground. Each exit
-     leaves the instant it let go in X's settings document, the document before the claim, and B
-     counts from there: only the letter after X let go is offered, and File moves that one. */
+     X organizes after B's own hand-back while B sleeps, a letter reaches the server that no drain of
+     X's takes in, and X lets go the way an install ordinarily does: the app quits, or the phone leaves
+     the foreground. Each exit leaves the instant it let go in X's settings document, the document
+     before the claim, less the clock allowance while X's claims carry no server stamp (mail 0169) but
+     never before the end of a holder's turn X's row recorded (p), and B counts from there: that letter
+     and the one after X let go are offered, and File moves both. */
   async function xTurnWhileBSleeps() {
     const meta = new MemoryMetaFolder();
     const b = await ownWindowOpen(meta);
@@ -550,7 +553,7 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     await x.organizing();
     expect(x.engine.runtimes().organizer[x.id]?.organizing, "premise: X organizes").toBe(true);
     expect(meta.newest().installId, "premise: X published its settings").toBe("install-x");
-    // A letter of X's turn that X keeps in the inbox: B takes it in only when it wakes.
+    // A letter of X's last moments that no drain of X's takes in: B takes it in only when it wakes.
     await sleep(20);
     b.server.pending.push(letter(new Date()));
     await sleep(20);
@@ -563,7 +566,7 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     else expect(await x.engine.handBack(), "premise: the hand-back gave the claim back").toEqual([{ mailboxId: x.id, released: 1 }]);
   };
 
-  it.each(["quit", "background"] as const)("(j) %s: B counts from the instant X let go, and File moves only the later letter", async (exit) => {
+  it.each(["quit", "background"] as const)("(j) %s: B counts from the instant X let go less the clock allowance, and File moves the letters inside it", async (exit) => {
     const { meta, b, x } = await xTurnWhileBSleeps();
     const mark = meta.trace.length;
     const before = Date.now();
@@ -578,17 +581,19 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     b.clock.skewMs = 15 * 60_000;
     await b.engine.resume();
     const since = b.gap().since!;
-    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before);
+    // X's claims carry no server stamp: the start is the instant X let go less the clock allowance.
+    expect(since, "B's window reached back over X's turn past the allowance").toBeGreaterThanOrEqual(before - GAP_CLOCK_ALLOWANCE_MS);
     const key = meta.newest().doc.gap;
     expect(key, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
-    expect(key!.since, "the moment is not the instant X let go").toBe(key!.at);
+    expect(Date.parse(key!.since), "the moment is not the instant X let go less the allowance").toBe(Date.parse(key!.at) - GAP_CLOCK_ALLOWANCE_MS);
     expect(Date.parse(key!.at)).toBeGreaterThanOrEqual(before);
     expect(Date.parse(key!.at)).toBeLessThanOrEqual(after);
     expect(since, "B counted from its own look, not from the instant X let go").toBe(Date.parse(key!.since));
     b.clock.skewMs = 0;
     await b.organizeHere();
-    expect(b.gap(), "the letter X kept was counted, or the later one was not").toMatchObject({ letters: 1, pressed: null });
-    expect(await file(b, 1), "File moved other than the later letter").toEqual([{ from: "INBOX", to: "ohmail/News" }]);
+    expect(b.gap(), "the letter of X's last moments, inside the allowance, or the later one was not counted")
+      .toMatchObject({ letters: 2, pressed: null });
+    expect(await file(b, 2), "File did not move both letters").toEqual([{ from: "INBOX", to: "ohmail/News" }, { from: "INBOX", to: "ohmail/News" }]);
   }, 60_000);
 
   it.each(["quit", "background"] as const)("(l) %s: a settings write the mailbox refuses is said once, the claim still goes back, and B counts from its own look", async (exit) => {
@@ -612,6 +617,34 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     b.clock.skewMs = 0;
     await b.organizeHere();
     expect(b.gap(), "a letter from before B's look was counted").toMatchObject({ letters: 1, pressed: null });
+  }, 60_000);
+
+  it.each(["quit", "background"] as const)("(p) %s soon after X saw the holder go: B counts from that look, never back over the holder's turn", async (exit) => {
+    const meta = new MemoryMetaFolder();
+    await meta.appendClaim(claimOf("install-y", new Date()));
+    const b = await install(meta, "install-b");
+    const x = await install(meta, "install-x");
+    await b.engine.resume();
+    await x.engine.resume();
+    const stateOf = (i: Awaited<ReturnType<typeof install>>) =>
+      (i.exec.direct("select organizer_state as s from mailboxes where id = ?", [i.id]) as { s: string | null }[])[0]!.s;
+    expect([stateOf(b), stateOf(x)], "premise: both saw Y hold").toEqual(["held", "held"]);
+    // WHILE Y HOLDS B takes the letter in, and Y keeps it in the inbox.
+    b.server.pending.push(letter(new Date()));
+    await b.engine.resume();
+    // Y goes without a key: X's next look sees it gone, then X organizes and lets go before any drain takes mail in.
+    await meta.removeClaims(meta.claims.map((c) => c.ref));
+    const sawItGo = Date.now();
+    await x.engine.resume();
+    await x.organizing();
+    expect(x.engine.runtimes().organizer[x.id]?.organizing, "premise: X organizes").toBe(true);
+    await exitBy(x, exit);
+    expect(meta.newest().doc.gap, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
+    await b.engine.resume();
+    expect(b.gap().since, "B's window reached back over Y's turn").toBeGreaterThanOrEqual(sawItGo);
+    await b.organizeHere();
+    expect(b.gap(), "a letter taken in while Y held was offered").toEqual({ since: null, letters: null, pressed: null });
+    expect(b.server.moves).toEqual([]);
   }, 60_000);
 
   it("(m) CONTROL: B saw X hold, then X's lid closed: the window opens at X's last stamp", async () => {
@@ -833,13 +866,13 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
 
   /* "planned quit" is the desktop's own: `main.ts` closes the store first, so the settings, which
      read the store, have to be left inside the quit's writer window. */
-  it.each(["quit", "planned quit", "background"] as const)("%s: B counts from the instant X let go, and File moves only the later letter", async (exit) => {
+  it.each(["quit", "planned quit", "background"] as const)("%s: B counts from the instant X let go less the clock allowance, and File moves the letters inside it", async (exit) => {
     const meta = new MemoryMetaFolder();
     const b = await bWindowOpen(meta);
     const x = await desktop(meta, "install-x");
     expect(x.s.organizerState().organizing, "premise: X organizes").toBe(true);
     expect(meta.newest().installId, "premise: X published its settings").toBe("install-x");
-    // B sleeps through X's turn; a letter of it stays in the inbox.
+    // B sleeps through X's turn; a letter of its last moments reaches the server, and no drain of X's takes it in.
     await sleep(20);
     b.server.pending.push(letter(new Date()));
     await sleep(20);
@@ -860,16 +893,17 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     b.clock.skewMs = 15 * 60_000;
     await b.s.syncUntilQuiet();
     const since = (await b.gap()).since!;
-    expect(since, "B's window reached back over X's turn").toBeGreaterThanOrEqual(before);
+    expect(since, "B's window reached back over X's turn past the allowance").toBeGreaterThanOrEqual(before - GAP_CLOCK_ALLOWANCE_MS);
     const key = meta.newest().doc.gap;
     expect(key, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
-    expect(key!.since, "the moment is not the instant X let go").toBe(key!.at);
+    expect(Date.parse(key!.since), "the moment is not the instant X let go less the allowance").toBe(Date.parse(key!.at) - GAP_CLOCK_ALLOWANCE_MS);
     expect(Date.parse(key!.at)).toBeLessThanOrEqual(after);
     expect(since, "B counted from its own look, not from the instant X let go").toBe(Date.parse(key!.since));
     b.clock.skewMs = 0;
     await b.organizeHere();
-    expect(await b.gap(), "the letter X kept was counted, or the later one was not").toMatchObject({ letters: 1, pressed: null });
-    expect(await b.file(1), "File moved other than the later letter").toEqual([{ from: "INBOX", to: "ohmail/News" }]);
+    expect(await b.gap(), "the letter of X's last moments, inside the allowance, or the later one was not counted")
+      .toMatchObject({ letters: 2, pressed: null });
+    expect(await b.file(2), "File did not move both letters").toEqual([{ from: "INBOX", to: "ohmail/News" }, { from: "INBOX", to: "ohmail/News" }]);
   }, 120_000);
 
   it("CONTROL: removing the mailbox writes no settings; only the install's own quit leaves them", async () => {

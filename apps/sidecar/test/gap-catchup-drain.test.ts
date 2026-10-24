@@ -17,7 +17,10 @@ import { requestOrganizerTakeover } from "../src/organize-here.js";
 /**
  * LETTERS FROM A GAP, ON THE LOCAL ENGINE (review HIGH-1). The window is the gap the
  * reader is looking at now: a look at no live holder opens it, a held look CLOSES it, and a letter
- * first taken in while another install held the mailbox is never in it. A promotion moves nothing:
+ * taken in while another install held the mailbox is in it only when that holder's drains did not
+ * cover it: it arrived after the start the holder's key carries (where its last finished drain began,
+ * else where it let go less the clock allowance, never before its own takeover; mail 0169). A holder
+ * that left no key covered its whole turn. A promotion moves nothing:
  * after a quiet drain the engine COUNTS what the person's rules would file, and only the person's
  * File press, through the real route, files that set. Letters arrive through the reader's own intake.
  */
@@ -37,7 +40,11 @@ class MemoryMetaFolder implements LeaseIo, ProfileIo {
   }
   async ensureMetaFolder(): Promise<void> {}
   async listClaims(): Promise<RawClaimMessage[]> { return this.claims.map((c) => ({ ...c })); }
-  async appendClaim(raw: string): Promise<void> { this.claims.push({ ref: this.nextUid++, raw }); }
+  /** The server's INTERNALDATE on each appended claim; none when null. */
+  stamp: (() => Date) | null = null;
+  async appendClaim(raw: string): Promise<void> {
+    this.claims.push({ ref: this.nextUid++, raw, ...(this.stamp === null ? {} : { internalDate: this.stamp() }) });
+  }
   async removeClaims(refs: readonly unknown[]): Promise<void> {
     const gone = new Set(refs);
     for (let i = this.claims.length - 1; i >= 0; i--) if (gone.has(this.claims[i]!.ref)) this.claims.splice(i, 1);
@@ -104,6 +111,8 @@ describe("letters from a gap are counted for the person and filed only on their 
   async function boot(
     meta: MemoryMetaFolder, pending: Array<ChangeBatch["creates"][number]>, moves: Array<{ from: string; to: string }>,
     settings = true,
+    /** The News rule, made before this instant, in place before the start: two installs then publish one rule. */
+    ruleBefore: Date | null = null,
   ): Promise<Sidecar> {
     const dataDir = await freshDataDir("ohmail-gap-offer-");
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
@@ -114,6 +123,7 @@ describe("letters from a gap are counted for the person and filed only on their 
       leaseStaleAfterMs: 60_000, adapterFactory: server(meta, pending, moves, settings), log: () => {},
     });
     cleanups.push(() => s.stop().catch(() => undefined));
+    if (ruleBefore !== null) await newsRule(s, ruleBefore);
     await grantOrganizeConsent(s);
     await s.start();
     await s.syncUntilQuiet();
@@ -166,7 +176,7 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await sinceOf(s), "the next gap was not noted").not.toBeNull();
   }, 60_000);
 
-  it("REVIEW HIGH-1: a letter first taken in while another install held the mailbox is never offered or moved", async () => {
+  it("REVIEW HIGH-1: a letter taken in while another install held the mailbox, and covered by that holder's drains, is never offered or moved", async () => {
     const meta = new MemoryMetaFolder();
     const moves: Array<{ from: string; to: string }> = [];
     const pending: Array<ChangeBatch["creates"][number]> = [];
@@ -186,13 +196,98 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(row, "the reader did not take the letter in").toBeDefined();
     const [fs] = await s.db.select().from(folderState).where(eq(folderState.messageId, row!.id));
     expect(fs).toMatchObject({ lastSetBy: "peer", observedFolder: "INBOX", desiredFolder: "INBOX" });
-    // THE LAPTOP QUITS: the next look opens a window AFTER the letter's intake; then the promotion.
+    // THE LAPTOP QUITS and leaves no key, so its drains cover its whole turn: the next look opens a window
+    // AFTER the letter's intake, and the clock allowance stops at that look (mail 0169); then the promotion.
     meta.clear();
     await s.syncUntilQuiet();
     await promote(s);
     expect(moves, "the letter the live laptop left in INBOX was moved").toEqual([]);
     expect(await rowOf(s), "a letter taken in while held was offered").toEqual({ since: null, letters: null, pressed: null });
   }, 90_000);
+
+  it("mail 0169: a Stop soon after taking a held mailbox over never reaches back over the holder's turn", async () => {
+    const meta = new MemoryMetaFolder();
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    await meta.laptopHolds();
+    const s = await boot(meta, pending, moves);
+    await newsRule(s, new Date());
+    // WHILE THE LAPTOP HOLDS the reader takes the letter in, and the laptop keeps it in INBOX.
+    pending.push(letter(new Date()));
+    await s.syncUntilQuiet();
+    // TAKEN OVER; the laptop stands down, and Stop follows before any drain of this turn takes mail in.
+    await requestOrganizerTakeover(s.db, { mailboxId: s.world.mailboxId, now: new Date(), intent: "takeover" });
+    await s.syncUntilQuiet();
+    expect(s.organizerState().organizing, "premise: the takeover promoted this install").toBe(true);
+    await meta.removeClaims((await meta.findOwnRecords("the-laptop"))!.map((c) => c.ref));
+    await s.db.update(mailboxes).set({ releaseRequestedAt: new Date() }).where(eq(mailboxes.id, s.world.mailboxId));
+    await s.syncUntilQuiet();
+    expect(s.organizerState().organizing, "premise: the stop was honoured").toBe(false);
+    await promote(s);
+    expect(moves, "the letter the laptop kept was moved").toEqual([]);
+    expect(await rowOf(s), "a letter taken in while held was offered").toEqual({ since: null, letters: null, pressed: null });
+  }, 90_000);
+
+  it.each(["quit", "background"] as const)("mail 0169: a %s soon after taking a held mailbox over never reaches back over the holder's turn", async (exit) => {
+    const meta = new MemoryMetaFolder();
+    await meta.laptopHolds();
+    const made = new Date();
+    const x = await boot(meta, [], [], true, made);
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    const s = await boot(meta, pending, moves, true, made);
+    expect([x.organizerState().organizing, s.organizerState().organizing], "premise: both read beside the laptop").toEqual([false, false]);
+    // WHILE THE LAPTOP HOLDS the reader takes the letter in, and the laptop keeps it in INBOX.
+    pending.push(letter(new Date()));
+    await s.syncUntilQuiet();
+    // X TAKES IT OVER; the laptop stands down, and X lets go before any drain of its turn takes mail in.
+    const tookOver = Date.now();
+    await requestOrganizerTakeover(x.db, { mailboxId: x.world.mailboxId, now: new Date(), intent: "takeover" });
+    await x.syncUntilQuiet();
+    expect(x.organizerState().organizing, "premise: the takeover promoted X").toBe(true);
+    await meta.removeClaims((await meta.findOwnRecords("the-laptop"))!.map((c) => c.ref));
+    if (exit === "quit") await x.stop();
+    else expect(await x.handBack(), "premise: the hand-back gave the claim back").toEqual([{ mailboxId: x.world.mailboxId, released: 1 }]);
+    await s.syncUntilQuiet();
+    expect((await sinceOf(s))?.getTime(), "the window reached back over the laptop's turn").toBeGreaterThanOrEqual(tookOver);
+    await promote(s);
+    expect(moves, "the letter the laptop kept was moved").toEqual([]);
+    expect(await rowOf(s), "a letter taken in while held was offered").toEqual({ since: null, letters: null, pressed: null });
+  }, 90_000);
+
+  it("mail 0169: a letter taken in while held, after the holder's last finished drain began, is offered once that holder stops", async () => {
+    const meta = new MemoryMetaFolder();
+    // Every claim carries the server's INTERNALDATE, in whole seconds as a server gives it.
+    meta.stamp = () => new Date(Math.floor(Date.now() / 1000) * 1000);
+    const made = new Date();
+    const xPending: Array<ChangeBatch["creates"][number]> = [];
+    const x = await boot(meta, xPending, [], true, made);
+    expect(x.organizerState().organizing, "premise: X organizes").toBe(true);
+    const moves: Array<{ from: string; to: string }> = [];
+    const pending: Array<ChangeBatch["creates"][number]> = [];
+    const s = await boot(meta, pending, moves, true, made);
+    expect(s.organizerState().organizing, "premise: a reader beside X").toBe(false);
+    // X's drain takes a letter in: its last finished drain, from the server's stamp on its claim.
+    xPending.push(letter(new Date()));
+    await x.syncUntilQuiet();
+    const [xRow] = await x.db.select({ through: mailboxes.organizedThrough }).from(mailboxes).where(eq(mailboxes.id, x.world.mailboxId));
+    expect(xRow!.through, "premise: X recorded its last finished drain").not.toBeNull();
+    // A LETTER REACHES THE SERVER; the reader takes it in while X holds, and no drain of X's sees it.
+    await new Promise((r) => setTimeout(r, 30));
+    pending.push(letter(new Date()));
+    await s.syncUntilQuiet();
+    const [reader] = await s.db.select({ state: mailboxes.organizerState }).from(mailboxes).where(eq(mailboxes.id, s.world.mailboxId));
+    expect(reader!.state, "premise: the reader took it in while its row said X holds").toBe("held");
+    // X STOPS: its key starts the window where that drain began, before the reader's intake.
+    await x.db.update(mailboxes).set({ releaseRequestedAt: new Date() }).where(eq(mailboxes.id, x.world.mailboxId));
+    for (let i = 0; i < 3 && x.organizerState().organizing; i++) await x.syncUntilQuiet();
+    expect(x.organizerState().organizing, "premise: X stopped").toBe(false);
+    await s.syncUntilQuiet();
+    expect((await sinceOf(s))?.getTime(), "the window did not open where X's last finished drain began").toBe(xRow!.through!.getTime());
+    await promote(s);
+    expect(moves, "a promotion moved mail unasked").toEqual([]);
+    expect(await rowOf(s), "the letter no drain of X's covered was not offered").toMatchObject({ letters: 1, pressed: null });
+  }, 120_000);
 
   it("a true gap's letter is counted, nothing moves unasked, and File through the route files it once", async () => {
     const meta = new MemoryMetaFolder();
