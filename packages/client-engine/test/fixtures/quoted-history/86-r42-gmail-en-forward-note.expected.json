@@ -19,9 +19,9 @@
   "authorsInHistory": [
     "Jonas Sample"
   ],
-  "notes": "A tester's letter, placeholders resolved: synthetic.",
+  "notes": "A tester's letter (round 42, Q8 member 1), placeholders resolved: synthetic. A forward with a note: the forwarded message is the content and shows whole.",
   "expect": {
-    "fold": "trailing",
+    "fold": "none",
     "mustNotFold": false,
     "onlyHistory": false,
     "text": {

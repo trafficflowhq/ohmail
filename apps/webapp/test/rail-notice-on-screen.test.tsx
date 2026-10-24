@@ -12,6 +12,7 @@ import { setActiveCatalog } from "../app/shell/locale";
 import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";
 import { GapLettersNotice } from "../app/shell/GapLettersNotice";
 import { OrganizerNotice } from "../app/shell/OrganizerNotice";
+import { SendingLine } from "../app/shell/SendingLine";
 
 /**
  * THE GAP OFFER IS ON SCREEN AT WIDTH (GAP-OFFER-OFF-SCREEN-UNDER-FOLDERS).
@@ -35,6 +36,7 @@ const SHEETS = [
   "packages/ui/src/base.css",
   "packages/ui/src/primitives/chip.css",
   "packages/ui/src/primitives/text-field.css",
+  "packages/ui/src/primitives/spinner.css",
   "packages/ui/src/composites/rail.css",
   "packages/ui/src/composites/list-pane.css",
   "apps/webapp/app/app.css",
@@ -45,7 +47,33 @@ const noop = async (): Promise<void> => {};
 const TAGS = ["Family", "Invoices", "Travel", "Garden", "Kiln", "Tax 2026", "School", "Club", "Health", "House", "Car", "Bank"];
 const OFFER = [{ id: "mb1", address: "a@x.example", count: 2, strangers: 0 }];
 
-interface Shape { tags: number; folders: number; gap: boolean; stopped?: boolean; empty?: boolean }
+interface Shape {
+  tags: number; folders: number; gap: boolean; stopped?: boolean; empty?: boolean; sending?: boolean;
+  /** A longer send line (`lineRows`): 3 = a failed send, queued, sending; 4 = the same and a sent; 5 = two endings, queued, sending, sent. */
+  rows?: 3 | 4 | 5;
+  /** The mailbox's own warning line, above the send line ("after": below it, `AppShell`'s order). */
+  warn?: boolean | "after";
+}
+
+/** A send in flight, as the shell's line api holds it (`SendingLine`'s rail form). */
+const SENDING = {
+  line: () => [{ id: "s1", key: "compose", state: "sending" as const, to: "Mila Example", subject: "The fair", since: Date.now() }],
+  subscribeLine: () => () => {}, lineVersion: () => 1, mountLine: () => () => {}, dismissLine: () => {},
+};
+
+const ITEMS = [
+  { id: "e1", key: "compose", state: "ended" as const, to: "Ana Example", subject: "Kiln", ended: { phase: "failed" as const, reason: "Mailbox full" } },
+  { id: "e2", key: "reply:t2", state: "ended" as const, to: "Ben Example", subject: "Dates", ended: { phase: "failed" as const }, left: { rowId: "r2", aboutThisCompose: false } },
+  { id: "q1", key: "reply:t3", state: "queued" as const, to: "Cleo Example", subject: "Glaze" },
+  { id: "s1", key: "reply:t4", state: "sending" as const, to: "Mila Example", subject: "The fair", since: Date.now() },
+  { id: "d1", key: "reply:t5", state: "sent" as const, to: "Dora Example", subject: "Clay" },
+];
+const lineOf = (rows: 3 | 4 | 5) => ({
+  ...SENDING, line: () => ITEMS.filter((i) => rows === 5 || (i.id !== "e2" && (rows === 4 || i.id !== "d1"))),
+});
+
+const warnLine = () => h("div", { className: "rail-sync warn", role: "status" },
+  h("div", { className: "rs-line" }, h("b", null, "a@x.example stopped syncing")), h("span", { className: "rs-num" }, "Sign in again"));
 
 /** The shell's group shapes (`shell-keys.tsx` `railGroups`), with the rail's notice slot filled. */
 function rail(o: Shape, locale: "en" | "de"): string {
@@ -94,7 +122,11 @@ function rail(o: Shape, locale: "en" | "de"): string {
           h(RailNav, {
             onCompose: () => {}, composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", id: "shell-rail",
             groups, activeId: "ohbox", mailboxes: [{ name: "a@x.example", hint: "imap" }], notice,
-            sync: h("button", { type: "button", className: "ritem rail-pull" }, "Pull new mail"),
+            sync: h(React.Fragment, null,
+              h("button", { type: "button", className: "ritem rail-pull" }, "Pull new mail"),
+              o.warn === true ? warnLine() : null,
+              o.sending || o.rows ? h(SendingLine, { api: o.rows ? lineOf(o.rows) : SENDING, variant: "rail", onOpen: () => false, onOpenMany: () => {} } as never) : null,
+              o.warn === "after" ? warnLine() : null),
             dock: h(React.Fragment, null,
               h("button", { type: "button", className: "ritem dock-cmd" }, "Command"),
               h("button", { type: "button", className: "ritem dock-theme", "aria-label": "Theme" }, "o")),
@@ -132,10 +164,9 @@ async function open(shape: Shape, o: Opts) {
     <style>html,body{margin:0;height:100%}</style></head>
     <body class="mo-canvas"><div class="app-root"><div class="shell">${rail(shape, o.locale ?? "en")}</div></div></body></html>`);
   if (o.toFoot) {
-    // The negative control: the slot carried back to the foot, where main drew it.
+    // The negative control: the slot carried back to the end of the list, where it once stood.
     await page.evaluate(() => {
-      const nav = document.querySelector("nav.rail")!;
-      nav.insertBefore(nav.querySelector(".rail-notice-slot")!, nav.querySelector(".rail-sync-slot"));
+      document.querySelector("nav.rail .rail-scroll")!.appendChild(document.querySelector("nav.rail .rail-notice-slot")!);
     });
   }
   return { ctx, page };
@@ -151,15 +182,17 @@ async function measure(shape: Shape, o: Opts): Promise<Reading> {
         return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
       };
       const nav = document.querySelector("nav.rail") as HTMLElement;
-      nav.scrollTop = 0;
+      const sc = nav.querySelector(".rail-scroll") as HTMLElement;
+      sc.scrollTop = 0;
       const nr = nav.getBoundingClientRect();
+      const sr = sc.getBoundingClientRect();
       const cs = getComputedStyle(nav);
       const slot = nav.querySelector(".rail-notice-slot");
       const shell = document.querySelector('.notice-shell[data-state="gap"]');
       const tagsGroup = nav.querySelector(".rgroup.rsub")!.parentElement!;
       return {
-        visible: { top: Math.round(nr.top), bottom: Math.round(nr.top + nav.clientHeight) },
-        client: nav.clientHeight, scroll: nav.scrollHeight,
+        visible: { top: Math.round(sr.top), bottom: Math.round(sr.top + sc.clientHeight) },
+        client: sc.clientHeight, scroll: sc.scrollHeight,
         gap: box(nav.querySelector('[data-state="gap"]')),
         verbs: [...nav.querySelectorAll('[data-state="gap"] .rn-verbs button')].map((b) => box(b)!),
         slotDisplay: slot ? getComputedStyle(slot).display : null,
@@ -234,6 +267,124 @@ describe("the slot's place and spacing", () => {
     expect(m.shell!.display).not.toBe("none");
     expect(inside(m.shell!, { top: 0, bottom: 844 }), `shell copy at ${m.shell!.top}-${m.shell!.bottom}`).toBe(true);
   });
+});
+
+/**
+ * THE SEND LINE AT THE RAIL'S FOOT IS ON SCREEN. It stood inside the rail's scroller
+ * under two mailboxes' folders and a tag, below the fold at 1440x900: the composer closed and nothing
+ * said the send was going. The foot (sync slot, dock, account line) is pinned outside the scroller.
+ */
+describe("a send in flight: the rail's foot line is inside the window", () => {
+  for (const [width, height] of [[1440, 900], [1280, 720]] as const) {
+    it(`${width}x${height}, 12 tags, 20 folders`, async () => {
+      const { ctx, page } = await open({ tags: 12, folders: 20, gap: false, sending: true }, { width, height });
+      try {
+        const m = await page.evaluate(() => {
+          const nav = document.querySelector("nav.rail") as HTMLElement;
+          const line = nav.querySelector(".sending-line")!.getBoundingClientRect();
+          const scrollers = [nav, ...nav.querySelectorAll<HTMLElement>(":scope > *")].filter((e) => e.scrollHeight > e.clientHeight + 1);
+          const hit = document.elementFromPoint(line.left + line.width / 2, line.top + line.height / 2);
+          const sc = scrollers[0]!;
+          sc.scrollTop = sc.scrollHeight;
+          const mbx = [...nav.querySelectorAll(".mbx")].pop()!.getBoundingClientRect();
+          const after = nav.querySelector(".sending-line")!.getBoundingClientRect();
+          return {
+            top: line.top, bottom: line.bottom, nav: nav.getBoundingClientRect().bottom, scrolls: scrollers.length,
+            hit: hit?.closest(".sending-line") != null, text: nav.querySelector(".sending-line")!.textContent,
+            role: nav.querySelector(".sending-line")!.getAttribute("role"), mbxBottom: mbx.bottom, afterTop: after.top, afterBottom: after.bottom,
+          };
+        });
+        expect(m.scrolls, "premise: the rail must scroll for this test to mean anything").toBeGreaterThan(0);
+        expect(m.text).toContain("Sending to Mila Example");
+        expect(m.role).toBe("status");
+        expect(m.top, "the line starts above the rail").toBeGreaterThanOrEqual(0);
+        expect(m.bottom, `the line ends at ${m.bottom}, the window at ${height}`).toBeLessThanOrEqual(Math.min(height, m.nav));
+        expect(m.hit, "something covers the line").toBe(true);
+        // The folder list scrolls above the foot: its last row ends above the line, and the line stays.
+        expect(m.mbxBottom).toBeLessThanOrEqual(m.afterTop + 1);
+        expect(m.afterBottom).toBeCloseTo(m.bottom, 0);
+      } finally {
+        await ctx.close();
+      }
+    });
+  }
+});
+
+/**
+ * A LONG SEND LINE ON A SHORT WINDOW. The foot does not scroll with the list, so an uncapped line
+ * (endings stand until dismissed, each later send adds a row) squeezed the list and Compose to nothing
+ * and pushed the dock and account line below the rail, where nothing could scroll to them.
+ */
+/**
+ * THE NEWEST SEND IS IN VIEW WITHOUT ANYONE SCROLLING. The capped slot scrolled from its top, so the
+ * Pull button, a warning line and a standing failure filled it and "Sending to …" fell below its fold:
+ * the person sent again and the foot showed only the old failure. The slot now rests on its end.
+ */
+const LONG: Array<{ rows: 3 | 4 | 5; warn: boolean | "after"; width: number; height: number }> = [
+  { rows: 3, warn: true, width: 1280, height: 600 },
+  { rows: 3, warn: true, width: 1024, height: 500 },
+  { rows: 5, warn: true, width: 1280, height: 600 },
+  { rows: 5, warn: true, width: 1024, height: 500 },
+  { rows: 3, warn: false, width: 1024, height: 600 },
+  { rows: 3, warn: false, width: 1024, height: 500 },
+  { rows: 4, warn: true, width: 1280, height: 600 },
+  { rows: 4, warn: "after", width: 1280, height: 600 },
+  { rows: 5, warn: true, width: 1366, height: 768 },
+  { rows: 5, warn: true, width: 1280, height: 720 },
+  { rows: 5, warn: true, width: 1440, height: 900 },
+];
+
+describe("a long send line on a short window: the list, Compose and the foot stay reachable", () => {
+  for (const { rows, warn, width, height } of LONG) {
+    it(`${rows} rows${warn ? `, a warning line${warn === "after" ? " below" : ""}` : ""}, ${width}x${height}`, async () => {
+      const { ctx, page } = await open({ tags: 12, folders: 30, gap: false, rows, warn }, { width, height });
+      try {
+        const m = await page.evaluate(() => {
+          const nav = document.querySelector("nav.rail") as HTMLElement;
+          const sc = nav.querySelector(".rail-scroll") as HTMLElement;
+          const slot = nav.querySelector(".rail-sync-slot") as HTMLElement;
+          const cs = getComputedStyle(nav);
+          const nr = nav.getBoundingClientRect();
+          const cta = nav.querySelector(".compose-cta")!.getBoundingClientRect();
+          const hit = document.elementFromPoint(cta.left + cta.width / 2, cta.top + cta.height / 2);
+          const sr = slot.getBoundingClientRect();
+          // The slot is read as it rests: nobody scrolls it.
+          const seen = (who: string) => {
+            const row = [...slot.querySelectorAll(".sl-row")].find((r) => r.textContent!.includes(who));
+            if (!row) return null;
+            const b = row.querySelector(".rs-line")!.getBoundingClientRect();
+            const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+            return { top: b.top, bottom: b.bottom, hit: at !== null && row.contains(at) };
+          };
+          return {
+            rows: slot.querySelectorAll(".sl-row").length,
+            hit: hit?.closest(".compose-cta") != null, client: sc.clientHeight,
+            inner: nr.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom),
+            rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+            mail: nav.querySelector(".rail-mail")!.getBoundingClientRect().bottom, navBottom: nr.bottom,
+            slotBox: { top: sr.top, bottom: sr.bottom },
+            sending: seen("Mila Example"), sent: seen("Dora Example"),
+            status: slot.querySelector(".sending-line")!.getAttribute("role"),
+          };
+        });
+        expect(m.rows, "premise: every row of the line renders").toBe(rows);
+        expect(m.hit, "Compose is covered or clipped").toBe(true);
+        expect(m.client, `the list is ${m.client}px tall`).toBeGreaterThanOrEqual(Math.min(9 * m.rem, 0.35 * m.inner) - 1);
+        expect(m.mail, `the account line ends at ${m.mail}, the rail at ${m.navBottom}`).toBeLessThanOrEqual(m.navBottom);
+        expect(m.status).toBe("status");
+        const newest = rows === 3 ? [m.sending] : [m.sending, m.sent];
+        for (const r of newest) {
+          expect(r, "premise: the row renders").not.toBeNull();
+          const where = `row at ${r!.top}-${r!.bottom}, slot ${m.slotBox.top}-${m.slotBox.bottom}`;
+          expect(r!.top, where).toBeGreaterThanOrEqual(m.slotBox.top - 1);
+          expect(r!.bottom, where).toBeLessThanOrEqual(m.slotBox.bottom + 1);
+          expect(r!.hit, `nothing of the row is under its centre, ${where}`).toBe(true);
+        }
+      } finally {
+        await ctx.close();
+      }
+    });
+  }
 });
 
 describe("File and Leave by keyboard", () => {

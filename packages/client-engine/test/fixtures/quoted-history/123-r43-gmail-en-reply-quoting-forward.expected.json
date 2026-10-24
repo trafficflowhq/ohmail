@@ -1,0 +1,44 @@
+{
+  "id": "123",
+  "file": "123-r43-gmail-en-reply-quoting-forward.eml",
+  "shape": "r43-gmail-en-reply-quoting-forward",
+  "description": "Gmail, English: a reply whose quote holds a forward with a note ('---------- Forwarded message ---------' inside the quoted message)",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 2,
+  "authorsInHistory": [
+    "Samir Muster",
+    "Jonas Sample"
+  ],
+  "notes": "Tester A's round-43 letter (Q8 member 2), placeholders resolved: synthetic. A forward quoted in a reply is history: the reply folds at its attribution.",
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Yes, let us share a stand. I can do the morning shift.",
+      "visibleLastLine": "Yes, let us share a stand. I can do the morning shift.",
+      "historyStartLine": "On Fri, 24 Oct 2026 at 03:21 Samir Muster <samir.muster@example.net> wrote:",
+      "historyStartLineNormalized": "On Fri, 24 Oct 2026 at 03:21 Samir Muster <samir.muster@example.net> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Fri, 24 Oct 2026 at 03:21 Samir Muster <samir.muster@example.net> wrote:",
+      "visibleFirstText": "Yes, let us share a stand. I can do the morning shift.",
+      "visibleLastText": "Yes, let us share a stand. I can do the morning shift."
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  }
+}

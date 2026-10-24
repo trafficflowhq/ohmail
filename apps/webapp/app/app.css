@@ -942,8 +942,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   .rail-host {
     display: flex;
   }
+  /* flex: the slot rests on its end (`rail.css`) */
   .rail-sync-slot {
-    display: block;
+    display: flex;
   }
   .notice-shell {
     display: none;
@@ -4653,6 +4654,11 @@ input.set-tag-input {
     transition: transform 0.32s var(--spring);
     padding: 20px 16px 20px 22px;
     border-radius:0 var(--r-overlay) var(--r-overlay) 0;
+  }
+  /* The scroller mirrors the drawer's padding (`rail.css`). */
+  .deck > .rail > .rail-scroll {
+    margin: -20px -16px 0 -22px;
+    padding: 20px 16px 0 22px;
   }
   .deck > .rail.open {
     transform: none;
