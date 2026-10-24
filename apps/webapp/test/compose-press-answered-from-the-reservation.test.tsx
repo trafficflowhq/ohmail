@@ -22,7 +22,7 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 let root: Root | null = null;
 
-function engineOver(reserved: Set<string>, deliveries: string[], pressed: string[] = [], claimed = new Set<string>()): OhmailEngine {
+function engineOver(reserved: Set<string>, deliveries: string[], pressed: string[] = [], claimed = new Set<string>(), loseFirst = false): OhmailEngine {
   return new OhmailEngine({
     store: new MemoryMirrorStore(),
     adapter: {
@@ -42,6 +42,7 @@ function engineOver(reserved: Set<string>, deliveries: string[], pressed: string
         reserved.add(o.idempotencyKey);
         claimed.add(words);
         deliveries.push(o.idempotencyKey);
+        if (loseFirst && deliveries.length === 1) throw new MutationRejectedError("network failure: Failed to fetch", { code: "network", retryable: true });
         return { changes: [], seq: null };
       },
       withdrawSend: async () => ({ outcome: "unsupported" as const }),
@@ -114,4 +115,17 @@ it("a record over a SETTLED key is spent — the press is a new key, the server'
   await press(); await settleAll();
   expect({ newKey: pressed.length === 1 && pressed[0] !== "K-earlier", said, deliveries: deliveries.length })
     .toEqual({ newKey: true, said: [], deliveries: 0 });
+});
+
+it("this press's own answer lost: its retry is answered from its own reservation, and the sentence is the delivery", async () => {
+  const reserved = new Set<string>(); const deliveries: string[] = []; const pressed: string[] = [];
+  const engine = engineOver(reserved, deliveries, pressed, new Set(), true);
+  await engine.start();
+  const said: string[] = []; const settled: string[] = [];
+  const press = await mount(engine, said, settled);
+  await press(); await settleAll();
+  await act(async () => { window.dispatchEvent(new Event("online")); });
+  await settleAll();
+  expect({ said, settled: settled.includes("compose"), deliveries: deliveries.length, asked: pressed.length, keys: new Set(pressed).size })
+    .toEqual({ said: ["Message sent."], settled: true, deliveries: 1, asked: 2, keys: 1 });
 });

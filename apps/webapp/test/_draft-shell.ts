@@ -81,6 +81,8 @@ export interface DraftShell {
   versions: Map<string, string>;
   /** Another device saves `patch` into a row: the server's version moves; the next `/sync` carries it. */
   editElsewhere: (id: string, patch: Partial<EngineDraft>) => Promise<void>;
+  /** While on, a `mail_send` is delivered and its answer lost; a later press under that key is answered from the reservation. */
+  loseSendAnswer: { on: boolean };
 }
 
 let roots: Root[] = [];
@@ -169,7 +171,9 @@ function engineOver(
   spendSentRow: DraftShell["spendSentRow"] = { on: false },
   withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null },
   versions: Map<string, string> | null = null,
+  loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false },
 ): OhmailEngine {
+  const delivered = new Set<string>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
@@ -209,9 +213,13 @@ function engineOver(
           cursor: changes.length > 0 ? `remote-${seq}` : s.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
         };
       },
-      mutate: async (m: EngineMutation) => {
+      mutate: async (m: EngineMutation, o?: { idempotencyKey?: string }) => {
         if (offline.on) throw new MutationRejectedError("no signal", { code: "network", retryable: true });
         sent.push(m);
+        const sendKey = m.kind === "mail_send" ? o?.idempotencyKey ?? null : null;
+        if (sendKey !== null && delivered.has(sendKey)) {
+          return { changes: [], seq: null, firstSend: { status: "sent", at: NOW.toISOString() } };
+        }
         const named = m.kind === "draft_save" || m.kind === "mail_send" ? m.draftId ?? null : null;
         if (named !== null && serverGone.has(named)) {
           throw new MutationRejectedError("draft not found", { status: 404, code: "not_found", retryable: false });
@@ -279,6 +287,10 @@ function engineOver(
           for (const c of changes) if (c.id === entityId && c.entity) (c.entity as { contentRevision?: string }).contentRevision = revision;
         }
         await s.applyChanges(changes);
+        if (sendKey !== null) delivered.add(sendKey);
+        if (sendKey !== null && loseSendAnswer.on) {
+          throw new MutationRejectedError("network failure: TypeError: Failed to fetch", { code: "network", retryable: true });
+        }
         return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}) };
       },
       withdrawSend: async () => (offline.on || withdrawAnswer.outcome === null
@@ -363,9 +375,10 @@ export async function mountShell(
   const refuseDiscard: DraftShell["refuseDiscard"] = { on: false };
   const spendSentRow: DraftShell["spendSentRow"] = { on: false };
   const withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null };
+  const loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false };
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
-    versions,
+    versions, loseSendAnswer,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -402,7 +415,7 @@ export async function mountShell(
   };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer,
   };
 }
 

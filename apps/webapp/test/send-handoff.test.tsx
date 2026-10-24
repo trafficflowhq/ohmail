@@ -91,6 +91,20 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await waitFor(() => footLine() === "", "the foot line settles away", 200);
   }, 40_000);
 
+  it("1b — the answer lost after delivery, the retry answered from this press's own reservation: the foot says Sent to Mila", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(s);
+    s.loseSendAnswer.on = true;
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => s.el.querySelector(".view-compose") == null, "the composer gone");
+    await waitFor(() => footLine().includes(en.compose.statusQueued), "not sent yet while the answer is missing");
+    s.loseSendAnswer.on = false;
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    await waitFor(() => footLine().includes("Sent to Mila"), "the foot finishes the send");
+    expect(toasts(), "a single press told it had already been sent").not.toContain(en.compose.toastAlreadySent);
+    expect(sends(s), "one key, asked twice").toHaveLength(2);
+  }, 40_000);
+
   it("2 — the reply dock closes at once and the foot finishes it", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { handOff: true });
     await replyOpen(s, "See you on Thursday");
