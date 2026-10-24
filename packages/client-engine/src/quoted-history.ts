@@ -8,9 +8,9 @@
  * runs over the lines. The answer is a RANGE: the history normally runs to the body's end, but
  * stops before a signature or list footer of the new message (mutt, Thunderbird with the
  * signature below). When in doubt the answer is `null` — folding new words is the failure that
- * matters, so every guard (Subject in a header block, the designed-layout gate, an announcement of
- * inline answers, coloured answers inside the history, `>` depth returning to prose) says "do not
- * fold". One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
+ * matters, so every guard (Subject in a header block, a forward's own forwarded message, the
+ * designed-layout gate, an announcement of inline answers, coloured answers inside the history, `>`
+ * depth returning to prose) says "do not fold". One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
  */
 
 export type QuotedAt = "trailing" | "leading";
@@ -58,6 +58,8 @@ const LABELS: Array<[Label, RegExp]> = [
 ];
 
 const SEPARATOR = /^-{2,}\s*(?:original message|urspr[üu]ngliche nachricht|original-nachricht|message d.origine|messaggio originale|mensaje original|oorspronkelijk bericht|forwarded message|weitergeleitete nachricht|message transf[ée]r[ée]|messaggio inoltrato|mensaje reenviado|doorgestuurd bericht|urspr[üu]ngliche mail)\s*-{2,}$/i;
+/** A forward's own introducer (never a reply's "Original Message"): what follows is the forward's content. */
+const FORWARD_SEPARATOR = /^-{2,}\s*(?:forwarded message|weitergeleitete nachricht|message transf[ée]r[ée]|messaggio inoltrato|mensaje reenviado|doorgestuurd bericht)\s*-{2,}$/i;
 const FORWARD = /^(?:begin forwarded message|anfang der weitergeleiteten nachricht|d[ée]but du message r[ée]exp[ée]di[ée]|inizio messaggio inoltrato|comienzo del mensaje reenviado|begin doorgestuurd bericht)\s?:$/i;
 const UNDERSCORE_RULE = /^_{10,}$/;
 const FOOTER_RULE = /^(?:_{20,}|={20,})$/;
@@ -116,6 +118,10 @@ const MONTH = String.raw`(?:jan|feb|m[äa]r|apr|ma[iy]|jun|jul|aug|sep|o[ck]t|no
 /** What the first line of a wrapped attribution carries: its date, time or address. */
 const DATED = new RegExp(String.raw`\b(?:19|20)\d\d\b|\b\d{1,2}:\d\d\b|@|\b\d{1,2}[./]\d{1,2}[./]|\b${MONTH}[\p{L}]*\.?\s+\d|\d\.?\s+${MONTH}`, "iu");
 const ANSWER_PREFIX = /^(?:\[[A-Z]{1,4}\]|->|=>|A:|Antwort:)/;
+/** Outlook's inline-answer mark, the writer's initials or name ("[Ana Example] "): an answer when a hop repeats it. */
+const ANSWER_MARK = /^\[(\p{L}[\p{L} .'-]{0,40})\]\s/u;
+/** GMX's, WEB.DE's and mail.com's reply header opens with the date above the From. */
+const SENT_FIRST = /^(?:gesendet|sent)\s?:/i;
 /** What a picture contributes to its line: content, matched by no rule. */
 const PICTURE = "￼";
 
@@ -184,6 +190,14 @@ function weakAttribution(text: string): boolean {
 
 function separatorLine(text: string): boolean {
   return text.length <= MAX_LINE && (SEPARATOR.test(text) || FORWARD.test(text));
+}
+
+/** The history from line `s` opens with a forward's introducer: the forwarded message is the content. */
+function forwardAt(L: Line[], s: number): boolean {
+  let k = s;
+  while (k < L.length && (L[k]!.blank || UNDERSCORE_RULE.test(L[k]!.text))) k++;
+  const t = k < L.length ? L[k]!.text : "";
+  return t.length <= MAX_LINE && (FORWARD_SEPARATOR.test(t) || FORWARD.test(t));
 }
 
 const NAMED: Record<string, string> = {
@@ -393,14 +407,28 @@ function introAbove(L: Line[], f: Facts, s: number, run: boolean): number {
 
 /**
  * A line in another hand than its hop's body: mostly highlighted, mostly in another ink than the
- * hop's own, or bold with an answer prefix. In plain text: an answer prefix.
+ * hop's own, or opening with an answer prefix or a mark the hop repeats (`marks`), at any weight.
  */
-function foreign(l: Line, hopInk: string, html: boolean): boolean {
-  if (!html) return ANSWER_PREFIX.test(l.text);
+function foreign(l: Line, hopInk: string, html: boolean, marks: ReadonlySet<string>): boolean {
+  const prefixed = ANSWER_PREFIX.test(l.text) || marks.has(ANSWER_MARK.exec(l.text)?.[1] ?? "");
+  if (!html) return prefixed;
   if (l.chars === 0) return false;
   if (l.mark * 10 >= l.chars * 6) return true;
   if (l.ink !== hopInk && l.inkShare >= 0.6) return true;
-  return l.bold === l.chars && ANSWER_PREFIX.test(l.text);
+  return prefixed;
+}
+
+/** The answer marks two or more body lines of the hop `a..b` open with (one "[EXTERNAL]" banner is none). */
+function marksOf(L: Line[], f: Facts, a: number, b: number, html: boolean): Set<string> {
+  const seen = new Set<string>();
+  const marks = new Set<string>();
+  for (let i = a; i < b; i++) {
+    const m = bodyLine(L, f, i, html) ? ANSWER_MARK.exec(L[i]!.text)?.[1] : undefined;
+    if (m === undefined) continue;
+    if (seen.has(m)) marks.add(m);
+    seen.add(m);
+  }
+  return marks;
 }
 
 /** A line of the history's own body (not a header block's, not empty). */
@@ -435,6 +463,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
     let hopInk = "";
     let most = -1;
     for (const [ink, w] of weight) if (w > most) { most = w; hopInk = ink; }
+    const marks = marksOf(L, f, a, b, html);
     // A heading ("URGENT", "Bitte beachten:") is the hop's own emphasis: its one foreign line with no
     // lowercase letter or ending in ':', not under a question. Several, or one under a question, answer.
     let heading = -1;
@@ -444,7 +473,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
       for (let i = a; i < b; i++) {
         if (!bodyLine(L, f, i, html)) continue;
         const t = L[i]!.text;
-        if ((t.endsWith(":") || !/\p{Ll}/u.test(t)) && foreign(L[i]!, hopInk, html)) {
+        if ((t.endsWith(":") || !/\p{Ll}/u.test(t)) && foreign(L[i]!, hopInk, html, marks)) {
           shaped++;
           heading = shaped === 1 && !above.endsWith("?") ? i : -1;
         }
@@ -457,7 +486,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
     for (let i = a; i < b; i++) {
       if (!bodyLine(L, f, i, html) || i === heading) continue;
       const l = L[i]!;
-      if (foreign(l, hopInk, html)) { if (before) pending = true; continue; }
+      if (foreign(l, hopInk, html, marks)) { if (before) pending = true; continue; }
       if (html && l.ink !== hopInk) continue;
       if (pending && (!html || prose(l))) return true;
       before = true;
@@ -472,18 +501,20 @@ interface Cand { kind: "run" | "header"; line: number; end: number; node: number
 /**
  * A bare header block (no client marker, no separator) reads as a paste or a memo: its lead
  * introduces it (a colon, or a sentence: a reply's lead ends in a sign-off), or its labels open
- * with To or Cc (a memo; a date first is GMX's and WEB.DE's reply header).
+ * with To or Cc (a memo). Sent above From is GMX's, WEB.DE's and mail.com's reply header, whatever
+ * sentence the lead ends in.
  */
 function pastedBlock(L: Line[], f: Facts, s: number, line: number): boolean {
+  let first = line;
+  while (first > 0 && !L[first - 1]!.blank && L[first - 1]!.depth === 0 && f.label[first - 1] !== null) first--;
   let k = s - 1;
   while (k >= 0 && L[k]!.blank) k--;
   if (k >= 0) {
     const t = L[k]!.text;
     if (t.endsWith(":")) return true;
+    if (SENT_FIRST.test(L[first]!.text) && f.label[first + 1] === "from") return false;
     if (SENTENCE_END.test(t) && !ABBREVIATION_END.test(t) && !DISCLAIMER.test(t) && t.split(" ").length >= 5) return true;
   }
-  let first = line;
-  while (first > 0 && !L[first - 1]!.blank && L[first - 1]!.depth === 0 && f.label[first - 1] !== null) first--;
   return f.label[first] === "to" || f.label[first] === "cc";
 }
 
@@ -568,7 +599,7 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
       if (f.commentFrom[c.line]) return NO;
       const bare = c.node < 0 && s === c.line && f.header[c.line] && !separatorLine(L[c.line]!.text);
       if (bare && !vouched && pastedBlock(L, f, s, c.line)) return NO;
-      if (answersInside(L, f, c.line, html)) return NO;
+      if (answersInside(L, f, c.line, html) || forwardAt(L, s)) return NO;
       return { at: "trailing", start: s, end: n, node: s === c.line && c.node >= 0 ? c.node : L[s]!.at };
     }
     const firstRun = runs++ === 0;
@@ -590,6 +621,7 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
       if (k < n && !introduced) continue;
       // Answers typed inside the first quote: the lead says so, or they are in another hand.
       if (firstRun && (ANNOUNCEMENT.test(leadOf(L, s)) || answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end)))) return NO;
+      if (forwardAt(L, s)) return NO;
       return { at: "trailing", start: s, end: k, node: L[s]!.at };
     }
     // Bottom-posted: an introducer and its quote come first, the reply below, nothing quoted after.

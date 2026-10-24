@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-116 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+124 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -29,6 +29,13 @@ Fixtures 106-116 are the shapes of its third review: a coloured line inside a qu
 brand-coloured company name over a nested Outlook hop, a red 'URGENT' line), GMX, WEB.DE and mail.com replies (a
 date-first header block), a markerless Samsung history under a nested-table signature, and leads that name no
 answers.
+A forward whose history opens with the forward's own introducer ('Forwarded message', 'Weitergeleitete
+Nachricht', 'Begin forwarded message:') shows the forwarded message whole: it is the content the forward
+delivers (19, 26, 32, 86). An Outlook forward reads like an Outlook reply in its body and still folds (02, 11,
+104). Fixture 123 is tester A's round-43 reply that quotes such a forward: it folds at its attribution.
+Fixture 124 is an Outlook reply whose answers sit inside the history in the body's own black ink, marked only
+by the writer's initials ('[AE] '); a mark two lines of one hop repeat ('[Ana Example] ') counts the same, a single
+'[EXTERNAL]' banner does not.
 
 ## Sidecar schema (`*.expected.json`)
 
@@ -101,20 +108,20 @@ which belong to the new message and stay visible.
 | 16 | `16-gmail-it-reply.eml` | gmail | it | reply | 1 | trailing | Gmail web, Italian: 'Il giorno gio 22 ott 2026 alle ore 09:14 Name <address> ha scritto:' |
 | 17 | `17-gmail-es-reply.eml` | gmail | es | reply | 1 | trailing | Gmail web, Spanish: 'El jue, 22 oct 2026 a las 9:14, Name (<address>) escribió:' |
 | 18 | `18-gmail-nl-reply.eml` | gmail | nl | reply | 1 | trailing | Gmail web, Dutch: 'Op do 22 okt 2026 om 09:14 schreef Name <address>:' |
-| 19 | `19-gmail-en-forward-with-note.eml` | gmail | en | forward | 1 | trailing | Gmail web, English: '---------- Forwarded message ---------' block (From/Date/Subject/To) inside div.gmail_quote, NO blockquote and NO '>' in text/plain, a note above |
+| 19 | `19-gmail-en-forward-with-note.eml` | gmail | en | forward | 1 | none (forward: shown whole) | Gmail web, English: '---------- Forwarded message ---------' block (From/Date/Subject/To) inside div.gmail_quote, NO blockquote and NO '>' in text/plain, a note above |
 | 20 | `20-gmail-de-forward-only.eml` | gmail | de | forward | 1 | none (only history) | Gmail web, German: a bare forward, nothing typed: '---------- Weitergeleitete Nachricht ---------' with Von:/Date:/Subject:/To: (Gmail mixes German and English labels) |
 | 21 | `21-gmail-android-de-reply.eml` | gmail_android | de | reply | 1 | trailing | Gmail for Android, German: 'Name <address> schrieb am Do., 22. Okt. 2026, 09:14:' (name first), dir=auto |
 | 22 | `22-gmail-android-en-reply.eml` | gmail_android | en | reply | 1 | trailing | Gmail for Android, English: 'On Thu, 22 Oct 2026, 09:14 Name, <address> wrote:' over an Outlook original |
 | 23 | `23-apple-mail-en-reply-nested.eml` | apple | en | reply | 2 | trailing | Apple Mail (macOS), English: blockquote type=cite with the attribution INSIDE the quote, nested twice; text/plain quotes the attribution too ('> On ... wrote:') |
 | 24 | `24-apple-mail-de-reply.eml` | apple | de | reply | 1 | trailing | Apple Mail, German: 'Am 22.10.2026 um 09:14 schrieb Name <address>:' over an Outlook original |
 | 25 | `25-apple-mail-nl-reply.eml` | apple | nl | reply | 1 | trailing | Apple Mail, Dutch: 'Op 22 okt 2026 om 09:14 heeft Name <address> het volgende geschreven:' (no 'schreef') |
-| 26 | `26-apple-mail-de-forward-note.eml` | apple | de | forward | 1 | trailing | Apple Mail, German: 'Anfang der weitergeleiteten Nachricht:' with Von/Betreff/Datum/An rows inside blockquote type=cite, a note above |
+| 26 | `26-apple-mail-de-forward-note.eml` | apple | de | forward | 1 | none (forward: shown whole) | Apple Mail, German: 'Anfang der weitergeleiteten Nachricht:' with Von/Betreff/Datum/An rows inside blockquote type=cite, a note above |
 | 27 | `27-apple-mail-en-forward-only.eml` | apple | en | forward | 1 | none (only history) | Apple Mail, English: 'Begin forwarded message:' and nothing typed |
 | 28 | `28-ios-mail-en-reply.eml` | ios | en | reply | 1 | trailing | iOS Mail, English: 'Sent from my iPhone', the attribution in its OWN blockquote type=cite, the quoted message in a SIBLING blockquote |
 | 29 | `29-ios-mail-de-reply.eml` | ios | de | reply | 2 | trailing | iOS Mail, German: 'Von meinem iPhone gesendet' over a two-level Outlook chain (the Outlook Von: block sits inside the iOS quote) |
 | 30 | `30-thunderbird-en-top-reply.eml` | thunderbird | en | reply | 1 | trailing | Thunderbird, English, top-posted: div.moz-cite-prefix + blockquote type=cite cite=mid:..., format=flowed text with '-- ' signature above the quote |
 | 31 | `31-thunderbird-de-bottom-post.eml` | thunderbird_bottom | de | reply | 1 | leading | Thunderbird, German, BOTTOM-posted: 'Am 22.10.26 um 09:14 schrieb Name:' + quote first, the new text and signature below it |
-| 32 | `32-thunderbird-de-forward-inline.eml` | thunderbird | de | forward | 1 | trailing | Thunderbird, German, inline forward: div.moz-forward-container with '-------- Weitergeleitete Nachricht --------' and a moz-email-headers-table (Betreff/Datum/Von/An) |
+| 32 | `32-thunderbird-de-forward-inline.eml` | thunderbird | de | forward | 1 | none (forward: shown whole) | Thunderbird, German, inline forward: div.moz-forward-container with '-------- Weitergeleitete Nachricht --------' and a moz-email-headers-table (Betreff/Datum/Von/An) |
 | 62 | `62-thunderbird-es-reply.eml` | thunderbird | es | reply | 1 | trailing | Thunderbird, Spanish: 'El 22/10/26 a las 9:14, Name escribió:' |
 | 33 | `33-proton-en-reply.eml` | proton | en | reply | 1 | trailing | Proton Mail, English: div.protonmail_quote with 'On Thursday, October 22nd, 2026 at 09:14, ... wrote:' + blockquote.protonmail_quote, 'Sent with Proton Mail secure email.' |
 | 34 | `34-yahoo-en-reply.eml` | yahoo | en | reply | 1 | trailing | Yahoo Mail, English: div.yahoo_quoted; text/plain history is NOT '>'-quoted, only indented by spaces under an indented attribution |
@@ -158,7 +165,7 @@ which belong to the new message and stay visible.
 | 83 | `83-r42-yahoo-ydp-en-reply-chain.eml` | yahoo | en | reply | 2 | trailing | Yahoo Mail, English: div#ydp…yahoo_quoted_1.ydp…yahoo_quoted (the generated id prefix), no blockquote, nested twice |
 | 84 | `84-r42-plain-signature-above-quote-chain.eml` | plain | en | reply | 2 | trailing | Plain text: a '-- ' signature, then the attribution and a '>' chain whose own signature is quoted |
 | 85 | `85-r42-plain-bottom-posted.eml` | plain | en | reply | 2 | leading | Plain text, bottom-posted: the attribution and '>' quote first, the new words last |
-| 86 | `86-r42-gmail-en-forward-note.eml` | gmail | en | forward | 1 | trailing | Gmail, English: a forward with a note, '---------- Forwarded message ---------' inside div.gmail_quote, no blockquote |
+| 86 | `86-r42-gmail-en-forward-note.eml` | gmail | en | forward | 1 | none (forward: shown whole) | Gmail, English: a forward with a note, '---------- Forwarded message ---------' inside div.gmail_quote, no blockquote |
 | 87 | `87-r42-gmail-plain-wrapped-attribution-chain.eml` | gmail_wrapped | en | reply | 2 | trailing | Gmail text/plain: the attribution wrapped at '<' over two lines at every level, a blank line before each quote |
 | 88 | `88-outlook-quoted-brand-coloured-signature.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: the quoted signature names the company in bold brand blue over a grey address line |
 | 89 | `89-outlook-quoted-green-print-notice.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: the quoted signature carries a green print notice over a grey 8pt disclaimer |
@@ -195,3 +202,5 @@ which belong to the new message and stay visible.
 | 120 | `120-owa-colon-answers-inside-quote.eml` | owa | de | inline | 1 | none (MUST NOT FOLD) | Outlook on the web, German: lead 'siehe unten.', red answers ending in ':' below the divRplyFwdMsg block |
 | 121 | `121-gmail-de-ink-first-lead-caps-answers.eml` | gmail | de | inline | 1 | none (MUST NOT FOLD) | Gmail, German: lead 'In Rot meine Antworten.', the answers JA, 5000 CHF, 14:00 in red inside the quote |
 | 122 | `122-gmail-en-split-lead-caps-answers.eml` | gmail | en | inline | 1 | none (MUST NOT FOLD) | Gmail, English: lead 'My answers are, as usual, in red.', the answers YES, CHF 5'000, 14:00 in red inside the quote |
+| 123 | `123-r43-gmail-en-reply-quoting-forward.eml` | gmail | en | reply | 2 | trailing | Gmail, English: a reply whose quote holds a forward with a note; folds at 'On ... wrote:' |
+| 124 | `124-outlook-en-black-initials-answers.eml` | outlook_win | en | inline | 1 | none (MUST NOT FOLD) | Outlook for Windows, English: lead 'thanks, done.', black answers inside the history marked '[AE] ' in bold italic |
