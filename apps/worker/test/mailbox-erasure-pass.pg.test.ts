@@ -7,12 +7,13 @@ import { brandDialect, dialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accounts, erasureRemaining, mailboxes, messageBodies, messages, reserveBodyBytes, stampMailboxErasure,
-  storageUsageOf, type Tx,
+  accounts, accountStorage, erasureRemaining, mailboxes, messageBodies, messages, reserveBodyBytes,
+  stampMailboxErasure, storageUsageOf, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
+import type { Logger } from "@trafficflow/core/mail";
 import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
-import { storageEvictPass } from "../src/storage-evict.js";
+import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "../src/storage-evict.js";
 
 /**
  * THE ERASURE PASS — the sweep a "Remove and erase" press owes, driven the way the worker cycle
@@ -201,6 +202,78 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
       // POSITIVE CONTROL: real bytes over the mark are still trimmed after the recount.
       expect((await trim(a, 5_000)).evicted).toBe(1);
       expect(await emptied(a)).toBe(1);
+    });
+
+    describe("the daily recount", () => {
+      const CAP = 10_000;
+      /** The pass with a logger that keeps its lines, at `at`. */
+      const pass = async (accountId: string, at: Date) => {
+        const lines: Array<{ event: string; fields: Record<string, unknown> }> = [];
+        const keep = (event: string, fields?: Record<string, unknown>) => { lines.push({ event, fields: fields ?? {} }); };
+        const log: Logger = { level: "debug", child: () => log, debug: keep, info: keep, warn: keep, error: keep };
+        const r = await storageEvictPass(db, { accountId, storageCap: async () => CAP, log }, at);
+        return { ...r, drift: lines.filter((l) => l.event === "storage_counter_drift").map((l) => l.fields) };
+      };
+      const inflate = (accountId: string, bytes: number) => db.transaction(async (tx) => {
+        await reserveBodyBytes(tx as unknown as Tx, dialect(db), accountId, bytes, null);
+      });
+      const checked = async (accountId: string) => (await db.select({
+        at: accountStorage.recountedAt, drift: accountStorage.recountDrift,
+      }).from(accountStorage).where(eq(accountStorage.accountId, accountId)))[0]!;
+
+      it("at 90% of the cap a counter never checked is recounted: corrected, logged, and nothing emptied", async () => {
+        const a = await account();
+        await counted(a, "kept", 5, 100);
+        await inflate(a, 4_200);
+        const r = await pass(a, NOW);
+        expect(r).toMatchObject({ ran: false, evicted: 0 });
+        expect(r.drift).toEqual([{ accountId: a, drift: 4_200, bytes: 5_000 }]);
+        expect(await storageUsageOf(db, a)).toBe(5_000);
+        expect(await checked(a)).toEqual({ at: NOW, drift: 4_200 });
+        expect(await emptied(a)).toBe(0);
+      });
+
+      it("a check younger than a day is not repeated; a day later it is", async () => {
+        const a = await account();
+        await counted(a, "kept", 5, 100);
+        await inflate(a, 4_200);
+        await pass(a, NOW);
+        await inflate(a, 4_200);
+        expect((await pass(a, new Date(NOW.getTime() + STORAGE_RECOUNT_EVERY_MS - 1))).drift).toEqual([]);
+        expect(await storageUsageOf(db, a), "the counter was recounted inside the day").toBe(9_200);
+        const later = new Date(NOW.getTime() + STORAGE_RECOUNT_EVERY_MS);
+        expect((await pass(a, later)).drift).toEqual([{ accountId: a, drift: 4_200, bytes: 5_000 }]);
+        expect(await checked(a)).toEqual({ at: later, drift: 4_200 });
+      });
+
+      it("below 90% nothing is recounted, drift or not", async () => {
+        const a = await account();
+        await counted(a, "kept", 5, 100);
+        await inflate(a, 3_000);
+        expect((await pass(a, NOW)).drift).toEqual([]);
+        expect(await storageUsageOf(db, a)).toBe(8_000);
+        expect(await checked(a)).toEqual({ at: null, drift: null });
+      });
+
+      it("bytes no letter holds, over the trim's mark, are recounted away before anything is emptied", async () => {
+        const a = await account();
+        await counted(a, "kept", 5, 100);
+        await inflate(a, 4_600);
+        const r = await pass(a, NOW);
+        expect(r.evicted, "the trim paid down bytes no letter holds").toBe(0);
+        expect(await emptied(a)).toBe(0);
+        expect(r.drift).toEqual([{ accountId: a, drift: 4_600, bytes: 5_000 }]);
+      });
+
+      it("POSITIVE CONTROL: a true count over the mark is checked, matches, logs nothing, and trims", async () => {
+        const a = await account();
+        await counted(a, "kept", 10, 100);
+        const r = await pass(a, NOW);
+        expect(r.drift).toEqual([]);
+        expect(await checked(a)).toEqual({ at: NOW, drift: 0 });
+        expect(r.evicted).toBe(1);
+        expect(await emptied(a)).toBe(1);
+      });
     });
   });
 });

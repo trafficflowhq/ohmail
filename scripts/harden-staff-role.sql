@@ -637,9 +637,12 @@ REVOKE ALL ON public.change_log FROM ohmail_admin;
 -- Usage data in the isolation rule's own words: an id, a byte count and a timestamp, nothing
 -- derived from what any message says. The alerts driver on this role reads it for the
 -- `storage_at_cap` rule, which is why the grant exists at all rather than the table staying
--- un-granted like `messages`.
+-- un-granted like `messages`. Mail 0166's seven columns are the counter's facts, on the same terms
+-- (counts, instants and a month, never content): the console's account page says from them whether
+-- ohmail emptied letters for space, since when, and whether the count matched the stored letters.
 REVOKE ALL ON public.account_storage FROM ohmail_admin;
-GRANT SELECT (account_id, bytes, updated_at) ON public.account_storage TO ohmail_admin;
+GRANT SELECT (account_id, bytes, updated_at, recounted_at, recount_drift, husked_for_space,
+  first_husked_at, last_husked_at, kept_from, withheld_on_arrival) ON public.account_storage TO ohmail_admin;
 
 -- ── 9d. Funnel top — invite/waitlist DATES ONLY, never an address. ────────────────────────
 --

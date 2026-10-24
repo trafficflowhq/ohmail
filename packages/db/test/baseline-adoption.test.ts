@@ -881,6 +881,10 @@ describe("the baseline cutoff is frozen", () => {
       // An erased mailbox's bytes leave the storage counter: the counter rows of accounts with an
       // erased mailbox, locked and recounted from their bodies. No object. Safe over any history.
       "0165_account_storage_recount",
+      // The storage counter's facts: seven ADD COLUMN IF NOT EXISTS on account_storage (two with a
+      // constant default), its CHECK dropped and re-added, the count of letters already emptied
+      // filled from their marker, and a grant guarded on the staff role. Safe over any history.
+      "0166_account_storage_facts",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

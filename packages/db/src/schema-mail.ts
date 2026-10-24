@@ -9,7 +9,7 @@
  * asymmetric on purpose — the mail half must stand alone; the reverse is legal.
  */
 
-import { pgTable, uuid, text, timestamp, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
@@ -1297,11 +1297,34 @@ export const accountStorage = pgTable("account_storage", {
   // bigint: a mailbox measured in bytes outruns int4 at 2 GiB, which is an ordinary mailbox.
   bytes: bigint("bytes", { mode: "number" }).notNull().default(0),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  // ── Mail 0166: the counter's facts, kept by the counter's own writers (`storage.ts`). ──
+  /** The last check of `bytes` against the stored letters; NULL until the first recount. */
+  recountedAt: timestamp("recounted_at", { withTimezone: true }),
+  /** `bytes` as it stood at that check minus the real sum: what had drifted. */
+  recountDrift: bigint("recount_drift", { mode: "number" }),
+  /** Letters whose text ohmail does not hold for space (`withheld_reason = 'storage_cap'`), now. */
+  huskedForSpace: integer("husked_for_space").notNull().default(0),
+  /** The first and latest time a trim emptied a letter's text for space; NULL is "not recorded". */
+  firstHuskedAt: timestamp("first_husked_at", { withTimezone: true }),
+  lastHuskedAt: timestamp("last_husked_at", { withTimezone: true }),
+  /**
+   * The first day of the month after the newest letter the trim emptied: every letter dated from it
+   * keeps its text, but for the `withheldOnArrival` ones. A letter withheld on arrival never moves it.
+   */
+  keptFrom: date("kept_from", { mode: "string" }),
+  /**
+   * Of `huskedForSpace`, the letters stored without their text because they arrived while the storage
+   * was full, dated on or after `kept_from` (every such letter while it is unset). Only ever counted
+   * up on arrival, set by the recount, or clamped to `huskedForSpace`, so never below zero.
+   */
+  withheldOnArrival: integer("withheld_on_arrival").notNull().default(0),
 }, (t) => ({
   // Declared here so the ORM's view matches the journal; created by mail 0062, which carries
   // the argument. The floor of last resort: no app-side decrement (the repair passes' clamped
   // deltas) can COMMIT a negative byte count.
   ckBytesNonNegative: check("account_storage_bytes_nonneg", sql`${t.bytes} >= 0`),
+  // Mail 0166: the erase's decrement is clamped too; this is the same floor for the count.
+  ckHuskedNonNegative: check("account_storage_husked_nonneg", sql`${t.huskedForSpace} >= 0`),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────

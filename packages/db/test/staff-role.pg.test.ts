@@ -600,6 +600,18 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
 
     await ownerClient.unsafe(`insert into account_storage (account_id, bytes) values ('${seeded.accountId}', 2048)`);
     expect(await adminStorage(staff, now, null, 500)).toMatchObject({ totalBytes: 2048, measuredAccounts: 1 });
+    // Mail 0166's facts, read as the role: each read names the columns, so a missing grant is 42501 here.
+    await ownerClient.unsafe(`update account_storage set husked_for_space = 3, first_husked_at = '2026-10-01T00:00:00Z',
+      last_husked_at = '2026-10-20T00:00:00Z', kept_from = '2026-04-01', recounted_at = '2026-10-23T00:00:00Z',
+      recount_drift = 512, withheld_on_arrival = 1 where account_id = '${seeded.accountId}'`);
+    expect((await adminStorage(staff, now, null, 500)).rows).toEqual([{
+      accountId: seeded.accountId, bytes: 2048, updatedAt: expect.any(String), emptiedForSpace: 3,
+      lastEmptiedAt: "2026-10-20T00:00:00.000Z", checkedAt: "2026-10-23T00:00:00.000Z", drift: 512,
+    }]);
+    expect((await adminAccountDetail(staff, now, seeded.accountId, { roles: ["owner"] }))!.storage).toMatchObject({
+      bytes: 2048, emptiedForSpace: 3, firstEmptiedAt: "2026-10-01T00:00:00.000Z", lastEmptiedAt: "2026-10-20T00:00:00.000Z",
+      keptFrom: "2026-04", withheldOnArrival: 1, checkedAt: "2026-10-23T00:00:00.000Z", drift: 512,
+    });
 
     const staffId = randomUUID();
     await ownerClient.unsafe(`insert into staff_users (id, email, password_hash) values ('${staffId}', 'role-test@example.test', 'x')`);

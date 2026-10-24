@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accounts, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
+  accounts, accountStorage, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
   messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
@@ -164,6 +164,9 @@ describe("the storage counter across an erase, on either store", () => {
       const page = await eraseOwedMailbox(db, d, { accountId, mailboxId: mb.id, now: () => NOW, maxSteps: 1 });
       expect(page.done).toBe(false);
       expect(await counted(), "the page step kept the bytes of the bodies it deleted").toBe(await real());
+      expect(await husked(), "the page step kept the count of the letters it deleted").toBe(await realHusked());
+      const left = await facts();
+      expect(left.withheldOnArrival, "more letters withheld on arrival than letters emptied").toBeLessThanOrEqual(left.huskedForSpace);
       const run = await eraseOwedMailbox(db, d, { accountId, mailboxId: mb.id, now: () => NOW, maxSteps: 10 });
       expect(run.done).toBe(true);
     };
@@ -175,7 +178,12 @@ describe("the storage counter across an erase, on either store", () => {
         .where(eq(messages.accountId, accountId));
       return Number(r!.s);
     };
-    return { d, accountId, fill, mailbox, erase, counted, real };
+    const facts = async () => (await db.select().from(accountStorage).where(eq(accountStorage.accountId, accountId)))[0]!;
+    const husked = async () => (await facts()).huskedForSpace;
+    const realHusked = async () => (await db.select({ id: messageBodies.id }).from(messageBodies)
+      .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+      .where(and(eq(messages.accountId, accountId), eq(messageBodies.withheldReason, "storage_cap")))).length;
+    return { d, accountId, fill, mailbox, erase, counted, real, facts, husked, realHusked };
   }
 
   it("an erased mailbox's bytes leave the counter", async () => {
@@ -197,9 +205,19 @@ describe("the storage counter across an erase, on either store", () => {
     await db.transaction(async (tx) =>
       evictOldestBodies(tx as unknown as Tx, w.d, w.accountId, { targetBytes: 7_000, maxBodies: 100 }));
     expect(await w.counted()).toBe(7_000);
+    expect(await w.husked()).toBe(3);
+    // The newest letter emptied is dated 1 June: text is kept from July on.
+    expect((await w.facts()).keptFrom, "the trim named a month with emptied letters as kept").toBe("2026-07-01");
+    // Say all three arrived while the storage was full: the erase cannot tell which letters it takes,
+    // so it never leaves more of those than letters emptied.
+    await db.update(accountStorage).set({ withheldOnArrival: 3 }).where(eq(accountStorage.accountId, w.accountId));
     await w.erase(gone);
     expect(await w.counted()).toBe(5_000);
     expect(await w.counted()).toBe(await w.real());
+    // The emptied letters went with their mailbox, so the count drops to what is left: none.
+    expect(await w.husked()).toBe(0);
+    // The finish's recount stamped its check: nothing had drifted, and no letter is emptied, so no month.
+    expect(await w.facts()).toMatchObject({ recountedAt: NOW, recountDrift: 0, keptFrom: null, withheldOnArrival: 0 });
   });
 
   it("a plain removal and a re-import count both copies; erasing the kept copy leaves the new one", async () => {

@@ -639,6 +639,32 @@ export interface StorageRow {
   accountId: string;
   bytes: number;
   updatedAt: string;
+  /** Letters whose text ohmail does not hold for space, now. */
+  emptiedForSpace: number;
+  /** The latest trim that emptied a letter's text; null when none is recorded. */
+  lastEmptiedAt: string | null;
+  /** The counter's last check against the stored letters; null before the first. */
+  checkedAt: string | null;
+  /** The counter minus the real bytes at that check; null before the first. */
+  drift: number | null;
+}
+
+/**
+ * The account page's storage block: the counter and its facts (mail 0166). Counts, instants and a
+ * month; `keptFrom` is the month ("YYYY-MM") from which every letter still holds its text but the
+ * `withheldOnArrival` ones: of `emptiedForSpace`, the letters stored without their text because they
+ * arrived while the storage was full (all of them while no month is recorded).
+ */
+export interface AccountStorageFacts {
+  bytes: number;
+  updatedAt: string;
+  checkedAt: string | null;
+  drift: number | null;
+  emptiedForSpace: number;
+  firstEmptiedAt: string | null;
+  lastEmptiedAt: string | null;
+  keptFrom: string | null;
+  withheldOnArrival: number;
 }
 
 /** `GET /admin/storage?cursor=&limit=` — keyset by account id; the two totals cover every row. */
@@ -803,7 +829,7 @@ export interface AccountDetailV2 {
   users: AdminAccountUser[];
   mailboxes: AdminMailboxDetail[];
   lifecycleNotices: AdminLifecycleNotice[];
-  storage: { bytes: number; updatedAt: string } | null;
+  storage: AccountStorageFacts | null;
   devices: AdminDevice[];
   sessions: AdminSessionFacts;
   authEvents: AdminAuthEvent[];

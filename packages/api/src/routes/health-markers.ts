@@ -858,6 +858,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // `select().from(messages)` on every read surface and in the worker's dedup lookup. Deploy order
   // migration → API → worker.
   ["messages", "server_missing_at"],
+  // mail 0166_account_storage_facts — the storage counter's facts. LOUD: the trim, the arrival of a
+  // letter withheld for space and the erase write `husked_for_space` with the bytes, and the staff
+  // account page reads it. Deploy order migration → API → worker.
+  ["account_storage", "husked_for_space"],
 ] as const;
 
 /**
@@ -1282,7 +1286,9 @@ export const MAIL_EXPECTED_MARKERS =
 // tolerated state, not a schema fault a serving API should 503 over.
 // mail 0146_rule_person_decided_followup (the stamps an older settings copy and a whole-domain spam
 // decision left owed) is two UPDATEs and adds no object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0164_messages_server_missing";
+// mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
+// object: no marker.
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0166_account_storage_facts";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

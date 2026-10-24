@@ -1,8 +1,8 @@
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import {
-  evictOldestBodies, mailboxes, recomputeAccountStorage, storageUsageOf,
+  accountStorage, evictOldestBodies, mailboxes, recomputeAccountStorage,
   EVICT_BATCH_BODIES, EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO,
-  type Tx,
+  type AccountRecount, type Tx,
 } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type Logger, type StorageCap } from "@trafficflow/core/mail";
 import { dialect } from "@trafficflow/db/dialect";
@@ -18,6 +18,13 @@ import { dialect } from "@trafficflow/db/dialect";
  * account per cycle, each locking the `account_storage` row FIRST (`packages/db/src/storage.ts` order), in
  * the serial per-account section. An UNBOUNDED cap is never trimmed (no ceiling to keep under). */
 export const EVICT_ROUNDS_PER_CYCLE = 4;
+
+/**
+ * How old a counter's last check against the stored letters may be, once the account is in the trim's
+ * band ({@link EVICT_LOW_WATER_RATIO} of its cap or more), before the pass checks it again — in its own
+ * transaction, before it decides to trim, so bytes no letter holds never cost a kept letter its text.
+ */
+export const STORAGE_RECOUNT_EVERY_MS = 24 * 60 * 60 * 1000;
 
 export interface StorageEvictResult {
   /** Whether the account was over its high-water mark at all. */
@@ -47,7 +54,22 @@ export async function storageEvictPass(
   const cap = resolved === UNMETERED_STORAGE_CAP ? null : resolved;
   if (cap === null || cap <= 0) return { ran: false, evicted: 0, freedBytes: 0, capped: false };
 
-  const used = await dbCall("storageEvict.usage", () => storageUsageOf(db, accountId));
+  const [counter] = await dbCall("storageEvict.usage", () => db
+    .select({ bytes: accountStorage.bytes, recountedAt: accountStorage.recountedAt })
+    .from(accountStorage).where(eq(accountStorage.accountId, accountId)).limit(1));
+  let used = Number(counter?.bytes ?? 0);
+  /** One check against the stored letters, its own transaction; a counter that had drifted says so. */
+  const recount = async (): Promise<number> => {
+    const r: AccountRecount = await dbCall("storageEvict.recount", () => db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as Tx, dialect(db), accountId, now)));
+    if (r.drift !== 0) opts.log?.warn("storage_counter_drift", { accountId, drift: r.drift, bytes: r.bytes });
+    return r.bytes;
+  };
+  // In the trim's band and not checked for a day: check first, so drift is never paid down with text.
+  const checkedAt = counter?.recountedAt ?? null;
+  const recountedNow = used >= cap * EVICT_LOW_WATER_RATIO
+    && (checkedAt === null || now.getTime() - checkedAt.getTime() >= STORAGE_RECOUNT_EVERY_MS);
+  if (recountedNow) used = await recount();
   if (used < cap * EVICT_HIGH_WATER_RATIO) {
     return { ran: false, evicted: 0, freedBytes: 0, capped: false };
   }
@@ -56,12 +78,12 @@ export async function storageEvictPass(
     .limit(1));
   if (erasing.length > 0) return { ran: false, evicted: 0, freedBytes: 0, capped: false, waitsForErasure: true };
   // An erase an older worker finished left its bytes on the counter: trim only against a recount.
-  const erased = await dbCall("storageEvict.erased", () => db.select({ id: mailboxes.id }).from(mailboxes)
-    .where(and(eq(mailboxes.accountId, accountId), isNotNull(mailboxes.erasureDoneAt))).limit(1));
-  if (erased.length > 0) {
-    const recounted = await dbCall("storageEvict.recount", () => db.transaction(async (tx) =>
-      recomputeAccountStorage(tx as Tx, dialect(db), accountId)));
-    if (recounted < cap * EVICT_HIGH_WATER_RATIO) return { ran: false, evicted: 0, freedBytes: 0, capped: false };
+  if (!recountedNow) {
+    const erased = await dbCall("storageEvict.erased", () => db.select({ id: mailboxes.id }).from(mailboxes)
+      .where(and(eq(mailboxes.accountId, accountId), isNotNull(mailboxes.erasureDoneAt))).limit(1));
+    if (erased.length > 0 && await recount() < cap * EVICT_HIGH_WATER_RATIO) {
+      return { ran: false, evicted: 0, freedBytes: 0, capped: false };
+    }
   }
 
   const target = Math.floor(cap * EVICT_LOW_WATER_RATIO);

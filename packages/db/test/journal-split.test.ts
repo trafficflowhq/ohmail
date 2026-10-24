@@ -3102,6 +3102,23 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "4aa908f9e5dd3b0c",   // LOCK TABLE account_storage IN SHARE ROW EXCLUSIVE MODE
     "044382c0c5e0ea80",   // UPDATE account_storage SET bytes = the account's body sum WHERE … erased mailbox
   ],
+  // THE STORAGE COUNTER'S FACTS — seven columns on account_storage (constant defaults on the two
+  // counts, no rewrite), the count's CHECK dropped then added (a table of one row per account), the
+  // count of letters already emptied filled from their marker, and SELECT on the seven for the staff
+  // role where it exists. No index, no other table written.
+  "0166_account_storage_facts": [
+    "deb9dfecbd92992c",   // ADD COLUMN IF NOT EXISTS recounted_at timestamptz
+    "8de20ca5a31a5cd2",   // ADD COLUMN IF NOT EXISTS recount_drift bigint
+    "99e32a1dd35562f0",   // ADD COLUMN IF NOT EXISTS husked_for_space integer DEFAULT 0 NOT NULL
+    "1673597040b55902",   // ADD COLUMN IF NOT EXISTS first_husked_at timestamptz
+    "1ba3d035162768c2",   // ADD COLUMN IF NOT EXISTS last_husked_at timestamptz
+    "e428b5b5932244e3",   // ADD COLUMN IF NOT EXISTS kept_from date
+    "0f38677bddfcf890",   // ADD COLUMN IF NOT EXISTS withheld_on_arrival integer DEFAULT 0 NOT NULL
+    "202a4604bbbd2238",   // DROP CONSTRAINT IF EXISTS account_storage_husked_nonneg
+    "1294b8f8b7ba1dab",   // ADD CONSTRAINT account_storage_husked_nonneg CHECK (husked_for_space >= 0)
+    "ca6742defb4f4609",   // UPDATE account_storage SET husked_for_space = the account's storage_cap letters
+    "730f8b3db5abbe63",   // DO … GRANT SELECT (the seven) ON account_storage TO ohmail_admin, if the role exists
+  ],
   // CLOUD 0041 — content identity for a staged attachment. One added column and the CHECK that
   // fixes its shape, drop-then-add, NOT VALID on a growth table. No DML: the column is NULLABLE,
   // so every ticket already staged keeps its only judgement (its size) and the NULL it carries.
@@ -4101,12 +4118,14 @@ describe("the two journals are well-formed", () => {
   // above 0163_folder_state_fresh_intent's.
   // 165 → 166 for `0165_account_storage_recount` (idx 165): its `when` (1791602600069) is strictly
   // above 0164_messages_server_missing's.
+  // 166 → 167 for `0166_account_storage_facts` (idx 166): its `when` (1791602600070) is strictly
+  // above 0165_account_storage_recount's.
   // cloud 33 → 34 for `0048_alert_driver_gaps`: its `when` (1791328224231) is strictly above 0047's.
   // cloud 34 → 35 for `0049_alert_driver_gaps_staff_grant`: its `when` (1792235630016) is strictly
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 166], ["cloud", CLOUD_DIR, 37]] as const)(
+  it.each([["mail", MAIL_DIR, 167], ["cloud", CLOUD_DIR, 37]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

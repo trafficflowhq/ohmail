@@ -8,23 +8,25 @@ import {
 } from "../src/testing.js";
 
 /**
- * MAIL 0165 AND A LATER ALTER OF account_storage IN ONE PENDING SET, as the migrator replays a release
- * that carries both: one transaction, no lock timeout. An ingest reserve for an account with an erased
- * mailbox arrives while 0165 runs and has waited past deadlock_timeout when the later statement alters
- * the same table. The pass must commit and the ingest must land after it: a writer that holds a lock on
- * account_storage while it waits would make that ALTER a deadlock that aborts the whole pass. The ALTER
- * stands in for the next migration that alters the counter table (0166 adds its facts). 0165 replays
- * safely, so it runs here on a clone of the migrated schema.
+ * MAIL 0165 AND 0166 IN ONE PENDING SET, as the migrator replays a release that carries both: one
+ * transaction, no lock timeout. An ingest reserve for an account with an erased mailbox arrives while
+ * 0165 runs and has waited past deadlock_timeout when 0166 alters the same table. The pass must commit
+ * and the ingest must land after it: a writer that holds a lock on account_storage while it waits
+ * would make 0166's ALTER a deadlock that aborts the whole pass. Both files replay safely, so they run
+ * here on a clone of the migrated schema.
  */
 const read = (p: string): string => readFileSync(fileURLToPath(new URL(p, import.meta.url)), "utf8");
 const split = (text: string): string[] => text.split("--> statement-breakpoint")
   .map((s) => s.replace(/^\s*--[^\n]*$/gm, "").trim()).filter(Boolean);
-const PASS_0165 = split(read("../../db-mail/drizzle/0165_account_storage_recount.sql"));
-const LATER_ALTER = `ALTER TABLE "account_storage" ADD COLUMN IF NOT EXISTS "one_pass_probe" integer`;
+const PASS = [
+  ...split(read("../../db-mail/drizzle/0165_account_storage_recount.sql")),
+  ...split(read("../../db-mail/drizzle/0166_account_storage_facts.sql")),
+];
+const FIRST_0166 = split(read("../../db-mail/drizzle/0165_account_storage_recount.sql")).length;
 const PG_UP = await realPgAvailable(PG_TEST_URL);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-describe.skipIf(!PG_UP)("mail 0165 then an ALTER of account_storage in one pass, beside an ingest", () => {
+describe.skipIf(!PG_UP)("mail 0165 then 0166 in one pass, beside an ingest", () => {
   const db = throwawayDb("ohmail_m0165_pass");
   let setup: ReturnType<typeof postgres>;
   let mig: ReturnType<typeof postgres>;
@@ -55,16 +57,16 @@ describe.skipIf(!PG_UP)("mail 0165 then an ALTER of account_storage in one pass,
     const zeroRan = new Promise<void>((r) => { inZero = r; });
     let ingestWaited = false;
     const migration = mig.begin(async (tx) => {
-      for (const s of PASS_0165) await tx.unsafe(s);
+      for (const s of PASS.slice(0, FIRST_0166)) await tx.unsafe(s);
       inZero();
-      // The ingest queues behind 0165 and outlasts its own deadlock check before the ALTER starts.
+      // The ingest queues behind 0165 and outlasts its own deadlock check before 0166 starts.
       for (let i = 0; i < 200; i++) {
         const [{ n }] = await setup<Array<{ n: number }>>`select count(*)::int as n from pg_locks where pid = ${pid} and not granted`;
         if (n > 0) { ingestWaited = true; break; }
         await sleep(25);
       }
       await sleep(Number(ms) + 500);
-      await tx.unsafe(LATER_ALTER);
+      for (const s of PASS.slice(FIRST_0166)) await tx.unsafe(s);
     }).then(() => "committed", (e: { code?: string; message?: string }) => `${e.code ?? ""} ${e.message ?? e}`);
     await zeroRan;
     // The ingest's reserve shape (`reserveBodyBytes`): make the row exist, then add under the cap.
@@ -77,7 +79,8 @@ describe.skipIf(!PG_UP)("mail 0165 then an ALTER of account_storage in one pass,
     expect(await ingest, "the ingest").toBe("committed");
     expect(ingestWaited, "the ingest never waited on the pass").toBe(true);
     // 0165 recounted the account (no bodies: 0) before the ingest's 10 bytes landed.
-    const [row] = await setup<Array<{ bytes: string }>>`select bytes from account_storage where account_id = ${a}`;
-    expect(Number(row!.bytes)).toBe(10);
+    const [row] = await setup<Array<{ bytes: string; husked_for_space: number }>>`
+      select bytes, husked_for_space from account_storage where account_id = ${a}`;
+    expect({ bytes: Number(row!.bytes), husked: row!.husked_for_space }).toEqual({ bytes: 10, husked: 0 });
   }, 60_000);
 });

@@ -696,7 +696,13 @@ export async function adminAccountDetail(
     .from(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, id))
     .orderBy(desc(accountLifecycleNotices.sentAt)).limit(ADMIN_LIST_LIMIT);
   const [storageRow] = await db
-    .select({ bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt })
+    .select({
+      bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt,
+      checkedAt: accountStorage.recountedAt, drift: accountStorage.recountDrift,
+      emptiedForSpace: accountStorage.huskedForSpace, firstEmptiedAt: accountStorage.firstHuskedAt,
+      lastEmptiedAt: accountStorage.lastHuskedAt, keptFrom: accountStorage.keptFrom,
+      withheldOnArrival: accountStorage.withheldOnArrival,
+    })
     .from(accountStorage).where(eq(accountStorage.accountId, id)).limit(1);
   const deviceRows = await db
     .select({ id: devices.id, kind: devices.kind, createdAt: devices.createdAt, lastSyncedAt: devices.lastSyncedAt })
@@ -745,7 +751,15 @@ export async function adminAccountDetail(
     lifecycleNotices: notices.map((n) => ({
       kind: n.kind as AdminLifecycleNotice["kind"], anchor: asDate(n.anchor).toISOString(), sentAt: asDate(n.sentAt).toISOString(),
     })),
-    storage: storageRow ? { bytes: int(storageRow.bytes), updatedAt: asDate(storageRow.updatedAt).toISOString() } : null,
+    storage: storageRow ? {
+      bytes: int(storageRow.bytes), updatedAt: asDate(storageRow.updatedAt).toISOString(),
+      checkedAt: iso(storageRow.checkedAt), drift: storageRow.drift === null ? null : int(storageRow.drift),
+      emptiedForSpace: int(storageRow.emptiedForSpace),
+      firstEmptiedAt: iso(storageRow.firstEmptiedAt), lastEmptiedAt: iso(storageRow.lastEmptiedAt),
+      // The column holds the month's first day; the page names the month.
+      keptFrom: storageRow.keptFrom === null ? null : storageRow.keptFrom.slice(0, 7),
+      withheldOnArrival: int(storageRow.withheldOnArrival),
+    } : null,
     devices: deviceRows.map((d) => ({
       id: d.id, kind: deviceKindWord(d.kind), pairedAt: asDate(d.createdAt).toISOString(), lastSyncedAt: iso(d.lastSyncedAt),
     })),
@@ -1115,7 +1129,9 @@ export const ADMIN_STORAGE_MAX = 500;
 
 /**
  * `GET /admin/storage?cursor=&limit=` — stored message bytes per measured account, keyset by
- * account id. The total and the count are over every row, so each page carries the whole figure.
+ * account id, with the letters emptied for space, the latest, and the counter's last check: the
+ * counter row's own columns, so a page reads no letter. The total and the count are over every
+ * row, so each page carries the whole figure.
  */
 export async function adminStorage(
   db: AdminDb, now: Date, cursor: string | null, limit: number,
@@ -1126,7 +1142,11 @@ export async function adminStorage(
     .select({ bytes: sql<string | null>`sum(${accountStorage.bytes})`, accounts: sql<number>`count(*)::int` })
     .from(accountStorage);
   const rows = await db
-    .select({ accountId: accountStorage.accountId, bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt })
+    .select({
+      accountId: accountStorage.accountId, bytes: accountStorage.bytes, updatedAt: accountStorage.updatedAt,
+      emptiedForSpace: accountStorage.huskedForSpace, lastEmptiedAt: accountStorage.lastHuskedAt,
+      checkedAt: accountStorage.recountedAt, drift: accountStorage.recountDrift,
+    })
     .from(accountStorage)
     .where(after ? sql`${accountStorage.accountId} > ${after}::uuid` : undefined)
     .orderBy(accountStorage.accountId)
@@ -1135,7 +1155,11 @@ export async function adminStorage(
     now: now.toISOString(),
     totalBytes: int(total?.bytes),
     measuredAccounts: int(total?.accounts),
-    rows: rows.map((r) => ({ accountId: r.accountId, bytes: int(r.bytes), updatedAt: asDate(r.updatedAt).toISOString() })),
+    rows: rows.map((r) => ({
+      accountId: r.accountId, bytes: int(r.bytes), updatedAt: asDate(r.updatedAt).toISOString(),
+      emptiedForSpace: int(r.emptiedForSpace), lastEmptiedAt: iso(r.lastEmptiedAt),
+      checkedAt: iso(r.checkedAt), drift: r.drift === null ? null : int(r.drift),
+    })),
     nextCursor: rows.length === size ? rows[rows.length - 1]!.accountId : null,
   };
 }

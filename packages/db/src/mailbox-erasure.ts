@@ -160,7 +160,7 @@ export async function sweepMailboxStep(
    * mailbox as its primitive states. The `mailbox` receipt comes last so it carries the
    * erasure's highest seq, and the finish stamp is in the same transaction as it. The counter is
    * recounted first (its lock before the receipt's seq): that repairs bytes an older erase left. */
-  await recomputeAccountStorage(tx, d, accountId);
+  await recomputeAccountStorage(tx, d, accountId, now);
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints).where(and(
     eq(outboundSendFingerprints.accountId, accountId), eq(outboundSendFingerprints.mailboxId, mailboxId),
   )));
@@ -258,13 +258,16 @@ async function eraseMessages(
     .where(inArray(messageInstances.messageId, ids)));
   // The bodies and the read state key off the MESSAGE and carry no `account_id` at all.
   // scoped-by: ids — a page of this mailbox's messages read by the step
-  // The bytes come from the delete itself, so a body a trim emptied meanwhile gives back nothing twice.
+  // The bytes come from the delete itself, so a body a trim emptied meanwhile gives back nothing twice;
+  // so does the count of letters emptied for space, by the marker each deleted row carried.
   const bodies = await tx.delete(messageBodies).where(inArray(messageBodies.messageId, ids)).returning({
     bytes: sql<number>`octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)`,
+    withheld: messageBodies.withheldReason,
   });
   await drop("message_bodies", Promise.resolve(bodies));
   const freed = bodies.reduce((sum, b) => sum + Number(b.bytes), 0);
-  if (freed > 0) await releaseBodyBytes(tx, d, accountId, freed);
+  const emptied = bodies.filter((b) => b.withheld === "storage_cap").length;
+  if (freed > 0 || emptied > 0) await releaseBodyBytes(tx, d, accountId, freed, emptied);
   // The search documents (mail 0125) carry the body's words — with the bodies, before `messages`.
   // scoped-by: ids — a page of this mailbox's messages read by the step
   await drop("message_search", tx.delete(messageSearch).where(inArray(messageSearch.messageId, ids)));

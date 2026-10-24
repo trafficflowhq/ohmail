@@ -51,7 +51,9 @@ afterAll(async () => {
 
 /** An account with one mailbox and `n` stored bodies of `size` bytes each, dates DESCENDING in
  *  insertion order (newest row inserted first) so date-order and physical order disagree. */
-async function seed(n: number, size: number): Promise<{ accountId: string; ids: string[] }> {
+async function seed(
+  n: number, size: number, dateOf: (i: number) => Date = (i) => new Date(Date.UTC(2026, 0, n - i)),
+): Promise<{ accountId: string; ids: string[] }> {
   const accountId = randomUUID();
   created.push(accountId);
   await db.insert(accounts).values({ id: accountId, name: `ev-${accountId.slice(0, 8)}` });
@@ -61,7 +63,7 @@ async function seed(n: number, size: number): Promise<{ accountId: string; ids: 
   const ids: string[] = [];
   for (let i = 0; i < n; i++) {
     // i = 0 is the NEWEST message and is inserted FIRST.
-    const date = new Date(Date.UTC(2026, 0, n - i));
+    const date = dateOf(i);
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id,
       bodyHash: `h${i}`, dedupKey: `${accountId}:${i}`, subject: `m${i}`, date,
@@ -122,6 +124,70 @@ describe.skipIf(!PG_UP)("evictOldestBodies — the rolling window's trim", () =>
       evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: 0, maxBodies: 100 }));
     expect(lower.evicted).toBe(2);
     expect(await storageUsageOf(db as unknown as Tx, accountId)).toBe(0);
+  });
+
+  it("keeps the facts across successive trims: how many, first and latest, and the month text is kept from", async () => {
+    // Six letters of 1,000 bytes, one a month from January to June, inserted newest first.
+    const { accountId } = await seed(6, 1_000, (i) => new Date(Date.UTC(2026, 5 - i, 15)));
+    const facts = async () => {
+      const [r] = await db.select({
+        n: accountStorage.huskedForSpace, first: accountStorage.firstHuskedAt,
+        last: accountStorage.lastHuskedAt, keptFrom: accountStorage.keptFrom,
+      }).from(accountStorage).where(eq(accountStorage.accountId, accountId));
+      return r!;
+    };
+    const trim = (targetBytes: number, maxBodies = 100) => db.transaction(async (tx) =>
+      evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes, maxBodies }));
+    expect(await facts()).toEqual({ n: 0, first: null, last: null, keptFrom: null });
+
+    // A full page of two: the letter after it, read in the same statement, is where text is kept from.
+    expect((await trim(0, 2)).evicted).toBe(2);
+    const one = await facts();
+    expect(one).toMatchObject({ n: 2, keptFrom: "2026-03-01" });
+    expect(one.first).toBeInstanceOf(Date);
+    expect(one.last!.getTime()).toBe(one.first!.getTime());
+
+    // Already under the target: nothing emptied, nothing recorded.
+    expect((await trim(4_000)).evicted).toBe(0);
+    expect(await facts()).toEqual(one);
+
+    // Both times set back a week, so "kept" and "moved" are comparisons, not the same instant twice.
+    const WEEK_AGO = new Date(one.first!.getTime() - 7 * 86_400_000);
+    await db.update(accountStorage).set({ firstHuskedAt: WEEK_AGO, lastHuskedAt: WEEK_AGO })
+      .where(eq(accountStorage.accountId, accountId));
+    expect((await trim(2_000)).evicted).toBe(2);
+    const two = await facts();
+    expect(two).toMatchObject({ n: 4, keptFrom: "2026-05-01" });
+    expect(two.first!.getTime(), "the first trim's time was overwritten").toBe(WEEK_AGO.getTime());
+    expect(two.last!.getTime()).toBeGreaterThan(WEEK_AGO.getTime());
+
+    // Every letter emptied: text is kept only from the month after the newest.
+    expect((await trim(0)).evicted).toBe(2);
+    expect(await facts()).toMatchObject({ n: 6, keptFrom: "2026-07-01" });
+    expect(await storageUsageOf(db as unknown as Tx, accountId)).toBe(0);
+  });
+
+  it("a count the release filled keeps the first time unrecorded; the next trim sets only the latest", async () => {
+    const { accountId } = await seed(4, 1_000);
+    // 0166 counts the letters emptied before it and leaves both times NULL.
+    await db.update(accountStorage).set({ huskedForSpace: 3 }).where(eq(accountStorage.accountId, accountId));
+    await db.transaction(async (tx) =>
+      evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: 3_000, maxBodies: 100 }));
+    const [r] = await db.select({ n: accountStorage.huskedForSpace, first: accountStorage.firstHuskedAt, last: accountStorage.lastHuskedAt })
+      .from(accountStorage).where(eq(accountStorage.accountId, accountId));
+    expect(r!.n).toBe(4);
+    expect(r!.first, "the first time was made up from a later trim").toBeNull();
+    expect(r!.last).toBeInstanceOf(Date);
+  });
+
+  it("kept_from is the month after the newest letter emptied, never the month of one", async () => {
+    // Weekly letters in April 2025; the trim empties the 2nd and the 9th.
+    const { accountId } = await seed(4, 1_000, (i) => new Date(Date.UTC(2025, 3, 23 - 7 * i)));
+    expect((await db.transaction(async (tx) =>
+      evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: 2_000, maxBodies: 100 }))).evicted).toBe(2);
+    const [r] = await db.select({ keptFrom: accountStorage.keptFrom }).from(accountStorage)
+      .where(eq(accountStorage.accountId, accountId));
+    expect(r!.keptFrom, "April was named as kept with two of its letters emptied").toBe("2025-05-01");
   });
 
   it("a full victim page above target reports more:true — the bounded batch resumes", async () => {

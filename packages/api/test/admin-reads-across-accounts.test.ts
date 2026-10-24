@@ -144,14 +144,28 @@ describe("GET /admin/storage — stored bytes per measured account, keyset by id
 
   it("answers every measured account with the deployment's total, in id order", async () => {
     const w = await world();
+    const unchecked = { emptiedForSpace: 0, lastEmptiedAt: null, checkedAt: null, drift: null };
     expect(await read<StoragePage>(w.deps, w.token, "/admin/storage")).toEqual({
       now: FIXED_NOW.toISOString(), totalBytes: 600, measuredAccounts: 3,
       rows: [
-        { accountId: A, bytes: 100, updatedAt: ago(HOUR).toISOString() },
-        { accountId: B, bytes: 200, updatedAt: ago(2 * HOUR).toISOString() },
-        { accountId: C, bytes: 300, updatedAt: ago(3 * HOUR).toISOString() },
+        { accountId: A, bytes: 100, updatedAt: ago(HOUR).toISOString(), ...unchecked },
+        { accountId: B, bytes: 200, updatedAt: ago(2 * HOUR).toISOString(), ...unchecked },
+        { accountId: C, bytes: 300, updatedAt: ago(3 * HOUR).toISOString(), ...unchecked },
       ],
       nextCursor: null,
+    });
+  });
+
+  it("names, per account, the letters emptied for space, the latest, and the counter's last check", async () => {
+    const w = await world();
+    await w.deps.db.update(accountStorage).set({
+      huskedForSpace: 7, firstHuskedAt: ago(5 * DAY), lastHuskedAt: ago(DAY), keptFrom: "2026-03-01",
+      recountedAt: ago(2 * HOUR), recountDrift: -40,
+    }).where(eq(accountStorage.accountId, B));
+    const page = await read<StoragePage>(w.deps, w.token, "/admin/storage");
+    expect(page.rows[1]).toEqual({
+      accountId: B, bytes: 200, updatedAt: ago(2 * HOUR).toISOString(),
+      emptiedForSpace: 7, lastEmptiedAt: ago(DAY).toISOString(), checkedAt: ago(2 * HOUR).toISOString(), drift: -40,
     });
   });
 

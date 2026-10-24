@@ -63,6 +63,9 @@ const RULED_TYPE: Record<string, string> = {
   PgBigInt53: "SQLiteInteger",
   PgBigInt64: "SQLiteCustomColumn",
   PgReal: "SQLiteReal",
+  /* A calendar day (mail 0166's `kept_from`) is its ISO 'YYYY-MM-DD' text on this store: the server's
+     `date` reads back as that same string, so both twins hand the code one shape. */
+  PgDateString: "SQLiteText",
   /* A `text[]` becomes a JSON array of strings, ruled for the 0.18 re-stack: this store has no
      array type, and the twin already rules jsonb the same way, so `piles` is stored and read the
      way every other list on the device is. The closed set stays in the migration on both stores. */
