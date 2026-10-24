@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, OhmailEngine } from "@ohmail/client-engine";
 import { AUTOSAVE_DELAY_MS } from "./compose-autosave";
+import { sendRecordNames } from "./send-lock";
 
 /** What the open reply editor would store — `null` while no reply editor is open. */
 export interface ReplyDraftForm {
@@ -56,6 +57,10 @@ export interface ReplyAutosave {
   baseline: (lane: string, row: ReplyRowFields) => void;
   /** The reply was delivered: the next reply to that message is a new one. */
   forget: (lane: string) => void;
+  /** The lane's send confirmed from `sentRow`: a create it took back too late is deleted when it lands. */
+  settled: (lane: string, sentRow: string | null) => void;
+  /** The lane's send was refused or withdrawn: a create it took back too late is the reply's row again. */
+  notSent: (lane: string) => void;
 }
 
 function signatureOf(f: ReplyDraftForm): string {
@@ -83,15 +88,28 @@ export function useReplyAutosave(
   /** The last form each lane showed, for the write its close owes. */
   const lastOf = useRef(new Map<string, ReplyDraftForm>());
   if (form !== null) lastOf.current.set(form.lane, form);
-  /** Per lane: the creates the outbox holds (answered `queued`, offline), by key — see `sending`. */
-  const waiting = useRef(new Map<string, Set<string>>());
+  /**
+   * Per lane: the creates the outbox holds (answered `queued`, offline), by key, with the words and
+   * the era they were made under. `held`: a Send took it back after it had left; that send decides.
+   */
+  const waiting = useRef(new Map<string, Map<string, { sig: string; at: number; held: boolean }>>());
+  /** Creates a confirmed send took back too late, by key, with the row that send went from. */
+  const doomed = useRef(new Map<string, { lane: string; sent: string | null }>());
+  const watchRef = useRef<() => void>(() => {});
   /** Lanes whose creates a send took back — owed a write again should that send be cancelled. */
   const taken = useRef(new Set<string>());
   /** Lanes whose send was cancelled after it took their creates back: the close's write may create. */
   const owed = useRef(new Set<string>());
-  const takeBack = useCallback((keys: Iterable<string>) => {
-    if (typeof engine.withdrawQueued !== "function") return;
-    for (const key of keys) void engine.withdrawQueued(key).catch(() => undefined);
+  /** Take a create back for a Send; one already on the wire is held for that send's ending. */
+  const holdBack = useCallback((lane: string, key: string) => {
+    const keys = waiting.current.get(lane);
+    const w = keys?.get(key);
+    if (keys === undefined || w === undefined) return;
+    w.held = true;
+    if (typeof engine.withdrawQueued !== "function") { keys.delete(key); return; }
+    void engine.withdrawQueued(key)
+      .then((said) => { if (said === "withdrawn") keys.delete(key); else resolveRef.current(); })
+      .catch(() => undefined);
   }, [engine]);
 
   /** Whether `f` is a write this lane may make now — asked when the pause is armed and when it ends. */
@@ -128,14 +146,21 @@ export function useReplyAutosave(
           await engine.mutate({ kind: "draft_discard", draftId: result.entityId });
         } else if (result.status === "queued") {
           taken.current.add(lane);
-          takeBack([result.key]);
+          const keys = waiting.current.get(lane) ?? new Map();
+          keys.set(result.key, { sig, at, held: true });
+          waiting.current.set(lane, keys);
+          watchRef.current();
+          holdBack(lane, result.key);
         }
         return;
       }
       /* A CREATE THE OUTBOX HOLDS (offline): no row to take until it lands, and the lane's send takes
          it back (`sending`). */
       if (row === null && result.status === "queued") {
-        waiting.current.set(lane, new Set([...(waiting.current.get(lane) ?? []), result.key]));
+        const keys = waiting.current.get(lane) ?? new Map();
+        keys.set(result.key, { sig, at, held: false });
+        waiting.current.set(lane, keys);
+        watchRef.current();
       }
       if (row === null && result.status === "confirmed" && result.entityId) doorsRef.current.took(lane, result.entityId);
       else if (row !== null) doorsRef.current.took(lane, row);
@@ -145,7 +170,7 @@ export function useReplyAutosave(
     } finally {
       inFlight.current.delete(lane);
     }
-  }, [engine, writable]);
+  }, [engine, writable, holdBack]);
 
   const signature = form === null ? null : signatureOf(form);
   const lane = form?.lane ?? null;
@@ -176,13 +201,12 @@ export function useReplyAutosave(
   }, []);
   const sending = useCallback((l: string) => {
     const keys = waiting.current.get(l);
-    if (keys === undefined) return;
-    waiting.current.delete(l);
+    if (keys === undefined || keys.size === 0) return;
     // No create holds these words for the account now: the send carries them.
     saved.current.delete(l);
     taken.current.add(l);
-    takeBack(keys);
-  }, [takeBack]);
+    for (const key of [...keys.keys()]) holdBack(l, key);
+  }, [holdBack]);
   const cancelled = useCallback((l: string) => {
     if (!taken.current.delete(l)) return;
     sealed.current.delete(l);
@@ -199,5 +223,70 @@ export function useReplyAutosave(
     taken.current.delete(l);
     owed.current.delete(l);
   }, []);
-  return { seal, sending, cancelled, baseline, forget };
+  const settled = useCallback((l: string, sentRow: string | null) => {
+    for (const [key, w] of waiting.current.get(l) ?? []) {
+      if (w.held) doomed.current.set(key, { lane: l, sent: sentRow });
+    }
+    resolveRef.current();
+  }, []);
+  const notSent = useCallback((l: string) => {
+    for (const w of waiting.current.get(l)?.values() ?? []) {
+      if (!w.held) continue;
+      w.held = false;
+      w.at = era.current.get(l) ?? 0;
+    }
+    resolveRef.current();
+  }, []);
+
+  /**
+   * A CREATE THE OUTBOX HELD HAS LANDED — on the reconnect flush, or a boot's replay, where no editor
+   * holds its result. The lane takes the row when it is the same reply, holds none and no Send went
+   * since; otherwise the row is a second copy and is deleted, unless a send record names it.
+   */
+  const remove = (lane: string, row: string): void => {
+    if (!sendRecordNames(lane, row, null)) void engine.mutate({ kind: "draft_discard", draftId: row });
+  };
+  const resolveRef = useRef<() => void>(() => {});
+  resolveRef.current = () => {
+    try { resolveCreates(); } finally { watchRef.current(); }
+  };
+  const resolveCreates = (): void => {
+    if (typeof engine.createdDraftOf !== "function") return;
+    for (const [key, d] of [...doomed.current]) {
+      const made = engine.createdDraftOf(key);
+      if (made === null) continue;
+      doomed.current.delete(key);
+      if (made.id !== d.sent) remove(d.lane, made.id);
+    }
+    for (const [lane, keys] of waiting.current) {
+      for (const [key, w] of [...keys]) {
+        if (w.held || doomed.current.has(key)) continue;
+        const made = engine.createdDraftOf(key);
+        if (made === null) continue;
+        const same = w.at === (era.current.get(lane) ?? 0);
+        if (same && doorsRef.current.rowOf(lane) === null && doorsRef.current.refuses(lane)) continue;
+        keys.delete(key);
+        const f = formRef.current?.lane === lane ? formRef.current : lastOf.current.get(lane) ?? null;
+        if (same && doorsRef.current.rowOf(lane) === null) {
+          doorsRef.current.took(lane, made.id);
+          saved.current.set(lane, w.sig);
+        } else {
+          remove(lane, made.id);
+          if (!same || doorsRef.current.rowOf(lane) === null) continue;
+          // The row the reply holds takes the newest words once.
+          saved.current.delete(lane);
+        }
+        if (f !== null && formRef.current?.lane === lane) void writeNow(f, false);
+      }
+    }
+  };
+  /* Subscribed only while a create waits or is doomed. */
+  const createsOff = useRef<(() => void) | null>(null);
+  const waits = (): boolean => doomed.current.size > 0 || [...waiting.current.values()].some((k) => k.size > 0);
+  watchRef.current = () => {
+    if (createsOff.current === null && waits()) createsOff.current = engine.subscribe(() => resolveRef.current());
+    else if (createsOff.current !== null && !waits()) { createsOff.current(); createsOff.current = null; }
+  };
+  useEffect(() => () => { createsOff.current?.(); createsOff.current = null; }, [engine]);
+  return { seal, sending, cancelled, baseline, forget, settled, notSent };
 }

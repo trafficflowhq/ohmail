@@ -53,6 +53,11 @@ async function scene(answer: (m: EngineMutation) => MutationRejectedError | null
       mutate: async (m: EngineMutation) => {
         const refusal = answer(m);
         if (refusal) throw refusal;
+        if (m.kind === "draft_save" && m.draftId === null) {
+          const id = `row-${++seq}`;
+          const entity = { ...draft(id), contentRevision: `rev-${id}` };
+          return { changes: [{ type: "draft", op: "create", id, seq, updatedAt: NOW, entity }], seq, entityId: id };
+        }
         return { changes: [], seq: null };
       },
     } as never,
@@ -109,5 +114,25 @@ describe("queuedChanges — every change waiting on the queue", () => {
     const after = engine.queuedChanges();
     expect(after, "a changed error kept the old snapshot").not.toBe(first);
     expect(after[0]?.error?.code).toBe("unavailable");
+  });
+
+  it("4 — a create confirmed on the reconnect flush names its row by key; an update names none", async () => {
+    let off = true;
+    const { engine } = await scene(() => (off ? offline() : null));
+    const create = await engine.mutate({
+      kind: "draft_save", draftId: null, mailboxId: "mb_1", subject: "Hi", body: "x", to: [], cc: [], bcc: [],
+    } as unknown as EngineMutation);
+    const update = await engine.mutate({
+      kind: "draft_save", draftId: "d1", mailboxId: "mb_1", subject: "Hi", body: "y", to: [], cc: [], bcc: [],
+    } as unknown as EngineMutation);
+    expect(engine.createdDraftOf(create.key), "a queued create named a row").toBeNull();
+    let heard = 0;
+    engine.subscribe(() => { heard += 1; });
+    off = false;
+    await engine.flushPending();
+    const made = engine.createdDraftOf(create.key);
+    expect(made, "the flushed create's row was not kept for its editor").toEqual({ id: expect.stringMatching(/^row-/), revision: `rev-${made?.id}` });
+    expect(engine.createdDraftOf(update.key), "an update was recorded as a create").toBeNull();
+    expect(heard, "nobody was told the row landed").toBeGreaterThan(0);
   });
 });

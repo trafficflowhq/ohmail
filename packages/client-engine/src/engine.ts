@@ -8764,6 +8764,9 @@ export class OhmailEngine {
       // Sweep the confirm's own drain-side reconcile (a real Sent row for an EARLIER send may have
       // just landed) and any expired copies, so the map cannot accumulate across a long session.
       this.reconcileOptimisticSent();
+      if (p.mutation.kind === "draft_save" && p.mutation.draftId === null && outcome.entityId) {
+        this.noteCreatedDraft(p.key, outcome.entityId, outcome.changes);
+      }
       this.overlayRev++;
       this.notify();
       // `entityId` rides the CONFIRMED result here. The queued arm below carries its own, taken
@@ -10607,6 +10610,25 @@ export class OhmailEngine {
    */
   drainsCompleted(): number {
     return this.drainsDone;
+  }
+
+  /**
+   * THE ROW A CONFIRMED `draft_save` CREATE MADE, by its key — on every road it confirmed by, the
+   * reconnect flush and a boot's replay included, where no surface holds the result. An editor
+   * whose create waited offline takes its row from here. Bounded, oldest dropped.
+   */
+  createdDraftOf(key: string): { id: string; revision: string | null } | null {
+    return this.createdDrafts.get(key) ?? null;
+  }
+
+  private readonly createdDrafts = new Map<string, { id: string; revision: string | null }>();
+
+  private noteCreatedDraft(key: string, id: string, changes: readonly SyncChange[]): void {
+    const echo = changes.find((c) => c.type === "draft" && c.id === id)?.entity as { contentRevision?: unknown } | null | undefined;
+    const revision = typeof echo?.contentRevision === "string" && echo.contentRevision !== "" ? echo.contentRevision : null;
+    this.createdDrafts.delete(key);
+    this.createdDrafts.set(key, { id, revision });
+    while (this.createdDrafts.size > 64) this.createdDrafts.delete(this.createdDrafts.keys().next().value!);
   }
 
   /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */
