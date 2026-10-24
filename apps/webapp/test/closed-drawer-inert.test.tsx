@@ -37,7 +37,14 @@ function offCanvasSelectors(css: string): string[] {
 }
 
 /** Each parked surface, and the fact the case below proves about it. */
-const PARKED: Record<string, string> = { ".deck > .rail": "the navigation drawer (RailNav's inert)" };
+const PARKED: Record<string, string> = {
+  ".deck > .rail": "the navigation drawer (RailNav's inert)",
+  ".tm-tip": "the thread squares' chip (aria-hidden, pointer-events none, nothing focusable)",
+};
+
+/** The declarations of `selector`'s own rule in `css`. */
+const ruleOf = (css: string, selector: string): string =>
+  [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]+)\{([^{}]*)\}/g)].find((m) => m[1]!.trim() === selector)?.[2] ?? "";
 
 let roots: Root[] = [];
 let wide = false;
@@ -139,6 +146,30 @@ describe("the census: a surface parked off canvas says what makes it inert", () 
 
   it("every off-canvas rule is one this file names, and every name is still a rule", () => {
     expect([...new Set(found)].sort()).toEqual(Object.keys(PARKED).sort());
+  });
+
+  it("the thread squares' chip, where it stands before it is placed, is no Tab stop, no name and no target", async () => {
+    const { ThreadTip } = await import("../app/shell/ThreadMarks.js");
+    const style = document.createElement("style");
+    style.textContent = `.tm-tip{${ruleOf(read("../app/app.css"), ".tm-tip")}}`;
+    document.head.appendChild(style);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    const m = {
+      id: "p1", threadId: "T", subject: "Q3 plan", from: { name: "Lena", address: "lena@example.invalid" },
+      date: "2026-10-22T09:00:00.000Z", unread: true, folder: "INBOX",
+    } as unknown as Parameters<typeof ThreadTip>[0]["m"];
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: h(ThreadTip, { m, place: "left" }) }));
+    });
+    const chip = document.querySelector<HTMLElement>(".tm-tip")!;
+    expect(chip.textContent, "the chip did not render").toMatch(/^Lena/);
+    expect(chip.getAttribute("aria-hidden"), "the chip is named to assistive tech").toBe("true");
+    expect(stops().filter((s) => chip.contains(s)), "Tab stops inside the chip").toEqual([]);
+    expect(getComputedStyle(chip).pointerEvents, "the chip takes the pointer").toBe("none");
+    style.remove();
   });
 });
 

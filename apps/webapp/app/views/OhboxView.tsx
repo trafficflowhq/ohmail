@@ -17,6 +17,8 @@ import {
 } from "@ohmail/client-engine";
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../shell/reader-seen";
+import { createThreadWalkChannel } from "../shell/thread-walk-channel";
+import { ThreadStrip } from "../shell/ThreadStrip";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -192,6 +194,7 @@ export function OhboxView({
   onHoldRow,
   onThreadRead,
   threadMarksOf,
+  conversationOf,
   readerId,
   readSetFor,
   undoLink,
@@ -337,6 +340,12 @@ export function OhboxView({
    * way {@link threadParticipants} is. Absent, the rows draw no squares.
    */
   threadMarksOf?: (threadId: string) => readonly ThreadMark[] | undefined;
+  /**
+   * THE CONVERSATION AS IT STANDS — the shell's `conversationOf`, the reader's own panels. The open
+   * row's strip draws its squares from it, so a reply or a read change after the reader closed shows
+   * there as on the row's marks. Absent, the strip draws what the reader last published.
+   */
+  conversationOf?: (messageId: string) => readonly EngineMessage[];
   /**
    * THE READER'S MARK AS READ SET — the shell's `conversationReadSet` over the presented mirror:
    * the unread members of the conversation on screen. Required, no default: the read slot's face
@@ -1938,9 +1947,42 @@ export function OhboxView({
     markSeenRef.current([id], true);
   }, [markUnread, returnToNew]);
   const record = selected ? recordIn(visit, selected) : null;
+  /**
+   * THE CONVERSATION'S PLACE, shared by the reader's squares and its list row's strip
+   * (`thread-walk-channel.ts`). One for the view's life; the reader (column or sheet) publishes to
+   * it. It outlives the reader — closed, the row keeps its ring where the person stopped — and is
+   * cleared once another conversation is chosen.
+   */
+  const [walk] = useState(createThreadWalkChannel);
+  useEffect(() => {
+    const s = walk.get();
+    if (selectedId !== null && s !== null && !s.messages.some((m) => m.id === selectedId)) walk.clear();
+  }, [selectedId, walk]);
+  /** A press on the strip with no reader on screen: the row's own open (its target), the press then pending. */
+  const stripOpen = (target: EngineMessage): void => {
+    if (readColumnHidden()) {
+      open(target);
+    } else {
+      selectByUser(target.id);
+      enter(target);
+    }
+  };
+  /**
+   * A conversation's row carries the strip, drawn while the walked conversation is this row's. Its
+   * squares are the conversation as it stands (`conversationOf`), asked again when the row's own
+   * marks change; only the place comes from the walk.
+   */
+  const followOf = (members: readonly EngineMessage[], target: EngineMessage, threadId: string | null | undefined): ReactNode =>
+    <ThreadStrip
+      channel={walk}
+      members={members.map((m) => m.id)}
+      onOpen={() => stripOpen(target)}
+      conversationOf={conversationOf}
+      marks={marksOf(threadId).marks}
+    />;
   const wiring = useMemo<ThreadReadWiring | null>(
-    () => (record ? { record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread } : null),
-    [record, readByRule, enterSelected, markPanelUnread],
+    () => (record ? { record, onRead: readByRule, onEnter: enterSelected, onMarkUnread: markPanelUnread, walk } : null),
+    [record, readByRule, enterSelected, markPanelUnread, walk],
   );
   const onThreadReadRef = useRef(onThreadRead);
   onThreadReadRef.current = onThreadRead;
@@ -2018,6 +2060,7 @@ export function OhboxView({
          for sighted mouse users and nobody else. See `MessageRow`. */
       picked={pickState(picked.has(m.id))}
       actions={actions}
+      follow={marksOf(m.threadId).marks ? followOf([m], m, m.threadId) : undefined}
       onClick={() => {
         if (readColumnHidden() && picked.size > 0) {
           /* THE LIST-SELECTION CONTRACT, and both platforms have it: once a selection exists,
@@ -2192,6 +2235,7 @@ export function OhboxView({
         tags={tagsOfMessage(target, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
         picked={pickState(g.members.every((m) => picked.has(m.id)))}
         actions={actions}
+        follow={followOf(g.members, target, g.key)}
         onClick={() => {
           if (readColumnHidden() && picked.size > 0) {
             // The same contract as the singleton row above — and a folded row toggles all of

@@ -5943,11 +5943,21 @@ input.set-tag-input {
 /* The column of squares: the reading column's sibling, laid over the conversation's own left
    padding (the column's grid area is the conversation's box), so it never covers a panel and no
    scroll moves it. Sticky inside the scroller, WebKitGTK drew it a frame apart from the scroll.
-   Thin below a 560px conversation. */
+   THE EVEN SEAM (owner 2026-10-24): in the split view the squares stand on an 18px rail (the ring's
+   width), one tile gap from the list's edge and one from the paper — 10 | 18 | 10 in ohmarchy,
+   16 | 18 | 16 in paper — at every width; the conversation's padding is the rail and one gap. The
+   press area is that padding (rail and gap): the gap beside the list is the column handle's.
+   A conversation under 560px only packs its slots closer (30, from 24). The reader sheet keeps its
+   34px (22px thin) bar. */
 .conv[data-thread-read] {
   padding-left: 34px;
 }
-.view.split:has(> .thread-marks[data-narrow]) > .read-col > .conv[data-thread-read],
+.view.split {
+  --tm-rail: 18px;
+}
+.view.split > .read-col > .conv[data-thread-read] {
+  padding-left: calc(var(--tm-rail) + var(--gap-tile));
+}
 .conv:has(> .thread-marks[data-narrow]) {
   padding-left: 22px;
 }
@@ -5990,8 +6000,11 @@ input.set-tag-input {
 .tm-bar::-webkit-scrollbar {
   display: none;
 }
-.thread-marks[data-narrow] .tm-bar {
+.conv > .thread-marks[data-narrow] > .tm-bar {
   width: 22px;
+}
+.view.split > .thread-marks > .tm-bar {
+  width: calc(var(--tm-rail) + var(--gap-tile));
 }
 .tm-mb {
   position: relative;
@@ -6010,13 +6023,39 @@ input.set-tag-input {
   min-height: 16px;
 }
 .tm-mb > .tm-sq,
-.tm-mb::after {
+.tm-mb::after,
+.tm-mb::before {
   grid-area: 1 / 1;
 }
 .tm-mb:hover {
   background: var(--tint);
 }
 .tm-mb:focus-visible {
+  outline-offset: -2px;
+}
+/* Beside the reader the button is the press area (rail + gap); the hover tint and the focus ring
+   stand on the rail alone, where the square is. */
+.view.split > .thread-marks .tm-mb {
+  grid-template-columns: var(--tm-rail) minmax(0, 1fr);
+}
+.view.split > .thread-marks .tm-mb::before {
+  content: "";
+  align-self: stretch;
+  justify-self: stretch;
+  pointer-events: none;
+  border-radius: var(--r-ctl);
+}
+.view.split > .thread-marks .tm-mb:hover {
+  background: none;
+}
+.view.split > .thread-marks .tm-mb:hover::before {
+  background: var(--tint);
+}
+.view.split > .thread-marks .tm-mb:focus-visible {
+  outline: none;
+}
+.view.split > .thread-marks .tm-mb:focus-visible::before {
+  outline: var(--focus-w) solid var(--accent);
   outline-offset: -2px;
 }
 /* The message most in view: a quiet neutral ring — never the accent, which means new. It switches
@@ -6028,6 +6067,7 @@ input.set-tag-input {
   content: "";
   width: 18px;
   height: 18px;
+  border-radius: calc(var(--r-ctl) * 4 / 8);
   box-shadow: inset 0 0 0 1.5px var(--ink3);
   opacity: 0;
   pointer-events: none;
@@ -6040,6 +6080,7 @@ input.set-tag-input {
   display: block;
   width: 10px;
   height: 10px;
+  border-radius: calc(var(--r-ctl) * 2 / 8);
   background: var(--accent);
   transition: opacity 850ms cubic-bezier(.22, .61, .36, 1);
 }
@@ -6054,6 +6095,75 @@ input.set-tag-input {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--accent);
   opacity: var(--mark-mine);
+}
+/* THE OPEN CONVERSATION'S ROW carries the same squares under its preview (`ThreadStrip`, in the
+   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring, the first square
+   where the row's own 8px squares stood; past the row's width it scrolls sideways, no bar, so the
+   row grows in height only and no column moves. */
+.tm-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: -4px 0 0;
+  padding: 0 14px 10px 9px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+.tm-strip::-webkit-scrollbar {
+  display: none;
+}
+.tm-strip .tm-mb {
+  flex: 0 1 20px;
+  min-width: 16px;
+  width: auto;
+  height: 20px;
+  min-height: 0;
+}
+/* THE CHIP (o9): the sender and the stamp of the square the pointer rests on or keyboard focus
+   holds. One fixed box in the body (the column and the list clip their overflow), placed by
+   `tipAt`: beside the reader its right edge 6px before the rail, over the list's gap and the open
+   row's end, never over message text; under the row's strip it hangs 4px below the square, inside
+   the list column; in the reader sheet it follows the bar, on keyboard focus only. */
+.tm-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-fr);
+  translate: -100% -50%;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 2px 8px;
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 18px;
+  color: var(--ink);
+  background: var(--float);
+  box-shadow: var(--lift-2);
+  border-radius: var(--r-ctl);
+  animation: tm-tip-in .12s var(--swift);
+}
+.tm-tip b {
+  font-weight: 600;
+}
+.tm-tip span {
+  color: var(--ink3);
+}
+.tm-tip[data-place="right"] {
+  translate: 0 -50%;
+}
+.tm-tip[data-place="under"] {
+  translate: 0 0;
+}
+@keyframes tm-tip-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tm-tip {
+    animation: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .conv[data-thread-read] > article.pm,

@@ -141,6 +141,9 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "[role=\"dialog\"], [role=\"alertdialog\"], [role=\"menu\"]", why: "a CSS selector — what counts as a layer above the deck" },
     { text: "{} button:not([disabled])", why: "a CSS selector, composed per zone" },
   ],
+  "apps/webapp/app/shell/ThreadMarks.tsx": [
+    { text: ":focus-visible", why: "a CSS selector — `Element.matches` asks whether a square's focus came from the keyboard" },
+  ],
   "apps/webapp/app/components/ComposeAttach.tsx": [
     { text: "read failed", why: "the reason on a rejected FileReader, logged and re-thrown — never rendered" },
   ],
