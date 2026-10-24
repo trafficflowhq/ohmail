@@ -1727,7 +1727,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, parkSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1946,7 +1946,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
-    readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+    parkSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });

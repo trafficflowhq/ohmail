@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FOLDER_OF_VIEW, ohboxRows, ownFaceOfRow, resurfacedFocus, rowOpenTarget, triageSubjectIds,
+  FOLDER_OF_VIEW, parkSubjectIds, ohboxRows, ownFaceOfRow, resurfacedFocus, rowOpenTarget, triageSubjectIds,
   type EngineMessage, type EntityReader, type MessageStateDTO, type OhboxRow,
 } from "@ohmail/client-engine";
 
@@ -176,5 +176,47 @@ describe("ownFaceOfRow: our reply facing the row a message stands for", () => {
   });
   it("our reply the only unread member: the letter's row is still faced by our reply", () => {
     expect(ownFaceOfRow(readerOf([letter, { ...reply, unread: true }]), letter)?.id).toBe("r2");
+  });
+});
+
+describe("parkSubjectIds: what a Park on a row's message files", () => {
+  const kai = msg({ id: "b2", at: "2026-09-20T08:30:00.000Z", from: KAI });
+  const parked = msg({
+    id: "c0", at: "2026-09-20T07:00:00.000Z",
+    triage: { messageId: "c0", state: "set_aside", bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT },
+  });
+
+  it("a conversation with two members in the Ohbox and one parked: both Ohbox members, from either", () => {
+    const reader = readerOf([parked, letter, kai]);
+    expect(parkSubjectIds(reader, "b2").sort()).toEqual(["a1", "b2"]);
+    expect(parkSubjectIds(reader, "a1").sort()).toEqual(["a1", "b2"]);
+  });
+  it("an answered row: every member, our reply too, so the row leaves", () => {
+    expect(parkSubjectIds(readerOf([letter, reply]), "a1").sort()).toEqual(["a1", "r2"]);
+    const kai3 = msg({ id: "b3", at: "2026-09-20T10:00:00.000Z", from: KAI });
+    expect(parkSubjectIds(readerOf([letter, reply, kai3]), "b3").sort()).toEqual(["a1", "b3", "r2"]);
+  });
+  it("a Resurfaced row: never a member filed in a pile or another folder", () => {
+    const archived = msg({ id: "o1", at: "2026-09-20T06:00:00.000Z", folder: "Archive" as EngineMessage["folder"] });
+    const later = msg({
+      id: "l2", at: "2026-09-20T07:30:00.000Z",
+      triage: { messageId: "l2", state: "reply_later", bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT },
+    });
+    const p3 = pinned(msg({ id: "p3", at: "2026-09-20T09:30:00.000Z", from: KAI }));
+    const reader = readerOf([archived, later, p3]);
+    expect(rowFor(reader, "T").members.map((m) => m.id).sort(), "the premise").toEqual(["l2", "o1", "p3"]);
+    expect(parkSubjectIds(reader, "p3")).toEqual(["p3"]);
+    expect(parkSubjectIds(reader, "o1"), "pressed on the archived member: itself").toEqual(["o1"]);
+  });
+  it("a parked message: every parked member of its conversation, nothing standing beside it", () => {
+    const p3 = pinned(msg({ id: "p3", at: "2026-09-20T09:30:00.000Z", from: KAI }));
+    expect(parkSubjectIds(readerOf([parked, p3]), "c0")).toEqual(["c0"]);
+    const parked2 = { ...kai, triage: { messageId: "b2", state: "set_aside" as const, bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT } };
+    expect(parkSubjectIds(readerOf([parked, letter, parked2]), "b2").sort()).toEqual(["b2", "c0"]);
+  });
+  it("a message no Ohbox row holds, a lone message, an unknown id: itself", () => {
+    expect(parkSubjectIds(readerOf([parked, letter, kai]), "c0")).toEqual(["c0"]);
+    expect(parkSubjectIds(readerOf([msg({ id: "s1", at: SET_AT, threadId: null })]), "s1")).toEqual(["s1"]);
+    expect(parkSubjectIds(readerOf([letter]), "gone")).toEqual(["gone"]);
   });
 });

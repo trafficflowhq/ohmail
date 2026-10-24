@@ -6,13 +6,17 @@ import {
   isOwnSent,
   newestFromSomeone,
   ohboxView,
+  pileOfState,
   resurfacedFocus,
   resurfacedThreads,
+  threadOf,
+  winningStates,
   type ResurfacedThreadRow,
 } from "./selectors.js";
+import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { isHeldFolder } from "@trafficflow/core/destinations";
 import type { EntityReader } from "./store.js";
-import type { EngineMessage } from "./types.js";
+import { FOLDER_OF_VIEW, type EngineMessage } from "./types.js";
 
 /*
  * ONE ROW PER CONVERSATION, ACROSS SECTIONS (owner 2026-09-28). The Ohbox draws a conversation at
@@ -190,6 +194,39 @@ export function triageSubjectIds(reader: EntityReader, ids: readonly string[]): 
     const m = rows[i];
     return m === undefined || isFromSomeone(m) || !lettered.has(conversationKeyOf(m));
   });
+}
+
+/**
+ * What a Park on `messageId` files. Standing in an Ohbox row: every member of it that stands in the
+ * Ohbox, our own reply included, so the row leaves (a Resurfaced row's pins, and its INBOX and own Sent
+ * members not filed in a pile). Parked: every parked member of its conversation, so the un-press
+ * mirrors the press. In another pile, in no row, or unknown to the reader: itself.
+ */
+export function parkSubjectIds(
+  reader: EntityReader, messageId: string, openHeld: string | null = null,
+): string[] {
+  const m = reader.get<EngineMessage>("message", messageId);
+  if (!m) return [messageId];
+  const claims = winningStates(reader);
+  const stateOf = (x: EngineMessage): string | undefined => claims.get(x.id)?.state ?? x.triage?.state;
+  if (stateOf(m) === "set_aside") {
+    const rest = threadOf(reader, messageId).filter((x) => x.id !== messageId && stateOf(x) === "set_aside");
+    return [messageId, ...rest.map((x) => x.id)];
+  }
+  if (pileOfState(stateOf(m) ?? "")) return [messageId];
+  const key = conversationKeyOf(m);
+  const rows = ohboxRows(reader, openHeld);
+  for (const section of SECTIONS) {
+    const row = rows[section].find((r) => r.key === key);
+    if (!row || !row.members.some((x) => x.id === messageId)) continue;
+    const pins = new Set((row.resurfaced?.pinned ?? []).map((x) => x.id));
+    const inbox = canonicalDestination(FOLDER_OF_VIEW.ohbox);
+    const standing = row.members.filter((x) => pins.has(x.id) || (
+      !pileOfState(stateOf(x) ?? "") && (isOwnSent(x) || canonicalDestination(x.folder) === inbox)
+    )).map((x) => x.id);
+    return standing.includes(messageId) ? standing : [messageId];
+  }
+  return [messageId];
 }
 
 /**

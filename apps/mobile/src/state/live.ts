@@ -118,6 +118,7 @@ import {
   threadMarksIndex,
   resurfacedThreads,
   ohboxRows,
+  parkSubjectIds,
   rowOpenTarget,
   threadSubject,
   type OhboxRow,
@@ -4465,8 +4466,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     say: RefusalArg,
     bubbleUpAt?: string,
     members?: readonly string[],
+    own = false,
   ): Promise<boolean> => {
-    const ms: EngineMutation[] = membersOf(messageId, members)
+    const ms: EngineMutation[] = membersOf(messageId, members, { own })
       .map((id) => ({ kind: "triage_set", messageId: id, state, ...(bubbleUpAt ? { bubbleUpAt } : {}) }));
     /* THE SENTENCE IS PAINTED BEFORE THE MIRROR MOVES. `mutate()` publishes before its first
        await, so spoken in the same turn the pill's state and the mirror's change land in ONE
@@ -4492,13 +4494,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   ): Promise<boolean> => {
     const state = kind === "replyLater" ? "reply_later" : "set_aside";
     const reader = engine.read();
-    const targets = membersOf(messageId, members).filter((id) => messageOf(id) !== undefined);
+    // A Park takes the Ohbox row, my reply too, and its un-press every parked member (`parkSubjectIds`).
+    const row = kind === "setAside" && members === undefined
+      ? parkSubjectIds(presentedReader(), messageId, engine.openRowHeld()) : [];
+    const own = row.length > 1;
+    const targets = membersOf(messageId, own ? row : members, { own }).filter((id) => messageOf(id) !== undefined);
     if (targets.length === 0) return false;
     const holds = (id: string) => triageStateOf(reader, messageOf(id)!) === state;
     const off = targets.every(holds);
     const changed = off ? targets : targets.filter((id) => !holds(id));
     const say = refuse(kind === "replyLater" ? (off ? "toastUnqueued" : "toastQueued") : (off ? "toastUnparked" : "toastAside"));
-    return triage(changed[0]!, off ? "none" : state, say, undefined, changed);
+    return triage(changed[0]!, off ? "none" : state, say, undefined, changed, own);
   };
 
   const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>

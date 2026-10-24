@@ -208,7 +208,8 @@ describe("the shown message is decided once per open: every remount after the ro
         await act(p, w0, open);
         const w1 = p.world();
         const row = threadRow(p.engine);
-        expect(row?.members.includes("a1"), "the premise: the verb took a1 out of its row").toBe(false);
+        // Set aside parks the whole row (a0 with a1), so no row is left to ask.
+        expect(row?.members.includes("a1") ?? false, "the premise: the verb took a1 out of its row").toBe(false);
         expect(row?.target, "the premise: asked again, the row would open at another member").not.toBe("a1");
         expect(shownAt(w1, remounts(w1, open))).toEqual(all(remounts(w1, open), "a1"));
       });
@@ -261,22 +262,27 @@ describe("an answered conversation, all read: the row stands for the letter", ()
     expect(threadRow(p.engine)?.target).toBe("a1");
   });
 
-  for (const [verb, posts, pile] of [
-    ["Later", "triage_set:a1:reply_later", "replyLater"],
-    ["Set aside", "triage_set:a1:set_aside", "setAside"],
+  // Set aside is Park: it takes the whole row, our reply too, so the row leaves the Ohbox.
+  for (const [verb, ids, pile] of [
+    ["Later", ["a1"], "replyLater"],
+    ["Set aside", ["a1", "x2"], "setAside"],
     ["Junk", null, null],
   ] as const) {
-    it(`the reader's ${verb}, pressed on what the row opened, acts on the letter`, async () => {
+    it(`the reader's ${verb}, pressed on what the row opened, acts on ${ids?.length === 2 ? "the row" : "the letter"}`, async () => {
       const p = await phone(answered());
       const w0 = p.world();
       const open = press(w0, "a1");
       await p.actions.openMessage(open);
       p.posted.length = 0;
       await VERBS[verb]!(p, w0, open);
-      expect(p.posted.some((x) => x.includes("x2")), `nothing acts on our reply: ${p.posted.join(" ")}`).toBe(false);
-      if (posts) expect(p.posted).toEqual([posts]);
-      else expect(p.posted.some((x) => x.includes("a1")), `the letter moved: ${p.posted.join(" ")}`).toBe(true);
-      if (pile) expect(triagePiles(p.engine.read())[pile].map((e) => e.messageId)).toEqual(["a1"]);
+      if (pile) {
+        const state = pile === "replyLater" ? "reply_later" : "set_aside";
+        expect([...p.posted].sort()).toEqual(ids!.map((id) => `triage_set:${id}:${state}`));
+        expect(triagePiles(p.engine.read())[pile].map((e) => e.messageId).sort()).toEqual([...ids!]);
+      } else {
+        expect(p.posted.some((x) => x.includes("x2")), `nothing acts on our reply: ${p.posted.join(" ")}`).toBe(false);
+        expect(p.posted.some((x) => x.includes("a1")), `the letter moved: ${p.posted.join(" ")}`).toBe(true);
+      }
     });
   }
 

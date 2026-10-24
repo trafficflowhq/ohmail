@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import type { useTranslations } from "next-intl";
 import {
   isResurfaced,
+  parkSubjectIds,
   ownFaceOfRow,
   rowOpenTarget,
   senderKey,
@@ -595,6 +596,9 @@ export function useShellOpenState({
   const readSetMemo = useMemo(() => createReadSetMemo(), []);
   const readSetFor = useStableCallback((messageId: string): string[] =>
     readSetMemo(presented, engine.read(), messageId));
+  /** What a Park on a message files (`parkSubjectIds`): its Ohbox row, or a parked one's parked conversation. */
+  const parkSetFor = useStableCallback((messageId: string): string[] =>
+    parkSubjectIds(presented, messageId, engine.openRowHeld()));
   /**
    * The sheet's message, with read state as the list behind it draws it (`presentsUnread`): a
    * RESURFACED message reads unread whatever its stored flag says (owner ruling 2026-08-31), so the
@@ -1321,6 +1325,7 @@ export function useShellOpenState({
   return {
     forwardTargetFor,
     ownFaceFor,
+    parkSetFor,
     selectOhboxRow,
     absoluteTime,
     barPanel,

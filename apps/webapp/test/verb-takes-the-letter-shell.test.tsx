@@ -10,7 +10,8 @@ import en from "../messages/en.json";
  * shell and the real engine. `a1` is Lena's letter, read; `x2` is our own newer reply, so the row
  * wears the reply. Every triage verb on the row (the keys, the bar, the sheet, the palette, a pick,
  * a drag) sends one `POST /messages/a1/triage` and nothing for `x2`. Standing for its face, the row
- * filed our reply and left the letter in the Ohbox.
+ * filed our reply and left the letter in the Ohbox. Park is the exception: it takes the whole row, our
+ * reply too, so the row leaves the Ohbox.
  */
 
 const ME = "walker@example.invalid";
@@ -71,6 +72,7 @@ const triagePosts = (): Array<[string, string]> => {
     return [[decodeURIComponent(m[1]!), (JSON.parse(String(init!.body)) as { state: string }).state] as [string, string]];
   });
 };
+const sortedPosts = (): Array<[string, string]> => [...triagePosts()].sort((x, y) => (x.join() < y.join() ? -1 : 1));
 /** Every tag write the engine sent: "<message id> <body>". */
 const tagPosts = (): string[] => {
   const calls = (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit?]> } }).mock.calls;
@@ -151,11 +153,12 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(listed).not.toContain("x2");
   }, 60_000);
 
-  it("`e` parks the letter", async () => {
+  it("`e` parks the letter and our reply, so the row leaves", async () => {
     const host = await mount(answered());
     await click(theRow(host));
     await key("e");
-    expect(triagePosts()).toEqual([["a1", "set_aside"]]);
+    expect(sortedPosts()).toEqual([["a1", "set_aside"], ["x2", "set_aside"]]);
+    expect(rows(host)).toEqual([]);
   }, 60_000);
 
   it("opened, the bar's Later acts on the letter, which is the focused panel", async () => {
@@ -166,11 +169,11 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(triagePosts()).toEqual([["a1", "reply_later"]]);
   }, 60_000);
 
-  it("opened, the bar's Park acts on the letter", async () => {
+  it("opened, the bar's Park parks the letter and our reply", async () => {
     const host = await mount(answered());
     await openRow(host);
     await click(bar(host, "abar-aside"));
-    expect(triagePosts()).toEqual([["a1", "set_aside"]]);
+    expect(sortedPosts()).toEqual([["a1", "set_aside"], ["x2", "set_aside"]]);
   }, 60_000);
 
   it("opened, the bar's Resurface Tomorrow acts on the letter", async () => {
@@ -352,6 +355,95 @@ describe("the cursor lands on a row's target, never on a member it does not stan
     expect(selRow(host)).toBe("a1");
     await key("a");
     expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+  }, 60_000);
+});
+
+describe("Park on a conversation's row parks the row", () => {
+  /** T: Lena's a1 and Kai's newer b2 in the Ohbox, c0 parked before; z9 a lone letter below. */
+  const AT_PARK = { setAt: ISO, updatedAt: ISO, bubbleUpAt: null };
+  const conversation = () => [
+    consent(LENA.address), consent(KAI.address),
+    message("c0", "2026-08-03T07:00:00.000Z", { triage: { messageId: "c0", state: "set_aside", ...AT_PARK } }),
+    message("a1", OLDER), message("b2", NEWER, { from: KAI, subject: "Re: Q3 plan" }),
+    thread("T", ["c0", "a1", "b2"]),
+    message("z9", "2026-08-02T08:00:00.000Z", { threadId: "Z", subject: "Garden" }),
+  ];
+  const sorted = sortedPosts;
+
+  it("`e` parks both Ohbox members, the row leaves and the selection moves on; `z` brings both back", async () => {
+    const host = await mount(conversation());
+    expect(rows(host).map((r) => r.dataset.id)).toEqual(["b2", "z9"]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(sorted()).toEqual([["a1", "set_aside"], ["b2", "set_aside"]]);
+    expect(rows(host).map((r) => r.dataset.id), "the row left the Ohbox").toEqual(["z9"]);
+    expect(selRow(host)).toBe("z9");
+    await key("z");
+    expect(sorted().filter(([, s]) => s === "none")).toEqual([["a1", "none"], ["b2", "none"]]);
+    expect(rows(host).map((r) => r.dataset.id), "the row is back").toEqual(["b2", "z9"]);
+  }, 60_000);
+
+  it("opened, the bar's Park parks both Ohbox members", async () => {
+    const host = await mount(conversation());
+    await openRow(host);
+    await click(bar(host, "abar-aside"));
+    expect(sorted()).toEqual([["a1", "set_aside"], ["b2", "set_aside"]]);
+  }, 60_000);
+
+  it("answered between two letters: `e` parks all three, the row leaves; `z` brings all three back", async () => {
+    const host = await mount([
+      consent(LENA.address), consent(KAI.address),
+      message("a1", OLDER), message("x2", NEWER, OURS),
+      message("b3", "2026-08-03T10:00:00.000Z", { from: KAI, subject: "Re: Q3 plan" }),
+      thread("T", ["a1", "x2", "b3"]),
+      message("z9", "2026-08-02T08:00:00.000Z", { threadId: "Z", subject: "Garden" }),
+    ]);
+    expect(rows(host).map((r) => r.dataset.id)).toEqual(["b3", "z9"]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(sorted()).toEqual([["a1", "set_aside"], ["b3", "set_aside"], ["x2", "set_aside"]]);
+    expect(rows(host).map((r) => r.dataset.id), "the row left the Ohbox").toEqual(["z9"]);
+    expect(selRow(host)).toBe("z9");
+    await key("z");
+    expect(sorted().filter(([, s]) => s === "none")).toEqual([["a1", "none"], ["b3", "none"], ["x2", "none"]]);
+    expect(rows(host).map((r) => r.dataset.id), "the row is back").toEqual(["b3", "z9"]);
+  }, 60_000);
+
+  it("a Resurfaced row: `e` parks the resurfaced letter, never a member filed elsewhere", async () => {
+    const host = await mount([
+      consent(LENA.address), consent(KAI.address),
+      message("o1", "2026-08-03T06:00:00.000Z", { folder: "Archive" }),
+      message("l2", OLDER, { triage: { messageId: "l2", state: "reply_later", ...AT_PARK } }),
+      message("p3", NEWER, { from: KAI, subject: "Re: Q3 plan", triage: { messageId: "p3", state: "resurfaced", ...AT_PARK } }),
+      thread("T", ["o1", "l2", "p3"]),
+    ]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(triagePosts()).toEqual([["p3", "set_aside"]]);
+  }, 60_000);
+
+  it("in Parked, `e` on a parked member of a Resurfaced conversation unparks it alone", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount([
+      consent(LENA.address), consent(KAI.address),
+      message("c0", OLDER, { triage: { messageId: "c0", state: "set_aside", ...AT_PARK } }),
+      message("p3", NEWER, { from: KAI, subject: "Re: Q3 plan", triage: { messageId: "p3", state: "resurfaced", ...AT_PARK } }),
+      thread("T", ["c0", "p3"]),
+    ]);
+    const c0 = rows(host).find((r) => r.dataset.id === "c0");
+    expect(c0, "c0 listed in Parked").toBeTruthy();
+    await click(c0!);
+    await key("e");
+    expect(triagePosts()).toEqual([["c0", "none"]]);
+  }, 60_000);
+
+  it("CONTROL: a lone message's `e` parks it alone, and `z` brings it back", async () => {
+    const host = await mount(conversation());
+    await click(rows(host)[1]!);
+    await key("e");
+    expect(triagePosts()).toEqual([["z9", "set_aside"]]);
+    await key("z");
+    expect(triagePosts()).toEqual([["z9", "set_aside"], ["z9", "none"]]);
   }, 60_000);
 });
 

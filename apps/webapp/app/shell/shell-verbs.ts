@@ -180,6 +180,8 @@ export interface ShellVerbsInput {
   offOhbox?: boolean;
   /** Our own reply facing the Ohbox row a message was selected on, decided at the press: Move seeds from it. */
   ownFaceFor?: ShellOpenState["ownFaceFor"];
+  /** What a Park files: the row the message stands in (`parkSubjectIds`), read in the Ohbox only (`offOhbox`). */
+  parkSetFor?: ShellOpenState["parkSetFor"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
   readerFor: ShellOpenState["readerFor"];
   setReaderFor: ShellOpenState["setReaderFor"];
@@ -209,7 +211,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, parkSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -1103,8 +1105,19 @@ export function useShellVerbs({
             );
           }
           break;
-        case "aside":
-          if (m.triage?.state === "set_aside") {
+        case "aside": {
+          /* Park takes the Ohbox row, our reply too, so the row leaves; its un-press, every parked member. */
+          const set = (offOhbox ? undefined : parkSetFor?.(m.id)) ?? [];
+          if (set.length > 1) {
+            const parked = (id: string) => rowOf(id)?.triage?.state === "set_aside";
+            const off = set.every(parked);
+            void mutateSetAndReport(
+              set.filter((id) => off || !parked(id)).map((messageId) => ({
+                kind: "triage_set" as const, messageId, state: off ? "none" as const : "set_aside" as const,
+              })),
+              (applied) => (off ? t("ohbox.toastUnparked") : t("ohbox.toastBulkAside", { count: applied })),
+            );
+          } else if (m.triage?.state === "set_aside") {
             void mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, t("ohbox.toastUnparked"));
           } else {
             void mutateAndReport(
@@ -1113,6 +1126,7 @@ export function useShellVerbs({
             );
           }
           break;
+        }
         case "unread":
           /**
            * THE READ TOGGLE'S FALLBACK ARM, and it is deliberately not the normal path.
