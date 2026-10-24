@@ -705,7 +705,8 @@ export function OhboxView({
       verbTook.current = null;
       suspend(took);
     }
-    if (!acted || wasSel !== acted.id || selectedId != null) return;
+    // A delete drops the shell's selection; Park and Later keep it on the filed message (the mirror still holds it).
+    if (!acted || wasSel !== acted.id || (selectedId != null && selectedId !== acted.id)) return;
     if (ids.includes(acted.id)) return; // the verb left the row in place
     if (Date.now() - acted.at > ACTED_FRESH_MS) return;
     if (readColumnHidden()) return;
@@ -1053,7 +1054,8 @@ export function OhboxView({
   useEffect(() => {
     const s = suspended.current;
     if (!s || (selectedId === s.sel && readerId === s.reader0 && heldRow === s.held0)) return;
-    if (s.sel === null && selectedId !== null && selectedId === verbAdvance.current
+    // Delete clears the selection; Park and Later leave it on the acted row.
+    if ((s.sel === null || s.sel === s.id) && selectedId !== null && selectedId === verbAdvance.current
         && readerId === s.reader0 && heldRow === s.held0) {
       s.sel = selectedId;
       verbAdvance.current = null;

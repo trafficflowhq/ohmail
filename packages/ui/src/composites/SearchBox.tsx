@@ -59,7 +59,8 @@ export function SearchBox({
 
 export interface FacetGroup {
   title: string;
-  items: { label: string; count?: number }[];
+  /** `pressed`: this facet is the filter in force; pressing it again clears it. */
+  items: { label: string; count?: number; pressed?: boolean }[];
 }
 
 export interface FacetsProps {
@@ -68,7 +69,7 @@ export interface FacetsProps {
   className?: string;
 }
 
-/** The facet rail beside search results. */
+/** The facet rail beside search results. Each facet is a toggle button, so Tab, Enter and Space reach it. */
 export function Facets({ groups, onPick, className }: FacetsProps) {
   return (
     <aside className={className ? `facets ${className}` : "facets"}>
@@ -77,9 +78,11 @@ export function Facets({ groups, onPick, className }: FacetsProps) {
           <h4>{g.title}</h4>
           <ul>
             {g.items.map((it) => (
-              <li key={it.label} onClick={() => onPick?.(g.title, it.label)}>
-                {it.label}
-                {it.count !== undefined ? <span className="n">×{it.count}</span> : null}
+              <li key={it.label}>
+                <button type="button" aria-pressed={it.pressed === true} onClick={() => onPick?.(g.title, it.label)}>
+                  {it.label}
+                  {it.count !== undefined ? <span className="n">×{it.count}</span> : null}
+                </button>
               </li>
             ))}
           </ul>

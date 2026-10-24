@@ -241,6 +241,22 @@ describe("after a verb, on the shipped shell", () => {
     expect(container.textContent).not.toContain("Nothing open.");
   });
 
+  for (const [verb, k] of [["Park", "e"], ["Later", "a"]] as const) {
+    it(`the default ADVANCES after ${verb} (${k}) on the open row too`, async () => {
+      const { container } = await shell();
+      await key("j");
+      await waitFor(() => selId(container) != null, "the cursor to stand");
+      const first = selId(container)!;
+      await key(k);
+      await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
+      await waitFor(() => selId(container) != null && selId(container) !== first, "the selection to advance");
+      await settle();
+      expect(selId(container)).not.toBe(first);
+      expect(selId(container)).not.toBeNull();
+      expect(container.textContent).not.toContain("Nothing open.");
+    });
+  }
+
   it("`close` clears the selection back to the list", async () => {
     window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
     const { container } = await shell();

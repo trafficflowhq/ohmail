@@ -10,7 +10,7 @@
  * `{inReplyTo, body}` with `body` exactly what was typed (`http-adapter.ts` `mailSend`); no quoted
  * original leaves the account. The draft is an account row (`reply-autosave.ts`), kept locally too.
  */
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
 import { chordKeys, useBinding, useModGlyph } from "./keymap";
@@ -434,9 +434,12 @@ export function InlineReply({
    * (`envelope === null`) nothing changes: the wire carries the computed envelope byte-for-byte, and
    * `test/inline-reply.test.ts` pins the mutation's exact key set for that case.
    */
+  /** The head was pressed: the rows open with focus in To, or the removed button drops it on the list row. */
+  const focusTo = useRef(false);
   const expand = onEnvelope === undefined
     ? undefined
     : (): void => {
+        focusTo.current = true;
         // A forward derives NO audience — its rows open empty (the shell seeds them on open;
         // this is the bare-mount way in, and it must not smuggle the reply's derivation in).
         if (mode === "forward") {
@@ -677,6 +680,7 @@ export function InlineReply({
           book={book}
           disabled={inFlight}
           fromRow={fromRow}
+          focusTo={focusTo}
         />
       ) : expand ? (
         // The head IS the way in: pressing the audience opens it for editing. A button and
@@ -1016,6 +1020,7 @@ function ReplyRecipients({
   book,
   disabled,
   fromRow = null,
+  focusTo,
 }: {
   envelope: ReplyEnvelopeEdit;
   onEnvelope: (next: ReplyEnvelopeEdit) => void;
@@ -1028,9 +1033,17 @@ function ReplyRecipients({
    * claim nobody can back (no mailbox facts).
    */
   fromRow?: ReactNode;
+  /** Set by the head's press; spent on mount. */
+  focusTo?: { current: boolean };
 }) {
   const t = useTranslations("compose");
   const base = useId();
+  // In the commit, before the shell's focus rule answers the removed head button.
+  useLayoutEffect(() => {
+    if (!focusTo?.current) return;
+    focusTo.current = false;
+    document.getElementById(`${base}-to`)?.focus({ preventScroll: true });
+  }, [focusTo, base]);
   const [focused, setFocused] = useState<Record<RecipientRow, boolean>>({
     to: false, cc: false, bcc: false,
   });
