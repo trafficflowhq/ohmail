@@ -145,7 +145,7 @@ describe("one table, and the sheet shrinks before it admits", () => {
 
   it("the native twin hands the picked file's own source to the shrink", () => {
     const native = read("src/compose/attach-native.ts");
-    expect(native).toContain("toAttachment(base64, asset.fileName, asset.mimeType, asset.uri)");
+    expect(native).toContain("toAttachment(base64, name, asset.mimeType, asset.uri)");
     expect(native).toContain("toAttachment(base64, asset.name, asset.mimeType, asset.uri)");
     expect(native).toContain("ImageManipulator.manipulate(");
   });
