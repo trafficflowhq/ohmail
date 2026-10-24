@@ -101,6 +101,15 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter; writes through the fenced group",
   },
   {
+    name: "junk_gone",
+    module: `${W}/junk-gone.ts`, entry: "junkGonePass",
+    triggers: ["visit"],
+    cadence: "at the visit's tail beside junk_restore, only when the cycle deferred nothing; skipped while the Junk folder's keys equal the last proof",
+    budget: "one STATUS (or the pass's LIST-STATUS) and bounded UID SEARCHes over one page of JUNK_GONE_PAGE rows per visit",
+    owns: "a letter ohmail filed into Junk that another client deleted there is tombstoned",
+    fence: "the visit's leased adapter, read-only; writes through the fenced group",
+  },
+  {
     name: "blank_repair",
     module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
     // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the

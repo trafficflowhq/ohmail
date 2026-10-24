@@ -174,7 +174,7 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0094). In the LOCAL barrel because the doors
    that use them are mounted by the desktop engine as well as by the hosted API. */

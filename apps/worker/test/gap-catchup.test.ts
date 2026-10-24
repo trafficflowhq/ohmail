@@ -167,6 +167,22 @@ describe("letters from a gap are counted for the person and filed only on their 
     expect(await placement(w, heldFirstSeen), "a letter taken in while held was filed").toEqual({ d: INBOX, by: "peer" });
   });
 
+  it("leaves out a letter gone from the server since, beside one it counts", async () => {
+    const w = await newWorld();
+    await seedRule(w, "letters@news.test");
+    const counted = await seedArrival(w, { from: "letters@news.test" });
+    const gone = await seedArrival(w, { from: "letters@news.test" });
+    const missing = await seedArrival(w, { from: "letters@news.test" });
+    await w.db.update(messages).set({ deletedAt: NOW }).where(eq(messages.id, gone));
+    await w.db.update(messages).set({ serverMissingAt: NOW }).where(eq(messages.id, missing));
+    expect(await run(w)).toMatchObject({ offered: 1 });
+    expect((await offerOf(w)).letters, "a letter gone from the server was counted").toBe(1);
+    await press(w);
+    expect(await run(w)).toMatchObject({ moved: 1 });
+    expect(await placement(w, counted)).toEqual({ d: NEWS, by: "us" });
+    expect(await placement(w, gone)).toEqual({ d: INBOX, by: "peer" });
+  });
+
   it("counts none of the shapes the ruling excludes, beside a control that is counted and filed", async () => {
     const w = await newWorld();
     await seedRule(w, "letters@news.test");

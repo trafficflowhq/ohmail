@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -14,6 +14,8 @@ import { schema } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { NativeLocator } from "@trafficflow/core";
+import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { junkGonePass } from "../src/junk-gone.js";
 
 /**
  * ═══ EXPUNGE PROPAGATION — WHAT THE MIRROR DOES WHEN THE SERVER NO LONGER HOLDS THE MESSAGE ══
@@ -164,6 +166,106 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     });
     const [fs2] = await db.select().from(folderState).where(eq(folderState.messageId, messageId));
     expect(fs2!.reconcileStatus).toBe("pending");
+  });
+
+  /** One more letter in `mailboxId`, filed by a spam verdict into `folder` at `ref` (the exempt shape). */
+  async function parked(accountId: string, mailboxId: string, folder: string, ref: string): Promise<string> {
+    const tag = randomUUID().slice(0, 8);
+    const [m] = await db.insert(messages).values({
+      accountId, mailboxId, dedupKey: `mid:<jp-${tag}@example.test>`, messageIdHeader: `jp-${tag}@example.test`,
+      fromAddress: "stranger@example.test", subject: "s", bodyHash: `jp-${tag}`, nativeLocator: LOC(folder, ref),
+    }).returning();
+    await repoOf().upsertFolderState(m!.id, {
+      desiredFolder: "ohmail/Quarantine", observedFolder: folder, lastSetBy: "us", satisfiedBy: folder,
+    });
+    return m!.id;
+  }
+
+  it("listJunkParked answers exactly the rows the reaper exempts as Junk-filed", async () => {
+    const { accountId, mailboxId, messageId: watched } = await seed();
+    const repo = repoOf();
+    const junk = "[Gmail]/Spam";
+    const a = await parked(accountId, mailboxId, junk, "7:70");
+    const b = await parked(accountId, mailboxId, junk, "7:71");
+    await db.update(messages).set({ serverMissingAt: new Date() }).where(eq(messages.id, b));
+    const c = await parked(accountId, mailboxId, junk, "7:72");
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, c));
+    const elsewhere = await parked(accountId, mailboxId, "Other", "7:73");
+    // An instanceless row that is not parked: the reaper's victim, never listed.
+    await repo.forgetInstanceAt(mailboxId, LOC("INBOX", "1:300"));
+
+    const listed = await repo.listJunkParked!(accountId, mailboxId, { folder: junk, limit: 10 });
+    expect(listed).toEqual([{ messageId: a, locator: LOC(junk, "7:70") }]);
+    expect(await repo.listJunkParked!(accountId, mailboxId, { folder: junk, limit: 10, afterId: a })).toEqual([]);
+    expect((await repo.listJunkParked!(accountId, mailboxId, { folder: "Other", limit: 10 })).map((r) => r.messageId))
+      .toEqual([elsewhere]);
+    expect(await repo.listJunkParked!(randomUUID(), mailboxId, { folder: junk, limit: 10 })).toEqual([]);
+    // The reaper takes the watched letter and spares the listed one.
+    await repo.transaction((r) => r.tombstoneInstanceless!(accountId, mailboxId, 200));
+    const live = await db.select({ id: messages.id }).from(messages)
+      .where(and(eq(messages.mailboxId, mailboxId), isNull(messages.deletedAt), isNull(messages.serverMissingAt)));
+    expect(live.map((r) => r.id).sort()).toEqual([a, elsewhere].sort());
+    void watched;
+  });
+
+  it("tombstoneJunkParkedGone tombstones a gone row and spares a re-decided, missing, moved or foreign one", async () => {
+    const { accountId, mailboxId } = await seed();
+    const other = await seed();
+    const repo = repoOf();
+    const junk = "Junk";
+    const gone = await parked(accountId, mailboxId, junk, "9:1");
+    const redecided = await parked(accountId, mailboxId, junk, "9:2");
+    const missing = await parked(accountId, mailboxId, junk, "9:3");
+    const moved = await parked(accountId, mailboxId, junk, "9:4");
+    const foreign = await parked(other.accountId, other.mailboxId, junk, "9:5");
+    const read = [
+      ...await repo.listJunkParked!(accountId, mailboxId, { folder: junk, limit: 10 }),
+      ...await repo.listJunkParked!(other.accountId, other.mailboxId, { folder: junk, limit: 10 }),
+    ];
+    expect(read).toHaveLength(5);
+    // Since the read: a Not-junk press, a mail-0164 mark, a new stored location.
+    await repo.upsertFolderState(redecided, { desiredFolder: "INBOX", observedFolder: junk, lastSetBy: "us" });
+    await db.update(messages).set({ serverMissingAt: new Date() }).where(eq(messages.id, missing));
+    await db.update(messages).set({ nativeLocator: LOC(junk, "9:40") }).where(eq(messages.id, moved));
+
+    const n = await repo.transaction((r) => r.tombstoneJunkParkedGone!(accountId, mailboxId, read));
+    expect(n).toBe(1);
+    const rows = await db.select({ id: messages.id, deletedAt: messages.deletedAt }).from(messages)
+      .where(inArray(messages.id, [gone, redecided, missing, moved, foreign]));
+    expect(rows.filter((r) => r.deletedAt !== null).map((r) => r.id)).toEqual([gone]);
+    const changes = await db.select().from(changeLog)
+      .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, gone)));
+    expect(changes.map((c) => c.op)).toEqual(["delete"]);
+  });
+
+  it("junkGonePass proves an unchanged Junk over several pages, then skips it until its keys move", async () => {
+    const { accountId, mailboxId } = await seed();
+    await db.update(mailboxes).set({ junkFolder: "Junk" }).where(eq(mailboxes.id, mailboxId));
+    for (let i = 1; i <= 5; i++) await parked(accountId, mailboxId, "Junk", `8:${i}`);
+    let keys = { uidValidity: "8", uidNext: 100, messages: 5 };
+    let asked = 0;
+    const adapter = {
+      folderKeys: async () => ({ k: "keys" as const, keys }),
+      uidsHeld: async (_f: string, v: string, uids: readonly number[]) => { asked++; return { k: "held" as const, uidValidity: v, present: new Set(uids) }; },
+    } as unknown as MailboxAdapter;
+    const repo = repoOf();
+    const visit = async () => (await junkGonePass({ repo, adapter, accountId, mailboxId, page: 2, write: (fn) => repo.transaction(fn) })).skipped;
+    for (let i = 0; i < 3; i++) await visit();
+    expect(asked, "a walk of three pages").toBe(3);
+    expect(await visit(), "an unchanged Junk was walked again").toBe("unchanged");
+    expect(await visit()).toBe("unchanged");
+    expect(asked).toBe(3);
+    // Junk moves mid-walk: that walk proves nothing, the next one does.
+    keys = { ...keys, uidNext: 101, messages: 6 };
+    await visit();
+    keys = { ...keys, uidNext: 102, messages: 7 };
+    await visit();
+    await visit();
+    expect(await visit(), "a walk Junk moved under was taken as proof").toBeUndefined();
+    await visit();
+    await visit();
+    expect(asked).toBe(9);
+    expect(await visit()).toBe("unchanged");
   });
 
   it("the husk never touches the SENDER RULE — the verdict's durable artifact survives", async () => {

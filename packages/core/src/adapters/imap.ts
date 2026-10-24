@@ -83,6 +83,7 @@ import {
   WriteDeclinedError, type WriteDoor, type MailboxWriteKind,
   type FolderSweepFence, type FolderSweepResult, type FolderDeleteOutcome,
   PASSIVE_EXCLUDED_SPECIAL_USE, type SpecialFolders,
+  type FolderKeysAnswer, type UidsHeldAnswer,
 } from "./imap-types.js";
 // The News pile's resolver (0.22): the adapter is the one place canonical names meet the live
 // tree, so `toServerPath` routes both spellings onto the folder the mailbox actually has.
@@ -1482,6 +1483,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private lastInboxSeen: { uidValidity: string; uidNext: number } | null = null;
   /** Canonical path → the STATUS the last LIST volunteered. See {@link unchangedPassive}. */
   private passiveStatus: ReadonlyMap<string, FolderStatus> = new Map();
+  /** The pass whose LIST carried {@link passiveStatus}; an older reading is not this pass's. */
+  private passiveStatusPass = -1;
   /** Folder → in-flight bounded flag drain. See {@link FlagDrain}. */
   private readonly flagDrain = new Map<string, FlagDrain>();
   /**
@@ -2654,6 +2657,63 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     }
   }
 
+  /** See {@link MailboxAdapter.folderKeys}: the LIST's STATUS when it carries one, else one STATUS. */
+  async folderKeys(folder: string): Promise<FolderKeysAnswer> {
+    const listed = this.passiveStatusPass === this.passiveCycle ? this.passiveStatus.get(folder) : undefined;
+    if (listed && epochOf(listed.uidValidity).known
+      && typeof listed.uidNext === "number" && typeof listed.messages === "number") {
+      return { k: "keys", keys: { uidValidity: String(listed.uidValidity), uidNext: listed.uidNext, messages: listed.messages } };
+    }
+    const st = await this.statusAt(this.toServerPath(folder), folder, IMAP_READ_DEADLINE_MS);
+    if (st.k === "absent") return { k: "absent" };
+    if (st.k !== "status" || st.uidNext === null || !epochOf(st.uidValidity).known) return { k: "unanswered" };
+    return { k: "keys", keys: { uidValidity: st.uidValidity, uidNext: st.uidNext, messages: st.messages } };
+  }
+
+  private static readonly HELD_CHUNK_RUNS = 100;
+  private static readonly HELD_CHUNK_UIDS = 500;
+
+  /** See {@link MailboxAdapter.uidsHeld}. One lock, `UID SEARCH UID <set>` per chunk, nothing else. */
+  async uidsHeld(folder: string, uidValidity: string, uids: readonly number[]): Promise<UidsHeldAnswer> {
+    const path = this.toServerPath(folder);
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(path));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      if (!(this.client as unknown as { usable?: boolean }).usable) return { k: "unanswered" };
+      return (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "NONEXISTENT"
+        ? { k: "absent" } : { k: "unanswered" };
+    }
+    try {
+      const selected = (): MailboxObject | false => {
+        const mb = this.client.mailbox as MailboxObject | false;
+        return mb && mb.path === path ? mb : false;
+      };
+      const mb = selected();
+      if (!mb) return { k: "unanswered" };
+      const live = String(mb.uidValidity);
+      const verdict = epochVerdict(epochOf(uidValidity), epochOf(mb.uidValidity));
+      if (verdict === "stale") return { k: "renumbered", uidValidity: live };
+      if (verdict !== "usable") return { k: "unanswered" };
+      const present = new Set<number>();
+      const asked = [...new Set(uids)].sort((a, b) => a - b);
+      const clock = this.readDeadline();
+      for (const chunk of uidSetChunks(asked, ImapAdapter.HELD_CHUNK_RUNS, ImapAdapter.HELD_CHUNK_UIDS)) {
+        const found = await this.searchBounded({ uid: chunk.set }, { uid: true }, folder, clock);
+        if (!Array.isArray(found)) return { k: "unanswered" };
+        const inChunk = new Set(chunk.uids);
+        for (const u of found) if (inChunk.has(u)) present.add(u);
+      }
+      // Read under the selection it was asked under, or it proves nothing.
+      const after = selected();
+      if (!after || !sameEpoch(epochOf(after.uidValidity), epochOf(uidValidity))) return { k: "unanswered" };
+      return { k: "held", uidValidity: live, present };
+    } finally {
+      lock.release();
+    }
+  }
+
   /**
    * DISTINCT recipient addresses from the newest `limit` Sent messages. See
    * {@link MailboxAdapter.scanSentRecipients} for WHY; the notes here are about the mechanics.
@@ -3654,6 +3714,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
             }
             : undefined,
         ));
+        if (wantStatus) this.passiveStatusPass = this.passiveCycle;
       } catch (err) {
         // ── A CEILING BREACH IS NOT "ONE BAD COMMAND" ────────────────────────────────────────
         //

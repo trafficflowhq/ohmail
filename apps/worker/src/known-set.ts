@@ -304,6 +304,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
   "setMailboxSpecialFolders", "huskBody", "restoreWithheldBody",
   "clearDeletedOnAdopt", "tombstoneInstanceless",
+  // The Junk check: a read of instanceless rows, and the reaper's write on them (`tombstoneGone`).
+  "listJunkParked", "tombstoneJunkParkedGone", "tombstoneGone",
   // mail 0164: `messages.server_missing_at` alone (+ updated_at), not a projected column; and the
   // stale-epoch arm's read of one message's instances. `repairLegacyNews` is DELIBERATELY ABSENT:
   // it forgets instance rows and flips the primary, which is what this projection remembers.

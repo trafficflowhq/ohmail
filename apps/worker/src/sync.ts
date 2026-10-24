@@ -37,6 +37,7 @@ import {
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
+import { junkGonePass } from "./junk-gone.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
@@ -1715,6 +1716,28 @@ async function syncCycleWithin(
     }
   }
 
+  // THE JUNK CHECK: letters ohmail filed into Junk and another client deleted there leave the
+  // copy (`junk-gone.ts`). Same placement and error handling as the restore above.
+  if (deferred.size === 0) {
+    try {
+      await junkGonePass({
+        repo, adapter, accountId, mailboxId,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("junk_gone_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so nothing was tombstoned",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("junk_gone_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
   /* THE BLANK REPAIR (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS): the junk restore's place and
      rule, the visit's tail and only when nothing was deferred. A blank an older build stored in a
      letter's place gives the place back, and a letter its move filed away goes back to INBOX; the
@@ -2561,6 +2584,36 @@ async function voidGoneFiling(
           : "the gone-restore void was computed against a desired folder that has since changed; "
             + "nothing was written and the newer intent stands",
       },
+      null,
+    );
+    return true;
+  }
+  /* A DELETE OF A LETTER ALREADY GONE stays where it was observed, body emptied, never listed in
+     Trash: no server holds it there. Only while it is still where the press found it: a delete
+     park that promoted a survivor moved it off that origin, and its first copy is in Trash.
+     Mail 0164 rows keep today's path. */
+  if (trash !== null && p.desiredFolder === trash && p.observedFolder !== trash && p.serverMissing === false
+    && p.trashedFrom != null && p.observedFolder === p.trashedFrom) {
+    const adopted = await repo.adoptFolderState(
+      p.messageId,
+      { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
+      p.desiredFolder,
+      null,
+    );
+    if (adopted && typeof repo.huskBody === "function") await repo.huskBody(accountId, p.messageId, "expunged");
+    await repo.recordAudit(
+      accountId,
+      adopted ? "reconcile.move.voided" : "reconcile.move.superseded",
+      adopted
+        ? {
+            messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, outcome: "gone",
+            evidence: vanished ? "delete_observed" : "absent_at_move",
+          }
+        : {
+            messageId: p.messageId, filedAgainst: p.desiredFolder, to: p.desiredFolder,
+            reason: "the gone-message void was computed against a desired folder that has since " +
+              "changed (or the row was erased); nothing was written and the newer intent stands",
+          },
       null,
     );
     return true;

@@ -174,7 +174,7 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {

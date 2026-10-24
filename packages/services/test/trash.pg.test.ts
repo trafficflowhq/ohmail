@@ -289,6 +289,10 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     // And the row has LEFT the Trash list, because its desired folder is no longer Trash.
     const page = await svc().listTrash(ctxAt(t2), { view: "trash" });
     expect(page.items).toHaveLength(0);
+
+    // Deleted again before the organizer carries the restore out: that tombstone is ours, not a lost letter.
+    expect("alreadyGone" in await svc().delete(ctxAt(t2), id), "the delete was dropped").toBe(false);
+    expect((await fsOf(id)).desiredFolder).toBe(TRASH);
   });
 
   it("restore of a delete whose move has not landed CANCELS it: the letter is back at once", async () => {

@@ -2,10 +2,10 @@ import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { auditLog, folderState, mailboxes, messageInstances, messages } from "@trafficflow/db";
+import { auditLog, folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
-import { MailboxService, MessageService, type ServiceContext } from "@trafficflow/services";
+import { MailboxService, MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle, type SyncDeps } from "../src/sync.js";
 import { makeHarness, rawClient, uidInFolder, DB_URL, ORGANIZER_CONSENT } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -21,9 +21,10 @@ import { FIXTURE_LEASE } from "./_door.js";
 
 const AVAILABLE = await realPgAvailable(DB_URL);
 
-function eml(o: { from: string; to: string; subject: string; messageId: string }): string {
+function eml(o: { from: string; to: string; subject: string; messageId: string; date?: string }): string {
   return [
     `Message-ID: <${o.messageId}>`, `From: ${o.from}`, `To: ${o.to}`, `Subject: ${o.subject}`,
+    ...(o.date !== undefined ? [`Date: ${o.date}`] : []),
     "Content-Type: text/plain; charset=utf-8", "", "the whole text of the message",
   ].join("\r\n");
 }
@@ -42,6 +43,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     closers.push(async () => { await c.logout().catch(() => undefined); });
     await c.mailboxCreate("Sent").catch(() => undefined);
     await c.mailboxCreate("Trash").catch(() => undefined);
+    await c.mailboxCreate("Junk").catch(() => undefined);
     const special = await h.adapter.findSpecialFolders();
     expect(special.trash, "the precondition: Trash was discovered").toBeTruthy();
     await h.repo.setMailboxSpecialFolders!(h.mailboxId, { junkFolder: special.junk, trashFolder: special.trash, sentFolder: null });
@@ -66,8 +68,80 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
       const l = await c.getMailboxLock(folder);
       try { await c.messageDelete(uids, { uid: true }); } finally { l.release(); }
     };
-    return { h, c, deps, ctx, idOf, filingOf, auditsOf, facts, expunge, trash: special.trash! };
+    /** Letters marked Spam and filed into Junk by the cycle: their ids, and the subject word. */
+    const spamFiled = async (n: number) => {
+      const tag = randomUUID().slice(0, 8);
+      const headers = Array.from({ length: n }, (_, i) => `spam${i}-${tag}@x.example`);
+      for (const header of headers) {
+        await c.append("INBOX", eml({ from: "anna@x.example", to: h.cfg.auth.user, subject: `junkword${tag}`, messageId: header }));
+      }
+      await runSyncCycle(deps);
+      const ids: string[] = [];
+      for (const header of headers) ids.push((await idOf(header))!);
+      for (const id of ids) await new MessageService().move(ctx, id, { folder: "ohmail/Quarantine" });
+      await runSyncCycle(deps);
+      for (const header of headers) expect(await uidInFolder(c, "Junk", header), "the precondition: filed into Junk").toHaveLength(1);
+      return { ids, headers, word: `junkword${tag}` };
+    };
+    const history = async () => (await new MessageService().listAll(ctx, { limit: 100 })).items.map((m) => m.id);
+    const found = async (q: string) => (await new SearchService().search(ctx, { q, limit: 50 })).items.map((m) => m.id);
+    return { h, c, deps, ctx, idOf, filingOf, auditsOf, facts, expunge, spamFiled, history, found, trash: special.trash! };
   }
+
+  it("a Spam letter deleted in Junk by another app leaves History and Search; one still there stays", async () => {
+    const w = await world();
+    expect(w.h.adapter.uidsHeld, "the precondition: the adapter can ask Junk").toBeDefined();
+    const { ids: [gone, kept], headers, word } = await w.spamFiled(2);
+    const oldHeader = `june-${randomUUID().slice(0, 8)}@x.example`;
+    await w.c.append("INBOX", eml({
+      from: "anna@x.example", to: w.h.cfg.auth.user, subject: "from June", messageId: oldHeader,
+      date: "Tue, 02 Jun 2026 09:00:00 +0000",
+    }));
+    await runSyncCycle(w.deps);
+    const old = (await w.idOf(oldHeader))!;
+    expect(await w.history(), "the precondition: all three are in History").toEqual(expect.arrayContaining([gone, kept, old]));
+    expect(await w.found(word), "the precondition: Search finds both Spam letters").toEqual(expect.arrayContaining([gone, kept]));
+
+    await w.expunge("Junk", headers[0]!);
+    await w.expunge("INBOX", oldHeader);
+    await runSyncCycle(w.deps);
+
+    const left = await w.history();
+    expect(left, "the Spam letter deleted in Junk is still in History").not.toContain(gone);
+    expect(left, "the old-dated letter deleted elsewhere is still in History").not.toContain(old);
+    expect(left, "the Spam letter still in Junk left History").toContain(kept);
+    expect(await w.found(word)).toEqual([kept]);
+    const [row] = await w.h.db.select({ deletedAt: messages.deletedAt }).from(messages).where(eq(messages.id, gone!));
+    expect(row?.deletedAt, "the gone letter was not tombstoned").not.toBeNull();
+  });
+
+  it("a Junk folder that cannot be read, is deleted or is re-created deletes nothing", async () => {
+    const w = await world();
+    const { ids, headers } = await w.spamFiled(1);
+    await w.expunge("Junk", headers[0]!);
+    const real = w.h.adapter;
+    const deaf = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "uidsHeld") return async () => ({ k: "unanswered" as const });
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await runSyncCycle({ ...w.deps, adapter: deaf });
+    expect(await w.history(), "an unanswered Junk read deleted a letter").toContain(ids[0]);
+
+    const second = await w.spamFiled(1);
+    await w.c.mailboxDelete("Junk");
+    await runSyncCycle(w.deps);
+    expect(await w.history(), "a deleted Junk folder deleted a letter").toContain(second.ids[0]);
+
+    await w.c.mailboxCreate("Junk");
+    const [row] = await w.h.db.select({ loc: messages.nativeLocator }).from(messages).where(eq(messages.id, second.ids[0]!));
+    const st = await w.c.status("Junk", { uidValidity: true });
+    expect(String(st.uidValidity), "the precondition: a new UIDVALIDITY").not.toBe((row!.loc as { ref: string }).ref.split(":")[0]);
+    await runSyncCycle(w.deps);
+    expect(await w.history(), "a re-created Junk folder (new UIDVALIDITY) deleted a letter").toContain(second.ids[0]);
+  });
 
   it("the Delete of a Sent reply another app removed is voided at the next cycle; a held message files", async () => {
     const w = await world();
@@ -100,10 +174,60 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     const f = await w.facts();
     expect(f.pendingMoves, "the strip still counts the gone letter").toBe(0);
     expect(f.filing?.due, "the gone letter is still due").toBe(0);
+    // The voided delete stays where it was observed and is not listed in Trash; its body is emptied.
+    expect(gone?.desiredFolder, "a voided delete still wants Trash").toBe(gone?.observedFolder);
+    const trashed = (await svc.listTrash(w.ctx, {})).items.map((t) => t.id);
+    expect(trashed, "Trash lists a letter no server holds").not.toContain(sent);
+    const [body] = await w.h.db.select({ withheld: messageBodies.withheldReason }).from(messageBodies)
+      .where(eq(messageBodies.messageId, sent!));
+    expect(body?.withheld).toBe("expunged");
     // CONTROL — the message the server still held filed to Trash.
+    expect(trashed, "the held message is missing from Trash").toContain(inbox);
     expect((await w.filingOf(inbox!))?.reconcileStatus).toBe("reconciled");
     expect(await uidInFolder(w.c, w.trash, inboxHeader), "the held message did not reach Trash").toHaveLength(1);
     expect(await uidInFolder(w.c, "INBOX", inboxHeader)).toHaveLength(0);
+  });
+
+  it("a deleted two-copy letter stays in Trash with its body when the server drops the second copy", async () => {
+    const w = await world();
+    const second = (await w.c.list()).find((f) => /News$/.test(f.path))?.path ?? "ohmail/News";
+    const header = `two-${randomUUID().slice(0, 8)}@x.example`;
+    const body = eml({ from: "anna@x.example", to: w.h.cfg.auth.user, subject: "two copies", messageId: header });
+    await w.c.append("INBOX", body);
+    await w.c.append(second, body);
+    // Gmail's rule: a message moved to Trash loses its other labels.
+    const real = w.h.adapter;
+    const dropSecond = async (to: unknown) => {
+      if (to !== w.trash || (await uidInFolder(w.c, second, header)).length === 0) return;
+      await w.expunge(second, header);
+    };
+    const gmail = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "move" || prop === "moveMany") {
+          const fn = Reflect.get(target, prop, target) as (...a: unknown[]) => Promise<unknown>;
+          return async (...a: unknown[]) => { const out = await fn.apply(target, a); await dropSecond(a[1]); return out; };
+        }
+        const v = Reflect.get(target, prop, target) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const deps = { ...w.deps, adapter: gmail };
+    await runSyncCycle(deps);
+    await runSyncCycle(deps);
+    const id = (await w.idOf(header))!;
+    expect(await w.h.db.select().from(messageInstances).where(eq(messageInstances.messageId, id)),
+      "the precondition: two watched copies").toHaveLength(2);
+
+    const svc = new MessageService();
+    await svc.delete(w.ctx, id);
+    for (let i = 0; i < 4; i++) await runSyncCycle(deps);
+
+    expect(await uidInFolder(w.c, w.trash, header), "the precondition: the server's Trash holds it").toHaveLength(1);
+    expect((await svc.listTrash(w.ctx, {})).items.map((t) => t.id), "Trash dropped a letter the server holds there").toContain(id);
+    expect((await w.filingOf(id))?.observedFolder).toBe(w.trash);
+    const [b] = await w.h.db.select({ withheld: messageBodies.withheldReason }).from(messageBodies)
+      .where(eq(messageBodies.messageId, id));
+    expect(b?.withheld ?? null, "the body of a letter in the server's Trash was emptied").toBeNull();
   });
 
   it("a gone letter whose delete ingest never reports is closed by the move's own reading", async () => {

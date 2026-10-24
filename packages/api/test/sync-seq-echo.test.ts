@@ -4,7 +4,7 @@ import { join, relative, resolve } from "node:path";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { eq, sql } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { changeLog } from "@trafficflow/db";
+import { changeLog, messages } from "@trafficflow/db";
 import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
 
 /**
@@ -118,6 +118,15 @@ describe("X-Sync-Seq is the seq /sync delivers the write at", () => {
     const refused = await H(req("POST", `/messages/${m.id}/move`, { bearer: s.token, body: JSON.stringify({ folder: "Nope" }) }), deps);
     expect(refused.status).toBe(400);
     expect(refused.headers.get("x-sync-seq")).toBeNull();
+    // A delete of a letter already gone from the server writes nothing and says so.
+    const ghost = await seedMessage(db, { accountId: s.accountId, folder: "INBOX" });
+    await db.update(messages).set({ deletedAt: FIXED_NOW }).where(eq(messages.id, ghost.id));
+    const before = await lastSeq(db, s.accountId);
+    const gone = await H(req("DELETE", `/messages/${ghost.id}`, { bearer: s.token }), deps);
+    expect(gone.status).toBe(200);
+    expect(await gone.json()).toMatchObject({ id: ghost.id, alreadyGone: true });
+    expect(gone.headers.get("x-sync-seq")).toBeNull();
+    expect(await lastSeq(db, s.accountId)).toBe(before);
   });
 
   it("the header is spelled out in these four files only (a replay goes through jsonResponse)", () => {

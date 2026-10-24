@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
-import { MessageService, SearchService, SyncService, ServiceError } from "../src/index.js";
-import { changesFor, makeCtx, movedHere, seedMessage } from "./helpers.js";
+import { eq, inArray } from "drizzle-orm";
+import { folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
+import { MessageService, SearchService, SyncService, ServiceError, type ServiceContext } from "../src/index.js";
+import { changesFor, makeCtx, movedHere, otherAccount, seedMessage } from "./helpers.js";
 
 /**
  * DELETE — the third user-commanded write of the 2026-08-22 amendment (imap-types.ts).
@@ -69,6 +69,57 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
     expect(fs!.desiredFolder).toBe("INBOX");   // untouched: nothing on the server to move
     const [row] = await db.select().from(messages).where(eq(messages.id, id));
     expect(row!.deletedAt).not.toBeNull();
+  });
+
+  it("a letter already gone from the server answers so: no Trash intent, no change, not in Trash", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    await db.update(mailboxes).set({ trashFolder: TRASH }).where(eq(mailboxes.id, mailboxId));
+    const id = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, id));
+    const svc = new MessageService();
+
+    const res = await svc.delete(ctx, id);
+    expect(res).toMatchObject({ alreadyGone: true, dto: { id } });
+    expect("seq" in res).toBe(false);
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, id));
+    expect(fs!.desiredFolder).toBe("INBOX");
+    expect(await changesFor(db, accountId)).toEqual([]);
+    expect((await svc.listTrash(ctx, {})).items.map((t) => t.id)).not.toContain(id);
+    // CONTROL: a tombstoned row already filed to Trash takes the ordinary path.
+    const trashed = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    movedHere(await svc.delete(ctx, trashed));
+    expect("alreadyGone" in await svc.delete(ctx, trashed)).toBe(false);
+  });
+
+  it("the already-gone read is the presser's own: another account's press is a 404, its copy counts for nothing", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const b = await otherAccount(db);
+    const ctxB: ServiceContext = { ...ctx, accountId: b.accountId };
+    await db.update(mailboxes).set({ trashFolder: TRASH }).where(inArray(mailboxes.id, [mailboxId, b.mailboxId]));
+    const gone = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    const kept = await seedMessage(db, b.accountId, b.mailboxId, { folder: "INBOX" });
+    await db.update(messages).set({ deletedAt: new Date() }).where(inArray(messages.id, [gone, kept]));
+    await db.insert(messageInstances).values({
+      accountId: b.accountId, mailboxId: b.mailboxId, messageId: kept, folder: "INBOX", uidvalidity: 1n, uid: 7, isPrimary: true,
+    });
+    // 0118 keys an instance to its message's account: B's letter cannot have a copy under A.
+    const verdict = await db.insert(messageInstances).values({
+      accountId, mailboxId, messageId: kept, folder: "INBOX", uidvalidity: 1n, uid: 8,
+    }).then(() => "admitted", (e: unknown) => (/message_instances_message_id_account_fk/.test(String(e))
+      ? "refused-by-the-key" : `refused-otherwise:${String(e)}`));
+    expect(verdict).toBe("refused-by-the-key");
+    const svc = new MessageService();
+
+    // A press on the other account's letter is the same 404 with or without a copy, and writes nothing.
+    await expect(svc.delete(ctxB, gone)).rejects.toMatchObject({ code: "not_found", httpStatus: 404 });
+    await expect(svc.delete(ctx, kept)).rejects.toMatchObject({ code: "not_found", httpStatus: 404 });
+    expect(await changesFor(db, accountId)).toEqual([]);
+    expect(await changesFor(db, b.accountId)).toEqual([]);
+    // B's copy counts for nothing in A's answer, and B's own press finds B's own copy.
+    expect(await svc.delete(ctx, gone)).toMatchObject({ alreadyGone: true, dto: { id: gone } });
+    movedHere(await svc.delete(ctxB, kept));
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, kept));
+    expect(fs!.desiredFolder).toBe(TRASH);
   });
 
   it("the snapshot bootstrap no longer hands a fresh mirror the deleted row; the delta tombstones it", async () => {

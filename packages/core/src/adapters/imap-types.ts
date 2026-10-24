@@ -1188,6 +1188,17 @@ export interface MailboxAdapter {
    * treats absence as both null, the documented fallbacks.
    */
   findSpecialFolders?(): Promise<SpecialFolders>;
+  /**
+   * The folder's UIDVALIDITY, UIDNEXT and EXISTS: this pass's LIST-STATUS reading when the server
+   * gave one, else one STATUS. Read-only. Optional; absence reads as `unanswered`.
+   */
+  folderKeys?(folder: string): Promise<FolderKeysAnswer>;
+  /**
+   * Which of `uids` the folder still holds under `uidValidity`: bounded `UID SEARCH UID <set>` under
+   * one lock, never ALL, never a FETCH, never a write. A refused or partial read, a changed epoch
+   * or a lost selection answers `unanswered`; a re-numbered folder `renumbered`. Optional.
+   */
+  uidsHeld?(folder: string, uidValidity: string, uids: readonly number[]): Promise<UidsHeldAnswer>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
@@ -1225,3 +1236,10 @@ export interface MailboxAdapter {
    */
   fetchRaw?(locator: NativeLocator, opts?: FetchRawOptions): Promise<Uint8Array>;
 }
+
+/** A folder's keys: equal keys under one epoch mean no arrival and no expunge since. */
+export interface FolderKeys { uidValidity: string; uidNext: number; messages: number }
+export type FolderKeysAnswer = { k: "keys"; keys: FolderKeys } | { k: "absent" } | { k: "unanswered" };
+/** {@link MailboxAdapter.uidsHeld}'s answer; `present` holds only UIDs that were asked. */
+export type UidsHeldAnswer = { k: "held"; uidValidity: string; present: ReadonlySet<number> }
+  | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };

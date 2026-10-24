@@ -122,6 +122,8 @@ const PINS: Record<string, { kind: Kind; with?: string; why: string }> = {
     { kind: "epoch-beside-it", with: "uidValidity", why: "what the retry row is written from" },
   "adapters/drizzle-repo.ts WorkerRepo.uid":
     { kind: "epoch-beside-it", with: "uidValidity", why: "`resolveMessageFailure`'s site argument" },
+  "adapters/imap-types.ts FolderKeys.uidNext":
+    { kind: "epoch-beside-it", with: "uidValidity", why: "the Junk check's proof keys, compared only under their own epoch" },
   "adapters/imap-types.ts PersistedFolderCursor.uidNext":
     { kind: "epoch-beside-it", with: "uidValidity", why: "checked by the passive skip" },
   "adapters/imap-types.ts KnownEntry.uid":
@@ -143,7 +145,7 @@ const PINS: Record<string, { kind: Kind; with?: string; why: string }> = {
   "adapters/imap-types.ts ChangeBatch.uid":
     { kind: "epoch-beside-it", with: "uidValidity", why: "`unanswered` and `oversize` rows" },
   "adapters/imap-types.ts MailboxAdapter.uids":
-    { kind: "within-one-call", why: "`fetchByUid`'s argument; nothing is kept" },
+    { kind: "within-one-call", why: "`fetchByUid`'s and `uidsHeld`'s argument; nothing is kept" },
   "adapters/imap.ts FolderPageItem.uid":
     {
       kind: "epoch-on-the-container", with: "FolderPage",

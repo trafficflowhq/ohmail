@@ -134,7 +134,19 @@ export interface PendingFolderState {
    * that is not owed costs a round trip. So only an explicit `null` skips.
    */
   deletedAt?: Date | null;
+  /**
+   * Whether the row is marked missing on the server (mail 0164). Absent from a producer that does
+   * not report it, and then a voided delete takes today's path.
+   */
+  serverMissing?: boolean;
+  /**
+   * `folder_state.trashed_from`: where the delete found the letter. Absent from a producer that does
+   * not report it, and then a voided delete takes today's path.
+   */
+  trashedFrom?: string | null;
 }
+/** A letter ohmail filed into Junk, with the location it was filed at. */
+export interface JunkParkedRow { messageId: string; locator: NativeLocator }
 /**
  * ONE message the re-route pass may reconsider: still desired into `ohmail/Screener`, and
  * carrying everything `evaluateRules` needs to decide again — no IMAP, only persisted headers.
@@ -606,6 +618,20 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   tombstoneInstanceless?(accountId: string, mailboxId: string, limit: number): Promise<number>;
   /**
+   * The letters ohmail filed into the provider's Junk (the reaper's exempt shape) whose stored
+   * location is in `folder`: live, not missing on the server, no copy on record. Paged by id.
+   * Optional; absence reads as none.
+   */
+  listJunkParked?(
+    accountId: string, mailboxId: string, opts: { folder: string; afterId?: string; limit: number },
+  ): Promise<JunkParkedRow[]>;
+  /**
+   * Tombstone the Junk-filed letters the server no longer holds, as the reaper does. Each row is
+   * re-read with {@link listJunkParked}'s filter and spared unless its stored location still equals
+   * the one given. Returns how many were tombstoned. Optional.
+   */
+  tombstoneJunkParkedGone?(accountId: string, mailboxId: string, gone: readonly JunkParkedRow[]): Promise<number>;
+  /**
    * Which of these messages owe their `ohmail/Quarantine` placement to an AI AUTO-APPLY (mail
    * 0065) — a graduated pattern's per-message act, not a user's press and not a rule. The
    * amended product rule allows only USER-COMMANDED writes into the provider's \Junk, so the
@@ -869,6 +895,28 @@ function inboxCopyOfSentRow(): SQL {
     eq(messageInstances.isPrimary, false),
     inArray(sql`coalesce(lower(${messages.nativeLocator}->>'folder'), '')`, sent),
     or(isNull(folderState.desiredFolder), inArray(sql`lower(${folderState.desiredFolder})`, sent)),
+  )!;
+}
+
+/**
+ * The junk-parked signature — reconciled while divergent — which only the `satisfiedBy` completion
+ * writes: there, "no watched instance" is the design, not a disappearance.
+ */
+const JUNK_PARKED = sql`exists (select 1 from ${folderState}
+      where ${folderState.messageId} = ${messages.id}
+        and ${folderState.reconcileStatus} = 'reconciled'
+        and ${folderState.desiredFolder} <> ${folderState.observedFolder})`;
+
+/** {@link WorkerRepo.listJunkParked}'s filter, shared with the re-read before a tombstone. */
+function junkParkedRows(accountId: string, mailboxId: string, folder: string): SQL {
+  return and(
+    eq(messages.accountId, accountId),
+    eq(messages.mailboxId, mailboxId),
+    isNull(messages.deletedAt),
+    isNull(messages.serverMissingAt),
+    sql`${messages.nativeLocator}->>'folder' = ${folder}`,
+    sql`not exists (select 1 from ${messageInstances} where ${messageInstances.messageId} = ${messages.id})`,
+    JUNK_PARKED,
   )!;
 }
 
@@ -1610,12 +1658,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
           isNull(messages.serverMissingAt),
           sql`not exists (select 1 from ${messageInstances}
                 where ${messageInstances.messageId} = ${messages.id})`,
-          // The junk-parked signature — reconciled while divergent — which only the `satisfiedBy`
-          // completion writes: there, "no watched instance" is the design, not a disappearance.
-          sql`not exists (select 1 from ${folderState}
-                where ${folderState.messageId} = ${messages.id}
-                  and ${folderState.reconcileStatus} = 'reconciled'
-                  and ${folderState.desiredFolder} <> ${folderState.observedFolder})`,
+          sql`not ${JUNK_PARKED}`,
         ))
         .orderBy(asc(messages.id))
         .limit(limit - victims.length);
@@ -1624,6 +1667,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         if (r.threadId !== null) threadsOf.add(r.threadId);
       }
     }
+    await this.tombstoneGone(accountId, victims, threadsOf);
+    return victims.length;
+  }
+
+  /** The reaper's write: `deleted_at`, the `'expunged'` husk, the change-log delete, the threads. */
+  private async tombstoneGone(accountId: string, victims: readonly string[], threadsOf: ReadonlySet<string>): Promise<void> {
     for (const id of victims) {
       await this.db.update(messages).set({ deletedAt: new Date(), updatedAt: new Date() })
         .where(eq(messages.id, id));
@@ -1639,6 +1688,41 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
         .limit(1);
       if (live) await this.recordChange({ accountId, entityType: "thread", entityId: threadId, op: "update", meta: null });
     }
+  }
+
+  /** See {@link WorkerRepo.listJunkParked}. */
+  async listJunkParked(
+    accountId: string, mailboxId: string, opts: { folder: string; afterId?: string; limit: number },
+  ): Promise<JunkParkedRow[]> {
+    const rows = await this.db.select({ id: messages.id, locator: messages.nativeLocator }).from(messages)
+      .where(and(
+        junkParkedRows(accountId, mailboxId, opts.folder),
+        ...(opts.afterId !== undefined ? [sql`${messages.id} > ${this.d.castUuid(opts.afterId)}`] : []),
+      ))
+      .orderBy(asc(messages.id))
+      .limit(opts.limit);
+    return rows.map((r) => ({ messageId: r.id, locator: r.locator as NativeLocator }));
+  }
+
+  /** See {@link WorkerRepo.tombstoneJunkParkedGone}. */
+  async tombstoneJunkParkedGone(accountId: string, mailboxId: string, gone: readonly JunkParkedRow[]): Promise<number> {
+    const victims: string[] = [];
+    const threadsOf = new Set<string>();
+    const byFolder = new Map<string, JunkParkedRow[]>();
+    for (const g of gone) byFolder.set(g.locator.folder, [...(byFolder.get(g.locator.folder) ?? []), g]);
+    for (const [folder, asked] of byFolder) {
+      const want = new Map(asked.map((g) => [g.messageId, g.locator.ref]));
+      const rows = await this.db.select({ id: messages.id, locator: messages.nativeLocator, threadId: messages.threadId })
+        .from(messages)
+        .where(and(junkParkedRows(accountId, mailboxId, folder), inArray(messages.id, [...want.keys()])));
+      for (const r of rows) {
+        const loc = r.locator as NativeLocator | null;
+        if (loc === null || loc.folder !== folder || loc.ref !== want.get(r.id)) continue;
+        victims.push(r.id);
+        if (r.threadId !== null) threadsOf.add(r.threadId);
+      }
+    }
+    await this.tombstoneGone(accountId, victims, threadsOf);
     return victims.length;
   }
 
@@ -3485,6 +3569,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       // One more column on the join this select already makes — never a second query, which
       // would spend the round trip it exists to save.
       deletedAt: messages.deletedAt,
+      serverMissingAt: messages.serverMissingAt,
+      trashedFrom: folderState.trashedFrom,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(
         eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending"),
@@ -3499,6 +3585,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       lastSetBy: r.lastSetBy as FolderAttribution, nativeLocator: (r.nativeLocator as NativeLocator | null) ?? null,
       attempts: r.attempts,
       deletedAt: r.deletedAt,
+      serverMissing: r.serverMissingAt !== null,
+      trashedFrom: r.trashedFrom,
     }));
   }
 

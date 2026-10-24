@@ -254,6 +254,8 @@ export const messageRoutes: Route[] = [
       });
       // 202 when the delete became a request — see the move route above.
       if ("pending" in result) return jsonResponse(result, { status: 202 });
+      // Gone from the server already: nothing was written, so no seq.
+      if ("alreadyGone" in result) return jsonResponse({ ...result.dto, alreadyGone: true }, { status: 200 });
       return jsonResponse(result.dto, { status: 200, seq: result.seq });
     },
   },

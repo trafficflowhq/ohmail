@@ -275,6 +275,7 @@ const SINKS: Record<string, { how: Disposition; why: string }> = {
   "sampleSenders|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "scanSentRecipients|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "searchFolderPage|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
+  "uidsHeld|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "sourceFingerprintOf|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "setFlags|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },
   "watch|getMailboxLock": { how: "no_server_sized_result", why: "SELECT" },

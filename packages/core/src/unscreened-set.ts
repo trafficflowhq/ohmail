@@ -218,6 +218,9 @@ async function selectCandidates(
     eq(messages.accountId, opts.accountId),
     eq(folderState.desiredFolder, OHBOX),
     placementUndecided(),
+    // A letter gone from the server is no candidate: offering it screens a ghost.
+    isNull(messages.deletedAt),
+    isNull(messages.serverMissingAt),
     sql`not exists (
       select 1 from ${messageStates} ms
        where ms.message_id = ${messages.id} and ms.state <> 'none'

@@ -4,7 +4,7 @@ import { mailboxes, messages, folderState, changeLog, learningSignals, rules } f
 import { and, asc, eq } from "drizzle-orm";
 import type { AdapterPort, NativeLocator } from "@trafficflow/core";
 import type {
-  MoveRequestResult, MoveResult, RuleCreation, RuleMutation, RuleRequestResult, ServiceContext,
+  AlreadyGoneResult, MoveRequestResult, MoveResult, RuleCreation, RuleMutation, RuleRequestResult, ServiceContext,
 } from "../src/index.js";
 
 /**
@@ -34,13 +34,14 @@ export function mutated<M extends RuleMutation | RuleCreation>(r: M | RuleReques
   return r;
 }
 
-export function movedHere(r: MoveResult | MoveRequestResult): MoveResult {
+export function movedHere(r: MoveResult | MoveRequestResult | AlreadyGoneResult): MoveResult {
   if ("pending" in r) {
     throw new Error(
       "expected a move written on this install, got a request waiting on "
       + JSON.stringify(r.holder),
     );
   }
+  if ("alreadyGone" in r) throw new Error("expected a move written on this install, got an already-gone answer");
   return r;
 }
 
