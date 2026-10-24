@@ -209,6 +209,12 @@
 .row-actions{display:flex;align-items:center;pointer-events:none}
 .row-actions-in{display:flex;align-items:center;gap:4px;padding:0 12px 0 8px}
 .row-actions-in:empty{display:none}
+/* WHAT FOLLOWS THE ROW (`MessageRow` `follow`): the slot's second line, the whole slot wide — the
+   open conversation's strip of squares on the Ohbox. While it stands there the row's own 8px squares
+   step aside: the strip is the same squares, drawn to be pressed. An empty follower (a conversation's
+   row while another is open) takes no room and hides nothing. */
+.row-follow{grid-column:1 / -1;grid-row:2;min-width:0}
+.row-slot:has(> .row-follow:not(:empty)) > .row .row-marks{display:none}
 
 /* THE PLACE BADGES LEAVE FIRST in a LIST COLUMN UNDER 380px (the two-pane band's 300-379, a phone's
    up to 390): where a message lives, which mailbox, its state note go, so the subject keeps the

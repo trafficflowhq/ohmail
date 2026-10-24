@@ -2120,6 +2120,9 @@ export function MessagePane({
           scroller={scroller}
           conv={convRef}
           onEnter={threadRead.onEnter}
+          openedId={message.id}
+          walk={threadRead.walk}
+          releaseAnchor={() => anchorRelease.current?.()}
         />
       ) : null}
       <ConversationPanels
