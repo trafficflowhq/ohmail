@@ -7596,6 +7596,19 @@ body.dnd-active * { cursor: grabbing !important; }
   opacity: 0.5;
   cursor: default;
 }
+/* Help & contact's copy controls, where a mailto would not leave the window (`HelpContactPane.tsx`). */
+.help-copy {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+/* A mail to support: the diagnostics block's strip under the editor (`SupportDiagnostics.tsx`). */
+.support-diag-what {
+  margin: 4px 0 2px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.5;
+  color: var(--ink2);
+}
 /* The PLAIN shape of the block: the text is editable in place, a bare textarea wearing the
    block's own chrome, so editing does not jump the reader into a different-looking control. A
    signature that carries formatting renders through `.sig-rich` below instead — the same editor

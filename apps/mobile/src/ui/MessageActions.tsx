@@ -104,6 +104,7 @@ import { editWhileIdle } from "./compose-edit";
 import { copiesShown, copiesToKeep, copiesToSend, type TypedCopies } from "./compose-copies";
 import { ComposeCopies } from "./ComposeCopies";
 import type { MailtoPrefill } from "./mailto";
+import { diagStrip } from "./help-contact";
 import { Segmented } from "./Segmented";
 import { Sheet, SheetBackdrop, SheetRow, useModalKey, useSheetPanelBounds } from "./Sheet";
 import { useFocusKeeper } from "./keep-focus";
@@ -1130,6 +1131,7 @@ export function ComposeSheet({
   forwardConfirmed = false,
   draft,
   prefill,
+  diag,
   onClose,
 }: {
   /** The message being answered — `null` for a mail with no parent (the `new` mode). */
@@ -1141,6 +1143,8 @@ export function ComposeSheet({
   draft?: { id: string; body: string } & WorldDraftEdit;
   /** A new mail's starting text — a `mailto:` pressed in a message (`app/compose.tsx`). */
   prefill?: MailtoPrefill;
+  /** The diagnostics block a mail to support carries in its body (`help-contact.ts`), offered for removal. */
+  diag?: string;
   onClose: () => void;
 }) {
   const t = useTheme();
@@ -1966,6 +1970,30 @@ export function ComposeSheet({
               },
             ]}
           />
+          {/* A mail to support: what its diagnostics block holds, and Remove / Add back in one press. */}
+          {diag !== undefined && later === null ? (() => {
+            const strip = diagStrip(body, diag);
+            return (
+              <View
+                accessibilityLabel={Copy.helpDiag}
+                style={{ backgroundColor: t.c.tint2, borderRadius: t.radius.card, paddingHorizontal: 14, paddingVertical: 8, gap: 4 }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Txt variant="caption" tone="ink3">
+                    {strip.k === "present" ? Copy.helpDiag : Copy.helpRemoved}
+                  </Txt>
+                  <View style={{ flex: 1 }} />
+                  <Button
+                    label={strip.k === "present" ? Copy.helpRemove : Copy.helpAddBack}
+                    variant="quiet"
+                    disabled={phase !== "idle"}
+                    onPress={() => { if (phase === "idle") setBody(strip.next); }}
+                  />
+                </View>
+                {strip.k === "present" ? <Txt variant="note" tone="ink3">{Copy.helpDiagWhat}</Txt> : null}
+              </View>
+            );
+          })() : null}
           {/* THE SIGNATURE BLOCK — a DISTINCT, REMOVABLE element below the writing area
               (`SignatureBlock.tsx` is the webapp reference; `signature.ts` owns the model).
               Nothing renders when there is nothing to show — struck, edited to blank, the

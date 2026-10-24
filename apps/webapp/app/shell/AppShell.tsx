@@ -290,6 +290,7 @@ import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
+import { HelpContactPane, type SupportHost } from "./HelpContactPane";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
@@ -592,6 +593,7 @@ export function AppShell({
   invitesSection,
   securitySection,
   aboutSection,
+  support,
   desktopSection,
   devicesSection,
   defaultMailSection,
@@ -743,6 +745,11 @@ export function AppShell({
    * from `GET /mailboxes`, which this shared shell may not call. Absent ⇒ the demo body.
    */
   aboutSection?: ReactNode;
+  /**
+   * Which surface, build and account this is, for Settings › Help & contact. The pane lives in
+   * the shell because Write to us opens the shell's own composer. Absent ⇒ no pane (the demo).
+   */
+  support?: SupportHost;
   /**
    * The pane only a shell with a native process behind it can have: which
    * door this install came in by, which mailbox it opens, and the actions
@@ -1002,6 +1009,7 @@ export function AppShell({
             invitesSection={invitesSection}
             securitySection={securitySection}
             aboutSection={aboutSection}
+            support={support}
             desktopSection={desktopSection}
             devicesSection={devicesSection}
             defaultMailSection={defaultMailSection}
@@ -1074,7 +1082,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1096,6 +1104,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   invitesSection?: ReactNode;
   securitySection?: ReactNode;
   aboutSection?: ReactNode;
+  support?: SupportHost;
   desktopSection?: { label: string; node: ReactNode };
   devicesSection?: ReactNode;
   defaultMailSection?: ReactNode;
@@ -1923,7 +1932,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
-    composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo,
+    composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -1970,7 +1979,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
     accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-    aboutSection, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
+    aboutSection, helpOffered: support != null, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length > 0,
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
@@ -3510,6 +3519,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                     aboutSection
                   )
                 }
+                helpSection={demo || !support ? undefined : (
+                  <HelpContactPane host={support} mailboxes={facts} onWrite={writeSupport} />
+                )}
                 /* THE ROUTE'S PANE — `#/settings/<pane>` controls the section; the bare hash
                    leaves the view's own deep-link logic (`?settings=`) in charge. A nav click
                    writes the hash (`goSettings`), so sections stack in history and Back/Forward

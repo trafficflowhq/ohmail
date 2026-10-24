@@ -151,6 +151,9 @@ export interface PhoneMailbox {
    * `stuck` is the server's own split, never a threshold this phone computes.
    */
   filing?: PhoneFiling;
+  /** `MailboxDTO.errorCode` and `authKind`, read only to class the support mail's block; absent where the wire sent none. */
+  errorCode?: string;
+  authKind?: string;
 }
 
 export interface PhoneFiling {
@@ -298,6 +301,8 @@ export async function readMailboxes(session: ConnectedSession): Promise<PhoneMai
         ...("syncBlockedSince" in r ? { syncBlockedSince: instantOf(r.syncBlockedSince) } : {}),
         ...("hostedLastSyncAt" in r ? { hostedLastSyncAt: instantOf(r.hostedLastSyncAt) } : {}),
         ...(filingOf(r.filing) === undefined ? {} : { filing: filingOf(r.filing)! }),
+        ...(typeof r.errorCode === "string" && r.errorCode !== "" ? { errorCode: r.errorCode } : {}),
+        ...(typeof r.authKind === "string" && r.authKind !== "" ? { authKind: r.authKind } : {}),
       });
     }
     return out;

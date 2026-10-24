@@ -42,6 +42,7 @@ import type { ComposeFields, ComposePlan } from "../shell/compose";
 import { draftNoteKey, worthSaving, type ComposeElsewhere } from "../shell/compose-autosave";
 import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
+import { SupportDiagnostics } from "../shell/SupportDiagnostics";
 import { SIG_FOLLOWING } from "../shell/signature";
 import { useFocusFollows } from "../shell/focus-follows";
 
@@ -941,6 +942,15 @@ export function ComposeView({
             editable={!inFlight}
             onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
           />
+
+          {fields.diag ? (
+            <SupportDiagnostics
+              block={fields.diag}
+              value={{ text: fields.body, html: fields.html }}
+              disabled={inFlight}
+              onChange={(v) => onFields({ ...fields, body: v.text, html: v.html })}
+            />
+          ) : null}
 
           {/* THE SIGNATURE — a distinct, removable block BELOW the writing area, never pasted
               into the prose. It follows the From selector (switching the sender swaps it to

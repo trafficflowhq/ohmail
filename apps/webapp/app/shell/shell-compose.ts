@@ -120,6 +120,7 @@ import {
 import { useStableCallback } from "./stable-callback";
 import type { OhboxReplyDone } from "../views/OhboxView";
 import type { MailboxEntity } from "../views/SettingsView";
+import type { SupportSeed } from "./HelpContactPane";
 
 /** How long a Not sent notice stands; a second ending inside it widens it to a count. */
 const NOT_SENT_TOAST_MS = 8000;
@@ -2362,9 +2363,11 @@ export function useShellCompose({
    * is the thread's inline dock now, `openForward`, and never touches the compose form at all.)
    */
   const writeTo = useStableCallback(
-    (address: string, name?: string) => {
+    (address: string, name?: string, more?: Pick<ComposeFields, "subject" | "body" | "diag">) => {
       const seeded: ComposeFields = {
         ...EMPTY_COMPOSE,
+        // Settings › Help & contact's Write to us: the subject and the diagnostics block in the body.
+        ...more,
         // The chips form: a prefilled recipient is settled, so it must open as a chip, not as
         // raw text in the input — the same rule as `openDraft`.
         to: formatRecipientChips([{ name: name ?? null, address }]),
@@ -2441,6 +2444,11 @@ export function useShellCompose({
     go("compose");
     onMailtoDraftSeeded?.();
   }, [mailtoDraft, autosave, go, onMailtoDraftSeeded]);
+
+  /** Settings › Help & contact's Write to us: `writeTo`'s door, with the subject and the block. */
+  const writeSupport = useStableCallback((seed: SupportSeed) => {
+    writeTo(seed.to, undefined, { subject: seed.subject, body: seed.body, diag: seed.diag });
+  });
   /**
    * The address book for the reply's recipient rows — the same ranked selector the compose
    * To field builds, derived when a reply OPENS rather than per keystroke or per delta: the
@@ -2510,5 +2518,6 @@ export function useShellCompose({
     setReplyFromId,
     toggleReply,
     writeTo,
+    writeSupport,
   };
 }

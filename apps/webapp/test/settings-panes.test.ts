@@ -15,13 +15,13 @@ const t = (key: string): string => `L:${key}`;
 const ALL: WiredPanes = {
   mailboxes: true, screener: true, ai: true, away: true, rules: true, folders: true,
   signatures: true, desktop: "This computer", devices: true, billing: true, invites: true,
-  security: true, account: true, about: true,
+  security: true, account: true, about: true, help: true,
 };
 
 const NONE: WiredPanes = {
   mailboxes: false, screener: false, ai: false, away: false, rules: false, folders: false,
   signatures: false, desktop: null, devices: false, billing: false, invites: false,
-  security: false, account: false, about: false,
+  security: false, account: false, about: false, help: false,
 };
 
 describe("the settings tab list", () => {
@@ -35,7 +35,7 @@ describe("the settings tab list", () => {
     expect(settingsPanes(ALL, t).map(([id]) => id)).toEqual([
       "general", "notifications", "mailboxes", "screener", "ai", "away", "rules", "tags",
       "folders", "signatures", "desktop", "devices", "billing", "invites", "security",
-      "account", "about",
+      "account", "about", "help",
     ]);
   });
 
@@ -56,5 +56,6 @@ describe("the settings tab list", () => {
     expect(byId.get("general")).toBe("L:general");
     expect(byId.get("folders")).toBe("L:folders.nav");
     expect(byId.get("signatures")).toBe("L:signatures.nav");
+    expect(byId.get("help")).toBe("L:help");
   });
 });

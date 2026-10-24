@@ -131,6 +131,8 @@ const DESKTOP_CLOUD_DOOR: Record<PaneId, Ruling> = {
   screener: { kind: "wired", prop: "screeningSection", via: "DesktopScreening" },
   away: { kind: "wired", prop: "awayTransport", via: "awayOverBridge" },
   about: { kind: "wired", prop: "aboutSection", via: "DesktopAbout" },
+  /* Help & contact: the shell builds the pane; each host hands in which surface and build it is. */
+  help: { kind: "wired", prop: "support", via: 'surface: "desktop"' },
 
   /* THE ACCOUNT'S AI SWITCH — wired on both surfaces, and the only pane here that is a WRITE
      rather than a door. It is not step-up gated (`ai-settings.ts` argues why: reversible by the
@@ -489,6 +491,7 @@ const WEB: Parameters<typeof SettingsView>[0] = {
   securitySection: node("security"),
   accountSection: node("account"),
   aboutSection: node("about"),
+  helpSection: node("help"),
 };
 
 /**

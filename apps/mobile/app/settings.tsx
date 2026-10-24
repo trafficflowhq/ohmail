@@ -11,7 +11,7 @@
 import Constants from "expo-constants";
 import { router } from "expo-router";
 import { useCallback, useState, useSyncExternalStore } from "react";
-import { Platform, View } from "react-native";
+import { Linking, Platform, View } from "react-native";
 import { buildCommit, buildLabel } from "../src/build-info";
 import { Copy } from "../src/copy";
 import { refuse, sayRefusal, type Refusal } from "../src/refusal";
@@ -95,6 +95,7 @@ import { SeedReopenPanel } from "../src/ui/SeedOfferCard";
 import { writePhoneDiagnostics } from "../src/engine/diagnostics";
 import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/diagnostics-native";
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
+import { phoneSupportMail } from "../src/ui/help-contact";
 import { selfCheckRowSaid, type SelfCheckPress } from "../src/ui/self-check-said";
 import { WaitingStrip } from "../src/ui/WaitingStrip";
 import { FilingStrip } from "../src/ui/FilingStrip";
@@ -406,6 +407,25 @@ function SettingsBody() {
             </Txt>
           </View>
           <DiagnosticPanel />
+        </Panel>
+        <Panel style={{ paddingBottom: 8, marginBottom: 10 }}>
+          {/* HELP & CONTACT: the phone's own composer to support, or the mail app where nothing here can send. */}
+          <Nav
+            label={Copy.helpRow}
+            sub={Copy.helpRowSub}
+            chevron
+            onPress={() => {
+              const mail = phoneSupportMail(
+                {
+                  mailboxes: w.mailboxes.rows,
+                  accountId: conn.state.k === "live" && !w.standalone ? conn.state.session.profile.accountId : null,
+                },
+                { platform: { os: Platform.OS, osVersion: Platform.Version ?? null }, build: { version: Constants.expoConfig?.version ?? null, commit } },
+              );
+              if (w.mailboxes.sendingId !== null) router.push({ pathname: "/compose", params: { mailto: mail.mailto, diag: mail.diag } });
+              else void Linking.openURL(mail.mailto).catch(() => undefined);
+            }}
+          />
         </Panel>
       </Scroller>
     </Screen>

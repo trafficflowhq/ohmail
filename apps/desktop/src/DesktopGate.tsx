@@ -49,6 +49,7 @@ import {
 } from "./cloud-session.js";
 import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
+import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
 import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
@@ -1313,6 +1314,9 @@ export function DesktopGate() {
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
+        /* SETTINGS → HELP & CONTACT. The window holds no account id, so the block says none; a
+           mailto here would come back into this window's composer, so the fallback is copy. */
+        {...(status ? { support: { surface: "desktop" as const, version: BUILD_VERSION, commit: BUILD_SHA || null, accountId: null, mailtoLeaves: false } } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */

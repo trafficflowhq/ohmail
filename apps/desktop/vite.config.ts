@@ -279,6 +279,10 @@ const BASE_MESSAGE_NAMESPACES = [
   // here worse than the usual raw key: it would render `update.upToDate` on the one control that
   // tells somebody whether their mail client is current.
   "update",
+  // `help` is Settings → Help & contact (`app/shell/HelpContactPane.tsx`, `SupportDiagnostics.tsx`):
+  // the support address, the mail to it and the block that names this build. Both doors' import
+  // graphs reach the pane, so BOTH bundles need it; without it the pane throws `MISSING_MESSAGE`.
+  "help",
 ] as const;
 
 /**

@@ -151,6 +151,8 @@ export interface ShellKeysInput {
   invitesSection: ReactNode | undefined;
   securitySection: ReactNode | undefined;
   aboutSection: ReactNode | undefined;
+  /** The host named its build and account (`SupportHost`), so Help & contact is a pane. */
+  helpOffered: boolean;
   desktopSection: { label: string; node: ReactNode } | undefined;
   devicesSection: ReactNode | undefined;
   /** The host's unread sink, told what the Ohbox is carrying. */
@@ -233,7 +235,7 @@ export function useShellKeys({
   facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
   receiptsNew,
   accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
-  aboutSection, desktopSection, devicesSection, onUnread, savedSettings,
+  aboutSection, helpOffered, desktopSection, devicesSection, onUnread, savedSettings,
   runArmedUndo,
   allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
   ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
@@ -901,7 +903,8 @@ export function useShellKeys({
     account: !demo && accountSection != null,
     // The demo gets its own About node (two true sentences about the fixture world).
     about: demo || aboutSection != null,
-  }), [demo, mailboxSection, savedSettings, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection]);
+    help: !demo && helpOffered,
+  }), [demo, mailboxSection, savedSettings, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection, helpOffered]);
 
   /* ── the palette command map (every command from the prototype) ── */
   const moveKey = useEnabledBinding("m");

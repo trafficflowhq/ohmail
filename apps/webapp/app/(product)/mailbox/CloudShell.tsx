@@ -88,9 +88,12 @@ export function CloudShell({ demo }: { demo: boolean }) {
   const resolvedDemo = useResolvedDemoModeFrom(demo);
   /** Another tab of this browser signed out: the shell goes in the same task and the tab leaves. */
   const { gone: signedOutHere, confirmed: listenFor } = useSignedOutElsewhere(resolvedDemo, resolveOwnerOutcome);
+  /** The server-confirmed account, for the Help & contact pane's diagnostics block. */
+  const [accountId, setAccountId] = useState<string | null>(null);
   const onConfirmed = useCallback((accountId: string) => {
     bindApiOwner(accountId);
     listenFor(accountId);
+    setAccountId(accountId);
   }, [listenFor]);
   /**
    * Is this tab still the app this origin serves? A browser client is downloaded once and left
@@ -336,6 +339,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
            each mounts the device-pair ceremony. Same absence rule as the invites pane. */
         devicesSection={devicePairing ? <DevicesSection /> : undefined}
         aboutSection={<AboutSection />}
+        /* Help & contact names ohmail's support, so a self-host build, whose operator runs the server, has none. */
+        support={resolvedDemo || SELF_HOST_BUILD ? undefined : {
+          surface: "web", version: process.env.NEXT_PUBLIC_APP_VERSION, commit: process.env.NEXT_PUBLIC_BUILD, accountId,
+        }}
         /* THE FIRST-RUN STAGE'S CALLS. Withheld on the demo — see `useCloudFirstRun`. */
         {...(firstRun ? { firstRun } : {})}
       />

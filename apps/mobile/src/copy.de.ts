@@ -986,6 +986,27 @@ export const DE: Deck = {
     + "geschrieben wurde; es wurde nichts gesendet.",
   diagnosticFailed: "Die Datei konnte nicht geschrieben werden. Es wurde nichts gesendet.",
 
+  /* --------------------------------------------- help & contact */
+
+  helpRow: "Hilfe & Kontakt",
+  helpRowSub: "support@ohmail.app · ein Mensch antwortet per Mail",
+  helpSubject: "Hilfe zu ohmail",
+  helpDiag: "Diagnose",
+  helpDiagWhat:
+    "Dieser Block enthält die App-Version und den Build, die Plattform, deine Account-ID, welche Art "
+    + "Postfach verbunden ist und die Art seines letzten Sync-Fehlers. Er enthält nie Adressen, Hosts, "
+    + "Betreffe, Ordnernamen oder Mailinhalte.",
+  helpRemove: "Entfernen",
+  helpRemoved: "Diagnose entfernt.",
+  helpAddBack: "Wieder einfügen",
+  helpDApp: "App",
+  helpDBuild: "Build",
+  helpDPlatform: "Plattform",
+  helpDAccount: "Account",
+  helpDMailbox: "Postfach",
+  helpDLastSync: "Letzter Sync-Fehler",
+  helpDNone: "keiner",
+
   /* --------------------------------------------- organizing in the background */
 
   stateOrganizing: "Organisiert",

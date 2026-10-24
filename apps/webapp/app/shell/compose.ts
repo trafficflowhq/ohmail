@@ -88,6 +88,11 @@ export interface ComposeFields {
    * reload restores it with the text it belongs to.
    */
   sig?: SignatureState;
+  /**
+   * The diagnostics block Settings › Help & contact put in {@link body}, so the composer can offer
+   * to remove it or put it back (`SupportDiagnostics`). The block itself is body text.
+   */
+  diag?: string;
 }
 
 export const EMPTY_COMPOSE: ComposeFields = {
@@ -454,6 +459,7 @@ export function readComposeDraft(): ComposeFields {
         : parsed.sig?.kind === "edited" && typeof parsed.sig.text === "string"
           ? { sig: { kind: "edited" as const, text: parsed.sig.text } }
           : {}),
+      ...(typeof parsed.diag === "string" && parsed.diag !== "" ? { diag: parsed.diag } : {}),
     };
   } catch {
     // Blocked storage, or a value some earlier version wrote in another shape. Either way an

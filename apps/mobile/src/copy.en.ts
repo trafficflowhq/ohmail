@@ -1477,6 +1477,27 @@ const TABLE = {
     + "was sent.",
   diagnosticFailed: "The file could not be written. Nothing was sent.",
 
+  /* --------------------------------------------- help & contact */
+
+  helpRow: "Help & contact",
+  helpRowSub: "support@ohmail.app · a person answers by mail",
+  helpSubject: "Help with ohmail",
+  helpDiag: "Diagnostics",
+  helpDiagWhat:
+    "This block holds the app version and build, the platform, your account id, which kind of mailbox "
+    + "is connected and the kind of its last sync error. It never holds addresses, hosts, subjects, "
+    + "folder names or any mail content.",
+  helpRemove: "Remove",
+  helpRemoved: "Diagnostics removed.",
+  helpAddBack: "Add back",
+  helpDApp: "App",
+  helpDBuild: "build",
+  helpDPlatform: "Platform",
+  helpDAccount: "Account",
+  helpDMailbox: "Mailbox",
+  helpDLastSync: "Last sync error",
+  helpDNone: "none",
+
   /* --------------------------------------------- organizing in the background */
 
   /**

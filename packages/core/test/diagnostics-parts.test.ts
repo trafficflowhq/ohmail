@@ -23,6 +23,11 @@ import {
   selfCheckSaid,
   sha256Hex,
   stripFrame,
+  supportBlock,
+  supportFacts,
+  supportMailto,
+  withSupportBlock,
+  withoutSupportBlock,
   type DiagnosticBundle,
   type DiagnosticSection,
 } from "../src/diagnostics/index.js";
@@ -235,5 +240,64 @@ describe("the diagnostic file's parts", () => {
     // Control: a path outside every home directory is left as it was.
     expect(stripFrame("at a (/opt/ohmail/engine/main.js:1:2)")).toBe("at a (/opt/ohmail/engine/main.js:1:2)");
     expect(stripFrame("at node:internal/modules/cjs/loader:1145:15")).toBe("at node:internal/modules/cjs/loader:1145:15");
+  });
+});
+
+describe("the support mail's diagnostics block", () => {
+  // Assembled at run time: a provider-domain address is what the block must classify and never write.
+  const GMAIL = ["ana", "gmail.com"].join("@");
+  const WORDS = { title: "Diagnostics", app: "App", build: "build", platform: "Platform", account: "Account", mailbox: "Mailbox", lastSync: "Last sync error", none: "none" };
+  const facts = () => supportFacts({
+    surface: "web",
+    build: { version: "0.30.3", commit: "0123456789abcdef0123456789abcdef01234567" },
+    platform: { os: "linux" },
+    account: "3f2a9c1e-0b7d-4e55-9a10-2c3d4e5f6a7b",
+    mailboxes: [
+      { id: "m1", address: GMAIL, status: "error", errorCode: "auth", authKind: "password" },
+      { id: "m2", address: "ana@work.example.org", status: "connected", errorCode: null, authKind: "oauth" },
+      { id: "m3", address: "ana@mail.example.org", status: "error", errorCode: "imap.example.org:993 refused" },
+    ],
+  });
+
+  it("names the build, the platform, the account and each mailbox's provider and error class", () => {
+    expect(supportBlock(facts(), WORDS)).toBe([
+      "— Diagnostics (ohmail) —",
+      "App: ohmail web 0.30.3 · build 012345678",
+      "Platform: linux",
+      "Account: 3f2a9c1e-0b7d-4e55-9a10-2c3d4e5f6a7b",
+      "Mailbox: gmail · Last sync error: auth",
+      "Mailbox: microsoft_oauth · Last sync error: none",
+      "Mailbox: imap · Last sync error: other",
+    ].join("\n"));
+  });
+
+  it("holds no address, host or port from the account it describes", () => {
+    const block = supportBlock(facts(), WORDS);
+    for (const leak of ["@", "gmail.com", "example.org", "993", "ana"]) expect(block).not.toContain(leak);
+    // An address offered as the account id is dropped, not written.
+    expect(supportFacts({ surface: "phone", build: {}, platform: {}, account: GMAIL }).account).toBeNull();
+  });
+
+  it("says none where a fact is missing, and drops what fails the file's own checks", () => {
+    const f = supportFacts({ surface: "desktop", build: { version: "nightly", commit: "dev" }, platform: { os: "beos" } });
+    expect(supportBlock(f, WORDS).split("\n").slice(1)).toEqual([
+      "App: ohmail desktop none", "Platform: other", "Account: none", "Mailbox: none",
+    ]);
+  });
+
+  it("comes out whole and goes back in, leaving what was written around it", () => {
+    const block = supportBlock(facts(), WORDS);
+    expect(withoutSupportBlock(`Sync stopped.\n\n${block}`, block)).toBe("Sync stopped.");
+    expect(withoutSupportBlock(`\n\n${block}`, block)).toBe("");
+    expect(withoutSupportBlock(`a\n\n${block}\n\nb`, block)).toBe("a\n\nb");
+    // An edited block is not the block any more.
+    expect(withoutSupportBlock(`a\n\n${block.replace("auth", "x")}`, block)).toBeNull();
+    expect(withSupportBlock("Sync stopped.\n", block)).toBe(`Sync stopped.\n\n${block}`);
+    expect(withSupportBlock("", block)).toBe(`\n\n${block}`);
+  });
+
+  it("the mailto carries the same subject and body, line breaks as CRLF", () => {
+    const url = supportMailto("Help with ohmail", "a\nb & c");
+    expect(url).toBe("mailto:support@ohmail.app?subject=Help%20with%20ohmail&body=a%0D%0Ab%20%26%20c");
   });
 });
