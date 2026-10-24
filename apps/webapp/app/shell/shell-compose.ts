@@ -1623,6 +1623,10 @@ export function useShellCompose({
       setOhboxSel(null);
       go(toList);
     },
+    onEmptied: () => {
+      setCompose(EMPTY_COMPOSE);
+      setComposeResumed(false);
+    },
   });
   settleComposeRef.current = autosave.settleCompose;
   composeEpochRef.current = autosave.epochNow;
@@ -2046,6 +2050,29 @@ export function useShellCompose({
    * a value left standing can only be re-read by another press, which carries its own stamp.
    */
   const [discardRefusal, setDiscardRefusal] = useState<DiscardRefusal | null>(null);
+  /** Empty the composer and every reply lane bound to this row, with their stored copies. */
+  const emptyEditorsOf = useStableCallback((draftId: string, heldRow: string | null) => {
+    if (releaseDraftIdRef.current === draftId || heldRow === draftId) {
+      releaseBindingRef.current();
+      setCompose(EMPTY_COMPOSE);
+      clearComposeDraft();
+      setComposeCloseRefusal(null);
+    }
+    const row = engine.read().get<EngineDraft>("draft", draftId) ?? null;
+    const lanes = new Set<string>();
+    for (const [lane, seed] of replySeedDrafts.current) if (seed === draftId) lanes.add(lane);
+    for (const [lane, held] of replyRows.current) if (held.row === draftId) lanes.add(lane);
+    for (const lane of [row?.inReplyToMessageId, row?.forwardOfMessageId ? inlineForwardKey(row.forwardOfMessageId) : null]) {
+      if (lane && readReplyMeta(lane).row?.id === draftId) lanes.add(lane);
+    }
+    for (const lane of lanes) {
+      replySeedDrafts.current.delete(lane);
+      replyRows.current.delete(lane);
+      replyAutosave.forget(lane);
+      clearReplyLane(lane);
+      setReplyTo((cur) => (cur !== null && (replyModeRef.current === "forward" ? inlineForwardKey(cur) : cur) === lane ? null : cur));
+    }
+  });
   const discardDraft = useStableCallback(
     (draftId: string) => {
       /**
@@ -2067,24 +2094,19 @@ export function useShellCompose({
         setDiscardRefusal({ draftId, why: decision.why, at: Date.now() });
         return;
       }
-      /* ── NOTHING IS FORGOTTEN BEFORE THE SERVER HAS ANSWERED — invariant T ─────────────────
-         The three statements below used to run the moment the mutation was dispatched, on the
-         assumption that a delete asked for is a delete done. It is not: a send can reserve the row
-         between the local check above and this request reaching the server (the service decides
-         under the row lock), and the 409 that comes back RESTORES the row in the mirror — while
-         the binding had already been dropped. The compose then sat populated with that message's
-         text holding no row, and two seconds later wrote a second one for it.
-         So the release, the block state and the reply seed all move inside the CONFIRMED branch,
-         and the refusal restores the binding instead. */
+      /* DISCARD DISCARDS: every editor holding this row is emptied before the request goes, its
+         stored copy too, or the words come back on the next Compose, Reply or reload. A refusal
+         below leaves the row in Drafts, where it can be opened again. */
+      // Read before the emptying spends the session, for the release once the server answers.
+      const session = heldRow !== null && heldRow === draftId ? composeSessionId() : null;
+      emptyEditorsOf(draftId, heldRow);
       // THIS PAGE'S OWN DELETE: its tombstone may land before the answer lets go of the editor.
       ownDraftDiscard(draftId, true);
       let queued = false;
       void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
         queued = res.status === "queued";
         if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
-          /* A SEND STILL RUNNING, said by the server under its row lock — the row comes back, so
-             the compose that was bound to it is bound to it again, and the row says why. */
-          settleComposeRef.current({ kind: "restoredBy409", rowId: draftId });
+          // A send still running, said by the server under its row lock: the row stays, and says why.
           setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() });
           return;
         }
@@ -2135,24 +2157,9 @@ export function useShellCompose({
         // leaves by the one door, once (`resolveHeldSend`'s latch, for its reason).
         if (!resolvedRows.current.has(draftId)) {
           resolvedRows.current.add(draftId);
-          releaseSendLockForRow(
-            COMPOSE_SEND_KEY, draftId,
-            heldRow !== null && heldRow === draftId ? composeSessionId() : null,
-            sendLockOwed(engine),
-          );
+          releaseSendLockForRow(COMPOSE_SEND_KEY, draftId, session, sendLockOwed(engine));
         }
         writeReplyMeta(`draft:${draftId}`, {});
-        // The compose form may be holding the very row that was just deleted — discarding from the
-        // list while it is open would otherwise leave autosave PATCHing a row that is gone, and
-        // the next pause would report a 404 nobody could act on.
-        if (releaseDraftIdRef.current === draftId) releaseBindingRef.current();
-        // The reply editor may be holding it too — a settle after this delete must not delete twice.
-        for (const [msgId, dId] of replySeedDrafts.current) {
-          if (dId === draftId) replySeedDrafts.current.delete(msgId);
-        }
-        for (const [lane, held] of replyRows.current) {
-          if (held.row === draftId) replyRows.current.delete(lane);
-        }
       }).then(() => {
         // Forgotten once the answer above has been handled; a queued delete is still this page's.
         if (!queued) ownDraftDiscard(draftId, false);

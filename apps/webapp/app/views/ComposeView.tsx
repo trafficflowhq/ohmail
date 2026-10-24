@@ -1004,7 +1004,9 @@ export function ComposeView({
                 because it arrives while somebody may be typing into a letter that no longer exists. */}
             {elsewhere !== null ? (
               <p className="compose-note" role="alert">
-                {t(elsewhere.why === "deleted" ? "deletedElsewhere" : elsewhere.earlier ? "sentElsewhereKept" : "sentElsewhere")}
+                {t(elsewhere.why === "deleted"
+                  ? (elsewhere.earlier ? "deletedElsewhereKept" : "deletedElsewhere")
+                  : elsewhere.earlier ? "sentElsewhereKept" : "sentElsewhere")}
               </p>
             ) : null}
             {/* THE QUESTION SITS ABOVE THE ROW IT WAS ASKED FROM, at full panel width — the

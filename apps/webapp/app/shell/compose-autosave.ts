@@ -197,11 +197,6 @@ export type ComposeFate =
     aboutThisCompose: boolean;
   }
   /**
-   * A discard of the bound row was refused: the server answered 409 `send_recorded` and KEPT it.
-   * The binding was never really gone, so it is restored rather than re-made.
-   */
-  | { kind: "restoredBy409"; rowId: string }
-  /**
    * A send was refused for good and its refusal names the row it was sent from — the adapter's own,
    * for a press that carried none. Nothing was delivered, so the row is an ordinary draft again and
    * this composer takes it, rather than its next pause writing a second row for the same message.
@@ -343,6 +338,8 @@ export function useComposeAutosave(opts: {
    * without moving `setCompose`/`go` into a hook that has no business holding them.
    */
   onCleared?: (toList: "ohbox" | "drafts") => void;
+  /** The surface empties its form: a restored letter whose row was deleted holds nothing new. */
+  onEmptied?: () => void;
 }): ComposeAutosave {
   const { engine, fields, mailboxId, active } = opts;
   const sendInFlight = opts.sendInFlight ?? false;
@@ -350,6 +347,8 @@ export function useComposeAutosave(opts: {
      in, and naming the prop directly would pin that render's whole scope. */
   const onClearedRef = useRef(opts.onCleared);
   onClearedRef.current = opts.onCleared;
+  const onEmptiedRef = useRef(opts.onEmptied);
+  onEmptiedRef.current = opts.onEmptied;
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -585,6 +584,11 @@ export function useComposeAutosave(opts: {
         });
         return true;
       }
+      if (tombstoned(engine, held)) {
+        goneAtStart();
+        return true;
+      }
+      if (hold.kind === "unknown") askServer();
       if (hold.kind !== "free") return false;
       adopted.current = true;
       epoch.current += 1;
@@ -596,6 +600,37 @@ export function useComposeAutosave(opts: {
       // mount, so the first change writes an UPDATE to it rather than being deduped away.
       return true;
     };
+    /* A ROW DELETED WHILE THIS TAB WAS CLOSED: absent from the mirror once a drain of this page has
+       completed, it is asked of the server once. Gone, the stored letter is cleared when it holds
+       nothing the row did not, and kept as a new draft otherwise; never written back to the row. */
+    let asked = false;
+    function askServer(): void {
+      if (asked || engine.read().get("draft", held!) != null || typeof engine.draftOnServer !== "function") return;
+      if ((engine.drainsCompleted?.() ?? 0) === 0) return;
+      asked = true;
+      void engine.draftOnServer(held!).then((answer) => {
+        if (answer === "gone" && !adopted.current && readComposeRow() === held) goneAtStart();
+      });
+    }
+    function goneAtStart(): void {
+      adopted.current = true;
+      epoch.current += 1;
+      adoptOff.current?.();
+      adoptOff.current = null;
+      saved.current = null;
+      savedHash.current = null;
+      const buffer = readComposeDraft();
+      const holds = readComposeRowHolds();
+      if (!worthSaving(buffer) || (holds !== null && holds.row === held && holds.sig === holdsSig(buffer))) {
+        openWrite.current = false;
+        clearComposeDraft();
+        onEmptiedRef.current?.();
+        return;
+      }
+      writeComposeRow(null);
+      abandonedAt.current = null;
+      setElsewhereAt({ why: "deleted", rowId: held!, at: null, earlier: true });
+    }
     if (settle()) return;
     let off: (() => void) | null = engine.subscribe(() => {
       if (settle()) {
@@ -664,17 +699,6 @@ export function useComposeAutosave(opts: {
       adoptOff.current?.();
       adoptOff.current = null;
       adopted.current = true;
-      adopt(fate.rowId, fieldsRef.current);
-      return;
-    }
-    if (fate.kind === "restoredBy409") {
-      /* THE SERVER KEPT THE ROW, so the binding was never really gone. Re-adopted rather than
-         re-made: `adopt` restores the id AND marks the text on screen as already-saved, so the
-         pause that follows writes nothing for content the row already holds — without that the
-         "restore" would be a PUT, and on a row with a send on record a PUT is refused.
-         Only for the compose that was bound to it: a Delete pressed on some other row in the list
-         has nothing here to restore. */
-      if (draftId !== null && draftId !== fate.rowId) return;
       adopt(fate.rowId, fieldsRef.current);
       return;
     }
