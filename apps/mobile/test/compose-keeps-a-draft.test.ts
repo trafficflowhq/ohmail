@@ -120,6 +120,12 @@ describe("every road out of the sheet asks before it closes", () => {
     // CONTROL: an empty composer just closes, and a queued send already carries its text.
     expect(keepAct({ phase: "idle", worth: false, files: 0, armed: false })).toBe("close");
     expect(keepAct({ phase: "queued", worth, files: 0, armed: false })).toBe("close");
+    // Unless its Cancel is owed: those words go nowhere, so they are kept as an idle letter's are.
+    expect(keepAct({ phase: "queued", worth, files: 0, armed: false, cancelOwed: true })).toBe("keep");
+    expect(keepAct({ phase: "queued", worth: false, files: 1, armed: false, cancelOwed: true })).toBe("ask");
+    expect(keepAct({ phase: "queued", worth, files: 0, armed: true, cancelOwed: true })).toBe("close");
+    // Unverified may have gone: its words are never offered again as a draft.
+    expect(keepAct({ phase: "unverified", worth, files: 0, armed: false, cancelOwed: true })).toBe("close");
   });
 
   it("a recipient or a reply's subject alone is not something the person wrote", () => {

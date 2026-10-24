@@ -21,21 +21,31 @@
  *
  * ── HOW TO WATCH EACH ONE FAIL ───────────────────────────────────────────────────────────────
  *
- *  1. `cancelAct` answering `"close"` for a queued send — the defect itself → controls 1 and 3.
+ *  1. `cancelAct` answering `"close"` for Cancel send over a queued send → controls 1 and 3; answering
+ *     `"withdraw"` for a plain close of the sheet → controls 6 and 10 (a send told it goes on the return never went).
  *  2. `withdrawQueued` without `this.withdrawnKeys.add(key)` → control 5.
  *  3. `withdrawQueued` without the queue removal → control 1.
  *  4. `dispatch` without the withdrawn read → control 5: a batch sends a row already withdrawn.
  *  5. `restoreOutbox` without the `withdrawn` skip → control 4: a relaunch re-queues a cancelled send.
  *  6. `dispatchSend` without the standing-key lookup → control 1b: a second press, a second key.
+ *  7. `dispatchSend` joining a send the sheet left by its intent alone → controls 7 and 7b.
+ *  8. `cancelSendPress` saying the cancellation over `gone`, or asking twice → controls 9 and 8.
+ *  9. `dispatchSend` joining a send restored after a relaunch by its intent alone → control 7R.
+ * 10. `keepAct` closing over the words of a send whose Cancel is owed → control 11.
  * Each was run, watched red by the assertion named beside it, and restored from a pristine copy
  * proved by `cmp`.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
-import { OUTBOX_TYPE, type WithdrawOutcome } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, type EngineMutation, type WithdrawOutcome } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
-import { flushQueued, liveActions, sendIntentOf, type LiveWorldActions } from "../src/state/live";
-import { afterWithdraw, cancelAct, type WithdrawAnswer } from "../src/ui/send-cancel";
+import { queuedCaptionKey } from "../src/engine/send-waits";
+import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
+import { flushQueued, liveActions, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
+import { keepAct } from "../src/ui/compose-keep";
+import {
+  afterWithdraw, cancelAct, cancelledSay, cancelSendOffered, cancelSendPress, keptSay, type CloseRoad, type SendVerdict, type WithdrawAnswer,
+} from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
@@ -68,17 +78,32 @@ async function scene() {
   const reachedTheDoor = new Promise<void>((r) => { atTheDoor = r; });
   let openTheDoor!: () => void;
   const doorOpened = new Promise<void>((r) => { openTheDoor = r; });
+  /** Sends that reach the server and lose their answer on the way back. */
+  let loseSendAnswers = 0;
+  /** Held writes wait at the door until released. */
+  let held: { path: (p: string) => boolean; reached: () => void; opened: Promise<void> } | null = null;
   const deps: MobileEngineDeps = {
     openExecutor: world.open,
     deleteDatabase: world.drop,
     uuid,
     fetch: async (url, init) => {
       if (offline) throw new TypeError("Network request failed");
-      if (holding && /^\/drafts\/[^/]+\/send$/.test(new URL(url).pathname)) {
+      const path = new URL(url).pathname;
+      if (holding && /^\/drafts\/[^/]+\/send$/.test(path)) {
         atTheDoor();
         await doorOpened;
       }
-      return fetch(url, init);
+      const method = ((init as RequestInit | undefined)?.method ?? "GET").toUpperCase();
+      if (held !== null && method !== "GET" && held.path(path)) {
+        held.reached();
+        await held.opened;
+      }
+      const res = await fetch(url, init);
+      if (loseSendAnswers > 0 && /^\/drafts\/[^/]+\/send$/.test(path)) {
+        loseSendAnswers -= 1;
+        throw new TypeError("Network request failed");
+      }
+      return res;
     },
   };
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
@@ -93,6 +118,18 @@ async function scene() {
     fake, origin, deps, ...boot, actions, toasts,
     tunnel: (on: boolean) => { offline = on; },
     holdTheSend: () => { holding = true; return { reachedTheDoor, openTheDoor }; },
+    loseSendAnswers: (n: number) => { loseSendAnswers = n; },
+    /** Hold every write whose path matches at the door, until `open()`. */
+    hold: (path: (p: string) => boolean) => {
+      let reached!: () => void;
+      const atDoor = new Promise<void>((r) => { reached = r; });
+      let open!: () => void;
+      const opened = new Promise<void>((r) => { open = r; });
+      held = { path, reached, opened };
+      return { atDoor, open: () => { held = null; open(); } };
+    },
+    /** What the sheet said as it closed, in order. */
+    sheetSaid: [] as string[],
   };
 }
 
@@ -100,15 +137,53 @@ async function scene() {
 const sendRequests = (fake: ReturnType<typeof mailServer>) =>
   fake.seen.filter((r) => r.method === "POST" && /^\/drafts\/[^/]+\/send$/.test(r.url));
 
-/** The composer's press, exactly as the sheet takes it: decide, ask, then say or close. */
+/**
+ * The composer's press, exactly as the sheet takes it: decide by the way out, leave or ask, then
+ * say or close. `null` is a Cancel send pressed while the last one is still asked. `verdict` is the
+ * world's ledger at the press, which this harness has no flush ledger for.
+ */
 async function pressCancel(
   live: Awaited<ReturnType<typeof scene>>,
   key: string | null,
+  road: CloseRoad,
   alreadySent = false,
-): Promise<"close" | "already_sent" | "unknown"> {
-  if (cancelAct({ phase: "queued", key, alreadySent }) === "close") return "close";
-  return afterWithdraw(await live.actions.withdrawSend(key!));
+  o: { asking?: { current: boolean }; verdict?: SendVerdict } = {},
+): Promise<"close" | "keepSend" | "already_sent" | "unknown" | null> {
+  const act = cancelAct({ road, phase: "queued", key, alreadySent });
+  if (act === "keepSend") live.actions.leaveSend(key!);
+  if (act !== "withdraw") return act;
+  const end = await cancelSendPress({
+    asking: o.asking ?? { current: false }, withdraw: () => live.actions.withdrawSend(key!),
+    verdict: () => o.verdict ?? "unknown", standalone: false, bound: false,
+  });
+  if (end?.say) live.sheetSaid.push(sayArg(end.say));
+  return end === null ? null : end.said;
 }
+
+/** The app killed and launched again over the same device store (CONTROL 4's relaunch). */
+async function relaunch(live: Awaited<ReturnType<typeof scene>>) {
+  live.store.close();
+  const again = await bootEngine(live.deps, { origin: live.origin, token: "tok-1", accountId: "acct-1" });
+  if (again.kind !== "ready") throw new Error("boot refused");
+  const actions = liveActions({ engine: again.engine, toast: (m) => live.toasts.push(sayArg(m)), uuid, zone: "UTC" });
+  return { ...again, actions };
+}
+
+/** Airplane mode as the phone reads it: the network door says offline (the tunnel cuts the wire). */
+function airplane(): { set(s: "online" | "offline"): void } {
+  let state: "online" | "offline" = "offline";
+  const listeners = new Set<(r: unknown) => void>();
+  const reader: NetworkReader = { read: () => state, subscribe: (l) => { listeners.add(l); return () => { listeners.delete(l); }; } };
+  installNetworkReader(reader);
+  return { set(s) { state = s; for (const l of [...listeners]) l(s); } };
+}
+afterEach(() => { installNetworkReader(null); });
+
+/** The server's rows that went, as `address|words`. */
+const sentRows = (fake: ReturnType<typeof mailServer>) => fake.draftRows()
+  .filter((d) => (d as { status?: string }).status === "sent")
+  .map((d) => `${(d as { to?: Array<{ address: string }> }).to?.map((x) => x.address).join(",")}|${(d as { body?: string }).body}`)
+  .sort();
 
 describe("a message the person cancelled is never sent, and never sent twice", () => {
   it("CONTROL 1 — offline, Cancel, compose again, reconnect: ONE delivery under ONE key", async () => {
@@ -121,7 +196,7 @@ describe("a message the person cancelled is never sent, and never sent twice", (
 
     // THE PRESS, with no network: the attempt may have left (this phone shares no disk to claim on),
     // so the server's answer is owed and the sheet says it could not reach it — never "withdrawn".
-    expect(await pressCancel(live, first.key ?? null)).toBe("unknown");
+    expect(await pressCancel(live, first.key ?? null, "cancelSend")).toBe("unknown");
     expect(live.engine.pendingMutations(), "the cancelled send is still on the queue").toHaveLength(0);
 
     // …and the person writes it again and sends.
@@ -195,12 +270,197 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     const flushing = flushQueued(live.engine, live.actions.releaseConfirmed);
     await door.reachedTheDoor;
 
-    expect(await pressCancel(live, queued.key ?? null)).toBe("already_sent");
+    expect(await pressCancel(live, queued.key ?? null, "cancelSend")).toBe("already_sent");
 
     door.openTheDoor();
     await flushing;
     expect(live.fake.deliveries(), "the message the composer said was sent did not go").toHaveLength(1);
     expect(sendRequests(live.fake)).toHaveLength(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 6 — offline, Back, reconnect: the send the sheet promised goes ONCE under its first key", async () => {
+    const live = await scene();
+    live.tunnel(true);
+    const first = await live.actions.sendReply("m-1", "goes when the signal is back", false, null);
+    expect(first.outcome).toBe("queued");
+
+    // Back over the waiting send: the sheet goes, the send stays.
+    expect(await pressCancel(live, first.key ?? null, "close")).toBe("keepSend");
+    expect(live.engine.pendingMutations().map((p) => p.key), "the close took the send off the queue").toEqual([first.key]);
+
+    live.tunnel(false);
+    await flushQueued(live.engine, live.actions.releaseConfirmed);
+    expect(live.fake.deliveries(), "a send told it goes on the return never went").toEqual([first.key]);
+    expect(live.fake.withdrawnKeys(), "the close asked a withdraw").toEqual([]);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 7 — offline, forward to Alice, Back, forward to Bob, reconnect: each forward goes, to its own", async () => {
+    const live = await scene();
+    live.tunnel(true);
+    const a = await live.actions.sendForward("m-1", [{ name: "Alice", address: "alice@fake.test" }], "Alice, see below.", null);
+    expect(await pressCancel(live, a.key ?? null, "close")).toBe("keepSend");
+    const b = await live.actions.sendForward("m-1", [{ name: "Bob", address: "bob@fake.test" }], "Bob, see below.", null);
+    expect([a.outcome, b.outcome]).toEqual(["queued", "queued"]);
+    expect(b.key, "the second forward retired the one the sheet left waiting").not.toBe(a.key);
+
+    live.tunnel(false);
+    await flushQueued(live.engine, live.actions.releaseConfirmed);
+    expect(new Set(live.fake.deliveries())).toEqual(new Set([a.key, b.key]));
+    const sentTo = live.fake.draftRows().filter((d) => (d as { status?: string }).status === "sent")
+      .map((d) => (d as { to?: Array<{ address: string }> }).to?.map((x) => x.address).join(",")).sort();
+    expect(sentTo).toEqual(["alice@fake.test", "bob@fake.test"]);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 7b — a reply left waiting, then a reply with other words: both go; the same words again join it", async () => {
+    const live = await scene();
+    live.tunnel(true);
+    const first = await live.actions.sendReply("m-1", "The contract is below.", false, null);
+    expect(await pressCancel(live, first.key ?? null, "close")).toBe("keepSend");
+    const again = await live.actions.sendReply("m-1", "The contract is below.", false, null);
+    expect(again.key, "the same words pressed again are the send that waits").toBe(first.key);
+    const other = await live.actions.sendReply("m-1", "And can we talk at ten?", false, null);
+    expect(other.key).not.toBe(first.key);
+
+    live.tunnel(false);
+    await flushQueued(live.engine, live.actions.releaseConfirmed);
+    expect(new Set(live.fake.deliveries())).toEqual(new Set([first.key, other.key]));
+    const bodies = live.fake.draftRows().filter((d) => (d as { status?: string }).status === "sent")
+      .map((d) => String((d as { body?: string }).body)).sort();
+    expect(bodies).toEqual(["And can we talk at ten?", "The contract is below."]);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 7R — a forward left waiting outlives a relaunch: the same one again joins it, one to Bob is its own", async () => {
+    const live = await scene();
+    live.tunnel(true);
+    const alice = [{ name: "Alice", address: "alice@fake.test" }];
+    const a = await live.actions.sendForward("m-1", alice, "Alice, see below.", null);
+    expect(await pressCancel(live, a.key ?? null, "close")).toBe("keepSend");
+    // Killed and launched again, still with no network: the left mark lived in the dead session.
+    const again = await relaunch(live);
+    const same = await again.actions.sendForward("m-1", alice, "Alice, see below.", null);
+    expect(same.key, "the same forward pressed after the relaunch was a second message").toBe(a.key);
+    const b = await again.actions.sendForward("m-1", [{ name: "Bob", address: "bob@fake.test" }], "Bob, see below.", null);
+    expect(b.key, "after the relaunch the forward to Bob retired the one to Alice").not.toBe(a.key);
+
+    live.tunnel(false);
+    await again.verifyIdentity();
+    await again.engine.start();
+    await flushQueued(again.engine, again.actions.releaseConfirmed);
+    expect(sentRows(live.fake)).toEqual(["alice@fake.test|Alice, see below.", "bob@fake.test|Bob, see below."]);
+    expect(live.fake.deliveries()).toHaveLength(2);
+    again.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 8 — Cancel send pressed twice while the server is asked: the second press says nothing, the first says it went", async () => {
+    const live = await scene();
+    // The send reaches the server and both its answers are lost: the sheet says it is still trying.
+    live.loseSendAnswers(2);
+    const queued = await live.actions.sendReply("m-1", "this one went", false, null);
+    expect(queued.outcome).toBe("queued");
+    expect(live.fake.deliveries()).toHaveLength(1);
+
+    const door = live.hold((p) => p === "/sends/withdraw");
+    const asking = { current: false };
+    const first = pressCancel(live, queued.key ?? null, "cancelSend", false, { asking });
+    await door.atDoor;
+    expect(await pressCancel(live, queued.key ?? null, "cancelSend", false, { asking }), "the second press was asked").toBeNull();
+    door.open();
+    expect(await first).toBe("already_sent");
+    expect(live.sheetSaid, "a press told the person nothing was sent").toEqual([]);
+    expect(live.fake.deliveries()).toHaveLength(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 9 — Cancel send after the flush delivered it, before the ledger heard: no cancellation is said", async () => {
+    const live = await scene();
+    live.tunnel(true);
+    const queued = await live.actions.sendReply("m-1", "on its way", false, null);
+    expect(queued.outcome).toBe("queued");
+    void live.actions.pileToggle("m-1", "replyLater");
+    await new Promise((r) => setTimeout(r, 50));
+    // The flush delivers the reply, then waits on the verb behind it: the world has not heard yet.
+    const door = live.hold((p) => !p.startsWith("/drafts"));
+    live.tunnel(false);
+    const flushing = flushQueued(live.engine, live.actions.releaseConfirmed);
+    await door.atDoor;
+    expect(live.fake.deliveries()).toEqual([queued.key]);
+    expect(await pressCancel(live, queued.key ?? null, "cancelSend")).toBe("close");
+    expect(live.sheetSaid, "a delivered reply was told nothing was sent").toEqual([]);
+    door.open();
+    await flushing;
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  /* Measured on 0.30.0 with a phone paired to Cloud: airplane mode, Send, Back, and the letter was
+     neither sent nor in Drafts. The paired door, with the network door reading offline. */
+  for (const relaunched of [false, true]) {
+    it(`CONTROL 10 — no network, Send, Back${relaunched ? ", a relaunch" : ""}, the network back: it goes once and is in Sent`, async () => {
+      const live = await scene();
+      const net = airplane();
+      live.tunnel(true);
+      const first = await live.actions.sendReply("m-1", "Sent from a plane.", false, null);
+      expect(first.outcome).toBe("queued");
+      expect(live.toasts).toEqual([Copy.replyQueuedOffline]);
+      expect(await pressCancel(live, first.key ?? null, "close")).toBe("keepSend");
+      expect(sayArg(keptSay(queuedCaptionKey(networkNow()))), "the close did not repeat the caption").toBe(Copy.replyQueuedOffline);
+
+      const phone = relaunched ? await relaunch(live) : live;
+      expect(phone.engine.pendingMutations().map((p) => p.key), "the closed sheet's send left the queue").toEqual([first.key]);
+      live.tunnel(false);
+      net.set("online");
+      if (relaunched) {
+        await phone.verifyIdentity();
+        await phone.engine.start();
+      }
+      const settled = await flushQueued(phone.engine, phone.actions.releaseConfirmed);
+      expect(settled.get(first.key!)?.status).toBe("confirmed");
+      expect(live.fake.deliveries(), "not exactly one delivery under the first key").toEqual([first.key]);
+      expect(live.fake.withdrawnKeys(), "the close asked a withdraw").toEqual([]);
+      expect(sentRows(live.fake)).toEqual(["ada@fake.test|Sent from a plane."]);
+      expect(live.fake.draftRows(), "a draft was left beside the sent letter").toHaveLength(1);
+      await flushQueued(phone.engine, phone.actions.releaseConfirmed);
+      expect(sendRequests(live.fake)).toHaveLength(1);
+      phone.store.close();
+      live.fake.server.close();
+    });
+  }
+
+  it("CONTROL 11 — Cancel send with no network, then Back: nothing goes, and the words reach Drafts", async () => {
+    const live = await scene();
+    const net = airplane();
+    live.tunnel(true);
+    const words = "Second thoughts.";
+    const first = await live.actions.sendReply("m-1", words, false, null);
+    expect(first.outcome).toBe("queued");
+    // The server cannot be asked, so the Cancel is owed and the sheet says so.
+    expect(await pressCancel(live, first.key ?? null, "cancelSend")).toBe("unknown");
+    // Back, as the sheet takes it: no row on this door holds the words, so the close keeps them.
+    expect(cancelAct({ road: "close", phase: "queued", key: first.key ?? null, alreadySent: false, cancelOwed: true })).toBe("close");
+    if (keepAct({ phase: "queued", worth: true, files: 0, armed: false, cancelOwed: true }) === "keep") {
+      expect(await live.actions.draftKeep({
+        mode: "reply", messageId: "m-1", mailboxId: null, to: [], subject: "", body: words, files: 0, draftId: null,
+      })).toBe("kept");
+    }
+
+    live.tunnel(false);
+    net.set("online");
+    await flushQueued(live.engine, live.actions.releaseConfirmed);
+    expect(live.fake.deliveries(), "a cancelled send went").toEqual([]);
+    expect(live.fake.withdrawnKeys()).toEqual([first.key]);
+    const drafts = live.fake.draftRows().map((d) => [(d as { status?: string }).status ?? "draft", (d as { body?: string }).body]);
+    expect(drafts, "the cancelled letter was neither sent nor in Drafts").toEqual([["draft", words]]);
+    expect(live.toasts.at(-1)).toBe(Copy.composeKeptQueued);
     live.store.close();
     live.fake.server.close();
   });
@@ -284,17 +544,46 @@ describe("the intent, and the decisions the composer takes", () => {
     expect(sendIntentOf({ kind: "mark_seen", messageIds: ["m-1"], unread: false } as never)).toBeNull();
   });
 
-  it("closing over a queued send withdraws; every other close is just a close", () => {
-    expect(cancelAct({ phase: "queued", key: "k-1", alreadySent: false })).toBe("withdraw");
-    expect(cancelAct({ phase: "idle", key: null, alreadySent: false })).toBe("close");
-    expect(cancelAct({ phase: "sending", key: "k-1", alreadySent: false })).toBe("close");
-    // A composer locked on an unverified send has nothing to withdraw — the server could not
-    // say whether the message left, and "cancelled" is not a claim this device can make.
-    expect(cancelAct({ phase: "unverified", key: "k-1", alreadySent: false })).toBe("close");
-    // No key, nothing to name: the close cannot withdraw a send it cannot identify.
-    expect(cancelAct({ phase: "queued", key: null, alreadySent: false })).toBe("close");
-    // The second press, after the answer was read.
-    expect(cancelAct({ phase: "queued", key: "k-1", alreadySent: true })).toBe("close");
+  it("a press that adds or drops a file, or sets a time, carries something the waiting send does not", () => {
+    const press = { kind: "mail_send", inReplyTo: "m-1", body: "See attached." } as EngineMutation;
+    // The waiting one went through the engine's enrichment; the press did not.
+    const waiting = { ...press, to: [{ name: "Ada", address: "ada@fake.test" }], subject: "Re: Invoice 12" } as EngineMutation;
+    const file = { filename: "contract.pdf", contentType: "application/pdf", contentBase64: "JVBERi0xLjQK" };
+    expect(sendWireDiffers(waiting, press), "an unaltered press read as another message").toBe(false);
+    expect(sendWireDiffers(waiting, { ...press, attachments: [file] } as EngineMutation)).toBe(true);
+    expect(sendWireDiffers({ ...waiting, attachments: [file] } as EngineMutation, press)).toBe(true);
+    expect(sendWireDiffers({ ...waiting, attachments: [file] } as EngineMutation, { ...press, attachments: [{ ...file }] } as EngineMutation)).toBe(false);
+    expect(sendWireDiffers(waiting, { ...press, sendAt: "2030-01-02T09:00:00Z" } as EngineMutation)).toBe(true);
+    expect(sendWireDiffers(waiting, { ...press, body: "Other words." } as EngineMutation)).toBe(true);
+  });
+
+  it("a close keeps a queued send, only Cancel send withdraws it, and every other close is just a close", () => {
+    const queued = { phase: "queued", key: "k-1", alreadySent: false } as const;
+    expect(cancelAct({ road: "close", ...queued })).toBe("keepSend");
+    expect(cancelAct({ road: "cancelSend", ...queued })).toBe("withdraw");
+    // After a Cancel the server could not answer: the sentence was said, a close only dismisses.
+    expect(cancelAct({ road: "close", ...queued, cancelOwed: true })).toBe("close");
+    expect(cancelAct({ road: "cancelSend", ...queued, cancelOwed: true })).toBe("withdraw");
+    for (const road of ["close", "cancelSend"] as const) {
+      // The second press, after "too late" was read.
+      expect(cancelAct({ road, ...queued, alreadySent: true })).toBe("close");
+      // No key, nothing to name.
+      expect(cancelAct({ road, ...queued, key: null })).toBe("close");
+      expect(cancelAct({ road, phase: "idle", key: null, alreadySent: false })).toBe("close");
+      expect(cancelAct({ road, phase: "sending", key: "k-1", alreadySent: false })).toBe("close");
+      // Unverified: the server could not say whether it left, and "cancelled" is not a claim this device can make.
+      expect(cancelAct({ road, phase: "unverified", key: "k-1", alreadySent: false })).toBe("close");
+    }
+    expect(cancelSendOffered(queued)).toBe(true);
+    expect(cancelSendOffered({ ...queued, alreadySent: true })).toBe(false);
+    expect(cancelSendOffered({ phase: "unverified", key: "k-1", alreadySent: false })).toBe(false);
+    expect(cancelSendOffered({ phase: "idle", key: null, alreadySent: false })).toBe(false);
+    // Drafts is named only where a row is known to hold the words.
+    expect(sayArg(cancelledSay({ standalone: true, bound: false }))).toBe(Copy.sendCancelledInDrafts);
+    expect(sayArg(cancelledSay({ standalone: false, bound: true }))).toBe(Copy.sendCancelledInDrafts);
+    expect(sayArg(cancelledSay({ standalone: false, bound: false }))).toBe(Copy.sendCancelled);
+    // A close over a waiting send says the sheet's own caption again.
+    for (const k of ["replyQueuedOffline", "replyQueued", "replySendingLong"] as const) expect(sayArg(keptSay(k))).toBe(Copy[k]);
   });
 
   it("the sheet's restated answers ARE the engine's — assignable both ways, or this will not compile", () => {
@@ -317,15 +606,15 @@ describe("the intent, and the decisions the composer takes", () => {
 
   it("THE WIRING — the sheet takes these decisions on every road out, and renders the sentence", () => {
     expect(COMPOSER).toContain('from "./send-cancel"');
-    // Every close goes through the one function that withdraws: the button, the scrim behind
-    // the sheet, and the platform back gesture. A bare `onClose` on any of the three is the
-    // defect coming back through the door it was not watched on.
+    // Every close goes through the one function that decides: the button, the scrim behind
+    // the sheet, and the platform back gesture. A bare `onClose` on any of the three is a
+    // way out nothing decides.
     expect(COMPOSER).toContain("onRequestClose={closeComposer}");
     expect(COMPOSER.match(/onPress=\{closeComposer\}/g) ?? [], "a close that does not withdraw").toHaveLength(2);
-    expect(COMPOSER).toContain("cancelAct({ phase, key: queuedKey, alreadySent })");
+    expect(COMPOSER).toContain('cancelAct({ road: "close", phase, key: queuedKey, alreadySent, cancelOwed: cancelUnreachable })');
     // The verdict rides beside the answer since `send-cancel-says-it-went.test.ts`: a `gone`
     // key that the flush CONFIRMED says the message went rather than closing in silence.
-    expect(COMPOSER).toContain("afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key))");
+    expect(COMPOSER).toContain("withdraw: () => w.actions.withdrawSend(key), verdict: () => w.sendOutcome(key)");
     // And the refused cancel is SAID, in place, rather than looking like a broken button.
     expect(COMPOSER).toContain("Copy.replyAlreadySent");
     expect(Copy.replyAlreadySent).toContain("Too late to cancel");

@@ -2095,6 +2095,10 @@ const TABLE = {
   /* SEND + DONE — the second send action, beside Send under the same lock. */
   sendAndDone: "Send + Done",
   replyCancel: "Cancel",
+  /* Offered in place of Cancel while a send waits; closing the sheet keeps the send (`send-cancel.ts`). */
+  cancelSend: "Cancel send",
+  sendCancelled: "Send cancelled. Nothing was sent.",
+  sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
   replySending: "Sending…",
   replySent: "Reply sent.",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key

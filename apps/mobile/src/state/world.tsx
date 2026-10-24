@@ -62,7 +62,7 @@ import {
   connectionSay, firstSyncSay, setAsideSaid,
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
-  answersWaiting, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -88,7 +88,6 @@ import {
   liveTagged,
   mirrorSettled,
   presentedWorld,
-  scheduleLabel,
   answersPerMailbox,
   widestWindowOfAnswer,
   screeningAnswered,
@@ -615,6 +614,7 @@ const NO_ACTIONS: WorldActions = {
   sendAndDoneOffered: () => false,
   // Nothing is connected, so nothing is queued: there is no send here to withdraw.
   withdrawSend: () => Promise.resolve("gone" as const),
+  leaveSend: () => undefined,
   // Nor cancel: `false` is "not confirmed", which is exactly what nothing-connected means.
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
@@ -1487,10 +1487,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               // earlier reservation is about that press's words, and about its arrangement —
               // naming a time this press asked for would promise one nobody made. See
               // `FlushedOutcome.earlierWent`.
-              showToast(
-                o.earlierWent ? refuse(o.forward ? "forwardEarlierWent" : "replyEarlierWent")
-                  : o.sendAt !== null ? refuse("scheduledFor", scheduleLabel(o.sendAt, new Date(), zone)) : o.forward ? refuse("forwarded") : refuse("replySent"),
-              );
+              showToast(confirmedSendSay(o, new Date(), zone));
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
             else showToast(refusedSendSay(o.failure));
@@ -1595,6 +1592,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           /* BY REFERENCE for the reason above it. */
           sendAndDoneOffered: acts.sendAndDoneOffered,
           withdrawSend: (key) => acts.withdrawSend(key),
+          leaveSend: (key) => acts.leaveSend(key),
           cancelSchedule: (draftId) => acts.cancelSchedule(draftId),
           draftDiscard: (draftId) => acts.draftDiscard(draftId),
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),

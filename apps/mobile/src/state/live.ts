@@ -2807,6 +2807,17 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
 }
 
 /**
+ * DOES THIS PRESS CARRY ANYTHING THE STANDING SEND DOES NOT? Its words ({@link sendTextDiffers}),
+ * its files and its appointment. Every press states those two, so absent there means none.
+ */
+export function sendWireDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
+  if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
+  const files = (m: typeof standing) => JSON.stringify((m.attachments ?? []).map((f) => [f.filename, f.contentType, f.contentBase64]));
+  return sendTextDiffers(standing, pressed) || files(standing) !== files(pressed)
+    || (standing.sendAt ?? null) !== (pressed.sendAt ?? null);
+}
+
+/**
  * WAS THIS CONFIRMATION ABOUT AN EARLIER MESSAGE? Two facts, both the server's: this key was
  * already settled (`firstSend`), and this press's changed words were kept back (`earlierWordsKept`,
  * the resume's save refused over a row a send holds). One without the other is an ordinary send —
@@ -2827,6 +2838,8 @@ export interface FlushedOutcome {
   kind: EngineMutation["kind"];
   /** mail_send only: whether the intent was a forward — the confirmation sentence differs. */
   forward: boolean;
+  /** mail_send only: a mail with no parent (neither a reply nor a forward) — "Sent.", never "Reply sent.". */
+  fresh: boolean;
   /**
    * mail_send only: the APPOINTMENT the queued intent carried (Send later, mail 0077), or
    * `null`. The sentence differs for the same reason `forward` does, and more sharply: an
@@ -2853,6 +2866,19 @@ export interface FlushedOutcome {
 }
 
 /**
+ * THE SENTENCE A CONFIRMED BACKGROUND SEND EARNS, by its kind. A confirmation the server answered
+ * from an earlier reservation is about that press's words and arrangement (`earlierWent`); an
+ * appointment delivered nothing yet (`sendAt`); otherwise it went, as a forward, a new mail or a reply.
+ */
+export function confirmedSendSay(
+  o: Pick<FlushedOutcome, "forward" | "fresh" | "sendAt" | "earlierWent">, now: Date, zone: string,
+): Refusal {
+  if (o.earlierWent) return refuse(o.forward ? "forwardEarlierWent" : o.fresh ? "composeEarlierWent" : "replyEarlierWent");
+  if (o.sendAt !== null) return refuse("scheduledFor", scheduleLabel(o.sendAt, now, zone));
+  return refuse(o.forward ? "forwarded" : o.fresh ? "composeSent" : "replySent");
+}
+
+/**
  * WHAT A LOCKED COMPOSER READS OFF THE LEDGER beside the status: the server accepted the send
  * (still sending, not waiting), or offered it again ({@link sendRearmed}), or it was refused,
  * leaving this row and earning this sentence.
@@ -2866,12 +2892,13 @@ export interface SendSettlement {
 export const NO_SETTLEMENT: SendSettlement = { accepted: false, rearmed: false, draftId: null, failure: null };
 
 /** What a queued intent was, captured while the queue still holds it — see {@link sendsOffTheQueue}. */
-interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; sendAt: string | null }
+interface QueuedMeta { kind: EngineMutation["kind"]; forward: boolean; fresh: boolean; sendAt: string | null }
 
 function queuedMetaOf(m: EngineMutation): QueuedMeta {
   return {
     kind: m.kind,
     forward: m.kind === "mail_send" && !!m.forwardOf,
+    fresh: m.kind === "mail_send" && !m.forwardOf && !m.inReplyTo,
     sendAt: (m.kind === "mail_send" ? m.sendAt : undefined) ?? null,
   };
 }
@@ -2888,6 +2915,18 @@ function queuedSendsOf(engine: OhmailEngine): Map<string, QueuedMeta> {
   let known = sendsOffTheQueue.get(engine);
   if (known === undefined) sendsOffTheQueue.set(engine, (known = new Map()));
   return known;
+}
+
+/**
+ * Keys of waiting sends no sheet holds, by engine: closed over ({@link LiveWorldActions.leaveSend}),
+ * or restored from a session that died, whose sheet died with it.
+ */
+const sendsLeft = new WeakMap<OhmailEngine, Set<string>>();
+
+function sendsLeftOf(engine: OhmailEngine): Set<string> {
+  let left = sendsLeft.get(engine);
+  if (left === undefined) sendsLeft.set(engine, (left = new Set()));
+  return left;
 }
 
 /**
@@ -2975,7 +3014,7 @@ export async function flushQueued(
      * send the person themselves cancelled is the wrong sentence, and there is no right one.
      */
     if (r.error?.code === OUTBOX_WITHDRAWN_CODE) { offQueue.delete(r.key); continue; }
-    const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, sendAt: null };
+    const meta = kinds.get(r.key) ?? offQueue.get(r.key) ?? { kind: "mark_seen" as const, forward: false, fresh: false, sendAt: null };
     offQueue.delete(r.key);
     const status =
       r.status === "confirmed" ? ("confirmed" as const)
@@ -2984,7 +3023,7 @@ export async function flushQueued(
     const earlierWent = earlierVersionWent(r);
     const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
     outcomes.set(r.key, {
-      status, kind: meta.kind, forward: meta.forward, sendAt: meta.sendAt, earlierWent,
+      status, kind: meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
       ...(refusedSend ? { failure: failedSendCopy(r), ...(r.entityId ? { draftId: r.entityId } : {}) } : {}),
       done: done.get(r.key) ?? null,
     });
@@ -3424,6 +3463,12 @@ export interface LiveWorldActions {
    * holds. See {@link OhmailEngine.withdrawQueued}.
    */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
+  /**
+   * THE SHEET CLOSED OVER THIS WAITING SEND and told the person it goes: from here a press for the
+   * same message carrying other words, files or a time is another message under its own key, never
+   * a replacement. A send restored after a relaunch is treated the same.
+   */
+  leaveSend(key: string): void;
   /**
    * TAKE THE APPOINTMENT OFF A SCHEDULED SEND — `draft_schedule_cancel`, the Scheduled
    * screen's one verb. See {@link LiveWorldActions.cancelSchedule}'s implementation for why
@@ -4977,24 +5022,28 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /**
    * ONE INTENT, ONE KEY, FOR AS LONG AS IT IS RETRYABLE. A send still standing on the queue for
    * this intent — a tunnel, or a killed app whose durable row this session restored — already
-   * carries the key it was expressed under, so a second press RESUMES it instead of minting a
-   * fresh one: same key, same request, and the server's own same-key branch decides whether that
-   * mail has gone. A fresh key there is a second copy in somebody's inbox, which is the whole
-   * defect. Standing means queued OR on the wire: a send in the air resumes its key too, the queue
-   * read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
+   * carries the key it was expressed under, so a second press of that message RESUMES it instead
+   * of minting a fresh one: same key, same request, and the server's own same-key branch decides
+   * whether that mail has gone. A fresh key there is a second copy in somebody's inbox, which is the
+   * whole defect. Standing means queued OR on the wire: a send in the air resumes its key too, the
+   * queue read first because a queued twin holds the newest words. Nothing standing ⇒ `mutate` mints.
    */
   const dispatchSend = (m: EngineMutation, andDone: SendAndDonePlan | null = null): Promise<MutationResult> => {
     const intent = sendIntentOf(m);
     // Queued or on the wire, and not a send already confirmed and kept for its echo.
-    const standing = intent === null
-      ? undefined
-      : [...engine.pendingMutations(), ...engine.inFlightMutations()]
-        .find((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
+    const standingSends = intent === null ? [] : [...engine.pendingMutations(), ...engine.inFlightMutations()]
+      .filter((p) => joinableStandingSend(p) && sendIntentOf(p.mutation) === intent);
+    /* A SEND NO SHEET HOLDS — closed over, or restored after a relaunch — is joined only by a press
+       carrying what it carries; anything else is another message. The mark is kept by key, so a
+       resume under it stays marked. */
+    const left = sendsLeftOf(engine);
+    for (const p of standingSends) if ("restored" in p && p.restored === true) left.add(p.key);
+    const standing = standingSends.find((p) => !left.has(p.key) || !sendWireDiffers(p.mutation, m));
     /* WITH NO NETWORK, THE SAME WORDS PRESSED AGAIN ARE THE SEND THAT WAITS. A second row under
        the key would be replayed on the return after the first had gone, and each replay writes a
-       draft of its own (`send-waits.ts`). Different words, or Send + Done pressed over a plain
+       draft of its own (`send-waits.ts`). Other words or files, or Send + Done pressed over a plain
        Send (or back), take the resume below: the latest press decides, under the same key. */
-    if (standing !== undefined && networkNow() === "offline" && !sendTextDiffers(standing.mutation, m)
+    if (standing !== undefined && networkNow() === "offline" && !sendWireDiffers(standing.mutation, m)
       && sameIntent(standing.andDone ?? null, andDone)) {
       return Promise.resolve({ id: standing.id, key: standing.key, status: "queued", seq: null });
     }
@@ -5016,6 +5065,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * pressed Cancel is the one that knows what to render.
    */
   const withdrawSend = (key: string): Promise<WithdrawOutcome> => engine.withdrawQueued(key);
+
+  const leaveSend = (key: string): void => { sendsLeftOf(engine).add(key); };
 
   const sendReply = async (
     messageId: string,
@@ -5788,7 +5839,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
-    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
@@ -5907,6 +5958,8 @@ export interface WorldActions {
   ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
+  /** See {@link LiveWorldActions.leaveSend}. */
+  leaveSend(key: string): void;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
   cancelSchedule(draftId: string): Promise<boolean>;
   /** Discard a draft — see {@link LiveWorldActions.draftDiscard} for the four endings. */
@@ -5997,6 +6050,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
       current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
+    leaveSend: (key) => current().leaveSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     draftDiscard: (draftId) => current().draftDiscard(draftId),
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),

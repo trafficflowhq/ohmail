@@ -593,6 +593,50 @@ describe("the engine bundle a phone would ship", () => {
     }
   }, 60_000);
 
+  /* A bodiless write on the phone's own Request: whatwg-fetch has no `body`, so the engine's guard
+     read every DELETE as an undeclared body and answered 415 — Drafts' Discard never worked. */
+  it("takes a bodiless write, with the adapter's own headers, on react-native's own Request", async () => {
+    await buildPhoneEngine();
+    const mod = loadArtifact();
+    const start = mod.startPhoneEngine as (d: unknown) => Promise<{
+      handle(r: Request): Promise<Response>; sessionToken: string; stop(): Promise<void>;
+    }>;
+    const { engine } = await overADeadPort(start, {
+      exec: sqlExecutor(),
+      imap: { host: "127.0.0.1", secure: false, auth: { user: "discard@b.test", pass: "pw" } },
+      address: "discard@b.test",
+      machineName: "census", installId: "census-install", keks: { 1: "a".repeat(64) },
+    });
+    live = engine;
+    const wf = require_("whatwg-fetch") as { Response: typeof Response; Request: typeof Request; Headers: typeof Headers };
+    expect("body" in wf.Request.prototype, "react-native's Request grew a `body` — re-derive this").toBe(false);
+    const platform = { Response: globalThis.Response, Request: globalThis.Request, Headers: globalThis.Headers };
+    try {
+      globalThis.Response = wf.Response;
+      globalThis.Request = wf.Request;
+      globalThis.Headers = wf.Headers;
+      const t = localEngineTransport(engine);
+      const at = (path: string) => `${LOCAL_ENGINE_ORIGIN}${path}`;
+      const rows = await readMailboxes({ profile: { origin: LOCAL_ENGINE_ORIGIN, accountId: "unused-here" }, fetch: t.fetch } as never);
+      const made = await t.fetch(at("/drafts"), {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "k-create-1" },
+        body: JSON.stringify({ mailboxId: rows![0]!.id, threadId: null, inReplyToMessageId: null, subject: "Discard me", body: "x", to: [], cc: [], bcc: [] }),
+      });
+      expect(made.status).toBe(201);
+      const { id } = await made.json() as { id: string };
+      const gone = await t.fetch(at(`/drafts/${encodeURIComponent(id)}`), { method: "DELETE", headers: { "idempotency-key": "k-discard-1" } });
+      expect(gone.status, `Discard answered ${gone.status}: ${await gone.clone().text()}`).toBeLessThan(300);
+      expect((await t.fetch(at(`/drafts/${encodeURIComponent(id)}`), { method: "GET", headers: {} })).status).toBe(404);
+      const unknown = await t.fetch(at("/messages/00000000-0000-4000-8000-000000000999"), { method: "DELETE", headers: { "idempotency-key": "k-delete-1" } });
+      expect(unknown.status, "a Delete was refused by its media type").toBe(404);
+    } finally {
+      globalThis.Response = platform.Response;
+      globalThis.Request = platform.Request;
+      globalThis.Headers = platform.Headers;
+    }
+  }, 60_000);
+
   it("DIALS the mail server on its own — nobody outside has to start it", async () => {
     /* THE EFFECT, not the field. `organizing: true` is read back off the object that wrote it and
        is true on an engine that never opened a socket; a connection arriving here is not. */

@@ -121,7 +121,7 @@ describe("a cancel pressed after the send already went", () => {
   it("5 — a caller that supplies no verdict is where it was, and the sheet supplies one", () => {
     expect(afterWithdraw("gone")).toBe("close");
     expect(COMPOSER, "the sheet asks the engine and never the ledger").toContain(
-      "afterWithdraw(await w.actions.withdrawSend(key), w.sendOutcome(key))",
+      "withdraw: () => w.actions.withdrawSend(key), verdict: () => w.sendOutcome(key)",
     );
   });
 
