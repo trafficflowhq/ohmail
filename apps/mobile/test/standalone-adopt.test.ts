@@ -1487,7 +1487,7 @@ describe("what the panel that names this phone reads", () => {
     /* Read rather than rendered for the file's stated reason. The ORDER is the assertion: the
        door answers first, and `w.mailboxes.rows` is the arm beside it. */
     const src = readFileSync(join(fileURLToPath(new URL(".", import.meta.url)), "..", "app/settings.tsx"), "utf8");
-    const door = src.indexOf("const here = standaloneHere()");
+    const door = src.indexOf("const here = standaloneHereFor({ standalone: w.standalone })");
     const cards = src.indexOf("here !== null");
     const roster = src.indexOf(": w.mailboxes.rows.map((row) => ({");
     expect(door, "the panel never asks the door").toBeGreaterThan(-1);

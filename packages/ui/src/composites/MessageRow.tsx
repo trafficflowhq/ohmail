@@ -282,6 +282,13 @@ export interface MessageRowProps {
    * null — dropping the prop remounts the button mid-transition.
    */
   actions?: ReactNode;
+  /**
+   * WHAT FOLLOWS THE ROW, under it — the open conversation's strip of squares on the Ohbox. Like
+   * `actions` it stands beside the row button in the `role="presentation"` slot, never inside it,
+   * on the slot's second line; the slot then carries the row's `data-index`, so a windowed list
+   * measures the row with what follows it. Absent ⇒ the row renders exactly as without it.
+   */
+  follow?: ReactNode;
   onClick?: () => void;
   className?: string;
 }
@@ -339,6 +346,7 @@ export function MessageRow(props: MessageRowProps) {
     spoken,
     detection,
     actions,
+    follow,
     onClick,
     className,
   } = props;
@@ -607,7 +615,7 @@ export function MessageRow(props: MessageRowProps) {
       type="button"
       className={cls}
       data-id={id}
-      data-index={windowIndex}
+      data-index={follow === undefined ? windowIndex : undefined}
       data-ids={memberIds && memberIds.length > 0 ? memberIds.join(" ") : undefined}
       data-stamp-id={stampId !== undefined && stampId !== id ? stampId : undefined}
       data-unseen={unread ? "1" : undefined}
@@ -632,16 +640,19 @@ export function MessageRow(props: MessageRowProps) {
   );
 
   // See `actions`: no slot ⇒ the row IS the button, unchanged.
-  if (actions === undefined) return rowButton;
+  if (actions === undefined && follow === undefined) return rowButton;
   return (
-    <div className="row-slot" role="presentation">
+    <div className="row-slot" role="presentation" data-index={follow === undefined ? undefined : windowIndex}>
       {rowButton}
       {/* The inner box is what the fade is painted on — see `.row-actions-in` in row.css: the
           wrapper spans the row so the controls centre on it, and a backdrop that tall would
           cover the stamp on the row's first line. */}
-      <span className="row-actions">
-        <span className="row-actions-in">{actions}</span>
-      </span>
+      {actions === undefined ? null : (
+        <span className="row-actions">
+          <span className="row-actions-in">{actions}</span>
+        </span>
+      )}
+      {follow === undefined ? null : <div className="row-follow">{follow}</div>}
     </div>
   );
 }

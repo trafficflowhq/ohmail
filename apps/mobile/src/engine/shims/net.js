@@ -62,6 +62,9 @@ function nativeError(err) {
   return e;
 }
 
+/** The largest piece one native write carries (see `_write`). */
+const NATIVE_WRITE_MAX = 16 * 1024;
+
 /**
  * One native socket, as a Duplex.
  *
@@ -192,21 +195,31 @@ class NativeSocketBridge extends Duplex {
    * wrote it for this chunk.
    */
   _write(chunk, encoding, callback) {
-    if (this._connectionGone || this.native.destroyed === true) {
-      const err = new Error("the mail server connection was closed before these bytes were written");
-      err.code = "ERR_STREAM_DESTROYED";
-      if (!this.destroyed) this.destroy();
-      callback(err);
-      return;
-    }
-    try {
-      // The native write's own callback IS this callback: the writable side's capacity, and
-      // therefore every `drain` the client waits on, is derived from when the platform says the
-      // bytes left.
-      this.native.write(chunk, null, callback);
-    } catch (err) {
-      callback(err);
-    }
+    /* AT MOST 16 KiB PER NATIVE WRITE, in order. The platform resets its inactivity timer only when
+       a whole native write completes, so one 958 KB write on a slow link timed out while its bytes
+       were still moving. Each piece passes the write-after-close refusal; the callback follows the
+       last piece, so the client's `drain` still waits for the platform. */
+    const bytes = chunk;
+    let offset = 0;
+    const next = (err) => {
+      if (err) { callback(err); return; }
+      if (offset >= bytes.length && offset > 0) { callback(); return; }
+      if (this._connectionGone || this.native.destroyed === true) {
+        const gone = new Error("the mail server connection was closed before these bytes were written");
+        gone.code = "ERR_STREAM_DESTROYED";
+        if (!this.destroyed) this.destroy();
+        callback(gone);
+        return;
+      }
+      const piece = bytes.length <= NATIVE_WRITE_MAX && offset === 0 ? bytes : bytes.subarray(offset, offset + NATIVE_WRITE_MAX);
+      offset += Math.max(piece.length, 1);
+      try {
+        this.native.write(piece, null, next);
+      } catch (thrown) {
+        callback(thrown);
+      }
+    };
+    next();
   }
 
   _final(callback) {
@@ -268,6 +281,7 @@ module.exports = {
   createConnection: connect,
   Socket: NativeSocketBridge,
   NativeSocketBridge,
+  NATIVE_WRITE_MAX,
   nativeError,
   setSocketLog,
   socketLogLine,

@@ -174,7 +174,7 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S VIEW OF SETTINGS IT DOES NOT OWN (mail 0094) — the mirror row, no dial. */
 export {
@@ -296,6 +296,8 @@ export {
 } from "./away-responder-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS,
+  SEND_SUBMISSION_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_COPY_GRACE_MS, SEND_COPY_RETRY_WAITS_MS,
+  SEND_UPLOAD_DROPPED_SENTENCE, SEND_REFUSED_BY_SERVER_SENTENCE, type SendCopyTiming,
   SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS, inUnverifiedProbeWindow, SEND_FAILED_SENTENCE,
   SEND_DUPLICATE_WINDOW_MS, sendContentFingerprint, duplicateSendSentence,
   SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE, SEND_NOT_SECURED_SENTENCE, SEND_LOGIN_REFUSED_SENTENCE,

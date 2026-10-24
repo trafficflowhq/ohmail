@@ -24,11 +24,13 @@ import { ViewBoundary } from "./ViewBoundary";
 
 /* NEVER A NAMED IMPORT OF `Activity`. Next 15.5's App Router renders the web app with its own vendored
    React (19.2.0-canary), which exports no `Activity`: the named import was undefined in the web bundle
-   and the first press of News or Receipts threw React #130 (0.30.2). The desktop window's React 19.2.3
-   has it. So it is read at run time, and where it is missing only the pile on screen is mounted: News
-   and Receipts mount at each visit on the web, as before 0.30.2, and stay mounted on the desktop.
+   and the first press of News or Receipts threw React #130 (0.30.2). Its react-dom does render Activity
+   (the element type is `Symbol.for("react.activity")`, the value the export is), so where the export is
+   missing the type is taken by that name, and the piles stay mounted on the web as on the desktop. A
+   React before 19.2 has no such renderer: there only the pile on screen is mounted.
    `kept-piles-next-react.test.tsx` renders this file under the vendored React. */
-const Activity = Reflect.get(React, "Activity") as
+const Activity = (Reflect.get(React, "Activity") ??
+  (/^(19\.([2-9]|\d{2,})|[2-9]\d)\./.test(React.version) ? Symbol.for("react.activity") : undefined)) as
   | ComponentType<{ mode: "visible" | "hidden"; children?: ReactNode }>
   | undefined;
 
@@ -77,7 +79,13 @@ export function KeptPiles({
     <>
       {KEPT_PILES.map((p) =>
         next.has(p) && (Activity !== undefined || p === active) ? (
-          <div key={p} data-pile={p} data-pile-active={p === active ? "" : undefined} style={{ display: "contents" }}>
+          <div
+            key={p}
+            data-pile={p}
+            data-pile-active={p === active ? "" : undefined}
+            inert={p !== active}
+            style={{ display: "contents" }}
+          >
             <Keep visible={p === active}>
               <ViewBoundary
                 onError={(error) => {

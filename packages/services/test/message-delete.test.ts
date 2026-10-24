@@ -71,6 +71,26 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
     expect(row!.deletedAt).not.toBeNull();
   });
 
+  it("a letter already gone from the server answers so: no Trash intent, no change, not in Trash", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    await db.update(mailboxes).set({ trashFolder: TRASH }).where(eq(mailboxes.id, mailboxId));
+    const id = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    await db.update(messages).set({ deletedAt: new Date() }).where(eq(messages.id, id));
+    const svc = new MessageService();
+
+    const res = await svc.delete(ctx, id);
+    expect(res).toMatchObject({ alreadyGone: true, dto: { id } });
+    expect("seq" in res).toBe(false);
+    const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, id));
+    expect(fs!.desiredFolder).toBe("INBOX");
+    expect(await changesFor(db, accountId)).toEqual([]);
+    expect((await svc.listTrash(ctx, {})).items.map((t) => t.id)).not.toContain(id);
+    // CONTROL: a tombstoned row already filed to Trash takes the ordinary path.
+    const trashed = await seedMessage(db, accountId, mailboxId, { folder: "INBOX" });
+    movedHere(await svc.delete(ctx, trashed));
+    expect("alreadyGone" in await svc.delete(ctx, trashed)).toBe(false);
+  });
+
   it("the snapshot bootstrap no longer hands a fresh mirror the deleted row; the delta tombstones it", async () => {
     const { db, accountId, mailboxId, ctx } = await makeCtx();
     await db.update(mailboxes).set({ trashFolder: TRASH }).where(eq(mailboxes.id, mailboxId));

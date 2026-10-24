@@ -40,7 +40,10 @@ export const WATCHED_FOLDERS = [
   "ohmail/Quarantine",
 ] as const;
 
-/** `ohmail/*` folders that ensureFolders() creates (INBOX always exists). */
+/**
+ * `ohmail/*` folders that ensureFolders() creates at attach (INBOX always exists), and that the
+ * filing pass makes again (`ensureOwnFolder`) when a filing finds one gone.
+ */
 export const OHMAIL_FOLDERS = WATCHED_FOLDERS.filter((f) => f !== "INBOX");
 
 /**
@@ -980,7 +983,22 @@ export type SendResult = {
   /** Delivered, and the server's own Sent copy was not found in time: no locator, no bytes. */
   sentLocator: null;
   raw: null;
+  /** `copy: "caller"`: the copy's bytes, for the caller to file with `fileSentCopy`. */
+  unfiledCopy?: Buffer;
 };
+
+/**
+ * How one `send` treats its Sent copy and the end of its upload. `copy: "inline"` (the default)
+ * appends on the send's own connection; `"caller"` appends nothing and hands the bytes back.
+ * `beforeRelease` runs after the last byte of the message and before the end-of-data mark: while
+ * it has not resolved, the server cannot accept the message, and its rejection is a refusal.
+ */
+export interface SendOptions {
+  copy?: "inline" | "caller";
+  beforeRelease?: () => Promise<void>;
+  /** Aborted while the upload runs: it is stopped before its end-of-data mark (a refusal). Ignored after. */
+  signal?: AbortSignal;
+}
 
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }
@@ -1084,6 +1102,12 @@ export interface MailboxAdapter {
   /** Creates the `ohmail/*` tree an organizer files into; every CREATE and RENAME asks `door`. */
   ensureFolders(door: WriteDoor): Promise<void>;
   /**
+   * Makes ONE of {@link OHMAIL_FOLDERS} again after a filing found it gone: `made`, or `exists`
+   * when it is there. Throws for any other name before a command; CREATE only, asked at `door`.
+   * Optional; an adapter without it never re-makes.
+   */
+  ensureOwnFolder?(canonical: string, door: WriteDoor): Promise<"made" | "exists">;
+  /**
    * A legacy `ohmail/Reads` the last LIST named beside `ohmail/News`, which no read reaches, else
    * null. Optional, like {@link foldLegacyNews}; fakes keep compiling.
    */
@@ -1107,7 +1131,8 @@ export interface MailboxAdapter {
    * means the server moved the mail and would not say where, so nothing was written and the
    * caller may NOT move it again. `gone` carries members whose UID the source no longer holds
    * ({@link MessageGoneError} reported, not thrown), so one vanished message does not cost the
-   * group. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
+   * group. A destination the server says is not there throws `DestinationMissingError`, nothing
+   * written. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string, door: WriteDoor): Promise<MoveManyResult>;
   /** The server path a canonical folder name addresses; both News spellings resolve to one folder. Optional. */
@@ -1188,6 +1213,17 @@ export interface MailboxAdapter {
    * treats absence as both null, the documented fallbacks.
    */
   findSpecialFolders?(): Promise<SpecialFolders>;
+  /**
+   * The folder's UIDVALIDITY, UIDNEXT and EXISTS: this pass's LIST-STATUS reading when the server
+   * gave one, else one STATUS. Read-only. Optional; absence reads as `unanswered`.
+   */
+  folderKeys?(folder: string): Promise<FolderKeysAnswer>;
+  /**
+   * Which of `uids` the folder still holds under `uidValidity`: bounded `UID SEARCH UID <set>` under
+   * one lock, never ALL, never a FETCH, never a write. A refused or partial read, a changed epoch
+   * or a lost selection answers `unanswered`; a re-numbered folder `renumbered`. Optional.
+   */
+  uidsHeld?(folder: string, uidValidity: string, uids: readonly number[]): Promise<UidsHeldAnswer>;
   watch(onSignal: () => void): Promise<() => Promise<void>>;
   /**
    * Re-establish what {@link watch} set up — INBOX selected, IDLE running — after other
@@ -1198,7 +1234,7 @@ export interface MailboxAdapter {
    * semantics. A no-op before `watch` and after its unwatch.
    */
   rearmWatch?(): Promise<void>;
-  send(msg: OutboundMessage): Promise<SendResult>;
+  send(msg: OutboundMessage, opts?: SendOptions): Promise<SendResult>;
   /**
    * Fetch a single MIME part's BLOB on-demand. Bytes are NEVER persisted.
    *
@@ -1225,3 +1261,10 @@ export interface MailboxAdapter {
    */
   fetchRaw?(locator: NativeLocator, opts?: FetchRawOptions): Promise<Uint8Array>;
 }
+
+/** A folder's keys: equal keys under one epoch mean no arrival and no expunge since. */
+export interface FolderKeys { uidValidity: string; uidNext: number; messages: number }
+export type FolderKeysAnswer = { k: "keys"; keys: FolderKeys } | { k: "absent" } | { k: "unanswered" };
+/** {@link MailboxAdapter.uidsHeld}'s answer; `present` holds only UIDs that were asked. */
+export type UidsHeldAnswer = { k: "held"; uidValidity: string; present: ReadonlySet<number> }
+  | { k: "renumbered"; uidValidity: string } | { k: "absent" } | { k: "unanswered" };

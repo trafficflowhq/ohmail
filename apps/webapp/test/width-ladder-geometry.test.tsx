@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { mapOmarchyThemePair } from "../../../packages/tokens/omarchy/map.js";
+import { omarchyRuleText } from "../../../packages/tokens/omarchy/rule.js";
 
 /**
  * ═══ THE WIDTH LADDER, MEASURED IN A REAL ENGINE ═════════════════════════════════════════════
@@ -235,4 +237,51 @@ describe("the red control: the pre-ladder stylesheet re-applied is caught by the
     const r = await read(821, true, PRE_LADDER);
     expect(r.readerShown, "the control did not bite — the override no longer reaches the split").toBe(false);
   }, 60_000);
+});
+
+/* THE DESKTOP'S OUTER EDGE UNDER THE OMARCHY FEED (owner report 2026-10-24, a 1488px window): the
+   feed maps Hyprland's gaps_out to the deck's edge; a gaps_out read as 0 put the rail, list and
+   reader flush to the window, their rings outside it. Every tile's ring stays inside the window. */
+const GRUVBOX = readFileSync(resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw/gruvbox.colors.toml"), "utf8");
+const hypr = (css: string): string => `{"option": "general:gaps_out", "css": "${css}", "set": true }`;
+
+async function tileEdges(gapsOut: string) {
+  const mapped = mapOmarchyThemePair({
+    colorsToml: GRUVBOX,
+    hyprGapsIn: '{"option": "general:gaps_in", "css": "5 5 5 5", "set": true }',
+    hyprGapsOut: hypr(gapsOut),
+    hyprBorderSize: '{"option": "general:border_size", "int": 2, "set": true }',
+  })!;
+  const live = omarchyRuleText(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
+  const html = PAGE(`${css("packages/tokens/src/ohmarchy.css")}\n${live}`)
+    .replace("<html>", '<html data-face="ohmarchy" data-theme="dark">');
+  const ctx = await browser!.newContext({ viewport: { width: 1488, height: 932 }, deviceScaleFactor: 1 });
+  try {
+    const page = await ctx.newPage();
+    await page.setContent(html);
+    return await page.evaluate(() =>
+      [".deck > .rail", ".list-col", ".read-col"].map((sel) => {
+        const el = document.querySelector(sel)!;
+        const r = el.getBoundingClientRect();
+        const ring = Number(/0px 0px 0px ([\d.]+)px/.exec(getComputedStyle(el).boxShadow)?.[1] ?? 0);
+        return { sel, ring, left: r.left - ring, top: r.top - ring, right: innerWidth - r.right - ring, bottom: innerHeight - r.bottom - ring };
+      }),
+    );
+  } finally {
+    await ctx.close();
+  }
+}
+
+describe("the desktop's tiles keep their rings inside the window under the Omarchy feed", () => {
+  for (const gapsOut of ["0 0 0 0", "10 10 10 10"])
+    it(`gaps_out ${gapsOut}: no ring outside the window`, async () => {
+      const tiles = await tileEdges(gapsOut);
+      for (const t of tiles) {
+        expect(t.ring, `${t.sel} draws no ring: this proves nothing`).toBeGreaterThan(0);
+        for (const side of ["left", "top", "right", "bottom"] as const)
+          if (!(t.sel === ".list-col" && (side === "left" || side === "right")))
+            expect(t[side], `${t.sel}'s ring runs out of the window at the ${side}`).toBeGreaterThanOrEqual(0);
+      }
+      if (gapsOut.startsWith("10")) expect(tiles[0]!.left, "the system's 10px edge").toBe(8);
+    }, 60_000);
 });

@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { ImapFlow } from "imapflow";
-import { ImapAdapter, MoveVerifyError, SameFolderMoveError, parseRef } from "../../src/adapters/imap.js";
+import {
+  DestinationMissingError, ImapAdapter, MoveVerifyError, SameFolderMoveError, parseRef,
+} from "../../src/adapters/imap.js";
 import { greenmailConfig, eml, seedInbox } from "./_imapenv.js";
 import { FIXTURE_DOOR } from "./_door.js";
 
@@ -286,5 +288,41 @@ describe("ImapAdapter.move (GreenMail)", () => {
     await c.logout();
     expect(here, "the move expunged the only copy").toEqual([src.uid]);
     for (const o of outcomes) expect(o).toBeInstanceOf(SameFolderMoveError);
+  });
+
+  /* FOLDER-MISSING-FILINGS: another client deleted ohmail's folder. The move names it and leaves
+     the letter at its source; `ensureOwnFolder` makes it again, then answers that it is there. */
+  it("a deleted ohmail folder: the move names it missing, ensureOwnFolder makes it, then says it exists", async () => {
+    const cfg = greenmailConfig();
+    adapter = new ImapAdapter(cfg);
+    await adapter.connect();
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const src = await seedInbox(cfg, "gone1@x");
+    const c = await raw(cfg);
+    await c.mailboxDelete("ohmail.Screened");
+
+    const err = await adapter.move({ folder: "INBOX", ref: src.ref }, "ohmail/Screened", FIXTURE_DOOR).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DestinationMissingError);
+    const l = await c.getMailboxLock("INBOX");
+    const still = await c.search({ header: { "message-id": "gone1@x" } }, { uid: true }).finally(() => l.release());
+    expect(still, "the letter left its source").toEqual([src.uid]);
+
+    expect(await adapter.ensureOwnFolder("ohmail/Screened", FIXTURE_DOOR)).toBe("made");
+    expect((await c.list()).map((f) => f.path)).toContain("ohmail.Screened");
+    expect(await adapter.ensureOwnFolder("ohmail/Screened", FIXTURE_DOOR)).toBe("exists");
+    await c.logout();
+    const moved = await adapter.move({ folder: "INBOX", ref: src.ref }, "ohmail/Screened", FIXTURE_DOOR);
+    expect(moved.folder).toBe("ohmail/Screened");
+  });
+
+  it("ensureOwnFolder refuses a folder that is not ohmail's, before any command", async () => {
+    adapter = new ImapAdapter(greenmailConfig());
+    await adapter.connect();
+    const asked: string[] = [];
+    const door = { ask: (w: string) => { asked.push(w); return { admit: true as const }; } };
+    for (const name of ["Archive", "INBOX", "ohmail/Elsewhere", "ohmail/Reads"]) {
+      await expect(adapter.ensureOwnFolder(name, door as never)).rejects.toThrow(/not one of ohmail's own folders/);
+    }
+    expect(asked).toEqual([]);
   });
 });

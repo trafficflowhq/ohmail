@@ -1,0 +1,46 @@
+{
+  "id": "124",
+  "file": "124-outlook-en-black-initials-answers.eml",
+  "shape": "outlook-en-black-initials-answers",
+  "description": "Outlook for Windows, English: lead 'thanks, done.', the answers typed inside the history in the body's own black ink, marked only by a bold italic '[AE] '",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "inline",
+  "levels": 1,
+  "authorsInHistory": [
+    "Ben Sample"
+  ],
+  "notes": "Synthetic. Outlook's inline-answer marker in the writer's initials; with the full name ('[Ana Example] ') it must stay open too.",
+  "expect": {
+    "fold": "none",
+    "mustNotFold": true,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hi Ben,",
+      "visibleLastLine": "Ana",
+      "historyStartLine": "From: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "From: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "attributionBefore": null,
+      "historyStartText": "From: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hi Ben,",
+      "visibleLastText": "Ana"
+    },
+    "inlineAnswers": [
+      "[AE] Yes, it is item 3 of the offer.",
+      "[AE] Yes, please leave it at the front desk."
+    ],
+    "trailingTail": null
+  }
+}

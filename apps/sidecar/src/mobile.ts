@@ -469,11 +469,27 @@ export const TRANSACTION_WAIT_MS = 30_000;
  * overlap), so it goes where every transaction funnels: the handle's `transaction` method. A
  * re-entrant `db.transaction` would deadlock, so the wait is bounded by {@link TRANSACTION_WAIT_MS}.
  */
+/** The code on a turn-wait refusal's cause, so its log line names it. */
+export const STORE_TURN_WAIT = "store_turn_wait";
+
+/** Which handle a transaction came through. */
+export type TransactionKind = "engine" | "ingest" | "route";
+
 /** One transaction chain two handles can share — the drain's and everybody else's, on one file. */
-export interface TransactionChain { tail: Promise<unknown> }
+export interface TransactionChain {
+  tail: Promise<unknown>;
+  /** The transaction running now, and how many waiters it has refused. */
+  holder?: { kind: TransactionKind; since: number; refused: number } | null;
+  /** Told when a holder first refuses a waiter, and when a holder that refused any settles. */
+  heard?: (
+    event: "store_turn_held" | "store_turn_released",
+    fields: { kind: TransactionKind; elapsedMs: number; refused: number },
+  ) => void;
+}
 
 export function oneTransactionAtATime<T extends object>(
   db: T, waitMs = TRANSACTION_WAIT_MS, chain: TransactionChain = { tail: Promise.resolve() },
+  kind: TransactionKind = "engine",
 ): T {
   const handle = db as T & {
     transaction?: (fn: unknown, config?: unknown) => Promise<unknown>;
@@ -489,7 +505,15 @@ export function oneTransactionAtATime<T extends object>(
     const turn = (): Promise<unknown> => {
       if (refused) return Promise.resolve(undefined);
       started = true;
-      return inner.call(handle, fn, config);
+      const holder = { kind, since: Date.now(), refused: 0 };
+      chain.holder = holder;
+      const settle = (): void => {
+        if (chain.holder === holder) chain.holder = null;
+        if (holder.refused > 0) {
+          chain.heard?.("store_turn_released", { kind, elapsedMs: Date.now() - holder.since, refused: holder.refused });
+        }
+      };
+      return inner.call(handle, fn, config).finally(settle);
     };
     const run = chain.tail.then(turn, turn);
     // The CHAIN keeps the entry whatever the caller is told, and swallows so that one transaction's
@@ -499,15 +523,22 @@ export function oneTransactionAtATime<T extends object>(
       const timer = setTimeout(() => {
         if (started) return;   // it is running; a slow transaction is not this failure
         refused = true;
+        const holder = chain.holder;
+        if (holder) {
+          holder.refused++;
+          if (holder.refused === 1) {
+            chain.heard?.("store_turn_held", { kind: holder.kind, elapsedMs: Date.now() - holder.since, refused: 1 });
+          }
+        }
         // The store's own refusal, marked at source: whatever caused the wait, it is not the message.
-        reject(new StoreStatementFaultError("store.transactionWait", new Error(
+        reject(new StoreStatementFaultError("store.transactionWait", Object.assign(new Error(
           "this store allows one transaction at a time, and this one waited " +
-            `${waitMs} ms without its turn. The usual cause is a transaction opened on the ` +
-            "database handle from INSIDE another transaction's body: a nested transaction must be " +
-            "opened on the transaction object it is nested in, which the driver renders as a " +
-            "savepoint, not on the handle — the handle's turn cannot come round until the outer " +
-            "one returns.",
-        )));
+            `${waitMs} ms without its turn. Either the transaction ahead of it held the store that ` +
+            "long (the store_turn_held line names it), or a transaction was opened on the database " +
+            "handle from INSIDE another transaction's body: a nested transaction must be opened on " +
+            "the transaction object it is nested in, which the driver renders as a savepoint — the " +
+            "handle's turn cannot come round until the outer one returns.",
+        ), { code: STORE_TURN_WAIT })));
       }, waitMs);
       run.then(
         (value) => { clearTimeout(timer); resolve(value); },
@@ -769,6 +800,8 @@ export async function openPhoneStore(
   onMigrating?: PhoneEngineDeps["onMigrating"],
   /** TEST SEAM — see {@link PhoneEngineDeps.journal}. */
   journal?: PhoneEngineDeps["journal"],
+  /** Hears a transaction that held the store past a waiter's wait. */
+  log?: Diagnostic,
 ): Promise<OpenLocalDb> {
   /* THE UPGRADE COUNTS ITSELF: how many this open owed, how many ran and which one paid, the
      desktop's `MigrationCensus` read off the migrator's own hooks, never off the journal's length. */
@@ -842,7 +875,14 @@ export async function openPhoneStore(
   const ingest = proxyOver(paged.ingest);
   /* ONE transaction chain for both handles: a drain letter and another caller's transaction never
      overlap on the one connection. */
-  const chain: TransactionChain = { tail: Promise.resolve() };
+  const chain: TransactionChain = {
+    tail: Promise.resolve(),
+    holder: null,
+    heard: (event, f) => {
+      if (event === "store_turn_held") log?.("store_turn_held", { kind: f.kind, elapsedMs: f.elapsedMs, refused: f.refused });
+      else log?.("store_turn_released", { kind: f.kind, elapsedMs: f.elapsedMs, refused: f.refused });
+    },
+  };
   /* OUTSIDE the transaction gate, so an announcement is delivered after the write is durable
      and without holding the next writer's turn — the contract's "delivered when the
      transaction commits", which this store has to keep for itself. */
@@ -850,13 +890,13 @@ export async function openPhoneStore(
      this store's own from then on. See `Dialect.foldLog`. */
   let foldMark: LogMark = { folded: null };
   const branded = brandDialect(
-    deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs, chain)), "sqlite",
+    deliverLocalNotifyAtCommit(oneTransactionAtATime(db, transactionWaitMs, chain, "engine")), "sqlite",
   ) as unknown as LocalDb;
   const ingestDb = brandDialect(
-    deliverLocalNotifyAtCommit(oneTransactionAtATime(ingest, transactionWaitMs, chain)), "sqlite",
+    deliverLocalNotifyAtCommit(oneTransactionAtATime(ingest, transactionWaitMs, chain, "ingest")), "sqlite",
   ) as unknown as LocalDb;
   const routeDb = brandDialect(
-    deliverLocalNotifyAtCommit(oneTransactionAtATime(route, transactionWaitMs, chain)), "sqlite",
+    deliverLocalNotifyAtCommit(oneTransactionAtATime(route, transactionWaitMs, chain, "route")), "sqlite",
   ) as unknown as LocalDb;
   return {
     db: branded,
@@ -1084,7 +1124,7 @@ async function composePhoneEngine(
      specifier is the shim the mail client's socket is built by. */
   (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
-  const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal);
+  const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal, log);
   /**
    * THE DIAL, AND WHO SUPPLIES IT. A configured start uses what it was given; a sealed start reads
    * the row. A store with nothing to read ends here, with the store CLOSED — an engine left open

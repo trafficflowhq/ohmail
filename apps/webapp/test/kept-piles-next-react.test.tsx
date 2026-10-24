@@ -12,7 +12,9 @@ import { createRequire } from "node:module";
  *
  * So here every `react` import in the module graph is Next's vendored React, and the renderer is
  * Next's vendored react-dom, the pair the production web bundle runs. The shell's sequence is played:
- * News, the Ohbox, Receipts, News again.
+ * News, the Ohbox, Receipts, News again. The vendored renderer has Activity, only the export is
+ * missing, so the piles stay mounted here as on the desktop: one mount per pile, effects let go while
+ * hidden (no read recorded), props applied while hidden.
  */
 /* A name the vendored React does not export reads as undefined, as it does in the web bundle (webpack
    only warns "Attempted import error" and builds), not as vitest's "no such export on the mock" throw. */
@@ -24,6 +26,8 @@ vi.mock("react/jsx-dev-runtime", async () => asBundled(await import("next/dist/c
 const React = await import("react");
 const { createRoot } = (await import("next/dist/compiled/react-dom/client" as string)) as typeof import("react-dom/client");
 const { KeptPiles } = await import("../app/shell/kept-piles");
+const { useVisit } = await import("../app/shell/visit");
+const { queryVisible } = await import("../app/shell/visible-dom");
 type KeptPileName = import("../app/shell/kept-piles").KeptPileName;
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -33,9 +37,21 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 let root: ReturnType<typeof createRoot> | null = null;
 let host: HTMLDivElement | null = null;
 let failures: string[] = [];
+let mounts: Record<KeptPileName, number> = { reads: 0, receipts: 0 };
+/** What each pile's recorder wrote: a stand-in for the seen sweep, armed only while its visit lives. */
+let reads: string[] = [];
+let mail = "first letter";
 
 function Pile({ name }: { name: KeptPileName }) {
-  return h("section", { className: `view view-${name}` }, `the ${name} pile`);
+  React.useState(() => { mounts[name] += 1; return null; });
+  const armed = React.useRef(false);
+  useVisit(() => { armed.current = true; }, () => { armed.current = false; });
+  React.useEffect(() => {
+    const onScroll = () => { if (armed.current) reads.push(`${name}: ${mail}`); };
+    window.addEventListener("scroll", onScroll);
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  return h("section", { className: `view view-${name}` }, h("button", { className: "row" }, `${name}: ${mail}`));
 }
 
 async function show(active: KeptPileName | null): Promise<void> {
@@ -61,6 +77,15 @@ class Boundary extends React.Component<{ children?: React.ReactNode }, { error: 
   override render() {
     return this.state.error ? h("div", { className: "view-fail" }, "the view failed") : this.props.children;
   }
+}
+
+async function start(): Promise<void> {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  failures = []; reads = []; mail = "first letter";
+  mounts = { reads: 0, receipts: 0 };
+  vi.spyOn(console, "error").mockImplementation(() => {});
 }
 
 afterEach(async () => {
@@ -109,5 +134,38 @@ describe("News and Receipts under Next's own React", () => {
     expect(visible("reads")).toBe(true);
     expect(visible("receipts")).toBe(false);
     expect(host.querySelectorAll(".view-reads")).toHaveLength(1);
+  });
+
+  it("switching back shows the same pile, mounted once", async () => {
+    await start();
+    await show("reads");
+    const first = host!.querySelector(".view-reads");
+    await show(null);
+    await show("receipts");
+    await show("reads");
+    expect(host!.querySelector(".view-reads"), "News was unmounted on the way out").toBe(first);
+    expect(mounts, "a revisit mounted the pile again").toEqual({ reads: 1, receipts: 1 });
+    expect(failures).toEqual([]);
+  });
+
+  it("a hidden pile records no read, is out of reach, and shows mail that changed meanwhile", async () => {
+    await start();
+    await show("reads");
+    await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(reads, "control: the pile on screen records").toEqual(["reads: first letter"]);
+    await show("receipts");
+    reads = [];
+    mail = "second letter";
+    await show("receipts");
+    await act(async () => { window.dispatchEvent(new Event("scroll")); });
+    expect(reads, "the hidden pile's recorder ran").toEqual(["receipts: second letter"]);
+    expect(visible("reads")).toBe(false);
+    expect(host!.querySelector("[data-pile=reads]")!.hasAttribute("inert"), "the hidden pile takes focus").toBe(true);
+    expect(queryVisible(".row")!.textContent).toBe("receipts: second letter");
+    await show("reads");
+    expect(host!.querySelector(".view-reads")!.textContent, "the return showed stale mail").toBe("reads: second letter");
+    expect(host!.querySelector("[data-pile=reads]")!.hasAttribute("inert")).toBe(false);
+    expect(queryVisible(".row")!.textContent).toBe("reads: second letter");
+    expect(mounts.reads).toBe(1);
   });
 });

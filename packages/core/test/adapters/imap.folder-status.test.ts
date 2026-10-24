@@ -97,3 +97,87 @@ describe("folderStatus — one STATUS, nothing else", () => {
     expect(fake.closed).toBe(0);
   });
 });
+
+describe("folderKeys and uidsHeld — the Junk check's two reads", () => {
+  type Search = (q: { uid?: string }, client: { mailbox: unknown }) => unknown;
+  async function junk(o: { uidValidity?: bigint; held?: number[]; search?: Search; select?: unknown } = {}) {
+    const fake = fakeClient(async () => ({ messages: 2, uidValidity: 7n, uidNext: 30 }));
+    const held = new Set(o.held ?? []);
+    const asked: string[] = [];
+    Object.assign(fake, {
+      async getMailboxLock(path: string) {
+        fake.calls.push(`select ${path}`);
+        if (o.select !== undefined) throw o.select;
+        fake.mailbox = { path, uidValidity: o.uidValidity ?? 7n, exists: held.size };
+        return { release() { fake.calls.push("release"); } };
+      },
+      async search(q: { uid?: string }) {
+        fake.calls.push("search");
+        asked.push(q.uid ?? "?");
+        if (o.search) return o.search(q, fake);
+        const set = new Set(String(q.uid).split(",").flatMap((r) => {
+          const [a, b] = r.split(":").map(Number);
+          return Array.from({ length: (b ?? a!) - a! + 1 }, (_, i) => a! + i);
+        }));
+        return [...held].filter((u) => set.has(u)).concat([100_000]);
+      },
+    });
+    const adapter = new ImapAdapter(cfg, { client: fake });
+    await adapter.connect();
+    fake.calls.length = 0;
+    return { adapter, fake, asked };
+  }
+
+  it("folderKeys answers the STATUS keys, a missing folder `absent`, anything short `unanswered`", async () => {
+    const { adapter } = await over(async () => ({ messages: 2, uidValidity: 7n, uidNext: 30 }));
+    expect(await adapter.folderKeys("Junk")).toEqual({ k: "keys", keys: { uidValidity: "7", uidNext: 30, messages: 2 } });
+    const gone = await over(async () => { throw Object.assign(new Error("no"), { code: "NotFound" }); });
+    expect(await gone.adapter.folderKeys("Junk")).toEqual({ k: "absent" });
+    const noNext = await over(async () => ({ messages: 2, uidValidity: 7n }));
+    expect(await noNext.adapter.folderKeys("Junk")).toEqual({ k: "unanswered" });
+    const refused = await over(async () => false);
+    expect(await refused.adapter.folderKeys("Junk")).toEqual({ k: "unanswered" });
+  });
+
+  it("uidsHeld answers the asked UIDs the folder holds, by UID SEARCH under one lock and nothing else", async () => {
+    const { adapter, fake, asked } = await junk({ held: [3, 9] });
+    const r = await adapter.uidsHeld("Junk", "7", [9, 3, 5]);
+    expect(r).toEqual({ k: "held", uidValidity: "7", present: new Set([3, 9]) });
+    expect(asked).toEqual(["3,5,9"]);
+    expect(fake.calls).toEqual(["select Junk", "search", "release"]);
+  });
+
+  it("a re-numbered folder, an unnamed epoch, a missing or refused folder answer without a verdict", async () => {
+    const renum = await junk({ uidValidity: 8n, held: [3] });
+    expect(await renum.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "renumbered", uidValidity: "8" });
+    expect(renum.asked).toEqual([]);
+    const unnamed = await junk({ held: [3] });
+    expect(await unnamed.adapter.uidsHeld("Junk", "0", [3])).toEqual({ k: "unanswered" });
+    const missing = await junk({ select: Object.assign(new Error("no"), { serverResponseCode: "NONEXISTENT" }) });
+    expect(await missing.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "absent" });
+    const refused = await junk({ select: new Error("NO [CANNOT]") });
+    expect(await refused.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "unanswered" });
+  });
+
+  it("a `false` search or a selection lost mid-read is `unanswered`; a breach throws", async () => {
+    const no = await junk({ search: () => false });
+    expect(await no.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "unanswered" });
+    const lost = await junk({ search: (_q, c) => { c.mailbox = false; return [3]; } });
+    expect(await lost.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "unanswered" });
+    const moved = await junk({ search: (_q, c) => { c.mailbox = { path: "Junk", uidValidity: 8n }; return [3]; } });
+    expect(await moved.adapter.uidsHeld("Junk", "7", [3])).toEqual({ k: "unanswered" });
+    const flood = await junk({ search: () => Array.from({ length: 50_001 }, (_, i) => i + 1) });
+    const err = await flood.adapter.uidsHeld("Junk", "7", [3]).then(() => null, (e: unknown) => e);
+    expect(isImapBoundExceeded(err)).toBe(true);
+  });
+
+  it("asks in bounded UID sets, never ALL", async () => {
+    const uids = Array.from({ length: 600 }, (_, i) => 2 * i + 1);
+    const { adapter, asked } = await junk({ held: [1] });
+    const r = await adapter.uidsHeld("Junk", "7", uids);
+    expect(r).toMatchObject({ k: "held", present: new Set([1]) });
+    expect(asked.length).toBeGreaterThan(1);
+    for (const set of asked) expect(set.split(",").length).toBeLessThanOrEqual(100);
+    expect(asked.join(",").split(",").map(Number).sort((a, b) => a - b)).toEqual(uids);
+  });
+});

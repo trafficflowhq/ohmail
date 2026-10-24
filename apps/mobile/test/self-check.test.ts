@@ -70,6 +70,18 @@ describe("the card's sentence, per press", () => {
     resetLocaleRegisterForTests();
   });
 
+  /* FOLDER-MISSING-FILINGS: the phone's check said "In step" while letters waited for good. */
+  it("says the filings that still wait on the mail server beside the reading, as the web does", async () => {
+    const check = await answer([{ folder: "INBOX", k: "in_step", server: 3, mirror: 3 }]);
+    expect(selfCheckRowSaid({ k: "done", check }, 2).sentence)
+      .toBe("In step with your mail server. 2 messages are still waiting to be filed on your mail server.");
+    expect(selfCheckRowSaid({ k: "done", check }, 0).sentence).toBe("In step with your mail server.");
+    setActiveLocale("de");
+    expect(selfCheckRowSaid({ k: "done", check }, 1).sentence)
+      .toBe("Stimmt mit deinem Mailserver überein. 1 Nachricht wartet noch darauf, auf deinem Mailserver einsortiert zu werden.");
+    resetLocaleRegisterForTests();
+  });
+
   it("in German too, and a reading for another mailbox is refused, not shown", async () => {
     setActiveLocale("de");
     expect(await say([{ folder: "INBOX", k: "in_step", server: 1, mirror: 1 }])).toBe("Stimmt mit deinem Mailserver überein.");
@@ -121,7 +133,7 @@ describe("the card's wiring, read for its calls", () => {
   it("Settings offers the press on this phone's own card, over the live session, and the file takes the readings", () => {
     const screen = code("app/settings.tsx");
     expect(screen).toMatch(/checkMailbox\(at, id\)/);
-    expect(screen).toMatch(/row\.key === HERE_CARD && here !== null \? \(\(\) => \{\s*const check = selfCheckRowSaid\(checkPress\)/);
+    expect(screen).toMatch(/row\.key === HERE_CARD && here !== null \? \(\(\) => \{\s*const check = selfCheckRowSaid\(checkPress[,)]/);
     expect(screen).toMatch(/selfChecks: selfChecksThisSession\(\)/);
   });
 });

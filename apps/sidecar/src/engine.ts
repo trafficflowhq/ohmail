@@ -66,7 +66,7 @@ import {
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
   nodeOneClickPost, nodeRemoteFetch, notifyRulesService, resolveSession,
   rulesService, sendService, snippetsService, syncService, threadService,
-  triageService, workflowsService, ServiceError, type UnsubscribeService,
+  triageService, workflowsService, ServiceError, SEND_SUBMISSION_CEILING_MS, type UnsubscribeService,
   type AuthConfig, type MailboxAllowancePolicy, type OneClickPost, type SearchSupersede,
   type PushService, type RemoteFetch,
   // The sign-out fence's durable half — one module for both doors, so the engine and the shared
@@ -1113,6 +1113,10 @@ function localServices(
     // the stricter branch; until the server has been probed the column is NULL and this still
     // resolves to 3 MB, so the loose direction is unreachable without a measurement.
     sendSurfaceMaxTotalBytes: null,
+    // This process outlives every answer: the Sent copy is retried in memory, and an upload on a
+    // slow link may run up to the ceiling, which ends it before a resolver may decide its row.
+    sendCopyOutlivesAnswer: true,
+    sendSubmissionCeilingMs: SEND_SUBMISSION_CEILING_MS,
     // UNMETERED STORAGE, typed on the same declaration-not-inference terms as the mailbox
     // allowance below: the desktop tier is free and its limit is the user's own disk. A value
     // somebody wrote, never an absent-config default — the send route REFUSES the sent-copy
@@ -2029,8 +2033,10 @@ export function withPullKick(
   return routes.map((r) => {
     /* "ORGANIZE HERE" AND "HAND THE MAILBOX BACK" RING THEIR OWN MAILBOX: the next gated pass
        re-reads the stamp (a release is its first arm) and the lease decides, so neither press is
-       left to the next poll. */
-    if (r.method === "POST" && (r.pattern === "/mailboxes/:id/organize" || r.pattern === "/mailboxes/:id/release")) {
+       left to the next poll. "Try again now" on the waiting filings likewise: it re-arms the rows,
+       and only the hosted worker reads the stamp it leaves. */
+    if (r.method === "POST" && (r.pattern === "/mailboxes/:id/organize" || r.pattern === "/mailboxes/:id/release"
+      || r.pattern === "/mailboxes/:id/filings/retry")) {
       return { ...r, handler: async (req, deps, params) => {
         const res = await r.handler(req, deps, params);
         if (res.status === 202) runtimeFor(params.id ?? "")?.ring();
@@ -2472,12 +2478,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         );
       }
       return config.adapterFactory
-        /* The empty third argument is the shared function's OWN timeouts option, which this
-           door does not set — the desktop dials the user's own server with the adapter's
-           defaults. Passed positionally so the factory lands in the fourth slot. */
-        ? makeSendAdapter(depsFor(), mailboxId, {},
+        /* The sync dial's deadlines: an upload on a slow link outlasts the serverless 25 s, and the
+           phone's socket timer only moves when a write completes. Passed positionally so the
+           factory lands in the fourth slot. */
+        ? makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS },
             (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ImapAdapter)
-        : makeSendAdapter(depsFor(), mailboxId);
+        : makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS });
     };
 
     const depsFor = (): ApiDeps => ({

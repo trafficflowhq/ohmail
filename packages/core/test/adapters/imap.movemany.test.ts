@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { ImapFlow } from "imapflow";
-import { ImapAdapter, parseRef, FILING_BATCH_MAX } from "../../src/adapters/imap.js";
+import { DestinationMissingError, ImapAdapter, parseRef, FILING_BATCH_MAX } from "../../src/adapters/imap.js";
 import { greenmailConfig, eml } from "./_imapenv.js";
 import type { NativeLocator } from "../../src/adapters/imap-types.js";
 import { FIXTURE_DOOR } from "./_door.js";
@@ -238,6 +238,22 @@ describe("ImapAdapter.moveMany (GreenMail)", () => {
     const res = await adapter.moveMany(locs, "ohmail/News", FIXTURE_DOOR);
 
     expect(res.outcome).toBe("declined");
+    expect(await idsIn(cfg, "INBOX")).toEqual(new Set(ids));
+  });
+
+  it("a destination another client deleted: the batch names it missing and writes nothing", async () => {
+    const cfg = cfgFor();
+    adapter = new ImapAdapter(cfg);
+    await adapter.connect();
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const ids = ["mm-gone-a@x", "mm-gone-b@x"];
+    const locs = await seedInbox(cfg, ids);
+    const c = await raw(cfg);
+    await c.mailboxDelete("ohmail.Receipts");
+    await c.logout();
+
+    const err = await adapter.moveMany(locs, "ohmail/Receipts", FIXTURE_DOOR).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DestinationMissingError);
     expect(await idsIn(cfg, "INBOX")).toEqual(new Set(ids));
   });
 });

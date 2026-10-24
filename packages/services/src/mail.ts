@@ -174,7 +174,7 @@ export {
   MessageService, messageService, MARK_SEEN_MAX_IDS, BODIES_IDS_MAX,
   type MessageView, type ListMessagesOptions, type MessagePatchBody,
   type MarkSeenBody, type MarkSeenResult,
-  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type PatchResult,
+  type MoveBody, type MoveIdempotency, type MoveResult, type MoveRequestResult, type AlreadyGoneResult, type PatchResult,
 } from "./message-service.js";
 /* THE READER'S DISPATCH AND ITS MIRROR READ (mail 0094). In the LOCAL barrel because the doors
    that use them are mounted by the desktop engine as well as by the hosted API. */
@@ -303,8 +303,10 @@ export {
 } from "./send-reconcile-pass.js";
 export {
   SendService, sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS,
+  SEND_SUBMISSION_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_COPY_GRACE_MS, SEND_COPY_RETRY_WAITS_MS,
+  SEND_UPLOAD_DROPPED_SENTENCE, SEND_REFUSED_BY_SERVER_SENTENCE, type SendCopyTiming,
   SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS, inUnverifiedProbeWindow,
-  SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE, FORWARD_MAX_RAW_BYTES,
+  SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE, FORWARD_MAX_RAW_BYTES, FORWARD_MAX_PARTS, FORWARD_MAX_TOTAL_BYTES,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, SEND_UNMEASURED_MESSAGE_BYTES, attachmentBudgetFor,

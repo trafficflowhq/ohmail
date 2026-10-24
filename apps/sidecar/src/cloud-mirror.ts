@@ -397,6 +397,25 @@ interface CursorState {
 /** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
 export interface HostedGap { letters: number; strangers?: number }
 
+/** One hosted mailbox's filing figures as Cloud answered them — see {@link CloudMirror.hostedFilings}. */
+export interface HostedFiling { pendingMoves: number; filing: MailboxDTO["filing"] }
+
+/** The hosted `filing` object narrowed at the wire: every member of the shape, or nothing. */
+function hostedFilingOf(m: MailboxDTO): HostedFiling | null {
+  const f = (m as { filing?: unknown }).filing as Record<string, unknown> | null | undefined;
+  if (f === null || typeof f !== "object") return null;
+  const count = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+  const stamp = (v: unknown): v is string | null => v === null || typeof v === "string";
+  if (!count(f.due) || !count(f.deferred) || !count(f.attempts) || !count(f.stuck) || typeof f.asOf !== "string") return null;
+  if (![f.oldestPendingAt, f.nextAttemptAt, f.lastRefusalClass, f.stuckSince, f.stuckRefusalClass, f.lastCycleAt].every(stamp)) return null;
+  const filing = {
+    due: f.due, deferred: f.deferred, oldestPendingAt: f.oldestPendingAt, nextAttemptAt: f.nextAttemptAt, attempts: f.attempts,
+    lastRefusalClass: f.lastRefusalClass, stuck: f.stuck, stuckSince: f.stuckSince, stuckRefusalClass: f.stuckRefusalClass,
+    asOf: f.asOf, lastCycleAt: f.lastCycleAt,
+  } as MailboxDTO["filing"];
+  return { pendingMoves: count(m.pendingMoves) ? m.pendingMoves : f.due + f.deferred, filing };
+}
+
 export interface CloudMirrorConfig {
   db: LocalDb;
   world: LocalWorld;
@@ -558,6 +577,14 @@ export interface CloudMirror {
    * pull. The Ohbox's "Checked" line reads it (`hostedLastSyncAt`).
    */
   hostedSyncs(): ReadonlyMap<string, string | null>;
+  /**
+   * THE FILINGS EACH HOSTED MAILBOX HAS NOT APPLIED (`pendingMoves` and `filing` of the hosted
+   * answer), per hosted mailbox id. The mirror writes every filing it copies as settled, so its own
+   * read always says none wait; the Cloud door's list carries these instead, or the strip and the
+   * Settings block never show what Cloud holds stuck. Rebuilt at every mailbox refresh; absent for an
+   * answer without a well-formed `filing` (an older server).
+   */
+  hostedFilings(): ReadonlyMap<string, HostedFiling>;
   /**
    * The freshness contract's verdict for this mirror (INSTANT-ARCH §6.6) — the same three states
    * the client engine's `freshness()` derives, from this mirror's completion stamp ({@link
@@ -2633,6 +2660,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let hostedGaps = new Map<string, HostedGap | null>();
   /** The hosted scan stamps — see {@link CloudMirror.hostedSyncs}. Empty until a refresh lands. */
   let hostedSyncs = new Map<string, string | null>();
+  /** The hosted filing figures — see {@link CloudMirror.hostedFilings}. Empty until a refresh lands. */
+  let hostedFilings = new Map<string, HostedFiling>();
   /** When counts were last ASKED for (not when they last changed). `-Infinity` ⇒ never. */
   let countsAskedAt = Number.NEGATIVE_INFINITY;
   /**
@@ -2758,6 +2787,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (typeof v === "string" || v === null) syncs.set(m.id, v);
     }
     hostedSyncs = syncs;
+    // The filing figures, rebuilt whole: a well-formed `filing` or nothing.
+    const filings = new Map<string, HostedFiling>();
+    for (const m of hosted) {
+      const f = hostedFilingOf(m);
+      if (f !== null) filings.set(m.id, f);
+    }
+    hostedFilings = filings;
     hostedMailboxIds = hosted.map((m) => m.id);
     boxesAsk = Math.max(boxesAsk, ask);
     await cfg.onMailboxes?.().catch(() => undefined);
@@ -4358,6 +4394,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     hostedImports: () => hostedImports,
     hostedGaps: () => hostedGaps,
     hostedSyncs: () => hostedSyncs,
+    hostedFilings: () => hostedFilings,
     // THE SHARED THREE-STATE DERIVATION — literally the function `OhmailEngine.freshness()`
     // calls, over this mirror's own stamp and this process's own clock. One derivation, three
     // renderers (the web ladder, the phone's wordmark line, the desktop window over

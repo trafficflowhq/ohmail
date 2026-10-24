@@ -37,6 +37,10 @@ class Server {
   /** Destinations whose `UID MOVE` the server answers NO. */
   refuseInto = new Set<string>();
   lockFault: (() => Error) | null = null;
+  /** A lock on a folder that is not there fails as imapflow 1.7.8 measured: NO, no code, `mailboxMissing`. */
+  measuredMissing = false;
+  /** The server answers a CREATE with a bare NO. */
+  refuseCreate = false;
   folder(path: string, uidValidity: bigint): Folder {
     const f = { uidValidity, uidNext: 1, msgs: new Map<number, Msg>() };
     this.folders.set(path, f);
@@ -65,6 +69,7 @@ function clientOver(s: Server) {
     async getMailboxLock(path: string) {
       if (s.lockFault) throw s.lockFault();
       const f = s.folders.get(path);
+      if (!f && s.measuredMissing) throw Object.assign(new Error("Command failed"), { responseStatus: "NO", mailboxMissing: true });
       if (!f) throw Object.assign(new Error("Mailbox doesn't exist"), { serverResponseCode: "NONEXISTENT" });
       client.mailbox = { path, exists: f.msgs.size, uidValidity: f.uidValidity, uidNext: f.uidNext };
       return { path, release() { /* nothing */ } };
@@ -113,6 +118,12 @@ function clientOver(s: Server) {
       s.imap.push(`messageDelete ${JSON.stringify(uidsOf(range))} in ${(client.mailbox as { path: string }).path}`);
       for (const u of uidsOf(range)) cur().msgs.delete(u);
       return true;
+    },
+    async mailboxCreate(path: string) {
+      s.imap.push(`mailboxCreate ${path}`);
+      if (s.refuseCreate) throw Object.assign(new Error("Command failed"), { responseStatus: "NO" });
+      s.folder(path, 9n);
+      return { path, created: true };
     },
     async messageFlagsAdd() { return true; },
     async messageFlagsRemove() { return true; },
@@ -330,3 +341,44 @@ describe("honest classes on the filing path", () => {
     expect((await w.audits()).filter((a) => a.action === "reconcile.move.failed")).toHaveLength(2);
   });
 });
+
+/* FOLDER-MISSING-FILINGS: another client deleted ohmail/Receipts under two groups of waiting
+   filings (one from the Inbox, one from News). One CREATE per pass, whatever the server answers. */
+describe("ohmail's own folder deleted under waiting filings", () => {
+  async function gone(refuseCreate: boolean) {
+    const s = renamedServer();
+    s.folders.delete("ohmail/Receipts");
+    s.measuredMissing = true;
+    s.refuseCreate = refuseCreate;
+    s.put("INBOX", 7, "old-news-1@example.com");
+    const w = await world(2, { observed: "ohmail/News", attempts: 0, errorClass: null });
+    await w.db.delete(messageInstances).where(and(eq(messageInstances.mailboxId, w.mailboxId), eq(messageInstances.folder, "ohmail/Reads")));
+    const at = [{ folder: "INBOX", ref: "1:7" }, { folder: "ohmail/News", ref: "4:102" }];
+    for (const [i, id] of w.ids.entries()) {
+      await w.db.update(messages).set({ nativeLocator: at[i]! }).where(eq(messages.id, id));
+      await w.db.update(messageInstances).set({ isPrimary: true }).where(eq(messageInstances.messageId, id));
+    }
+    const adapter = await adapterOver(s);
+    await pass(w, adapter);
+    return { s, w };
+  }
+
+  it("a CREATE the server refuses is asked once across both groups, and every row reads `no_such_folder`", async () => {
+    const { s, w } = await gone(true);
+    expect(commands(s).filter((c) => c.startsWith("mailboxCreate"))).toEqual(["mailboxCreate ohmail/Receipts"]);
+    expect(commands(s).some((c) => c.startsWith("messageMove")), "a move into a folder that is not there").toBe(false);
+    expect((await w.states()).map((r) => [r.status, r.attempts, r.cls]))
+      .toEqual([["pending", 1, "no_such_folder"], ["pending", 1, "no_such_folder"]]);
+    expect((await w.audits()).map((a) => a.action).sort()).toEqual(["reconcile.move.failed", "reconcile.move.failed"]);
+  });
+
+  it("a CREATE the server takes: one CREATE, one audit row, and both groups filed", async () => {
+    const { s, w } = await gone(false);
+    expect(commands(s).filter((c) => c.startsWith("mailboxCreate"))).toEqual(["mailboxCreate ohmail/Receipts"]);
+    expect(s.count("ohmail/Receipts")).toBe(2);
+    expect((await w.states()).map((r) => r.status)).toEqual(["reconciled", "reconciled"]);
+    expect((await w.audits()).filter((a) => a.action === "reconcile.folder.remade").map((a) => a.payload))
+      .toEqual([{ mailboxId: w.mailboxId, folder: "ohmail/Receipts" }]);
+  });
+});
+

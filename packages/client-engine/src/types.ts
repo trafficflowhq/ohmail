@@ -1364,6 +1364,12 @@ export type EngineMutation =
        */
       forwardOf?: string | null;
       /**
+       * WHICH OF THE ORIGINAL'S FILES GO — attachment ids, only beside {@link forwardOf}. Absent:
+       * every part (the request is the one it always was). Present: exactly these, `[]` none. The
+       * server refuses an id that is not one of the original's parts (409, nothing sent).
+       */
+      forwardParts?: string[];
+      /**
        * The person confirmed forwarding a `no_forward` original after the one-sentence ask. The
        * server refuses such a forward without it (403) and admits it with it; ignored otherwise.
        */
@@ -2001,7 +2007,15 @@ export const OUTBOX_ABANDONED_TYPE = "outbox_abandoned";
  */
 export const ROUTING_JOURNAL_TYPE = "routing_journal";
 
-/** The rows the wipe carries — the outbox's two collections and the routing journal. */
+/**
+ * A letter being written on the phone, and each file picked for it: kept in the account's own
+ * mirror so a hard stop loses neither, and carried through a wipe because nothing re-derives them.
+ */
+export const COMPOSE_LETTER_TYPE = "compose_letter";
+export const COMPOSE_FILE_TYPE = "compose_file";
+
+/** The rows the wipe carries — the outbox's two collections, the routing journal and the letters. */
 export function isCarriedLocalType(type: string): boolean {
-  return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === ROUTING_JOURNAL_TYPE;
+  return type === OUTBOX_TYPE || type === OUTBOX_ABANDONED_TYPE || type === ROUTING_JOURNAL_TYPE
+    || type === COMPOSE_LETTER_TYPE || type === COMPOSE_FILE_TYPE;
 }

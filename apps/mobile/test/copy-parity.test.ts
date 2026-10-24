@@ -499,6 +499,8 @@ describe("the phone's two copy decks", () => {
    */
   const SAME_OUTPUT_IN_BOTH: Record<string, { arm?: boolean; why: string }> = {
     serversForgetFailed: { why: "returns its argument unchanged — the sentence is the caller's" },
+    filingStuckWhy: { why: "a mailbox and a reason joined by a middle dot, as the web's sync.filingStuckWhy" },
+    filingsReasonCounted: { why: "a reason and its count in brackets, as the web's mailboxFilings.reasonCounted" },
     aiSuggests: { why: "a place name and a number, with no words of its own" },
     folderInMailbox: { why: "a folder's name and a mailbox's label in brackets, with no words of its own" },
     doorbellMore: { why: "a plus sign and a number — the faces the doorbell stack did not draw, "

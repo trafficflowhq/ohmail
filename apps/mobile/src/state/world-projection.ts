@@ -134,7 +134,7 @@ export interface ProjectionInputs {
   onPresented(pres: EntityReader, options: ConsentOptions, unrouted?: EntityReader): void;
 }
 
-export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">;
+export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">;
 
 /** The arms of the card's claim this projection reads (`PhoneClaim`, `ui/standalone-form.ts`). */
 export type StandaloneClaim = { readonly k: "theirs"; readonly name: string; readonly kind: string } | { readonly k: string };

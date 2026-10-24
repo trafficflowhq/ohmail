@@ -2154,6 +2154,7 @@ const TABLE = {
     `Some files were not added — they would have put the total over ${size}.`,
   attachUnreadable: "Some files couldn't be read and were not added.",
   attachDuplicate: (filenames: string) => `Already attached: ${filenames}`,
+  photoNamed: (stamp: string) => `Photo ${stamp}`,
   attachRemove: (filename: string) => `Remove ${filename}`,
   /* The picker itself refused — said by name, never a press that does nothing. */
   attachUnavailable: "Files can't be picked on this device right now.",
@@ -2205,7 +2206,24 @@ const TABLE = {
     `This can't be kept as a draft — it's past the ${size} limit. Shorten it, or close again to discard it.`,
   composeKeepTooLongBound: (size: string) =>
     `These changes can't be kept — they're past the ${size} limit, so Drafts still holds the earlier version. Shorten it, or close again to discard the changes.`,
-  composeKeepFiles: "Drafts do not keep attachments. Close again to discard them.",
+  composeKeepFiles: (names: string, size: string) =>
+    `Not kept with the draft: ${names}. This phone keeps up to ${size} of attachments with drafts. Close again to keep it without them.`,
+  /* A DRAFT ROW HOLDS NO BYTES: the attachments stay on this phone, and the sentence says where. */
+  composeKeptHere: "Kept in Drafts. Its attachments are kept on this phone only.",
+  composeKeptQueuedHere: "Kept as a draft, its attachments on this phone only. It reaches Drafts once this phone is back online.",
+  /* THE LETTERS A HARD STOP LEFT, said once at the next launch (`compose/letter-restore.ts`). */
+  lettersKept: (n: number) => (n === 1
+    ? "A letter you were writing when ohmail stopped is in Drafts."
+    : `${n} letters you were writing when ohmail stopped are in Drafts.`),
+  lettersKeptWithout: (n: number, names: string) => (n === 1
+    ? `A letter you were writing when ohmail stopped is in Drafts, without ${names}: past what this phone keeps with drafts.`
+    : `${n} letters you were writing when ohmail stopped are in Drafts, without ${names}: past what this phone keeps with drafts.`),
+  letterSendUnclear: (n: number) => (n === 1
+    ? "A letter you sent as ohmail stopped is in Drafts. Check Sent before you send it again."
+    : `${n} letters you sent as ohmail stopped are in Drafts. Check Sent before you send them again.`),
+  letterSendUnconfirmed: (n: number) => (n === 1
+    ? "A letter whose send was never confirmed is in Drafts. Check Sent before you send it again."
+    : `${n} letters whose sends were never confirmed are in Drafts. Check Sent before you send them again.`),
   composeNeedRecipient: "Add someone to send it to.",
   composeNoMailbox: "No mailbox on this phone can send yet.",
   composeNoMailboxHint: "Once this phone has mail, you can write from that mailbox.",
@@ -2819,6 +2837,47 @@ const TABLE = {
     `${folder}, News' folder before the rename (${n} ${n === 1 ? "letter" : "letters"} not moved into News yet)`,
   selfCheckAndMore: (list: string, n: number) => `${list}, and ${n} more`,
   selfCheckFailed: "The check could not run. Nothing was changed.",
+  selfCheckWaiting: (count: number) =>
+    `${count === 1 ? "1 message is" : `${count} messages are`} still waiting to be filed on your mail server.`,
+
+  /* ── THE FILINGS THAT WAIT — `ui/filing-lines.ts`: the web's strip and Settings block
+     (`sync.filing*`, `mailboxFilings.*`) in this phone's deck. */
+  filingStuck: (count: number, minutes: number) =>
+    `${count === 1 ? "1 message has" : `${count} messages have`} not been filed for ${minutes === 1 ? "1 minute" : `${minutes} minutes`}`,
+  filingStuckHours: (count: number, hours: number) =>
+    `${count === 1 ? "1 message has" : `${count} messages have`} not been filed for ${hours === 1 ? "1 hour" : `${hours} hours`}`,
+  filingStuckWhy: (where: string, reason: string) => `${where} · ${reason}`,
+  filingWaiting: (count: number) => `${count === 1 ? "1 message waits" : `${count} messages wait`} for the next try`,
+  filingWaitingWhy: (where: string, reason: string, at: string) => `${where} · ${reason} · next try at ${at}`,
+  mailboxCountWaiting: (count: number) => (count === 1 ? "1 mailbox" : `${count} mailboxes`),
+  filingReasonsDiffer: "the reasons differ by mailbox",
+  filingReasonRefused: "the last try did not go through",
+  filingReasonNoSuchFolder: "the folder is not there",
+  filingReasonReadOnly: "the folder will not take it",
+  filingReasonOverQuota: "the mailbox is full",
+  filingReasonStaleLocator: "ohmail lost track of it on your mail server",
+  filingReasonUnconfirmed: "ohmail could not confirm the move",
+  filingReasonUnknown: "the last try did not go through",
+  filingReasonNone: "no refusal is recorded",
+  filingStripOpen: "Show in Settings",
+  filingsTitle: (mailbox: string) => `Waiting to be filed · ${mailbox}`,
+  filingsGroup: (count: number, folder: string, since: string) =>
+    `${count === 1 ? "1 message waits" : `${count} messages wait`} to be filed into ${folder} since ${since}`,
+  filingsWhy: (reasons: string) => `Why: ${reasons}`,
+  filingsReasonCounted: (reason: string, count: number) => `${reason} (${count})`,
+  filingsNext: (at: string) => `Next try at ${at}.`,
+  filingsAt: (count: number, at: string) => `${count === 1 ? "It is" : "They are"} in ${at} on your mail server.`,
+  filingsDeletesAll: (count: number): string => (count === 1 ? "You deleted it." : "You deleted them."),
+  filingsDeletesSome: (count: number) => (count === 1 ? "1 of them you deleted." : `${count} of them you deleted.`),
+  filingsUnread: (count: number) => `${count === 1 ? "1 message waits" : `${count} messages wait`} to be filed.`,
+  filingsRetry: "Try again now",
+  filingsLeave: "Leave them where they are",
+  filingsRetried: (count: number) => (count === 0 ? "Nothing here was waiting for a retry."
+    : count === 1 ? "1 message will be tried again on the next pass." : `${count} messages will be tried again on the next pass.`),
+  filingsLeft: (count: number) => (count === 0 ? "Nothing here was left to settle."
+    : count === 1 ? "1 message stays where it is." : `${count} messages stay where they are.`),
+  filingsFailed: "That did not go through. Nothing was changed.",
+  filingsElsewhere: "Another install organizes this mailbox now. Nothing was changed.",
 
   /* THE ROW'S BADGES, SPOKEN — `ui/row-spoken.ts`. A chip's face ("4", "2 new") read out in a
      list is a number and a word with no referent, so each fact has a sentence of its own here;
@@ -2964,6 +3023,36 @@ const TABLE = {
   pfiReplaceNoteBare:
     "Saving replaces the settings in the mailbox with this ohmail's own within a few minutes. While this ohmail has none of its own, the mailbox keeps them.",
   pfiReplacedTitle: "This ohmail's settings go to the mailbox within a few minutes.",
+  /* THE SENT-MAIL SEED — the web's "seed" words, the review and the offer that opens it. */
+  seedTitle: (n: number) => `You've written to ${n === 1 ? "1 person" : `${n} people`}.`,
+  seedLede:
+    "Writing to someone is the clearest sign you want to hear back from them. Everyone ticked below gets through to your Ohbox from now on. Untick anyone you'd rather screen.",
+  seedTruncated: (scanned: number) =>
+    `Read from your ${scanned} most recent sent messages. Anyone you wrote to before that will still reach the Screener if they write again.`,
+  seedFilterPlaceholder: "Find someone…",
+  seedSelectShown: (n: number) => (n === 1 ? "Tick all 1 shown" : `Tick all ${n} shown`),
+  seedDeselectShown: (n: number) => (n === 1 ? "Untick 1 shown" : `Untick all ${n} shown`),
+  seedWrote: (n: number) => (n === 1 ? "1 message" : `${n} messages`),
+  seedAlreadyDecided: "already decided",
+  seedExcludedSummary: (n: number) => (n === 1 ? "1 address was left out" : `${n} addresses were left out`),
+  seedExcludedRobot: "looks like a machine address",
+  seedExcludedMachineSent: "found in an automatic reply you sent",
+  seedExcludedOwn: "one of your own addresses",
+  seedWillDo: (n: number) =>
+    `This adds a rule for the ${n === 1 ? "1 person" : `${n} people`} ticked. Anything of theirs waiting in the Screener moves to your Ohbox; the rest of your mail stays where your mail server has it.`,
+  seedConfirm: (n: number) => `Let ${n === 1 ? "1 person" : `${n} people`} through`,
+  seedConfirming: "Saving…",
+  seedLater: "Not now",
+  seedNothingToDecide: "Nobody in your sent mail is waiting for a decision.",
+  seedClose: "Close",
+  seedLoading: "Reading your sent mail…",
+  seedErrorTitle: "That didn't work.",
+  seedErrorGeneric: "Something went wrong reading your sent mail.",
+  seedErrorRetry: "Your ticks are still here — press the button again.",
+  seedSettingsLabel: "People you write to",
+  seedReopenBody:
+    "Look again at the people you have written to and decide who gets through. Anyone you have already decided about stays as they are; this only adds people you have not answered for yet — which is what a newly connected mailbox brings.",
+  seedReopenAction: "Review them",
   /* WHAT WAITS ON THE ORGANIZER (the rules-page lane): a queued Move's rule, the pass that
      finished, and the list of what the other computer has not carried out yet. */
   toastMoveQueuedWithRule: (place: string, holder: string) =>

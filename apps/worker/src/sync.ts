@@ -6,7 +6,8 @@ import {
   type StorageCap,
 } from "@trafficflow/core/mail";
 import {
-  WATCHED_FOLDERS, MessageGoneError, SameFolderMoveError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
+  WATCHED_FOLDERS, OHMAIL_FOLDERS, MessageGoneError, SameFolderMoveError, WriteDeclinedError, parseRef, FILING_BATCH_MAX,
+  isDestinationMissing, isRefusedCommand, type MoveManyResult,
   epochOf, epochOfRef, epochVerdict, sameEpoch, UNKNOWN_EPOCH, isImapBoundExceeded, makeRef, type Epoch,
   type BudgetStop, type NativeLocator, type ImapCursor, type KnownEntry, type MailboxAdapter, type PersistedFolderCursor,
 } from "@trafficflow/core/adapters/imap";
@@ -37,6 +38,7 @@ import {
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
+import { junkGonePass } from "./junk-gone.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
@@ -1715,6 +1717,28 @@ async function syncCycleWithin(
     }
   }
 
+  // THE JUNK CHECK: letters ohmail filed into Junk and another client deleted there leave the
+  // copy (`junk-gone.ts`). Same placement and error handling as the restore above.
+  if (deferred.size === 0) {
+    try {
+      await junkGonePass({
+        repo, adapter, accountId, mailboxId,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("junk_gone_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so nothing was tombstoned",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("junk_gone_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
   /* THE BLANK REPAIR (IMAP-STREAMING-FETCH-TAKES-UNSOLICITED-FLAGS): the junk restore's place and
      rule, the visit's tail and only when nothing was deferred. A blank an older build stored in a
      letter's place gives the place back, and a letter its move filed away goes back to INBOX; the
@@ -2283,12 +2307,14 @@ async function reconcileFolders(deps: SyncDeps, at: CyclePageCursor, beforeWalk 
   // owed" and the surviving copy waits for the next poll — or, in a drain that stops on backlog
   // alone, is never reached at all.
   let reopened = false;
+  // ohmail's own folders this pass made again, or could not: one CREATE per folder per pass.
+  const remade = new Map<string, boolean>();
   for (const group of groups.values()) {
     for (let i = 0; i < group.length; i += FILING_BATCH_MAX) {
       const chunk = group.slice(i, i + FILING_BATCH_MAX);
-      const batched = await fileChunk(deps, chunk, special, at, beforeWalk);
+      const batched = await fileChunk(deps, chunk, special, at, beforeWalk, remade);
       if (batched !== null) { reopened = reopened || batched.reopened; continue; }
-      for (const p of chunk) reopened = (await fileOne(deps, p, special, at, beforeWalk)) || reopened;
+      for (const p of chunk) reopened = (await fileOne(deps, p, special, at, beforeWalk, remade)) || reopened;
     }
   }
   await refillLeftJunk(deps, groups, special);
@@ -2362,7 +2388,7 @@ async function sentFolderOf(deps: SyncDeps): Promise<{ sentFolder?: string | nul
  */
 async function fileChunk(
   deps: SyncDeps, chunk: PendingPhysical[], special: SpecialFolderMap, at: CyclePageCursor,
-  beforeWalk = false,
+  beforeWalk = false, remade: Map<string, boolean> = new Map(),
 ): Promise<{ reopened: boolean } | null> {
   const { adapter, accountId, mailboxId, log } = deps;
   if (typeof adapter.moveMany !== "function") return null;
@@ -2385,7 +2411,7 @@ async function fileChunk(
   // `try` below deliberately: its refusal must abort the cycle, never degrade to the per-message path.
   openPage(at, "filing");
   await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
-  let result;
+  let result: MoveManyResult | "missing";
   try {
     result = await adapter.moveMany(
       chunk.map((p) => p.nativeLocator!), toFolder, writeDoorOf(writeAuthorityOf(deps)),
@@ -2393,7 +2419,44 @@ async function fileChunk(
   } catch (err) {
     // A decline at the door is about the writer: it ends the cycle, never the per-message path.
     rethrowRefusal(err);
-    return null;
+    if (!isDestinationMissing(err)) return null;
+    result = "missing";
+  }
+  if (result === "missing") {
+    let again: boolean;
+    try {
+      again = await remakeOwnFolder(deps, toFolder, at, remade);
+    } catch (err) {
+      rethrowRefusal(err);
+      return null;
+    }
+    if (again) {
+      openPage(at, "filing");
+      await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
+      try {
+        result = await adapter.moveMany(
+          chunk.map((p) => p.nativeLocator!), toFolder, writeDoorOf(writeAuthorityOf(deps)),
+        );
+      } catch (err) {
+        rethrowRefusal(err);
+        if (!isDestinationMissing(err)) return null;
+      }
+    }
+  }
+  if (result === "missing") {
+    // Never one by one into a folder that is not there: every letter is still at its source.
+    await fencedLiveGroup(deps, async (r) => {
+      for (const p of chunk) {
+        await recordFilingFailure(r, accountId, p, toFolder, "no_such_folder",
+          "the destination folder is not on the mail server; every letter is still at its source");
+      }
+    });
+    log?.warn("reconcile_move_batch_folder_missing", {
+      mailboxId, accountId, size: chunk.length, toFolder: folderLabel(toFolder),
+      reason: "the folder these letters file into is not on the mail server and could not be made "
+        + "again; each letter's filing waits on the ladder",
+    });
+    return { reopened: false };
   }
   // THE THREE ANSWERS, and the third is the one this used to get wrong. `declined` is a refusal
   // taken BEFORE any command, so the group is owed to the per-message path. `moved_unmapped` says
@@ -2493,6 +2556,54 @@ async function fileChunk(
   return { reopened };
 }
 
+/**
+ * A FILING FOUND OHMAIL'S OWN FOLDER GONE — another client deleted it, or the provider pruned it
+ * empty. Make it again, under the lease, at most once per pass (`remade`), and audit it. Only
+ * {@link OHMAIL_FOLDERS}: a folder of the person's is theirs to make. `true` when the folder is
+ * there to file into again; a server NO on the CREATE is `false`. Refusals and transport failures
+ * propagate.
+ */
+async function remakeOwnFolder(
+  deps: SyncDeps, physical: string, at: CyclePageCursor, remade: Map<string, boolean>,
+): Promise<boolean> {
+  const { adapter, accountId, mailboxId, log } = deps;
+  const canonical = isNewsFolder(physical) ? NEWS_FOLDER : physical;
+  const known = remade.get(canonical);
+  if (known !== undefined) return known;
+  if (!(OHMAIL_FOLDERS as readonly string[]).includes(canonical) || typeof adapter.ensureOwnFolder !== "function") {
+    remade.set(canonical, false);
+    return false;
+  }
+  let made: "made" | "exists";
+  try {
+    openPage(at, "filing");
+    await assertMayWriteToMailbox(writeAuthorityOf(deps), "folder_create");
+    made = await adapter.ensureOwnFolder(canonical, writeDoorOf(writeAuthorityOf(deps)));
+  } catch (err) {
+    rethrowRefusal(err);
+    if (isTransportFailure(err) || !isRefusedCommand(err)) throw err;
+    remade.set(canonical, false);
+    log?.warn("reconcile_folder_not_remade", {
+      mailboxId, accountId, toFolder: folderLabel(canonical),
+      reason: "the mail server refused to make ohmail's folder again; the filings into it wait on the ladder",
+    });
+    return false;
+  }
+  remade.set(canonical, true);
+  if (made === "made") {
+    try {
+      await fencedLiveGroup(deps, (r) => r.recordAudit(accountId, "reconcile.folder.remade", { mailboxId, folder: canonical }, null));
+    } catch (err) {
+      rethrowRefusal(err);
+    }
+    log?.info("reconcile_folder_remade", {
+      mailboxId, accountId, toFolder: folderLabel(canonical),
+      reason: "a filing found ohmail's folder gone from the mail server; it was made again",
+    });
+  }
+  return true;
+}
+
 /** Fan an audit batch out to whichever of the two repo shapes this deployment has. */
 async function recordAudits(
   repo: SyncDeps["repo"], accountId: string,
@@ -2561,6 +2672,36 @@ async function voidGoneFiling(
           : "the gone-restore void was computed against a desired folder that has since changed; "
             + "nothing was written and the newer intent stands",
       },
+      null,
+    );
+    return true;
+  }
+  /* A DELETE OF A LETTER ALREADY GONE stays where it was observed, body emptied, never listed in
+     Trash: no server holds it there. Only while it is still where the press found it: a delete
+     park that promoted a survivor moved it off that origin, and its first copy is in Trash.
+     Mail 0164 rows keep today's path. */
+  if (trash !== null && p.desiredFolder === trash && p.observedFolder !== trash && p.serverMissing === false
+    && p.trashedFrom != null && p.observedFolder === p.trashedFrom) {
+    const adopted = await repo.adoptFolderState(
+      p.messageId,
+      { desiredFolder: p.observedFolder, observedFolder: p.observedFolder, lastSetBy: p.lastSetBy },
+      p.desiredFolder,
+      null,
+    );
+    if (adopted && typeof repo.huskBody === "function") await repo.huskBody(accountId, p.messageId, "expunged");
+    await repo.recordAudit(
+      accountId,
+      adopted ? "reconcile.move.voided" : "reconcile.move.superseded",
+      adopted
+        ? {
+            messageId: p.messageId, from: p.nativeLocator, to: p.desiredFolder, outcome: "gone",
+            evidence: vanished ? "delete_observed" : "absent_at_move",
+          }
+        : {
+            messageId: p.messageId, filedAgainst: p.desiredFolder, to: p.desiredFolder,
+            reason: "the gone-message void was computed against a desired folder that has since " +
+              "changed (or the row was erased); nothing was written and the newer intent stands",
+          },
       null,
     );
     return true;
@@ -2674,7 +2815,7 @@ async function recordFilingFailure(
  */
 async function fileOne(
   deps: SyncDeps, p: PendingPhysical, special: SpecialFolderMap, at: CyclePageCursor,
-  beforeWalk = false,
+  beforeWalk = false, remade: Map<string, boolean> = new Map(),
 ): Promise<boolean> {
   const { adapter, accountId, mailboxId, log } = deps;
   // Mail 0065: the physical destination was decided when the row was grouped — a spam verdict
@@ -2688,7 +2829,14 @@ async function fileOne(
   try {
     openPage(at, "filing");
     await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
-    newLoc = await adapter.move(p.nativeLocator!, physical, writeDoorOf(writeAuthorityOf(deps)));
+    try {
+      newLoc = await adapter.move(p.nativeLocator!, physical, writeDoorOf(writeAuthorityOf(deps)));
+    } catch (err) {
+      if (!isDestinationMissing(err) || !await remakeOwnFolder(deps, physical, at, remade)) throw err;
+      openPage(at, "filing");
+      await assertMayWriteToMailbox(writeAuthorityOf(deps), "move");
+      newLoc = await adapter.move(p.nativeLocator!, physical, writeDoorOf(writeAuthorityOf(deps)));
+    }
   } catch (err) {
     // A refusal must not be recorded as this message's failure — it is the process's, or the
     // mailbox's new organizer's. A stand-down taken here used to fall through to the deferral
@@ -2748,8 +2896,12 @@ async function fileOne(
     // {@link classifyMoveRefusal} for the closed set, and `WorkerRepo.deferFolderReconcile` for why
     // it is an argument to the deferral rather than a write of its own.
     const errorClass = classifyMoveRefusal(err);
-    await fencedLiveGroup(deps, (r) => recordFilingFailure(r, accountId, p, physical, errorClass,
+    const attempts = await fencedLiveGroup(deps, (r) => recordFilingFailure(r, accountId, p, physical, errorClass,
       err instanceof Error ? `${err.name}: ${err.message}` : String(err)));
+    log?.warn("reconcile_move_failed", {
+      mailboxId, accountId, messageId: p.messageId, kind: errorClass, attempts, state: "deferred",
+      toFolder: folderLabel(physical),
+    });
     return false;
   }
 

@@ -11,7 +11,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
-  Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
+  AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
   type LayoutChangeEvent,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -94,6 +94,8 @@ import {
 } from "../compose/attach";
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
+import { letterSession, openLetterKeeper, type LetterKeeper } from "../compose/letter-keeper";
+import { KEPT_FILES_MAX_BYTES } from "../compose/letter-store";
 import { usePrefs } from "../state/store";
 import { cancelAct, cancelSendOffered, cancelSendPress, keptSay } from "./send-cancel";
 import { autosaveKeep, keepAct, unmountKeep, worthKeeping } from "./compose-keep";
@@ -1248,7 +1250,11 @@ export function ComposeSheet({
    * are the LAST pick's verdicts (refused-over-cap, duplicates, unreadable, picker refused) —
    * each said in place, the webapp's `role="status"` rows in this sheet's idiom.
    */
-  const [attachments, setAttachments] = useState<PhoneComposeAttachment[]>([]);
+  /* A DRAFT OPENED FROM DRAFTS brings the files kept with it on this phone (`compose/letter-store.ts`). */
+  const [attachments, setAttachments] = useState<PhoneComposeAttachment[]>(() => (draft === undefined ? []
+    : (letterSession()?.door.filesOf(draft.id) ?? []).map((f) => ({
+      filename: f.filename, contentType: f.contentType, contentBase64: f.contentBase64, sizeBytes: f.sizeBytes, fileId: f.fileId,
+    }))));
   /* KINDS, never sentences: a deck read stored in state freezes in the language it was read in
      (refusal.test.ts's rule) — the sentence is derived at render time. Filenames are data. */
   const [attachNotes, setAttachNotes] = useState<AttachNote[]>([]);
@@ -1259,6 +1265,8 @@ export function ComposeSheet({
    * the next close discards (`compose-keep.ts`). Any edit takes it back, so new text is kept again.
    */
   const [keepNote, setKeepNote] = useState<"failed" | "files" | "tooLong" | null>(null);
+  /** The files the last close named as past what this phone keeps with drafts. */
+  const [filesOver, setFilesOver] = useState<string[]>([]);
   /** A keep on its way — one row per close, however often the backdrop is tapped meanwhile. */
   const keeping = useRef(false);
   /** A Cancel send still being asked: a press meanwhile is not a second question. */
@@ -1290,12 +1298,33 @@ export function ComposeSheet({
      asked yet", which states nothing rather than a guessed address. */
   const fromAddress = w.mailboxes.rows.find((r) => r.id === sendFrom)?.address ?? null;
   const attachCap = phoneAttachCap(w.mailboxes.rows, sendFrom ?? "");
+  /* THE LETTER ON THE PHONE'S DISK as it is written (`compose/letter-keeper.ts`): half a second after
+     the last change, at once when the app leaves the foreground, and marked before a keep or a send. */
+  const [keeper] = useState<LetterKeeper | null>(() => {
+    const letters = letterSession();
+    if (letters === null) return null;
+    const held = draft !== undefined ? letters.door.letterOf(draft.id) : undefined;
+    return openLetterKeeper({
+      door: letters.door, id: held?.id ?? letters.uuid(), newFileId: letters.uuid,
+      words: {
+        mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body,
+        envelope: w.actions.keepEnvelope(mode, m?.id ?? null),
+      },
+      draftId: draft?.id ?? null, savedAs: saved.current,
+    });
+  });
+  const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body };
+  useEffect(() => {
+    keeper?.edit({ ...letterWords, envelope: keeper.current().envelope });
+    // The words are the change; the keeper reads the rest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [to, subject, body, copies.cc, copies.bcc]);
   const { pictureQuality } = usePrefs();
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
     const outcome: AttachPickOutcome =
-      which === "files" ? await picker.pickFiles() : await picker.pickPhotos();
+      which === "files" ? await picker.pickFiles() : await picker.pickPhotos(zone);
     if (outcome.kind === "cancelled") return;
     if (outcome.kind === "unavailable") {
       // The platform refused the picker itself — said by name, never a press that does nothing.
@@ -1306,6 +1335,13 @@ export function ComposeSheet({
        The level is read at the pick, so a change in Settings applies to the next one. */
     const picked = await shrinkPicked(outcome.files, pictureQuality, nativeImageShrink);
     const admit = admitPicked(attachments, picked, attachCap);
+    /* Each admitted file's bytes reach the phone's disk once, now (`compose/letter-store.ts`). */
+    if (keeper !== null) {
+      for (let i = attachments.length; i < admit.next.length; i++) {
+        const f = admit.next[i]!;
+        admit.next[i] = { ...f, fileId: keeper.addFile(f) };
+      }
+    }
     const notes: AttachNote[] = [];
     if (admit.overCap > 0) notes.push({ kind: "overCap" });
     if (admit.duplicates.length > 0) notes.push({ kind: "duplicates", filenames: admit.duplicates.join(", ") });
@@ -1350,26 +1386,43 @@ export function ComposeSheet({
   const bound = draft !== undefined;
   /** The snapshot a quiet save is carrying — one in flight per snapshot. */
   const savingFor = useRef<string | null>(null);
+  /** The quiet save of a draft opened here, when one is owed; also run as the app leaves the foreground. */
+  const quietSave = useRef<() => void>(() => undefined);
+  quietSave.current = () => {
+    if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
+    if (savingFor.current === onScreen) return;
+    const snapshot = onScreen;
+    savingFor.current = snapshot;
+    let row = draftId;
+    /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
+       A forward draft is saved as a forward of its original, never as a new mail. */
+    void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
+      mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
+      mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
+      rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; },
+    })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot); }).catch(() => undefined).finally(() => {
+      if (savingFor.current === snapshot) savingFor.current = null;
+    });
+  };
   useEffect(() => {
     if (!bound || draftId === null || phase !== "idle" || saved.current === onScreen || tooLong) return;
     const timer = setTimeout(() => {
-      if (savingFor.current === onScreen) return;
-      const snapshot = onScreen;
-      savingFor.current = snapshot;
-      /* Saved only once kept: a refused keep is the close's to keep again and to say (`autosaveKeep`).
-         A forward draft is saved as a forward of its original, never as a new mail. */
-      void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
-        mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
-        mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
-        rebind: setDraftId,
-      })).catch(() => undefined).finally(() => {
-        if (savingFor.current === snapshot) savingFor.current = null;
-      });
+      quietSave.current();
     }, DRAFT_AUTOSAVE_MS);
     return () => clearTimeout(timer);
-    // `w`, `mailboxId` and the three fields are read at the timer; `onScreen` is their change.
+    // `onScreen` is the fields' change; `quietSave` reads the rest when it runs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bound, draftId, phase, onScreen, tooLong]);
+  /* LEAVING THE FOREGROUND writes the letter now, and a draft opened here saves now: the next thing
+     may be a force-stop. */
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") return;
+      keeper?.flush();
+      quietSave.current();
+    });
+    return () => sub.remove();
+  }, [keeper]);
   /* THE ROW WAS SENT OR DELETED ON ANOTHER DEVICE — the mirror's word, read while this sheet is idle
      on it (its own send leaves the sheet). Held from that moment, because the keep that follows
      binds a NEW row; `at` is what the row held, so text typed after it is told apart from the letter. */
@@ -1396,8 +1449,12 @@ export function ComposeSheet({
     const settled = w.sendOutcome(queuedKey);
     const said = w.sendSettlement(queuedKey);
     // Confirmed: the flush already announced the send (kind-aware toast); this just closes.
-    if (settled === "confirmed") leave();
+    if (settled === "confirmed") {
+      keeper?.drop();
+      leave();
+    }
     else if (settled === "rolled_back") {
+      keeper?.sendAnswered({ outcome: "failed", ...(said.draftId !== null ? { draftId: said.draftId } : {}) });
       // The queued copy is gone with the rollback — a fresh Send cannot double-deliver.
       setQueuedKey(null);
       setAccepted(false);
@@ -1412,7 +1469,10 @@ export function ComposeSheet({
       // The re-armed Send says why it is back, in the words the refusal earned.
       setFailNote(said.failure ?? "replyFailed");
     }
-    else if (settled === "unverified") setPhase("unverified");
+    else if (settled === "unverified") {
+      keeper?.sendAnswered({ outcome: "unverified", ...(said.draftId !== null ? { draftId: said.draftId } : {}) });
+      setPhase("unverified");
+    }
     // Still queued: the server holds the send (sending, not waiting), or offered it again.
     else {
       if (said.accepted) setAccepted(true);
@@ -1515,17 +1575,33 @@ export function ComposeSheet({
     if (way === "keepSend") {
       w.actions.leaveSend(queuedKey!);
       toast.say(keptSay(queuedCaptionKey(network, accepted, rearmed)));
+      // The letter keeps its send's key: the flush or the next launch settles it.
+      keeper?.release();
       leave();
       return;
     }
     if (way === "close") {
-      /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes.
-         After a Cancel the server could not answer the words are kept too, except standalone, whose
-         engine already wrote them into a row. */
-      const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
+      /* The second close after the files were named keeps the letter without them. */
+      const dropped = keepNote === "files" ? filesOver.length : 0;
+      if (dropped > 0) {
+        keeper?.dropOverLimit();
+        const kept = new Set(keeper?.current().files.map((f) => f.fileId));
+        setAttachments((list) => list.filter((a) => a.fileId === undefined || kept.has(a.fileId)));
+      }
+      const files = keeper?.current().files.length ?? 0;
+      /* A bound draft keeps exactly what is on screen, emptied included; unchanged, it just closes,
+         its files staying with it on this phone. After a Cancel the server could not answer the words
+         are kept too, except standalone, whose engine already wrote them into a row. */
+      const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
       const cancelOwed = cancelUnreachable && !alreadySent && !w.standalone;
-      const act = keepAct({ phase, worth, files: attachments.length, armed: keepNote !== null, tooLong, cancelOwed });
+      const over = dropped > 0 ? [] : keeper?.overKeepLimit() ?? [];
+      const act = keepAct({
+        phase, worth, filesOver: over.length, armed: keepNote !== null && dropped === 0, tooLong, cancelOwed,
+      });
       if (act === "close") {
+        // Nothing worth a row, or discarded: the letter goes; a bound draft's or a send's stays.
+        if (phase === "idle" && !(bound && draftId !== null) && !cancelOwed) keeper?.drop();
+        else keeper?.release();
         leave();
         return;
       }
@@ -1534,21 +1610,27 @@ export function ComposeSheet({
         return;
       }
       if (act === "ask") {
+        setFilesOver(over.map((f) => f.filename));
         setKeepNote("files");
         return;
       }
       if (keeping.current) return;
       keeping.current = true;
+      keeper?.markKeep();
       void (async () => {
         /* A draft opened from Drafts is kept where it was, unannounced: its keep's Undo would
            discard a row that existed before this sheet. */
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, ...(draft !== undefined ? { quiet: true } : {}),
-          rebind: setDraftId,
+          ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
         });
         keeping.current = false;
-        if (kept === "kept") leave();
+        if (kept !== "kept") keeper?.keepAnswered(null);
+        if (kept === "kept") {
+          keeper?.release();
+          leave();
+        }
         else setKeepNote(kept === "tooLong" ? "tooLong" : "failed");
       })();
       return;
@@ -1574,6 +1656,9 @@ export function ComposeSheet({
       if (end === null) return;
       if (end.said === "close") {
         if (end.say !== null) toast.say(end.say);
+        /* Withdrawn: the files stay with the row that holds the words, if one does. */
+        if (end.say !== null) keeper?.cancelled(draftId);
+        else keeper?.release();
         leave();
       }
       else if (end.said === "already_sent") setAlreadySent(true);
@@ -1582,13 +1667,23 @@ export function ComposeSheet({
   };
 
   atUnmount.current = () => {
-    const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body });
-    if (unmountKeep({ phase, worth, keeping: keeping.current, tooLong }) !== "keep") return;
+    // Nobody is left to ask about files past the phone's limit: the keep goes without them.
+    keeper?.dropOverLimit();
+    const files = keeper?.current().files.length ?? 0;
+    const dropped = 0;
+    const worth = bound && draftId !== null ? saved.current !== onScreen : worthKeeping({ fresh, subject, body, files });
+    if (unmountKeep({ phase, worth, keeping: keeping.current, tooLong }) !== "keep") {
+      keeper?.release();
+      return;
+    }
+    keeper?.markKeep();
+    /* Answered after the sheet is gone; a keep that never answers is the next launch's to settle. */
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files: attachments.length, draftId, quiet: true,
-      rebind: setDraftId,
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true,
+      rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
     });
+    keeper?.release();
   };
 
   /* OVER A LETTER SENT ELSEWHERE A PRESS IS ANSWERED IN WORDS; only the offer sends, and it sends
@@ -1610,7 +1705,10 @@ export function ComposeSheet({
       : forward
         ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
-    const result = await toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
+    const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
+    /* MARKED BEFORE THE DISPATCH: a hard stop from here on leaves the next launch a sent letter, which
+       it never sends again (`compose/letter-restore.ts`). */
+    const result = keeper ? await keeper.sendVia(press, sigText) : await press();
     // `superseded`: a newer press of this reply carries it and says its sentence.
     if (result.outcome === "sent" || result.outcome === "superseded") {
       leave();
@@ -1685,7 +1783,7 @@ export function ComposeSheet({
     keepNote !== null ? (
       <Txt key="keep" variant="caption" tone="ink2" accessibilityRole="alert">
         {keepNote === "failed" ? Copy.composeKeepFailed
-          : keepNote === "files" ? Copy.composeKeepFiles
+          : keepNote === "files" ? Copy.composeKeepFiles(filesOver.join(", "), sizeLabel(KEPT_FILES_MAX_BYTES))
             : bound && draftId !== null ? Copy.composeKeepTooLongBound(draftLimitLabel())
               : Copy.composeKeepTooLong(draftLimitLabel())}
       </Txt>
@@ -1944,6 +2042,7 @@ export function ComposeSheet({
                     onPress={() => {
                       if (phase !== "idle") return;
                       setAttachments((list) => list.filter((a) => a !== file));
+                      if (file.fileId !== undefined) keeper?.removeFile(file.fileId);
                     }}
                     accessibilityRole="button"
                     accessibilityState={{ disabled: phase !== "idle" }}

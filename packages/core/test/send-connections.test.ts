@@ -222,4 +222,26 @@ describe("SendConnections — one connection across consecutive presses", () => 
     expect(performance.now() - began).toBeGreaterThanOrEqual(190);
     expect(d.made[0]!.state).toMatchObject({ closes: 0, forced: 1 });
   });
+
+  it("(13) the lease forwards send's options and the copy filing, and reads dead once released", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const seen: { opts?: unknown; filed?: [number, string, unknown] } = {};
+    const real: WarmSendAdapter = {
+      async send(_msg, opts) { seen.opts = opts; return { providerMessageId: "<p@x>", unfiledCopy: Buffer.from("raw") }; },
+      async fileSentCopy(raw, id, o) { seen.filed = [raw.length, id, o]; return null; },
+      async messageInSent() { return false; },
+      async close() { /* kept */ },
+      isLive: () => true,
+    };
+    const lease = await keep.open("mb-1", async () => real);
+    const beforeRelease = async (): Promise<void> => undefined;
+    const res = await lease.send(MSG, { copy: "caller", beforeRelease });
+    expect(seen.opts).toEqual({ copy: "caller", beforeRelease });
+    expect(res.unfiledCopy?.toString()).toBe("raw");
+    expect(await lease.fileSentCopy!(Buffer.from("raw"), "<p@x>", { look: true })).toBeNull();
+    expect(seen.filed).toEqual([3, "<p@x>", { look: true }]);
+    expect(lease.isLive?.()).toBe(true);
+    await lease.close();
+    expect(lease.isLive?.(), "a released lease is not a connection to probe on").toBe(false);
+  });
 });

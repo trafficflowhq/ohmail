@@ -266,7 +266,8 @@ export interface FolderStateRow {
   /**
    * `folder_state.decided_at` (mail 0145) — written only where stated, never cleared by an omission.
    * The ingest states it when the gate admits a letter as an answer to the person's own writing
-   * (the reply or the bounce arm): that letter's place is decided for that letter alone.
+   * (the reply or the bounce arm): that letter's place is decided for that letter alone. It states
+   * a lower bound of the filing for a new letter somebody filed into a pile on arrival.
    */
   decidedAt?: Date;
 }

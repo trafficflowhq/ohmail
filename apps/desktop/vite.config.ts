@@ -222,8 +222,8 @@ const BASE_MESSAGE_NAMESPACES = [
   // binary ships a sync strip whose error line resolves to a raw `mailboxes.err_…` key, which is
   // exactly the failure the abort below exists to prevent.
   "mailboxes",
-  // `mailboxFilings` is the shell's block of filings that wait (`shell/MailboxFilings.tsx`).
-  // Only Cloud web mounts it today; listed because the shell sources read it.
+  // `mailboxFilings` is the shell's block of filings that wait (`shell/MailboxFilings.tsx`),
+  // mounted in Settings → Mailboxes on every door (`DesktopGate.tsx`).
   "mailboxFilings",
   // `rules` is the surface that lets somebody see and revoke the rules the
   // Screener writes. The desktop shell renders it (SettingsView is published), and its

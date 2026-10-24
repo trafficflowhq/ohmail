@@ -172,6 +172,23 @@ describe("each guard is what keeps its fixture open", () => {
     }
   });
 
+  it("a forward with a note shows its forwarded message whole; a reply quoting that forward folds", () => {
+    for (const id of ["19", "26", "32", "86"]) {
+      expect(quotedHistoryOfText(fixture(id).text.split("\n")), id).toBeNull();
+      expect(htmlCase(fixture(id).html!).r, id).toBeNull();
+      expect(quotedHistoryVerdictOfHtml(new DOMParser().parseFromString(fixture(id).html!, "text/html").body as unknown as QuotedDomNode, quotedDomTree), id).toBeNull();
+    }
+    expect(htmlCase(fixture("86").html!).visibleText).toContain("you are invited to the regional crafts fair");
+    // The forward's wording is what keeps it open: the same block under a reply's separator folds.
+    const asReply = (s: string): string => s.replace("---------- Forwarded message ---------", "-----Original Message-----");
+    expect(quotedHistoryOfText(asReply(fixture("86").text).split("\n"))).not.toBeNull();
+    expect(htmlCase(asReply(fixture("86").html!)).r).not.toBeNull();
+    const reply = htmlCase(fixture("123").html!);
+    expect(reply.r).not.toBeNull();
+    expect(reply.visibleText).not.toContain("Forwarded message");
+    expect(quotedHistoryOfText(fixture("123").text.split("\n"))).not.toBeNull();
+  });
+
   it("a bottom-posted reply folds the quote at the top and leaves the reply whole", () => {
     const lines = fixture("31").text.split("\n");
     const r = quotedHistoryOfText(lines)!;
@@ -340,6 +357,100 @@ describe("the colour guard reads the history's own ink", () => {
       'production de décembre.<o:p></o:p></p><p class="MsoNormal"><span style="color:#C00000">5 000 CHF</span></p>');
     expect(htmlCase(two).r, "two such lines").toBeNull();
     expect(htmlCase(two).visibleText).toContain("5 000 CHF");
+  });
+});
+
+describe("answers marked with the writer's initials or name, in the body's own ink", () => {
+  const both = (html: string, text: string) => {
+    const v = verdictOf(html);
+    return { v, html: htmlCase(html).r, text: foldText(text), held: foldText(text, { html: v }) };
+  };
+  const named = (s: string): string => s.replace(/\[AE\] /g, "[Ana Example] ");
+
+  it("124: black '[AE] ' answers keep the html and the text open", () => {
+    const fx = fixture("124");
+    expect(both(fx.html!, fx.text)).toEqual({ v: null, html: null, text: null, held: null });
+  });
+
+  it("124 with '[Ana Example] ' answers stays open on both parts", () => {
+    const fx = fixture("124");
+    expect(both(named(fx.html!), named(fx.text))).toEqual({ v: null, html: null, text: null, held: null });
+  });
+
+  it("an '[EXTERNAL]' banner and '[cid:...]' placeholders in the history still fold", () => {
+    const fx = fixture("124");
+    const html = fx.html!.replace(/<b><i>\[AE\] <\/i><\/b>/g, "")
+      .replace("<p class=\"MsoNormal\">Hi Ana,", "<p class=\"MsoNormal\">[EXTERNAL] This message comes from outside the organisation.</p><p class=\"MsoNormal\">Hi Ana,")
+      .replace("Ben Sample<o:p></o:p></p></div>", "Ben Sample<o:p></o:p></p><p class=\"MsoNormal\">[cid:image001.png] [cid:image002.png]</p><p class=\"MsoNormal\">[cid:image001.png] Example Works</p><p class=\"MsoNormal\">[Example Works logo] Example Works AG</p><p class=\"MsoNormal\">Musterstrasse 1, 8000 Zürich</p></div>");
+    const text = fx.text.replace(/\[AE\] /g, "").replace("\nHi Ana,", "\n[EXTERNAL] This message comes from outside the organisation.\nHi Ana,")
+      .replace(/Ben Sample\n?$/, "Ben Sample\n[cid:image001.png] [cid:image002.png]\n[cid:image001.png] Example Works\n[Example Works logo] Example Works AG\nMusterstrasse 1, 8000 Zürich\n");
+    for (const s of [html, text]) expect(s).toMatch(/\[EXTERNAL\][^]*\[cid:image001\.png\][^]*\[Example Works logo\] [^]*Musterstrasse/);
+    const r = both(html, text);
+    expect(r.v).toBe("trailing");
+    expect(r.html).not.toBeNull();
+    expect(r.text).not.toBeNull();
+    expect(r.held).not.toBeNull();
+  });
+
+  it("124 with one question and its '[AE] ' answer above the sign-off stays open on both parts", () => {
+    const fx = fixture("124");
+    const html = fx.html!.replace("<p class=\"MsoNormal\"><o:p>&nbsp;</o:p></p><p class=\"MsoNormal\">2. Do your technicians need a key for the plant room?<o:p></o:p></p><p class=\"MsoNormal\"><b><i>[AE] </i></b>Yes, please leave it at the front desk.<o:p></o:p></p>", "");
+    const text = fx.text.replace("\n\n2. Do your technicians need a key for the plant room?\n[AE] Yes, please leave it at the front desk.", "");
+    for (const s of [html, text]) expect(s).toMatch(/offer\?[^]*\[AE\] [^]*item 3 of the offer\.(?![^]*plant room)[^]*Best regards,/);
+    expect(both(html, text)).toEqual({ v: null, html: null, text: null, held: null });
+  });
+});
+
+describe("arrow bullets and Q/A lines in an Outlook history are no answers in html", () => {
+  const listed = (lines: string[]): string => fixture("124").html!.replace(/two questions before[^]*?(?=<p class="MsoNormal">Best regards,)/,
+    lines.map((l) => `<p class="MsoNormal">${l.replace(/>/g, "&gt;")}<o:p></o:p></p>`).join(""));
+
+  for (const lines of [
+    ["wie besprochen:", "-> Termin am Dienstag um 10 Uhr", "-> Pläne bitte mitbringen", "Bitte bestätige mir kurz den Termin."],
+    ["as discussed:", "=> Site visit on Tuesday at 10", "=> Please bring the plans", "Please confirm the date briefly."],
+    ["Q: Is the filter cleaning included?", "A: It is item 3 of the offer.", "Please confirm the date briefly."],
+  ]) {
+    it(`'${lines[1]}' folds`, () => {
+      const html = listed(lines);
+      expect(html).not.toContain("[AE]");
+      expect(verdictOf(html)).toBe("trailing");
+      const c = htmlCase(html);
+      expect(c.visibleText).toContain("thanks, done.");
+      expect(c.historyText).toContain(lines.at(-1));
+    });
+  }
+});
+
+describe("a GMX, WEB.DE or mail.com reply header (the date first) folds by its quote box", () => {
+  const lead = (s: string): string => s.replace("Dienstag passt mir gut, ich bringe die Pläne mit.", "Ja, Dienstag um 10 Uhr passt mir gut.")
+    .replace(/Gruss Clara\n\n/, "").replace("<div>Gruss Clara</div><div>&nbsp;</div>", "");
+  // The sanitizer drops `name`: only the box's border is left to read.
+  const sanitized = (s: string): string => s.replace(/ name="quote(?:d-content)?"/g, "");
+
+  it("108 with a one-sentence lead folds trailing in html, and its text part with it", () => {
+    const fx = fixture("108");
+    const html = sanitized(lead(fx.html!));
+    expect(html).not.toMatch(/Gruss Clara| name=/);
+    expect(verdictOf(html)).toBe("trailing");
+    expect(htmlCase(html).visibleText).toContain("Ja, Dienstag um 10 Uhr passt mir gut.");
+    const text = lead(fx.text);
+    expect(text).not.toContain("Gruss Clara");
+    expect(foldText(text, { html: verdictOf(html) })?.at).toBe("trailing");
+    // A text part alone has no box: after a sentence the block reads as a paste.
+    expect(foldText(text)).toBeNull();
+  });
+
+  it("a pasted 'Gesendet:/Von:' mail in plain paragraphs after a one-sentence lead stays open", () => {
+    const lines = ["Hallo Ben,", "", "hier ist die Antwort vom Vermieter von gestern Abend.", "",
+      "Gesendet: Donnerstag, 22. Oktober 2026 um 09:14 Uhr", "Von: \"Rolf Vermieter\" <rolf@example.org>", "An: clara.muster@example.net",
+      "Betreff: Begehung", "", "Hallo Clara,", "Dienstag geht leider nicht.", "Rolf", "",
+      "Kannst du ihn bitte morgen anrufen und einen neuen Termin vereinbaren?", "", "Gruss Clara"];
+    const esc = (l: string): string => l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = `<div style="font-family: Verdana;font-size: 12.0px;">${lines.map((l) => `<div>${l === "" ? "&nbsp;" : esc(l)}</div>`).join("")}</div>`;
+    const text = lines.join("\n");
+    const v = verdictOf(html);
+    expect({ v, text: foldText(text), held: foldText(text, { html: v }) }).toEqual({ v: null, text: null, held: null });
+    expect(htmlCase(html).visibleText).toContain("Gruss Clara");
   });
 });
 

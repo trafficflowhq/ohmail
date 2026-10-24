@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { NativeLocator } from "@trafficflow/core";
 // The SAME module `sync.ts` imports it from — an `instanceof` against a second copy of the class
 // would answer false and this file would be testing nothing.
-import { MessageGoneError, SameFolderMoveError, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import {
+  DestinationMissingError, MessageGoneError, SameFolderMoveError, type MailboxAdapter,
+} from "@trafficflow/core/adapters/imap";
 import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { reconcileMailbox } from "../src/sync.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -338,3 +340,37 @@ describe("reconcileFlags — the loop that used to fail the whole cycle", () => 
     expect(rec.deferredFlags.map((d) => d.messageId)).toEqual(["stuck-flag"]);
   });
 });
+
+/* FOLDER-MISSING-FILINGS: imapflow hands neither `[TRYCREATE]` nor `[NONEXISTENT]` to the
+   reconciler on this path, so the class comes from the adapter's own reading — and a lock refused
+   for a missing SOURCE carries imapflow's `mailboxMissing` too, which must stay a plain refusal. */
+describe("a filing whose folder is gone", () => {
+  const logged = async (failWith: Error) => {
+    const rec: Recorded = {
+      moved: [], flagged: [], folderStates: [], audits: [], deferredMoves: [], deferredFlags: [],
+    };
+    const lines: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const at = (event: string, fields?: Record<string, unknown>) => { lines.push({ event, fields: fields ?? {} }); };
+    const log = { level: "info", child: () => log, debug: at, info: at, warn: at, error: at };
+    await reconcileMailbox({ writeAuthority: FIXTURE_LEASE,
+      repo: repoOf(rec), adapter: adapterOf(failWith), accountId: "acct-1", mailboxId: "mb-1", log,
+    } as never);
+    return { rec, lines };
+  };
+
+  it("the adapter's missing destination is `no_such_folder`, with its audit row and a log line", async () => {
+    const { rec, lines } = await logged(new DestinationMissingError("ohmail/News"));
+    expect(rec.deferredMoves.map((d) => [d.messageId, d.errorClass])).toEqual([["stuck", "no_such_folder"]]);
+    const failed = rec.audits.find((a) => a.action === "reconcile.move.failed");
+    expect((failed!.payload as { errorClass?: string }).errorClass).toBe("no_such_folder");
+    expect(lines.find((l) => l.event === "reconcile_move_failed")?.fields)
+      .toMatchObject({ kind: "no_such_folder", attempts: 1, toFolder: "ohmail/News", state: "deferred" });
+    expect(rec.moved, "the healthy letter still filed").toEqual(["healthy"]);
+  });
+
+  it("a SOURCE lock imapflow refused as missing stays `refused`", async () => {
+    const { rec } = await logged(Object.assign(new Error("Command failed"), { responseStatus: "NO", mailboxMissing: true }));
+    expect(rec.deferredMoves[0]!.errorClass).toBe("refused");
+  });
+});
+

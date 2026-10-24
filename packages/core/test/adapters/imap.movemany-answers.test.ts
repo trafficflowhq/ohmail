@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { ImapAdapter, MoveRefusedError, isRefusedCommand, makeRef } from "../../src/adapters/imap.js";
+import {
+  DestinationMissingError, ImapAdapter, MoveRefusedError, isDestinationMissing, isRefusedCommand, makeRef,
+} from "../../src/adapters/imap.js";
 import type { NativeLocator } from "../../src/adapters/imap-types.js";
 import { FIXTURE_DOOR } from "./_door.js";
 
@@ -122,7 +124,10 @@ describe("moveMany — a move that landed is never reported as a refusal", () =>
  */
 describe("a UID MOVE the server refused", () => {
   /** `afterMove` is what the source holds once the command has answered. */
-  function refusingClient(answer: unknown, afterMove: number[] = [2, 3], caps: string[] = ["MOVE", "UIDPLUS"]) {
+  function refusingClient(
+    answer: unknown, afterMove: number[] = [2, 3], caps: string[] = ["MOVE", "UIDPLUS"],
+    dst: { status?: "gone" | "there"; lock?: "gone" } = {},
+  ) {
     const writes: string[] = [];
     let moved = false;
     const holds = () => (moved ? afterMove : [2, 3]);
@@ -135,6 +140,10 @@ describe("a UID MOVE the server refused", () => {
         return ["Junk", "INBOX"].map((path) => ({ path, name: path, delimiter: "/", flags: new Set<string>() }));
       },
       async getMailboxLock(path: string) {
+        // imapflow's measured shape for a folder that is gone: a NO, no code, its own LIST empty.
+        if (path === "INBOX" && dst.lock === "gone") {
+          throw Object.assign(new Error("Command failed"), { responseStatus: "NO", mailboxMissing: true });
+        }
         client.mailbox = { path, exists: path === "Junk" ? holds().length : 0, uidValidity: 9n };
         return { path, release() { /* nothing */ } };
       },
@@ -160,6 +169,12 @@ describe("a UID MOVE the server refused", () => {
       async messageDelete(uids: number[] | number) {
         writes.push(`messageDelete ${JSON.stringify(uids)}`);
         return true;
+      },
+      statuses: [] as string[],
+      async status(path: string) {
+        client.statuses.push(path);
+        if (dst.status === "gone") throw Object.assign(new Error("Command failed"), { code: "NotFound" });
+        return { messages: 0, uidValidity: 5n, uidNext: 1 };
       },
       async logout() { /* nothing */ },
       close() { /* nothing */ },
@@ -197,5 +212,49 @@ describe("a UID MOVE the server refused", () => {
     const err = await (await over(client)).move(LOC("Junk", 9, 2), "INBOX", FIXTURE_DOOR).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MoveRefusedError);
     expect(client.writes).toEqual(["messageCopy [2] → INBOX"]);
+  });
+
+  /* FOLDER-MISSING-FILINGS: imapflow keeps a `NO [TRYCREATE]` to its logger and answers `false`;
+     one STATUS of the destination tells a folder that is gone from any other refusal. */
+  it("moveMany: `false`, every letter still there, the destination's STATUS NotFound: the folder is missing", async () => {
+    const client = refusingClient(false, [2, 3], ["MOVE", "UIDPLUS"], { status: "gone" });
+    const err = await (await over(client)).moveMany(chunk, "INBOX", FIXTURE_DOOR).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DestinationMissingError);
+    expect(isDestinationMissing(err)).toBe(true);
+    expect(isRefusedCommand(err), "still a refusal to a caller that asks only that").toBe(true);
+    expect(client.writes).toEqual(["messageMove [2,3] → INBOX"]);
+    expect(client.statuses, "one STATUS of the destination").toEqual(["INBOX"]);
+  });
+
+  it("move: the MOVE and the COPY branch both name the missing folder; nothing is expunged", async () => {
+    for (const caps of [["MOVE", "UIDPLUS"], ["UIDPLUS"]]) {
+      const client = refusingClient(false, [2, 3], caps, { status: "gone" });
+      const err = await (await over(client)).move(LOC("Junk", 9, 2), "INBOX", FIXTURE_DOOR).catch((e: unknown) => e);
+      expect(err, caps.join()).toBeInstanceOf(DestinationMissingError);
+      expect(client.writes.some((w) => w.startsWith("messageDelete"))).toBe(false);
+    }
+  });
+
+  it("POSITIVE CONTROL — a destination that is there keeps the plain refusal", async () => {
+    const client = refusingClient(false, [2, 3], ["MOVE", "UIDPLUS"], { status: "there" });
+    expect(await (await over(client)).moveMany(chunk, "INBOX", FIXTURE_DOOR)).toEqual({ outcome: "refused", moved: new Map(), gone: [] });
+    const err = await (await over(refusingClient(false, [2, 3], ["MOVE", "UIDPLUS"], { status: "there" })))
+      .move(LOC("Junk", 9, 2), "INBOX", FIXTURE_DOOR).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MoveRefusedError);
+  });
+
+  it("a destination lock imapflow refuses as missing names the folder before any write", async () => {
+    const client = refusingClient(false, [2, 3], ["MOVE", "UIDPLUS"], { lock: "gone" });
+    const adapter = await over(client);
+    expect(await adapter.moveMany(chunk, "INBOX", FIXTURE_DOOR).catch((e: unknown) => e)).toBeInstanceOf(DestinationMissingError);
+    expect(await adapter.move(LOC("Junk", 9, 2), "INBOX", FIXTURE_DOOR).catch((e: unknown) => e)).toBeInstanceOf(DestinationMissingError);
+    expect(client.writes).toEqual([]);
+  });
+
+  it("a SOURCE lock refused the same way is not the destination's: it stays the driver's error", async () => {
+    const client = refusingClient(false, [2, 3], ["MOVE", "UIDPLUS"], { lock: "gone" });
+    const err = await (await over(client)).move(LOC("INBOX", 9, 2), "Junk", FIXTURE_DOOR).catch((e: unknown) => e);
+    expect(isDestinationMissing(err)).toBe(false);
+    expect(isRefusedCommand(err)).toBe(true);
   });
 });

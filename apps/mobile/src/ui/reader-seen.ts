@@ -1,4 +1,4 @@
-import { THREAD_TOP_LINES, type ThreadPanel, type ThreadRead } from "@ohmail/client-engine";
+import { THREAD_TOP_LINES, threadWalk, type ThreadPanel, type ThreadRead, type Walk } from "@ohmail/client-engine";
 
 /* The reader's one door to the shared rule: its record and the fade constants the tint runs on. */
 export {
@@ -17,6 +17,14 @@ export {
  * is due; what turned read goes out at once (`onRead`). The record is entered at the reader's mount:
  * a phone reader is an open. Nothing is looked at while the app is not in the foreground, and every
  * dwell starts over then.
+ *
+ * The ring (`onHere`) is the engine's walk (`threadWalk`, the web's too): the last message whose top
+ * has crossed the reading line, the first at the top and the last at the very end. Its geometry — the
+ * tops, the scroll's range, the reading height — is rebuilt after a layout report, never on a scroll;
+ * a scroll gives it the offset only. A pin (a square pressed, the open's landing) holds the ring
+ * until the person scrolls: their drag (`pin(null)`), or any scroll the app did not make — a report
+ * away from the offset the app last asked for (`asked`) while no app scroll is on its way, which is
+ * how a screen reader's scroll, a status-bar tap or a wheel arrives (no drag begins for those).
  */
 
 export type PhoneGroup = "above" | "below";
@@ -39,8 +47,19 @@ export interface PhoneThreadRead {
   panelHeader: (id: string, y: number, height: number) => void;
   panelBody: (id: string, y: number) => void;
   panelEnd: (id: string, y: number) => void;
-  /** Where the scroll view stands: every scroll event, the end of a drag or a fling, the app's own jump. */
-  onScroll: (offsetY: number) => void;
+  /** The scroll content's height (`onContentSizeChange`): the scroll's range is it less the view. */
+  content: (height: number) => void;
+  /**
+   * Where the scroll view stands: every scroll event, the end of a drag or a fling, the app's own jump.
+   * `appMoving`: an app scroll is on its way (the open anchor aiming, an animated jump), so the report is the app's.
+   */
+  onScroll: (offsetY: number, appMoving?: boolean) => void;
+  /** The app scrolls the view to this offset (the anchor's aim, a square's jump): a report there is the app's. */
+  asked: (y: number) => void;
+  /** A square pressed or the open's landing: that message is the ring until the person scrolls (`pin(null)`, `onScroll`). */
+  pin: (id: string | null) => void;
+  /** The scroll that puts this message's top on the walk's reading line; `null` before its layout. */
+  scrollFor: (id: string) => number | null;
   /** Look again in the next frame (a read state or a body changed, the app came back). */
   poke: () => void;
   /** Every panel laid out, top to bottom, the opened message (`openedId`) among them: the reader's place reads it. */
@@ -62,7 +81,9 @@ export interface PhoneThreadReadOptions {
   lines?: (id: string) => number;
   /** Is the app in the foreground (`AppState` active)? Asked per look; absent, always. */
   active?: () => boolean;
-  /** The panel most in view (its square's ring), each time it changes. */
+  /** Where the scroll view starts: the offset the app asked for until it asks another. */
+  start?: number;
+  /** The current message (its square's ring, the walk's answer), each time it changes. */
   onHere?: (id: string | null) => void;
   /** The frame scheduler and the dwell's timer; tests run them by hand. */
   frame?: (run: () => void) => () => void;
@@ -100,6 +121,11 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
   let pending: (() => void) | null = null;
   let dwell: (() => void) | null = null;
   let here: string | null = null;
+  let contentH = 0;
+  let pinned: string | null = null;
+  let asked = o.start ?? 0;
+  /** The walk over the last layout; `null` once a layout report changed it. */
+  let walk: { ids: string[]; opened: string | null; w: Walk } | null = null;
 
   const member = (id: string): Member => {
     let m = members.get(id);
@@ -150,6 +176,35 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     listed("below").forEach(push);
     return out;
   };
+  /** The walk over the panels as laid out now, in drawing order (the Ohbox's time order). */
+  const walkNow = (): { ids: string[]; w: Walk } => {
+    const opened = o.openedId();
+    if (walk !== null && walk.opened === opened) return walk;
+    const all = panels();
+    const ids = all.map((p) => p.panel.id);
+    walk = {
+      ids,
+      opened,
+      w: threadWalk({
+        tops: all.map((p) => p.top),
+        max: Math.max(0, contentH - height),
+        view: height - chrome,
+        opened: opened === null ? -1 : ids.indexOf(opened),
+      }),
+    };
+    return walk;
+  };
+  /** The ring: the pin while one holds, else the walk at the scroll; no answer keeps the last. */
+  const ring = (): void => {
+    const { ids, w } = walkNow();
+    const at = pinned === null ? -1 : ids.indexOf(pinned);
+    const i = w.current(y, at >= 0 ? { index: at } : null);
+    if (i < 0) return;
+    const id = ids[i] ?? null;
+    if (id !== here) { here = id; o.onHere?.(id); }
+  };
+  /** A layout report: the walk is measured again at the next look. */
+  const moved = (): void => { walk = null; poke(); };
   /** A dwell under way is looked at again when it is done. */
   const schedule = (): void => {
     dwell?.();
@@ -166,6 +221,7 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
       // Nobody can be seeing this (the app is away, nothing is laid out): every dwell starts over.
       o.record.observe([], null, NOTHING, t);
       schedule();
+      ring();
       return;
     }
     const all = panels();
@@ -174,31 +230,37 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     const ids = o.record.observe(all.map((p) => p.panel), view, unread, t);
     if (ids.length > 0) o.onRead(ids);
     schedule();
-    /* The ring: the panel with the most of itself in view, a tie to the later one. */
-    let best: string | null = null;
-    let most = 0;
-    for (const p of all) {
-      const px = Math.min(p.bottom, view.bottom) - Math.max(p.top, view.top);
-      if (px > 0 && px >= most) { most = px; best = p.panel.id; }
-    }
-    if (best !== here) { here = best; o.onHere?.(best); }
+    ring();
   };
-  const poke = (): void => {
+  function poke(): void {
     if (!live || pending) return;
     pending = frame(look);
-  };
+  }
   return {
-    viewport: (h) => { height = h; poke(); },
-    chrome: (overlap) => { chrome = Math.max(0, overlap); poke(); },
-    offset: (which, v) => { offsets[which] = v; poke(); },
+    viewport: (h) => { height = h; moved(); },
+    chrome: (overlap) => { chrome = Math.max(0, overlap); moved(); },
+    offset: (which, v) => { offsets[which] = v; moved(); },
     openedFrom: (fy, fh) => { from = { y: fy, h: fh }; poke(); },
     openedBody: (by) => { body = by; poke(); },
     openedEnd: (ey) => { end = ey; poke(); },
-    panel: (id, group, py, h) => { const m = member(id); m.group = group; m.y = py; m.h = h; poke(); },
-    panelHeader: (id, hy, hh) => { const m = member(id); m.fromY = hy; m.fromH = hh; poke(); },
+    panel: (id, group, py, h) => { const m = member(id); m.group = group; m.y = py; m.h = h; moved(); },
+    panelHeader: (id, hy, hh) => { const m = member(id); m.fromY = hy; m.fromH = hh; moved(); },
     panelBody: (id, by) => { member(id).bodyY = by; poke(); },
     panelEnd: (id, ey) => { member(id).endY = ey; poke(); },
-    onScroll: (offsetY) => { y = offsetY; poke(); },
+    content: (h) => { contentH = h; moved(); },
+    onScroll: (offsetY, appMoving = false) => {
+      y = offsetY;
+      if (pinned !== null && !appMoving && Math.abs(offsetY - asked) > 1) pinned = null;
+      poke();
+    },
+    asked: (ay) => { asked = ay; },
+    pin: (id) => { pinned = id; poke(); },
+    scrollFor: (id) => {
+      if (height <= 0 || contentH <= 0) return null;
+      const { ids, w } = walkNow();
+      const i = ids.indexOf(id);
+      return i < 0 ? null : w.scrollFor(i);
+    },
     poke,
     layout: (openedId) => {
       const boxes = (group: PhoneGroup) => listed(group).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h }));

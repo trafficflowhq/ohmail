@@ -538,6 +538,8 @@ export {
   EVIDENCE_WINDOW_MS, THREAD_READ_FADE_MS, THREAD_READ_HOLD_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createThreadRead,
   type LineBox, type ThreadPanel, type ThreadRead, type ThreadView,
 } from "./reader-seen-rules.js";
+// The thread's squares: which one is current while the reader scrolls, and where a press lands.
+export { WALK_LINE, threadWalk, type Walk, type WalkGeometry, type WalkPin } from "./thread-walk.js";
 
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {
@@ -573,7 +575,7 @@ export {
   type TabWindows,
 } from "./routing-window.js";
 // Where a surface with no `localStorage` keeps that window's journal: a client-local mirror row.
-export { ROUTING_JOURNAL_TYPE } from "./types.js";
+export { COMPOSE_FILE_TYPE, COMPOSE_LETTER_TYPE, ROUTING_JOURNAL_TYPE } from "./types.js";
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
 export {
@@ -842,6 +844,7 @@ export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
    cap rule, here because the webapp AND the phone composer read it. See its header. */
 export {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  COMPOSE_FORWARD_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_MIME_ENVELOPE_BYTES,
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,
@@ -1008,3 +1011,5 @@ export {
   type SelfCheckSaid,
   type SelfCheckUnreadable,
 } from "./diagnostics.js";
+// The filing refusal classes every client words, and their narrowing. See `filing-reasons.ts`.
+export { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "./filing-reasons.js";

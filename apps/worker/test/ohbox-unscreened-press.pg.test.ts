@@ -11,7 +11,7 @@ import {
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { screenUnscreened, unscreenedSummary } from "@trafficflow/services/mail";
+import { organizeDecisionCount, screenUnscreened, unscreenedSummary } from "@trafficflow/services/mail";
 import type { Db, ServiceContext } from "@trafficflow/services";
 
 /**
@@ -105,6 +105,22 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     const [still] = await db.select({ d: folderState.desiredFolder })
       .from(folderState).where(eq(folderState.messageId, contact));
     expect(still!.d).toBe(OHBOX);
+  });
+
+  it("a letter gone from the server is not offered, pressed or counted; its live twin is", async () => {
+    const w = await newWorld();
+    const live = await seedOhbox(w, "stranger@x.test");
+    const gone = await seedOhbox(w, "stranger@x.test");
+    const missing = await seedOhbox(w, "stranger@x.test");
+    await db.update(messages).set({ arrivedAt: ARRIVED }).where(eq(messages.accountId, w.accountId));
+    await db.update(messages).set({ deletedAt: NOW }).where(eq(messages.id, gone));
+    await db.update(messages).set({ serverMissingAt: NOW }).where(eq(messages.id, missing));
+
+    expect(await unscreenedSummary(db as never, w.accountId)).toMatchObject({ total: 1 });
+    expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { scope: "all_time" })).toMatchObject({ letters: 1, total: 1 });
+    await screenUnscreened(ctxOf(w));
+    const owed = await makeDrizzleRepo(db as never).listPendingFolderStates(w.mailboxId);
+    expect(owed.map((r) => r.messageId)).toEqual([live]);
   });
 
   it("a second press adds nothing to the queue — the first one emptied the set", async () => {

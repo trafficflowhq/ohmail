@@ -284,7 +284,13 @@ describe("the wire corpus the desktop app decodes", () => {
       };
       // Each append names its INTERNALDATE, a minute apart in the Date headers' order, from one
       // clock read floored to the second (the server's precision): arrival order is not timing.
-      const base = Math.floor(Date.now() / 1000) * 1000;
+      // GreenMail stores an APPEND date in the 12:xx UTC hour as 00:xx (a 12-hour clock with no
+      // AM/PM), so arrivals that would fall in that hour move to 11:47-11:49 UTC the same day.
+      const now = Math.floor(Date.now() / 1000) * 1000;
+      const inNoonHour = (t: number): boolean => new Date(t).getUTCHours() === 12;
+      const base = inNoonHour(now) || inNoonHour(now - 3 * 60_000)
+        ? new Date(now).setUTCHours(11, 50, 0, 0)
+        : now;
       const arrival = (minutesAgo: number): Date => new Date(base - minutesAgo * 60_000);
       await w.raw.append("INBOX", eml({
         from: "stranger@nowhere.test", to: w.cfg.auth.user, subject: "Can we talk?",

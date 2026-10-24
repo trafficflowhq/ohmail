@@ -1,5 +1,5 @@
 import {
-  ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds,
+  ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, FORWARD_MAX_PARTS, dedupeStagedIds,
   requireUuid, parseReaderLocale, parseReaderZone,
   type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
@@ -27,6 +27,8 @@ interface SendRequestBody {
   stagedAttachmentIds?: unknown;
   /** Forward this original — the server reads it, refuses an unconfirmed no_forward one, and quotes it. */
   forwardOf?: string;
+  /** Which of the original's parts go (attachment ids), only beside `forwardOf`; absent: all of them. */
+  forwardParts?: unknown;
   /** The person confirmed forwarding a no_forward original after the ask. Only `true` counts. */
   forwardConfirmed?: unknown;
   /** The sender's IANA zone and language tag, for the date the quoted header gives the original. */
@@ -107,6 +109,21 @@ function readStagedIds(raw: unknown): string[] | undefined {
   // input census means "the shape test is the bound"; here there was no shape test.
   for (const id of ids) requireUuid(id, "stagedAttachmentIds");
   return ids.length > 0 ? ids : undefined;
+}
+
+/**
+ * The forwarded parts the person kept: absent stays absent (every part goes); otherwise a list of
+ * at most `FORWARD_MAX_PARTS` ids, duplicates dropped, and only beside `forwardOf`. Anything else
+ * is a 400, never a guess about which files to send.
+ */
+function readForwardParts(raw: unknown, forwardOf: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (forwardOf === undefined) throw new ServiceError("validation_failed", 400, "forwardParts needs forwardOf");
+  if (!Array.isArray(raw)) throw new ServiceError("validation_failed", 400, "forwardParts must be a list");
+  if (raw.length > FORWARD_MAX_PARTS) {
+    throw new ServiceError("validation_failed", 400, `forwardParts must contain at most ${FORWARD_MAX_PARTS} entries`);
+  }
+  return [...new Set(raw.map((id) => requireUuid(id, "forwardParts")))];
 }
 
 /**
@@ -370,6 +387,7 @@ export const draftsRoutes: Route[] = [
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
       const forwardConfirmed = forwardOf !== undefined && body.forwardConfirmed === true;
+      const forwardParts = readForwardParts(body.forwardParts, forwardOf);
       // The sender's clock for the quoted date. A malformed one never refuses a send: the date
       // then reads in UTC and English, as for a client that states none.
       const forwardZone = forwardOf ? unlessMalformed(() => parseReaderZone(body.forwardZone, "forwardZone")) : undefined;
@@ -406,6 +424,10 @@ export const draftsRoutes: Route[] = [
           // nothing about them. `sendSurfaceFor` holds that rule; this stays the host's honest
           // statement about its own pipeline.
           surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
+          // WHERE THE SENT COPY IS WAITED FOR: inside the request on Cloud, in memory where the host outlives it.
+          ...(deps.services?.sendCopyOutlivesAnswer === true ? { copyOutlivesAnswer: true } : {}),
+          ...(deps.services?.sendSubmissionCeilingMs !== undefined
+            ? { submissionCeilingMs: deps.services.sendSubmissionCeilingMs } : {}),
           // WHERE STAGED BYTES COME FROM. Absent on a host with no object storage — a local
           // install — and then a request naming staged references is REFUSED rather than sent
           // without its files.
@@ -415,6 +437,7 @@ export const draftsRoutes: Route[] = [
         },
         { attachments, stagedAttachmentIds, forwardOf,
           ...(forwardConfirmed ? { forwardConfirmed } : {}),
+          ...(forwardParts ? { forwardParts } : {}),
           ...(forwardZone ? { forwardZone } : {}),
           ...(forwardLocale ? { forwardLocale } : {}),
           ...(ifContentRevision ? { ifContentRevision } : {}) },
@@ -428,6 +451,7 @@ export const draftsRoutes: Route[] = [
             {
               status: "sent", providerMessageId: result.providerMessageId,
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
+              ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
             },
             { status: 200, seq: result.seq ?? undefined },
           );

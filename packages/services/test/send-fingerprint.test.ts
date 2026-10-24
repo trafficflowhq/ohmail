@@ -72,6 +72,18 @@ describe("sendContentFingerprint — every member discriminates", () => {
    * Without `forwardOf` they hash the same and the second forward is refused as a duplicate of the
    * first — a message the user meant to send that never leaves, with the suite green.
    */
+  it("forwardParts: absent keeps every stored digest; the selection discriminates, its order does not", () => {
+    const fwd = { forwardOf: "22222222-2222-4222-8222-222222222222" };
+    // The digest a forward had before the field existed, pinned: a stored claim stays valid.
+    expect(fp(fwd)).toBe("c1911edfe050cde54ea4cf43b969c88ca66b2af7b1f3d4a65154cfabb843da2b");
+    expect(fp({ ...fwd, forwardParts: undefined })).toBe(fp(fwd));
+    const a = "aaaaaaaa-0000-4000-8000-000000000001";
+    const b = "bbbbbbbb-0000-4000-8000-000000000002";
+    expect(fp({ ...fwd, forwardParts: [a] })).not.toBe(fp({ ...fwd, forwardParts: [b] }));
+    expect(fp({ ...fwd, forwardParts: [] })).not.toBe(fp(fwd));
+    expect(fp({ ...fwd, forwardParts: [a, b] })).toBe(fp({ ...fwd, forwardParts: [b, a] }));
+  });
+
   it("two forwards of DIFFERENT originals with no note are different messages", () => {
     const blank = { subject: "", text: "" };
     expect(fp({ ...blank, forwardOf: "aaaaaaaa-0000-4000-8000-000000000001" }))

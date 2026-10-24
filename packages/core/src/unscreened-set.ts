@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, gte, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
 import {
   accountSettings, approvals, auditAction, auditLog, drafts, folderState, mailboxes,
-  messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChange,
+  messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChanges,
   weAnsweredThisSenderWhere, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -29,6 +29,8 @@ export const OHBOX_UNSCREENED_GROUPS_MAX = 200;
 export const OHBOX_UNSCREENED_MESSAGES_MAX = 1000;
 /** Rows one page of the walk reads. */
 const BATCH = 200;
+/** Letters one intent upsert carries: a few binds each, well under either store's bind ceiling. */
+const INTENT_SLICE = 200;
 /** Pages one walk may read: a bound on rows READ, so a large Ohbox answers with what it has. */
 const MAX_PAGES = 25;
 /** How much wider than the window the SQL prefilter reads; the window itself is `screenerAdmits`. */
@@ -218,6 +220,9 @@ async function selectCandidates(
     eq(messages.accountId, opts.accountId),
     eq(folderState.desiredFolder, OHBOX),
     placementUndecided(),
+    // A letter gone from the server is no candidate: offering it screens a ghost.
+    isNull(messages.deletedAt),
+    isNull(messages.serverMissingAt),
     sql`not exists (
       select 1 from ${messageStates} ms
        where ms.message_id = ${messages.id} and ms.state <> 'none'
@@ -331,35 +336,41 @@ export async function writeScreenerIntents(
 ): Promise<{ screened: UnscreenedSenderGroup[]; total: number }> {
   const screened = unscreenedGroups(input.rows);
   const moving = new Set(screened.map((g) => g.address));
-  let total = 0;
+  const seen = new Set<string>();
+  const rows: UnscreenedRow[] = [];
   for (const row of input.rows) {
-    if (!moving.has(row.fromAddress.toLowerCase())) continue;
-    const reconcileStatus = SCREENER === row.observedFolder ? "reconciled" : "pending";
-    await t.insert(folderState).values({
+    if (!moving.has(row.fromAddress.toLowerCase()) || seen.has(row.messageId)) continue;
+    seen.add(row.messageId);
+    rows.push(row);
+  }
+  /* SET-BASED, in the caller's one transaction: a row-at-a-time press spent ~4 statements per letter
+     and held the phone store's only transaction slot for minutes on a slow device. */
+  for (let i = 0; i < rows.length; i += INTENT_SLICE) {
+    await t.insert(folderState).values(rows.slice(i, i + INTENT_SLICE).map((row) => ({
       messageId: row.messageId, desiredFolder: SCREENER, observedFolder: row.observedFolder,
-      lastSetBy: "us", reconcileStatus, conflict: false,
-    }).onConflictDoUpdate({
+      lastSetBy: "us" as const, reconcileStatus: SCREENER === row.observedFolder ? "reconciled" as const : "pending" as const,
+      conflict: false,
+    }))).onConflictDoUpdate({
       target: folderState.messageId,
       set: {
-        desiredFolder: SCREENER, observedFolder: row.observedFolder, lastSetBy: "us",
-        reconcileStatus, conflict: false, updatedAt: input.now,
+        desiredFolder: SCREENER, observedFolder: sql`excluded.observed_folder`, lastSetBy: "us",
+        reconcileStatus: sql`excluded.reconcile_status`, conflict: false, updatedAt: input.now,
       },
     });
-    await recordChange(ledger, {
-      accountId: input.accountId, entityType: "message", entityId: row.messageId, op: "move",
-      meta: { from: OHBOX, to: SCREENER },
-    });
-    total++;
   }
-  for (const g of screened) {
-    await t.insert(auditLog).values({
+  await recordChanges(ledger, rows.map((row) => ({
+    accountId: input.accountId, entityType: "message" as const, entityId: row.messageId, op: "move" as const,
+    meta: { from: OHBOX, to: SCREENER },
+  })));
+  if (screened.length > 0) {
+    await t.insert(auditLog).values(screened.map((g) => ({
       accountId: input.accountId,
       action: auditAction("screener.unscreened_sweep"),
       payload: { address: g.address, count: g.count, from: OHBOX, to: SCREENER, via: input.via },
       inverse: { address: g.address, from: SCREENER, to: OHBOX },
-    });
+    })));
   }
-  return { screened, total };
+  return { screened, total: rows.length };
 }
 
 /** A screening answer as the consent writes it: absent dials keep what the account stored. */

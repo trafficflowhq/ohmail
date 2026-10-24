@@ -17,6 +17,12 @@
 export const COMPOSE_ATTACH_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
 
 /**
+ * The ceiling on a forward's INHERITED files — the parts the server streams from the original,
+ * which never ride the client's request. Mirrors the send's `FORWARD_MAX_TOTAL_BYTES`, same pin.
+ */
+export const COMPOSE_FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
  * The envelope allowance behind an announced `SIZE`: headers, MIME boundaries, and the base64
  * wrap at 76 with CRLF — the expansion is (4/3)·(78/76), inverse exactly 19/26. Mirrors the
  * send's `SEND_MIME_ENVELOPE_BYTES`, same parity pin.

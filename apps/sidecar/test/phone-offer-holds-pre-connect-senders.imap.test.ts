@@ -13,9 +13,44 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startPhoneEngine } from "../src/mobile.js";
 import {
   EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PASS, PORT, SMTP_PORT,
-  dialectSeam, dirs, folderOnServer, nodeExecutor, open, post, rowOf, seedMailboxId, withServer, type Line, type Phone,
+  deliver, dialectSeam, dirs, folderOnServer, nodeExecutor, open, post, rowOf, seedMailboxId, withServer, type Line, type Phone,
 } from "./_phone-offline-rig.js";
 import { serviceUp } from "@trafficflow/db/testing";
+import { createRequire } from "node:module";
+import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
+import { bootEngine, LOCAL_ENGINE_ORIGIN, localEngineTransport, type MobileEngineDeps } from "../../mobile/src/engine/boot.js";
+import { confirmSeed, readFoldersEnabled, readSeedReview } from "../../mobile/src/net/consent.js";
+import { readMailboxes } from "../../mobile/src/net/mailboxes.js";
+import { seedStage, worldSeedOf, type SeedFacts } from "../../mobile/src/state/seed-offer.js";
+import { SCREENING_UNSUPPLIED, liveOhbox, presentedWorld } from "../../mobile/src/state/live.js";
+
+const sqlite = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+
+/** The app's mirror over `node:sqlite`, in its own directory. */
+function appMirror(): MobileEngineDeps {
+  const dir = mkdtempSync(join(tmpdir(), "ohmail-phone-seed-mirror-"));
+  dirs.push(dir);
+  return {
+    openExecutor: (name: string): SqlExecutor => {
+      const db = new sqlite.DatabaseSync(join(dir, `${name.replace(/[^A-Za-z0-9.-]/g, "_")}.db`));
+      return {
+        async all(sql: string, params: ReadonlyArray<SqlValue> = []): Promise<SqlRow[]> {
+          return db.prepare(sql).all(...params) as SqlRow[];
+        },
+        async batch(statements): Promise<void> {
+          db.exec("BEGIN IMMEDIATE");
+          try {
+            for (const { sql, params = [] } of statements) db.prepare(sql).run(...params);
+            db.exec("COMMIT");
+          } catch (err) { db.exec("ROLLBACK"); throw err; }
+        },
+      };
+    },
+    deleteDatabase: async () => undefined,
+    uuid: () => randomUUID(),
+    fetch: async () => { throw new Error("the global transport was used on the standalone door"); },
+  };
+}
 
 /** The run's one probe (test/setup/services.global.ts), at the address this file dials. */
 const SERVER_UP = ON_DEVICE_STORE ? serviceUp("greenmail", `${HOST}:${PORT}`).up : false;
@@ -127,5 +162,71 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone connected to a mailbox wit
     const queue = await ask(phone, "/screener");
     expect(((queue.body.items ?? []) as Array<{ sender: { address: string } }>).map((i) => i.sender.address).sort()).toEqual([mara, stranger].sort());
     expect(addresses((await ask(phone, "/screener/unscreened")).body, "groups"), "the offer outlived its press").toEqual([]);
+  }, 600_000);
+
+  /* THE SENT-MAIL SEED ON THE STANDALONE PHONE. Mara is somebody the account wrote to: without the
+     seed her next letter is held as a first-time sender's. The app's own reads over its own door
+     ask it, the confirm writes her rule, the release returns the held letter, and her next one
+     stays in the Inbox; a stranger is still held. */
+  it("asks the sent-mail seed, and a yes lets the person written to through", async () => {
+    const user = `pre-connect-seed-${randomUUID()}@trafficflow.test`;
+    const n = randomUUID().slice(0, 8);
+    const base = Date.now();
+    const mara = `mara.${n}@rig-corpus.invalid`;
+    const stranger = `nobody.${n}@stranger.invalid`;
+    await put(user, "Sent", { from: `<${user}>`, to: `Mara Lindqvist <${mara}>`, subject: `Keys ${n}`, at: new Date(base - 60 * MIN) });
+    const plain = `Plain note ${n}`;
+    const first = `First contact ${n}`;
+    await put(user, "INBOX", { from: `Mara Lindqvist <${mara}>`, to: `<${user}>`, subject: plain, at: new Date(base - 50 * MIN) });
+    await put(user, "INBOX", { from: `Nobody Known <${stranger}>`, to: `<${user}>`, subject: first, at: new Date(base - 45 * MIN) });
+
+    const phone = await bootPhone(user);
+    expect(await post(phone, `/local/mailboxes/${seedMailboxId(phone)}/organize`)).toBe(200);
+    expect(await until(phone, async () => (await rowOf(phone, plain)) !== null && (await rowOf(phone, first)) !== null, 180_000),
+      `never ingested — events ${events(phone)}`).toBe(true);
+    const boot = await bootEngine(appMirror(), { origin: LOCAL_ENGINE_ORIGIN, accountId: phone.engine.accountId, localEngine: phone.engine });
+    if (boot.kind !== "ready") throw new Error("the app's mirror refused");
+    await boot.verifyIdentity();
+    await boot.engine.start();
+    const session = { profile: { origin: LOCAL_ENGINE_ORIGIN, apiBase: null }, fetch: localEngineTransport(phone.engine).fetch };
+    const facts = async (): Promise<SeedFacts> => ({
+      seed: worldSeedOf((await readFoldersEnabled(session as never))!.seed),
+      mailboxes: { known: true, rows: (await readMailboxes(session as never)) ?? [] },
+      profileQuestionOpen: false,
+    });
+    try {
+      const before = await facts();
+      expect(before.seed, "the door said nothing about the seed").toEqual({ known: true, carried: true, confirmedAt: null });
+      expect(seedStage(before), "the phone does not owe the seed").toBe("owed");
+
+      const again = `Mara again ${n}`;
+      await deliver(user, `Mara Lindqvist <${mara}>`, again);
+      expect(await until(phone, async () => (await folderOnServer(user, again)) === "ohmail/Screener", 90_000),
+        "the premise: a letter from somebody written to is held while the seed is owed").toBe(true);
+
+      const review = await readSeedReview(session);
+      expect(review?.candidates.map((c) => c.address), "the review did not name the person written to").toEqual([mara]);
+      expect((await confirmSeed(session, [mara], `seed-${n}`)).rulesCreated).toBe(1);
+      await boot.engine.requestPull();
+      expect(await until(phone, async () => (await folderOnServer(user, again)) === "INBOX", 90_000),
+        "the yes left her held letter in the Screener").toBe(true);
+
+      const next = `Mara once more ${n}`;
+      await deliver(user, `Mara Lindqvist <${mara}>`, next);
+      expect(await until(phone, async () => (await rowOf(phone, next)) !== null, 60_000)).toBe(true);
+      for (let i = 0; i < 5; i++) await phone.engine.resume();
+      expect(await folderOnServer(user, next), "her next letter was held as a first-time sender's").toBe("INBOX");
+      await boot.engine.syncOnce();
+      const now = new Date();
+      const box = liveOhbox(presentedWorld(boot.engine.read(), now, false, SCREENING_UNSUPPLIED).reader, { now, zone: "UTC", screening: SCREENING_UNSUPPLIED });
+      expect([...box.resurfaced, ...box.fresh, ...box.seen].map((m) => m.subject)).toEqual(expect.arrayContaining([again, next]));
+      expect(addresses((await ask(phone, "/screener/unscreened")).body, "groups"), "the offer still names her").toEqual([stranger]);
+
+      const later = `Somebody new ${n}`;
+      await deliver(user, `Somebody New <new.${n}@stranger.invalid>`, later);
+      expect(await until(phone, async () => (await folderOnServer(user, later)) === "ohmail/Screener", 90_000),
+        "the control: a stranger is still held").toBe(true);
+      expect(seedStage(await facts()), "the seed is still owed after the yes").toBe("none");
+    } finally { boot.store.close(); }
   }, 600_000);
 });

@@ -149,6 +149,16 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
     expect(live["--lift-0"].startsWith("0 0 0 1px ")).toBe(true);
   });
 
+  it("a zero outer gap leaves the edge one ring wide, so the tiles' outer borders stay in the window", () => {
+    // Owner report 2026-10-24: gaps_out read 0 drew the rail, list and reader flush to the
+    // window, their rings outside it.
+    const zero = '{"option": "general:gaps_out", "css": "0 0 0 0", "set": true }';
+    expect(mappedWith({ hyprGapsIn: VM.gapsIn, hyprGapsOut: zero, hyprBorderSize: VM.border })["--gap-edge"]).toBe("2px");
+    expect(mappedWith({ hyprGapsOut: zero, hyprBorderSize: '{"int": 4}' })["--gap-edge"]).toBe("4px");
+    expect(mappedWith({ hyprGapsOut: zero })["--gap-edge"]).toBe("2px"); // the mapped ring
+    expect(mappedWith({ hyprGapsOut: '{"css": "1 1 1 1"}', hyprBorderSize: '{"int": 0}' })["--gap-edge"]).toBe("2px");
+  });
+
   it("with nothing known, the static theme rides unmodified", () => {
     const tokens = { "--font-ui": "x", "--lift-1": "0 0 0 2px red" };
     expect(applySettings(tokens, parseSystem(null))).toEqual(tokens);

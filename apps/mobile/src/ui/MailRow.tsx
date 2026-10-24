@@ -6,14 +6,15 @@
  * Blanc's row hierarchy survives the narrower column intact: weight carries
  * unread, colour carries seen, and the dot is the only mark.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, PanResponder, View } from "react-native";
+import { ScrollView } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import type { Mail } from "../state/model";
 import { useWorld } from "../state/world";
 import { moveTargetsFor, type WorldMail, type WorldPileState } from "../state/live";
-import { Badge, TagChip, TapRow, Txt } from "./base";
+import { Badge, Tap, TagChip, TapRow, Txt } from "./base";
 import { Icon } from "./Icon";
 import { mailRowSpoken, marksOfRow, threadBadgeOf, trackerShort } from "./row-spoken";
 import { faceLabel, rowActionVerb, rowActions, type RowActionVerb } from "./row-actions";
@@ -21,7 +22,15 @@ import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
-import { marksShown } from "./reader-marks";
+import { STRIP_END, STRIP_HIT_SLOP, STRIP_SLOT, STRIP_START, marksShown, stripOffsetFor, type RailItem } from "./reader-marks";
+import { MARK_RING, MarkSquare, ringRadius } from "./MarkSquare";
+
+/** The open conversation's squares on its row: the reader's, its ring, and a press on one. */
+export interface RowStripFacts {
+  items: readonly RailItem[];
+  here: string | null;
+  onPress: (id: string) => void;
+}
 
 export function MailRow({
   m,
@@ -34,10 +43,17 @@ export function MailRow({
    * sheet too, so the gesture is a shortcut and never the only way.
    */
   swipe,
+  /**
+   * THE READER'S SQUARES, on the row of the conversation an Ohbox reader showed last
+   * (`state/thread-place.ts`): ringed where the reader is or stopped; a press scrolls the reader there.
+   * They take the place of the row's small marks.
+   */
+  strip,
 }: {
   m: Mail & { pile?: WorldPileState; presentedFolder?: WorldMail["presentedFolder"] };
   onPress: () => void;
   swipe?: boolean;
+  strip?: RowStripFacts | null;
 }) {
   const t = useTheme();
   const w = useWorld();
@@ -88,6 +104,8 @@ export function MailRow({
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dxNow = useRef(0);
+  /* A touch that started on the strip: its drag scrolls the strip, so the row never claims it. */
+  const onStrip = useRef(false);
   const settle = () => {
     dxNow.current = 0;
     Animated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 0 }).start();
@@ -95,9 +113,12 @@ export function MailRow({
   const responder = useMemo(
     () =>
       PanResponder.create({
+        /* Every touch starts off the strip; the strip's own touch start, after this, says otherwise. */
+        onStartShouldSetPanResponderCapture: () => { onStrip.current = false; return false; },
         /* Claimed at the MOVE and never at the start: a row that takes the touch down owns every
-           tap, and the list must go on scrolling under a finger that only meant to scroll. */
-        onMoveShouldSetPanResponder: (_e, g) => swipe === true && swipeClaims(g.dx, g.dy),
+           tap, and the list must go on scrolling under a finger that only meant to scroll. A drag
+           that started on the strip scrolls the strip. */
+        onMoveShouldSetPanResponder: (_e, g) => swipe === true && !onStrip.current && swipeClaims(g.dx, g.dy),
         onPanResponderMove: (_e, g) => {
           dxNow.current = g.dx;
           pan.setValue({ x: swipeOffset(g.dx), y: 0 });
@@ -116,7 +137,7 @@ export function MailRow({
     [swipe, m.id, m.memberIds, face],
   );
 
-  const row = (
+  const tap = (
     <TapRow
       onPress={onPress}
       accessibilityRole="button"
@@ -189,7 +210,7 @@ export function MailRow({
         </Txt>
       ) : null}
 
-      {marks ? <RowMarks marks={marks} /> : null}
+      {marks && !strip ? <RowMarks marks={marks} /> : null}
 
       {badges ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 7 }}>
@@ -217,6 +238,15 @@ export function MailRow({
       ) : null}
     </TapRow>
   );
+  /* The strip stands under the row's press target, never inside it: its squares are presses of their own. */
+  const row = strip ? (
+    <View>
+      {tap}
+      <View onTouchStart={() => { onStrip.current = true; }}>
+        <RowStrip items={strip.items} here={strip.here} onPress={strip.onPress} />
+      </View>
+    </View>
+  ) : tap;
 
   if (swipe !== true) return row;
 
@@ -282,6 +312,60 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
         />
       ))}
     </View>
+  );
+}
+
+/**
+ * THE READER'S SQUARES ON THE ROW — the rail's own, oldest first, the current one ringed, each a
+ * press that scrolls the reader to its message. A long conversation scrolls sideways, keeping the
+ * ringed square in view. Spoken as the rail's squares are.
+ */
+function RowStrip({ items, here, onPress }: RowStripFacts) {
+  const t = useTheme();
+  const list = useRef<ScrollView>(null);
+  const [room, setRoom] = useState(0);
+  const n = items.length;
+  const at = items.findIndex((it) => it.id === here);
+  useEffect(() => {
+    if (at < 0 || room <= 0) return;
+    list.current?.scrollTo({ x: stripOffsetFor(at, n, room), animated: false });
+  }, [at, n, room]);
+  return (
+    <ScrollView
+      ref={list}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      accessibilityRole="toolbar"
+      accessibilityLabel={Copy.readerMarksAria}
+      testID="row-strip"
+      style={{ marginTop: -4, flexGrow: 0 }}
+      contentContainerStyle={{ paddingLeft: STRIP_START, paddingRight: STRIP_END, paddingBottom: 10 }}
+      onLayout={(e) => setRoom(e.nativeEvent.layout.width)}
+    >
+      {items.map((it, i) => (
+        <Tap
+          key={it.id}
+          accessibilityRole="button"
+          accessibilityLabel={it.kind === "mine"
+            ? Copy.readerMarkMine(i + 1, n)
+            : Copy.readerMarkFrom(i + 1, n, it.sender, it.kind === "unread")}
+          accessibilityState={{ selected: it.id === here }}
+          testID={`strip-${it.id}`}
+          hitSlop={STRIP_HIT_SLOP}
+          onPress={() => onPress(it.id)}
+          style={{ width: STRIP_SLOT, height: STRIP_SLOT, alignItems: "center", justifyContent: "center" }}
+        >
+          <View
+            style={{
+              width: MARK_RING, height: MARK_RING, alignItems: "center", justifyContent: "center",
+              borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3, borderRadius: ringRadius(t.radius.focus),
+            }}
+          >
+            <MarkSquare kind={it.kind} />
+          </View>
+        </Tap>
+      ))}
+    </ScrollView>
   );
 }
 

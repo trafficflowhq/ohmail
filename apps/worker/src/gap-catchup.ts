@@ -289,6 +289,8 @@ async function selectGapCandidates(
     sql`${messages.createdAt} >= ${since}`,
     isNull(messages.sensitivityCategory),
     eq(messages.noAi, false),
+    isNull(messages.deletedAt),
+    isNull(messages.serverMissingAt),
     sql`not exists (
       select 1 from ${mailboxes} mb
        where mb.id = ${messages.mailboxId}

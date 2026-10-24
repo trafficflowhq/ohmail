@@ -269,6 +269,15 @@ export interface MoveResult {
  * in this install's store, and a `seq` would advance every client's cursor past a change that
  * does not exist.
  */
+/**
+ * A delete of a letter the server no longer holds anywhere: tombstoned, no copy on record, not
+ * filed to Trash. Nothing is written, so there is no seq; the route answers 200 with the flag.
+ */
+export interface AlreadyGoneResult {
+  dto: MessageDTO;
+  alreadyGone: true;
+}
+
 export interface MoveRequestResult {
   pending: true;
   requestId: string;
@@ -1506,7 +1515,7 @@ export class MessageService {
   async delete(
     ctx: ServiceContext, id: string,
     opts: { idempotency?: MoveIdempotency | null } = {},
-  ): Promise<MoveResult | MoveRequestResult> {
+  ): Promise<MoveResult | MoveRequestResult | AlreadyGoneResult> {
     /* WHICH MAILBOX NOW OWES A MOVE — captured inside the transaction and rung AFTER it commits.
        `null` when this request wrote no desired folder, so the organizer is not woken for work
        that does not exist. */
@@ -1516,10 +1525,17 @@ export class MessageService {
     const answer = await asTx(ctx).transaction(async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
-        dedupKey: messages.dedupKey,
+        dedupKey: messages.dedupKey, deletedAt: messages.deletedAt,
       }).from(messages)
         .where(and(eq(messages.id, id), eq(messages.accountId, ctx.accountId))).limit(1);
       if (!msg) throw new ServiceError("not_found", 404, "message not found");
+
+      // Already gone from the server: a Trash move would list a letter no server holds.
+      if (msg.deletedAt !== null && await this.goneEverywhere(tx, id, msg.mailboxId)) {
+        const dto = await materializeMessage(asDb(tx), ctx.accountId, id);
+        if (!dto) throw new ServiceError("not_found", 404, "message not found");
+        return { dto, alreadyGone: true as const };
+      }
 
       /**
        * A reader deletes nothing here — it ASKS. A delete is a move to Trash plus a tombstone, so
@@ -1620,6 +1636,18 @@ export class MessageService {
     if (filed !== null) await this.ringFiledMailbox(ctx, filed);
 
     return answer;
+  }
+
+  /** No copy on record and not filed to Trash: the store's own proof the letter is gone. */
+  private async goneEverywhere(tx: Tx, id: string, mailboxId: string): Promise<boolean> {
+    const [copy] = await tx.select({ id: messageInstances.messageId }).from(messageInstances)
+      .where(eq(messageInstances.messageId, id)).limit(1);
+    if (copy) return false;
+    const [trashed] = await tx.select({ id: folderState.messageId }).from(folderState)
+      .innerJoin(mailboxes, eq(mailboxes.id, mailboxId))
+      .where(and(eq(folderState.messageId, id), sql`${folderState.desiredFolder} = ${mailboxes.trashFolder}`))
+      .limit(1);
+    return !trashed;
   }
 
   /**

@@ -2620,6 +2620,7 @@ export class HttpAdapter implements EngineAdapter {
       stagedAttachmentIds?: string[];
       forwardOf?: string;
       forwardConfirmed?: true;
+      forwardParts?: string[];
       forwardZone?: string;
       forwardLocale?: string;
       ifContentRevision?: string;
@@ -2639,6 +2640,7 @@ export class HttpAdapter implements EngineAdapter {
     else if (!alreadyPresented && m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
     if (m.forwardOf && m.forwardConfirmed === true) sendBody.forwardConfirmed = true;
+    if (m.forwardOf && m.forwardParts !== undefined) sendBody.forwardParts = m.forwardParts;
     if (m.forwardOf && m.forwardClock) {
       sendBody.forwardZone = m.forwardClock.zone;
       sendBody.forwardLocale = m.forwardClock.locale;

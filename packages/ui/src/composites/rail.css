@@ -1,6 +1,6 @@
 /* rail — white panel sculpted by light, no border */
 .rail{
-  padding:18px 12px 18px 16px;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:1px;
+  padding:18px 12px 18px 16px;overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column;gap:1px;
   background:var(--panel);border-radius:var(--r-overlay);box-shadow:var(--lift-1);
 }
 /* THE LABEL ROOM AT A 200px TRACK (DESIGN-FOLD-WIDTHS §4): below 1366 the rail's right padding
@@ -8,8 +8,18 @@
    difference between "Invoices 2026" and "Invoic…". Wider windows keep the shipped 12. */
 @media (max-width: 1365.98px){
   .rail{padding-right:8px}
+  .rail > .rail-scroll{margin-right:-8px;padding-right:8px}
 }
-.rail > *{flex:none}
+.rail > *,.rail-scroll > *{flex:none}
+/* THE SCROLLER IS EVERYTHING ABOVE THE FOOT (`RailNav.tsx`): the routes, tags, folders and mailboxes
+ * scroll; the sync slot, dock and account line below it never do, so a send finishing at the foot is
+ * on screen at every height. It reaches the rail's edges (its margin and padding mirror the rail's,
+ * beside every rule that changes that padding), so the scrollbar, focus rings and the active-row
+ * mark are not clipped. A zero basis and a floor: the scroller keeps Compose and a few rows however
+ * long the foot's send line grows (the line scrolls inside its own cap, `.rail-sync-slot`), and the
+ * rail itself scrolls only when the foot and that floor do not fit. */
+.rail > .rail-scroll{flex:1 1 0;min-height:min(9rem,35%);overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:1px;
+  margin:-18px -12px 0 -16px;padding:18px 12px 0 16px}
 .wordmark{font-size:15px;letter-spacing:-.02em;padding:2px 8px 14px;user-select:none}
 .wordmark b{font-weight:650}
 .wordmark b em{font-style:normal;color:var(--accent-ink)}
@@ -96,9 +106,9 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * to act on the app instead of navigating, and dressing them as a widget would make the rail
  * read as two components.
  *
- * SHORT VIEWPORTS: `.rail` scrolls (`overflow-y:auto`), so on a short window the dock scrolls
- * with everything else. Deliberately NOT pinned inside the scroller — a `position:sticky` foot
- * would cover the mailbox list at exactly the height where the list needs every line it has.
+ * SHORT VIEWPORTS: the foot sits below `.rail-scroll`, outside it, so the list scrolls above the
+ * dock and never under it. No `position:sticky` inside the scroller: it would cover the list's last
+ * lines, and WebKitGTK repositions a sticky box a frame late while it scrolls.
  *
  * ONE LINE. The dock is a flex ROW: the labelled control takes the line and anything that is a
  * lone glyph rides the right end of it at its own width. Two stacked rows spent a second line of
@@ -119,6 +129,14 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
  * upwards from them. Put the auto back on `.rail-dock` and a sync starting mid-session would
  * shove both controls down by its own height. */
 .rail-sync-slot{margin-top:auto;padding-bottom:10px}
+/* The send line grows a row per send, and endings stand until dismissed: the slot gives way first
+ * and scrolls inside its cap. The inline inset keeps focus rings unclipped. It rests on its END
+ * (`column-reverse` over one stack, so reading order is unchanged): what overflows is the oldest,
+ * at the top, and the newest send stays in view as rows come and go, with no script scrolling it.
+ * `display:flex` is in app.css's one-copy query; the zero ribbon's `display:block` drops the anchor. */
+.rail > .rail-sync-slot{flex:0 1 auto;min-height:0;max-height:45%;overflow-y:auto;overflow-x:hidden;
+  margin-inline:-6px;padding-inline:6px;flex-direction:column-reverse}
+.rail-sync-stack{flex:none}
 .rail-sync-slot + .rail-dock{margin-top:0}
 /* THE NOTICE SLOT'S PLACE — see `notice` in `RailNav.tsx`: under the piles, before Tags. Spaced
  * as a `.rgroup` and out of the foot's auto-margin chain, so the sync slot keeps the slack and a
