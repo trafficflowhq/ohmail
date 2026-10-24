@@ -49,6 +49,10 @@ interface World {
   imap: { host: string; port: number; secure: boolean; auth: { user: string; pass: string } };
   /** The next mail read throws once, as a store or pipeline fault would: the login stands. */
   failNextRead: () => void;
+  /** Every NOOP the engine sent on the wire, with whether IDLE ran just before it and just after. */
+  noops: { idlingBefore: boolean; idlingAfter: boolean }[];
+  /** From now on a NOOP is answered without the wire, so only IDLE can bring an arrival in. */
+  quietNoops: () => void;
 }
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -70,6 +74,8 @@ async function standUp(
   const lines: Line[] = [];
   const adapters: ImapAdapter[] = [];
   let failRead = false;
+  let quiet = false;
+  const noops: World["noops"] = [];
   const factory = (cfg: ImapConfig, ctx: AdapterDialContext): MailboxAdapter => {
     const real = new ImapAdapter(cfg, { onConnectionError: ctx.onConnectionError });
     adapters.push(real);
@@ -78,6 +84,16 @@ async function standUp(
       get(target, prop) {
         if (prop === "capabilities" && !opts.idle) {
           return async () => ({ ...(await target.capabilities()), idle: false });
+        }
+        if (prop === "noop") {
+          const idling = (): boolean => (target as unknown as { client?: ImapFlow }).client?.idling === true;
+          return async () => {
+            if (quiet) return;
+            const idlingBefore = idling();
+            await target.noop();
+            // Before the adapter's re-arm, which it asks for a turn later.
+            noops.push({ idlingBefore, idlingAfter: idling() });
+          };
         }
         if (prop === "changesSince" && failRead) {
           failRead = false;
@@ -100,7 +116,10 @@ async function standUp(
   const raw = new ImapFlow({ ...imap, logger: false });
   await raw.connect();
   cleanups.push(async () => { await raw.logout().catch(() => undefined); });
-  return { sidecar, raw, imap, lines, address, adapters, failNextRead: () => { failRead = true; } };
+  return {
+    sidecar, raw, imap, lines, address, adapters, noops,
+    failNextRead: () => { failRead = true; }, quietNoops: () => { quiet = true; },
+  };
 }
 
 /** The start, which reports a failed mailbox rather than throwing: a case stands on a launch that served. */
@@ -157,6 +176,17 @@ function restingOn(w: World): { path: string | null; idling: boolean } {
   const client = (w.adapters.at(-1) as unknown as { client?: ImapFlow }).client;
   const mb = client?.mailbox;
   return { path: mb && typeof mb === "object" ? mb.path : null, idling: client?.idling === true };
+}
+
+/** The first heartbeat NOOP sent while IDLE ran, awaited as that event rather than sampled from the IDLE flag. */
+async function heartbeatDuringIdle(w: World): Promise<World["noops"][number] | null> {
+  const t0 = Date.now();
+  while (Date.now() - t0 < PREMISE_BOUND_MS) {
+    const beat = w.noops.find((n) => n.idlingBefore);
+    if (beat) return beat;
+    await new Promise((r) => { setTimeout(r, 25); });
+  }
+  return null;
 }
 
 /** Where the connection rests once it rests on INBOX with IDLE running, or where it is past the bound. */
@@ -260,23 +290,18 @@ for (const server of SERVERS) {
         "the arrival after the other client's delete waited for the poll").not.toBeNull();
     });
 
-    it("the heartbeat's NOOP puts IDLE back within a second, and an arrival just after it rings", async () => {
+    it("the heartbeat's NOOP ends IDLE, IDLE comes back before imapflow's own, and the next arrival rings", async () => {
       const w = await standUp(server, { pollIntervalMs: HOUR, idle: true, organize: false, heartbeatTimeoutMs: 6_000 });
       await w.sidecar.start();
       expect(await restsOnInbox(w)).toEqual({ path: "INBOX", idling: true });
-      const t0 = Date.now();
-      while (Date.now() - t0 < 15_000 && restingOn(w).idling) await new Promise((r) => { setTimeout(r, 5); });
-      expect(restingOn(w).idling, "the heartbeat never ended IDLE").toBe(false);
-      const s0 = Date.now();
-      let backMs: number | null = null;
-      while (Date.now() - s0 < 1_000) {
-        if (restingOn(w).idling) { backMs = Date.now() - s0; break; }
-        await new Promise((r) => { setTimeout(r, 5); });
-      }
-      expect(backMs, "IDLE was not back within 1 s of the heartbeat NOOP").not.toBeNull();
-      await new Promise((r) => { setTimeout(r, Math.max(0, 1_500 - (Date.now() - s0))); });
-      expect(await arrivalMs(w, await deliverFresh(w, "after-noop"), 3_000),
-        "the arrival after the heartbeat waited for the next NOOP").not.toBeNull();
+      const beat = await heartbeatDuringIdle(w);
+      expect(beat, "no heartbeat NOOP while IDLE ran").not.toBeNull();
+      expect(beat?.idlingAfter, "the heartbeat never ended IDLE").toBe(false);
+      w.quietNoops();
+      // The bound sits well inside imapflow's 15 s auto-IDLE delay, which is what brought IDLE back before.
+      expect(await restsOnInbox(w), "IDLE was not back after the heartbeat NOOP").toEqual({ path: "INBOX", idling: true });
+      expect(await arrivalMs(w, await deliverFresh(w, "after-noop"), DOORBELL_BOUND_MS),
+        "the arrival after the heartbeat did not ring on the IDLE").not.toBeNull();
     });
   });
 }
