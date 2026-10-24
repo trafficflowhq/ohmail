@@ -45,7 +45,7 @@ const ORDER: ReadonlyArray<{ hook: string; frame: string }> = [
  * the glue the ruling leaves in it. The whole file's line ceiling is retired: it counted
  * lines four legitimate rows added and measured no behaviour.
  */
-const CEILINGS = { shellInnerLogic: 1100 } as const;
+const CEILINGS = { shellInnerLogic: 1101 } as const; // raised 2026-10-25 from 1100: the setup resume's one call (`setup-resume.ts` holds its logic)
 
 /**
  * WHICH CONTROL MEASURES WHICH FRAME'S MOVED CODE. The golden render test is DOM identity, so it

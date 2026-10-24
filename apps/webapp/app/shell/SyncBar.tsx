@@ -138,8 +138,10 @@ function SyncAnnouncer({ say, progress }: { say: string | null; progress: number
 /* No default VALUE on the parameter, only on the field. A `= {}` there types the component as
    `(props?: …)`, which is not a `FunctionComponent<P>`, and `createElement(SyncBar, { variant })`
    then resolves to the propless overload and rejects the prop it was given. */
-export function SyncBar({ variant = "shell", hostOffline = false }: {
+export function SyncBar({ variant = "shell", hostOffline = false, setupHref }: {
   variant?: "shell" | "rail";
+  /** Where "no mailbox" links: the door's setup page. Absent (the desktop window): Settings → Mailboxes. */
+  setupHref?: string;
   /**
    * Is this window paired to a computer that is not answering? — then the `stale` arm yields.
    * `staleAsOf` reads "As of {time} · catching up" with a spinner: an ACTIVITY claim, and on a
@@ -152,7 +154,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
    */
   hostOffline?: boolean;
 }) {
-  const s = useStripSpeech(hostOffline);
+  const s = useStripSpeech(hostOffline, setupHref);
   /* WHETHER ANYTHING IS ACTUALLY RUNNING — before the early return, because a hook may not sit
      behind one. The busy STATES say a sync is outstanding; this says a drain is in flight now,
      and only it may move a mark (`drain-mark.ts`). */
@@ -226,7 +228,7 @@ export function SyncBar({ variant = "shell", hostOffline = false }: {
  * THE STRIP'S SENTENCE FOR THIS RENDER, or `null` where the strip says nothing — the quiet gate, the
  * host-offline withholding of `stale` and the offline word, decided once for both shapes.
  */
-function useStripSpeech(hostOffline: boolean): Speech | null {
+function useStripSpeech(hostOffline: boolean, setupHref?: string): Speech | null {
   const t = useTranslations("sync");
   // The error TAXONOMY lives with the Settings rows that already own it (`mailboxes.err_*`,
   // mail 0023). Two copies of seven sentences is how they drift, and one of them then describes
@@ -247,7 +249,7 @@ function useStripSpeech(hostOffline: boolean): Speech | null {
   // Cloud behind it — the standalone desktop, which folds `NEXT_PUBLIC_API_BASE` away at build
   // time — so it is the seam the `stopped` sentence branches on. See `speech()`'s `stopped` arm.
   const cloud = apiConfigured();
-  const spoken = speech(state, t, tm, cloud, managed);
+  const spoken = speech(state, t, tm, cloud, managed, setupHref);
   /* THE OFFLINE WORD. Both conditions, each necessary: the state must be a fetch-shaped claim —
      one a dead network makes false — AND the browser must say offline. A failing server is not
      "offline", and an offline browser over settled content has nothing to correct. The mirror IS
@@ -332,7 +334,9 @@ interface Speech {
   link: { href: string; label: string } | null;
 }
 
-function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, managed: boolean): Speech {
+function speech(
+  state: MailState, t: Translate, tm: Translate, cloud: boolean, managed: boolean, setupHref?: string,
+): Speech {
   // The label names the Mailboxes pane, so the link opens it rather than the section list's first pane.
   const settings = { href: "#/settings/mailboxes", label: t("settings") };
   switch (state.key) {
@@ -582,7 +586,10 @@ function speech(state: MailState, t: Translate, tm: Translate, cloud: boolean, m
     case "noMailbox":
       // Reachable only when `GET /mailboxes` ANSWERED and answered zero. A probe that failed
       // leaves the facts unknown and this strip silent — see `MailStateProvider`.
-      return { tone: "", role: "status", warn: false, busy: false, title: t("noMailbox"), detail: null, link: settings };
+      return {
+        tone: "", role: "status", warn: false, busy: false, title: t("noMailbox"), detail: null,
+        link: setupHref ? { href: setupHref, label: t("connect") } : settings,
+      };
 
     case "importing": {
       const counted = state.total !== null

@@ -286,6 +286,7 @@ import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
+import { useShellSetup } from "./setup-resume";
 import { durableSessionSet } from "./durable";
 import { ManagedServiceContext } from "./managed-service";
 import { SendReleaseProvider } from "./send-release";
@@ -1273,6 +1274,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
   const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
   const consent = useConsentState(!resolvedDemo, consentTransport, settingsStamp, windowOwners);
+  const setupHref = useShellSetup(firstRun, resolvedDemo, facts, consent); // setup resumes once per tab (`setup-resume.ts`)
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
    * has yet completed for this engine", which is exactly the window in which ZERO folder
@@ -2277,7 +2279,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             itself (`sync` on the rail below); this one is hidden there by `app.css`. Under
             1024px the rail is a drawer that is closed most of the time, so the strip and the
             corner pill are the only way the mailbox can speak, and they keep the job. */}
-        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} />}
+        {sessionRefused ? null : <SyncBar hostOffline={hostConnection != null} setupHref={setupHref} />}
         {/* A send that left its editor, finishing — the narrow-width pill; the rail carries it at width. */}
         <SendingLine api={mailSend} variant="shell" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
 
@@ -2444,7 +2446,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 <PullNewMail variant="rail" binding={pullBinding} />
                 {/* A send that left its editor finishes here, above the mailbox's own line. */}
                 <SendingLine api={mailSend} variant="rail" onOpen={(i) => openNotSent(i.key, i.left, i.m)} onOpenMany={() => go("drafts")} />
-                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} />}
+                {sessionRefused ? null : <SyncBar variant="rail" hostOffline={hostConnection != null} setupHref={setupHref} />}
                 {/* Same component at rail width — its own layout collapses under 520px, so the
                     rail does not need a second variant. */}
                 <UnsavedChanges variant="rail" />
@@ -2542,6 +2544,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
               <OhboxView
                 replyDone={replyDone}
                 demo={demo}
+                {...(setupHref ? { setupHref } : {})}
                 /* THE AWAY-RESPONDER NOTICE — the one state in which this product sends mail
                    on its own, made visible on the pane its owner actually reads. Same gate as
                    the settings row (`awaySection` below): absent on the demo, absent on a
@@ -2585,7 +2588,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                      * where somebody has a screen full of decisions already.
                      */
                     const offer = faceOffer.eligible && applyFaceAllDevices !== null
-                      && !route.firstRun
+                      && !route.firstRun && (facts?.length ?? 0) > 0 // waits for a mailbox, every door
                       ? <OhmarchyOffer apply={applyFaceAllDevices} onDone={faceOffer.dismiss} />
                       : null;
                     return (

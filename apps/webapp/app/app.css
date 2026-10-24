@@ -2451,6 +2451,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-ohbox .read-col .empty {
   padding-top: 96px;
 }
+/* The Ohbox with no mailbox: the card's one verb on its own line under the sentence. */
+.empty-connect .btn {
+  display: flex;
+  width: fit-content;
+  margin: 16px auto 0;
+}
 
 /* ================= the open message's marks =================
    Under the subject sit two different things that used to share one wrapping `.chips` row. The

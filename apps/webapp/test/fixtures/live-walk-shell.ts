@@ -36,6 +36,7 @@ import messages from "../../messages/en.json";
 import messagesDe from "../../messages/de.json";
 import type { MailboxFacts } from "../../app/shell/mail-state";
 import type { ConsentTransport } from "../../app/shell/consent-state";
+import type { FirstRunHost } from "../../app/shell/first-run-host";
 import { settleFirstPaint } from "../_first-paint.js";
 import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
 
@@ -340,6 +341,8 @@ export async function mountShell(
     consentTransport?: ConsentTransport;
     /** The host's providers between the toast host and `AppShell` — the Cloud's locale seam. Absent: none. */
     wrap?: (shell: React.ReactElement) => React.ReactElement;
+    /** The first-run door, as `CloudShell` hands it over. Absent: the desktop window's shape. */
+    firstRun?: FirstRunHost;
   } = {},
 ): Promise<HTMLElement> {
   const { AppShell } = await import("../../app/shell/AppShell.js");
@@ -358,6 +361,7 @@ export async function mountShell(
     mailboxFacts: opts.probe ?? (async (): Promise<MailboxFacts[]> => facts),
     ...(opts.engine ? { engine: opts.engine } : {}),
     ...(opts.consentTransport ? { consentTransport: opts.consentTransport } : {}),
+    ...(opts.firstRun ? { firstRun: opts.firstRun } : {}),
   };
 
   await act(async () => {

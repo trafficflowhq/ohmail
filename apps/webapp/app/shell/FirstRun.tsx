@@ -1286,6 +1286,10 @@ export function FirstRun({
     <form ref={formRef} tabIndex={-1} onSubmit={(e) => { e.preventDefault(); if (!busy) submit(); }}>{body}</form>
   );
 
+  /* A FIRST MAILBOX ON A WEB DOOR IS CONNECTED ON ITS SETUP PAGE: this form has no step-up prompt for
+     Test and Connect, and `/join` has the tiles and the in-place prompt. An add run keeps the form. */
+  const handOff = host.setupHref !== undefined && host.resume !== undefined && add !== true && facts.mailbox === null;
+
   return (
     <div className="ob-stage">
       <div ref={cardRef} className="login-card ob-card set-pane" role="dialog" aria-modal="true"
@@ -1354,7 +1358,7 @@ export function FirstRun({
           </>
         )) : null}
 
-        {step === "mailbox" ? screen(
+        {step === "mailbox" && !handOff ? screen(
           () => {
             /**
              * BACK ONTO THIS SCREEN MUST NOT CONNECT A SECOND MAILBOX: This step's forward verb CREATES, and Back
@@ -1563,6 +1567,14 @@ export function FirstRun({
             </>
           ),
         ) : null}
+
+        {step === "mailbox" && handOff ? screen(() => host.resume?.(), (
+          <>
+            <h1 id={`${ids}-title`}>{t("mailboxTitle")}</h1>
+            <p className="sub">{t("mailboxHandoffLead")}</p>
+            {foot({ back: true, primary: next(t("mailboxHandoffGo")) })}
+          </>
+        )) : null}
 
         {step === "elsewhere" ? screen(
           () => {

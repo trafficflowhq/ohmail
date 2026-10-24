@@ -92,7 +92,7 @@ const RAIL_OPEN: Step[] = SELF_HOST_BUILD
 const ACCESS_POLL_ATTEMPTS = 10;
 const ACCESS_POLL_MS = 1_500;
 
-export function JoinScreen({ initialCode, billingReturn, publicSignup = false, planHint }: {
+export function JoinScreen({ initialCode, billingReturn, publicSignup = false, planHint, signedIn = false }: {
   initialCode: string;
   /** `?billing=success|cancelled`, the two values Stripe Checkout redirects back with. */
   billingReturn?: "success" | "cancelled";
@@ -108,8 +108,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   publicSignup?: boolean;
   /** `?plan` and `?interval` from the site's tier buttons, already read from their closed sets (`page.tsx`). */
   planHint?: PlanHint;
+  /** The request carried an owner marker naming an account (`page.tsx`, read on the server so the first paint agrees). */
+  signedIn?: boolean;
 }) {
   const t = useTranslations("join");
+  const to = useTranslations("onboarding");
   const lang = useLocale() === "de" ? "de" : "en";
 
   /**
@@ -147,6 +150,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   const [fatal, setFatal] = useState<string | null>(null);
   /** Which way OUT that screen offers. `"signIn"` is the original default; the capacity valve added the other. */
   const [fatalAction, setFatalAction] = useState<"signIn" | "waitlist">("signIn");
+  /** Until the first bootstrap settles a signed-in account's step is unknown, and it must not see the sign-up form. */
+  const [resolving, setResolving] = useState(signedIn);
+  /** The session or a step read failed with something other than "no session". */
+  const [unreachable, setUnreachable] = useState(false);
 
   // ── The form state, kept across steps so a refusal never loses typed input ────────────
   const [code, setCode] = useState(initialCode);
@@ -293,11 +300,13 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       if (may === true) forgetPlanHint();
 
       await landEntitled();
-    } catch {
-      // No session at all is the normal first visit; anything else means the server said
-      // "not you", and starting over is the only honest response.
+    } catch (err) {
+      // No session (401) is the normal first visit and the form is right; any other fault leaves the step unknown.
+      if (signedIn && !(err instanceof ApiError && err.status === 401)) setUnreachable(true);
+    } finally {
+      setResolving(false);
     }
-  }, [landEntitled]);
+  }, [landEntitled, signedIn]);
 
   /**
    * A SIGN-OUT THIS BROWSER ASKED FOR AND THE SERVER NEVER CONFIRMED (`login/pending-sign-out.tsx`). The jar
@@ -312,6 +321,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     if (apiConfigured() && readOwnerMarker().kind === "signed-out") {
       let cancelled = false;
       stopFinish.current = () => { cancelled = true; };
+      setResolving(false);
       void pending.finish(() => cancelled);
       return () => { cancelled = true; };
     }
@@ -688,6 +698,28 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
             <Link className="btn primary" href="/login?next=join">{t("signIn")}</Link>
           )}
         </div>
+      </Shell>
+    );
+  }
+
+  if (unreachable) {
+    return (
+      <Shell title={to("resumeUnreachableTitle")}>
+        <p className="sub" role="alert">{to("resumeUnreachableBody")}</p>
+        <div className="join-actions">
+          <Button variant="primary" onClick={() => { setUnreachable(false); setResolving(true); void bootstrap(); }}>
+            {to("resumeRetry")}
+          </Button>
+          <Link className="btn" href="/">{to("resumeLeave")}</Link>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (resolving) {
+    return (
+      <Shell title={to("resumeCheckingTitle")}>
+        <p className="sub" role="status">{to("resumeChecking")}</p>
       </Shell>
     );
   }

@@ -247,4 +247,15 @@ export interface FirstRunHost {
 
   /** The door's second-factor prompt — absent where Agree meets none (the local door). */
   stepUp?: FirstRunStepUp;
+
+  /**
+   * WHERE A FIRST MAILBOX IS CONNECTED, when that is a page of its own: `/join` on the web doors, which
+   * has the provider tiles and the in-place step-up this stage lacks. Absent (the desktop window):
+   * Settings → Mailboxes.
+   */
+  setupHref?: string;
+  /** Leave for {@link setupHref}. Present exactly when it is. */
+  resume?: () => void;
+  /** A mailbox sign-in return is being finished on this page load; nothing may route over it. */
+  oauthPending?: () => boolean;
 }

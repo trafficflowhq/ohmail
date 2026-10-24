@@ -131,6 +131,8 @@ const recordOf = (visits: MutableRefObject<Map<string, ThreadRead>>, m: EngineMe
  * a knob here would be a knob about whether a tap means what it says.
  */
 const LONG_PRESS_MS = 450;
+/** The no-mailbox card's verb where the door has no setup page (the desktop window). */
+const SETTINGS_MAILBOXES = "#/settings/mailboxes";
 
 /**
  * The document the press landed in — `e.view` first, so a press inside a portal or a second
@@ -172,6 +174,7 @@ export interface OhboxReplyDone {
 
 export function OhboxView({
   demo,
+  setupHref = SETTINGS_MAILBOXES,
   replyDone,
   noticeSection,
   standingNotice,
@@ -242,6 +245,8 @@ export function OhboxView({
   standingNotice?: ReactNode;
   /** Fixture world or a real mailbox — decides the "older mail" tail. See its use below. */
   demo: boolean;
+  /** Where the no-mailbox card's verb goes: the door's setup page, else Settings → Mailboxes. */
+  setupHref?: string;
   /**
    * RESURFACED CONVERSATIONS, PINNED ABOVE EVERYTHING — one row each, from the engine's
    * `resurfacedThreads`. Rows and not messages: the pin is per message on the wire, and a
@@ -2527,7 +2532,7 @@ export function OhboxView({
         {hasOwnSent ? <div className="tail-row">{t("sentNote")}</div> : null}
         {/* The view's own fact — this list is empty — combined with a state derived once, up
             in the shell. `doorbellCount` is the Screener's waiting count, already a prop. */}
-        {all.length === 0 ? <SyncState waiting={doorbellCount} surface={surface} /> : null}
+        {all.length === 0 ? <SyncState waiting={doorbellCount} surface={surface} setupHref={setupHref} /> : null}
         {/* MAIL FROM BEYOND WHAT THIS DEVICE KEPT.
 
             Rendered BELOW the local window and under its own group label, because that is what
@@ -3124,14 +3129,26 @@ function SelectionPill({
  * the derivation returns the resting value for a fixtures engine — and `settled` is true for
  * them for the same reason: a fixtures engine is permanently settled.
  */
-function SyncState({ waiting, surface }: { waiting: number; surface: ListSurface }) {
+function SyncState({ waiting, surface, setupHref }: { waiting: number; surface: ListSurface; setupHref: string }) {
   const t = useTranslations("ohbox");
-  const { state } = useMailState();
+  const { state, mailboxes } = useMailState();
   /* `skeleton` and `pending` are one rendering: a mirror nobody has read and a mirror the
      account's own facts say is still filling are both "not looked yet" to a reader, and the
      silhouette plus the grace sentence is the state this pane already had for the first. */
   const owedYet = !saysEmpty(surface);
   const speak = useLoadingGrace(owedYet);
+
+  /* No mailbox, as `GET /mailboxes` answered it: the one thing to do, and where. */
+  if (mailboxes !== null && mailboxes.length === 0) {
+    return (
+      <div className="empty empty-connect" role="status">
+        <span className="glyph" aria-hidden="true">✉</span>
+        <b>{t("connectTitle")}</b>
+        {t("connectLead")}
+        <a className="btn primary" href={setupHref}>{t("connectAction")}</a>
+      </div>
+    );
+  }
 
   /* THE MIRROR HAS NOT BEEN READ, so this list is not empty — it is unknown. Above every arm
      below, because both of them state something about mail that has arrived. */
