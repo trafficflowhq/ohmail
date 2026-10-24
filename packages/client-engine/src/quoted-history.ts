@@ -8,9 +8,9 @@
  * runs over the lines. The answer is a RANGE: the history normally runs to the body's end, but
  * stops before a signature or list footer of the new message (mutt, Thunderbird with the
  * signature below). When in doubt the answer is `null` — folding new words is the failure that
- * matters, so every guard (Subject in a header block, the designed-layout gate, an announcement of
- * inline answers, coloured answers inside the history, `>` depth returning to prose) says "do not
- * fold". One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
+ * matters, so every guard (Subject in a header block, a forward's own forwarded message, the
+ * designed-layout gate, an announcement of inline answers, coloured answers inside the history, `>`
+ * depth returning to prose) says "do not fold". One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
  */
 
 export type QuotedAt = "trailing" | "leading";
@@ -58,6 +58,8 @@ const LABELS: Array<[Label, RegExp]> = [
 ];
 
 const SEPARATOR = /^-{2,}\s*(?:original message|urspr[üu]ngliche nachricht|original-nachricht|message d.origine|messaggio originale|mensaje original|oorspronkelijk bericht|forwarded message|weitergeleitete nachricht|message transf[ée]r[ée]|messaggio inoltrato|mensaje reenviado|doorgestuurd bericht|urspr[üu]ngliche mail)\s*-{2,}$/i;
+/** A forward's own introducer (never a reply's "Original Message"): what follows is the forward's content. */
+const FORWARD_SEPARATOR = /^-{2,}\s*(?:forwarded message|weitergeleitete nachricht|message transf[ée]r[ée]|messaggio inoltrato|mensaje reenviado|doorgestuurd bericht)\s*-{2,}$/i;
 const FORWARD = /^(?:begin forwarded message|anfang der weitergeleiteten nachricht|d[ée]but du message r[ée]exp[ée]di[ée]|inizio messaggio inoltrato|comienzo del mensaje reenviado|begin doorgestuurd bericht)\s?:$/i;
 const UNDERSCORE_RULE = /^_{10,}$/;
 const FOOTER_RULE = /^(?:_{20,}|={20,})$/;
@@ -184,6 +186,14 @@ function weakAttribution(text: string): boolean {
 
 function separatorLine(text: string): boolean {
   return text.length <= MAX_LINE && (SEPARATOR.test(text) || FORWARD.test(text));
+}
+
+/** The history from line `s` opens with a forward's introducer: the forwarded message is the content. */
+function forwardAt(L: Line[], s: number): boolean {
+  let k = s;
+  while (k < L.length && (L[k]!.blank || UNDERSCORE_RULE.test(L[k]!.text))) k++;
+  const t = k < L.length ? L[k]!.text : "";
+  return t.length <= MAX_LINE && (FORWARD_SEPARATOR.test(t) || FORWARD.test(t));
 }
 
 const NAMED: Record<string, string> = {
@@ -568,7 +578,7 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
       if (f.commentFrom[c.line]) return NO;
       const bare = c.node < 0 && s === c.line && f.header[c.line] && !separatorLine(L[c.line]!.text);
       if (bare && !vouched && pastedBlock(L, f, s, c.line)) return NO;
-      if (answersInside(L, f, c.line, html)) return NO;
+      if (answersInside(L, f, c.line, html) || forwardAt(L, s)) return NO;
       return { at: "trailing", start: s, end: n, node: s === c.line && c.node >= 0 ? c.node : L[s]!.at };
     }
     const firstRun = runs++ === 0;
@@ -590,6 +600,7 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
       if (k < n && !introduced) continue;
       // Answers typed inside the first quote: the lead says so, or they are in another hand.
       if (firstRun && (ANNOUNCEMENT.test(leadOf(L, s)) || answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end)))) return NO;
+      if (forwardAt(L, s)) return NO;
       return { at: "trailing", start: s, end: k, node: L[s]!.at };
     }
     // Bottom-posted: an introducer and its quote come first, the reply below, nothing quoted after.

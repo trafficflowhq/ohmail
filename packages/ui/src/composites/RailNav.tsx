@@ -235,114 +235,117 @@ export function RailNav({
   const noticeSlot = notice ? <div className="rail-notice-slot">{notice}</div> : null;
   return (
     <nav ref={setNav} id={id} className={className ? `rail ${className}` : "rail"} aria-label={ariaLabel}>
-      <div className="wordmark">
-        {/* Two elements, not one string: `.wordmark b em` paints the `em` half
-            in accent-ink, so the rail echoes the "oh." app mark. Keep the split
-            at the word boundary — oh | mail — and keep it lower-case. The accent
-            is on "oh" wherever it falls; the rename moved it from the tail to
-            the head, which is the same motif reading the same way. */}
-        {wordmark ?? (
-          <b>
-            <em>oh</em>mail
-          </b>
-        )}
+      {/* The scroller holds everything above the foot; the foot (sync, dock, account) stays on screen. */}
+      <div className="rail-scroll">
+        <div className="wordmark">
+          {/* Two elements, not one string: `.wordmark b em` paints the `em` half
+              in accent-ink, so the rail echoes the "oh." app mark. Keep the split
+              at the word boundary — oh | mail — and keep it lower-case. The accent
+              is on "oh" wherever it falls; the rename moved it from the tail to
+              the head, which is the same motif reading the same way. */}
+          {wordmark ?? (
+            <b>
+              <em>oh</em>mail
+            </b>
+          )}
+        </div>
+
+        {onCompose ? (
+          <button
+            type="button"
+            className={composeActive ? "compose-cta on" : "compose-cta"}
+            onClick={onCompose}
+          >
+            <Icon name="pen" /> {composeLabel}
+            {composeKbd ? <Kbd shortcut={composeKbd}>{composeKbd}</Kbd> : null}
+          </button>
+        ) : null}
+
+        {groups.map((group, gi) => (
+          <Fragment key={group.label ?? gi}>
+            {gi === noticeAt ? noticeSlot : null}
+            <div className="rgroup">
+              {group.label ? <div className="rlabel">{group.label}</div> : null}
+              {group.items.map((item) => {
+                // The `?` sheet's key (`kbdHint`) is deliberate and always shown; the per-row
+                // reveal (`navKey`) only while this row is pointed at. Either takes the count's
+                // slot — a hovered row is one you are about to reach, so its key is what you want
+                // there — and at rest neither is present, which is what keeps the resting rail quiet.
+                const cap = item.kbdHint ?? (revealId === item.id ? item.navKey : undefined);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    // A stable, presentation-free hook on each rail entry. Nothing in the app
+                    // reads it; it lets an outside surface (the marketing page's embedded demo)
+                    // anchor a pointer to a specific entry without depending on label text.
+                    data-rail-id={item.id}
+                    // The row's key as DATA, invisible everywhere by itself: the Zero layout's
+                    // 52px ribbon paints it as the row's face via `content: attr(data-nav-key)`
+                    // (zero-layout.css) — the digits ARE this rail's established identity for
+                    // the places (the quick-nav grammar), so the ribbon needs no icon set the
+                    // paper rail never had. The hover/focus REVEAL above stays JS-owned and
+                    // untouched; this attribute renders nothing in any classic layout.
+                    data-nav-key={item.navKey ?? item.kbdHint}
+                    className={item.id === activeId ? "ritem on" : "ritem"}
+                    title={item.title}
+                    aria-current={item.id === activeId ? "page" : undefined}
+                    onClick={() => {
+                      // Clear before navigating: a tap can both reveal (compatibility mouseenter /
+                      // focus-on-tap) and navigate, and without this the keycap would be left
+                      // standing in the count's place with no pointer-leave ever coming.
+                      unreveal(item);
+                      onNavigate?.(item.id);
+                    }}
+                    onMouseEnter={() => reveal(item)}
+                    onMouseLeave={() => unreveal(item)}
+                    onFocus={() => reveal(item)}
+                    onBlur={() => unreveal(item)}
+                  >
+                    {item.label}
+                    {cap ? (
+                      <span className="cnt">
+                        <Kbd shortcut={item.navKey ?? item.kbdHint}>{cap}</Kbd>
+                      </span>
+                    ) : (
+                      <Count value={item.count} hot={item.hot} />
+                    )}
+                  </button>
+                );
+              })}
+              {group.tags ? (
+                <TagsGroup
+                  label={group.tags.label}
+                  items={group.tags.items}
+                  defaultOpen={group.tags.defaultOpen ?? true}
+                  open={group.tags.open}
+                  onOpenChange={group.tags.onOpenChange}
+                  create={group.tags.create}
+                  activeTagId={activeTagId}
+                  onNavigateTag={onNavigateTag}
+                />
+              ) : null}
+              {group.custom ?? null}
+            </div>
+          </Fragment>
+        ))}
+        {noticeAt === groups.length ? noticeSlot : null}
+
+        {mailboxes?.length ? (
+          <div className="rgroup">
+            <div className="rlabel">{mailboxesLabel}</div>
+            {mailboxes.map((m) => (
+              <div className="mbx" key={m.name}>
+                <i />
+                <span className="nm">{m.name}</span>
+                <small>{m.hint}</small>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      {onCompose ? (
-        <button
-          type="button"
-          className={composeActive ? "compose-cta on" : "compose-cta"}
-          onClick={onCompose}
-        >
-          <Icon name="pen" /> {composeLabel}
-          {composeKbd ? <Kbd shortcut={composeKbd}>{composeKbd}</Kbd> : null}
-        </button>
-      ) : null}
-
-      {groups.map((group, gi) => (
-        <Fragment key={group.label ?? gi}>
-          {gi === noticeAt ? noticeSlot : null}
-          <div className="rgroup">
-            {group.label ? <div className="rlabel">{group.label}</div> : null}
-            {group.items.map((item) => {
-              // The `?` sheet's key (`kbdHint`) is deliberate and always shown; the per-row
-              // reveal (`navKey`) only while this row is pointed at. Either takes the count's
-              // slot — a hovered row is one you are about to reach, so its key is what you want
-              // there — and at rest neither is present, which is what keeps the resting rail quiet.
-              const cap = item.kbdHint ?? (revealId === item.id ? item.navKey : undefined);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  // A stable, presentation-free hook on each rail entry. Nothing in the app
-                  // reads it; it lets an outside surface (the marketing page's embedded demo)
-                  // anchor a pointer to a specific entry without depending on label text.
-                  data-rail-id={item.id}
-                  // The row's key as DATA, invisible everywhere by itself: the Zero layout's
-                  // 52px ribbon paints it as the row's face via `content: attr(data-nav-key)`
-                  // (zero-layout.css) — the digits ARE this rail's established identity for
-                  // the places (the quick-nav grammar), so the ribbon needs no icon set the
-                  // paper rail never had. The hover/focus REVEAL above stays JS-owned and
-                  // untouched; this attribute renders nothing in any classic layout.
-                  data-nav-key={item.navKey ?? item.kbdHint}
-                  className={item.id === activeId ? "ritem on" : "ritem"}
-                  title={item.title}
-                  aria-current={item.id === activeId ? "page" : undefined}
-                  onClick={() => {
-                    // Clear before navigating: a tap can both reveal (compatibility mouseenter /
-                    // focus-on-tap) and navigate, and without this the keycap would be left
-                    // standing in the count's place with no pointer-leave ever coming.
-                    unreveal(item);
-                    onNavigate?.(item.id);
-                  }}
-                  onMouseEnter={() => reveal(item)}
-                  onMouseLeave={() => unreveal(item)}
-                  onFocus={() => reveal(item)}
-                  onBlur={() => unreveal(item)}
-                >
-                  {item.label}
-                  {cap ? (
-                    <span className="cnt">
-                      <Kbd shortcut={item.navKey ?? item.kbdHint}>{cap}</Kbd>
-                    </span>
-                  ) : (
-                    <Count value={item.count} hot={item.hot} />
-                  )}
-                </button>
-              );
-            })}
-            {group.tags ? (
-              <TagsGroup
-                label={group.tags.label}
-                items={group.tags.items}
-                defaultOpen={group.tags.defaultOpen ?? true}
-                open={group.tags.open}
-                onOpenChange={group.tags.onOpenChange}
-                create={group.tags.create}
-                activeTagId={activeTagId}
-                onNavigateTag={onNavigateTag}
-              />
-            ) : null}
-            {group.custom ?? null}
-          </div>
-        </Fragment>
-      ))}
-      {noticeAt === groups.length ? noticeSlot : null}
-
-      {mailboxes?.length ? (
-        <div className="rgroup">
-          <div className="rlabel">{mailboxesLabel}</div>
-          {mailboxes.map((m) => (
-            <div className="mbx" key={m.name}>
-              <i />
-              <span className="nm">{m.name}</span>
-              <small>{m.hint}</small>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {sync ? <div className="rail-sync-slot">{sync}</div> : null}
+      {sync ? <div className="rail-sync-slot"><div className="rail-sync-stack">{sync}</div></div> : null}
       {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}
     </nav>

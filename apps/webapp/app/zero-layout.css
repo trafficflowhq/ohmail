@@ -111,6 +111,11 @@
     box-shadow: var(--lift-1);
     overflow-x: hidden;
   }
+  /* the scroller mirrors the ribbon's padding (`rail.css`) */
+  :root[data-layout="zero"] .deck > .rail:not(.open) > .rail-scroll {
+    margin: -10px -5px 0;
+    padding: 10px 5px 0;
+  }
   /* head: the mark yields to the ≡ (its duties — identity — need no 52px
      restatement; the drawer keeps the wordmark). */
   :root[data-layout="zero"] .deck > .rail:not(.open) .wordmark {
@@ -250,6 +255,7 @@
   :root[data-layout="zero"] .deck > .rail:not(.open) .rail-sync-slot {
     display: block;
     margin-top: auto;
+    margin-inline: 0;
     padding: 0;
   }
   :root[data-layout="zero"] .deck > .rail:not(.open) .rail-sync-slot .rail-sync {

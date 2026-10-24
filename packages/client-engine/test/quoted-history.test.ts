@@ -172,6 +172,23 @@ describe("each guard is what keeps its fixture open", () => {
     }
   });
 
+  it("a forward with a note shows its forwarded message whole; a reply quoting that forward folds", () => {
+    for (const id of ["19", "26", "32", "86"]) {
+      expect(quotedHistoryOfText(fixture(id).text.split("\n")), id).toBeNull();
+      expect(htmlCase(fixture(id).html!).r, id).toBeNull();
+      expect(quotedHistoryVerdictOfHtml(new DOMParser().parseFromString(fixture(id).html!, "text/html").body as unknown as QuotedDomNode, quotedDomTree), id).toBeNull();
+    }
+    expect(htmlCase(fixture("86").html!).visibleText).toContain("you are invited to the regional crafts fair");
+    // The forward's wording is what keeps it open: the same block under a reply's separator folds.
+    const asReply = (s: string): string => s.replace("---------- Forwarded message ---------", "-----Original Message-----");
+    expect(quotedHistoryOfText(asReply(fixture("86").text).split("\n"))).not.toBeNull();
+    expect(htmlCase(asReply(fixture("86").html!)).r).not.toBeNull();
+    const reply = htmlCase(fixture("123").html!);
+    expect(reply.r).not.toBeNull();
+    expect(reply.visibleText).not.toContain("Forwarded message");
+    expect(quotedHistoryOfText(fixture("123").text.split("\n"))).not.toBeNull();
+  });
+
   it("a bottom-posted reply folds the quote at the top and leaves the reply whole", () => {
     const lines = fixture("31").text.split("\n");
     const r = quotedHistoryOfText(lines)!;
