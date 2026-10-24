@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { FORWARD_MAX_RAW_BYTES, forwardedDate, sendService } from "@trafficflow/services/mail";
 import type { ServiceContext, AttachmentAdapter, OpenAdapter } from "@trafficflow/services/mail";
 import { normalizeMime, prepareHtmlForStorage, STORED_HTML_CAP_BYTES } from "@trafficflow/core/mail";
-import type { SendAdapter, OutboundMessage } from "@trafficflow/core/mail";
+import type { SendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core/mail";
 import { MessageGoneError, RawMessageTooLargeError } from "@trafficflow/core/adapters/imap";
 import { FIXED_NOW, makeDeps, seedMailbox, seedMessage, seedSession, seedBody } from "../../api/test/helpers.js";
 
@@ -971,5 +971,34 @@ describe("forwardParts — only the files the person kept leave", () => {
     expect(res.status).toBe("sent");
     expect(res.firstSend).toBeUndefined();
     expect(s.send.delivered).toHaveLength(2);
+  });
+
+  it("Send again of a held forward that kept some files never sends the removed ones: unmatched, nothing goes", async () => {
+    const s = await threeParts();
+    // The row names its original, as a phone forward's row does.
+    await s.w.db.update(drafts).set({ forwardOfMessageId: s.w.originalId }).where(eq(drafts.id, s.w.draftId));
+    let lost = true;
+    const taken: OutboundMessage[] = [];
+    const deps = {
+      openFetchAdapter: s.fetch.openFetchAdapter,
+      openSendAdapter: async (): Promise<SendAdapter> => ({
+        async send(msg: OutboundMessage, opts?: SendOptions) {
+          await opts?.beforeRelease?.();
+          taken.push(msg);
+          // Taken, and the answer lost: the send is held.
+          if (lost) throw Object.assign(new Error("Timeout"), { code: "ETIMEDOUT" });
+          return { providerMessageId: msg.messageId ?? "<none>" };
+        },
+        async messageInSent() { return false; },
+        async close() { /* nothing */ },
+      }),
+    };
+    expect((await sendService.send(s.w.ctx, s.w.draftId, "fp-7", deps, { forwardOf: s.w.originalId, forwardParts: [A, C] })).status)
+      .toBe("unverified");
+    lost = false;
+    const again = await sendService.send(s.w.ctx, s.w.draftId, "fp-7-again", deps, { again: true }).catch((e: unknown) => e);
+    expect(again).toMatchObject({ code: "send_again_changed", httpStatus: 409 });
+    expect(taken.map((m) => m.attachments?.map((a) => a.filename)), "a removed file went").toEqual([["part-2.bin", "part-4.bin"]]);
+    expect(s.fetch.asked).toEqual(["2", "4"]);
   });
 });

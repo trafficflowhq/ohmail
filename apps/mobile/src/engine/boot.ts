@@ -10,6 +10,7 @@
  */
 import {
   HttpAdapter,
+  MutationRejectedError,
   OhmailEngine,
   SYNC_ENTITY_TYPES,
   SqlMirrorStore,
@@ -128,6 +129,8 @@ export interface ConnectConfig {
    * (`send-waits.ts`). Absent, every send goes to the engine as before.
    */
   network?: () => NetworkState;
+  /** Override the forward check's deadline (tests). Absent, {@link FORWARD_PARTS_HELLO_MS}. */
+  forwardPartsDeadlineMs?: number;
 }
 
 /**
@@ -210,6 +213,44 @@ function heldWhileOffline(
  * healthy round trip, far below "the app never syncs".
  */
 export const IDENTITY_PROBE_DEADLINE_MS = 8000;
+
+/** How long a forward that names its parts waits for `GET /hello`: the engine puts no limit on a send. */
+export const FORWARD_PARTS_HELLO_MS = 8000;
+
+/**
+ * DOES THE SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts` on `GET /hello`
+ * at the origin. `false` only from ohmail's own `/hello` without it; anything else (the network, the
+ * deadline, a non-2xx, a body that is not ohmail's) is `null`, no answer.
+ */
+export async function helloForwardParts(
+  fetchImpl: (url: string, init?: RequestInit) => Promise<Response>, origin: string, deadlineMs: number,
+): Promise<boolean | null> {
+  const stop = typeof AbortController === "function" ? new AbortController() : null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => { stop?.abort(); resolve(null); }, deadlineMs);
+  });
+  const read = async (): Promise<boolean | null> => {
+    let res: Response;
+    try {
+      res = await fetchImpl(`${origin}/hello`, { method: "GET", ...(stop ? { signal: stop.signal } : {}) });
+    } catch {
+      return null;
+    }
+    if (!res.ok) return null;
+    try {
+      const body = (await res.json()) as { product?: unknown; features?: { forwardParts?: unknown } } | null;
+      return body?.product === "ohmail" ? body.features?.forwardParts === true : null;
+    } catch {
+      return null;
+    }
+  };
+  try {
+    return await Promise.race([read(), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * The deferred identity judgment — see {@link bootEngine}'s header for why it is no longer
@@ -406,6 +447,8 @@ function accountGuarded(
    * has two halves here: the owner stamp stops mirror bleed, and this stops cursor bleed.
    */
   cleared: () => boolean,
+  /** `GET /hello` read right before a forward that names its parts — see {@link helloForwardParts}. */
+  forwardPartsSaid: () => Promise<boolean | null>,
 ): GuardedMobileAdapter {
   const HELD = `this mirror's sync is held until the account identity check settles — run verifyIdentity() first`;
   const check = (changes: SyncChange[]): void => {
@@ -438,7 +481,20 @@ function accountGuarded(
     // Forwarded, not gated — user-intent calls bounded by the act that fires them (the
     // webapp's gate draws the same line). Forwarded BY HAND because this literal is the whole
     // surface the engine sees: a capability missing here is missing on the live path only.
-    mutate: (m, opts) => adapter.mutate(m, opts),
+    mutate: (m, opts) => {
+      if (!(m.kind === "mail_send" && m.forwardOf && m.forwardParts !== undefined)) return adapter.mutate(m, opts);
+      /* A FORWARD THAT NAMES ITS PARTS GOES ONLY TO A SERVER THAT SAYS IT HONOURS THEM — checked on
+         every attempt, outbox replays included. No answer waits in the queue. Codes, never
+         sentences: the send path words them (`failedSendCopy`). */
+      return forwardPartsSaid().then((said) => {
+        if (said === true) return adapter.mutate(m, opts);
+        return Promise.reject(said === null ? new MutationRejectedError("network", { code: "network", retryable: true })
+          // An earlier attempt wrote the row and its send may have gone: only the server's same-key answer may say "not sent".
+          : opts.createdRow !== undefined
+            ? new MutationRejectedError("send_unverified", { code: "send_unverified", retryable: false, entityId: opts.createdRow.id })
+            : new MutationRejectedError("forward_parts_unsupported", { code: "forward_parts_unsupported", retryable: false }));
+      });
+    },
     // Cancel asks the server, on `mutate`'s rule. Left out of this literal, every phone Cancel would
     // be answered by the disk alone — the type makes the omission a compile error.
     withdrawSend: (key, draftId) => adapter.withdrawSend(key, draftId),
@@ -631,6 +687,9 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
       }),
       accountId,
       () => identityCleared,
+      // The phone's own engine is this same build.
+      () => (local !== undefined ? Promise.resolve(true)
+        : helloForwardParts(fetchImpl, origin, config.forwardPartsDeadlineMs ?? FORWARD_PARTS_HELLO_MS)),
     ),
     store,
     storePolicy: MOBILE_WINDOW,

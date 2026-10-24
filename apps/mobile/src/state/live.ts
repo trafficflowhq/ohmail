@@ -11,7 +11,7 @@
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
-import { DRAFT_BODY_MAX_BYTES, draftOverCeiling } from "@ohmail/client-engine";
+import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
 import {
   FOLDER_OF_VIEW,
   LAST_DRAIN_AT_META,
@@ -445,6 +445,8 @@ export interface WorldAttachment {
   id: string;
   filename: string;
   size: string;
+  /** The bytes `size` names — what a forward weighs its files by. */
+  sizeBytes: number;
   /** A part the body references (`cid:`) rather than a file the sender attached — the tile
       wears the "embedded" tag and sorts after every real file. */
   inline: boolean;
@@ -2113,6 +2115,7 @@ function filesField(engine: OhmailEngine, id: string): { attachments?: WorldAtta
       id: item.id,
       filename: item.filename,
       size: sizeLabel(item.sizeBytes),
+      sizeBytes: item.sizeBytes,
       inline: item.inline,
       mime: item.mimeType,
       state: item.state,
@@ -2752,8 +2755,8 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  * because asking again cannot help; every other failure keeps the plain one.
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyBusy" | "replyNotSignedIn"
-  | "replyForwardOriginalUnavailable" | "replyFailed" | "replySentElsewhere" | "replyDeletedElsewhere"
-  | "replyTooLong" | "replyTooLarge";
+  | "replyForwardOriginalUnavailable" | "replyForwardPartsChanged" | "replyForwardPartsUnsupported" | "replyFailed" | "replySentElsewhere"
+  | "replyDeletedElsewhere" | "replyTooLong" | "replyTooLarge";
 
 /** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
 export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
@@ -2766,6 +2769,8 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
         : code === "send_busy" ? "replyBusy"
           : code === "mailbox_not_signed_in" ? "replyNotSignedIn"
             : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
+              : code === "forward_parts_changed" ? "replyForwardPartsChanged"
+                : code === "forward_parts_unsupported" ? "replyForwardPartsUnsupported"
               : code === "draft_too_large" ? "replyTooLong"
                 : code === "payload_too_large" ? "replyTooLarge"
                   : "replyFailed";
@@ -2779,6 +2784,8 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
         : kind === "replyBusy" ? refuse("replyBusy")
           : kind === "replyNotSignedIn" ? refuse("replyNotSignedIn")
             : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
+              : kind === "replyForwardPartsChanged" ? refuse("replyForwardPartsChanged")
+                : kind === "replyForwardPartsUnsupported" ? refuse("replyForwardPartsUnsupported")
               : kind === "replyTooLong" ? refuse("replyTooLong", draftLimitLabel())
                 : kind === "replyTooLarge" ? refuse("replyTooLarge")
                   : refuse("replyFailed");
@@ -2878,8 +2885,9 @@ export function sendTextDiffers(standing: EngineMutation, pressed: EngineMutatio
 export function sendWireDiffers(standing: EngineMutation, pressed: EngineMutation): boolean {
   if (standing.kind !== "mail_send" || pressed.kind !== "mail_send") return false;
   const files = (m: typeof standing) => JSON.stringify((m.attachments ?? []).map((f) => [f.filename, f.contentType, f.contentBase64]));
+  const parts = (m: typeof standing) => JSON.stringify(m.forwardParts === undefined ? null : [...m.forwardParts].sort());
   return sendTextDiffers(standing, pressed) || files(standing) !== files(pressed)
-    || (standing.sendAt ?? null) !== (pressed.sendAt ?? null);
+    || (standing.sendAt ?? null) !== (pressed.sendAt ?? null) || parts(standing) !== parts(pressed);
 }
 
 /**
@@ -3177,6 +3185,15 @@ export interface DraftKeep {
  */
 export type DraftKeepOutcome = "kept" | "refused" | "tooLong";
 
+/** The original's files, as a forward lists them: still being read, read, or not readable. */
+export interface ForwardFilesRead {
+  state: "loading" | "ready" | "failed";
+  parts: Array<{ id: string; filename: string; sizeBytes: number; inline: boolean }>;
+}
+
+/** What a forward press says beyond its words: the original's files it keeps (`compose/forward-files.ts`). */
+export interface ForwardOpts { forwardParts?: string[] }
+
 /** What a kept reply or forward is addressed to and called, kept so it outlives its original. */
 export interface KeptEnvelope { to: EmailAddress[]; cc: EmailAddress[]; subject: string }
 
@@ -3261,6 +3278,8 @@ export interface LiveDeps {
   ownAddresses?: () => readonly string[];
   /** The letters kept on this phone, and the files kept with drafts (`compose/letter-store.ts`). */
   letters?: LetterDoor;
+  /** The session's server sends only the forwarded parts a send names; `null` is not known yet. A getter. */
+  forwardParts?: () => boolean | null;
   /**
    * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'`, or `null` for "never chosen" (mail 0110), as a
    * GETTER for `ownAddresses`' reason exactly: this facade is identity-stable by design while
@@ -3385,6 +3404,10 @@ export interface LiveWorldActions {
    * opens at once; the promise never rejects, and a failed read still opens (the send says why).
    */
   forwardFetch(messageId: string): Promise<void> | null;
+  /** The original's files a forward lists — see {@link ForwardFilesRead}. */
+  forwardFiles(messageId: string): ForwardFilesRead;
+  /** The server sends only the parts a forward names; `null` until it answers, `false` once it said it cannot. */
+  forwardPartsSupported(): boolean | null;
   /**
    * PUT A GIVEN-UP CHANGE BACK IN THE QUEUE — under its ORIGINAL Idempotency-Key, so an attempt
    * that committed and only lost its answer replays that answer instead of sending a second copy.
@@ -3544,7 +3567,7 @@ export interface LiveWorldActions {
    * `attachments` on either verb ride the same mutation the webapp composer sends —
    * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
    * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
@@ -3906,9 +3929,27 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   const forwardFetch = (messageId: string): Promise<void> | null => {
     const m = messageOf(messageId);
     if (!m) return null;
+    // The sheet lists the original's files: Forward is the person's press, so a failed list is asked again.
+    void engine.loadAttachments(messageId, { retry: true }).catch(() => undefined);
     const held = engine.read().get<EngineMessage>("message", messageId) !== undefined;
     return forwardPress(m, held).fetch ? offMirrorBodyRead(engine, messageId) : null;
   };
+
+  /** The original's parts a forward carries, embedded pictures included: the first the send takes, by id. */
+  const forwardFiles = (messageId: string): ForwardFilesRead => {
+    const list = engine.attachmentsOf(messageId, { includeInlineParts: true });
+    if (list.state === "failed" || list.state === "unavailable") return { state: "failed", parts: [] };
+    if (list.state !== "ready") return { state: "loading", parts: [] };
+    const parts = [...list.items].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, SENT_FORWARD_MAX_PARTS);
+    return {
+      state: "ready",
+      parts: parts.map((i) => ({ id: i.id, filename: i.filename, sizeBytes: i.sizeBytes, inline: i.inline })),
+    };
+  };
+
+  /** Does the server send only the parts a forward names (`GET /hello` `features.forwardParts`)? */
+  let forwardPartsRefused = false;
+  const forwardPartsSupported = (): boolean | null => (forwardPartsRefused || deps.forwardParts === undefined ? false : deps.forwardParts());
 
   /*
    * THE LISTS A SCREEN SHOWS: the opened message's, each conversation member's, each held
@@ -5545,7 +5586,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return "kept";
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false, draftId: string | null = null): Promise<SendResult> => {
+  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false, draftId: string | null = null, opts: ForwardOpts = {}): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
     const m = messageOf(messageId);
@@ -5564,6 +5605,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         inReplyTo: null,
         forwardOf: messageId,
         ...(sensitive && confirmed ? { forwardConfirmed: true } : {}),
+        // The original's files the sheet listed and kept; absent, the server sends every one.
+        ...(opts.forwardParts !== undefined ? { forwardParts: opts.forwardParts } : {}),
         // The quoted header names the original's date on this phone's clock and in its language.
         forwardClock: { zone: readerZone(), locale: activeLocale() },
         subject: forwardSubject(m.subject),
@@ -5576,11 +5619,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(draftId ? { draftId } : {}),
       }, sig);
     if (draftOverCeiling(signed.body)) return tooLongSend();
-    return sent(
+    const r = await sent(
       dispatchSend(signed, plan),
       Copy.forwarded,
       Copy.forwardEarlierWent,
     );
+    // The server said it cannot leave parts out: this session's rows go back to read-only.
+    if (r.failure === "replyForwardPartsUnsupported") forwardPartsRefused = true;
+    return r;
   };
 
   const sendNew = async (
@@ -6040,7 +6086,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     retryQueued: (id) => engine.retryQueued(id),
     discardQueued: (key) => engine.withdrawQueued(key),
     releaseConfirmed,
-    openMessage, leaveMessage, hydrateMessage, forwardFetch, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
+    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
@@ -6076,6 +6122,10 @@ export interface WorldActions {
   hydrateMessage(id: string): void;
   /** A Forward press's read first — see {@link LiveWorldActions.forwardFetch}. */
   forwardFetch(messageId: string): Promise<void> | null;
+  /** See {@link LiveWorldActions.forwardFiles}. */
+  forwardFiles(messageId: string): ForwardFilesRead;
+  /** See {@link LiveWorldActions.forwardPartsSupported}. */
+  forwardPartsSupported(): boolean | null;
   /**
    * The two verbs on a change the engine gave up on — see {@link LiveWorldActions.retryAbandoned}.
    * Awaited by the caller (the chrome disables the row while one is in flight), so unlike most of
@@ -6151,7 +6201,7 @@ export interface WorldActions {
   ): Promise<SendResult>;
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null): Promise<SendResult>;
+  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts): Promise<SendResult>;
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
   sendNew(
     mailboxId: string | null,
@@ -6225,6 +6275,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     openAttachmentBytes: (id, attachmentId) => current().openAttachmentBytes(id, attachmentId),
     hydrateMessage: (id) => current().hydrateMessage(id),
     forwardFetch: (id) => current().forwardFetch(id),
+    forwardFiles: (id) => current().forwardFiles(id),
+    forwardPartsSupported: () => current().forwardPartsSupported(),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
     retryQueued: (id) => current().retryQueued(id),
@@ -6256,8 +6308,8 @@ export function stableActions(current: () => WorldActions): WorldActions {
     trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId) =>
       current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId),
-    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId) =>
-      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId),
+    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId, opts) =>
+      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId, opts),
     sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies) =>
       current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),

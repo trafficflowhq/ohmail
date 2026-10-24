@@ -433,4 +433,74 @@ describe("a letter being written survives a hard stop", () => {
       expect(third.letters.filesOf(String(drafts(fake)[0]!.id))).toHaveLength(1);
     } finally { fake.server.close(); }
   }, 60_000);
+
+  /* A FORWARD WITH FILES REMOVED holds a choice its draft row cannot: the letter stays with the row. */
+  const FWD: LetterWords = { ...WORDS, mode: "forward", messageId: "m1", subject: "Fwd: Welcome", body: "See below" };
+  const forwardTo = (first: Awaited<ReturnType<typeof launch>>, parts: string[]) =>
+    first.actions.sendForward("m1", TO, FWD.body, null, [], false, false, null, { forwardParts: parts });
+
+  it("a forward's removed files outlive a keep, a refused send and an unverified one: each letter stays with its row", async () => {
+    const { fake, origin } = await server();
+    fake.setHello({ forwardParts: true });
+    const disk = deviceDisk();
+    try {
+      const first = await launch(disk, origin);
+      await first.engine.syncOnce();
+      holdTheClock();
+      const kept = first.compose({ words: FWD });
+      kept.forwardKept(["att-1"]);
+      kept.markKeep();
+      await first.actions.draftKeep({
+        mode: "forward", messageId: "m1", mailboxId: "mb-1", to: TO, subject: FWD.subject, body: FWD.body, files: 0, row: (r) => kept.keepAnswered(r),
+      });
+      const keptRow = kept.current().draftId!;
+      expect(first.letters.letterOf(keptRow)?.forwardKept, "the keep dropped the choice").toEqual(["att-1"]);
+
+      const refused = first.compose({ words: FWD });
+      refused.forwardKept(["att-2"]);
+      refused.sendAnswered({ outcome: "failed", draftId: "d-refused" });
+      expect(first.letters.letterOf("d-refused")?.forwardKept, "the refusal dropped the choice").toEqual(["att-2"]);
+
+      const held = first.compose({ words: FWD });
+      held.forwardKept(["att-3"]);
+      fake.unverifiedNextSend();
+      const res = await held.sendVia(() => forwardTo(first, ["att-3"]));
+      expect(res.outcome).toBe("unverified");
+      expect(first.letters.letterOf(res.draftId!)?.forwardKept, "the unverified answer dropped the choice").toEqual(["att-3"]);
+    } finally { fake.server.close(); }
+  }, 60_000);
+
+  it("a forward's removed files outlive a kill: the restore keeps the draft and the flush its unverified send, the choice with each", async () => {
+    const { fake, origin } = await server();
+    fake.setHello({ forwardParts: true });
+    const disk = deviceDisk();
+    try {
+      const first = await launch(disk, origin, { offline: true });
+      await first.engine.syncOnce();
+      holdTheClock();
+      const queued = first.compose({ words: FWD });
+      queued.forwardKept(["att-1"]);
+      const res = await queued.sendVia(() => forwardTo(first, ["att-1"]));
+      expect(res.outcome).toBe("queued");
+      first.actions.leaveSend(res.key!);
+      queued.release();
+      first.net.offline = false;
+      fake.unverifiedNextSend();
+      const settled = await first.flush();
+      const sentFrom = [...settled.values()][0]!.draftId!;
+      expect(first.letters.letterOf(sentFrom)?.forwardKept, "the flush dropped the choice").toEqual(["att-1"]);
+      const typed = first.compose({ words: { ...FWD, body: "Typed before the kill" } });
+      typed.forwardKept(["att-2"]);
+      typed.flush();
+      await first.letters.landed();
+      kill(first, disk);
+
+      const next = await launch(disk, origin);
+      await next.restore();
+      await next.letters.landed();
+      const row = drafts(fake).find((d) => d.body === "Typed before the kill")!;
+      expect(next.letters.letterOf(String(row.id))?.forwardKept, "the restore dropped the choice").toEqual(["att-2"]);
+      expect(next.letters.letterOf(sentFrom)?.forwardKept).toEqual(["att-1"]);
+    } finally { fake.server.close(); }
+  }, 60_000);
 });

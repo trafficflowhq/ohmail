@@ -2162,6 +2162,23 @@ const TABLE = {
   /* It took the dial and would not serve it now, past the send's own retries. */
   replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
+  /* A FORWARD LISTS THE ORIGINAL'S FILES (`compose/forward-files.ts`); a forward never says "total". */
+  forwardFilesHead: "Forwarded with it",
+  forwardFilesLine: (kept: string, more: string) => `Forwarded files: ${kept}. Up to ${more} more from this phone.`,
+  forwardFilesAllGo: (size: string, more: string) =>
+    `Forwarded files: ${size}. All of them go with it. Up to ${more} more from this phone.`,
+  forwardFilesNone: (more: string) => `Up to ${more} from this phone.`,
+  forwardFilesReading: "Reading the letter's files…",
+  forwardFilesUnreadKept: "The letter's files could not be read here. The ones you kept go with it.",
+  forwardFilesUnreadAllGo: "The letter's files could not be read here. All of them go with it.",
+  /* A choice made earlier that the server said it cannot honour. */
+  forwardFilesRemovedGo: (size: string, more: string) =>
+    `Forwarded files: ${size}. Your server sends all of them, the ones you removed too. Up to ${more} more from this phone.`,
+  forwardFilesUnreadRemovedGo: "The letter's files could not be read here. Your server sends all of them, the ones you removed too.",
+  forwardFilesTooLarge: (limit: string) => `The forwarded files are over ${limit}. Remove some to send it.`,
+  forwardTotalTooLarge: (limit: string) => `This is over the ${limit} your mail server takes. Remove some files to send it.`,
+  replyForwardPartsUnsupported: "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
+  replyForwardPartsChanged: "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
   replyForwardOriginalUnavailable: "Not sent. The original could not be loaded, so it was not forwarded.",
   replySentElsewhere: "Not sent: this draft already went from another device.",
   composeSentElsewhere: "This draft was sent from another device. Anything you type now is kept as a new draft.",

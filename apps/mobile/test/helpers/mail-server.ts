@@ -94,6 +94,10 @@ export function mailServer() {
    */
   const seen: Array<{ method: string; url: string; body: string; key: string | null }> = [];
   const failures: Array<{ method: string; prefix: string; status?: number; body?: unknown }> = [];
+  /** Each message's attachment list, as `GET /messages/:id/attachments` answers it. */
+  const files = new Map<string, Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline: boolean }>>();
+  /** What `GET /hello` announces under `features`; unset, the route is not served. */
+  let helloFeatures: Record<string, unknown> | null = null;
   /** Routes armed to ACCEPT the request and never answer — the hung-server shape. */
   const hangs: Array<{ method: string; prefix: string }> = [];
   /**
@@ -363,6 +367,17 @@ export function mailServer() {
        * `GET /messages/bodies?ids=…`: the single route also answers `headers` (dropped by the
        * client) and NEITHER answers `withheld`, which is what an ordinary row looks like.
        */
+      const filesRoute = url.pathname.match(/^\/messages\/([^/]+)\/attachments$/);
+      // Served only for a message given a list: every other list read answers as it always did.
+      if (method === "GET" && filesRoute && files.has(decodeURIComponent(filesRoute[1]!))) {
+        const id = decodeURIComponent(filesRoute[1]!);
+        json(200, { items: (files.get(id) ?? []).map((f) => ({ ...f, messageId: id })) });
+        return;
+      }
+      if (method === "GET" && url.pathname === "/hello" && helloFeatures !== null) {
+        json(200, { product: "ohmail", flavor: "selfhost", apiVersion: "1", needsSetup: false, features: helloFeatures });
+        return;
+      }
       const bodyRoute = url.pathname.match(/^\/messages\/([^/]+)\/body$/);
       if (method === "GET" && bodyRoute) {
         const id = decodeURIComponent(bodyRoute[1]!);
@@ -948,6 +963,12 @@ export function mailServer() {
       const at = new Date().toISOString();
       push("tag", "create", id, { id, accountId: "acct-1", name, hue, createdAt: at, updatedAt: at });
     },
+    /** This message's attachment list — what `GET /messages/:id/attachments` then answers. */
+    setFiles: (id: string, list: Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline?: boolean }>) => {
+      files.set(id, list.map((f) => ({ ...f, inline: f.inline ?? false })));
+    },
+    /** Serve `GET /hello` with these `features`; `null` stops serving it (a 404). */
+    setHello: (features: Record<string, unknown> | null) => { helloFeatures = features; },
     /** Give this message a stored body — what `GET /messages/:id/body` then answers. */
     setBody: (id: string, text: string, posture?: "one_click" | "no_header" | "mailto_only" | "not_one_click") => {
       bodies.set(id, text);

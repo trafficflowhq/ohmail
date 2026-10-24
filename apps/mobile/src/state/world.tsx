@@ -28,6 +28,7 @@ import { NO_TOASTS, afterDismiss, nextToast, paintGate, type ToastSlots } from "
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
+import { forwardPartsReader } from "../net/pairing";
 import {
   readFoldersEnabled,
   writeAutoAct,
@@ -636,6 +637,8 @@ const NO_ACTIONS: WorldActions = {
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
   keepEnvelope: () => null,
+  forwardFiles: () => ({ state: "failed" as const, parts: [] }),
+  forwardPartsSupported: () => false,
   draftSent: () => false,
   draftLeft: () => null,
   sendOutcome: () => "unknown",
@@ -1333,6 +1336,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const journal = session?.store ?? null;
   /* THE LETTERS BEING WRITTEN, on the same journal (`compose/letter-store.ts`): one door per session. */
   const letters = useMemo(() => (journal ? letterDoor(journal) : null), [journal]);
+  /* A FORWARD NAMES ITS KEPT FILES only to a server that announced it reads the list; asked again while unanswered. */
+  const forwardPartsNow = useRef<ReturnType<typeof forwardPartsReader> | null>(null);
+  useEffect(() => {
+    forwardPartsNow.current = session ? forwardPartsReader(session) : null;
+    return () => { forwardPartsNow.current = null; };
+  }, [session]);
   useLayoutEffect(() => {
     openLetterSession(letters ? { door: letters, uuid: () => Crypto.randomUUID() } : null);
     return () => openLetterSession(null);
@@ -1382,6 +1391,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       ? liveActions({
         engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
         ...(letters ? { letters } : {}),
+        forwardParts: () => forwardPartsNow.current?.said() ?? null,
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
@@ -1587,6 +1597,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           releaseAttachments: (id) => acts.releaseAttachments(id),
           hydrateMessage: (id) => acts.hydrateMessage(id),
           forwardFetch: (id) => acts.forwardFetch(id),
+          forwardFiles: (id) => acts.forwardFiles(id),
+          forwardPartsSupported: () => acts.forwardPartsSupported(),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
           retryQueued: (id) => acts.retryQueued(id),

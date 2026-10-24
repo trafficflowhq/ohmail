@@ -8,7 +8,7 @@
  * imports; this module imports no react-native and no expo.
  */
 import {
-  IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin, zonedFields,
+  COMPOSE_FORWARD_MAX_TOTAL_BYTES, IMAGE_QUALITY_RULES, composeAttachCap, encodableImageType, fitWithin, zonedFields,
   type ComposeAttachment, type ImageQualityLevel, type ImageQualityRule,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
@@ -113,6 +113,23 @@ export function phoneAttachCap(
 ): number {
   const row = mailboxId ? mailboxes.find((b) => b.id === mailboxId) : undefined;
   return composeAttachCap(row?.smtpMaxSizeBytes ?? null);
+}
+
+/**
+ * A FORWARD'S THREE BOUNDS: files added on this phone stay under the phone's cap (they ride its one
+ * request), the original's kept files under the send's forwarded ceiling (the server streams them),
+ * and both together under what the sending mailbox takes — `composeAttachCap` with no surface term.
+ */
+export function forwardCaps(
+  mailboxes: readonly PhoneMailbox[],
+  mailboxId: string | null | undefined,
+): { phone: number; forwarded: number; message: number } {
+  const row = mailboxId ? mailboxes.find((b) => b.id === mailboxId) : undefined;
+  return {
+    phone: phoneAttachCap(mailboxes, mailboxId),
+    forwarded: COMPOSE_FORWARD_MAX_TOTAL_BYTES,
+    message: composeAttachCap(row?.smtpMaxSizeBytes ?? null, null),
+  };
 }
 
 /** What one admit pass decided — the list as it stands, and the notes the sheet renders. */

@@ -7,7 +7,7 @@
  */
 import { refuse, type Refusal } from "../refusal";
 import type { KeptRow } from "./letter-keeper";
-import { keptFit, wordsOf, type Letter, type LetterAddress, type LetterDoor, type LetterMark } from "./letter-store";
+import { keptFit, rowHoldsLetter, wordsOf, type Letter, type LetterAddress, type LetterDoor, type LetterMark } from "./letter-store";
 
 /** A queued or in-flight mutation, as the engine holds it. */
 export interface OutboxRow { key: string; mutation: { kind: string } & Record<string, unknown> }
@@ -126,7 +126,7 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
   const put = (l: Letter): void => d.door.put({ ...l, updatedAt: now().toISOString() });
   const bind = (l: Letter, draftId: string): void => {
     const next = { ...l, draftId, savedAs: wordsOf(l), keep: null, send: null };
-    if (next.files.length === 0) d.door.drop(l.id);
+    if (rowHoldsLetter(next)) d.door.drop(l.id);
     else put(next);
   };
   /** Make or update the letter's row, quietly; the files that do not fit are named. */
@@ -232,7 +232,7 @@ export function settleLetters(
       if (l.keep?.key === key && o.kind === "draft_save") {
         if (o.status === "confirmed" && o.createdDraftId) {
           const next = { ...l, draftId: o.createdDraftId, savedAs: wordsOf(l), keep: null };
-          if (next.files.length === 0) door.drop(l.id);
+          if (rowHoldsLetter(next)) door.drop(l.id);
           else door.put({ ...next, updatedAt: now().toISOString() });
         } else if (o.status === "rolled_back") door.put({ ...l, keep: null, updatedAt: now().toISOString() });
       }
@@ -241,7 +241,7 @@ export function settleLetters(
         // Unverified: the row the server holds it in keeps the files; without one the next launch looks.
         else if (o.status === "unverified" && o.draftId) {
           const next = { ...l, draftId: o.draftId, savedAs: wordsOf(l), send: null };
-          if (next.files.length === 0) door.drop(l.id);
+          if (rowHoldsLetter(next)) door.drop(l.id);
           else door.put({ ...next, updatedAt: now().toISOString() });
         }
         else if (o.status === "rolled_back") {

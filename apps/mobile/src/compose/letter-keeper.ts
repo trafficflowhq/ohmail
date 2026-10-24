@@ -5,7 +5,7 @@
  * writes it at once. A keep or a send is MARKED before its mutation is dispatched, so a hard stop
  * between the two leaves the next launch the truth: the letter was being kept, or was sent.
  */
-import { keptFit, wordsOf, type Letter, type LetterDoor, type LetterFile } from "./letter-store";
+import { keptFit, rowHoldsLetter, wordsOf, type Letter, type LetterDoor, type LetterFile } from "./letter-store";
 
 /** How long after the last change the letter reaches the disk. */
 export const LETTER_WRITE_MS = 500;
@@ -101,8 +101,8 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
   const set = (patch: Partial<Letter>): void => { letter = { ...letter, ...patch }; };
   const bound = (draftId: string, savedAs = wordsOf(letter)): void => {
     set({ draftId, savedAs, keep: null, send: null });
-    if (letter.files.length > 0 || savedAs !== wordsOf(letter)) { write(); return; }
-    // A row with no files needs nothing held here: the server holds the words until the next edit.
+    if (!rowHoldsLetter(letter) || savedAs !== wordsOf(letter)) { write(); return; }
+    // A row that holds the whole letter needs nothing here: the server holds the words until the next edit.
     if (timer !== null) { timers.clear(timer); timer = null; }
     o.door.drop(o.id);
     onDisk = JSON.stringify(letter);
