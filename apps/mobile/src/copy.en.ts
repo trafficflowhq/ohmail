@@ -2154,6 +2154,7 @@ const TABLE = {
     `Some files were not added — they would have put the total over ${size}.`,
   attachUnreadable: "Some files couldn't be read and were not added.",
   attachDuplicate: (filenames: string) => `Already attached: ${filenames}`,
+  photoNamed: (stamp: string) => `Photo ${stamp}`,
   attachRemove: (filename: string) => `Remove ${filename}`,
   /* The picker itself refused — said by name, never a press that does nothing. */
   attachUnavailable: "Files can't be picked on this device right now.",

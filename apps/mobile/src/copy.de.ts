@@ -1471,6 +1471,7 @@ export const DE: Deck = {
     `Einige Dateien wurden nicht hinzugefügt — sie hätten das Total über ${size} gebracht.`,
   attachUnreadable: "Einige Dateien konnten nicht gelesen werden und wurden nicht hinzugefügt.",
   attachDuplicate: (filenames: string) => `Bereits angehängt: ${filenames}`,
+  photoNamed: (stamp: string) => `Foto ${stamp}`,
   attachRemove: (filename: string) => `${filename} entfernen`,
   attachUnavailable: "Dateien können auf diesem Gerät gerade nicht ausgewählt werden.",
   composeNeedContent: "Schreib etwas oder häng eine Datei an.",
