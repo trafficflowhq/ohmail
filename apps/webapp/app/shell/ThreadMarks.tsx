@@ -22,12 +22,13 @@
  * published on the visit's channel (`thread-walk-channel.ts`), so the list row's strip wears the same
  * ring and its press is this jump.
  */
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject, type WheelEvent } from "react";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
-import { isOwnOutbound, threadWalk, type EngineMessage, type Walk } from "@ohmail/client-engine";
-import { cssRect } from "@ohmail/ui";
-import { clockOf, displayTime, metaLine, senderName } from "./format";
+import { clock, fullDateTime, isOwnOutbound, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
+import { Icon, cssRect } from "@ohmail/ui";
+import { senderName } from "./format";
+import { activeFormatLocale, activeFormatZone } from "./locale";
 import { scrollByHand, scrollProgrammatically, stampLive } from "./programmatic-scroll";
 import { nextFrame, viewOf } from "./reader-seen";
 import type { ThreadWalkChannel } from "./thread-walk-channel";
@@ -314,23 +315,54 @@ export function tipAt(place: TipPlace, button: Rect, square: Rect, railW: number
   return { left: Math.max(lo, Math.min(square.left - 4, hi)), top: button.bottom + TIP_GAP.under };
 }
 
-/** The chip's words: who sent the square's message, and when, as its panel says it, with the clock. */
-export function tipStamp(m: EngineMessage, now: Date): string {
-  const when = displayTime(m, now);
-  const clock = m.date ? clockOf(m.date) : "";
-  return clock !== "" && when.includes(clock) ? when : metaLine(when, clock);
+/** The chip's date (o10): today 09:12 · yesterday 17:40 · Tue 21 Oct, 14:05, the year outside this one. */
+export function tipWhen(m: Pick<EngineMessage, "date">, now: Date, words: { today: (time: string) => string; yesterday: (time: string) => string }): string {
+  const d = m.date ? new Date(m.date) : null;
+  if (!d || Number.isNaN(d.getTime())) return "";
+  const zone = activeFormatZone();
+  const locale = activeFormatLocale();
+  const ago = zonedDayNumber(now, zone) - zonedDayNumber(d, zone);
+  if (ago === 0) return words.today(clock(d, zone));
+  if (ago === 1) return words.yesterday(clock(d, zone));
+  if (zonedFields(d, zone).year !== zonedFields(now, zone).year) return fullDateTime(d, zone, locale);
+  return weekdayDateClock(d, zone, locale);
 }
 
-/** The chip itself: one line, the sender bold, the stamp quieter. Never a name for assistive tech (the square's own label is). */
+/** The chip's second line: the message's first line, cut at a word near 64 characters. */
+export function tipLine(snippet: string | null | undefined): string {
+  const line = (snippet ?? "").replace(/\s+/g, " ").trim();
+  if (line.length <= 64) return line;
+  const cut = line.slice(0, 64);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > 40 ? cut.slice(0, sp) : cut).trimEnd()}\u2026`;
+}
+
+/**
+ * The chip itself (o10, two lines): the sender bold ("you" for the account's own) and the friendly
+ * date, a clip where the message has a file; under them its first line. Never a name for assistive
+ * tech (the square's own label is).
+ */
 export const ThreadTip = forwardRef<HTMLDivElement, { m: EngineMessage; place: TipPlace; now?: Date }>(function ThreadTip({ m, place, now }, ref) {
-  const stamp = tipStamp(m, now ?? new Date());
+  const tm = useTranslations("message");
+  const when = tipWhen(m, now ?? new Date(), { today: (time) => tm("markToday", { time }), yesterday: (time) => tm("markYesterday", { time }) });
+  const line = tipLine(m.snippet);
+  const file = m.hasAttachments === true || (m.attachmentCount ?? 0) > 0;
   return (
     <div ref={ref} className="tm-tip" data-place={place} aria-hidden="true">
-      <b>{senderName(m)}</b>
-      {stamp === "" ? null : <span>{` · ${stamp}`}</span>}
+      <div className="tm-tip-head">
+        <b>{isOwnOutbound(m) ? tm("markYou") : senderName(m)}</b>
+        {when === "" ? null : <span className="tm-tip-when">{when}</span>}
+        {file ? <Icon name="clip" className="tm-tip-clip" /> : null}
+      </div>
+      {line === "" ? null : <div className="tm-tip-line">{line}</div>}
     </div>
   );
 });
+
+/** A finger held this long on a square shows its chip (and the press is swallowed). */
+export const HOLD_MS = 380;
+/** The chip stays this long after the holding finger lifts. */
+const HOLD_KEEP_MS = 1100;
 
 /** Is `el` focused from the keyboard? A click's focus is not (the pointer's hover names it then). */
 const keyboardFocus = (el: Element): boolean => {
@@ -345,8 +377,8 @@ const keyboardFocus = (el: Element): boolean => {
  * The toolbar itself, drawn into the column's box. A square the pointer rests on, or that keyboard
  * focus holds, names its message in a CHIP (o9): the sender and the stamp, in one fixed element in
  * the body (the column and the list clip their overflow), placed by `tipAt`. The squares carry no
- * `title`, so the name is never shown twice. `tipOn="focus"`: only keyboard focus shows it (the
- * reader sheet, under a finger).
+ * `title`, so the name is never shown twice. A finger held on a square (380 ms) shows it too, and that
+ * hold presses nothing. `tipOn="focus"`: no pointer hover (the reader sheet, under a finger).
  */
 export function ThreadMarksBar({
   messages,
@@ -382,13 +414,54 @@ export function ThreadMarksBar({
   const chip = useRef<HTMLDivElement | null>(null);
   const pointed = useRef<HTMLElement | null>(null);
   const focused = useRef<HTMLElement | null>(null);
+  /** Touch: the square a finger holds, the hold's timer, the chip's stay after it, the swallowed press. */
+  const held = useRef<HTMLElement | null>(null);
+  const holding = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keeping = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swallow = useRef(false);
   const [tip, setTip] = useState<string | null>(null);
   const named = tip === null ? null : messages.find((m) => m.id === tip) ?? null;
 
-  /** The square the chip names: the one under the pointer, else the one keyboard focus holds. */
+  /** The square the chip names: the one a finger holds, else under the pointer, else keyboard focus's. */
   const refresh = (): void => {
-    const b = [pointed.current, focused.current].find((el) => el?.isConnected) ?? null;
+    const b = [held.current, pointed.current, focused.current].find((el) => el?.isConnected) ?? null;
     setTip(b?.dataset.for ?? null);
+  };
+  const stopTimers = (): void => {
+    if (holding.current !== null) clearTimeout(holding.current);
+    if (keeping.current !== null) clearTimeout(keeping.current);
+    holding.current = keeping.current = null;
+  };
+  useEffect(() => stopTimers, []);
+  const onHoldStart = (e: PointerEvent<HTMLDivElement>): void => {
+    if (e.pointerType !== "touch") return;
+    const b = squareOf(e.target);
+    if (!b) return;
+    stopTimers();
+    swallow.current = false;
+    if (held.current !== null) {
+      // A new press ends the last hold's stay: no focus or pointerout will clear its chip.
+      held.current = null;
+      refresh();
+    }
+    holding.current = setTimeout(() => {
+      holding.current = null;
+      held.current = b;
+      swallow.current = true;
+      refresh();
+    }, HOLD_MS);
+  };
+  const onHoldEnd = (): void => {
+    if (holding.current !== null) clearTimeout(holding.current);
+    holding.current = null;
+    if (held.current === null) return;
+    if (keeping.current !== null) clearTimeout(keeping.current);
+    keeping.current = setTimeout(() => {
+      keeping.current = null;
+      held.current = null;
+      swallow.current = false;
+      refresh();
+    }, HOLD_KEEP_MS);
   };
   const squareOf = (t: EventTarget | null): HTMLElement | null =>
     t instanceof Element ? t.closest<HTMLElement>(".tm-mb") : null;
@@ -429,7 +502,7 @@ export function ThreadMarksBar({
       aria-label={tm("marksAria")}
       onKeyDown={onKey}
       onWheel={onWheel}
-      onPointerOver={tipOn === "hover" ? (e) => { pointed.current = squareOf(e.target); refresh(); } : undefined}
+      onPointerOver={tipOn === "hover" ? (e) => { if (e.pointerType === "touch") return; pointed.current = squareOf(e.target); refresh(); } : undefined}
       onPointerOut={tipOn === "hover" ? (e) => {
         const b = squareOf(e.target);
         if (b && !(e.relatedTarget instanceof Node && b.contains(e.relatedTarget))) pointed.current = null;
@@ -441,6 +514,17 @@ export function ThreadMarksBar({
         refresh();
       }}
       onBlur={() => { focused.current = null; refresh(); }}
+      onPointerDown={onHoldStart}
+      onPointerUp={onHoldEnd}
+      onPointerCancel={onHoldEnd}
+      onClickCapture={(e) => {
+        // The click that ends a hold is no press.
+        if (!swallow.current) return;
+        swallow.current = false;
+        e.stopPropagation();
+        e.preventDefault();
+      }}
+      onContextMenu={(e) => { if (squareOf(e.target)) e.preventDefault(); }}
     >
       {messages.map((m, i) => {
         const kind = m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read";

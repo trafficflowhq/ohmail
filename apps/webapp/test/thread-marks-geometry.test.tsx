@@ -8,6 +8,7 @@ import { threadWalk, type EngineMessage } from "@ohmail/client-engine";
 import { MessageRow } from "@ohmail/ui";
 import { ThreadMarksBar, ThreadTip, tipAt, type TipPlace } from "../app/shell/ThreadMarks";
 import messages from "../messages/en.json";
+import de from "../messages/de.json";
 
 /**
  * THE COLUMN OF SQUARES NEVER COVERS A MESSAGE — MEASURED IN A REAL ENGINE. jsdom lays nothing out,
@@ -277,6 +278,7 @@ async function seam(viewport: number, list: number, face: "ohmarchy" | "paper") 
         paper: r("article.pm").left,
         corner: getComputedStyle(document.querySelector(".tm-sq")!).borderTopLeftRadius,
         ringCorner: getComputedStyle(mb, "::after").borderTopLeftRadius,
+        hoverCorner: getComputedStyle(mb, "::before").borderTopLeftRadius,
         pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
       };
     }, 560);
@@ -300,8 +302,10 @@ describe("the seam: list | gap | 18px rail | gap | paper, even in both faces", (
         expect(m.barLeft, "the press area covers the column handle's gap").toBeGreaterThanOrEqual(m.listRight + m.gap - 0.5);
         expect(m.barRight, "the press area ends at the paper").toBeLessThanOrEqual(m.paper + 0.5);
         expect(m.slot, "a slot's pitch").toBe(m.narrow ? 30 : 24);
-        expect(m.corner, "a square's corner from the radius token").toBe(face === "ohmarchy" ? "0px" : "2px");
-        expect(m.ringCorner, "the ring's corner").toBe(face === "ohmarchy" ? "0px" : "4px");
+        // Paper's soft squares (owner 2026-10-24, o10 v1): 3 on the 10px square, the ring concentric at 7.
+        expect(m.corner, "a square's corner from the radius token").toBe(face === "ohmarchy" ? "0px" : "3px");
+        expect(m.ringCorner, "the ring's corner").toBe(face === "ohmarchy" ? "0px" : "7px");
+        expect(m.hoverCorner, "the rail's hover box").toBe(face === "ohmarchy" ? "0px" : "5px");
         expect(m.pageOverflow).toBeLessThanOrEqual(0);
       }, 60_000);
 });
@@ -374,6 +378,8 @@ describe("the open row's strip", () => {
           strip: bar.getBoundingClientRect(),
           list: list.getBoundingClientRect(),
           button: { w: b.width, h: b.height },
+          corner: getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius,
+          paperCorner: (document.documentElement.removeAttribute("data-face"), getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius),
           sideways: bar.scrollWidth > bar.clientWidth,
           listOverflow: list.scrollWidth - list.clientWidth,
           pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
@@ -384,6 +390,7 @@ describe("the open row's strip", () => {
       expect(m.strip.right, "the strip stays in the list column").toBeLessThanOrEqual(m.list.right + 0.5);
       expect(m.button.h, "a square's button").toBe(20);
       expect(m.button.w).toBeGreaterThanOrEqual(16);
+      expect([m.corner, m.paperCorner], "the strip's hover box: square in ohmarchy, paper's 5").toEqual(["0px", "5px"]);
       expect(m.sideways, "thirty squares scroll sideways").toBe(true);
       expect(m.listOverflow, "the strip widens the list").toBeLessThanOrEqual(0);
       expect(m.pageOverflow).toBeLessThanOrEqual(0);
@@ -399,12 +406,27 @@ describe("the open row's strip", () => {
  * list's gap and the open row's end, never over message text; under the row's strip it stays inside
  * the list column. Measured with the real stylesheets: the chip's own box, where `tipAt` puts it.
  */
-const chipMarkup = (m: EngineMessage, place: TipPlace): string => renderToStaticMarkup(
-  <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+const chipMarkup = (m: EngineMessage, place: TipPlace, locale: "en" | "de" = "en"): string => renderToStaticMarkup(
+  <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : messages} timeZone="UTC">
     <ThreadTip m={m} place={place} now={new Date("2026-10-24T12:00:00.000Z")} />
   </NextIntlClientProvider>,
 );
+const LONG = "Thanks for the draft, I went through all of it on the train and have three small notes for the second part";
+/** p3 with a first line past the chip's 64 characters and a file. */
+const CHIPPED = { ...MEMBERS[2]!, snippet: LONG, hasAttachments: true, attachmentCount: 1 } as EngineMessage;
 type R = { left: number; right: number; top: number; bottom: number; width: number; height: number };
+
+describe("the chip's words", () => {
+  const at = (iso: string, over: Record<string, unknown> = {}) => ({ ...MEMBERS[0]!, date: iso, snippet: "See you at ten", ...over }) as EngineMessage;
+  const words = (html: string) => html.replace(/<[^>]+>/g, "|").split("|").filter((w) => w.trim() !== "");
+  it("today and yesterday by name with the clock, your own as you, no clip without a file, in English and German", () => {
+    expect(words(chipMarkup(at("2026-10-24T09:12:00.000Z"), "left"))).toEqual(["Sender p1", expect.stringMatching(/^today \d\d:12$/), "See you at ten"]);
+    expect(chipMarkup(at("2026-10-24T09:12:00.000Z"), "left")).not.toContain("<svg");
+    expect(words(chipMarkup(at("2026-10-23T12:40:00.000Z", { folder: "Sent" }), "left"))).toEqual(["you", expect.stringMatching(/^yesterday \d\d:40$/), "See you at ten"]);
+    expect(words(chipMarkup(at("2026-10-23T12:40:00.000Z", { folder: "Sent" }), "left", "de"))).toEqual(["du", expect.stringMatching(/^gestern \d\d:40$/), "See you at ten"]);
+    expect(words(chipMarkup(at("2026-10-24T09:12:00.000Z", { snippet: "" }), "left")), "no first line, no second line").toHaveLength(2);
+  });
+});
 
 describe("the chip names a square, beside the rail or under the strip, over no message", () => {
   for (const face of ["ohmarchy", "paper"] as const)
@@ -413,7 +435,7 @@ describe("the chip names a square, beside the rail or under the strip, over no m
         const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
         try {
           await page.setContent(split_(viewport, list, face));
-          await page.evaluate((html) => { document.body.insertAdjacentHTML("beforeend", html); }, chipMarkup(MEMBERS[2]!, "left"));
+          await page.evaluate((html) => { document.body.insertAdjacentHTML("beforeend", html); }, chipMarkup(CHIPPED, "left"));
           const at = await page.evaluate(() => {
             const rect = (el: Element) => { const r = el.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height }; };
             const b = document.querySelectorAll(".tm-mb")[2]!;
@@ -429,13 +451,33 @@ describe("the chip names a square, beside the rail or under the strip, over no m
             return {
               chip: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
               over: words.some((p) => r.left < p.right - 0.5 && p.left < r.right - 0.5 && r.top < p.bottom - 0.5 && p.top < r.bottom - 0.5),
+              // the rail's 18px column at each square: the chip never stands on a mark or its ring
+              overMark: [...document.querySelectorAll(".tm-sq")].some((q) => {
+                const s = q.getBoundingClientRect();
+                const cx = s.left + s.width / 2;
+                return r.left < cx + 9 && cx - 9 < r.right && r.top < s.bottom + 4 && s.top - 4 < r.bottom;
+              }),
               position: getComputedStyle(c).position,
-              text: c.textContent,
+              name: c.querySelector(".tm-tip-head b")?.textContent,
+              when: c.querySelector(".tm-tip-when")?.textContent,
+              clip: c.querySelector(".tm-tip-head svg") !== null,
+              line: c.querySelector<HTMLElement>(".tm-tip-line")?.textContent ?? "",
+              lineCut: (() => { const l = c.querySelector<HTMLElement>(".tm-tip-line")!; return getComputedStyle(l).textOverflow; })(),
+              lines: (() => { const a = c.querySelector(".tm-tip-head")!.getBoundingClientRect(); const b = c.querySelector(".tm-tip-line")!.getBoundingClientRect(); return b.top >= a.bottom - 0.5; })(),
+              width: r.width,
             };
           }, pos);
           const railLeft = at.square.left + at.square.width / 2 - 9;
           expect(m.position).toBe("fixed");
-          expect(m.text).toMatch(/^Sender p3 · /);
+          expect(m.name, "the sender, bold").toBe("Sender p3");
+          expect(m.when, "a friendly date past yesterday: weekday, day, month, clock").toMatch(/^Thu 22 Oct, \d\d:00$/);
+          expect(m.clip, "a clip where the message has a file").toBe(true);
+          expect(m.lines, "two lines: who and when over the first line").toBe(true);
+          expect(m.line.length, "the first line, cut near 64 characters").toBeLessThanOrEqual(65);
+          expect(m.line.endsWith("…") && LONG.startsWith(m.line.slice(0, -1))).toBe(true);
+          expect(m.lineCut).toBe("ellipsis");
+          expect(m.width, "the chip's measure").toBeLessThanOrEqual(272.5);
+          expect(m.overMark, "the chip stands on a mark").toBe(false);
           expect(railLeft - m.chip.right, "chip → rail").toBeCloseTo(6, 1);
           expect((m.chip.top + m.chip.bottom) / 2, "on the square's line").toBeCloseTo(at.button.top + at.button.height / 2, 0);
           expect(m.over, "the chip covers message text").toBe(false);
@@ -477,7 +519,7 @@ describe("the chip names a square, beside the rail or under the strip, over no m
         const b = c.getBoundingClientRect();
         return { left: b.left, right: b.right, top: b.top };
       }, pos);
-      expect(r.top - at.button.bottom, "under the square").toBeCloseTo(4, 1);
+      expect(r.top - at.button.bottom, "under the square, never on it").toBeCloseTo(4, 1);
       expect(r.left, "inside the list column").toBeGreaterThanOrEqual(at.list.left + 8 - 0.5);
       expect(r.right, "inside the list column").toBeLessThanOrEqual(at.list.right - 8 + 0.5);
     } finally {

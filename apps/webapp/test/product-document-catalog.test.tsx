@@ -76,9 +76,10 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  sign-out (resume, carried whole).
  *  Raised 2026-10-23 (both): the reader's Mark unread and the conversation squares' spoken labels
  *  (message, carried whole).
+ *  Raised 2026-10-24 (both): the squares' chip says you, today and yesterday (message, carried whole).
  *  Raised 2026-10-25 (both): the mailbox step's Microsoft sign-in, its refusal hint, the sentences
  *  for a sign-in that came back unconnected, and its ways out (join, carried whole). */
-const INLINE_CEILING_BYTES = { en: 38_700, de: 44_260 } as const;
+const INLINE_CEILING_BYTES = { en: 38_780, de: 44_340 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>
