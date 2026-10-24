@@ -254,14 +254,17 @@ function latent<T extends object>(target: T, ms: number, count: { n: number }): 
 }
 
 /**
- * THE 20-QUERY HARNESS, by the class the answer falls in: a word in many messages (the page cut),
+ * THE QUERY HARNESS, by the class the answer falls in: a word in many messages (the page cut),
  * a word in a few, no match in either tier, and a typo the similar tier answers. `k` names a
  * vocabulary word; one past the vocabulary is outside it and shares its syllables — the broad typo.
+ * `of` spells a query of several words, `{k}` a vocabulary word: each word anywhere in the letter.
  */
 type Cls = "common" | "rare" | "none" | "typo";
-const HARNESS: Array<{ cls: Cls; q?: string; k?: number }> = [
+const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...[0, 1, 2, 5, 40].map((k) => ({ cls: "common" as const, k })), { cls: "common", q: "axa" }, { cls: "common", q: "portal" },
+  ...["portal {0}", "{0} portal {2}", "{0} {1}", "{0} -{1}", "{40} -{1}", "{0} {2} -{1}", "{0} or {2} -{1}"].map((of) => ({ cls: "common" as const, of })),
   ...["kestrel", "osprey", "plover", "heron", "egret", "avocet", "dunlin", "unlin"].map((q) => ({ cls: "rare" as const, q })),
+  ...["heron {0}", "dunlin {1}", "heron -{3000}", "heron {0} -{3000}", "heron or dunlin -{3000}"].map((of) => ({ cls: "rare" as const, of })),
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
 ];
@@ -357,7 +360,14 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
     await base.execute(sql`reset default_statistics_target`);
     await base.execute(sql`analyze message_bodies`);
-    for (const h of HARNESS) h.q = h.q ?? (await vocabWord(h.k!));
+    for (const h of HARNESS) {
+      if (h.of !== undefined) {
+        let q = h.of;
+        for (const [m, k] of h.of.matchAll(/\{(\d+)\}/g)) q = q.replace(m, await vocabWord(Number(k)));
+        h.q = q;
+      }
+      h.q = h.q ?? (await vocabWord(h.k!));
+    }
     await base.execute(sql`reset statement_timeout`);
     for (let i = 0; i < 10; i++) await referenceMs();
   }, 900_000);
@@ -393,6 +403,34 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }, 600_000);
   }
 
+  // Two words on A before its backfill: the older columns are read per part, each off its own GIN.
+  it(`before the backfill, two words answer page and count inside ${BUDGET_MS} ms at p95 and scan no table`, async () => {
+    const svc = new SearchService();
+    const QS = ["w3000 w1", "w2000 w2500"];
+    for (const q of QS) await svc.search(ctx(), { q, parts: "page" });
+    const best = await bestOfRounds("before two words", async () => {
+      const figures: Record<string, number> = {};
+      for (const q of QS) {
+        const page: number[] = [];
+        const count: number[] = [];
+        for (let i = 0; i < 20; i++) {
+          page.push((await svc.search(ctx(), { q, parts: "page" })).ms);
+          count.push((await svc.search(ctx(), { q, parts: "estimate" })).ms);
+        }
+        figures[`${q} page`] = p95Of(page);
+        figures[`${q} count`] = p95Of(count);
+      }
+      return figures;
+    });
+    for (const [k, v] of Object.entries(best)) expect(v, `${k} p95, the best of ${ROUNDS} rounds; the run's quietest reference ${quietest.toFixed(1)} ms`).toBeLessThanOrEqual(BUDGET_MS);
+    for (const q of QS) {
+      seen.length = 0;
+      await svc.search(ctx(), { q, parts: "page" });
+      const session = seen.filter(isSession);
+      for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) expect(await seqScans(st, session), q).toEqual([]);
+    }
+  }, 600_000);
+
   it(`with an 8 ms round trip a statement, the first page still answers inside ${BUDGET_MS} ms at p95`, async () => {
     const svc = new SearchService();
     const count = { n: 0 };
@@ -423,7 +461,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   // slow shape all five); a class's p95 is over its queries' medians, and the five passes are one
   // round of bestOfRounds. Red when a cut page asks the planner again (6-7 statements) or the typo
   // word is hidden from the planner (a broad typo's page, 220 ms).
-  it(`the 20-query harness in production's shape: every class's page and count inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
+  it(`the query harness in production's shape: every class's page and count inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
     const svc = new SearchService();
     const count = { n: 0 };
     const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
@@ -449,6 +487,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
           reads[i]!.count.push((await svc.search(at, { q: h.q!, parts: "estimate" })).ms);
         }
       }
+      // Each query's page and count medians, so a red class names the query that made it.
+      console.log(`search-budget harness by query: ${HARNESS.map((h, i) => `${h.of ?? h.q} ${median(reads[i]!.page)}/${median(reads[i]!.count)}`).join(", ")}`);
       const figures: Record<string, number> = {};
       for (const cls of CLASSES) {
         const of = reads.filter((_, i) => HARNESS[i]!.cls === cls);

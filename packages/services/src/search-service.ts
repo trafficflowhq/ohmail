@@ -71,6 +71,13 @@ const LOCAL_ARM_READ_FACTOR = 4;
  * for the similarity, ~3-4 for the condition and the lookup, so 8 000 at most (~35 ms at 74k).
  */
 const SEARCH_TYPO_WALK_FACTOR = 40;
+/**
+ * A BOUNDED arm held to an excluded word walks on past its bound, to this many cuts of the newest
+ * mail, when its words are dense there and the exclusion leaves too few: reading their matches off
+ * the GINs reads every match (two common words and a common exclusion: 67k matches, 265 ms at 74k),
+ * the walk ~6 µs a letter (8 000 at most, ~45 ms).
+ */
+const SEARCH_EXCLUSION_WALK_FACTOR = 40;
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -327,6 +334,16 @@ interface Branch {
   readonly pred: SQL; readonly rank: SQL;
   /** The predicate without its account: what a bounded read asks the index for by itself. */
   readonly raw?: SQL;
+  /**
+   * Over the document (`s`), asked only of rows the branch has already cut: an excluded word, whose
+   * check reads the body vector, so never of every index match ({@link SearchService.keeps}).
+   */
+  readonly after?: SQL;
+  /**
+   * A branch of an arm held to an excluded word: its words without the exclusion, over the document,
+   * which {@link SearchService.boundedRead} asks of the newest mail to choose a deeper walk or the index.
+   */
+  readonly pos?: SQL;
 }
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
@@ -339,7 +356,7 @@ interface Arm {
   /** Read by {@link SearchService.localRead} for this account: the desktop's own store, documents built. */
   readonly local?: { readonly account: string };
   /** The typo arm's walk test, a cheap necessary condition first: read by {@link SearchService.typoRead}. */
-  readonly typo?: { readonly walkPred: SQL };
+  readonly typo?: { readonly walkPred: SQL; readonly vectors: boolean };
 }
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
@@ -457,19 +474,39 @@ export class SearchService {
     const own = (b: SearchArm): Branch =>
       documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred } : b;
     if (tier === "similar") {
-      const fuzz = d.search.fuzzy(q, "mail", { trigram, threshold: FUZZY_THRESHOLD });
-      const arm: Arm = { name: "similar", ranked: true, branches: [own(fuzz), ...(legacy?.fuzzy ?? []).map(bare)] };
+      // A guess never holds a word the reader excluded, anywhere in the letter.
+      const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
+      const excluded = d.search.words(q).excluded;
+      const fuzz = held(d.search.fuzzy(q, "mail", { trigram, threshold: FUZZY_THRESHOLD }), excluded);
+      const old = (legacy?.fuzzy ?? []).map((b) => bare(held(b, legacy!.excluded)));
+      const arm: Arm = { name: "similar", ranked: true, branches: [own(fuzz), ...old] };
       // The server's documents only: the desktop's store keeps its scans inside six cuts.
       const pre = trigram && documents && legacy === null && this.opts.localStore !== true
         ? d.search.typoPrefilter(q, { threshold: FUZZY_THRESHOLD, terms: sql`s.terms`, lowered: sql`s.t` }) : null;
       if (pre === null) return [arm];
       const walkPred = sql`(s.account_id = ${ctx.accountId} and (case when ${pre} then ${fuzz.pred} else false end))`;
-      return [{ ...arm, typo: { walkPred } }];
+      return [{ ...arm, typo: { walkPred, vectors: excluded !== undefined } }];
     }
+    const local = this.opts.localStore === true && d.name === "pg" && documents && legacy === null;
     const words = d.search.words(q);
+    // An excluded word: on the server's documents asked of each arm's cut rows only (its check reads
+    // the body), elsewhere in the arm's predicate. There the text arm reads, per `or` group, what the
+    // text index answers whole (`alone`), and a group of several operands also as its letter, held.
+    const keep = words.excluded;
+    const late = keep !== undefined && d.name === "pg" && documents && !local;
+    const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep }
+      : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
+    const alone = late && words.alone ? words.alone : null;
+    const rank = words.text.rank;
+    const text = alone
+      ? alone.flatMap((g) => [{ ...own({ pred: g.pred, rank }), pos: g.letter }, ...(g.whole ? [] : [{ ...held(own({ pred: g.letter, rank })), pos: g.letter }])])
+      : [held(own(words.text))];
     const out: Arm[] = [
-      { name: "head", ranked: true, branches: [own(words.head), ...(legacy ? [bare(legacy.words.head)] : [])] },
-      { name: "text", ranked: false, branches: [own(words.text), ...(legacy ? [bare(legacy.words.text)] : [])] },
+      { name: "head", ranked: true, branches: [held(own(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
+      {
+        name: "text", ranked: false, ...(words.across === true && d.name === "pg" ? { bounded: true } : {}),
+        branches: [...text, ...(legacy ? [bare(legacy.words.text)] : [])],
+      },
     ];
     // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
     // each word also read as the start of a longer one (`elevat` reaches `elevation`). On Postgres
@@ -477,7 +514,13 @@ export class SearchService {
     // reads have no such misplan and keep two plain arms (one branch each: no union there).
     const part = exactAsked(q) ? null : d.search.partWords(q);
     const old = legacy?.part ?? null;
-    if (part !== null && d.name === "pg") {
+    if (part !== null && part.across === true) {
+      // Words that may straddle the letter's parts: one predicate over the whole letter.
+      out.push({
+        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true } : {}),
+        branches: [own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+      });
+    } else if (part !== null && d.name === "pg") {
       out.push({
         name: "part", ranked: false, bounded: true,
         branches: [own(part.head), own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
@@ -496,7 +539,6 @@ export class SearchService {
       });
     }
     // Every branch is then the document's own (`own`), so the bounded read can ask it by itself.
-    const local = this.opts.localStore === true && d.name === "pg" && documents && legacy === null;
     return local ? out.map((a) => ({ ...a, local: { account: ctx.accountId }, bounded: false })) : out;
   }
 
@@ -507,20 +549,34 @@ export class SearchService {
    */
   private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL): SQL {
     const cut = arm.ranked ? window : k;
-    const branch = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
+    const read = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
       ${this.from} where ${where} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
+    const capped = SearchService.capped(arm);
+    // A branch held to `after` keeps its cut rows that pass; a full cut says the arm is cut (`x`). A
+    // row that fails stays as a row with no id, so the flag outlives every row.
+    const branch = (b: Branch): SQL => (b.after !== undefined
+      ? sql`(select case when ${this.keeps(b.after, sql`c.id`)} then c.id end as id, c.date, c.rank, c.x
+          from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
+      : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
-      : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo.walkPred, k)
+      : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k)
       : arm.bounded ? this.boundedRead(where, arm.branches, k)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
-      : sql`(select id, date, max(rank) as rank from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
+      : sql`(select id, date, max(rank) as rank${capped ? sql`, max(x) as x` : sql``}
+          from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
     // `SQL_RANK_ORDER`'s key sequence (a recency arm's rank is the constant its branches wrote).
     const rank = sql`m.rank`;
-    const x = arm.local ? sql`, m.x` : sql``;
-    return sql`select m.id, m.date, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r${x}
-               from (select m.id, m.date, m.rank${x} from ${merged} m
+    const rows = (from: SQL): SQL => sql`select m.id, m.date, row_number() over (order by ${rank} desc, m.date desc nulls last, m.id desc) as r
+               from (select m.id, m.date, m.rank from ${from} m ${capped ? sql`where m.id is not null` : sql``}
                      order by ${rank} desc, m.date desc nulls last, m.id desc limit ${k}) m`;
+    if (!capped) return rows(merged);
+    // A capped arm: its rows with `x` 0, and one row with no id when it is cut ({@link SearchService.capped}),
+    // whether or not a row survived.
+    return sql`with mg as (select * from ${merged} m)
+      select id, date, r, 0 as x from (${rows(sql`mg`)}) m
+      union all
+      select null, null, null, 1 where exists (select 1 from mg where mg.x = 1)`;
   }
 
   /**
@@ -583,11 +639,12 @@ export class SearchService {
     // Every branch the document's own: each walked row asks its document alone. The walk's row is
     // already the message under the filters, and a second lookup of it was a disk read per row cold.
     const docOnly = branches.every((b) => b.raw !== undefined);
-    const hit = docOnly
-      ? sql`exists (select 1 from message_search s where s.message_id = w.id and (${sql.join(branches.map((b) => b.pred), sql` or `)}) limit 1 offset 0)`
+    const hitOf = (preds: SQL[]): SQL => (docOnly
+      ? sql`exists (select 1 from message_search s where s.message_id = w.id and (${sql.join(preds, sql` or `)}) limit 1 offset 0)`
       : sql`exists (select 1 from messages m left join message_search s on s.message_id = m.id
       left join message_bodies b on b.message_id = m.id
-      where m.id = w.id and (${sql.join(branches.map((b) => b.pred), sql` or `)}) limit 1 offset 0)`;
+      where m.id = w.id and (${sql.join(preds, sql` or `)}) limit 1 offset 0)`);
+    const hit = hitOf(branches.map((b) => b.pred));
     // The probe: the newest K asked first; a part too sparse there to fill the walk skips it.
     const dense = sql`(select count(*) from (${newestOf(k)}) w where ${hit}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`;
     const walked = sql`select w.id as id, w.date as date from (${newestOf(SEARCH_PART_WALK_FACTOR * k)}) w where ${dense} and ${hit}
@@ -595,10 +652,83 @@ export class SearchService {
     const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
       where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
     const matched = sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
-    return sql`(with pw as (${walked})
+    if (branches.every((b) => b.after === undefined && b.pos === undefined)) {
+      return sql`(with pw as (${walked})
       select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
       union all
       select id, date, 0 as rank from (${matched}) pm where (select count(*) from pw) < ${k})`;
+    }
+    // AN EXCLUSION, whose check reads the body: never asked of every index match. The newest bound
+    // of mail is walked, each row asked whole. Short of K with older mail unasked, the walk goes on to
+    // {@link SEARCH_EXCLUSION_WALK_FACTOR} cuts when what it kept would fill K there at the same rate,
+    // or when a held branch's words without the exclusion are dense in the newest K (their matches,
+    // too many to read off the index); it walks only until the arm holds a page (K over
+    // {@link SEARCH_ARM_FACTOR}), since each letter it asks costs a document read and the arm says it
+    // is cut anyway. Otherwise the branches the index answers whole are read, and each held branch's
+    // matches newest first under the bound, asked `after` one by one until K pass. The arm is cut
+    // (`x`, a row of its own) when the deeper walk stopped short of K with mail past it, or a held
+    // read was full.
+    const bound = SEARCH_PART_WALK_FACTOR * k;
+    const far = SEARCH_EXCLUSION_WALK_FACTOR * k;
+    const page = Math.ceil(k / SEARCH_ARM_FACTOR);
+    // A group's index branch is inside its held branch (the same words, `pos`), so a walk asks the held one alone.
+    const inside = (b: Branch): boolean => b.after === undefined && b.pos !== undefined
+      && branches.some((o) => o.after !== undefined && o.pos === b.pos);
+    const kept = hitOf(branches.filter((b) => !inside(b)).map((b) => (b.after === undefined ? b.pred : sql`(${b.pred} and ${b.after})`)));
+    const sure = branches.filter((b) => b.after === undefined);
+    const late = branches.flatMap((b, i) => (b.after === undefined ? [] : [{ b, i }]));
+    // A held branch's words without the exclusion, asked of the newest K (`pb`).
+    const words = late.length === 0 ? sql`false` : hitOf(late.map(({ b }) => b.pos ?? b.pred));
+    const count = (n: number, skip = 0): SQL => sql`(select count(*) from (select m.id from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${n} offset ${skip}) f)`;
+    // Each asked once, and only once the one before it holds.
+    const short = sql`(select count(*) from pw) < ${k}`;
+    const full = sql`(select v from pf)`;
+    const crowded = sql`(select v from pb)`;
+    // The kept rate fills K inside the deeper walk, or a held branch's index read would read every match.
+    const rate = sql`(select count(*) from pw) >= ${Math.ceil((k * bound) / far)}`;
+    const walkOn = sql`(select v from pv)`;
+    const index = sql`${short} and ${full} and not ${walkOn}`;
+    const pr = (i: number): SQL => sql.raw("pr" + String(i));
+    const deep = late.map(({ b, i }) => sql`, ${pr(i)} as (select m.id as id, m.date as date ${this.from}
+        where ${where} and ${b.pred} and ${index} order by (m.date is null), m.date desc, m.id desc limit ${bound})`);
+    const passed = late.map(({ b, i }) => sql`select id, date from (select p.id, p.date from ${pr(i)} p where ${this.keeps(b.after!, sql`p.id`)} limit ${k}) k${pr(i)}`);
+    const found = [
+      sql`select id, date from pw`, sql`select id, date from pd`,
+      ...sure.map((b) => sql`select id, date from (${read(b)}) s where ${index}`), ...passed,
+    ];
+    const readFull = late.length === 0 ? sql`false` : sql.join(late.map(({ i }) => sql`(select count(*) from ${pr(i)}) >= ${bound}`), sql` or `);
+    return sql`(with pw as (select w.id as id, w.date as date from (${newestOf(bound)}) w where ${kept}
+        order by w.date desc nulls last, w.id desc limit ${k}),
+      pf as (select ${count(bound)} >= ${bound} as v),
+      pb as (select (select count(*) from (${newestOf(k)}) w where ${words}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)} as v),
+      pv as (select ${rate}${late.length === 0 ? sql`` : sql` or ${crowded}`} as v),
+      pd as (select w.id as id, w.date as date from (select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+          where ${where} order by m.date desc nulls last, m.id desc limit ${far - bound} offset ${bound}) w
+        where ${short} and ${full} and ${walkOn} and ${kept} order by w.date desc nulls last, w.id desc
+        limit greatest(${page} - (select count(*) from pw), 0))${sql.join(deep, sql``)}
+      select id, date, 0 as rank, 0 as x from pw where (select count(*) from pw) >= ${k}
+      union all
+      select id, date, 0 as rank, 0 as x
+      from (select id, date from (${sql.join(found, sql` union `)}) a
+        order by (date is null), date desc, id desc limit ${k}) pm
+      where ${short}
+      union all
+      select null, null, 0, 1 where ${short} and ${full} and (case when ${walkOn}
+        then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${readFull} end))`;
+  }
+
+  /** `after` holds for the message `id`: one document lookup, asked by itself. */
+  private keeps(after: SQL, id: SQL): SQL {
+    return sql`exists (select 1 from message_search s where s.message_id = ${id} and ${after} limit 1 offset 0)`;
+  }
+
+  /**
+   * An arm that says it is cut apart from its count (`x`): the desktop's walk, and an arm held to an
+   * excluded word ({@link boundedRead}'s row with no id), which may read fewer than K and still be cut.
+   */
+  private static capped(arm: Arm): boolean {
+    return arm.local !== undefined || arm.branches.some((b) => b.after !== undefined || b.pos !== undefined);
   }
 
   /**
@@ -609,12 +739,14 @@ export class SearchService {
    * holds fewer than K, the operator's matches are read off the trigram GIN. Either answer is the
    * newest K matches, and only those K are ranked.
    */
-  private typoRead(where: SQL, b: Branch, walkPred: SQL, k: number): SQL {
+  private typoRead(where: SQL, b: Branch, { walkPred, vectors }: NonNullable<Arm["typo"]>, k: number): SQL {
     const newestOf = (n: SQL | number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
     // Each walked message's document asked by itself (`offset 0`), so the walk streams in its order
     // and stops at K: joined, a mailbox inside the bound was read whole and sorted. `lower` once each.
-    const asked = (n: number): SQL => sql`(${newestOf(n)}) w cross join lateral (select s.account_id, s.terms, lower(s.terms) as t
+    // The vectors only for an excluded word, which the walk then asks of the whole letter.
+    const tsv = vectors ? sql`, s.head_tsv, s.text_tsv` : sql``;
+    const asked = (n: number): SQL => sql`(${newestOf(n)}) w cross join lateral (select s.account_id, s.terms, lower(s.terms) as t${tsv}
       from message_search s where s.message_id = w.id offset 0) s where ${walkPred}`;
     const h = sql`(select h from tp)`;
     const need = sql`((${k * k} + ${h} - 1) / (case when ${h} > 0 then ${h} else 1 end))`;
@@ -634,7 +766,8 @@ export class SearchService {
 
   /** The union of every branch's id set — what `total` and the facets count over. */
   private unionSql(where: SQL, arms: readonly Arm[]): SQL {
-    const selects = arms.flatMap((a) => a.branches).map((b) => sql`select m.id as id ${this.from} where ${where} and ${b.pred}`);
+    const selects = arms.flatMap((a) => a.branches)
+      .map((b) => sql`select m.id as id ${this.from} where ${where} and ${b.pred}${b.after ? sql` and ${b.after}` : sql``}`);
     return sql.join(selects, sql` union `);
   }
 
@@ -647,7 +780,7 @@ export class SearchService {
   private fusedArms(
     d: Dialect, where: SQL, arms: readonly Arm[], tier: SearchTier, limit: number,
     opts: { prefix?: string; gate?: SQL } = {},
-  ): { k: number; named: SQL; all: SQL; sizes: SQL[]; sizeNames: string[] } {
+  ): { k: number; named: SQL; all: SQL; sizes: SQL[]; sizeNames: string[]; cutRow: SQL } {
     const k = SEARCH_ARM_FACTOR * limit;
     const window = tier === "similar" ? k : SEARCH_RANK_WINDOW_FACTOR * limit;
     const pre = opts.prefix ?? "";
@@ -660,8 +793,9 @@ export class SearchService {
     const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
-    // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`).
-    const held = (i: number): SQL => (arms[i]!.local ? sql`(select count(*) + ${k} * coalesce(max(x), 0) from ${a(i)})`
+    // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`), as does an arm an
+    // exclusion cut short ({@link armSql}'s and {@link boundedRead}'s).
+    const held = (i: number): SQL => (SearchService.capped(arms[i]!) ? sql`(select count(id) + ${k} * coalesce(max(x), 0) from ${a(i)})`
       : sql`(select count(*) from ${a(i)})`);
     const size = (i: number): SQL => (opts.gate === undefined ? held(i)
       : sql`(case when ${opts.gate} then ${held(i)} else 0 end)`);
@@ -673,9 +807,11 @@ export class SearchService {
       ], sql`, `),
       // Each row carries the date its arm read, so the fused candidates are ordered without being
       // looked up again: one read of a message per candidate, a disk read each on a cold page.
-      all: sql.join(armSqls.map((_, i) => sql`select id, date, r from ${a(i)}`), sql` union all `),
+      all: sql.join(armSqls.map((_, i) => sql`select id, date, r from ${a(i)}${SearchService.capped(arms[i]!) ? sql` where id is not null` : sql``}`), sql` union all `),
       sizes: armSqls.map((_, i) => sql`${d.castInt(size(i))} as ${sql.raw(sizeNames[i]!)}`),
       sizeNames,
+      // Some arm says it is cut apart from its rows: it may be cut with no row at all.
+      cutRow: sql.join([sql`false`, ...armSqls.flatMap((_, i) => (SearchService.capped(arms[i]!) ? [sql`exists (select 1 from ${a(i)} where x = 1)`] : []))], sql` or `),
     };
   }
 
@@ -722,7 +858,8 @@ export class SearchService {
       }
       let t: SearchTier = cursor?.t ?? "exact";
       let rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, cursor, built);
-      if (cursor === null && t === "exact" && rows.items.length === 0) {
+      // In every order the tier the first relevance page answers: a cut exact tier with no row stays.
+      if (cursor === null && t === "exact" && rows.items.length === 0 && !(await this.cutEmpty(ctx, db, d, q, where, limit, built))) {
         t = "similar";
         rows = await this.pageRows(ctx, db, d, q, t, where, sort, limit, null, built);
       }
@@ -738,21 +875,29 @@ export class SearchService {
    * THE FIRST RELEVANCE PAGE AND ITS TYPO TIER AS ONE STATEMENT, for a store where a statement is
    * a round trip: the typo arms sit behind a count of the exact tier's fused rows, which Postgres
    * plans as a one-time filter, so they never start when the exact tier answers and a closest-
-   * words page costs the round trips of an exact one. No row at all answers as the typo tier.
+   * words page costs the round trips of an exact one. No row at all answers as the typo tier,
+   * unless an exact arm says it is cut with no row ({@link fusedArms}' `cutRow`: every newest match
+   * held an excluded word): then no guess is read, and the answer is the exact tier, cut and empty,
+   * so the count and the date orders read on. Its marker row (`t` 2) is the newest message under the
+   * filters, which the materializing join keeps, and is never shown.
    */
   private async firstRelevancePage(
     ctx: ServiceContext, db: unknown, d: Dialect, q: string, where: SQL, limit: number, built: StoreFacts,
   ): Promise<{ tier: SearchTier; got: TierRows }> {
-    const none = sql`(select count(*) from fused_e) = 0`;
+    const empty = sql`(select count(*) from fused_e) = 0`;
     const e = this.fusedArms(d, where, this.arms(ctx, d, q, "exact", built), "exact", limit);
+    const none = sql`${empty} and not (${e.cutRow})`;
     const s = this.fusedArms(d, where, this.arms(ctx, d, q, "similar", built), "similar", limit, { prefix: "s", gate: none });
+    const marker = sql`select m.id as id, m.date as date, 0 as score, 2 as t from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} and ${empty} and (${e.cutRow}) order by m.date desc nulls last, m.id desc limit 1`;
     const score = d.castInt(sql`sum(${sql.raw(String(RRF_SCALE))} / (${sql.raw(String(RRF_K))} + r))`);
     const rows = await materializePage(db as Db, ctx.accountId, {
       rows: sql`
       with ${e.named}, fused_e as (select id, date, ${score} as score from (${e.all}) x group by id, date),
       ${s.named}, fused_s as (select id, date, ${score} as score from (${s.all}) x where ${none} group by id, date),
-      fused as (select id, date, score, 0 as t from fused_e union all select id, date, score, 1 as t from fused_s)
-      select f.id as id, f.score as score, f.t as t, ${d.castInt(sql`(select count(*) from fused)`)} as fused,
+      fused as (select id, date, score, 0 as t from fused_e union all select id, date, score, 1 as t from fused_s
+        union all select id, date, score, t from (${marker}) mk)
+      select f.id as id, f.score as score, f.t as t, ${d.castInt(sql`(select count(*) from fused where t < 2)`)} as fused,
         ${sql.join([...e.sizes, ...s.sizes], sql`, `)}
       from fused f
       order by f.score desc, f.date desc nulls last, f.id desc
@@ -760,6 +905,9 @@ export class SearchService {
       keys: ["score", "t", "fused", ...e.sizeNames, ...s.sizeNames],
       order: sql`p.score desc, ${messages.date} desc nulls last, ${messages.id} desc`,
     });
+    if (rows.length > 0 && Number(rows[0]!.keys[1]) === 2) {
+      return { tier: "exact", got: { items: [], next: null, cut: true, candidates: 0 } };
+    }
     const page = rows.slice(0, limit);
     const last = page[page.length - 1];
     const tier: SearchTier = rows.length > 0 && Number(rows[0]!.keys[1]) === 0 ? "exact" : "similar";
@@ -774,6 +922,19 @@ export class SearchService {
         candidates: Number(rows[0]?.keys[2] ?? 0),
       },
     };
+  }
+
+  /**
+   * Is the exact tier, read as the first relevance page reads it at `limit`, cut with no row
+   * ({@link fusedArms}' `cutRow`)? Asked only once the exact tier holds nothing, so every answer —
+   * a page in any order, the estimate, the summary — stays in the tier the first page answers in.
+   */
+  private async cutEmpty(
+    ctx: ServiceContext, db: unknown, d: Dialect, q: string, where: SQL, limit: number, built: StoreFacts,
+  ): Promise<boolean> {
+    const e = this.fusedArms(d, where, this.arms(ctx, d, q, "exact", built), "exact", limit);
+    const [row] = await d.exec(db, sql`with ${e.named} select case when ${e.cutRow} then 1 else 0 end as c`);
+    return Number(row?.[0] ?? 0) === 1;
   }
 
   /**
@@ -880,7 +1041,8 @@ export class SearchService {
       let tier: SearchTier = "exact";
       let counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "exact", built)));
       await ctx.searchSupersede?.turn();
-      if (showSimilar(counted.total)) {
+      // The page's tier: a first page cut with no row stayed exact, so its count is this one, 0.
+      if (showSimilar(counted.total) && !(await this.cutEmpty(ctx, db, d, q, where, SearchService.pageOf(opts.limit), built))) {
         tier = "similar";
         counted = await this.facets(ctx, db, d, this.unionSql(where, this.arms(ctx, d, q, "similar", built)));
         await ctx.searchSupersede?.turn();
@@ -909,12 +1071,18 @@ export class SearchService {
         const { k, named, all, sizes } = this.fusedArms(d, where, arms, t, limit);
         const counted = await this.facets(ctx, db, d, sql`select id from (${all}) x group by id`, { named, extras: sizes });
         const cut = counted.extras.some((n) => n >= k);
-        return { ...counted, cut, estimateOf: cut && t !== "similar" ? () => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
+        return { ...counted, arms, cut, estimateOf: cut && t !== "similar" ? (): Promise<number> => this.estimateOf(ctx, d, where, arms, counted.extras, k, counted.total) : null };
       };
       let t: SearchTier = "exact";
       let counted = await ofTier(t);
       await ctx.searchSupersede?.turn();
-      if (showSimilar(counted.total)) {
+      if (counted.cut && counted.total === 0) {
+        // A cut exact tier is never replaced by guesses, though no row survived. The planner's
+        // reading counts the letters the walk found excluded, so it is no estimate here: the whole
+        // set is counted, the summary's count — 0 when nothing matches, never "about N".
+        counted = { ...(await this.facets(ctx, db, d, this.unionSql(where, counted.arms))), arms: counted.arms, cut: false, estimateOf: null };
+        await ctx.searchSupersede?.turn();
+      } else if (showSimilar(counted.total)) {
         t = "similar";
         counted = await ofTier(t);
         await ctx.searchSupersede?.turn();

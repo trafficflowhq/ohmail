@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partWordTails, partWordsOf } from "./index.js";
+import { assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partWordKept, partWordTails, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -152,43 +152,13 @@ export function deliverLocalNotifyAtCommit<T extends object>(db: T): T {
   return db;
 }
 
-/**
- * Postgres's `english` stopwords (`tsearch_data/english.stop`), which its parser drops from a query
- * and a part-word arm alike. `and`, `or` and `not` are among them, so FTS5's operator words go too.
- * This index keeps every word, so a query that kept one asked for a word the server never asks for.
- */
-export const ENGLISH_STOPWORDS: ReadonlySet<string> = new Set(`
-  i me my myself we our ours ourselves you your yours yourself yourselves he him his
-  himself she her hers herself it its itself they them their theirs themselves what which who
-  whom this that these those am is are was were be been being have has had
-  having do does did doing a an the and but if or because as until while
-  of at by for with about against between into through during before after above below to
-  from up down in out on off over under again further then once here there when
-  where why how all any both each few more most other some such no nor not
-  only own same so than too very s t can will just don should now
-`.trim().split(/\s+/));
+// Re-exported because it was defined here first and its test imports it by this path.
+export { ENGLISH_STOPWORDS };
 
-/** Between words, as `websearch_to_tsquery` reads them: `! & | ( ) < :` separate ANDed words. */
-const QUERY_SEPARATOR = /[\s!&|()<:]/u;
-/** A join the server's parser keeps inside one token (`sign-in`, `3.14`, `and/or`, an address). */
-const WORD_JOIN = /^[-./@]$/;
-
-/**
- * One typed operand as an FTS5 phrase of its letter-and-digit runs, or null. A stopword at either
- * end is dropped as the server drops it (`o'brien's` is `o brien`), unless a word join binds it to
- * its neighbour (`sign-in` stays two words); one inside a phrase stays, since the text holds it.
- */
+/** One typed operand as an FTS5 phrase of its letter-and-digit runs ({@link operandRuns}), or null. */
 function phraseOf(text: string): string | null {
-  const runs = [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((m) => ({ w: m[0], at: m.index, end: m.index + m[0].length }));
-  const bound = (i: number): boolean =>
-    (i > 0 && WORD_JOIN.test(text.slice(runs[i - 1]!.end, runs[i]!.at)))
-    || (i < runs.length - 1 && WORD_JOIN.test(text.slice(runs[i]!.end, runs[i + 1]!.at)));
-  const drop = (i: number): boolean => ENGLISH_STOPWORDS.has(runs[i]!.w.toLowerCase()) && !bound(i);
-  let lo = 0;
-  let hi = runs.length - 1;
-  while (lo <= hi && drop(lo)) lo++;
-  while (hi >= lo && drop(hi)) hi--;
-  return lo > hi ? null : `"${runs.slice(lo, hi + 1).map((r) => r.w).join(" ")}"`;
+  const runs = operandRuns(text);
+  return runs === null ? null : `"${runs.join(" ")}"`;
 }
 
 /**
@@ -203,46 +173,57 @@ function phraseOf(text: string): string | null {
  */
 export function ftsQueryOf(q: string, mode: "words" | "parts" = "words"): { match: string | null; exclude: string | null } {
   if (mode === "parts") {
-    const words = partWordsOf(q);
-    const kept = (words ?? []).filter((w, i) => !ENGLISH_STOPWORDS.has(w.toLowerCase())
-      || (i === words!.length - 1 && [...w].length >= PART_PREFIX_MIN_CHARS));
-    const group = (w: string): string => `(${[`"${w}"*`, ...partWordTails(w).map((t) => `"${w}${t}"`)].join(" OR ")})`;
+    const words = partWordsOf(q) ?? [];
     // AND spelled out: FTS5 takes no implicit AND beside a parenthesised group.
-    const match = kept.map((w) => ([...w].length >= PART_PREFIX_MIN_CHARS ? group(w) : `"${w}"`)).join(" AND ");
+    const match = words.filter((_, i) => partWordKept(words, i)).map(partGroupOf).join(" AND ");
     return { match: match === "" ? null : match, exclude: null };
   }
-  const terms: string[] = [];
-  const excluded: string[] = [];
-  let dashes = 0;
-  for (let i = 0; i < q.length;) {
-    const c = q[i]!;
-    if (QUERY_SEPARATOR.test(c)) { i++; continue; }
-    if (c === "-") { dashes++; i++; continue; }
-    let text: string;
-    if (c === '"') {
-      const close = q.indexOf('"', i + 1);
-      text = q.slice(i + 1, close < 0 ? q.length : close);
-      i = close < 0 ? q.length : close + 1;
-    } else {
-      let j = i;
-      while (j < q.length && q[j] !== '"' && !QUERY_SEPARATOR.test(q[j]!)) j++;
-      text = q.slice(i, j);
-      i = j;
-    }
-    const negated = dashes % 2 === 1;
-    dashes = 0;
-    if (c !== '"' && !negated && /^or$/i.test(text)) {
-      if (terms.length > 0 && terms[terms.length - 1] !== "OR") terms.push("OR");
-      continue;
-    }
-    const term = phraseOf(text);
-    if (term !== null) (negated ? excluded : terms).push(term);
-  }
-  if (terms[terms.length - 1] === "OR") terms.pop();
-  const positive = terms.join(" ");
-  if (positive === "") return { match: null, exclude: excluded.length === 0 ? null : excluded.join(" OR ") };
-  const head = terms.includes("OR") ? `(${positive})` : positive;
+  const ops = queryOperandsOf(q);
+  const groups = ops.any.map((g) => g.map((o) => phraseOf(o.text)!).join(" "));
+  const excluded = ops.none.map((o) => phraseOf(o.text)!);
+  if (groups.length === 0) return { match: null, exclude: excluded.length === 0 ? null : excluded.join(" OR ") };
+  const head = groups.length > 1 ? `(${groups.join(" OR ")})` : groups[0]!;
   return { match: [head, ...excluded.map((e) => `NOT ${e}`)].join(" "), exclude: null };
+}
+
+/** One part-word as FTS5: from four letters a group of its prefix and the word plus each tail, else the word. */
+function partGroupOf(w: string): string {
+  return [...w].length >= PART_PREFIX_MIN_CHARS ? `(${[`"${w}"*`, ...partWordTails(w).map((t) => `"${w}${t}"`)].join(" OR ")})` : `"${w}"`;
+}
+
+/** One operand as an FTS5 expression over every ß/ss form of it; an excluded one as typed. */
+function operandMatch(text: string, fold: boolean): string {
+  const forms = fold ? eszettForms(text) : [text];
+  const phrases = [...new Set(forms.map(phraseOf).filter((p): p is string => p !== null))];
+  return phrases.length === 1 ? phrases[0]! : `(${phrases.join(" OR ")})`;
+}
+
+/**
+ * `match` in the subject and sender (`m`) or in the body (`b`): one operand anywhere in the letter.
+ * A letter with no body row has a null `b.rowid`, whose `IN` is null, never false: coalesced, so
+ * `NOT` of it keeps that letter, as the server's `not coalesce(b.body_tsv @@ t, false)` does.
+ */
+function inLetter(match: string): SQL {
+  return sql`(m.rowid IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ${match})
+    OR coalesce(b.rowid IN (SELECT rowid FROM message_bodies_fts WHERE message_bodies_fts MATCH ${match}), 0))`;
+}
+
+/**
+ * The query over the whole letter once it straddles its parts ({@link straddlesParts}), as the
+ * server's: every operand of a group in either table, `head` held to it; no excluded one in either
+ * is `excluded`, which the caller holds every arm to.
+ */
+function acrossOf(q: string, head: SearchArm, recency: SQL): MailWordArms | null {
+  const ops = queryOperandsOf(q);
+  if (!straddlesParts(ops)) return null;
+  const groups = ops.any.map((g) => sql`(${sql.join(g.map((o) => inLetter(operandMatch(o.text, true))), sql` AND `)})`);
+  const none = ops.none.length === 0 ? undefined
+    : sql`(${sql.join(ops.none.map((o) => sql`NOT ${inLetter(operandMatch(o.text, false))}`), sql` AND `)})`;
+  const letter = groups.length === 0 ? sql`1` : sql`(${sql.join(groups, sql` OR `)})`;
+  return {
+    head: { pred: sql`(${head.pred} AND ${letter})`, rank: head.rank }, text: { pred: letter, rank: recency },
+    across: true, ...(none ? { excluded: none } : {}),
+  };
 }
 
 /**
@@ -512,16 +493,25 @@ export function sqliteDialect(): Dialect {
       },
       // The two FTS5 tables as the two word arms: subject/sender ranked by bm25, the body by
       // recency, as the server's arms rank. FTS5 reads a quoted span as a phrase.
-      words: (q: string): MailWordArms => ({
-        head: { pred: ftsRows(sql`m.rowid`, "messages_fts", q), rank: ftsRank(sql`m.rowid`, "messages_fts", q) },
-        text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q), rank: sql`coalesce(m.date, 0)` },
-      }),
+      words: (q: string): MailWordArms => {
+        const head = { pred: ftsRows(sql`m.rowid`, "messages_fts", q), rank: ftsRank(sql`m.rowid`, "messages_fts", q) };
+        const recency = sql`coalesce(m.date, 0)`;
+        return acrossOf(q, head, recency) ?? { head, text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q), rank: recency } };
+      },
       // The same two FTS5 tables as `words`, each word as itself and, from four letters, as the
       // start of a longer one or as itself plus a tail (`ftsQueryOf`): the tables stem (porter,
       // mail 0138), so a prefix alone misses `elevation`, whose stem `elev` is shorter than `elevat`.
       partWords: (q: string): MailWordArms | null => {
-        if (partWordsOf(q) === null) return null;
+        const words = partWordsOf(q);
+        if (words === null) return null;
         const recency = sql`coalesce(m.date, 0)`;
+        const ops = partOperandsOf(q);
+        if (ops !== null) {
+          // Each typed operand's kept words together in one table, each word in every ß/ss form.
+          const forms = (w: string): string => { const g = eszettForms(w).map(partGroupOf); return g.length === 1 ? g[0]! : `(${g.join(" OR ")})`; };
+          const letter = sql`(${sql.join(ops.map((op) => inLetter(op.map((i) => forms(words[i]!)).join(" AND "))), sql` AND `)})`;
+          return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
+        }
         return {
           head: { pred: ftsRows(sql`m.rowid`, "messages_fts", q, "parts"), rank: recency },
           text: { pred: ftsRows(sql`b.rowid`, "message_bodies_fts", q, "parts"), rank: recency },
