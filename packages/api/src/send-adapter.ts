@@ -171,8 +171,11 @@ export async function makeSendAdapter(
     }
 
     return {
-      send: async (msg) => {
-        const res = await adapter.send(msg);
+      send: async (msg, sendOpts) => {
+        const res = await adapter.send(msg, sendOpts);
+        if (res.sentLocator === null && res.unfiledCopy !== undefined) {
+          return { providerMessageId: res.providerMessageId, unfiledCopy: res.unfiledCopy };
+        }
         // `appended` carries the Sent copy this send appended, or found where the server files its
         // own — the UID and the exact bytes at it. Dropping it here (which this wrapper used to do) is what
         // left the just-sent message discoverable only by the sync worker's next pass over Sent, a
@@ -185,6 +188,8 @@ export async function makeSendAdapter(
         if (res.sentLocator === null) return { providerMessageId: res.providerMessageId };
         return { providerMessageId: res.providerMessageId, appended: { locator: res.sentLocator, raw: res.raw } };
       },
+      // Forwarded with `send`'s options: a copy the caller files is filed here, on the same connection.
+      fileSentCopy: (raw, messageId, o) => adapter.fileSentCopy(raw, messageId, o),
       messageInSent: (messageId) => adapter.messageInSent(messageId),
       close: () => adapter.close(),
       // FORWARDED, and without it the seam is decorative. `SendAdapter.forceClose` exists for a

@@ -379,6 +379,11 @@ export interface NewPlan {
    */
   adoption?: "peer";
   /**
+   * A NEW letter somebody else filed into a pile ({@link isFiledPile}), committed {@link passive}. Its
+   * place is decided like an adopted move's: `decided_at` gets a lower bound of the filing.
+   */
+  filedOnArrival?: true;
+  /**
    * The body is stored as this husk instead of its text: `too_large` for a message refused on size
    * ({@link Change.oversizeBytes}), whose plan was made from its header block. Set in ONE place,
    * {@link planChange}, whichever arm planned the row; absent stores the parsed body as always.
@@ -734,6 +739,12 @@ function documentKeeps(
   return !(verdict.destination !== null && effectForDestination(verdict.destination) === "deny");
 }
 
+/** An organized folder that new mail reaches only by somebody's filing: all but INBOX and the Screener. */
+function isFiledPile(folder: string): boolean {
+  const pile = canonicalDestination(folder);
+  return isOrganizedFolder(pile) && pile !== "INBOX" && pile !== "ohmail/Screener";
+}
+
 /**
  * The typed "no cap" — the value a composition root writes to say its deployment meters no
  * storage: the desktop engine, the self-host server (a self-hoster's limit is their own disk),
@@ -795,6 +806,16 @@ async function adoptionBound(repo: unknown, mailboxId: string): Promise<Date | n
   const r = repo as Partial<Pick<WorkerRepo, "getMailbox">>;
   if (typeof r.getMailbox !== "function") return null;
   return (await r.getMailbox(mailboxId))?.lastSyncAt ?? null;
+}
+
+/**
+ * THE EARLIEST A LETTER FILED ON ARRIVAL WAS FILED: its INTERNALDATE (a move keeps it), else the bound
+ * an adoption takes, else the epoch: decided at a time nobody knows, so it makes no press stale.
+ */
+async function filedOnArrivalBound(p: NewPlan, deps: CommitDeps): Promise<Date> {
+  if (p.arrivedAt !== null) return p.arrivedAt;
+  const since = deps.observedSince !== undefined ? deps.observedSince : await adoptionBound(deps.repo, deps.mailboxId);
+  return since ?? new Date(0);
 }
 
 /**
@@ -1348,6 +1369,10 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         : preBaselineBacklog || heldForImport
           ? change.locator.folder
           : decision.destination ?? change.locator.folder;
+    // A new letter somebody else filed into a pile stays there; only the gate and a denial still move it.
+    const filedOnArrival = isFiledPile(change.locator.folder) && decision.source !== "screener"
+      && !deniedByConsent && !authScreens(authVerdict) && !fileBounceAsReceipt;
+    if (filedOnArrival) desired = change.locator.folder;
 
     let ai: AiPlan | undefined;
     // The identity of ONE classification of THIS mail — the mailbox and the hashed dedup key,
@@ -1369,6 +1394,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
       classifier &&
       routing &&
       correspondent === null &&
+      !filedOnArrival &&
       // The unclear residue BY NAME: `own` also carries no destination and is never a question.
       decision.source === "unclear" &&
       decision.destination == null &&
@@ -1453,6 +1479,7 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
         // real move, and `reconcileFolders` skips `external` rows), and never for `admitBounce` — a
         // corroborated DSN is this organizer's decision even in place.
         ...(heldForImport && !admitBounce && desired === change.locator.folder ? { passive: true } : {}),
+        ...(filedOnArrival ? { passive: true, filedOnArrival: true } : {}),
         /* `fileBounceAsReceipt` AGAIN, READ ONCE: it decides where the report goes AND that the
            address it was sent to is dead, because those are one fact. ABSENT unless the report is
            ours — an empty array would be a third state meaning the same as absent, and it cannot
@@ -1851,8 +1878,10 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // pinned by a control of its own rather than left to this operator.
       lastSetBy: p.passive ? (p.adoption ?? "external") : "us",
       // AN ANSWER THE GATE ADMITTED IS DECIDED FOR THIS LETTER: a later letter from the address waits
-      // at the gate without pulling it back, and no decision about the sender moves it.
-      ...(p.correspondentAdmission || p.bounceAdmission ? { decidedAt: new Date() } : {}),
+      // at the gate without pulling it back, and no decision about the sender moves it. So is a letter
+      // filed on arrival: a client neither forecasts a rule's walk moving it nor counts it as ohmail's filing.
+      ...(p.filedOnArrival ? { decidedAt: await filedOnArrivalBound(p, deps) }
+        : p.correspondentAdmission || p.bounceAdmission ? { decidedAt: new Date() } : {}),
     };
     await repo.upsertFolderState(stored.id, initial);
 

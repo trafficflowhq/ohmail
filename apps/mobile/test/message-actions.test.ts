@@ -589,6 +589,8 @@ describe("the codex round-1 fixes, on the wire", () => {
     // The server could not say whether the message left; a fresh-key retry is the duplicate
     // door, so the outcome is its own locked state with its own sentence.
     expect(result.outcome).toBe("unverified");
+    // The row the server holds the send in is named, so the files kept on the phone stay with it.
+    expect(result.draftId).toBe("d-1");
     expect(live.toasts).toContain(Copy.replyUnverified);
     expect(live.toasts).not.toContain(Copy.replySent);
     expect(live.toasts).not.toContain(Copy.replyFailed);

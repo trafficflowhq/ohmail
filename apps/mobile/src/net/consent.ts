@@ -98,6 +98,11 @@ export interface FoldersConsent {
    */
   autoAct: boolean | null;
   autoSuggestOn: boolean;
+  /**
+   * THE SENT-MAIL SEED — `seedConfirmedAt`, `null` while the review was never confirmed. The whole
+   * field is `null` where the answer carries no `seedConfirmedAt` (an older door: nothing to offer).
+   */
+  seed: { confirmedAt: string | null } | null;
 }
 
 /** `'HH:MM'`, 24-hour — the server's own shape (`RESURFACE_TIME_RE`), shared by value. */
@@ -166,6 +171,9 @@ export async function readFoldersEnabled(session: ConnectedSession): Promise<Fol
       autoUnsubscribe: !(typeof body.blockAutoUnsubscribeAt === "string" && body.blockAutoUnsubscribeAt !== ""),
       autoAct: "autoActAt" in body ? typeof body.autoActAt === "string" && body.autoActAt !== "" : null,
       autoSuggestOn: typeof body.autoSuggestAt === "string" && body.autoSuggestAt !== "",
+      seed: "seedConfirmedAt" in body
+        ? { confirmedAt: typeof body.seedConfirmedAt === "string" && body.seedConfirmedAt !== "" ? body.seedConfirmedAt : null }
+        : null,
     };
   } catch {
     return null;
@@ -255,4 +263,114 @@ export async function writeThemeFace(
   if (res.status !== 200) throw new Error(`consent write refused (${res.status})`);
   const body = (await res.json()) as { themeFace?: unknown };
   return faceOf(body.themeFace);
+}
+
+/** The two members of a session the seed calls use — structural, like `profile-import.ts`'s. */
+export interface SeedSession {
+  readonly profile: { readonly origin: string; readonly apiBase: string | null };
+  fetch(url: string, init?: unknown): Promise<Response>;
+}
+
+/** One person the account has written to — `GET /consent/seed`'s candidate. */
+export interface SeedCandidate {
+  address: string;
+  name: string | null;
+  messages: number;
+  lastWrittenAt: string | null;
+  alreadyDecided: boolean;
+}
+
+export type SeedExclusion = "robot-recipient" | "machine-sent" | "own-address";
+
+/** The review list: shown before anything acts. */
+export interface SeedReview {
+  candidates: SeedCandidate[];
+  excluded: Array<{ address: string; reason: SeedExclusion }>;
+  scannedMessages: number;
+  truncated: boolean;
+}
+
+const EXCLUSIONS: ReadonlySet<string> = new Set(["robot-recipient", "machine-sent", "own-address"]);
+
+function candidateOf(raw: unknown): SeedCandidate | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const c = raw as Record<string, unknown>;
+  if (typeof c.address !== "string" || c.address === "") return null;
+  if (typeof c.messages !== "number" || typeof c.alreadyDecided !== "boolean") return null;
+  return {
+    address: c.address,
+    name: typeof c.name === "string" && c.name !== "" ? c.name : null,
+    messages: c.messages,
+    lastWrittenAt: typeof c.lastWrittenAt === "string" ? c.lastWrittenAt : null,
+    alreadyDecided: c.alreadyDecided,
+  };
+}
+
+/** The wire's review, malformed entries dropped; `null` when the answer is not a review at all. */
+export function seedReviewOf(raw: unknown): SeedReview | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const b = raw as Record<string, unknown>;
+  if (!Array.isArray(b.candidates)) return null;
+  const candidates = b.candidates.map(candidateOf).filter((c): c is SeedCandidate => c !== null);
+  const excluded = (Array.isArray(b.excluded) ? b.excluded : []).flatMap((e: unknown) => {
+    const x = e as Record<string, unknown> | null;
+    return x !== null && typeof x === "object" && typeof x.address === "string" && typeof x.reason === "string"
+      && EXCLUSIONS.has(x.reason) ? [{ address: x.address, reason: x.reason as SeedExclusion }] : [];
+  });
+  return {
+    candidates,
+    excluded,
+    scannedMessages: typeof b.scannedMessages === "number" ? b.scannedMessages : 0,
+    truncated: b.truncated === true,
+  };
+}
+
+/** Ask for the review list. Reads, writes nothing. `null` is "could not ask". */
+export async function readSeedReview(session: SeedSession): Promise<SeedReview | null> {
+  try {
+    const res = await session.fetch(`${requestBase(session)}/consent/seed`, { method: "GET" });
+    if (res.status !== 200) return null;
+    return seedReviewOf(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/** A refused confirm, carrying the door's own sentence when it wrote one. */
+export class SeedRefused extends Error {
+  constructor(readonly status: number | null, readonly said: string | null) {
+    super("seed_refused");
+  }
+}
+
+/**
+ * THE CONSENT EVENT — the ticked addresses, one key per press. Resolves to what the door wrote;
+ * throws {@link SeedRefused} on anything but 200.
+ */
+export async function confirmSeed(
+  session: SeedSession, addresses: readonly string[], key: string,
+): Promise<{ rulesCreated: number; contactsCreated: number }> {
+  let res: Response;
+  try {
+    res = await session.fetch(`${requestBase(session)}/consent/seed`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "Idempotency-Key": key },
+      body: JSON.stringify({ addresses }),
+    });
+  } catch {
+    throw new SeedRefused(null, null);
+  }
+  if (res.status !== 200) {
+    let said: string | null = null;
+    try {
+      const m = ((await res.json()) as { error?: { message?: unknown } }).error?.message;
+      if (typeof m === "string" && m.trim() !== "") said = m;
+    } catch { /* not JSON: the status is all there is */ }
+    throw new SeedRefused(res.status, said);
+  }
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  return {
+    rulesCreated: typeof body.rulesCreated === "number" ? body.rulesCreated : 0,
+    contactsCreated: typeof body.contactsCreated === "number" ? body.contactsCreated : 0,
+  };
 }

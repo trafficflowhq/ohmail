@@ -145,6 +145,7 @@ import { activeLocale } from "../i18n/locale";
 import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
+import type { LetterDoor } from "../compose/letter-store";
 import {
   mailboxProfiles, planScreenCommit, PRESS_VISIBLE_ROWS, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
   type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
@@ -2773,8 +2774,9 @@ export interface SendResult {
   outcome: SendOutcome;
   key?: string;
   /**
-   * `failed` only: the draft row the refused send left, an ordinary draft again. The composer
+   * `failed`: the draft row the refused send left, an ordinary draft again. The composer
    * binds it, so its next press and its keep are that row and never a second copy of one letter.
+   * `unverified`: the row the server holds the send in, which keeps the letter's files.
    */
   draftId?: string;
   /** `failed` only: which sentence the refusal earned, said in the composer ({@link failedSendCopy}). */
@@ -2867,8 +2869,10 @@ export interface FlushedOutcome {
    * "Reply sent." over the newer words would name a message nobody sent.
    */
   earlierWent: boolean;
-  /** A refused mail_send: the row the refusal left, which the composer binds so a press is that row. */
+  /** A refused mail_send: the row the refusal left, which the composer binds so a press is that row; an unverified one: the row holding it. */
   draftId?: string;
+  /** A confirmed draft_save: the row it made, which a letter kept on this phone binds to. */
+  createdDraftId?: string;
   /** A refused mail_send: the sentence the refusal earned ({@link failedSendCopy}). */
   failure?: FailedSendCopy;
   /**
@@ -3037,7 +3041,9 @@ export async function flushQueued(
     const refusedSend = status === "rolled_back" && meta.kind === "mail_send";
     outcomes.set(r.key, {
       status, kind: meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
-      ...(refusedSend ? { failure: failedSendCopy(r), ...(r.entityId ? { draftId: r.entityId } : {}) } : {}),
+      ...(refusedSend ? { failure: failedSendCopy(r) } : {}),
+      ...((refusedSend || (status === "unverified" && meta.kind === "mail_send")) && r.entityId ? { draftId: r.entityId } : {}),
+      ...(status === "confirmed" && meta.kind === "draft_save" && r.entityId ? { createdDraftId: r.entityId } : {}),
       done: done.get(r.key) ?? null,
     });
   }
@@ -3080,13 +3086,18 @@ export interface DraftKeep {
   bcc?: EmailAddress[];
   subject: string;
   body: string;
+  /** Files kept with the draft on this phone (a draft row holds no bytes). */
   files: number;
+  /** Files the close named as past what this phone keeps, discarded with the second close. */
+  dropped?: number;
   /** The row this composer is bound to ({@link SendResult.draftId}): the keep updates it in place. */
   draftId?: string | null;
   /** A composer's own save as it goes: the row is written and nothing is said. */
   quiet?: boolean;
   /** The bound row was sent from another device, so the keep wrote a NEW row: bind to it. */
   rebind?: (draftId: string) => void;
+  /** The row the keep made or updated, or the key its queued save waits under. */
+  row?: (r: { draftId: string | null; key: string | null }) => void;
 }
 
 /**
@@ -3094,6 +3105,9 @@ export interface DraftKeep {
  * `tooLong` — the body is past the draft limit (`DRAFT_BODY_MAX_BYTES`), so no save is tried.
  */
 export type DraftKeepOutcome = "kept" | "refused" | "tooLong";
+
+/** What a kept reply or forward is addressed to and called, kept so it outlives its original. */
+export interface KeptEnvelope { to: EmailAddress[]; cc: EmailAddress[]; subject: string }
 
 export const UNDO_MS = 8000;
 
@@ -3174,6 +3188,8 @@ export interface LiveDeps {
    * of the app already had.
    */
   ownAddresses?: () => readonly string[];
+  /** The letters kept on this phone, and the files kept with drafts (`compose/letter-store.ts`). */
+  letters?: LetterDoor;
   /**
    * THE ACCOUNT'S RESURFACE TIME — `'HH:MM'`, or `null` for "never chosen" (mail 0110), as a
    * GETTER for `ownAddresses`' reason exactly: this facade is identity-stable by design while
@@ -3518,6 +3534,8 @@ export interface LiveWorldActions {
    * discards it; `refused` names nothing and the sheet stays open to say so.
    */
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
+  /** A reply's or forward's derived envelope, for the letter kept on this phone. */
+  keepEnvelope(mode: DraftKeep["mode"], messageId: string | null): KeptEnvelope | null;
   /** The mirror says this row was SENT — by another device while a composer here holds it. */
   draftSent(draftId: string): boolean;
   /**
@@ -5025,7 +5043,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return {
       outcome,
       ...(outcome === "queued" && first ? { key: first.key } : {}),
-      ...(outcome === "failed" && settled?.entityId ? { draftId: settled.entityId } : {}),
+      ...((outcome === "failed" || outcome === "unverified") && settled?.entityId ? { draftId: settled.entityId } : {}),
       ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
       ...(accepted ? { accepted: true as const } : {}),
       ...(rearmed ? { rearmed: true as const } : {}),
@@ -5199,8 +5217,12 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       .mutate({ kind: "draft_discard", draftId })
       .then((res) => pressVerdict(res), () => PRESS_THREW);
     switch (r.kind) {
-      case "applied":
+      case "applied": {
+        // The files kept with it on this phone go with it.
+        const letter = deps.letters?.letterOf(draftId);
+        if (letter) deps.letters!.drop(letter.id);
         return "discarded";
+      }
       case "queued":
         /* `organizer` is the SERVER's record — the optimistic paint went back and the row is on
            screen while the install that organizes this mailbox does the delete; `retry` is this
@@ -5264,6 +5286,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       return freed?.error?.code === "send_still_running" ? "stillRunning" : "notReached";
     }
     const html = typeof d.html === "string" && d.html !== "" ? d.html : null;
+    /* THE FILES KEPT WITH IT ON THIS PHONE go with it, as they went with the first press. */
+    const files = (deps.letters?.filesOf(draftId) ?? []).map(({ filename, contentType, contentBase64 }) => ({ filename, contentType, contentBase64 }));
     const r = await sent(
       dispatchSend({
         kind: "mail_send" as const,
@@ -5277,11 +5301,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to: d.to,
         cc: d.cc,
         bcc: d.bcc,
+        ...(files.length > 0 ? { attachments: files } : {}),
       }),
       Copy.composeSent,
       Copy.composeEarlierWent,
       false,
     );
+    if (r.outcome === "sent") {
+      const letter = deps.letters?.letterOf(draftId);
+      if (letter) deps.letters!.drop(letter.id);
+    }
     return r.outcome;
   };
 
@@ -5318,6 +5347,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const left = draftId === null ? null : draftLeft(draftId);
     if (left === null) return null;
     return { outcome: "failed", failure: left === "sent" ? "replySentElsewhere" : "replyDeletedElsewhere" };
+  };
+
+  /** A reply's or forward's derived recipients and subject, as the keep derives them; `null` for a new mail. */
+  const keepEnvelope = (mode: DraftKeep["mode"], messageId: string | null): KeptEnvelope | null => {
+    const parent = messageId === null ? undefined : messageOf(messageId);
+    if (!parent || mode === "new") return null;
+    if (mode === "forward") return { to: [], cc: [], subject: forwardSubject(parent.subject) };
+    const env = mode === "replyAll" ? replyAllRecipients(parent, deps.ownAddresses?.() ?? NO_OWN_ADDRESSES) : null;
+    return { to: env ? env.to : [parent.from], cc: env ? env.cc : [], subject: replySubject(parent.subject) };
   };
 
   const draftKeep = async (k: DraftKeep): Promise<DraftKeepOutcome> => {
@@ -5362,16 +5400,18 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     if (r?.status === "rolled_back" && r.error?.code === "draft_too_large") return "tooLong";
     if (r === null || r.status === "rolled_back") return "refused";
     if (target !== bound && r.entityId) k.rebind?.(r.entityId);
+    k.row?.({ draftId: r.status === "confirmed" ? r.entityId ?? target : target, key: r.key ?? null });
     // A newer save of this row replaced this one: it owns the sentence.
     if (k.quiet === true || r.status === "superseded") return "kept";
-    const without = k.files > 0;
+    /* A draft row holds no bytes: files kept are kept on this phone only, and said so. */
+    const files = k.files > 0 ? "Here" : (k.dropped ?? 0) > 0 ? "WithoutFiles" : "";
     if (r.status === "queued") {
-      toast(refuse(without ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));
+      toast(refuse(files === "Here" ? "composeKeptQueuedHere" : files === "WithoutFiles" ? "composeKeptQueuedWithoutFiles" : "composeKeptQueued"));
       return "kept";
     }
     const id = r.entityId ?? bound;
     toast(
-      refuse(without ? "composeKeptWithoutFiles" : "composeKept"),
+      refuse(files === "Here" ? "composeKeptHere" : files === "WithoutFiles" ? "composeKeptWithoutFiles" : "composeKept"),
       id ? { undo: () => { void draftDiscard(id); } } : undefined,
     );
     return "kept";
@@ -5880,7 +5920,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     deleteMessage, trashList, trashRestore,
     sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelSchedule, tagToggle, tagCreate, screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
-    draftDiscard, draftResolve, draftSendAgain, draftKeep, draftSent, draftLeft,
+    draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
   };
 }
@@ -6009,6 +6049,8 @@ export interface WorldActions {
   draftSendAgain(draftId: string): Promise<DraftSendAgainOutcome>;
   /** Keep what a closing composer holds — see {@link LiveWorldActions.draftKeep}. */
   draftKeep(keep: DraftKeep): Promise<DraftKeepOutcome>;
+  /** A reply's or forward's derived envelope, for the letter kept on this phone. */
+  keepEnvelope(mode: DraftKeep["mode"], messageId: string | null): KeptEnvelope | null;
   /** See {@link LiveWorldActions.draftSent}. */
   draftSent(draftId: string): boolean;
   /** See {@link LiveWorldActions.draftLeft}. */
@@ -6095,6 +6137,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),
     draftSendAgain: (draftId) => current().draftSendAgain(draftId),
     draftKeep: (keep) => current().draftKeep(keep),
+    keepEnvelope: (mode, messageId) => current().keepEnvelope(mode, messageId),
     draftSent: (draftId) => current().draftSent(draftId),
     draftLeft: (draftId) => current().draftLeft(draftId),
     sendOutcome: (key) => current().sendOutcome(key),

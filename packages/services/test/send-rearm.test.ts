@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { attachments, drafts, mailboxes, messageBodies, outboundSends, outboundSendFingerprints } from "@trafficflow/db";
-import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
+import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
 import { SendNotSubmitted } from "@trafficflow/core";
 import {
   MailboxSideRefusal, SendService, ServiceError, TransientDialRefusal, runScheduledSendPass,
@@ -26,6 +26,8 @@ import { seedBody, seedMessage } from "../../api/test/helpers.js";
  */
 
 const svc = new SendService();
+/** The successor of a process that died mid-attempt: it cannot see `svc`'s live attempts. */
+const elsewhere = new SendService();
 const START = new Date("2026-10-19T08:00:00.000Z");
 const WINDOW_MS = 120_000;
 const shaped = (fields: Record<string, unknown>): Error => Object.assign(new Error("dial"), fields);
@@ -48,9 +50,11 @@ function transport(script: Script = {}) {
       throw fault();
     }
     return {
-      async send(msg: OutboundMessage) {
+      async send(msg: OutboundMessage, opts?: SendOptions) {
         const f = script.submit?.[state.submits] ?? null;
         state.submits += 1;
+        // A hang waits for the reply after the whole message went, as a slow server's 250 does.
+        if (f === HANG || !f) await opts?.beforeRelease?.();
         if (f === HANG) {
           await new Promise<void>((_resolve, reject) => { hung.push(() => reject(shaped({ code: "ECONNRESET" }))); });
         } else if (f) {
@@ -549,10 +553,10 @@ describe("a crash between attempts sends at most once", () => {
     // The re-armed attempt's submission never answers: it may have reached the server.
     const dying = outcome(press(w, "k1", tr, {}, { attemptCeilingMs: 60_000 }));
     for (let i = 0; i < 200 && tr.state.submits < 1; i++) await new Promise((r) => setTimeout(r, 5));
-    expect((await w.row("k1")).offerState).toBe("offered");
+    expect((await w.row("k1")).offerState).toBe("complete");
     expect((await press(w, "k1", tr)).status, "a live re-armed attempt is answered in_flight").toBe("in_flight");
     w.advance(SEND_STALE_AFTER_MS + 1_000);
-    const settled = await press(w, "k1", tr);
+    const settled = await elsewhere.send(w.ctx, w.draftId, "k1", { openSendAdapter: tr.factory, rearmTransient: true } as never);
     expect(settled.status).toBe("unverified");
     expect(tr.state.probes).toBe(1);
     expect(tr.state.delivered, "nothing was resent").toHaveLength(0);

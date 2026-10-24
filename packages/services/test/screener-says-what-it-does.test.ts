@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, folderState, mailboxes, messageBodies, messages, rules, type Tx } from "@trafficflow/db";
+import { planChange, commitChange, UNMETERED_STORAGE_CAP, type Change } from "@trafficflow/core";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { cutlineCounts } from "../src/consent-cutline.js";
 import { heldReleaseGroups, heldReleaseTotal } from "../src/held-release-service.js";
-import { messageRowToDTO } from "../src/dto/materialize.js";
+import { materializeMessage, messageRowToDTO } from "../src/dto/materialize.js";
 import type { ServiceContext } from "../src/context.js";
 
 /**
@@ -39,7 +41,7 @@ async function world() {
     return m!.id as string;
   };
   const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => NOW, requestId: `s-${randomUUID().slice(0, 8)}` };
-  return { db, tx: db as unknown as Tx, accountId, ctx, letter };
+  return { db, tx: db as unknown as Tx, accountId, mailboxId: mb!.id as string, ctx, letter };
 }
 
 describe("a letter whose place somebody decided", () => {
@@ -54,6 +56,27 @@ describe("a letter whose place somebody decided", () => {
     };
     expect((await dto(answer)).placeDecided).toBe(true);
     expect("placeDecided" in (await dto(plain))).toBe(false);
+  });
+
+  it("is stated for a letter another client filed on arrival, not for the sender's Ohbox letter", async () => {
+    const w = await world();
+    const from = "piet@people.invalid";
+    await w.db.insert(rules).values({ accountId: w.accountId, kind: "sender", match: from, destination: "INBOX", enabled: true, priority: 0, provenance: "promoted" });
+    const repo = makeDrizzleRepo(w.db);
+    const ingest = async (folder: string, ref: string) => {
+      const raw = Buffer.from([`Message-ID: <${ref}@people.invalid>`, `From: ${from}`, "To: me@ohmail.test",
+        "Subject: the invoice", "Content-Type: text/plain; charset=utf-8", "", "Attached."].join("\r\n"));
+      const change: Change = { type: "create", locator: { folder, ref }, raw, seen: false, internalDate: NOW };
+      const plan = await planChange(change, { repo, accountId: w.accountId, mailboxId: w.mailboxId, routing: repo, readerMode: false });
+      const { messageId } = await repo.transaction((tx) => commitChange(plan, {
+        repo: tx, routing: tx, accountId: w.accountId, mailboxId: w.mailboxId, storageCap: UNMETERED_STORAGE_CAP,
+      }));
+      return (await materializeMessage(w.db, w.accountId, messageId))!;
+    };
+    const filed = await ingest("ohmail/News", "5:1");
+    expect([filed.folder, filed.placeDecided]).toEqual(["ohmail/News", true]);
+    const ohbox = await ingest("INBOX", "1:1");
+    expect([ohbox.folder, "placeDecided" in ohbox]).toEqual(["INBOX", false]);
   });
 
   it("is no undecided residence: an author whose only letter is an admitted answer owes no decision", async () => {

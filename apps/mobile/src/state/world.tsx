@@ -54,6 +54,9 @@ import { claimHere } from "../ui/standalone-form";
 import { readFolderSummary } from "../net/folder-ops";
 import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
+import { openLetterSession, ownedLetters } from "../compose/letter-keeper";
+import { restoreLetters, sayLetterRestore, settleLetters, sweepLetters } from "../compose/letter-restore";
+import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
@@ -67,6 +70,7 @@ import {
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
   answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  keptRecipients,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -166,6 +170,7 @@ import {
   routingReader,
   subscribeRoutingPlaces,
 } from "./held-routing";
+import { worldSeedOf, type WorldSeed } from "./seed-offer";
 
 export type {
   FolderEntity, MoveTarget, PhoneOrganizer, ScreenerRow, WorldActions, WorldHistory, WorldMail,
@@ -481,6 +486,8 @@ export interface World {
    * the account stored and rejects on a refusal.
    */
   autoAct: { on: boolean; suggestOn: boolean; pending: boolean; set(on: boolean): Promise<boolean> } | null;
+  /** The sent-mail seed as the consent read last said it (`state/seed-offer.ts`). */
+  seed: WorldSeed;
   message(id: string): WorldMail | undefined;
   /**
    * WHAT A PRESS ON AN OHBOX ROW OPENS: the engine's `rowOpenTarget` for the pressed row's message
@@ -626,6 +633,7 @@ const NO_ACTIONS: WorldActions = {
   draftSendAgain: () => Promise.resolve("notReached" as const),
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
+  keepEnvelope: () => null,
   draftSent: () => false,
   draftLeft: () => null,
   sendOutcome: () => "unknown",
@@ -715,6 +723,7 @@ function emptyWorld(actions: WorldActions): World {
     // to. `false` is "not confirmed", which is exactly what nothing-connected means.
     face: { account: null, known: false, pending: false, applyAll: () => Promise.resolve(false) },
     autoAct: null,
+    seed: { known: false },
     message: () => undefined,
     rowOpenTarget: (id) => id,
     filesOf: () => undefined,
@@ -758,7 +767,7 @@ export function useEngineQueuesAsk(): () => void {
 }
 
 /** The projection plus the per-render facts, the projection's getters carried over by descriptor. */
-function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">): World {
+function withFacts(projected: Projected, facts: Pick<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "seed" | "sendOutcome" | "sendSettlement">): World {
   const out = Object.defineProperties({}, Object.getOwnPropertyDescriptors(projected)) as World;
   return Object.assign(out, facts);
 }
@@ -974,6 +983,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   /* The act on suggestions, as the account's consent read last said it; `null` = no axis yet. */
   const [autoAct, setAutoAct] = useState<{ on: boolean; suggestOn: boolean } | null>(null);
   const [autoActPending, setAutoActPending] = useState(false);
+  /* The sent-mail seed off the same read; unknown until one lands, reset per session. */
+  const [seed, setSeed] = useState<WorldSeed>({ known: false });
   /**
    * THE PIN AS IT STANDS RIGHT NOW, readable at write-completion time (review-caught). The
    * selector is live while the PATCH flies, so the pin may have moved since the press; a closure
@@ -1096,6 +1107,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       // user's write, and nothing on this phone writes a capability.
       setFoldersStorable(ans.storable);
       setAutoAct(ans.autoAct === null ? null : { on: ans.autoAct, suggestOn: ans.autoSuggestOn });
+      setSeed(worldSeedOf(ans.seed));
     });
     /* THE MAILBOX READ, built beside the folders machine and gated on the SAME identity: a
        superseded session's late answer applies nothing. Its own request rather than a field on
@@ -1194,6 +1206,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     // Account A's act consent says nothing about account B's.
     setAutoAct(null);
     setAutoActPending(false);
+    setSeed({ known: false });
     drainOwed.current = false; // the debt was the old session's; the new one owes nothing
     if (machine) void machine.refresh();
   }, [machine]);
@@ -1310,6 +1323,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * left commit here, before the first paint shows their mail where it was.
    */
   const journal = session?.store ?? null;
+  /* THE LETTERS BEING WRITTEN, on the same journal (`compose/letter-store.ts`): one door per session. */
+  const letters = useMemo(() => (journal ? letterDoor(journal) : null), [journal]);
+  useLayoutEffect(() => {
+    openLetterSession(letters ? { door: letters, uuid: () => Crypto.randomUUID() } : null);
+    return () => openLetterSession(null);
+  }, [letters]);
   useLayoutEffect(() => {
     if (!engine || !journal) return undefined;
     openRoutingSession({
@@ -1354,6 +1373,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine
       ? liveActions({
         engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
+        ...(letters ? { letters } : {}),
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
@@ -1397,8 +1417,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         },
       })
       : null),
-    [engine, showToast, zone],
+    [engine, showToast, zone, letters],
   );
+  /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
+  useEffect(() => {
+    if (!engine || !acts || !letters) return;
+    let live = true;
+    void restoreLetters({
+      door: letters,
+      owned: ownedLetters(),
+      outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+      keep: (k) => acts.draftKeep(k),
+      hasMessage: (id) => engine.read().get("message", id) !== undefined,
+      drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+      firstSync: () => engine.syncOnce().then(() => undefined),
+      parse: keptRecipients,
+    }).then((restored) => {
+      const say = sayLetterRestore(restored);
+      if (live && say !== null) showToast(say);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [engine, acts, letters, showToast]);
   // The held file lists heal after a drop, for as long as this facade serves (`watchLists`).
   useEffect(() => acts?.watchLists(), [acts]);
 
@@ -1440,6 +1479,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const saidGoing = useRef(new Set<string>());
   useEffect(() => {
     if (conn.syncing) tried.current.clear();
+    /* A completed drain: a kept draft sent or deleted on another device takes its files with it. */
+    else if (letters && acts) sweepLetters(letters, ownedLetters(), acts.draftLeft);
   }, [conn.syncing]);
   useEffect(() => {
     if (conn.syncing || engine === null || acts === null || flushing.current === engine) return;
@@ -1475,6 +1516,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
         // to the session on screen, and this one's is gone.
         if (backendEngineRef.current !== flushed) return;
+        if (letters) settleLetters(letters, ownedLetters(), settled);
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
           settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
@@ -1605,6 +1647,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
           draftSendAgain: (draftId) => acts.draftSendAgain(draftId),
           draftKeep: (keep) => acts.draftKeep(keep),
+          keepEnvelope: (mode, messageId) => acts.keepEnvelope(mode, messageId),
           draftSent: (draftId) => acts.draftSent(draftId),
           draftLeft: (draftId) => acts.draftLeft(draftId),
           sendOutcome: (key) => outcomeOf(key),
@@ -1787,13 +1830,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         applyAll: applyFaceAllDevices,
       },
       autoAct: autoAct === null ? null : { ...autoAct, pending: autoActPending, set: setAutoActOn },
+      seed,
       sendOutcome: outcomeOf,
       sendSettlement: settlementOf,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projected, engine, session, actions, zone, conn.syncing, conn.syncError, outcomeSeq,
     outcomeOf, settlementOf, accountFace, accountFaceKnown, facePending, applyFaceAllDevices,
-    autoAct, autoActPending, setAutoActOn]);
+    autoAct, autoActPending, setAutoActOn, seed]);
 
   /**
    * The freshness watcher — the clock's other half, after the memo because its sentinel IS the

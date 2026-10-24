@@ -164,6 +164,9 @@ export function mailServer() {
   let themeFace: string | null | undefined;
   /** The unsubscribe switch (mail 0054): `undefined` omits it — an API too old to carry it. */
   let blockAutoUnsubscribeAt: string | null | undefined;
+  /* THE SENT-MAIL SEED: `undefined` omits `seedConfirmedAt` (a door without it); the review is what GET answers. */
+  let seedConfirmedAt: string | null | undefined;
+  let seedReview: unknown = { candidates: [], excluded: [], scannedMessages: 0, truncated: false };
   /**
    * The account ACCEPTS a face write and leaves the row as it was — a policy the client cannot
    * see, answered 200. The only thing separating "the account adopted ohmarchy" from "it did
@@ -322,7 +325,26 @@ export function mailServer() {
           // Same rule for the face: absent = an API that cannot store one.
           ...(themeFace !== undefined ? { themeFace } : {}),
           ...(blockAutoUnsubscribeAt !== undefined ? { blockAutoUnsubscribeAt } : {}),
+          ...(seedConfirmedAt !== undefined ? { seedConfirmedAt } : {}),
         });
+        return;
+      }
+      /* `GET /consent/seed` answers the review; `POST` writes one `seeded-from-sent` INBOX rule per
+         address that has none, stamps the confirm and answers `confirmSeed`'s counts. */
+      if (url.pathname === "/consent/seed" && method === "GET") {
+        json(200, seedReview);
+        return;
+      }
+      if (url.pathname === "/consent/seed" && method === "POST") {
+        const addresses = (JSON.parse(body || "{}") as { addresses?: string[] }).addresses ?? [];
+        let rulesCreated = 0;
+        for (const a of addresses) {
+          if ([...rules.values()].some((r) => r.kind === "sender" && r.match === a)) continue;
+          addRule({ ...ruleDto(`rule-seed-${seq + 1}`, "sender", a, "INBOX"), provenance: "seeded-from-sent" } as RuleDTO);
+          rulesCreated += 1;
+        }
+        seedConfirmedAt = new Date().toISOString();
+        json(200, { rulesCreated, contactsCreated: addresses.length, declined: 0, skipped: addresses.length - rulesCreated }, seq);
         return;
       }
       /* ── the two body reads, in the API's own answer shapes ───────────────────────────────
@@ -920,6 +942,10 @@ export function mailServer() {
     setThemeFace: (face: string | null | undefined) => { themeFace = face; },
     /** The account's unsubscribe switch as `GET /consent` serves it; `undefined` omits the field. */
     setBlockAutoUnsubscribeAt: (at: string | null | undefined) => { blockAutoUnsubscribeAt = at; },
+    /** `seedConfirmedAt` on `GET /consent`; `undefined` omits it. */
+    setSeedConfirmedAt: (at: string | null | undefined) => { seedConfirmedAt = at; },
+    /** What `GET /consent/seed` answers from now on. */
+    setSeedReview: (review: unknown) => { seedReview = review; },
     /** The face as the account holds it — what a travel assertion reads. */
     themeFace: () => themeFace,
     /** Accept every face write and store none — see {@link declineFace}. */

@@ -19,6 +19,8 @@ import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, type LiveWorldActions, type ToastOpts } from "../src/state/live";
 import { keepAct, unmountKeep, worthKeeping } from "../src/ui/compose-keep";
+import { openLetterKeeper } from "../src/compose/letter-keeper";
+import { KEPT_FILES_MAX_BYTES, letterDoor, type LetterJournal } from "../src/compose/letter-store";
 import { DRAFT_BODY_MAX_BYTES } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
@@ -86,15 +88,21 @@ describe("a closed composer keeps its text as a draft", () => {
     expect(posted(live.fake)[0]!.inReplyToMessageId ?? null).toBeNull();
   }, 30_000);
 
-  it("a forward keeps its note under Fwd: and names the message it forwards, and says the files were not kept", async () => {
+  it("a forward keeps its note under Fwd: and names the message it forwards, and says its files stay on this phone", async () => {
     const live = await scene();
+    let row: { draftId: string | null; key: string | null } | null = null;
     await live.actions.draftKeep({
       mode: "forward", messageId: "m1", mailboxId: null,
-      to: [{ name: null, address: "peer@fake.test" }], subject: "", body: "FYI", files: 2,
+      to: [{ name: null, address: "peer@fake.test" }], subject: "", body: "FYI", files: 2, row: (r) => { row = r; },
     });
     expect(posted(live.fake)[0]).toMatchObject({ subject: "Fwd: Welcome", body: "FYI" });
     expect(posted(live.fake)[0]!.forwardOfMessageId, "the kept forward names no original").toBe("m1");
     expect(posted(live.fake)[0]!.inReplyToMessageId ?? null, "a forward was kept as a reply").toBeNull();
+    // A draft row holds no bytes: the files are kept, on this phone, and the sentence says where.
+    expect(live.toasts.at(-1)!.say).toBe(Copy.composeKeptHere);
+    expect(row).toMatchObject({ draftId: "d-1" });
+    // Only files the close named as past the phone's limit, and discarded, are said as not kept.
+    await live.actions.draftKeep({ mode: "new", messageId: null, mailboxId: "mb-1", to: [], subject: "x", body: "y", files: 0, dropped: 1 });
     expect(live.toasts.at(-1)!.say).toBe(Copy.composeKeptWithoutFiles);
   }, 30_000);
 
@@ -111,27 +119,61 @@ describe("a closed composer keeps its text as a draft", () => {
 });
 
 describe("every road out of the sheet asks before it closes", () => {
-  it("text is kept, files alone are asked about, and the second close discards", () => {
+  it("text and files are kept, files past the phone's limit are named first, and the second close discards", () => {
     const worth = worthKeeping({ fresh: false, subject: "", body: "x" });
-    expect(keepAct({ phase: "idle", worth, files: 0, armed: false })).toBe("keep");
-    expect(keepAct({ phase: "idle", worth: false, files: 1, armed: false })).toBe("ask");
-    expect(keepAct({ phase: "idle", worth: false, files: 1, armed: true })).toBe("close");
-    expect(keepAct({ phase: "idle", worth, files: 0, armed: true })).toBe("close");
+    expect(keepAct({ phase: "idle", worth, filesOver: 0, armed: false })).toBe("keep");
+    // A letter with only a file is something the person made: it is kept, file and all.
+    expect(keepAct({ phase: "idle", worth: worthKeeping({ fresh: false, subject: "", body: "", files: 1 }), filesOver: 0, armed: false })).toBe("keep");
+    expect(keepAct({ phase: "idle", worth, filesOver: 1, armed: false })).toBe("ask");
+    expect(keepAct({ phase: "idle", worth, filesOver: 0, armed: true })).toBe("close");
     // CONTROL: an empty composer just closes, and a queued send already carries its text.
-    expect(keepAct({ phase: "idle", worth: false, files: 0, armed: false })).toBe("close");
-    expect(keepAct({ phase: "queued", worth, files: 0, armed: false })).toBe("close");
+    expect(keepAct({ phase: "idle", worth: false, filesOver: 0, armed: false })).toBe("close");
+    expect(keepAct({ phase: "queued", worth, filesOver: 0, armed: false })).toBe("close");
     // Unless its Cancel is owed: those words go nowhere, so they are kept as an idle letter's are.
-    expect(keepAct({ phase: "queued", worth, files: 0, armed: false, cancelOwed: true })).toBe("keep");
-    expect(keepAct({ phase: "queued", worth: false, files: 1, armed: false, cancelOwed: true })).toBe("ask");
-    expect(keepAct({ phase: "queued", worth, files: 0, armed: true, cancelOwed: true })).toBe("close");
+    expect(keepAct({ phase: "queued", worth, filesOver: 0, armed: false, cancelOwed: true })).toBe("keep");
+    expect(keepAct({ phase: "queued", worth, filesOver: 1, armed: false, cancelOwed: true })).toBe("ask");
+    expect(keepAct({ phase: "queued", worth, filesOver: 0, armed: true, cancelOwed: true })).toBe("close");
     // Unverified may have gone: its words are never offered again as a draft.
-    expect(keepAct({ phase: "unverified", worth, files: 0, armed: false, cancelOwed: true })).toBe("close");
+    expect(keepAct({ phase: "unverified", worth, filesOver: 0, armed: false, cancelOwed: true })).toBe("close");
   });
 
   it("a recipient or a reply's subject alone is not something the person wrote", () => {
     expect(worthKeeping({ fresh: true, subject: "Hi", body: "" })).toBe(true);
     expect(worthKeeping({ fresh: false, subject: "Re: x", body: " " })).toBe(false);
     expect(worthKeeping({ fresh: true, subject: "", body: "" })).toBe(false);
+  });
+
+  it("files past what the phone keeps with drafts are named, and the keep goes without exactly those", async () => {
+    const rows = new Map<string, unknown>();
+    const journal: LetterJournal = {
+      get: <T>(type: string, id: string) => rows.get(`${type}:${id}`) as T | undefined,
+      entries: <T>(type: string) => [...rows].filter(([k]) => k.startsWith(`${type}:`))
+        .map(([k, entity]) => ({ id: k.slice(type.length + 1), entity: entity as T })),
+      commitLocal: async (puts, deletes) => {
+        for (const p of puts) rows.set(`${p.type}:${p.id}`, p.entity);
+        for (const d of deletes) rows.delete(`${d.type}:${d.id}`);
+      },
+    };
+    const door = letterDoor(journal);
+    let n = 0;
+    const open = (id: string) => openLetterKeeper({
+      door, id, newFileId: () => `f-${++n}`,
+      words: { mode: "new", messageId: null, mailboxId: "mb-1", to: "", cc: "", bcc: "", subject: "s", body: "b", envelope: null },
+    });
+    const big = Buffer.alloc(16, 1).toString("base64");
+    const earlier = open("l-1");
+    earlier.addFile({ filename: "earlier.bin", contentType: "application/octet-stream", contentBase64: big, sizeBytes: KEPT_FILES_MAX_BYTES - 1000 });
+    earlier.markKeep();
+    earlier.keepAnswered({ draftId: "d-1", key: null });
+    const letter = open("l-2");
+    letter.addFile({ filename: "small.txt", contentType: "text/plain", contentBase64: big, sizeBytes: 900 });
+    letter.addFile({ filename: "photo.jpg", contentType: "image/jpeg", contentBase64: big, sizeBytes: 2000 });
+    expect(letter.overKeepLimit().map((f) => f.filename)).toEqual(["photo.jpg"]);
+    letter.dropOverLimit();
+    expect(letter.current().files.map((f) => f.filename)).toEqual(["small.txt"]);
+    await door.landed();
+    expect([...rows.keys()].filter((k) => k.startsWith("compose_file:"))).toEqual(["compose_file:f-1", "compose_file:f-2"]);
+    expect(Copy.composeKeepFiles("photo.jpg", "12 MB")).toContain("photo.jpg");
   });
 
   it("the backdrop, the back gesture and Cancel are ONE close, and it consults the keep", () => {
@@ -142,7 +184,7 @@ describe("every road out of the sheet asks before it closes", () => {
     expect(close).toContain("keepAct({");
     expect(close).toContain("w.actions.draftKeep({");
     // The close waits for the keep: `leave` (the close that calls `onClose`) follows a "kept" answer.
-    expect(close).toContain('if (kept === "kept") leave();');
+    expect(close).toContain('if (kept === "kept") {');
   });
 });
 
@@ -151,10 +193,10 @@ describe("past the draft limit the composer says so, and nothing typed is lost u
   const at = "é".repeat(DRAFT_BODY_MAX_BYTES / 2);
 
   it("a close over too long a text stays and says why; the second close discards", () => {
-    expect(keepAct({ phase: "idle", worth: true, files: 0, armed: false, tooLong: true })).toBe("tooLong");
-    expect(keepAct({ phase: "idle", worth: true, files: 0, armed: true, tooLong: true })).toBe("close");
+    expect(keepAct({ phase: "idle", worth: true, filesOver: 0, armed: false, tooLong: true })).toBe("tooLong");
+    expect(keepAct({ phase: "idle", worth: true, filesOver: 0, armed: true, tooLong: true })).toBe("close");
     // Control: nothing written, nothing to say.
-    expect(keepAct({ phase: "idle", worth: false, files: 0, armed: false, tooLong: true })).toBe("close");
+    expect(keepAct({ phase: "idle", worth: false, filesOver: 0, armed: false, tooLong: true })).toBe("close");
     expect(unmountKeep({ phase: "idle", worth: true, keeping: false, tooLong: true })).toBe("nothing");
     expect(unmountKeep({ phase: "idle", worth: true, keeping: false, tooLong: false })).toBe("keep");
   });

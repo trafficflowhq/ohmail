@@ -1578,6 +1578,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   ai_provider_verified: "info",
   ai_call_failed: "error",
   ai_routing_unavailable: "error",
+  // mobile.ts — a transaction that held the phone store past a waiter's wait, and its end: `info`,
+  // the waiter's own refusal is the error. Closed fields only (handle kind, two numbers).
+  store_turn_held: "info",
+  store_turn_released: "info",
 };
 
 function sidecarSites(): Site[] {

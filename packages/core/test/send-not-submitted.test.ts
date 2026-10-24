@@ -1,3 +1,5 @@
+import net from "node:net";
+import { Duplex } from "node:stream";
 import { describe, it, expect } from "vitest";
 import { ImapAdapter } from "../src/adapters/imap.js";
 import { SendNotSubmitted, SentCopyAppendFailed, submissionNeverOffered } from "../src/send.js";
@@ -60,13 +62,187 @@ describe("ImapAdapter.send over a submission that never offered the message", ()
     expect((login as SendNotSubmitted).step).toBe("login");
   });
 
-  it("the ambiguous control: a timeout reaches the caller unchanged", async () => {
+  it("a transporter without the release gate proves nothing: its timeout reaches the caller unchanged", async () => {
     const timeout = fail("ETIMEDOUT");
     const out = await send(adapterFailing(timeout));
     expect(out).toBe(timeout);
     expect(out).not.toBeInstanceOf(SendNotSubmitted);
     expect(out).not.toBeInstanceOf(SentCopyAppendFailed);
   });
+});
+
+/**
+ * THE END OF THE MESSAGE IS RELEASED ONLY AFTER `beforeRelease`, over real sockets and the pinned
+ * nodemailer: a session that ends before the release delivered nothing (`data`), and the server
+ * never saw the end-of-data mark; after the release an error stays ambiguous.
+ */
+describe("a submission that ends before its end-of-data mark is `data`", () => {
+  type Mode = "ok" | "drop-mid-upload" | "rcpt-550" | "close-after-mark" | "silent-after-mark";
+  const PHOTO = Buffer.alloc(300 * 1024, 7);
+  const servers: Array<{ close(): void }> = [];
+
+  async function smtp(mode: Mode, dropAt = 100_000) {
+    const seen = { dataBytes: 0, mark: false };
+    const server = net.createServer((s) => {
+      s.on("error", () => undefined);
+      s.write("220 fake ESMTP\r\n");
+      let inData = false;
+      let buf = "";
+      s.on("data", (d: Buffer) => {
+        if (inData) {
+          seen.dataBytes += d.length;
+          buf = (buf + d.toString("latin1")).slice(-16);
+          if (mode === "drop-mid-upload" && seen.dataBytes > dropAt) { s.destroy(); return; }
+          if (buf.endsWith("\r\n.\r\n")) {
+            seen.mark = true;
+            inData = false;
+            if (mode === "close-after-mark") s.destroy();
+            else if (mode === "ok") s.write("250 queued\r\n");
+          }
+          return;
+        }
+        buf += d.toString("latin1");
+        let i: number;
+        while ((i = buf.indexOf("\r\n")) >= 0) {
+          const line = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (/^EHLO/i.test(line)) s.write("250-fake\r\n250 AUTH PLAIN\r\n");
+          else if (/^AUTH/i.test(line)) s.write("235 ok\r\n");
+          else if (/^RCPT/i.test(line) && mode === "rcpt-550") s.write("550 5.1.1 no such user\r\n");
+          else if (/^DATA/i.test(line)) { s.write("354 go\r\n"); inData = true; buf = ""; return; }
+          else if (/^QUIT/i.test(line)) { s.write("221 bye\r\n"); s.end(); }
+          else s.write("250 ok\r\n");
+        }
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    servers.push({ close: () => server.close() });
+    return { port: (server.address() as { port: number }).port, seen };
+  }
+
+  async function adapterOn(port: number) {
+    const fakeImap = {
+      list: async () => [{ path: "INBOX", delimiter: "/", flags: new Set<string>() }],
+      on: () => undefined, logout: async () => undefined, close: () => undefined,
+    };
+    const a = new ImapAdapter({
+      host: "127.0.0.1", port: 1, secure: false, auth: { user: "u", pass: "p" },
+      smtp: { host: "127.0.0.1", port, secure: false, allowInsecure: true, auth: { user: "u", pass: "p" } },
+      timeouts: { connectionMs: 2_000, greetingMs: 2_000, socketMs: 1_000 },
+    } as never, { client: fakeImap as never });
+    await a.connect();
+    return a;
+  }
+
+  const MSG = {
+    from: "u@example.test", to: "b@example.test", subject: "the photo", text: "A photo letter.",
+    attachments: [{ filename: "p.jpg", contentType: "image/jpeg", content: PHOTO }],
+  };
+  const sendWith = (a: ImapAdapter, beforeRelease: () => Promise<void>) =>
+    a.send(MSG, { copy: "caller", beforeRelease }).then((r) => r, (e: unknown) => e);
+
+  it("a server that drops the connection mid-upload: SendNotSubmitted('data'), no mark, no release", async () => {
+    const { port, seen } = await smtp("drop-mid-upload");
+    let released = 0;
+    const out = await sendWith(await adapterOn(port), async () => { released += 1; });
+    expect(out).toBeInstanceOf(SendNotSubmitted);
+    expect((out as SendNotSubmitted).step).toBe("data");
+    expect(seen.dataBytes).toBeGreaterThan(0);
+    expect(seen.mark).toBe(false);
+    expect(released).toBe(0);
+  }, 15_000);
+
+  /** The SMTP socket as a slow link: bytes wait in its own write queue and leave at `rate` per second. */
+  function overSlowLink(a: ImapAdapter, port: number, rate: number): void {
+    (a as unknown as { transporter: { getSocket: unknown } }).transporter.getSocket = (
+      _o: unknown, cb: (e: Error | null, s?: { connection: Duplex }) => void,
+    ) => {
+      const sock = net.connect(port, "127.0.0.1", () => cb(null, { connection: link }));
+      const link = new Duplex({
+        write(chunk: Buffer, _e, done) {
+          setTimeout(() => { if (!sock.destroyed) sock.write(chunk); done(); }, (chunk.length / rate) * 1000);
+        },
+        read() { /* pushed from the socket */ },
+      });
+      Object.assign(link, { setTimeout: () => link, setKeepAlive: () => link });
+      sock.on("data", (d: Buffer) => link.push(d));
+      sock.on("error", () => undefined);
+      sock.on("close", () => link.destroy());
+    };
+  }
+
+  it("a slow link dropped half-way through the photo: `data`, no release, no mark (the gate waits for the socket)", async () => {
+    const { port, seen } = await smtp("drop-mid-upload", 200_000);
+    const a = await adapterOn(port);
+    overSlowLink(a, port, 2_000_000);
+    let released = 0;
+    const out = await sendWith(a, async () => { released += 1; });
+    expect(out).toBeInstanceOf(SendNotSubmitted);
+    expect((out as SendNotSubmitted).step).toBe("data");
+    expect({ released, mark: seen.mark }).toEqual({ released: 0, mark: false });
+  }, 15_000);
+
+  it("a refused release: SendNotSubmitted('data'), and the server never sees the end of the message", async () => {
+    const { port, seen } = await smtp("ok");
+    const out = await sendWith(await adapterOn(port), async () => { throw new Error("the row is no longer this attempt's"); });
+    expect(out).toBeInstanceOf(SendNotSubmitted);
+    expect((out as SendNotSubmitted).step).toBe("data");
+    expect(seen.dataBytes).toBeGreaterThan(0);
+    expect(seen.mark).toBe(false);
+  }, 15_000);
+
+  it("a 550 to RCPT is `data` with the server's code: final, nothing was accepted", async () => {
+    const { port, seen } = await smtp("rcpt-550");
+    let released = 0;
+    const out = await sendWith(await adapterOn(port), async () => { released += 1; });
+    expect(out).toBeInstanceOf(SendNotSubmitted);
+    expect((out as SendNotSubmitted).step).toBe("data");
+    expect((out as SendNotSubmitted).responseCode).toBe(550);
+    await new Promise((r) => { setTimeout(r, 50); });
+    expect({ dataBytes: seen.dataBytes, released }).toEqual({ dataBytes: 0, released: 0 });
+  }, 15_000);
+
+  it("the normal path: the mark follows the release, and `caller` hands back the copy's bytes", async () => {
+    const { port, seen } = await smtp("ok");
+    const order: string[] = [];
+    const out = await sendWith(await adapterOn(port), async () => { order.push(seen.mark ? "after-mark" : "before-mark"); });
+    expect(out).not.toBeInstanceOf(Error);
+    expect(order).toEqual(["before-mark"]);
+    expect(seen.mark).toBe(true);
+    const res = out as { sentLocator: unknown; unfiledCopy?: Buffer };
+    expect(res.sentLocator).toBeNull();
+    expect(res.unfiledCopy?.toString("latin1")).toContain("Subject: the photo");
+  }, 15_000);
+
+  it("CONTROL: the server read the end of the message and closed without a 250 — ambiguous", async () => {
+    const { port, seen } = await smtp("close-after-mark");
+    const out = await sendWith(await adapterOn(port), async () => undefined);
+    expect(seen.mark).toBe(true);
+    expect(out).toBeInstanceOf(Error);
+    expect(out).not.toBeInstanceOf(SendNotSubmitted);
+  }, 15_000);
+
+  it("a stop after the release ends the session at once; the outcome stays ambiguous", async () => {
+    const { port, seen } = await smtp("silent-after-mark");
+    const stop = new AbortController();
+    const out = await (await adapterOn(port)).send(MSG, {
+      copy: "caller", signal: stop.signal, beforeRelease: async () => { setTimeout(() => stop.abort(), 20); },
+    }).then((r) => r, (e: unknown) => e);
+    expect(seen.mark).toBe(true);
+    expect(out).toBeInstanceOf(Error);
+    expect(out).not.toBeInstanceOf(SendNotSubmitted);
+    expect((out as { code?: string }).code, "not the socket deadline's own timeout").not.toBe("ETIMEDOUT");
+  }, 15_000);
+
+  it("CONTROL: a timeout after the release reaches the caller unchanged", async () => {
+    const { port, seen } = await smtp("silent-after-mark");
+    const out = await sendWith(await adapterOn(port), async () => undefined);
+    expect(seen.mark).toBe(true);
+    expect((out as { code?: string }).code).toBe("ETIMEDOUT");
+    expect(out).not.toBeInstanceOf(SendNotSubmitted);
+    expect(out).not.toBeInstanceOf(SentCopyAppendFailed);
+    for (const srv of servers.splice(0)) srv.close();
+  }, 15_000);
 });
 
 describe("a submission whose socket never connected is `connect`", () => {

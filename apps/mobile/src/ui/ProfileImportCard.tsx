@@ -15,6 +15,7 @@ import {
 } from "../net/profile-import";
 import type { ConnectedSession } from "../net/pairing";
 import { useWorld } from "../state/world";
+import { publishProfileQuestion } from "../state/seed-offer";
 import { Button, Panel, Txt, useTopPad } from "./base";
 import {
   IMPORT_STATUS_BEAT_MS, askTickets, askableRows, cardQuestion, countsSaid, failureSaid, importingSaid, mailboxesToAsk,
@@ -107,6 +108,10 @@ export function ProfileImportCard() {
   const [shownFor, setShownFor] = useState<string | null>(null);
   const current = cardQuestion(rows);
   const q = current?.question;
+  /* The sent-mail seed waits while this card asks or finishes an import. */
+  const asking = current !== null || phase.kind === "busy" || phase.kind === "importing";
+  useEffect(() => { publishProfileQuestion(asking); }, [asking]);
+  useEffect(() => () => publishProfileQuestion(false), []);
 
   /* The card's phase belongs to the mailbox on screen; a different question starts fresh. */
   useEffect(() => {

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { planChange, commitChange , UNMETERED_STORAGE_CAP} from "../src/pipeline.js";
+import { planChange, commitChange , UNMETERED_STORAGE_CAP, type PlanDeps } from "../src/pipeline.js";
 import { FakeRepo, FakeRouting, dedupKeyFor } from "./fakes.js";
-import type { Change, CreditGate, PlanDeps, Rule } from "../src/ports.js";
+import type { Change, CreditGate } from "../src/ports.js";
+import type { Rule } from "../src/rules.js";
 import type { ClassifierPort, ClassifierResult } from "../src/ai/classify.js";
 
 /**
@@ -65,7 +66,7 @@ const forbiddenClassifier: ClassifierPort = {
 };
 
 function deps(repo: FakeRepo, extra: Partial<PlanDeps> = {}): PlanDeps {
-  return { repo, accountId: "acct-1", mailboxId: "mb-1", ...extra };
+  return { repo, accountId: "acct-1", mailboxId: "mb-1", ...extra, readerMode: extra.readerMode ?? false };
 }
 
 async function ingest(change: Change, repo: FakeRepo, extra: Partial<PlanDeps> = {}) {
@@ -225,6 +226,105 @@ describe("passive presence — the customer's own folders", () => {
     expect(repo.rows.size).toBe(1);
     expect(await repo.getFolderState(first.messageId)).toEqual({
       desiredFolder: ARCHIVE, observedFolder: ARCHIVE, lastSetBy: "external",
+    });
+  });
+});
+
+describe("filed on arrival — a NEW letter that first appears in an organized pile", () => {
+  // Another client, a server filter or a plus address put it there: the person's filing stands.
+  const FRIEND = "piet@people.invalid";
+  const letIn: Rule = {
+    id: "r-letin", kind: "sender", match: FRIEND, destination: "INBOX", effect: "allow",
+    priority: 0, provenance: "promoted", enabled: true, subjectContains: null, bodyContains: null,
+  };
+  const ARRIVED = new Date("2026-10-23T12:31:00.000Z");
+  const arrival = (folder: string, raw: Buffer, ref = "5:1"): Change =>
+    ({ type: "create", locator: { folder, ref }, raw, seen: false, internalDate: ARRIVED });
+
+  for (const pile of ["ohmail/News", "ohmail/Receipts", "ohmail/Screened", "ohmail/Quarantine"]) {
+    it(`a let-in sender's letter in ${pile} stays there, external and decided at its arrival, with no move`, async () => {
+      const repo = new FakeRepo();
+      repo.rules.push(letIn);
+      const res = await ingest(arrival(pile, eml({ from: FRIEND, messageId: `pile-${pile}@x` })), repo);
+      expect(res.action).toEqual({ type: "none" });
+      expect(await repo.getFolderState(res.messageId)).toEqual({
+        desiredFolder: pile, observedFolder: pile, lastSetBy: "external", decidedAt: ARRIVED,
+      });
+    });
+  }
+
+  it("with no INTERNALDATE its stamp is the stated bound, else the previous cycle's start, else the epoch", async () => {
+    const stated = new Date("2026-10-23T12:30:00.000Z");
+    const lastSyncAt = new Date("2026-10-23T12:29:00.000Z");
+    const stampOf = async (observedSince: Date | undefined, lastSync: Date | null, ref: string) => {
+      const repo = new FakeRepo();
+      repo.rules.push(letIn);
+      Object.assign(repo, { getMailbox: async () => ({ id: "mb-1", lastSyncAt: lastSync }) });
+      const raw = eml({ from: FRIEND, messageId: `pile-bound-${ref}@x` });
+      const plan = await planChange({ type: "create", locator: { folder: "ohmail/News", ref }, raw, seen: false }, deps(repo));
+      const res = await commitChange(plan, {
+        storageCap: UNMETERED_STORAGE_CAP, repo, accountId: "acct-1", mailboxId: "mb-1",
+        ...(observedSince !== undefined ? { observedSince } : {}),
+      });
+      return (await repo.getFolderState(res.messageId))!.decidedAt;
+    };
+    expect(await stampOf(stated, lastSyncAt, "5:2")).toEqual(stated);
+    expect(await stampOf(undefined, lastSyncAt, "5:3")).toEqual(lastSyncAt);
+    expect(await stampOf(undefined, null, "5:4")).toEqual(new Date(0));
+  });
+
+  it("the same letter arriving in INBOX still follows the let-in rule as ours", async () => {
+    const repo = new FakeRepo();
+    repo.rules.push(letIn);
+    const res = await ingest(arrival("INBOX", eml({ from: FRIEND, messageId: "pile-inbox@x" })), repo);
+    expect(await repo.getFolderState(res.messageId)).toEqual({
+      desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    });
+  });
+
+  it("a known contact with a graduated AI route is not asked about nor moved", async () => {
+    const repo = new FakeRepo();
+    repo.senders.add(FRIEND);
+    const routing = new FakeRouting();
+    routing.graduated.add(`sender:${FRIEND}→INBOX`);
+    let asked = 0;
+    const classifier: ClassifierPort = {
+      async classify(): Promise<ClassifierResult> {
+        asked++;
+        return { destination: "INBOX", confidence: 0.9, rationale: "", spam: false };
+      },
+    };
+    const res = await ingest(arrival("ohmail/News", eml({ from: FRIEND, messageId: "pile-ai@x" })), repo,
+      { classifier, routing });
+    expect(res.action).toEqual({ type: "none" });
+    expect((await repo.getFolderState(res.messageId))!.desiredFolder).toBe("ohmail/News");
+    expect(asked).toBe(0);
+    expect(routing.decisions).toEqual([]);
+  });
+
+  it("a stranger's letter in News still goes to the Screener", async () => {
+    const repo = new FakeRepo();
+    const res = await ingest(arrival("ohmail/News", eml({ from: "nobody@else.invalid", messageId: "pile-str@x" })), repo);
+    expect(res.action).toEqual({ type: "move", to: "ohmail/Screener" });
+    expect((await repo.getFolderState(res.messageId))!.lastSetBy).toBe("us");
+  });
+
+  it("a quarantined sender's letter in News still goes to Quarantine", async () => {
+    const repo = new FakeRepo();
+    repo.rules.push({ ...letIn, id: "r-deny", destination: "ohmail/Quarantine", effect: "deny" });
+    const res = await ingest(arrival("ohmail/News", eml({ from: FRIEND, messageId: "pile-deny@x" })), repo);
+    expect(res.action).toEqual({ type: "move", to: "ohmail/Quarantine" });
+  });
+
+  it("a held letter another client moves into News is adopted as before", async () => {
+    const repo = new FakeRepo();
+    repo.rules.push(letIn);
+    const raw = eml({ from: FRIEND, messageId: "pile-held@x" });
+    const first = await ingest(arrival("INBOX", raw, "1:1"), repo);
+    const moved = await ingest({ type: "move", locator: { folder: "ohmail/News", ref: "5:9" }, raw, seen: false }, repo);
+    expect(moved.outcome).toBe("external_move");
+    expect(await repo.getFolderState(first.messageId)).toEqual({
+      desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "external",
     });
   });
 });

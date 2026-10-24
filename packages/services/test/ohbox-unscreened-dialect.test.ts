@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import {
-  accounts, contacts, folderState, mailboxes, messageBodies, messages, rules, threads,
+  accounts, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules, threads,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
@@ -112,6 +112,39 @@ describe("the undecided-sender walk speaks both dialects", () => {
 
     expect((await unscreenedSummary(w.db as never, w.accountId)).total).toBe(0);
     expect(await screenUnscreened(ctxOf(w))).toEqual({ screened: [], total: 0 });
+  });
+
+  it("the press's rows: status by observed folder, one move per letter on contiguous seqs in walk order, one audit per group", async () => {
+    const w = await world();
+    const ids = [
+      await seed(w, "b@x.test"), await seed(w, "a@x.test"), await seed(w, "b@x.test"),
+      await seed(w, "c@x.test"), await seed(w, "b@x.test"),
+    ];
+    const already = ids[3]!;
+    await w.db.update(folderState).set({ observedFolder: GATE, reconcileStatus: "pending" })
+      .where(eq(folderState.messageId, already));
+
+    expect((await screenUnscreened(ctxOf(w))).total).toBe(5);
+
+    const states = await w.db.select({ id: folderState.messageId, s: folderState.reconcileStatus, by: folderState.lastSetBy })
+      .from(folderState);
+    expect(Object.fromEntries(states.map((r) => [r.id, [r.s, r.by]]))).toEqual(Object.fromEntries(
+      ids.map((id) => [id, [id === already ? "reconciled" : "pending", "us"]]),
+    ));
+    const changes = await w.db.select({ seq: changeLog.seq, id: changeLog.entityId, op: changeLog.op, meta: changeLog.meta })
+      .from(changeLog).where(eq(changeLog.accountId, w.accountId)).orderBy(asc(changeLog.seq));
+    expect(changes.map((c) => c.id)).toEqual([...ids].sort());
+    expect(changes.map((c) => [c.op, c.meta])).toEqual(ids.map(() => ["move", { from: OHBOX, to: GATE }]));
+    const seqs = changes.map((c) => Number(c.seq));
+    expect(seqs).toEqual(seqs.map((_, i) => seqs[0]! + i));
+    const audits = await w.db.select({ payload: auditLog.payload, inverse: auditLog.inverse })
+      .from(auditLog).where(eq(auditLog.accountId, w.accountId));
+    expect(audits).toEqual(expect.arrayContaining([
+      ["b@x.test", 3], ["a@x.test", 1], ["c@x.test", 1],
+    ].map(([address, count]) => ({
+      payload: { address, count, from: OHBOX, to: GATE, via: "offer" }, inverse: { address, from: GATE, to: OHBOX },
+    }))));
+    expect(audits).toHaveLength(3);
   });
 
   it("a rule's body term is read, so the wide column round-trips on either store", async () => {
