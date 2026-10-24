@@ -223,7 +223,7 @@ export {
   RESTORABLE_PROVENANCE, restoredProvenanceSql,
 } from "./request-apply.js";
 export {
-  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance,
+  convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, endOwedWalk,
   type ConvergedKey, type FoundRule, type KeyWriteResult, type RuleRowWrite,
 } from "./rule-key.js";
 

@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
-  ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule,
+  ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule, endOwedWalk,
   ruleKeyIsOwnAddress, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
@@ -663,11 +663,15 @@ export class RulesService {
       // recognizes the held-release press and narrows the walk to mail settled at the gate. This
       // is the ordinary, unnarrowed retro — the whole backlog the rule claims.
       const rearm = (destinationMoved: boolean): void => {
-        if (((destinationMoved || subjectMoved || bodyMoved) && applyRetro) || retroAsked) {
+        const moved = destinationMoved || subjectMoved || bodyMoved;
+        if ((moved && applyRetro) || retroAsked) {
           set.retroRequestedAt = ctx.now();
           set.retroDoneAt = null;
           set.retroCursor = null;
           set.retroMoved = 0;
+        } else if (moved) {
+          // Past mail declined: a walk still owed ends here, so the rest stays where it is.
+          set.retroDoneAt = endOwedWalk(tx, ctx.now());
         }
       };
 

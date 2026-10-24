@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
   approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
   messageStates, messages, OwnAddressesPerPass, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
@@ -293,6 +293,8 @@ export async function ruleRetroPass(
      * between the probe and the page. The completion decision compares against it; see there.
      */
     let walkedTo: string | null = null;
+    /** The last page found the walk parked and did not walk; see {@link stampRetroDone}. */
+    let stillParked = false;
     for (; pages < maxPages; pages++) {
       if (result.moved >= budget) { result.capped = true; break; }
 
@@ -321,10 +323,30 @@ export async function ruleRetroPass(
           ))
           .limit(1));
         if (!live) {
-          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false };
+          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false, parked: false };
         }
 
         const rule = live as OwedRule;
+
+        // A WALK PARKED at the end of the mailboxes this install organizes ({@link parkedFence})
+        // stays finished until a mailbox comes under this install: none left outside, or one
+        // flipped to organizer after the park. Then it pages again from the beginning; the cursor
+        // write below replaces the parked value by its compare-and-set.
+        let afterId = rule.cursor;
+        const parkedAt = parkedSince(rule.cursor);
+        if (parkedAt !== null) {
+          const boxes = await tx.select({ role: mailboxes.organizerRole, eventAt: mailboxes.organizerEventAt })
+            .from(mailboxes)
+            .where(and(eq(mailboxes.accountId, rule.accountId), ne(mailboxes.status, "disabled")));
+          const rearm = boxes.every((m) => m.role === "organizer")
+            || boxes.some((m) => m.role === "organizer" && m.eventAt != null && m.eventAt.getTime() > parkedAt.getTime());
+          if (!rearm) {
+            return {
+              gone: false, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: rule.cursor, done: true, parked: true,
+            };
+          }
+          afterId = null;
+        }
 
         // THE KNOWLEDGE THE DECISION RESTS ON, RE-ASKED PER PAGE. `evaluateRules` below reads the
         // account's WHOLE rule set and known senders; these were once cached for the run (see the
@@ -342,9 +364,10 @@ export async function ruleRetroPass(
         const byTheAct = rule.provenance === "promoted" && rule.personDecidedAt === null
           && (await rulesTheActWrote(tx, rule.accountId, [rule])).has(rule.id);
         const candidates = await selectCandidates(tx, {
-          rule, ownAddresses: own, limit: batch, afterId: rule.cursor, byTheAct,
+          rule, ownAddresses: own, limit: batch, afterId, byTheAct,
         });
 
+        const releaseRun = isReleaseRun(rule);
         let moved = 0;
         let kept = 0;
         let lastId: string | null = null;
@@ -374,16 +397,19 @@ export async function ruleRetroPass(
           // ONLY a rule answer moves already-filed mail. `screener` means the gate has not been
           // passed and re-screening old mail is not this pass's business; `header` and `unclear`
           // are placement refinements for a sender already past the gate, and relocating years of
-          // mail on a heuristic is exactly the over-reach `sensitive-rescreen` refuses. The
-          // destination is the ROUTER's, not the new rule's: a higher-priority deny rule still
-          // wins, and a message it wins for is left alone.
+          // mail on a heuristic is exactly the over-reach `sensitive-rescreen` refuses.
+          // And only THIS rule's answer: the candidates are the sender's mail, and a letter another
+          // rule decides (a deny above it, or a sender rule whose past mail the person left where it
+          // was) stays put. A walk carries out its own rule, never another rule's backlog. The
+          // release press is the exception: its rows are held at the gate, counted and shown before
+          // the press, and leave by the router's answer.
           // `destination` is `Destination | null` on the DTO — `null` is the `unclear` answer —
           // and the null check is kept EXPLICIT rather than leaned on `source === "rule"`,
           // which happens to imply it today. The two are separate fields and a narrowing that
           // depends on their agreeing is one refactor away from filing mail into `null`.
           const to = decision.destination;
           // In either News spelling a message already at the router's place stays: no move.
-          if (decision.source !== "rule" || to === null
+          if (decision.source !== "rule" || (decision.matchedRuleId !== rule.id && !releaseRun) || to === null
             || canonicalDestination(to) === canonicalDestination(c.desiredFolder)) {
             kept++;
             continue;
@@ -445,6 +471,7 @@ export async function ruleRetroPass(
           resumedFrom: rule.cursor,
           // A short page that was not cut short by the budget is the end of the backlog.
           done: !capped && candidates.length < batch,
+          parked: false,
         };
       });
 
@@ -452,6 +479,7 @@ export async function ruleRetroPass(
       // What the decision below compares the fence against: the value the pass resumed from when
       // no page advanced it, and the last committed page's own cursor when one did.
       walkedTo = page.cursor ?? page.resumedFrom;
+      stillParked = page.parked;
       result.examined += page.rows;
       result.moved += page.moved;
       result.kept += page.kept;
@@ -483,9 +511,9 @@ export async function ruleRetroPass(
      * is promoted, reset then keeps the cursor), leaving the rule owed with a fence across the
      * `messages.id` uuid space so B's older mail is never filed. Both fields now move in ONE statement
      * under ONE row evaluation: finished ⇒ stamp and keep the spent cursor; not finished ⇒ leave
-     * `retro_done_at` NULL and clear the fence. Completion is the COMPLEMENT of the candidate gate over
-     * LIVE mailboxes (`status='disabled'` not live, `error` live). Clearing the cursor is what
-     * `RulesService.update` writes on a retarget; re-offering is safe (candidate query = idempotency, bounded by `RULE_RETRO_MAX_PAGES`).
+     * `retro_done_at` NULL and park the walk ({@link parkedFence}): no per-cycle re-walk, and the
+     * next page re-arms it from the start once a mailbox comes under this install. Completion is the
+     * COMPLEMENT of the candidate gate over LIVE mailboxes (`status='disabled'` not live, `error` live).
      */
     /* THE STAMP ALSO YIELDS TO A RESET — the half the page CAS cannot cover.
      * The page write holds the rule row `FOR UPDATE`, so a concurrent reset lands after it; this
@@ -503,10 +531,9 @@ export async function ruleRetroPass(
      * and serializes it, a fragment does not, and `postgres@3`'s `bytes.js` then refuses a `Date`.
      * PGlite accepted it, so the PGlite suite was green while 7 pg files failed
      * (`rule-retro-body.pg`, `rule-retro-subject.pg`) — the two backends disagree on PARAMETER
-     * SERIALIZATION, and a fragment is where that becomes reachable. The `null` cursor arm needs no
-     * cast: Postgres takes its type from the other arm (`retro_cursor`, uuid).
+     * SERIALIZATION, and a fragment is where that becomes reachable.
      */
-    const decided = await stampRetroDone(db, row.accountId, { ruleId: row.id, outside, walkedTo, now });
+    const decided = await stampRetroDone(db, row.accountId, { ruleId: row.id, outside, walkedTo, stillParked, now });
 
     if (decided?.doneAt != null) {
       // Counted from the stamp the database actually wrote, not from reaching this line: a rule
@@ -515,12 +542,12 @@ export async function ruleRetroPass(
       result.completed++;
       continue;
     }
-    if (decided !== undefined) {
+    if (decided !== undefined && !stillParked) {
       log.info("rule_retro_owed_pending_mailbox", {
         ruleId: row.id, accountId: row.accountId,
         reason: "the backlog is finished for the mailboxes this install organizes, and a live " +
           "mailbox of the account is not one of them — `retro_done_at` is NOT written and " +
-          "`retro_cursor` is cleared, so a promotion re-walks that mailbox's mail from the start",
+          "the walk is parked, so a promotion re-walks the account's mail from the start",
       });
     }
   }
@@ -542,24 +569,52 @@ export async function ruleRetroPass(
  * when two drivers finish at once: one writes the stamp and its delta, the other writes nothing.
  */
 async function stampRetroDone(
-  db: Tx, accountId: string, a: { ruleId: string; outside: SQL; walkedTo: string | null; now: Date },
+  db: Tx, accountId: string,
+  a: { ruleId: string; outside: SQL; walkedTo: string | null; stillParked: boolean; now: Date },
 ): Promise<{ doneAt: Date | null; cursor: string | null } | undefined> {
   return db.transaction(async (tx) => {
     const d = dialect(tx);
+    const walked = a.walkedTo === null ? sql`null` : d.castUuid(a.walkedTo);
+    // A page that found the walk parked walked nothing, so it never stamps (a promotion since that
+    // page re-arms the next one), and it keeps the instant it was parked at.
+    const parked = a.stillParked;
+    const park = parked && a.walkedTo !== null ? a.walkedTo : parkedFence(a.now);
     const [decided] = await tx.update(rulesTbl)
       .set({
-        retroDoneAt: sql`case
+        retroDoneAt: parked ? sql`${rulesTbl.retroDoneAt}` : sql`case
           when ${a.outside} then ${rulesTbl.retroDoneAt}
-          when ${rulesTbl.retroCursor} is distinct from ${a.walkedTo === null ? sql`null` : d.castUuid(a.walkedTo)}
+          when ${rulesTbl.retroCursor} is distinct from ${walked}
             then ${rulesTbl.retroDoneAt}
           else ${d.ts(a.now)} end`,
-        retroCursor: sql`case when ${a.outside} then null else ${rulesTbl.retroCursor} end`,
+        // Parked only over the fence this pass left; a reset since then keeps its NULL.
+        retroCursor: sql`case when ${a.outside} and ${rulesTbl.retroCursor} is not distinct from ${walked}
+          then ${d.castUuid(park)} else ${rulesTbl.retroCursor} end`,
       })
       .where(and(eq(rulesTbl.id, a.ruleId), isNull(rulesTbl.retroDoneAt)))
       .returning({ doneAt: rulesTbl.retroDoneAt, cursor: rulesTbl.retroCursor });
     if (decided?.doneAt != null) await recordRuleDelta(tx as unknown as LedgerTx, accountId, [a.ruleId], "update");
     return decided;
   });
+}
+
+/**
+ * THE PARKED FENCE: a walk finished for the mailboxes this install organizes while another live
+ * mailbox of the account is outside it. The rule stays owed (the press still holds for that
+ * mailbox), and `retro_cursor` holds this value instead of NULL, so the next cycles do not walk the
+ * whole backlog again. It sorts above every v4 and v7 uuid (version nibble `f`), and its last 64
+ * bits are the instant it was parked, which the re-arm compares against `organizer_event_at`.
+ */
+const PARKED_PREFIX = "ffffffff-ffff-ffff-";
+
+function parkedFence(at: Date): string {
+  const hex = Math.max(0, Math.trunc(at.getTime())).toString(16).padStart(16, "0");
+  return `${PARKED_PREFIX}${hex.slice(0, 4)}-${hex.slice(4)}`;
+}
+
+function parkedSince(cursor: string | null): Date | null {
+  if (cursor === null || !cursor.toLowerCase().startsWith(PARKED_PREFIX)) return null;
+  const ms = Number.parseInt(cursor.slice(PARKED_PREFIX.length).replace("-", ""), 16);
+  return Number.isFinite(ms) ? new Date(ms) : null;
 }
 
 /**

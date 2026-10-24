@@ -9,7 +9,7 @@ import { readOrganizerRole } from "./organizer-role.js";
 import { recordLearningSignal } from "./learning-signal.js";
 import { upsertDesiredSeenMany } from "./flag-intent.js";
 import { ruleMatchKey, ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
-import { findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
+import { endOwedWalk, findRulesByKey, keptProvenance, lockAccountRuleKeys, writeRuleUnderKey, type RuleRowWrite } from "./rule-key.js";
 import { storedAuthScreens, unconfirmedSql } from "./screening-verdicts.js";
 import { automaticAiAdmits } from "./screener-suggestion.js";
 import { auditAction } from "./staff-channels.js";
@@ -732,7 +732,9 @@ export async function applyScreenerDecision(
       const provenance = keptProvenance(row.provenance, "promoted");
       if (provenance !== row.provenance) d.provenance = provenance;
       if (decidedBy === "person" && row.personDecidedAt === null) d.personDecidedAt = now;
-      return applyRetro && (d.destination !== undefined || d.enabled === true) ? { ...d, ...retro } : d;
+      if (applyRetro) return d.destination !== undefined || d.enabled === true ? { ...d, ...retro } : d;
+      // Moved with past mail declined: a walk still owed ends here.
+      return d.destination !== undefined ? { ...d, retroDoneAt: endOwedWalk(tx, now) } : d;
     },
     insert: {
       destination: appliedFolder, provenance: "promoted", enabled: true, priority,
