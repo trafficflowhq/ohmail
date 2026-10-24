@@ -1500,9 +1500,9 @@ export type ListTrashFn = (opts: { cursor?: string; limit?: number }) => Promise
  *
  * `restoreTo` is the folder the server decided on — which may not be the row's own `restoreTo`
  * if the origin folder disappeared between the page and the press — so the toast names THIS
- * value, not the one the row was rendered with. `pending` is always true and is carried rather
- * than assumed: the restore is a filing the mail server has not performed yet, and a surface
- * that treated the 200 as "done" would be claiming the mail is back.
+ * value, not the one the row was rendered with. `pending` is carried rather than assumed: true
+ * when the restore is a filing the mail server has not performed yet, false when it cancelled a
+ * delete the server never saw (the letter is back at once).
  */
 export interface RestoreFromTrashWire {
   restoreTo: string;

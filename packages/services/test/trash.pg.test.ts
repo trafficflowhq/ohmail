@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, sql } from "drizzle-orm";
-import { folderState, mailboxFolders, mailboxes, messages, accounts, changeLog, OrganizedElsewhereError } from "@trafficflow/db";
+import {
+  folderState, mailboxFolders, mailboxes, messages, messageInstances, accounts, changeLog, OrganizedElsewhereError,
+} from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import {
   MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, realPgAvailable, throwawayDb,
@@ -60,8 +62,10 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
   let mbNoTrash: string;
   const svc = () => new MessageService();
 
-  /** A message with a server copy in `folder`. Returns its id. */
-  const msg = async (folder: string, opts: { mailbox?: string; subject?: string } = {}): Promise<string> => {
+  /** A message with a server copy in `folder`; `watched` also records its instance, as ingest does. */
+  const msg = async (
+    folder: string, opts: { mailbox?: string; subject?: string; watched?: boolean } = {},
+  ): Promise<string> => {
     const id = randomUUID();
     await db.insert(messages).values({
       id, accountId: ACCOUNT, mailboxId: opts.mailbox ?? mb,
@@ -73,7 +77,43 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     await db.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: folder, lastSetBy: "external",
     });
+    if (opts.watched) {
+      await db.insert(messageInstances).values({
+        accountId: ACCOUNT, mailboxId: opts.mailbox ?? mb, messageId: id, folder,
+        uidvalidity: 7n, uid: Math.floor(Math.random() * 100000), isPrimary: true,
+      });
+    }
     return id;
+  };
+
+  /** True once a backend waits on a row lock over `folder_state`: the press is parked behind the rival. */
+  const waitForLockWait = async (deadlineMs = 10_000): Promise<boolean> => {
+    const until = Date.now() + deadlineMs;
+    while (Date.now() < until) {
+      const [row] = await client<Array<{ n: number }>>`
+        select count(*)::int as n from pg_stat_activity
+         where datname = current_database() and wait_event_type = 'Lock' and state = 'active'
+           and query ilike '%folder_state%'`;
+      if ((row?.n ?? 0) > 0) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  };
+
+  /** A restore pressed while a rival holds the row; `rivalWrites` runs on the rival before it commits. */
+  const restoreBehindRival = async (id: string, rivalWrites: (rival: postgres.ReservedSql) => Promise<unknown>) => {
+    const rival = await client.reserve();
+    try {
+      await rival`begin`;
+      await rival`select 1 from folder_state where message_id = ${id}::uuid for update`;
+      const pressed = svc().restore(ctxAt(t2), id);
+      const blocked = await waitForLockWait();
+      await rivalWrites(rival);
+      await rival`commit`;
+      return { out: await pressed, blocked };
+    } finally {
+      rival.release();
+    }
   };
 
   const fsOf = async (id: string) => {
@@ -120,6 +160,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
        poisoning shape, reproduced inside one file. */
     await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${ACCOUNT})`);
     await db.delete(changeLog).where(eq(changeLog.accountId, ACCOUNT));
+    await db.delete(messageInstances).where(eq(messageInstances.accountId, ACCOUNT));
     await db.delete(messages).where(eq(messages.accountId, ACCOUNT));
   });
 
@@ -222,7 +263,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     expect(p2.nextCursor).toBeNull();
   });
 
-  it("restore writes desired = the origin, clears it, and does NOT clear deleted_at", async () => {
+  it("restore with NO watched copy on record writes desired = the origin, clears it, and does NOT clear deleted_at", async () => {
     const id = await msg("ohmail/News");
     await svc().delete(ctxAt(t1), id);
 
@@ -249,6 +290,49 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     const page = await svc().listTrash(ctxAt(t2), { view: "trash" });
     expect(page.items).toHaveLength(0);
   });
+
+  it("restore of a delete whose move has not landed CANCELS it: the letter is back at once", async () => {
+    const id = await msg("ohmail/News", { watched: true });
+    await svc().delete(ctxAt(t1), id);
+
+    const out = await svc().restore(ctxAt(t2), id);
+    expect(out).toMatchObject({ restoreTo: "ohmail/News", pending: false });
+    expect(await deletedAtOf(id), "nothing reached the server, so nothing waits for it").toBeNull();
+    expect(await fsOf(id)).toMatchObject({
+      desiredFolder: "ohmail/News", observedFolder: "ohmail/News", reconcileStatus: "reconciled", trashedFrom: null,
+    });
+    const [row] = await db.select().from(changeLog)
+      .where(eq(changeLog.entityId, id)).orderBy(sql`${changeLog.seq} desc`).limit(1);
+    expect(row!.op).toBe("update");
+    expect(Number(row!.seq)).toBe(out.seq);
+  });
+
+  it("a park that commits while the restore waits on the row sends the restore down the landed path", async () => {
+    const id = await msg("ohmail/News", { watched: true });
+    await svc().delete(ctxAt(t1), id);
+
+    const { out, blocked } = await restoreBehindRival(id, (rival) => rival`
+      update folder_state set observed_folder = ${TRASH}, reconcile_status = 'reconciled', last_set_by = 'us'
+       where message_id = ${id}::uuid`);
+    expect(blocked, "the restore never waited on the row, so this proved nothing").toBe(true);
+    expect(out).toMatchObject({ restoreTo: "ohmail/News", pending: true });
+    expect(await deletedAtOf(id), "the copy is in the server's Trash: the tombstone stands").not.toBeNull();
+    expect(await fsOf(id)).toMatchObject({
+      desiredFolder: "ohmail/News", observedFolder: TRASH, reconcileStatus: "pending",
+    });
+  }, 60_000);
+
+  it("a rival that touches the row without landing the park leaves the cancel to the restore", async () => {
+    const id = await msg("ohmail/News", { watched: true });
+    await svc().delete(ctxAt(t1), id);
+
+    const { out, blocked } = await restoreBehindRival(id, (rival) => rival`
+      update folder_state set attempts = attempts + 1 where message_id = ${id}::uuid`);
+    expect(blocked, "the restore never waited on the row, so this proved nothing").toBe(true);
+    expect(out).toMatchObject({ restoreTo: "ohmail/News", pending: false });
+    expect(await deletedAtOf(id)).toBeNull();
+    expect(await fsOf(id)).toMatchObject({ desiredFolder: "ohmail/News", observedFolder: "ohmail/News" });
+  }, 60_000);
 
   it("the target falls back to INBOX when the origin folder no longer exists", async () => {
     const id = await msg("Projects");

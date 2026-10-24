@@ -222,6 +222,50 @@ describe("delete → Trash → restore, against real GreenMail", () => {
       "and it is an op the apply contract upserts, so the row lives again").toBe(true);
   }, 90000);
 
+  it("a restore pressed before the organizer moved the copy cancels the delete: it never leaves INBOX", async () => {
+    const cfg = imapCfg();
+    const db = makeDb(DB);
+    const accountId = randomUUID();
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: cfg.auth.user, ...ORGANIZER_CONSENT,
+    }).returning();
+    await db.insert(contacts).values({ accountId, address: "anna@x.example" });
+    const repo = makeDrizzleRepo(db);
+    const adapter = new ImapAdapter(cfg);
+    await adapter.connect();
+    closers.push(() => adapter.close());
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const raw = await rawClient(cfg);
+    closers.push(async () => { await raw.logout(); });
+    await raw.mailboxCreate("Trash").catch(() => {});
+    const special = await adapter.findSpecialFolders();
+    await repo.setMailboxSpecialFolders!(mb!.id, { junkFolder: special.junk, trashFolder: special.trash, sentFolder: null });
+    const trashPath = special.trash!;
+    const deps: SyncDeps = {
+      repo, adapter, accountId, mailboxId: mb!.id, role: "organizer",
+      trustedAuthservIds: NO_TRUSTED_AUTHSERV_IDS, storageCap: UNMETERED_STORAGE_CAP,
+      writeAuthority: FIXTURE_LEASE, signatures: null,
+    };
+
+    await raw.append("INBOX", emlOf({ from: "anna@x.example", subject: "changed my mind", messageId: "trashundo@x" }));
+    await runSyncCycle(deps);
+    const [msg] = await db.select().from(messages).where(byMessageId(mb!.id, "trashundo@x"));
+    const id = msg!.id;
+    const svc = new MessageService();
+    await svc.delete(ctxOf(db, accountId), id);
+    const out = await svc.restore(ctxOf(db, accountId), id);
+    expect(out).toMatchObject({ restoreTo: "INBOX", pending: false });
+
+    await runSyncCycle(deps);
+    await runSyncCycle(deps);
+    expect((await uidInFolder(raw, "INBOX", "trashundo@x")).length, "still in INBOX on the server").toBe(1);
+    expect((await uidInFolder(raw, trashPath, "trashundo@x")).length, "and never in its Trash").toBe(0);
+    const [live] = await db.select({ d: messages.deletedAt }).from(messages).where(eq(messages.id, id));
+    expect(live!.d, "the letter is live").toBeNull();
+    const inbox = await svc.list(ctxOf(db, accountId), { view: "imbox" });
+    expect(inbox.items.map((m) => m.id), "and in the list it came from").toContain(id);
+  }, 90000);
+
   it("NEGATIVE CONTROL — a move that lands INTO Trash leaves the row deleted", async () => {
     /* ══ THE CLEAR MAY NOT WIDEN INTO UN-DELETING DELETES ══════════════════════════════════
      *

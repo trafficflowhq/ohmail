@@ -476,6 +476,9 @@ describe("worker dependency boundary", () => {
       "request-drain-past-meta-window.test.ts",
       // A reader's press through `MessageService.move`, so the record's two instants are the door's own.
       "request-drain.test.ts",
+      // The cancel lives in `MessageService.restore`, composed with this app's reconcile: a
+      // hand-written restore UPDATE would test a copy of the fix. The import boundary still holds.
+      "restore-before-the-delete-lands.test.ts",
       "rule-create-wire.test.ts", "rule-key-converges.pg.test.ts",
       // The erasure the auto-act pass races is `deleteAccount` itself: a hand-written stamp would
       // be a copy of the erasure's lock order, which is the subject. The import boundary still holds.
