@@ -785,8 +785,11 @@ export function writeReplyDraft(messageId: string, value: RichValue): void {
 export interface ReplyEditorMeta {
   subject?: string;
   sig?: SignatureState;
-  /** The account row this browser last wrote or opened for the lane, at its stored stamp. */
-  row?: { id: string; at: string };
+  /**
+   * The account row this browser last wrote or opened for the lane, at its stored stamp; `holds` hashes
+   * its text, `pending` the text of a later save the outbox took and the row was not yet seen holding.
+   */
+  row?: { id: string; at: string; holds?: string; pending?: string };
   /** What the editor showed while it held text — see {@link LaneEnvelope}. */
   envelope?: LaneEnvelope;
 }
@@ -843,7 +846,13 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
-      ...(typeof row?.id === "string" && typeof row.at === "string" ? { row: { id: row.id, at: row.at } } : {}),
+      ...(typeof row?.id === "string" && typeof row.at === "string"
+        ? { row: {
+          id: row.id, at: row.at,
+          ...(typeof row.holds === "string" ? { holds: row.holds } : {}),
+          ...(typeof row.pending === "string" ? { pending: row.pending } : {}),
+        } }
+        : {}),
       ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
         : sig?.kind === "edited" && typeof sig.text === "string"
           ? { sig: { kind: "edited" as const, text: sig.text } }

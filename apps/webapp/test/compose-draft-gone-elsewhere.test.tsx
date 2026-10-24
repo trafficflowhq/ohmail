@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { composeSessionId, handOffComposer, readComposeDraft, resetComposerForTest } from "../app/shell/compose";
+import { composeSessionId, handOffComposer, readComposeDraft, readComposeRow, resetComposerForTest } from "../app/shell/compose";
 import { COMPOSE_SEND_KEY } from "../app/shell/mail-send";
 import { claimSendLock, SEND_LOCK_FORMAT, type SendLock } from "../app/shell/send-lock";
 import { act, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
@@ -161,6 +161,10 @@ describe("a draft deleted on another device while it is open here", () => {
     await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the refused delete");
     await pause(200);
     shell.refuseDiscard.on = false;
+    // The refused Discard emptied the editor; the letter is opened again from Drafts.
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter still in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter again");
+    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
     shell.remote.push(deletedElsewhere());
     await sync();
     await act(async () => { window.location.hash = "#/compose"; });
@@ -344,4 +348,181 @@ describe("CONTROLS — nothing here is called deleted elsewhere, and nothing sen
     expect({ buffer: readComposeDraft().subject, saves: saves().length, kept: text().includes(compose.sentElsewhereKept ?? "\u0000") },
       "a sent letter with nothing new was kept as a draft").toEqual({ buffer: "", saves: 0, kept: false });
   }, 30_000);
+});
+
+describe("this tab's Discard in Drafts of the letter the editor holds", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  const reload = async (drafts: EngineDraft[] = []): Promise<void> => {
+    await unmountAll();
+    resetComposerForTest();
+    stubDom();
+    shell = await mountShell("#/drafts", [], drafts);
+  };
+
+  it("empties the editor: the next Compose is blank and nothing is written for the letter", async () => {
+    await openLetter();
+    await deleteFromDrafts();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete confirmed");
+    await act(async () => { window.location.hash = "#/compose"; });
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({
+      subject: q<HTMLInputElement>("#compose-subject")?.value ?? null,
+      resumed: text().includes(compose.resumedNote!),
+      buffer: readComposeDraft().subject, row: readComposeRow(), creates: creates(),
+    }, "the discarded letter came back in Compose").toEqual({ subject: "", resumed: false, buffer: "", row: null, creates: [] });
+  }, 30_000);
+
+  it("a reload after the Discard brings nothing back and creates nothing", async () => {
+    await openLetter();
+    await deleteFromDrafts();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete confirmed");
+    await reload();
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({ creates: creates(), buffer: readComposeDraft().subject }, "the reload re-saved the discarded letter")
+      .toEqual({ creates: [], buffer: "" });
+  }, 30_000);
+
+  it("a Discard the server refuses (a send running) leaves the editor empty, the row listed, nothing written", async () => {
+    await openLetter();
+    shell.refuseDiscard.on = true;
+    await deleteFromDrafts();
+    await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the refused delete");
+    await pause(200);
+    const listed = q(`.draft-row[data-id="${D}"]`) !== null;
+    await act(async () => { window.location.hash = "#/compose"; });
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({ listed, subject: q<HTMLInputElement>("#compose-subject")?.value ?? null, saves: saves().length, row: readComposeRow() },
+      "a refused Discard put the letter back in the editor, or wrote it").toEqual({ listed: true, subject: "", saves: 0, row: null });
+  }, 30_000);
+});
+
+describe("a reload whose stored letter names a row deleted while the tab was closed", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  async function reopenGone(): Promise<void> {
+    handOffComposer();
+    await unmountAll();
+    window.sessionStorage.clear();
+    resetComposerForTest();
+    stubDom();
+    shell = await mountShell("#/compose", [], [], { serverGone: [D] });
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+  }
+
+  it("nothing typed since the last save: the stored copy is cleared and no draft is made", async () => {
+    await openLetter();
+    await typeSubject("Plans for Friday, saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length > 0, "the save");
+    await reopenGone();
+    expect({ form: q<HTMLInputElement>("#compose-subject")?.value ?? null, buffer: readComposeDraft().subject, row: readComposeRow(), creates: creates() },
+      "the reload re-saved a letter deleted on another device").toEqual({ form: "", buffer: "", row: null, creates: [] });
+  }, 30_000);
+
+  it("words typed after the last save are kept as a new draft, and the editor says why", async () => {
+    await openLetter();
+    await typeSubject("Plans for Friday, saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length > 0, "the save");
+    await typeSubject("Plans for Friday, typed before closing");
+    await reopenGone();
+    await waitFor(() => creates().length > 0, "the kept words saved", 40).catch(() => undefined);
+    expect({ creates: creates(), toGone: saves().filter((m) => m.draftId === D && m.subject?.includes("closing")).length },
+      "the words typed before closing were lost, or written to the deleted row")
+      .toEqual({ creates: [{ row: null, subject: "Plans for Friday, typed before closing" }], toGone: 0 });
+    expect(text().includes(compose.deletedElsewhereKept ?? "\u0000"), "the editor did not say why").toBe(true);
+  }, 30_000);
+});
+
+describe("a save that waited offline, then the row was deleted on another device", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  const online = async (): Promise<void> => { await act(async () => { window.dispatchEvent(new Event("online")); }); };
+  /** Typed offline: the pause's save waits on the outbox, and lands when the connection is back. */
+  async function editThroughTheQueue(words: string, leave = false): Promise<void> {
+    shell.offline.on = true;
+    await typeSubject(words);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    if (leave) {
+      await act(async () => { window.location.hash = "#/ohbox"; });
+      await pause(300);
+    }
+    shell.offline.on = false;
+    await online();
+    await waitFor(() => saves().some((m) => m.draftId === D && m.subject === words), "the queued save landed", 200);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+  }
+  async function reload(hash: string): Promise<void> {
+    shell.offline.on = true;
+    handOffComposer();
+    await unmountAll();
+    window.sessionStorage.clear();
+    resetComposerForTest();
+    stubDom();
+    shell = await mountShell(hash, [], [], { serverGone: [D] });
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+  }
+
+  it("landed before the tab closed: a reload clears the letter and makes no draft", async () => {
+    await openLetter();
+    await editThroughTheQueue("Plans for Friday, edited offline");
+    await reload("#/compose");
+    expect({ creates: creates(), form: q<HTMLInputElement>("#compose-subject")?.value ?? null, row: readComposeRow(), kept: text().includes(compose.deletedElsewhereKept!) },
+      "a letter whose every word reached the deleted row was made again").toEqual({ creates: [], form: "", row: null, kept: false });
+  }, 60_000);
+
+  it("landed after the composer was left: a reload makes no draft", async () => {
+    await openLetter();
+    await editThroughTheQueue("Plans for Friday, written on the train", true);
+    await reload("#/ohbox");
+    expect({ creates: creates(), row: readComposeRow() }).toEqual({ creates: [], row: null });
+  }, 60_000);
+
+  it("landed, then the delete arrives while the tab is open: nothing is made again", async () => {
+    await openLetter();
+    await editThroughTheQueue("Plans for Friday, edited offline");
+    shell.remote.push(deletedElsewhere());
+    await sync();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete applied");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect(creates(), "a letter whose every word reached the deleted row was made again").toEqual([]);
+  }, 60_000);
+
+  it("still waiting when the delete arrives here: the words stay, and no draft is made of them", async () => {
+    await openLetter();
+    shell.offline.on = true;
+    await typeSubject("Plans for Friday, maybe saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    shell.remote.push(deletedElsewhere());
+    await sync();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete applied");
+    shell.offline.on = false;
+    await online();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({ creates: creates(), form: q<HTMLInputElement>("#compose-subject")?.value ?? null, says: text().includes(compose.deletedElsewhere!) })
+      .toEqual({ creates: [], form: "Plans for Friday, maybe saved", says: true });
+  }, 60_000);
+
+  it("still waiting when the tab closed: the words stay, no draft is made until they change, and none is claimed unsaved", async () => {
+    await openLetter();
+    shell.offline.on = true;
+    await typeSubject("Plans for Friday, maybe saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await reload("#/compose");
+    const first = { creates: creates().length, form: q<HTMLInputElement>("#compose-subject")?.value ?? null, kept: text().includes(compose.deletedElsewhereKept!), says: text().includes(compose.deletedElsewhere!) };
+    await reload("#/compose");
+    const second = { creates: creates().length, form: q<HTMLInputElement>("#compose-subject")?.value ?? null };
+    shell.offline.on = false;
+    await typeSubject("Plans for Friday, maybe saved, and more");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => creates().length > 0, "the changed words saved", 40).catch(() => undefined);
+    expect({ first, second, then: creates() }).toEqual({
+      first: { creates: 0, form: "Plans for Friday, maybe saved", kept: false, says: true },
+      second: { creates: 0, form: "Plans for Friday, maybe saved" },
+      then: [{ row: null, subject: "Plans for Friday, maybe saved, and more" }],
+    });
+  }, 90_000);
 });

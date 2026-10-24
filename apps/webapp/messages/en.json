@@ -1380,6 +1380,7 @@
     "cancelWhatSentElsewhereTyped": "This deletes what you typed since. The letter itself was already sent from another device.",
     "sentElsewhereKept": "This draft was sent from another device before your last changes here were saved. They are kept as a new draft.",
     "deletedElsewhere": "This draft was deleted on another device. Anything you type now is kept as a new draft.",
+    "deletedElsewhereKept": "This draft was deleted on another device before your last changes here were saved. They are kept as a new draft.",
     "deletedElsewhereSend": "Not sent: this draft was deleted on another device.",
     "cancelWhatDeletedElsewhere": "This closes the message. Its draft was already deleted on another device.",
     "cancelWhatDeletedElsewhereTyped": "This deletes what you typed since. The draft itself was already deleted on another device.",
@@ -3628,6 +3629,8 @@
     "subjectFoot": "The sender’s other mail keeps going where it goes now. Change or revoke this at Settings → Rules."
   },
   "reply": {
+    "deletedElsewhere": "This reply's draft was deleted on another device. Anything you type now is kept as a new draft.",
+    "deletedElsewhereKept": "This reply's draft was deleted on another device before your last changes here were saved. They are kept as a new draft.",
     "toastSavedAsDraft": "Your unsent reply was saved in Drafts.",
     "to": "Reply to {name}",
     "toAll": "Reply to {names}",

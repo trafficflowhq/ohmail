@@ -1380,6 +1380,7 @@
     "cancelWhatSentElsewhereTyped": "Das löscht, was du seitdem geschrieben hast. Die Nachricht selbst wurde bereits von einem anderen Gerät gesendet.",
     "sentElsewhereKept": "Dieser Entwurf wurde von einem anderen Gerät gesendet, bevor deine letzten Änderungen hier gespeichert waren. Sie werden als neuer Entwurf gespeichert.",
     "deletedElsewhere": "Dieser Entwurf wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
+    "deletedElsewhereKept": "Dieser Entwurf wurde auf einem anderen Gerät gelöscht, bevor deine letzten Änderungen hier gespeichert waren. Sie werden als neuer Entwurf gespeichert.",
     "deletedElsewhereSend": "Nicht gesendet: Dieser Entwurf wurde auf einem anderen Gerät gelöscht.",
     "cancelWhatDeletedElsewhere": "Das schließt die Nachricht. Ihr Entwurf wurde bereits auf einem anderen Gerät gelöscht.",
     "cancelWhatDeletedElsewhereTyped": "Das löscht, was du seitdem geschrieben hast. Der Entwurf selbst wurde bereits auf einem anderen Gerät gelöscht.",
@@ -3628,6 +3629,8 @@
     "subjectFoot": "Die übrigen Mails dieses Absenders gehen weiter dorthin, wo sie jetzt hingehen. Ändern oder widerrufen kannst du das unter Einstellungen → Regeln."
   },
   "reply": {
+    "deletedElsewhere": "Der Entwurf dieser Antwort wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
+    "deletedElsewhereKept": "Der Entwurf dieser Antwort wurde auf einem anderen Gerät gelöscht, bevor deine letzten Änderungen hier gespeichert waren. Sie werden als neuer Entwurf gespeichert.",
     "toastSavedAsDraft": "Deine ungesendete Antwort wurde in den Entwürfen gespeichert.",
     "to": "Antwort an {name}",
     "toAll": "Antwort an {names}",

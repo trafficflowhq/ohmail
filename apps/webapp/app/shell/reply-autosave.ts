@@ -34,8 +34,8 @@ export interface ReplyRowDoors {
   rowOf: (lane: string) => string | null;
   /** A write this lane may not make now: its send is on the way, or a row it cannot write stands. */
   refuses: (lane: string) => boolean;
-  /** A create confirmed: the lane holds the row, with its stored stamp. */
-  took: (lane: string, row: string) => void;
+  /** A write answered: the lane holds the row, with its stored stamp; `text` the body written, `confirmed` or queued. */
+  took: (lane: string, row: string, text: string, confirmed: boolean) => void;
 }
 
 /** What a row holds, in the fields the editor writes. */
@@ -56,6 +56,8 @@ export interface ReplyAutosave {
   baseline: (lane: string, row: ReplyRowFields) => void;
   /** The reply was delivered: the next reply to that message is a new one. */
   forget: (lane: string) => void;
+  /** The lane's next form showing `body` writes nothing until it changes. */
+  asSaved: (lane: string, body: string) => void;
 }
 
 function signatureOf(f: ReplyDraftForm): string {
@@ -83,6 +85,12 @@ export function useReplyAutosave(
   /** The last form each lane showed, for the write its close owes. */
   const lastOf = useRef(new Map<string, ReplyDraftForm>());
   if (form !== null) lastOf.current.set(form.lane, form);
+  /** Per lane: a body the next form showing it counts as saved — see `asSaved`. */
+  const quiet = useRef(new Map<string, string>());
+  if (form !== null && quiet.current.has(form.lane)) {
+    if (quiet.current.get(form.lane) === form.body) saved.current.set(form.lane, signatureOf(form));
+    quiet.current.delete(form.lane);
+  }
   /** Per lane: the creates the outbox holds (answered `queued`, offline), by key — see `sending`. */
   const waiting = useRef(new Map<string, Set<string>>());
   /** Lanes whose creates a send took back — owed a write again should that send be cancelled. */
@@ -137,8 +145,8 @@ export function useReplyAutosave(
       if (row === null && result.status === "queued") {
         waiting.current.set(lane, new Set([...(waiting.current.get(lane) ?? []), result.key]));
       }
-      if (row === null && result.status === "confirmed" && result.entityId) doorsRef.current.took(lane, result.entityId);
-      else if (row !== null) doorsRef.current.took(lane, row);
+      if (row === null && result.status === "confirmed" && result.entityId) doorsRef.current.took(lane, result.entityId, f.body, true);
+      else if (row !== null) doorsRef.current.took(lane, row, f.body, result.status === "confirmed");
       saved.current.set(lane, sig);
     } catch {
       /* The text is still in the editor and the scratch; the next change tries again. */
@@ -198,6 +206,8 @@ export function useReplyAutosave(
     waiting.current.delete(l);
     taken.current.delete(l);
     owed.current.delete(l);
+    quiet.current.delete(l);
   }, []);
-  return { seal, sending, cancelled, baseline, forget };
+  const asSaved = useCallback((l: string, body: string) => { quiet.current.set(l, body); }, []);
+  return { seal, sending, cancelled, baseline, forget, asSaved };
 }
