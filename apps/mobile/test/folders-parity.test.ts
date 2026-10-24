@@ -185,9 +185,8 @@ describe("the delete verb — the engine's, behind a confirm", () => {
     // case: the webapp stopped reading "Use folders" for delete admission (fix "the cursor delete
     // stops reading the Use-folders flag", 2026-09-09 — the selection delete never read it, so a
     // folders-off account could Trash a picked pile and not the row under its cursor), and
-    // `apps/webapp/test/delete-admission-census.test.ts` now asserts that term is ABSENT at all
-    // four webapp sites, this predicate among them. Demanding it here made two guards contradict
-    // each other. The phone still gates on `w.folders.enabled` (the case above): the two readers
+    // `apps/webapp/test/delete-key-shell.test.tsx` deletes with the switch off at the webapp's
+    // sites, this predicate among them. Demanding it here made two guards contradict each other. The phone still gates on `w.folders.enabled` (the case above): the two readers
     // differ, which is a gap row, not a spelling for this census to assert.
     const declared = pane.match(/const deleteConfirmAdmitted\s*=([\s\S]*?);/);
     expect(declared, "MessagePane no longer declares `deleteConfirmAdmitted`").not.toBeNull();

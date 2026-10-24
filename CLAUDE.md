@@ -88,6 +88,9 @@ The phone app (`apps/mobile`) has two root commands: `npm run typecheck:mobile` 
 
 - Colours and shadows come from `packages/tokens`, never hand-written in a view.
 - No message is ever replaced by a "N more" placeholder.
+- New tests are behaviour tests (render, call, assert what comes out). A test file that reads product source as
+  text fails `test/source-text-freeze.test.ts` unless `test/support/source-text-baseline.txt` (which only
+  shrinks) or `test/support/source-text-guards.tsv` names it.
 
 ## How a change reaches `main`
 

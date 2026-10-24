@@ -1,0 +1,14 @@
+apps/mobile/test/copy-census.test.ts	every sentence the phone shows lives in its copy deck, so German reaches all of it
+apps/mobile/test/engine-packaging.test.ts	the phone's packaged engine stays under its size ceiling and names no build machine
+apps/sidecar/test/credential-seal-census.test.ts	every writer that seals a mailbox password reads the sign-out stamp
+apps/sidecar/test/log-census.test.ts	every field the desktop engine logs is on the allowed list, so no secret or mail text reaches a log
+apps/webapp/test/cloud-draft-disclosure.test.ts	the consent step states what a Cloud draft sends, with the counts read off the service
+apps/webapp/test/copy-census.test.ts	every word the web app draws comes from the catalogues, in both languages
+apps/webapp/test/send-record-door-census.test.ts	a send record leaves by one door, so a send that may still finish is never sent twice
+apps/webapp/test/session-cookie-spellings.test.ts	session cookies are read through the one reader that prefers the host-only __Host- spelling
+apps/webapp/test/session-expiry-single-rule.test.ts	a web session ends only on sign-out, a named refusal or the idle window, never on a fault
+apps/webapp/test/session-verdict-guard.test.ts	no catch block writes the signed-out verdict, which no behaviour test can reach
+packages/api/test/session-jar-one-writer.test.ts	the session jar has one writer, so a late refresh never signs a browser into another account
+packages/api/test/staff-token-one-door-census.test.ts	a staff write reads its step-up token through one door, so the recency check cannot be skipped
+test/desktop-egress-disclosed.test.ts	every published account of what the desktop contacts names each kind of egress
+test/published-roots-carry-no-plane-staff.test.ts	no published file carries the billing plane's staff surface

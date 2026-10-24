@@ -12,8 +12,7 @@
    calm values and ohmarchy through the ring ladder — the layout never
    names a color or a radius of its own. Classic is the ABSENT state of
    `data-layout`: no selector below can match a classic document, which is
-   what keeps classic byte-identical by construction
-   (test/zero-layout-purity.test.ts, the faces-paper-purity argument).
+   what keeps classic byte-identical by construction.
 
    ── THE LADDER (owner-ruled, §12 — boundaries derived from content
       floors, one degradation per step) ───────────────────────────────────

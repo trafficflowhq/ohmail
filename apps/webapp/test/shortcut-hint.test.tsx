@@ -250,8 +250,8 @@ describe("the strip cannot wrap and cannot push the pane wider", () => {
 
   it("under 700px the strips are gone entirely — no keyboard chrome over a phone's list", () => {
     // The declarations live inside app.css's `max-width: 699.98px` block; this scan does not
-    // parse the at-rule, so their PRESENCE anywhere in the sheet plus the block test in
-    // `list-title-size.test.ts`'s pattern is the guard: delete either `display: none` and red.
+    // parse the at-rule, so their PRESENCE anywhere in the sheet is the guard: delete either
+    // `display: none` and red.
     expect(APP).toMatch(/\.view \.list-hints \{\s*display: none;\s*\}/);
     expect(APP).toMatch(/\.view \.stream-hints \{\s*display: none;\s*\}/);
   });
