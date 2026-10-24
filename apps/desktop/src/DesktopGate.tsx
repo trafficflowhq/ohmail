@@ -51,6 +51,8 @@ import { DoorChooser } from "./DoorChooser.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
+import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
+import { filingsOverBridge } from "./local-filings.js";
 import { checkMailboxHere } from "./local-self-check.js";
 import { readMailboxFacts } from "./local-mailbox-facts.js";
 /* The OS-answer reader this window has to bring itself — see the injection below. */
@@ -1288,6 +1290,8 @@ export function DesktopGate() {
               server={selfHostedServerOf(status)}
               onShellStatus={onStatus}
             />
+            {/* THE FILINGS THAT WAIT, on every door: the local engine serves them; the Cloud door lists Cloud's figures and relays the read and both presses. */}
+            <MailboxFilings api={filingsOverBridge} />
             {/* THE SELF-CHECK, on the local door only: its engine holds the mirror it compares. */}
             {status?.mode === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
           </>

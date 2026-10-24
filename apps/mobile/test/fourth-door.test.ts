@@ -1034,7 +1034,7 @@ describe("screen 3: the Settings row", () => {
   it("renders at all only where an engine is registered, and asks the DOOR rather than a read", () => {
     expect(SETTINGS).toContain("standaloneAvailable({ startEngine: phoneEngineStart() })");
     expect(SETTINGS, "the panel still gates on a roster read landing").not.toContain("!w.mailboxes.known");
-    expect(SETTINGS, "the panel does not ask the door").toContain("const here = standaloneHere()");
+    expect(SETTINGS, "the panel does not ask the door").toContain("const here = standaloneHereFor({ standalone: w.standalone })");
     expect(SETTINGS, "the paired arm lost its roster").toContain("w.mailboxes.rows.map((row) => ({");
   });
 

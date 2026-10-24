@@ -55,11 +55,15 @@ export function selfCheckSentence(check: MailboxCheck): string {
   }
 }
 
-export function selfCheckRowSaid(p: SelfCheckPress): SelfCheckRowSaid {
+/** A reading counts folders, not filings: the `waiting` filings are said beside it, as on the web. */
+export function selfCheckRowSaid(p: SelfCheckPress, waiting = 0): SelfCheckRowSaid {
   switch (p.k) {
     case "rest": return { sentence: null, action: Copy.selfCheckAction, busy: false };
     case "busy": return { sentence: null, action: Copy.selfCheckChecking, busy: true };
-    case "done": return { sentence: selfCheckSentence(p.check), action: Copy.selfCheckAction, busy: false };
+    case "done": {
+      const said = selfCheckSentence(p.check);
+      return { sentence: waiting > 0 ? `${said} ${Copy.selfCheckWaiting(waiting)}` : said, action: Copy.selfCheckAction, busy: false };
+    }
     case "failed": return { sentence: Copy.selfCheckFailed, action: Copy.selfCheckAction, busy: false };
   }
 }

@@ -38,7 +38,7 @@ import {
   onOrganizerState, organizeRefusal, organizerHandedBack, organizerInstruction,
   organizerHandBackLateSaid, organizerNotificationsOffSaid, organizerRestrictedSaid, organizerSettingsLeft,
   organizerStateVersion,
-  pressOrganizeHere, standaloneHere, standaloneServerSettings,
+  pressOrganizeHere, standaloneHereFor, standaloneServerSettings,
 } from "../src/engine/organizer-session";
 import { openNotificationSettings } from "../src/engine/notification-permission-native";
 import { NotifyPermission } from "../src/ui/NotifyPermission";
@@ -97,6 +97,9 @@ import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/di
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
 import { selfCheckRowSaid, type SelfCheckPress } from "../src/ui/self-check-said";
 import { WaitingStrip } from "../src/ui/WaitingStrip";
+import { FilingStrip } from "../src/ui/FilingStrip";
+import { FilingsBlocks } from "../src/ui/FilingsBlock";
+import { filingsWaiting } from "../src/ui/filing-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -197,6 +200,8 @@ function SettingsBody() {
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel />
         <WaitingStrip />
+        <FilingStrip />
+        <FilingsBlocks />
 
         {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
         <SavedSettingsPanel />
@@ -517,7 +522,7 @@ function ThisPhonePanel() {
    * finished stop or a mailbox another machine held, settling only when Settings was re-entered.
    * `useSyncExternalStore` over the organizer session's own version counter — the mechanism
    * `world.tsx` uses for the mirror engine — fixes it. No state is copied: a notify means "ask
-   * again", and the read below is the same `standaloneHere()`, so there is one answer to whether
+   * again", and the read below is the same door (`standaloneHereFor`), so there is one answer to whether
    * this phone organizes this mailbox.
    */
   useSyncExternalStore(
@@ -541,7 +546,9 @@ function ThisPhonePanel() {
    * The standalone card's key is a constant, not a mailbox id: it names React's
    * row; the engine's own release needs no id.
    */
-  const here = standaloneHere();
+  /* SCOPED TO THE ACCOUNT ON SCREEN: the engine outlives a switch, so under another account the
+     phone's own mailbox is not this panel's card (`standaloneHereFor`). */
+  const here = standaloneHereFor({ standalone: w.standalone });
   /* What each field of the server sheet wears: the press's refusal where it names that field, else
      the port rule the typed value already breaks. */
   const serverWears = (field: ServerField | "password"): { error: string } | Record<string, never> => {
@@ -783,7 +790,7 @@ function ThisPhonePanel() {
                 {/* CHECK THIS MAILBOX — one read of the mail server against this phone's copy, and
                     one sentence back. The door in THIS process only: its engine holds the copy. */}
                 {row.key === HERE_CARD && here !== null ? (() => {
-                  const check = selfCheckRowSaid(checkPress);
+                  const check = selfCheckRowSaid(checkPress, filingsWaiting(w.mailboxes.rows.find((m) => m.id === here.id)));
                   return (
                     <View style={{ gap: 2, marginTop: 4 }}>
                       <Button

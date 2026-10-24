@@ -2836,6 +2836,47 @@ const TABLE = {
     `${folder}, News' folder before the rename (${n} ${n === 1 ? "letter" : "letters"} not moved into News yet)`,
   selfCheckAndMore: (list: string, n: number) => `${list}, and ${n} more`,
   selfCheckFailed: "The check could not run. Nothing was changed.",
+  selfCheckWaiting: (count: number) =>
+    `${count === 1 ? "1 message is" : `${count} messages are`} still waiting to be filed on your mail server.`,
+
+  /* ── THE FILINGS THAT WAIT — `ui/filing-lines.ts`: the web's strip and Settings block
+     (`sync.filing*`, `mailboxFilings.*`) in this phone's deck. */
+  filingStuck: (count: number, minutes: number) =>
+    `${count === 1 ? "1 message has" : `${count} messages have`} not been filed for ${minutes === 1 ? "1 minute" : `${minutes} minutes`}`,
+  filingStuckHours: (count: number, hours: number) =>
+    `${count === 1 ? "1 message has" : `${count} messages have`} not been filed for ${hours === 1 ? "1 hour" : `${hours} hours`}`,
+  filingStuckWhy: (where: string, reason: string) => `${where} · ${reason}`,
+  filingWaiting: (count: number) => `${count === 1 ? "1 message waits" : `${count} messages wait`} for the next try`,
+  filingWaitingWhy: (where: string, reason: string, at: string) => `${where} · ${reason} · next try at ${at}`,
+  mailboxCountWaiting: (count: number) => (count === 1 ? "1 mailbox" : `${count} mailboxes`),
+  filingReasonsDiffer: "the reasons differ by mailbox",
+  filingReasonRefused: "the last try did not go through",
+  filingReasonNoSuchFolder: "the folder is not there",
+  filingReasonReadOnly: "the folder will not take it",
+  filingReasonOverQuota: "the mailbox is full",
+  filingReasonStaleLocator: "ohmail lost track of it on your mail server",
+  filingReasonUnconfirmed: "ohmail could not confirm the move",
+  filingReasonUnknown: "the last try did not go through",
+  filingReasonNone: "no refusal is recorded",
+  filingStripOpen: "Show in Settings",
+  filingsTitle: (mailbox: string) => `Waiting to be filed · ${mailbox}`,
+  filingsGroup: (count: number, folder: string, since: string) =>
+    `${count === 1 ? "1 message waits" : `${count} messages wait`} to be filed into ${folder} since ${since}`,
+  filingsWhy: (reasons: string) => `Why: ${reasons}`,
+  filingsReasonCounted: (reason: string, count: number) => `${reason} (${count})`,
+  filingsNext: (at: string) => `Next try at ${at}.`,
+  filingsAt: (count: number, at: string) => `${count === 1 ? "It is" : "They are"} in ${at} on your mail server.`,
+  filingsDeletesAll: (count: number): string => (count === 1 ? "You deleted it." : "You deleted them."),
+  filingsDeletesSome: (count: number) => (count === 1 ? "1 of them you deleted." : `${count} of them you deleted.`),
+  filingsUnread: (count: number) => `${count === 1 ? "1 message waits" : `${count} messages wait`} to be filed.`,
+  filingsRetry: "Try again now",
+  filingsLeave: "Leave them where they are",
+  filingsRetried: (count: number) => (count === 0 ? "Nothing here was waiting for a retry."
+    : count === 1 ? "1 message will be tried again on the next pass." : `${count} messages will be tried again on the next pass.`),
+  filingsLeft: (count: number) => (count === 0 ? "Nothing here was left to settle."
+    : count === 1 ? "1 message stays where it is." : `${count} messages stay where they are.`),
+  filingsFailed: "That did not go through. Nothing was changed.",
+  filingsElsewhere: "Another install organizes this mailbox now. Nothing was changed.",
 
   /* THE ROW'S BADGES, SPOKEN — `ui/row-spoken.ts`. A chip's face ("4", "2 new") read out in a
      list is a number and a word with no referent, so each fact has a sentence of its own here;

@@ -591,6 +591,12 @@ const ENGINE_IMPORTERS = new Set([
    * line boxes it is handed; no connection, and the pattern scan above holds it to that.
    */
   "src/ui/reader-seen.ts",
+  /**
+   * THE FILINGS THAT WAIT, WORDED — a named consumer of the shared refusal classes
+   * (`filingRefusalReason`, the web strip's own list), `clock` and the folder-to-view map. Pure
+   * over facts it is handed; no connection, and the pattern scan above holds it to that.
+   */
+  "src/ui/filing-lines.ts",
 ]);
 
 describe("network: confined to the engine seam", () => {
