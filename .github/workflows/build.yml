@@ -143,6 +143,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   # When `main` takes pull requests through a merge queue, its required checks (the engine and the
   # engine-bearing UI) must report on the queue's merge group, or the queue waits until it gives up.
   merge_group:
@@ -196,6 +197,11 @@ jobs:
   # macos-signed-check), beside how the job it needs ended: GitHub reads an `if:`
   # naming no status function as `success()`, which asks the whole needs chain,
   # this job included.
+  #
+  # A DRAFT pull request runs this job and nothing else: the engine pair and each
+  # gated job read the draft flag themselves (a gate here alone would fail open,
+  # a skipped `changes` building everything), and `ready_for_review` starts the
+  # run that builds. The flag is null on every other event.
   changes:
     name: changes · which platform builds this pull request needs
     if: github.event_name == 'pull_request'
@@ -218,7 +224,7 @@ jobs:
   macos:
     name: macOS · smoke · engine · universal app · dmg
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: macos-15
     timeout-minutes: 60
     # NO ENVIRONMENT AND NO SECRET, ON EVERY RUN, the release tag's included: this job runs the
@@ -1287,7 +1293,7 @@ jobs:
   windows:
     name: Windows · smoke · engine · nsis setup
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -1641,7 +1647,7 @@ jobs:
   linux:
     name: Linux · smoke · engine · appimage + deb + rpm
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: ubuntu-latest
     # Seventy-five and not sixty since the perf smoke joined this job: importing five thousand
     # messages and letting the process group settle is minutes on top of three packaged artifacts.
@@ -2819,7 +2825,7 @@ jobs:
   linux-arm64:
     name: Linux arm64 · smoke · engine · appimage + deb + rpm
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     # GitHub's hosted arm64 Linux runner, free for public repositories. It is a
     # NATIVE machine, not emulation: everything below compiles and runs as
     # aarch64, which is what makes the checks worth running here rather than
@@ -3868,7 +3874,7 @@ jobs:
   linux-flatpak:
     name: Linux · flatpak builds offline
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
@@ -4204,7 +4210,8 @@ jobs:
   # Where it runs: as ci.yml's jobs do (its header says when that is the maintainers' own runners).
   engine:
     name: engine · typecheck · build
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
 
     steps:
@@ -4340,7 +4347,8 @@ jobs:
   # ==========================================================================
   engine-ui-smoke:
     name: engine-bearing UI · scan · smoke
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
 
     steps:

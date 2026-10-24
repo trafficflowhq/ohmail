@@ -16,8 +16,12 @@ import { evalIf, namesStatusCheck, runJobs, type IfContext, type JobResult } fro
  * `.github/scripts/pr-build-scope.sh` on a pull request, and the platform jobs read its answer there and
  * nowhere else. What must hold:
  *
- *   · the two contexts the ruleset requires from build.yml run on every pull request, never behind the
- *     answer, and no trigger is path-filtered (a required context that never reports blocks the merge);
+ *   · the two contexts the ruleset requires from build.yml run on every pull request once it is ready for
+ *     review, never behind the answer, and no trigger is path-filtered (a required context that never reports
+ *     blocks the merge);
+ *   · a draft pull request starts only `changes` in build, android and selfhost-smoke: every other job reads the
+ *     draft flag itself, because a gate on `changes` alone fails open (each job builds when `changes` did not
+ *     succeed);
  *   · a push to main, a `v*` tag, a merge group and a dispatch run every platform job, whatever `changes`
  *     did, and every job after one — a release takes its installers from the tag run. Read as GitHub starts
  *     jobs (`runJobs`): an `if:` naming no status-check function is `success()` over the whole needs chain,
@@ -35,6 +39,8 @@ const BUILD = text("build"), ANDROID = text("android"), SELFHOST = text("selfhos
 
 /** The contexts main's ruleset requires from build.yml, as the jobs' names spell them. */
 const REQUIRED = { engine: "engine · typecheck · build", "engine-ui-smoke": "engine-bearing UI · scan · smoke" };
+/** A job's whole `if:` on a draft: not run while the pull request is a draft; null on any other event. */
+const DRAFT_GATE = "${{ !github.event.pull_request.draft }}";
 /** The platform jobs that ask `changes` directly; linux-rpm-install asks through `linux`. */
 const DESKTOP_GATED = ["macos", "windows", "linux", "linux-arm64", "linux-flatpak"];
 const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs === undefined ? [] : [j.needs]);
@@ -43,6 +49,7 @@ const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs === unde
 function run(event: string, ref: string, result: string, scope: string, extra: IfContext = {}): IfContext {
   return {
     "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail",
+    "github.event.pull_request.draft": event === "pull_request" ? false : null,
     "needs.changes.result": result, "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope,
     "needs.linux.result": "success", ...extra,
   };
@@ -67,9 +74,10 @@ const ifOf = (j: Job | undefined) => {
   return raw === "" ? "true" : raw;
 };
 /** A run as runJobs takes it: what no job decides, the event and the answer `changes` printed; it works out the rest. */
-const graphRun = (event: string, ref: string, scope: string): IfContext => ({
+const graphRun = (event: string, ref: string, scope: string, draft = false): IfContext => ({
   "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail",
-  "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope,
+  "github.event.pull_request.draft": event === "pull_request" ? draft : null,
+  "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope, "needs.changes.outputs.selfhost": scope,
 });
 const ran = (r: Record<string, JobResult>) => Object.keys(r).filter((id) => r[id] === "success").sort();
 /** The script runs with nothing of the caller's run: under CI it would otherwise write to the job's own output. */
@@ -97,11 +105,11 @@ describe("the required contexts report on every pull request", () => {
     });
   }
 
-  it("build.yml's two required jobs exist under their context names and wait on nothing", () => {
+  it("build.yml's two required jobs exist under their context names, wait on nothing and skip only a draft", () => {
     const jobs = load(BUILD).jobs ?? {};
     for (const [id, name] of Object.entries(REQUIRED)) {
       expect(jobs[id]?.name, `the required context ${name} has no job`).toBe(name);
-      expect(jobs[id]?.if, `${id} is gated`).toBeUndefined();
+      expect(jobs[id]?.if, `${id} is gated beyond the draft`).toBe(DRAFT_GATE);
       expect(needsOf(jobs[id]!), `${id} waits on another job`).toEqual([]);
     }
   });
@@ -170,6 +178,30 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
     expect(ungated.macos!.if, "the plant").toBeUndefined();
     expect(() => ifOf(ungated.macos), "a job that needs another, read alone").toThrow(/whole needs chain/);
     expect(runJobs(ungated, graphRun("pull_request", "refs/pull/7/merge", "false")).macos, "the planted ungated macOS job").toBe("success");
+  });
+});
+
+describe("a draft pull request starts only `changes`", () => {
+  const wfs = { build: load(BUILD).jobs ?? {}, android: load(ANDROID).jobs ?? {}, selfhost: load(SELFHOST).jobs ?? {} };
+  const draft = (jobs: Record<string, Job>) => ran(runJobs(jobs, graphRun("pull_request", "refs/pull/7/merge", "true", true)));
+
+  it("in build, android and selfhost-smoke, even when the answer says it needs every build", () => {
+    for (const [label, jobs] of Object.entries(wfs)) expect(draft(jobs), label).toEqual(["changes"]);
+    /* The same pull request marked ready builds what it builds today. */
+    expect(ran(runJobs(wfs.android, graphRun("pull_request", "refs/pull/7/merge", "true")))).toEqual(["apk", "changes"]);
+    expect(ran(runJobs(wfs.selfhost, graphRun("pull_request", "refs/pull/7/merge", "true")))).toEqual(["boot-smoke", "changes"]);
+  });
+
+  it("is watched failing on the gate dropped from a job and on the gate moved onto `changes`", () => {
+    const noGate = load(BUILD.replace(/^( {2}macos:\n(?: {4}.*\n)*? {4}if: \$\{\{ !cancelled\(\) && )!github\.event\.pull_request\.draft && /m, "$1")).jobs!;
+    expect(noGate.macos!.if).not.toBe(wfs.build.macos!.if);
+    expect(draft(noGate)).toEqual(["changes", "macos", "macos-sign"]);
+    /* Gating `changes` instead: skipped on a draft, it reads as an answer that could not be read, and every
+       platform job builds. */
+    const onChanges = Object.fromEntries(Object.entries(wfs.build).map(([id, j]) => [id, id === "changes"
+      ? { ...j, if: "${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}" }
+      : { ...j, if: typeof j.if === "string" ? j.if.replace("!github.event.pull_request.draft && ", "") : j.if }]));
+    expect(draft(onChanges)).toEqual(expect.arrayContaining(["macos", "windows", "linux", "linux-arm64", "linux-flatpak"]));
   });
 });
 

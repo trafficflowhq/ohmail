@@ -338,7 +338,9 @@ function selectionProblems(text: string): string[] {
   for (const [id, job] of Object.entries(wf.jobs)) {
     for (const s of job.steps) if ((s.run ?? "").includes("${{")) problems.push(`ENV_ONLY ${id}: "${s.name ?? s.uses}" interpolates an expression into its run text`);
   }
-  for (const id of ["plan", "typecheck", "webapp-build"]) if (wf.jobs[id]!.if !== undefined) problems.push(`REQUIRED ${id} does not run on every pull request`);
+  /* Skipped on a draft only; marking it ready runs them (test/workflows-under-pull-requests.test.ts). */
+  const ready = (id: string) => (id === "webapp-build" ? undefined : "${{ !github.event.pull_request.draft }}");
+  for (const id of ["plan", "typecheck", "webapp-build"]) if (wf.jobs[id]!.if !== ready(id)) problems.push(`REQUIRED ${id} does not run on every pull request`);
   return problems;
 }
 
@@ -362,7 +364,7 @@ describe("a pull request's selected run", () => {
       ["files in the run text", workflowText.replace("            list=$FILES\n", "            list=\"${{ matrix.files }}\"\n"), /^ENV_ONLY suite: /],
       ["a selected report not read back", workflowText.replace(/--verify-list "selected sqlite shard \$SHARD"/, "--verify-sqlite-report \"$SHARD\""), /^VERIFY sqlite /],
       ["selected durations uploaded", workflowText.replace("        if: always() && env.FILES == ''\n", "        if: always()\n"), /^DURATIONS suite /],
-      ["a required check skipped", workflowText.replace("    name: typecheck\n", "    name: typecheck\n    if: needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
+      ["a required check skipped", workflowText.replace(/(\n {4}name: typecheck\n {4}if: ).*\n/, "$1needs.plan.outputs.shards != '[]'\n"), /^REQUIRED typecheck /],
     ];
     for (const [what, text, want] of planted) {
       expect(text, what).not.toBe(workflowText);

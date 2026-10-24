@@ -32,7 +32,7 @@ const JOBS = ["macos", "macos-sign", "macos-signed-check", "windows", "linux", "
 /** The tag push as the expressions see it: `changes` is skipped there, so its answer is empty. */
 const atTag: IfContext = {
   "github.event_name": "push", "github.ref": "refs/tags/v1.2.3", "github.repository": "trafficflowhq/ohmail",
-  "needs.changes.outputs.desktop": "",
+  "github.event.pull_request.draft": null, "needs.changes.outputs.desktop": "",
 };
 
 describe("build.yml runs at the version tag", () => {

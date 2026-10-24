@@ -37,8 +37,9 @@ const load = (t: string) => yaml.load(t) as Workflow;
 const exec = (t: string) => t.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
 
 const GATE = "boot-smoke";
-const ctx = (event: string, result: string, selfhost: string): IfContext => ({
+const ctx = (event: string, result: string, selfhost: string, draft = false): IfContext => ({
   "github.event_name": event, "needs.changes.result": result, "needs.changes.outputs.selfhost": selfhost,
+  "github.event.pull_request.draft": event === "pull_request" ? draft : null,
 });
 
 /** What departs from the workflow's shape, one line each; [] when it holds. */
@@ -66,6 +67,7 @@ export function workflowFindings(text: string): string[] {
   if (!runs(ctx("pull_request", "failure", ""))) out.push("skips when changes failed");
   if (!runs(ctx("workflow_dispatch", "skipped", ""))) out.push("skips a dispatch");
   if (runs(ctx("pull_request", "success", "true"), true)) out.push("runs on a cancelled run");
+  if (runs(ctx("pull_request", "success", "true", true))) out.push("runs on a draft");
   if (gate["timeout-minutes"] !== 45) out.push(`timeout ${gate["timeout-minutes"]}`);
   const smoke = (gate.steps ?? []).find((s) => /selfhost-smoke\.sh/.test(s.run ?? ""));
   if (!smoke) out.push("no step runs selfhost-smoke.sh");

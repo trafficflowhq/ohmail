@@ -1,8 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
+import { runJobs, type IfContext, type JobShape } from "./support/workflow-if.js";
 
 /**
  * THE PUBLIC MAIN TAKES PULL REQUESTS, AND THE WORKFLOWS FOLLOW.
@@ -13,6 +15,10 @@ import { publicPath } from "./support/public-root.mjs";
  * signing key outside the `release` environment can be made to run, key in hand, from any branch; and a
  * feeds recovery dispatched on the tag still takes main's tools. Nothing here runs GitHub Actions, so the
  * rules are read off the files, the expressions evaluated as written.
+ *
+ * A draft pull request runs only the quick checks: each workflow that skips its heavy jobs on a draft also
+ * runs on `ready_for_review`, so marking the pull request ready starts them. Without that trigger the newest
+ * run on the head would stay the draft's, every heavy job in it skipped, and a skipped job reports success.
  */
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const WF = (n: string) => readFileSync(publicPath(`github/workflows/${n}.yml`, ROOT), "utf8");
@@ -132,6 +138,78 @@ export function evaluate(expr: string, ctx: Record<string, string | null>): unkn
   if (!/^[\s"a-zA-Z0-9_./=&|-]*$/.test(js)) throw new Error(`not an expression this reads: ${expr}`);
   return new Function(`return (${js});`)();
 }
+
+const yaml = createRequire(resolve(ROOT, "package.json"))("js-yaml") as { load(text: string): unknown };
+type Loaded = { on?: Record<string, { types?: string[] } | null>; jobs?: Record<string, JobShape> };
+/** The pull_request activity types a draft gate needs: the default three, and the one that ends the draft. */
+export const DRAFT_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"];
+
+/** The workflows that read a pull request's draft flag and do not run when it is marked ready. */
+export function draftWithoutReady(files: Record<string, string>): string[] {
+  return Object.entries(files)
+    .filter(([, t]) => /\bgithub\.event\.pull_request\.draft\b/.test(exec(t)))
+    .filter(([, t]) => !((yaml.load(t) as Loaded).on?.pull_request?.types ?? []).includes("ready_for_review"))
+    .map(([f]) => f);
+}
+
+/** ci.yml's jobs as a run of the given event starts them; a plan that hands each matrix one job. */
+const ciRun = (t: string, draft: boolean | null, event = draft === null ? "workflow_dispatch" : "pull_request") =>
+  runJobs((yaml.load(t) as Loaded).jobs ?? {}, {
+    "github.event_name": event, "github.event.pull_request.draft": draft,
+    "needs.plan.outputs.shards": '[{"shard":0}]', "needs.plan.outputs.alone": '["a.test.ts"]', "needs.plan.outputs.sqlite": '[{"shard":0}]',
+  } satisfies IfContext);
+const started = (r: Record<string, string>) => Object.keys(r).filter((k) => r[k] === "success").sort();
+
+describe("a draft pull request runs the quick checks only, and marking it ready runs the rest", () => {
+  const ci = WF("ci");
+  const all = Object.fromEntries(readdirSync(publicPath("github/workflows", ROOT)).filter((f) => f.endsWith(".yml"))
+    .map((f) => [f, readFileSync(publicPath(`github/workflows/${f}`, ROOT), "utf8")]));
+
+  it("the four workflows that skip work on a draft run on the default types and ready_for_review", () => {
+    for (const f of ["ci.yml", "build.yml", "android.yml", "selfhost-smoke.yml"]) {
+      expect((yaml.load(all[f]!) as Loaded).on?.pull_request?.types, f).toEqual(DRAFT_TYPES);
+    }
+    expect(draftWithoutReady(all)).toEqual([]);
+    expect(Object.keys(all).filter((f) => /pull_request\.draft/.test(exec(all[f]!))).sort())
+      .toEqual(["android.yml", "build.yml", "ci.yml", "selfhost-smoke.yml"]);
+  });
+
+  it("ci.yml: a draft starts no job; a ready pull request and a dispatch start every one", () => {
+    const every = ["alone", "desktop", "plan", "proxy-e2e", "sqlite", "suite", "typecheck", "webapp-build"];
+    expect(started(ciRun(ci, true))).toEqual([]);
+    expect(started(ciRun(ci, false))).toEqual(every);
+    expect(started(ciRun(ci, null))).toEqual(every);
+    expect(started(ciRun(ci, null, "schedule"))).toEqual(every);
+  });
+
+  it("ci.yml: a pull request's next push supersedes its run; a run that is no pull request's has a group of its own", () => {
+    const c = concurrencyOf(ci);
+    const at = (event: string, n: string | null, id: string) => ({
+      "github.event_name": event, "github.event.pull_request.number": n, "github.run_id": id, "github.ref": "refs/heads/pr/release-0301-bump",
+    });
+    const group = (ctx: Record<string, string | null>) => String(valueOf(c.group ?? "", ctx));
+    expect(group(at("pull_request", "7", "1"))).toBe(group(at("pull_request", "7", "2")));
+    expect(valueOf(c.cancel ?? "false", at("pull_request", "7", "2"))).toBe(true);
+    expect(group(at("pull_request", "7", "1"))).not.toBe(group(at("pull_request", "8", "2")));
+    for (const ev of ["workflow_dispatch", "schedule"]) {
+      expect(group(at(ev, null, "4")), ev).not.toBe(group(at(ev, null, "5")));
+      expect(valueOf(c.cancel ?? "false", at(ev, null, "5")), ev).toBe(false);
+    }
+  });
+
+  it("is watched failing on ready_for_review dropped and on a group keyed by the ref", () => {
+    const noReady = ci.replace("types: [opened, synchronize, reopened, ready_for_review]", "types: [opened, synchronize, reopened]");
+    expect(noReady).not.toBe(ci);
+    expect(draftWithoutReady({ ...all, "ci.yml": noReady })).toEqual(["ci.yml"]);
+    const byRef = concurrencyOf(ci.replace(/group: ci-.*\n/, "group: ci-${{ github.event.pull_request.number || github.ref }}\n"));
+    const ctx = (id: string) => ({ "github.event_name": "workflow_dispatch", "github.event.pull_request.number": null, "github.run_id": id, "github.ref": "refs/heads/main" });
+    expect(valueOf(byRef.group!, ctx("4"))).toBe(valueOf(byRef.group!, ctx("5")));
+    /* The gate dropped from plan: a draft starts the whole suite. */
+    const ungated = ci.replace(/(\n {2}plan:\n {4}name: .*\n) {4}if: .*\n/, "$1");
+    expect(ungated).not.toBe(ci);
+    expect(started(ciRun(ungated, true))).toContain("suite");
+  });
+});
 
 describe("the workflows of a main that takes pull requests", () => {
   const build = WF("build"), android = WF("android"), feeds = WF("release-feeds");

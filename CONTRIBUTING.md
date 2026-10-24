@@ -58,8 +58,11 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   files a release bump writes. A pull request that changes only tests, docs or other workflows
   skips them, and they show as skipped. `.github/scripts/pr-build-scope.sh`
   decides, and its `changes` job prints why. The engine job and the
-  engine-bearing UI smoke run on every pull request, and a push to `main`, a
-  release tag and a manual run build every platform.
+  engine-bearing UI smoke run on every pull request once it is ready for
+  review, and a push to `main`, a release tag and a manual run build every
+  platform.
+- A draft pull request runs only the sign-off and guard checks and the
+  `changes` jobs. Marking it ready for review starts the rest.
 - The workflows under `.github/`, the tools under `scripts/` they run and the
   push gate's baseline under `.gate/` are changed by the maintainers. The
   **guard** check fails a pull request from a fork that changes them. If you

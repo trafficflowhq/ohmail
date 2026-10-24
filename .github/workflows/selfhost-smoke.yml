@@ -12,12 +12,14 @@
 # the stack needs the compose plugin and buildx. One job, no matrix, no cache, no secret, no registry
 # login; a newer push cancels the older run. It is not a required check. `changes` skips it on a pull
 # request that touches nothing the three images build from (.github/scripts/pr-build-scope.sh, the
-# recipes' dockerignores); a dispatch runs it whatever changed, e.g. `gh workflow run selfhost-smoke.yml --ref main`.
+# recipes' dockerignores), and so does a draft until it is marked ready for review; a dispatch runs it
+# whatever changed, e.g. `gh workflow run selfhost-smoke.yml --ref main`.
 
 name: selfhost-smoke
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +52,7 @@ jobs:
   boot-smoke:
     name: self-host · images from this tree · boot smoke
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.selfhost == 'true') }}
+    if: ${{ !cancelled() && !github.event.pull_request.draft && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.selfhost == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
