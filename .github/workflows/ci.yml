@@ -564,8 +564,20 @@ jobs:
       - name: The tree the web image builds
         run: find apps packages -path '*/node_modules' -prune -o -type d -name test -prune -exec rm -rf {} +
 
+      # webpack reports a missing export as a warning and next build exits 0, while the bundle ships
+      # the name undefined; the build's log is read for one (.github/scripts/webapp-build-check.mjs).
       - name: next build
-        run: cd apps/webapp && npx --offline next build
+        run: |
+          set -euo pipefail
+          (cd apps/webapp && npx --offline next build) 2>&1 | tee "$RUNNER_TEMP/next-build.log"
+          node .github/scripts/webapp-build-check.mjs imports "$RUNNER_TEMP/next-build.log"
+
+      - name: Install Chromium for the smoke
+        run: npx playwright install --with-deps chromium
+
+      # next start over that build: /demo (fixtures, no account) at the Ohbox, News and Receipts.
+      - name: Production smoke
+        run: node .github/scripts/webapp-build-check.mjs smoke apps/webapp
 
   # The required check's name is this job's name, "typecheck": it is read by the repository's ruleset.
   typecheck:
