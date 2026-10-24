@@ -290,8 +290,8 @@ import { sendLine, sendLineValues } from "./SendStatus";
 
 /* THE TWO PANES THE FIRST PAINT NEVER SHOWS, split out of the first-load bundle. Lazy VALUE,
    static TYPES: the type imports above cost no bytes, and these factories are the only place
-   the two modules may be named — the import-graph census
-   (`test/first-load-defers-panes.test.ts`) refuses a static path back in. Both mount behind
+   the two modules may be named — the built first load
+   (`test/first-load-defers-editor.test.ts`) refuses a static path back in. Both mount behind
    their existing `effectiveView` seams under one `Suspense` each, through `lazyView`, so a chunk
    that failed to load is asked for again on the next open. */
 const ComposeView = lazyView(async () => {

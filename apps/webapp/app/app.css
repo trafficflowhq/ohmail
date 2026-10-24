@@ -152,8 +152,7 @@ body.reading .shell {
 @media (min-width: 1024px) {
   .view-reads .stream,
   .view-receipts .stream {
-    /* the deck frame is a token now (--gap-edge); the reclaim and the give-back move with it
-       (thread-column-shadow.test.ts pins all three sites to the same token) */
+    /* the deck frame is a token now (--gap-edge); the reclaim and the give-back move with it */
     margin-top: calc(-1 * var(--gap-edge));
     margin-bottom: calc(-1 * var(--gap-edge));
     padding-top: calc(2px + var(--gap-edge));
@@ -4502,8 +4501,8 @@ input.set-tag-input {
     padding: 12px 16px 8px;
     flex: none;
   }
-  /* The page's one title below 1024 (DESIGN-FOLD-WIDTHS §5): the topbar's register, never the pile title's 20px —
-     `list-title-size.test.ts` keeps the two registers apart. A long folder or tag name
+  /* The page's one title below 1024 (DESIGN-FOLD-WIDTHS §5): the topbar's register, never the pile title's 20px.
+     A long folder or tag name
      ellipsises rather than pushing the ↻ and ⌘K capsules off the bar. */
   .topbar .tb-title {
     font-size:calc(13.5px + var(--type-up));

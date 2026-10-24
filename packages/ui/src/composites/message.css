@@ -87,8 +87,7 @@
  * the edge, back when the panels sat 2px from the clip. With the clip box extended into the
  * gaps the arc cannot reach a panel any more — all it clipped was the corner of the shadow
  * strip, where a curved fragment reads as debris floating over the gap mid-scroll. A scrolled
- * panel is cut on one straight line, the reading the stream's card scroll already ships.
- * Guarded structurally by thread-column-shadow.test.ts in the webapp suite. */
+ * panel is cut on one straight line, the reading the stream's card scroll already ships. */
 .read-col:has(> .conv){background:none;border-radius:0;box-shadow:none;margin:calc(-1 * var(--gap-edge));padding:var(--gap-edge);
   -webkit-mask-image:linear-gradient(to right,transparent,#000 var(--gap-edge));
   mask-image:linear-gradient(to right,transparent,#000 var(--gap-edge))}
@@ -248,8 +247,7 @@
    STRETCHES in a flex one — and `.mb` (message-body.css) is a stretch column, which is exactly
    where the rich prose path renders this. The chip shipped as a bar spanning the whole letter
    there; `align-self` pins the flex case and `width:fit-content` says the same thing everywhere
-   else. The 14px below is `.msg-quote`'s own step, so expanding does not reflow the lead.
-   Guarded structurally by history-toggle-pill.test.ts in the webapp suite. */
+   else. The 14px below is `.msg-quote`'s own step, so expanding does not reflow the lead. */
 .msg-history-toggle,.msg-page-more{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
   width:fit-content;border:0;background:none;box-shadow:inset 0 0 0 1px var(--hair-soft);
   border-radius:var(--r-pill);padding:4px 12px;margin:0 0 14px;

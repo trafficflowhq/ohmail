@@ -84,6 +84,13 @@ Node 22 (CI runs 22.23.4), and stable Rust for the desktop app's native half.
 Every command runs from the repository root unless it says otherwise, in bash
 (Git Bash on Windows).
 
+A test drives the code and asserts what comes out: it renders, calls or runs
+it, and never reads a source file as text to match how it is spelled. The
+source-text tests already in the tree are frozen (`test/source-text-freeze.test.ts`
+refuses a new one, and a new read in one already listed), and the few guards no
+behaviour test can reach are named with their reasons in
+`test/support/source-text-guards.tsv`.
+
 Every week `.github/workflows/contributor.yml` clones the repository on a clean
 Linux, macOS and Windows runner and runs the blocks marked for it, here and in
 the READMEs, word for word. `test/contributor-route.test.ts` holds the
