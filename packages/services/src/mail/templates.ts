@@ -101,6 +101,8 @@ export interface RenderedEmail {
    * on the waitlist confirmation). The transport passes them through verbatim.
    */
   headers?: Record<string, string>;
+  /** Where a reply goes when this mail asks for one; the transport's configured address otherwise. */
+  replyTo?: string;
 }
 
 /**
@@ -638,6 +640,10 @@ interface LifecycleNoticeData {
   erasureDate: string | null;
   /** Deep link to the app's account page — informational, changes nothing by itself. */
   accountUrl: string;
+  /** The signup wizard's mailbox step, through sign-in (`<app>/login?next=join`). */
+  setupUrl: string;
+  /** The account has never had a mailbox: the trial and closure notices must not say ohmail organizes one. */
+  noMailbox?: boolean;
   supportEmail: string;
 }
 
@@ -709,9 +715,67 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
   },
 };
 
+/**
+ * The trial and closure notices for an account that never connected a mailbox; replies go to support. The
+ * Microsoft sign-in is named for work or school accounts only: a personal account's is not proven yet.
+ */
+const NO_MAILBOX_COPY: Record<"trial_two_days" | "closed", Record<"en" | "de", {
+  subject: string;
+  action: string;
+  body: (d: LifecycleNoticeData) => string[];
+}>> = {
+  trial_two_days: {
+    en: {
+      subject: "Your ohmail trial ends in two days",
+      action: "Connect your mailbox",
+      body: (d) => [
+        `Your trial ends on ${d.anchorDate}, and your ohmail account has no mailbox connected yet, so ohmail has not organized any mail for you.`,
+        "Connecting takes a few minutes: the button below takes you to the mailbox step, through sign-in if needed. If your mail is in a Microsoft 365 work or school account, connect it in Settings → Mailboxes with Connect Outlook instead: you sign in with Microsoft and need no app password.",
+        "Stuck, or not sure ohmail fits? Just reply to this mail and a person answers.",
+      ],
+    },
+    de: {
+      subject: "Deine ohmail-Testphase endet in zwei Tagen",
+      action: "Postfach verbinden",
+      body: (d) => [
+        `Die Testphase endet am ${d.anchorDate}, und mit deinem ohmail-Account ist noch kein Postfach verbunden. ohmail hat also noch keine Mail für dich organisiert.`,
+        "Das Verbinden dauert ein paar Minuten: Der Button unten führt dich zum Postfach-Schritt, falls nötig über die Anmeldung. Liegt deine Mail in einem Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde sie stattdessen unter Einstellungen → Postfächer mit „Outlook verbinden“: Du meldest dich bei Microsoft an und brauchst kein App-Passwort.",
+        "Hängst du fest oder bist unsicher, ob ohmail passt? Antworte einfach auf diese Mail, ein Mensch antwortet dir.",
+      ],
+    },
+  },
+  closed: {
+    en: {
+      subject: "Your ohmail account has closed",
+      action: "Open your ohmail account",
+      body: (d) => [
+        `Your ohmail account closed on ${d.anchorDate}. It had no mailbox connected, so ohmail never read or moved any of your mail.`,
+        "Sign in to subscribe and connect a mailbox after all, or to delete your account.",
+        ...(d.erasureDate
+          ? [`If you do nothing, your ohmail account data — rules, Screener decisions and settings — is erased on ${d.erasureDate}.`]
+          : []),
+        "Questions, or stuck connecting? Just reply to this mail and a person answers.",
+      ],
+    },
+    de: {
+      subject: "Dein ohmail-Account ist geschlossen",
+      action: "Dein ohmail-Account öffnen",
+      body: (d) => [
+        `Dein ohmail-Account ist seit dem ${d.anchorDate} geschlossen. Mit ihm war kein Postfach verbunden, ohmail hat also nie eine deiner Mails gelesen oder verschoben.`,
+        "Melde dich an, um doch noch zu abonnieren und ein Postfach zu verbinden, oder um deinen Account zu löschen.",
+        ...(d.erasureDate
+          ? [`Tust du nichts, werden deine ohmail-Account-Daten (Regeln, Screener-Entscheidungen und Einstellungen) am ${d.erasureDate} gelöscht.`]
+          : []),
+        "Fragen, oder hängst du beim Verbinden fest? Antworte einfach auf diese Mail, ein Mensch antwortet dir.",
+      ],
+    },
+  },
+};
+
 function lifecycleNotice(d: LifecycleNoticeData): RenderedEmail {
-  const url = safeUrl(d.accountUrl);
-  const copy = LIFECYCLE_COPY[d.kind][d.locale];
+  const bare = d.noMailbox === true && d.kind !== "erasure_week" ? d.kind : null;
+  const url = safeUrl(bare === "trial_two_days" ? d.setupUrl : d.accountUrl);
+  const copy = bare ? NO_MAILBOX_COPY[bare][d.locale] : LIFECYCLE_COPY[d.kind][d.locale];
   const blocks = copy.body(d);
   const footer = [
     d.locale === "de" ? `Einen Menschen erreichen: ${d.supportEmail}` : `Reach a human: ${d.supportEmail}`,
@@ -727,6 +791,7 @@ function lifecycleNotice(d: LifecycleNoticeData): RenderedEmail {
       action: { label: copy.action, url },
       footer,
     }),
+    ...(bare ? { replyTo: d.supportEmail } : {}),
   };
 }
 

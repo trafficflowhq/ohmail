@@ -185,6 +185,26 @@ describe("MailService — the four beta sends", () => {
   });
 });
 
+describe("MailService — the lifecycle notices' links", () => {
+  it("a notice for an account with no mailbox links to sign-in, which resumes the signup wizard; every notice's account link opens the app", async () => {
+    const h = await harness();
+    const base = { locale: "en" as const, anchor: START, erasureAt: null };
+    await h.svc.sendLifecycleNotice(h.ctx, { ...base, to: "bare@example.com", kind: "trial_two_days", noMailbox: true });
+    await h.svc.sendLifecycleNotice(h.ctx, { ...base, to: "kept@example.com", kind: "trial_two_days" });
+    const [bare, kept] = h.spy.sent;
+    // `/login?next=join`, which the web app resolves (`join-step-up-in-place.test.tsx`).
+    expect(bare!.data).toMatchObject({
+      noMailbox: true,
+      setupUrl: "https://app.ohmail.app/login?next=join",
+      accountUrl: "https://app.ohmail.app/#/settings/account",
+    });
+    expect(bare!.rendered.text).toContain("https://app.ohmail.app/login?next=join");
+    expect(bare!.rendered.html).toContain('href="https://app.ohmail.app/login?next=join"');
+    expect(kept!.data).toMatchObject({ noMailbox: false });
+    expect(kept!.rendered.text).toContain("https://app.ohmail.app/#/settings/account");
+  });
+});
+
 describe("MailService — recipient hygiene", () => {
   it("refuses an address that cannot be a recipient, without touching the mailer", async () => {
     const h = await harness();

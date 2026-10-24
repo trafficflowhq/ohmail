@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ThrottleKeys } from "./auth/throttle-keys.js";
 import { and, asc, eq, exists, gt, isNull, sql } from "drizzle-orm";
-import { accounts, users, accountSettings } from "@trafficflow/db";
+import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
 import { bridgeTx, type Db } from "./context.js";
@@ -43,6 +43,7 @@ export interface LifecycleNoticeMailer {
       locale: "en" | "de";
       anchor: Date;
       erasureAt: Date | null;
+      noMailbox: boolean;
     },
     // The WEAKEST shape the pass reads — `status` alone — so the API's structural declaration of
     // this method (which cannot name `MailSendResult`) satisfies it; `MailService`'s own richer
@@ -361,12 +362,15 @@ async function claimAndSend(
   const [settings] = await db.select({ locale: accountSettings.locale }).from(accountSettings)
     .where(eq(accountSettings.accountId, accountId)).limit(1);
   const locale: "en" | "de" = settings?.locale === "de" ? "de" : "en";
+  // Read at send time: only an account deletion removes a mailbox row, so none means never connected.
+  const noMailbox = (await db.select({ id: mailboxes.id }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId)).limit(1)).length === 0;
 
   let anyFailed = false;
   for (const r of recipients) {
     const sent = await deps.mail.sendLifecycleNotice(
       { db, now: deps.now },
-      { to: r.email, kind: due.kind, locale, anchor: due.anchor, erasureAt: due.erasureAt },
+      { to: r.email, kind: due.kind, locale, anchor: due.anchor, erasureAt: due.erasureAt, noMailbox },
     );
     if (sent.status === "failed") anyFailed = true;
   }

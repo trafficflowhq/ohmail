@@ -94,7 +94,8 @@ export class ResendMailer implements MailerPort {
 
     let mail: OutboundEmail;
     try {
-      mail = { ...renderTemplate(template, data), from: this.cfg.from, to: recipient, replyTo: this.cfg.replyTo };
+      const rendered = renderTemplate(template, data);
+      mail = { ...rendered, from: this.cfg.from, to: recipient, replyTo: rendered.replyTo ?? this.cfg.replyTo };
     } catch (e) {
       // A template that cannot render is OUR bug, not a provider outage: never retryable.
       // `safeUrl` no longer echoes the URL it rejected, but scrub it anyway — this string

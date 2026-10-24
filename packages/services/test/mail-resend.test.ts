@@ -96,6 +96,16 @@ describe("ResendMailer — the request it builds", () => {
     expect(http.calls[0]!.headers["Idempotency-Key"]).toBe("k-1");
   });
 
+  it("a template's own reply address wins over the configured one", async () => {
+    const http = recorder({ status: 200, body: "{}" });
+    await mailer(http, { replyTo: "replies@example.com" }).send("reader@example.com", "lifecycle_notice", {
+      kind: "trial_two_days", locale: "en", anchorDate: "26 October 2026, 18:05 UTC", erasureDate: null,
+      accountUrl: "https://ohmail.app/#/settings/account", setupUrl: "https://ohmail.app/#/first-run/again",
+      noMailbox: true, supportEmail: "support@ohmail.app",
+    });
+    expect((JSON.parse(http.calls[0]!.body) as { reply_to?: string }).reply_to).toBe("support@ohmail.app");
+  });
+
   it("omits reply_to and headers when there is nothing to send", async () => {
     const http = recorder({ status: 200, body: "{}" });
     await mailer(http, { replyTo: undefined }).send("reader@example.com", "email_verification", {

@@ -290,6 +290,7 @@ export interface ApiServices {
         locale: "en" | "de";
         anchor: Date;
         erasureAt: Date | null;
+        noMailbox?: boolean;
       },
     ): Promise<{ status: "sent" | "skipped" | "failed" }>;
     /**
