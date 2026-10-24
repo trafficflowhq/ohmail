@@ -1919,6 +1919,46 @@ export const DE: Deck = {
     `${folder}, der Ordner von News vor der Umbenennung (${n} ${n === 1 ? "Nachricht" : "Nachrichten"} noch nicht nach News verschoben)`,
   selfCheckAndMore: (list: string, n: number) => `${list} und ${n} weitere`,
   selfCheckFailed: "Die Prüfung konnte nicht laufen. Es wurde nichts verändert.",
+  selfCheckWaiting: (count: number) =>
+    `${count === 1 ? "1 Nachricht wartet" : `${count} Nachrichten warten`} noch darauf, auf deinem Mailserver einsortiert zu werden.`,
+
+  /* ── WAS AUFS EINSORTIEREN WARTET — `ui/filing-lines.ts`, die Worte des Webs. */
+  filingStuck: (count: number, minutes: number) =>
+    `${count === 1 ? "1 Nachricht wurde" : `${count} Nachrichten wurden`} seit ${minutes === 1 ? "1 Minute" : `${minutes} Minuten`} nicht einsortiert`,
+  filingStuckHours: (count: number, hours: number) =>
+    `${count === 1 ? "1 Nachricht wurde" : `${count} Nachrichten wurden`} seit ${hours === 1 ? "1 Stunde" : `${hours} Stunden`} nicht einsortiert`,
+  filingStuckWhy: (where: string, reason: string) => `${where} · ${reason}`,
+  filingWaiting: (count: number) => `${count === 1 ? "1 Nachricht wartet" : `${count} Nachrichten warten`} auf den nächsten Versuch`,
+  filingWaitingWhy: (where: string, reason: string, at: string) => `${where} · ${reason} · nächster Versuch um ${at}`,
+  mailboxCountWaiting: (count: number) => (count === 1 ? "1 Postfach" : `${count} Postfächer`),
+  filingReasonsDiffer: "die Gründe sind je Postfach verschieden",
+  filingReasonRefused: "der letzte Versuch ging nicht durch",
+  filingReasonNoSuchFolder: "der Ordner ist nicht da",
+  filingReasonReadOnly: "der Ordner nimmt es nicht an",
+  filingReasonOverQuota: "das Postfach ist voll",
+  filingReasonStaleLocator: "ohmail findet es auf deinem Mailserver nicht wieder",
+  filingReasonUnconfirmed: "ohmail konnte das Verschieben nicht bestätigen",
+  filingReasonUnknown: "der letzte Versuch ging nicht durch",
+  filingReasonNone: "keine Ablehnung verzeichnet",
+  filingStripOpen: "In den Einstellungen zeigen",
+  filingsTitle: (mailbox: string) => `Wartet aufs Einsortieren · ${mailbox}`,
+  filingsGroup: (count: number, folder: string, since: string) =>
+    `${count === 1 ? "1 Nachricht wartet" : `${count} Nachrichten warten`} seit ${since} aufs Einsortieren: ${folder}`,
+  filingsWhy: (reasons: string) => `Grund: ${reasons}`,
+  filingsReasonCounted: (reason: string, count: number) => `${reason} (${count})`,
+  filingsNext: (at: string) => `Nächster Versuch um ${at}.`,
+  filingsAt: (count: number, at: string) => `${count === 1 ? "Sie liegt" : "Sie liegen"} auf deinem Mailserver in ${at}.`,
+  filingsDeletesAll: (count: number) => (count === 1 ? "Du hast sie gelöscht." : "Du hast sie alle gelöscht."),
+  filingsDeletesSome: (count: number) => (count === 1 ? "1 davon hast du gelöscht." : `${count} davon hast du gelöscht.`),
+  filingsUnread: (count: number) => `${count === 1 ? "1 Nachricht wartet" : `${count} Nachrichten warten`} aufs Einsortieren.`,
+  filingsRetry: "Jetzt erneut versuchen",
+  filingsLeave: "Dort lassen, wo sie sind",
+  filingsRetried: (count: number) => (count === 0 ? "Hier wartete nichts auf einen neuen Versuch."
+    : count === 1 ? "1 Nachricht wird beim nächsten Durchlauf erneut versucht." : `${count} Nachrichten werden beim nächsten Durchlauf erneut versucht.`),
+  filingsLeft: (count: number) => (count === 0 ? "Hier war nichts mehr festzulegen."
+    : count === 1 ? "1 Nachricht bleibt, wo sie ist." : `${count} Nachrichten bleiben, wo sie sind.`),
+  filingsFailed: "Das ging nicht durch. Es wurde nichts geändert.",
+  filingsElsewhere: "Eine andere Installation organisiert dieses Postfach jetzt. Es wurde nichts geändert.",
 
   mailRowThreadAria: (n: number) =>
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"} in diesem Gespräch`,

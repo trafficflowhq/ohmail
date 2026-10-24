@@ -14,7 +14,7 @@ import { readSelfCheck } from "@trafficflow/core/diagnostics";
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
 
-const FACTS = [
+const FACTS: Array<Record<string, unknown>> = [
   { id: "m1", address: "ann@example.test", displayName: null, status: "connected" },
   { id: "m2", address: "old@example.test", displayName: null, status: "disabled" },
 ];
@@ -22,11 +22,13 @@ vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
   const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
     "../../webapp/app/shell/MailStateProvider",
   );
-  return { ...real, useMailboxFacts: () => FACTS };
+  return { ...real, useMailboxFacts: () => FACTS, useMailState: () => ({ state: null, refresh: async () => {} }) };
 });
 
 const { MailboxSelfCheck, selfCheckPressSentence, selfCheckSentence } = await import("../../webapp/app/shell/MailboxSelfCheck");
 const { checkMailboxHere, selfChecksThisSession } = await import("../src/local-self-check.js");
+const { MailboxFilings } = await import("../../webapp/app/shell/MailboxFilings");
+const { filingsOverBridge } = await import("../src/local-filings.js");
 const { writeDesktopDiagnostics } = await import("../src/local-diagnostics.js");
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -177,6 +179,85 @@ function bridgeEntry(text: string): Record<string, unknown> | undefined {
   const last = lines[lines.length - 1];
   return last?.event === "bridge_transport" ? last : undefined;
 }
+
+/* FOLDER-MISSING-FILINGS: the desktop drew no filings block, so "Settings → Mailboxes" under the
+   strip led nowhere. The shared block now renders over the bridge on every door. */
+describe("the filings that wait — the desktop's block over the bridge", () => {
+  const waiting = { due: 0, deferred: 0, stuck: 2, stuckSince: "2026-10-24T04:02:00.000Z", stuckRefusalClass: "no_such_folder",
+    oldestPendingAt: "2026-10-24T04:02:00.000Z", nextAttemptAt: null, attempts: 3, lastRefusalClass: "no_such_folder",
+    asOf: "2026-10-24T04:46:00.000Z", lastCycleAt: null };
+  const filings = { mailboxId: "m1", asOf: "2026-10-24T04:46:00.000Z", more: false, groups: [{
+    folder: "ohmail/Screened", count: 2, deferred: 0, stuck: 2, deletes: 0, since: "2026-10-24T04:02:00.000Z",
+    through: "2026-10-24T04:06:00.000Z", nextAttemptAt: null, at: "INBOX", reasons: [{ reason: "no_such_folder", count: 2 }],
+  }] };
+  function engineBy(answer: (method: string, url: string, body: unknown) => [number, unknown]): void {
+    asked = [];
+    globe.__TAURI_INTERNALS__ = {
+      invoke: (command, payload) => {
+        if (command !== "engine_request") return Promise.reject(new Error(`unexpected ${command}`));
+        asked.push({ method: payload?.method, url: payload?.url });
+        const raw = payload?.body as string | ArrayLike<number> | undefined;
+        const text = typeof raw === "string" ? raw : raw ? new TextDecoder().decode(new Uint8Array(raw)) : "";
+        const body = text === "" ? undefined : JSON.parse(text);
+        const [status, out] = answer(String(payload?.method), String(payload?.url), body);
+        return Promise.resolve(framed(status, out));
+      },
+    };
+  }
+  async function renderFilings(): Promise<HTMLDivElement> {
+    el = document.createElement("div");
+    document.body.appendChild(el);
+    root = createRoot(el);
+    await act(() => {
+      root?.render(h(NextIntlClientProvider, { locale: "en", messages: en as never, timeZone: "UTC", children: h(MailboxFilings, { api: filingsOverBridge }) }));
+    });
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    return el;
+  }
+  const button = (node: HTMLDivElement, label: string) => [...node.querySelectorAll("button")].find((b) => b.textContent === label)!;
+  async function pressed(node: HTMLDivElement, label: string): Promise<void> {
+    await act(async () => { button(node, label).click(); });
+    for (let i = 0; i < 20; i++) await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+  }
+  afterEach(() => { FACTS[0] = { ...FACTS[0], filing: undefined }; });
+
+  it("names the folder, the reason and where the letters are, and both presses go down the bridge", async () => {
+    FACTS[0] = { ...FACTS[0], filing: waiting };
+    const posted: unknown[] = [];
+    engineBy((method, url, body) => {
+      if (method === "GET") return [200, filings];
+      posted.push({ url, body });
+      return url.endsWith("/retry") ? [202, { reset: 2, skipped: 0 }] : [200, { settled: 2, remaining: 0 }];
+    });
+    const node = await renderFilings();
+    expect(asked[0]).toEqual({ method: "GET", url: "/mailboxes/m1/filings" });
+    expect(node.textContent).toContain("Why: the folder is not there");
+    expect(node.textContent).toContain("They are in Ohbox on your mail server.");
+    await pressed(node, "Try again now");
+    expect(node.textContent).toContain("2 messages will be tried again on the next pass.");
+    await pressed(node, "Leave them where they are");
+    expect(node.textContent).toContain("2 messages stay where they are.");
+    expect(posted).toEqual([
+      { url: "/mailboxes/m1/filings/retry", body: { folder: "ohmail/Screened" } },
+      { url: "/mailboxes/m1/filings/leave", body: { folder: "ohmail/Screened", through: "2026-10-24T04:06:00.000Z" } },
+    ]);
+  });
+
+  it("a 409 says another install organizes it now", async () => {
+    FACTS[0] = { ...FACTS[0], filing: waiting };
+    engineBy((method) => (method === "GET" ? [200, filings] : [409, { error: { code: "conflict", message: "x" } }]));
+    const node = await renderFilings();
+    await pressed(node, "Try again now");
+    expect(node.textContent).toContain("Another install organizes this mailbox now. Nothing was changed.");
+  });
+
+  it("nothing waits: no block and no request", async () => {
+    engineBy(() => [200, filings]);
+    const node = await renderFilings();
+    expect(node.textContent).toBe("");
+    expect(asked).toEqual([]);
+  });
+});
 
 describe("selfCheckSentence — every arm against the catalogue", () => {
   const t = createTranslator({ locale: "en", messages: en as never, namespace: "mailboxes" }) as unknown as Parameters<typeof selfCheckSentence>[0];

@@ -29,6 +29,7 @@
    why a reader's press has nowhere to go, shared with the server's refusal. Each import is the
    alternative to a second copy of a rule that must never diverge — see `address-key.ts`. */
 import { addressKey } from "./address-key";
+import { FILING_REFUSAL_REASONS, filingRefusalReason, type FilingRefusalReason } from "@ohmail/client-engine";
 import { liftedAt, refusalIsStale } from "./access-window";
 import {
   holderIsLive, holderStopped, nothingOrganizesWhy, notOrganizingYet, organizerSituation, rosterRefusalReason,
@@ -1721,27 +1722,10 @@ export interface FilingReport {
   reasonsDiffer: boolean;
 }
 
-/**
- * The refusal classes this build renders a sentence for.
- *
- * The SERVER owns the closed set (`FILING_REFUSAL_CLASSES` in `@trafficflow/db`) and this client
- * re-declares it, exactly as {@link SYNC_BLOCK_REASONS} re-declares its own: the shell may not
- * import the server's packages, and a fifth member during a rolling deploy is a real possibility.
- * An unrecognised value therefore becomes `unknown`, which HAS a sentence ("your server would not
- * say why") — silence there would restore the invisibility this whole arm exists to end.
- */
-export const FILING_REFUSAL_REASONS = [
-  "refused", "no_such_folder", "read_only", "over_quota", "stale_locator", "unconfirmed", "unknown",
-] as const;
+/* The refusal classes this build renders a sentence for, shared with the phone: `filing-reasons.ts`. */
+export { FILING_REFUSAL_REASONS, type FilingRefusalReason };
 
-export type FilingRefusalReason = (typeof FILING_REFUSAL_REASONS)[number];
-
-function filingReason(v: string | null): FilingRefusalReason | null {
-  if (v === null) return null;
-  return (FILING_REFUSAL_REASONS as readonly string[]).includes(v)
-    ? (v as FilingRefusalReason)
-    : "unknown";
-}
+const filingReason = filingRefusalReason;
 
 /**
  * How long one serialized reconcile rotation legitimately takes, as this strip must assume.

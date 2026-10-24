@@ -96,6 +96,9 @@ import { nativePhoneDiagnosticDeps, shareDiagnosticFile } from "../src/engine/di
 import { diagnosticSaid, type DiagnosticPress } from "../src/ui/diagnostic-said";
 import { selfCheckRowSaid, type SelfCheckPress } from "../src/ui/self-check-said";
 import { WaitingStrip } from "../src/ui/WaitingStrip";
+import { FilingStrip } from "../src/ui/FilingStrip";
+import { FilingsBlock } from "../src/ui/FilingsBlock";
+import { filingsWaiting } from "../src/ui/filing-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen() {
@@ -196,6 +199,7 @@ function SettingsBody() {
         {/* this phone — first, because it is the only block that says what this phone IS */}
         <ThisPhonePanel />
         <WaitingStrip />
+        <FilingStrip />
 
         {/* a "Not now" whose settings document still stands in the mailbox: Import, or Save */}
         <SavedSettingsPanel />
@@ -779,7 +783,7 @@ function ThisPhonePanel() {
                 {/* CHECK THIS MAILBOX — one read of the mail server against this phone's copy, and
                     one sentence back. The door in THIS process only: its engine holds the copy. */}
                 {row.key === HERE_CARD && here !== null ? (() => {
-                  const check = selfCheckRowSaid(checkPress);
+                  const check = selfCheckRowSaid(checkPress, filingsWaiting(w.mailboxes.rows.find((m) => m.id === here.id)));
                   return (
                     <View style={{ gap: 2, marginTop: 4 }}>
                       <Button
@@ -804,6 +808,8 @@ function ThisPhonePanel() {
                     </View>
                   );
                 })() : null}
+                {/* THE FILINGS THAT WAIT ON THE MAIL SERVER, with Try again and Leave — every card. */}
+                <FilingsBlock mailbox={w.mailboxes.rows.find((m) => m.id === (row.key === HERE_CARD ? here?.id : row.key))} />
                 {/* WHAT THE LAST SEND ANSWERED, beside the verb that made it. */}
                 {resupplySaid === null || row.key !== HERE_CARD ? null : (
                   <Txt variant="note" tone="ink2" accessibilityRole="alert">
