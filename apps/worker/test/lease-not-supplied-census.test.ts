@@ -105,6 +105,8 @@ const GUARDS: Record<string, { arg: string; gate?: string }> = {
   "apps/worker/src/sync.ts:fileChunk:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
   "apps/worker/src/sync.ts:fileOne:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
   "apps/worker/src/sync.ts:fileOne:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
+  "apps/worker/src/sync.ts:remakeOwnFolder:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
+  "apps/worker/src/sync.ts:remakeOwnFolder:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
   "apps/worker/src/sync.ts:reconcileFlags:assertMayWriteToMailbox": { arg: "writeAuthorityOf(deps)" },
   "apps/worker/src/sync.ts:reconcileFlags:writeDoorOf": { arg: "writeAuthorityOf(deps)" },
   "apps/worker/src/folder-ops.ts:runCreate:assertMayWriteToMailbox": { arg: "deps.writeAuthority" },

@@ -3,14 +3,15 @@ import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { ImapFlow } from "imapflow";
-import { contacts, folderState, mailboxFolders, messageInstances, messages } from "@trafficflow/db";
+import { auditLog, contacts, folderState, mailboxFolders, mailboxes, messageInstances, messages } from "@trafficflow/db";
 import { serviceUp } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { LEGACY_NEWS_FOLDER, NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
+import { MessageService, SearchService, readMailboxFilings, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle } from "../src/sync.js";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+import { ORGANIZER_CONSENT } from "./_workerdb.js";
 import { greenmailPorts } from "./_greenmail-ports.js";
 import { world } from "../../../packages/api/test/_self-check-world.js";
 import { selfCheckMailbox } from "../../../packages/api/src/mailbox-self-check.js";
@@ -211,3 +212,88 @@ describe("the News rename's tail, end to end", { timeout: 90_000 }, () => {
       .toEqual({ folder: LEGACY_NEWS_FOLDER, k: "server_more", server: 2, mirror: 0, predecessorOf: NEWS_FOLDER });
   });
 });
+
+/* FOLDER-MISSING-FILINGS: another client deletes one of ohmail's own folders while a filing into
+   it waits. imapflow keeps the server's `[TRYCREATE]` to its logger, so the organizer read every
+   such filing as "your mail server refused it" for good. It makes its own folder again (once, under
+   the lease, audited) and files; a folder of the person's is never made, and its reason is named. */
+describe("a deleted folder under a waiting filing, end to end", { timeout: 90_000 }, () => {
+  const idOf = async (r: Awaited<ReturnType<typeof rig>>, subject: string) => (await r.w.db.select({ id: messages.id })
+    .from(messages).where(and(eq(messages.mailboxId, r.w.mailboxId), eq(messages.subject, subject))))[0]!.id;
+  const actions = async (r: Awaited<ReturnType<typeof rig>>) => (await r.w.db.select({ a: auditLog.action }).from(auditLog)
+    .where(eq(auditLog.accountId, r.w.accountId))).map((x) => x.a);
+  const uidsIn = async (r: Awaited<ReturnType<typeof rig>>, path: string) => {
+    const l = await r.raw.getMailboxLock(path);
+    try { return ((await r.raw.search({ all: true }, { uid: true })) || []).length; } finally { l.release(); }
+  };
+  const settled = async (r: Awaited<ReturnType<typeof rig>>, role: Role = "organizer") => {
+    await r.w.db.update(mailboxes).set(role === "organizer" ? ORGANIZER_CONSENT : { organizerRole: "reader" }).where(eq(mailboxes.id, r.w.mailboxId));
+    const a = await r.open(role);
+    await r.drain(a, role);
+    return a;
+  };
+
+  it.skipIf(!up.up)(`ohmail/Screened deleted: the organizer makes it again and files there${skip}`, async () => {
+    const r = await rig();
+    await r.raw.append("INBOX", eml("s1"), ["\\Seen"]);
+    const org = await settled(r);
+    await r.raw.mailboxDelete("ohmail.Screened");
+    await new MessageService().move(r.ctxOf(), await idOf(r, "rename tail s1"), { folder: "ohmail/Screened" });
+    await r.drain(org, "organizer");
+
+    expect(await r.serverOhmail()).toContain("ohmail.Screened");
+    expect(await uidsIn(r, "ohmail.Screened")).toBe(1);
+    expect(await uidsIn(r, "INBOX")).toBe(0);
+    expect((await r.w.db.select({ s: folderState.reconcileStatus }).from(folderState)).map((x) => x.s)).toEqual(["reconciled"]);
+    const did = await actions(r);
+    expect(did.filter((a) => a === "reconcile.folder.remade")).toHaveLength(1);
+    expect(did).not.toContain("reconcile.move.failed");
+    await r.drain(org, "organizer");
+    expect((await r.check()).verdict).toBe("in_step");
+  });
+
+  it.skipIf(!up.up)(`three letters into the deleted folder take one CREATE${skip}`, async () => {
+    const r = await rig();
+    for (const id of ["t1", "t2", "t3"]) await r.raw.append("INBOX", eml(id), ["\\Seen"]);
+    const org = await settled(r);
+    await r.raw.mailboxDelete("ohmail.Screened");
+    const svc = new MessageService();
+    for (const id of ["t1", "t2", "t3"]) await svc.move(r.ctxOf(), await idOf(r, `rename tail ${id}`), { folder: "ohmail/Screened" });
+    await r.drain(org, "organizer");
+
+    expect(await uidsIn(r, "ohmail.Screened")).toBe(3);
+    expect((await actions(r)).filter((a) => a === "reconcile.folder.remade")).toHaveLength(1);
+  });
+
+  it.skipIf(!up.up)(`a deleted folder of the person's is not made again, and its reason is named${skip}`, async () => {
+    const r = await rig();
+    await r.raw.append("INBOX", eml("p1"), ["\\Seen"]);
+    const org = await settled(r);
+    // No verb files into a folder of the person's; an intent naming one (an import's) is written as stored.
+    const row = { desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" } as const;
+    await r.w.db.insert(folderState).values({ messageId: await idOf(r, "rename tail p1"), ...row })
+      .onConflictDoUpdate({ target: folderState.messageId, set: row });
+    await r.drain(org, "organizer");
+
+    expect((await r.raw.list()).map((f) => f.path)).not.toContain("Archive");
+    expect(await uidsIn(r, "INBOX")).toBe(1);
+    expect((await r.w.db.select({ c: folderState.lastErrorClass }).from(folderState)).map((x) => x.c)).toEqual(["no_such_folder"]);
+    const filings = await readMailboxFilings(r.ctxOf(), r.w.mailboxId);
+    expect(filings.groups.map((g) => [g.folder, g.at, g.reasons])).toEqual([["Archive", "INBOX", [{ reason: "no_such_folder", count: 1 }]]]);
+    expect(await actions(r)).not.toContain("reconcile.folder.remade");
+  });
+
+  it.skipIf(!up.up)(`a reader makes nothing${skip}`, async () => {
+    const r = await rig();
+    await r.raw.append("INBOX", eml("d1"), ["\\Seen"]);
+    const org = await settled(r);
+    await org.close();
+    await r.raw.mailboxDelete("ohmail.Screened");
+    await new MessageService().move(r.ctxOf(), await idOf(r, "rename tail d1"), { folder: "ohmail/Screened" });
+    await settled(r, "reader");
+
+    expect(await r.serverOhmail()).not.toContain("ohmail.Screened");
+    expect(await actions(r)).not.toContain("reconcile.folder.remade");
+  });
+});
+

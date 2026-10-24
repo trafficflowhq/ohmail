@@ -74,6 +74,21 @@ describe("withPullKick", () => {
     expect(withPullKick([del], () => runtimes)[0]).toBe(del);
   });
 
+  /* FOLDER-MISSING-FILINGS: "Try again now" re-arms the waiting filings and stamps a request only
+     the hosted worker reads; here the organizer is this process, so its own mailbox rings. */
+  it("a 202 on POST /mailboxes/:id/filings/retry rings that mailbox; a 409 rings nothing", async () => {
+    const rung: string[] = [];
+    const retry = (status: number): Route => ({ ...answered(status), pattern: "/mailboxes/:id/filings/retry" });
+    const call = async (route: Route) =>
+      (await route.handler(new Request("http://local/mailboxes/b/filings/retry", { method: "POST" }), {} as never, { id: "b" })).status;
+    const one = (id: string) => ({ ring: () => { rung.push(id); } });
+    for (const status of [202, 409, 404]) {
+      const [wrapped] = withPullKick([retry(status)], () => [one("a"), one("b")], (id) => one(id));
+      expect(await call(wrapped!)).toBe(status);
+    }
+    expect(rung).toEqual(["b"]);
+  });
+
   it("with no runtime it answers as the route did and rings nothing", async () => {
     const [wrapped] = withPullKick([answered(202)], () => []);
     expect(await press(wrapped!)).toBe(202);

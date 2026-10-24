@@ -2029,8 +2029,10 @@ export function withPullKick(
   return routes.map((r) => {
     /* "ORGANIZE HERE" AND "HAND THE MAILBOX BACK" RING THEIR OWN MAILBOX: the next gated pass
        re-reads the stamp (a release is its first arm) and the lease decides, so neither press is
-       left to the next poll. */
-    if (r.method === "POST" && (r.pattern === "/mailboxes/:id/organize" || r.pattern === "/mailboxes/:id/release")) {
+       left to the next poll. "Try again now" on the waiting filings likewise: it re-arms the rows,
+       and only the hosted worker reads the stamp it leaves. */
+    if (r.method === "POST" && (r.pattern === "/mailboxes/:id/organize" || r.pattern === "/mailboxes/:id/release"
+      || r.pattern === "/mailboxes/:id/filings/retry")) {
       return { ...r, handler: async (req, deps, params) => {
         const res = await r.handler(req, deps, params);
         if (res.status === 202) runtimeFor(params.id ?? "")?.ring();

@@ -7,7 +7,7 @@
  * about what a server said.
  */
 import type { FilingRefusalClass } from "@trafficflow/db";
-import { isRefusedCommand } from "@trafficflow/core/adapters/imap";
+import { isDestinationMissing, isRefusedCommand } from "@trafficflow/core/adapters/imap";
 import { classifyIngestFault } from "./dead-letter.js";
 
 /**
@@ -81,6 +81,8 @@ export function isTransportFailure(err: unknown): boolean {
  * `isTransportFailure` returns first.
  */
 export function classifyMoveRefusal(err: unknown): FilingRefusalClass {
+  // The adapter's own reading of a gone destination. Never `mailboxMissing`: a gone SOURCE carries it too.
+  if (isDestinationMissing(err)) return "no_such_folder";
   const code = typeof (err as { serverResponseCode?: unknown } | null)?.serverResponseCode === "string"
     ? String((err as { serverResponseCode: string }).serverResponseCode).toUpperCase()
     : "";

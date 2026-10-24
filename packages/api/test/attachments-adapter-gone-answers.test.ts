@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { attachments, drafts, mailboxCredentials, messageBodies, messages } from "@trafficflow/db";
 import * as imapModule from "@trafficflow/core/adapters/imap";
 import {
-  AttachmentTooLargeError, EpochUnknownError, ImapAdapter, ImapBoundConfigError, ImapBoundExceeded,
+  AttachmentTooLargeError, DestinationMissingError, EpochUnknownError, ImapAdapter, ImapBoundConfigError, ImapBoundExceeded,
   ImapConnectionClosedError, MessageGoneError, MoveIncompleteError, MoveRefusedError, MoveVerifyError,
   RawMessageTooLargeError, SameFolderMoveError, UnsupportedAuthTypeError, WriteDeclinedError,
 } from "@trafficflow/core/adapters/imap";
@@ -116,6 +116,7 @@ const MODULE_CLASSES: Record<string, { verdict: Verdict; make: () => unknown }> 
   MoveVerifyError: { verdict: "latch", make: () => new MoveVerifyError(STALE, "Archive") },
   MoveIncompleteError: { verdict: "latch", make: () => new MoveIncompleteError(STALE, "Archive", "refused") },
   MoveRefusedError: { verdict: "latch", make: () => new MoveRefusedError(STALE, "Archive", "refused") },
+  DestinationMissingError: { verdict: "latch", make: () => new DestinationMissingError("Archive") },
   SameFolderMoveError: { verdict: "latch", make: () => new SameFolderMoveError(STALE, "INBOX") },
   WriteDeclinedError: { verdict: "latch", make: () => new WriteDeclinedError("move", "claim_stale") },
   UnsupportedAuthTypeError: { verdict: "latch", make: () => new UnsupportedAuthTypeError("kerberos") },

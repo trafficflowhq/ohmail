@@ -40,7 +40,10 @@ export const WATCHED_FOLDERS = [
   "ohmail/Quarantine",
 ] as const;
 
-/** `ohmail/*` folders that ensureFolders() creates (INBOX always exists). */
+/**
+ * `ohmail/*` folders that ensureFolders() creates at attach (INBOX always exists), and that the
+ * filing pass makes again (`ensureOwnFolder`) when a filing finds one gone.
+ */
 export const OHMAIL_FOLDERS = WATCHED_FOLDERS.filter((f) => f !== "INBOX");
 
 /**
@@ -1084,6 +1087,12 @@ export interface MailboxAdapter {
   /** Creates the `ohmail/*` tree an organizer files into; every CREATE and RENAME asks `door`. */
   ensureFolders(door: WriteDoor): Promise<void>;
   /**
+   * Makes ONE of {@link OHMAIL_FOLDERS} again after a filing found it gone: `made`, or `exists`
+   * when it is there. Throws for any other name before a command; CREATE only, asked at `door`.
+   * Optional; an adapter without it never re-makes.
+   */
+  ensureOwnFolder?(canonical: string, door: WriteDoor): Promise<"made" | "exists">;
+  /**
    * A legacy `ohmail/Reads` the last LIST named beside `ohmail/News`, which no read reaches, else
    * null. Optional, like {@link foldLegacyNews}; fakes keep compiling.
    */
@@ -1107,7 +1116,8 @@ export interface MailboxAdapter {
    * means the server moved the mail and would not say where, so nothing was written and the
    * caller may NOT move it again. `gone` carries members whose UID the source no longer holds
    * ({@link MessageGoneError} reported, not thrown), so one vanished message does not cost the
-   * group. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
+   * group. A destination the server says is not there throws `DestinationMissingError`, nothing
+   * written. At most {@link FILING_BATCH_MAX}. Optional; fakes keep compiling.
    */
   moveMany?(locators: readonly NativeLocator[], toFolder: string, door: WriteDoor): Promise<MoveManyResult>;
   /** The server path a canonical folder name addresses; both News spellings resolve to one folder. Optional. */
