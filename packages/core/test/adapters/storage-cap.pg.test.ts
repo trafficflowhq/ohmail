@@ -5,7 +5,8 @@ import { runMigrations } from "@trafficflow/db/admin";
 import {
   accounts, accountStorage, mailboxes, messages, messageBodies, messageSearch, attachments, folderState,
   changeLog, bodyBytesOf, storageUsageOf, applyBodyBytesDelta, reserveBodyBytes, evictOldestBodies,
-  recomputeAccountStorage,
+  recomputeAccountStorage, stampMailboxErasure, sweepMailboxStep, eraseOwedMailbox, recordChanges,
+  type LedgerTx,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -404,4 +405,176 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
       await recomputer.close().catch(() => {});
     }
   }, 30_000);
+
+  /**
+   * THE ERASE AGAINST INGEST AND THE TRIM. An erase step locks the counter before the change-log
+   * sequence, the order ingest takes them in (reserve, then the deltas), and gives back exactly the
+   * bytes of the rows its delete removed. Each case forces its interleaving and asserts the wait.
+   *
+   * MUTATION WATCHED: take the counter lock after the step's `recordChanges` → the first case
+   * deadlocks (40P01).
+   */
+  describe("an erase step beside ingest and the trim", () => {
+    const BODY = "e".repeat(1_000);
+    const NOW = new Date("2026-10-24T10:00:00.000Z");
+
+    async function sibling(accountId: string): Promise<string> {
+      const [mb] = await owned.db.insert(mailboxes)
+        .values({ accountId, provider: "imap", address: `${randomUUID()}@cap.test` }).returning();
+      return mb!.id;
+    }
+    /** One counted letter: its message, its body and its reservation, in the caller's transaction. */
+    async function letter(tx: unknown, accountId: string, mailboxId: string, daysAgo: number): Promise<string> {
+      const t = tx as typeof owned.db;
+      await reserveBodyBytes(t as never, dialect(owned.db), accountId, BODY.length, null);
+      const [m] = await t.insert(messages).values({
+        accountId, mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "erase race",
+        date: new Date(NOW.getTime() - daysAgo * 86_400_000),
+      }).returning();
+      await t.insert(messageBodies).values({ messageId: m!.id, text: BODY, html: null, headers: {} });
+      return m!.id;
+    }
+    async function letters(accountId: string, mailboxId: string, n: number, daysAgo: number): Promise<void> {
+      for (let i = 0; i < n; i++) await owned.db.transaction((tx) => letter(tx, accountId, mailboxId, daysAgo + i));
+    }
+    const stamp = (accountId: string, mailboxId: string) => owned.db.transaction(async (tx) => {
+      await stampMailboxErasure(tx as never, { accountId, mailboxId, now: NOW });
+    });
+    const real = async (accountId: string): Promise<number> => {
+      const [r] = await owned.db.execute<{ sum: string }>(sql`
+        select coalesce(sum(octet_length(b.text) + coalesce(octet_length(b.html), 0)), 0)::bigint as sum
+          from message_bodies b join messages m on m.id = b.message_id
+         where m.account_id = ${accountId}`) as unknown as Array<{ sum: string }>;
+      return Number(r!.sum);
+    };
+    const sawLockWait = async (): Promise<boolean> => {
+      for (let i = 0; i < 100; i++) {
+        const rows = await owned.db.execute<{ n: string }>(sql`
+          select count(*)::bigint as n from pg_locks
+           where not granted and locktype in ('transactionid', 'tuple')`) as unknown as Array<{ n: string }>;
+        if (Number(rows[0]!.n) > 0) return true;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return false;
+    };
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => { open = resolve; });
+      return { open, opened };
+    };
+
+    it("ingest holding the counter first: the erase waits on it, no deadlock, the counter exact", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 3, 10);
+      await stamp(w.accountId, w.mailboxId);
+      const writer = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const writing = writer.db.transaction(async (tx) => {
+          const id = await letter(tx, w.accountId, sib, 0);
+          locked.open();
+          await held.opened;
+          await recordChanges(tx as unknown as LedgerTx, [{
+            accountId: w.accountId, entityType: "message", entityId: id, op: "create", meta: null,
+          }]);
+        });
+        await locked.opened;
+        const erasing = eraseOwedMailbox(eraser.db as never, dialect(eraser.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([writing, erasing]);
+        expect(waited, "the erase step must wait on the counter the ingest holds").toBe(true);
+        expect([a.status, b.status], String((a as PromiseRejectedResult).reason ?? (b as PromiseRejectedResult).reason))
+          .toEqual(["fulfilled", "fulfilled"]);
+        expect((b as PromiseFulfilledResult<{ done: boolean }>).value.done).toBe(true);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(1_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await writer.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+
+    it("the erase step holding the counter first: ingest waits on it, no deadlock, the counter exact", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 3, 10);
+      await stamp(w.accountId, w.mailboxId);
+      const writer = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const erasing = eraser.db.transaction(async (tx) => {
+          const step = await sweepMailboxStep(tx as unknown as LedgerTx, dialect(eraser.db),
+            { accountId: w.accountId, mailboxId: w.mailboxId, now: NOW });
+          locked.open();
+          await held.opened;
+          return step;
+        });
+        erasing.catch(() => locked.open());
+        await locked.opened;
+        const writing = writer.db.transaction(async (tx) => {
+          const id = await letter(tx, w.accountId, sib, 0);
+          await recordChanges(tx as unknown as LedgerTx, [{
+            accountId: w.accountId, entityType: "message", entityId: id, op: "create", meta: null,
+          }]);
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([erasing, writing]);
+        expect(waited, "the ingest must wait on the counter the erase step holds").toBe(true);
+        expect([a.status, b.status]).toEqual(["fulfilled", "fulfilled"]);
+        expect(await storageUsageOf(owned.db, w.accountId), "the step kept its bodies' bytes")
+          .toBe(await real(w.accountId));
+        const rest = await eraseOwedMailbox(owned.db as never, dialect(owned.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        expect(rest.done).toBe(true);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(1_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await writer.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+
+    it("an erase step against a trim of the same bodies releases them once", async () => {
+      const w = await world();
+      const sib = await sibling(w.accountId);
+      await letters(w.accountId, w.mailboxId, 4, 100);   // the oldest: the trim takes these
+      await letters(w.accountId, sib, 2, 1);
+      await stamp(w.accountId, w.mailboxId);
+      const evictor = makeOwnedDb(PG_TEST_URL);
+      const eraser = makeOwnedDb(PG_TEST_URL);
+      try {
+        const held = gate(); const locked = gate();
+        const trimming = evictor.db.transaction(async (tx) => {
+          const r = await evictOldestBodies(tx as never, dialect(evictor.db), w.accountId,
+            { targetBytes: 4_000, maxBodies: 100 });
+          locked.open();
+          await held.opened;
+          return r;
+        });
+        await locked.opened;
+        const erasing = eraseOwedMailbox(eraser.db as never, dialect(eraser.db), {
+          accountId: w.accountId, mailboxId: w.mailboxId, now: () => NOW, maxSteps: 10,
+        });
+        const waited = await sawLockWait();
+        held.open();
+        const [a, b] = await Promise.allSettled([trimming, erasing]);
+        expect(waited).toBe(true);
+        expect([a.status, b.status]).toEqual(["fulfilled", "fulfilled"]);
+        expect((a as PromiseFulfilledResult<{ evicted: number }>).value.evicted).toBe(2);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(2_000);
+        expect(await storageUsageOf(owned.db, w.accountId)).toBe(await real(w.accountId));
+      } finally {
+        await evictor.close().catch(() => {});
+        await eraser.close().catch(() => {});
+      }
+    }, 30_000);
+  });
 });

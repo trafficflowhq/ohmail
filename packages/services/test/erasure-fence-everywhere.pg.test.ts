@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { eq } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, dialect } from "@trafficflow/db/dialect";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -88,7 +88,7 @@ async function seed(): Promise<{ accountId: string; mailboxId: string }> {
 /** The mailbox erasure, through the sweep itself — the stamp under test is the sweep's own. */
 async function eraseMailbox(accountId: string, mailboxId: string, now = NOW): Promise<void> {
   await (sweepDb as unknown as Tx).transaction(async (tx) => {
-    await sweepMailboxData(tx as unknown as LedgerTx, { accountId, mailboxId, now });
+    await sweepMailboxData(tx as unknown as LedgerTx, dialect(tx), { accountId, mailboxId, now });
   });
 }
 
@@ -149,7 +149,7 @@ describe.skipIf(!PG_UP)("the sweep's own mailbox stamp", () => {
     // refuse every later write against a mailbox whose mail is still there.
     const { accountId, mailboxId } = await seed();
     await expect((sweepDb as unknown as Tx).transaction(async (tx) => {
-      await sweepMailboxData(tx as unknown as LedgerTx, { accountId, mailboxId, now: NOW });
+      await sweepMailboxData(tx as unknown as LedgerTx, dialect(tx), { accountId, mailboxId, now: NOW });
       throw new Error("rolled back on purpose");
     })).rejects.toThrow("rolled back on purpose");
     const after = await db.select({ erasedAt: mailboxes.erasedAt })

@@ -5468,11 +5468,11 @@ export async function startWorkerWithLock(
         run: async (accountId) => {
           // MIXED: the cap is the entitlements program's answer; the pass tags its own db calls.
           await runTailStage("cycle.storageEvictPass", "mixed", async () => {
-            const { ran, evicted, freedBytes, capped } = await storageEvictPass(
+            const { ran, evicted, freedBytes, capped, waitsForErasure } = await storageEvictPass(
               db as unknown as Tx, { accountId, log, storageCap: storageCapFor, dbCall: asDatabaseFault }, new Date(),
             );
-            if (ran && evicted > 0) {
-              log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped });
+            if ((ran && evicted > 0) || waitsForErasure) {
+              log.info("storage_evict_pass", { accountId, evicted, freedBytes, capped, waitsForErasure });
             }
           }, (err) => {
             log.error("storage_evict_failed", {

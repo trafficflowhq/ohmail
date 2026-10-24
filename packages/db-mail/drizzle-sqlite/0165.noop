@@ -1,0 +1,6 @@
+0165_account_storage_recount — NOT CARRIED AS A STEP: THE DEVICE STORE IS UNMETERED.
+
+The shared entry recounts `account_storage` once for every account with an erased mailbox, because
+the server's trim pays the counter down against a cap. No cap is enforced on a device store, so a
+counter an older erase left high costs nothing there, and the erase's own finish recounts it at the
+next erasure.

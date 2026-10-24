@@ -603,7 +603,7 @@ export const ALLOWED_FIELDS: readonly string[] = [
   "read", "reaped", "records", "recounted", "refusedUncorroborated", "remaining", "removed",
   "rescreened", "residue", "restored", "retentionMs", "retired", "rulesArmed", "seen",
   "sensitivityExcluded", "size", "staleAfterMs", "steps", "total", "tries", "unrecognised",
-  "voided",
+  "voided", "waitsForErasure",
   "epoch", "fact", "imap", "organizerState", "subscription",
   "folderId", "ruleId", "uid", "uidValidity", "generation", "decidedAt",
   // THE ATTACHMENT PART GATE (`attachment_part_mismatch`, `attachment_part_unverified`), added WITH

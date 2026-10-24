@@ -282,7 +282,7 @@ export {
   evictOldestBodies, reserveBodyBytesEvicting,
   EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO, EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES,
   type EvictionResult,
-  recomputeAccountStorage,
+  recomputeAccountStorage, lockAccountStorage,
 } from "./storage.js";
 
 /** One definition of "transaction pooler", shared by every host that must refuse one. */

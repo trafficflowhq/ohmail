@@ -11,7 +11,8 @@ import type { Tx } from "./change-log.js";
  * count (still written at cap); neither do snippets, attachment metadata or staging.
  * `Buffer.byteLength` is UTF-8 octets — the number the 0062 backfill aggregates in SQL; a pg test
  * holds the two together. Every writer moves the counter IN THE SAME TRANSACTION as the body
- * write; LOCK ORDER: the `account_storage` row before the first `recordChange`, everywhere.
+ * write; LOCK ORDER: the `account_storage` row before the first `recordChange`, everywhere. A mailbox
+ * erase step takes it after the mailbox row and before its receipts ({@link lockAccountStorage}).
  */
 
 /**
@@ -72,6 +73,14 @@ export async function releaseBodyBytes(
       updatedAt: d.now(),
     })
     .where(eq(accountStorage.accountId, accountId));
+}
+
+/** Make the account's counter row exist and lock it; returns the bytes read under the lock. */
+export async function lockAccountStorage(tx: Tx, d: Dialect, accountId: string): Promise<number> {
+  await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
+  const rows = await d.forUpdate(tx.select({ bytes: accountStorage.bytes }).from(accountStorage)
+    .where(eq(accountStorage.accountId, accountId)));
+  return Number(rows[0]?.bytes ?? 0);
 }
 
 /**

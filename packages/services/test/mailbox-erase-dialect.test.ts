@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accounts, drafts, eraseOwedMailbox, mailboxCredentials, mailboxFolders, mailboxes, messageBodies,
-  messages, threads,
+  accounts, drafts, eraseOwedMailbox, evictOldestBodies, mailboxCredentials, mailboxFolders, mailboxes,
+  messageBodies, messages, reserveBodyBytes, storageUsageOf, threads, type Tx,
 } from "@trafficflow/db";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
@@ -125,5 +125,94 @@ describe("removing one mailbox WITH erase, on either store", () => {
     expect(await db.select().from(messages).where(eq(messages.id, messageId))).toHaveLength(1);
     expect(await db.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, mailboxId))).toHaveLength(0);
+  });
+});
+
+/**
+ * The erase gives back what it deletes: `account_storage` is what the trim pays down, so bytes left
+ * on the counter after an erase empty the text of letters the person kept.
+ */
+describe("the storage counter across an erase, on either store", () => {
+  const BODY = "x".repeat(1_000);
+
+  async function world(db: Db) {
+    const d = dialect(db);
+    const [a] = await db.insert(accounts).values({ name: "erase-counter" }).returning();
+    const accountId = a!.id;
+    const fill = async (mailboxId: string, n: number, daysAgo: number, key: string) => {
+      for (let i = 0; i < n; i++) {
+        const k = `${key}:${i}`;
+        const [m] = await db.insert(messages).values({
+          accountId, mailboxId, bodyHash: k, dedupKey: k, subject: k, fromAddress: "a@example.test",
+          date: new Date(NOW.getTime() - (daysAgo + i) * 86_400_000),
+        }).returning();
+        await db.transaction(async (tx) => {
+          await reserveBodyBytes(tx as unknown as Tx, d, accountId, BODY.length, null);
+          await tx.insert(messageBodies).values({ messageId: m!.id, text: BODY });
+        });
+      }
+    };
+    const mailbox = async (label: string, n: number, daysAgo: number, key = label) => {
+      const address = `${label}-${accountId.slice(0, 8)}@example.test`;
+      const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address }).returning();
+      await fill(mb!.id, n, daysAgo, key);
+      return { id: mb!.id, address };
+    };
+    const erase = async (mb: { id: string; address: string }) => {
+      await svc.delete(ctxFor(db, accountId), mb.id, { erase: { confirmAddress: mb.address } });
+      // The page step itself gives the bytes back, before the finish recounts.
+      const page = await eraseOwedMailbox(db, d, { accountId, mailboxId: mb.id, now: () => NOW, maxSteps: 1 });
+      expect(page.done).toBe(false);
+      expect(await counted(), "the page step kept the bytes of the bodies it deleted").toBe(await real());
+      const run = await eraseOwedMailbox(db, d, { accountId, mailboxId: mb.id, now: () => NOW, maxSteps: 10 });
+      expect(run.done).toBe(true);
+    };
+    const counted = () => storageUsageOf(db as unknown as Tx, accountId);
+    const real = async () => {
+      const [r] = await db.select({
+        s: sql<number>`coalesce(sum(octet_length(${messageBodies.text}) + coalesce(octet_length(${messageBodies.html}), 0)), 0)`,
+      }).from(messageBodies).innerJoin(messages, eq(messages.id, messageBodies.messageId))
+        .where(eq(messages.accountId, accountId));
+      return Number(r!.s);
+    };
+    return { d, accountId, fill, mailbox, erase, counted, real };
+  }
+
+  it("an erased mailbox's bytes leave the counter", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    await w.mailbox("kept", 5, 100);
+    const gone = await w.mailbox("gone", 5, 1);
+    expect(await w.counted()).toBe(10_000);
+    await w.erase(gone);
+    expect(await w.counted(), "the erased mailbox's bytes stayed on the counter").toBe(5_000);
+    expect(await w.counted()).toBe(await w.real());
+  });
+
+  it("after a trim, erasing the mailbox that holds the emptied letters leaves the real sum", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    const gone = await w.mailbox("gone", 5, 100);
+    await w.mailbox("kept", 5, 1);
+    await db.transaction(async (tx) =>
+      evictOldestBodies(tx as unknown as Tx, w.d, w.accountId, { targetBytes: 7_000, maxBodies: 100 }));
+    expect(await w.counted()).toBe(7_000);
+    await w.erase(gone);
+    expect(await w.counted()).toBe(5_000);
+    expect(await w.counted()).toBe(await w.real());
+  });
+
+  it("a plain removal and a re-import count both copies; erasing the kept copy leaves the new one", async () => {
+    const db = await makeTestDb();
+    const w = await world(db);
+    const old = await w.mailbox("same", 4, 10, "same");
+    await svc.delete(ctxFor(db, w.accountId), old.id);
+    const again = await w.mailbox("again", 0, 0);
+    await w.fill(again.id, 4, 10, "same");
+    expect(await w.counted()).toBe(8_000);
+    expect(await w.counted()).toBe(await w.real());
+    await w.erase(old);
+    expect(await w.counted()).toBe(4_000);
+    expect(await w.counted()).toBe(await w.real());
   });
 });

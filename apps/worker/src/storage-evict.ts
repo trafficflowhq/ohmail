@@ -1,5 +1,6 @@
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import {
-  evictOldestBodies, storageUsageOf,
+  evictOldestBodies, mailboxes, recomputeAccountStorage, storageUsageOf,
   EVICT_BATCH_BODIES, EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO,
   type Tx,
 } from "@trafficflow/db";
@@ -25,6 +26,8 @@ export interface StorageEvictResult {
   freedBytes: number;
   /** `true` ⇒ the per-cycle round bound stopped the trim short; the next cycle resumes. */
   capped: boolean;
+  /** A "Remove and erase" is still sweeping: its bytes are on the counter, so no trim yet. */
+  waitsForErasure?: boolean;
 }
 
 export async function storageEvictPass(
@@ -47,6 +50,18 @@ export async function storageEvictPass(
   const used = await dbCall("storageEvict.usage", () => storageUsageOf(db, accountId));
   if (used < cap * EVICT_HIGH_WATER_RATIO) {
     return { ran: false, evicted: 0, freedBytes: 0, capped: false };
+  }
+  const erasing = await dbCall("storageEvict.erasing", () => db.select({ id: mailboxes.id }).from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), isNotNull(mailboxes.erasedAt), isNull(mailboxes.erasureDoneAt)))
+    .limit(1));
+  if (erasing.length > 0) return { ran: false, evicted: 0, freedBytes: 0, capped: false, waitsForErasure: true };
+  // An erase an older worker finished left its bytes on the counter: trim only against a recount.
+  const erased = await dbCall("storageEvict.erased", () => db.select({ id: mailboxes.id }).from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), isNotNull(mailboxes.erasureDoneAt))).limit(1));
+  if (erased.length > 0) {
+    const recounted = await dbCall("storageEvict.recount", () => db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as Tx, dialect(db), accountId)));
+    if (recounted < cap * EVICT_HIGH_WATER_RATIO) return { ran: false, evicted: 0, freedBytes: 0, capped: false };
   }
 
   const target = Math.floor(cap * EVICT_LOW_WATER_RATIO);
