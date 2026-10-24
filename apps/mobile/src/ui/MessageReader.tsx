@@ -260,15 +260,24 @@ export function MessageReader({
      own jumps. */
   const scrollKey = `msg:${id}`;
   const startAt = useMemo(() => ({ x: 0, y: paneScrollOf(scrollKey) }), [scrollKey]);
-  /* THE PLACE: the message under the view's top and how far into it (`pane-memory`). A new width aims
-     at it again, never at the offset. It moves with the person's scroll and a landing, not with an aim. */
+  /* THE PLACE: the message under the view's top and how far into it, or the content's end (`pane-memory`).
+     A new width aims at it again, never at the offset. It moves with the person's scroll and a landing, not with an aim. */
   const place = useMemo(() => ({ current: panePlaceOf(scrollKey) }), [scrollKey]);
   const stand = (y: number): void => {
     recordPaneScroll(scrollKey, y);
     const a = anchorRef.current;
     if (a !== null && (!a.holding || a.settled)) {
-      const p = placeAt(seen.layout(id), y);
-      if (p !== null) { place.current = p; recordPanePlace(scrollKey, p); }
+      const p = placeAt(seen.layout(id), y, box.current);
+      /* Only the person's own scroll keeps the content's end; a landing keeps its message. */
+      const q = p === null || !p.end || !a.holding || place.current?.end === true ? p : { id: p.id, dy: p.dy, h: p.h };
+      if (q !== null) { place.current = q; recordPanePlace(scrollKey, q); }
+    } else if (a !== null && place.current === null) {
+      /* The open stands clamped at the end, short of its message's top: a remount (one pane to two) aims at that top again. */
+      const mid = landingOf() ?? id;
+      const top = seen.topOf(mid);
+      const at = openTarget();
+      const h = seen.layout(id).find((x) => x.id === mid)?.height ?? 0;
+      if (top !== null && at !== null) recordPanePlace(scrollKey, { id: mid, dy: at - top, h });
     }
     seen.onScroll(y, jumpEnd.current !== null || anchorRef.current?.moving === true);
   };
@@ -295,17 +304,24 @@ export function MessageReader({
   standRef.current = stand;
   const anchorFacts = useRef(() => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null));
   anchorFacts.current = () => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null);
+  /** The strip's pressed member this open lands on, if any. */
+  const landingOf = (): string | null => {
+    const l = landing.current;
+    return l !== null && l.for === id ? l.id : null;
+  };
+  /** Where the open aims: the pressed member, the kept place, or the opened message's top less its air. */
+  const openTarget = (): number | null => {
+    const l = landingOf();
+    if (l !== null) return seen.scrollFor(l);
+    if (place.current !== null) return placeY(seen.layout(id), place.current, box.current);
+    const top = anchorFacts.current();
+    return top === null ? null : top - 8;
+  };
   const anchor = useMemo(
     () => createOpenAnchor({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
       start: startAt.y,
-      target: () => {
-        const l = landing.current;
-        if (l !== null && l.for === id && l.id !== null) return seen.scrollFor(l.id);
-        if (place.current !== null) return placeY(seen.layout(id), place.current);
-        const top = anchorFacts.current();
-        return top === null ? null : top - 8;
-      },
+      target: () => openTarget(),
       extent: () => box.current,
       scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
       stand: (y) => standRef.current(y),

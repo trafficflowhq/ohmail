@@ -15,6 +15,8 @@
  * A NEW WIDTH AIMS AGAIN. A rotation, a fold or a density change reflows every panel, and the offset
  * the view kept then points into another message: `rearm` aims at the kept place (`placeAt`,
  * `placeY`) until the person's own scroll, and while it is on its way (`aiming`) nothing is read.
+ * A view the person scrolled to the content's end keeps the end, not the panel under its top; an open
+ * clamped at the end keeps its message's top.
  */
 import type { PanePlace } from "./pane-memory";
 
@@ -143,15 +145,22 @@ export interface PlacePanel { id: string; top: number; height: number }
 /** The air a jump leaves above a panel's top: a view standing in it stands at that panel. */
 const PLACE_AIR = 8;
 
-/** Where the view at `y` stands: the panel under its top line, and how far into it. */
-export function placeAt(panels: readonly PlacePanel[], y: number): PanePlace | null {
+/** The content and view heights of the scroll view. */
+export interface PlaceExtent { content: number; view: number }
+
+/** Where the view at `y` stands: the panel under its top line, and how far into it; at the end of a content taller than the view, the end. */
+export function placeAt(panels: readonly PlacePanel[], y: number, extent: PlaceExtent): PanePlace | null {
   let at: PlacePanel | null = null;
   for (const p of panels) if (p.top <= y + PLACE_AIR + 1) at = p;
-  return at === null ? null : { id: at.id, dy: y - at.top, h: at.height };
+  if (at === null) return null;
+  const max = extent.content - extent.view;
+  const end = extent.content > 0 && extent.view > 0 && max > 1 && y >= max - 1;
+  return end ? { id: at.id, dy: y - at.top, h: at.height, end: true } : { id: at.id, dy: y - at.top, h: at.height };
 }
 
-/** Where `place` stands in today's layout: the same distance above the top, as far into the panel, or past its end. */
-export function placeY(panels: readonly PlacePanel[], place: PanePlace): number | null {
+/** Where `place` stands in today's layout: the content's end, or the same distance above the top, as far into the panel, or past its end. */
+export function placeY(panels: readonly PlacePanel[], place: PanePlace, extent: PlaceExtent): number | null {
+  if (place.end === true) return extent.content > 0 && extent.view > 0 ? Math.max(0, extent.content - extent.view) : null;
   const p = panels.find((x) => x.id === place.id);
   if (!p) return null;
   if (place.dy <= 0 || place.h <= 0 || p.height <= 0) return p.top + place.dy;

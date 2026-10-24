@@ -553,6 +553,98 @@ describe("a new width keeps the place in the conversation", () => {
     expect(native.offset).toBe(tops(tall).p3 - 8);
     expect(world.glanced.flat()).not.toContain("p2");
   });
+
+  /* ONE PANE TO TWO ON THE FOLDABLE: the two-pane reader is narrower and shorter, and the opened newest is
+     one short message under two tall members, so the open lands at the end. The switch remounts the reader. */
+  const PORTRAIT: Geo = { width: 700, view: 900, heights: [150, 1500, 1500], opened: 60 };
+  const LANDSCAPE: Geo = { width: 620, view: 600, heights: [170, 1700, 1700], opened: 60 };
+  const endOf = (g: Geo): number => tops(g).content - g.view;
+  const remount = (): HTMLElement => {
+    act(() => root?.unmount());
+    host?.remove();
+    pass(300);
+    return mountReader("p4");
+  };
+
+  it("landed at the end, remounted from one pane to two and back: the newest stays in view, nothing read on the way", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = thread(["p1", "p2", "p3"]);
+    layAt(mountReader("p4"), PORTRAIT);
+    settle(1000);
+    expect(native.offset, "the premise: the open lands at the end").toBe(endOf(PORTRAIT));
+    for (const g of [LANDSCAPE, PORTRAIT]) {
+      layAt(remount(), g);
+      settle(1000);
+      expect(native.offset, `the end again at ${g.width}dp`).toBe(endOf(g));
+    }
+    pass(3000);
+    flushNative();
+    expect(world.glanced.flat(), "no member's top was ever on screen").toEqual([]);
+  });
+
+  it("the person's own scroll to the very end, then a new width: the end again", () => {
+    world.mail = thread();
+    const el = mountReader("p4");
+    layAt(el, PORTRAIT);
+    settle();
+    dragTo(tops(PORTRAIT).p2);
+    dragTo(endOf(PORTRAIT));
+    settle();
+    layAt(el, LANDSCAPE);
+    settle();
+    expect(native.offset).toBe(endOf(LANDSCAPE));
+  });
+
+  it("control: scrolled up from the end into a member, a remount keeps that member's place, not the end", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = thread();
+    layAt(mountReader("p4"), PORTRAIT);
+    settle(1000);
+    dragTo(tops(PORTRAIT).p3 + PORTRAIT.heights[2] * 0.4);
+    settle();
+    layAt(remount(), LANDSCAPE);
+    settle(1000);
+    expect(native.offset).toBeCloseTo(tops(LANDSCAPE).p3 + LANDSCAPE.heights[2] * 0.4, 0);
+  });
+
+  it("landed at the end on a loading body, remounted, then the body arrives: the newest's top, not the new end", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = thread();
+    layAt(mountReader("p4"), PORTRAIT);
+    settle(1000);
+    const el = remount();
+    layAt(el, LANDSCAPE);
+    settle(1000);
+    expect(native.offset, "the premise: the end at the two-pane width").toBe(endOf(LANDSCAPE));
+    layAt(el, { ...LANDSCAPE, opened: 1400 });
+    settle(1000);
+    expect(native.offset).toBe(tops(LANDSCAPE).opened - 8);
+  });
+
+  it("a newest that fits one pane but not two: the remount shows its top", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = thread();
+    const one: Geo = { ...PORTRAIT, opened: 700 };
+    layAt(mountReader("p4"), one);
+    settle(1000);
+    expect(native.offset, "the premise: the open lands at the end").toBe(endOf(one));
+    layAt(remount(), { ...LANDSCAPE, opened: 800 });
+    settle(1000);
+    expect(native.offset).toBe(tops(LANDSCAPE).opened - 8);
+  });
+
+  it("an open whose top is exactly the end, remounted, then a longer body: the newest's top, not the new end", () => {
+    forgetPaneScroll("msg:p4");
+    world.mail = thread();
+    const exact: Geo = { ...PORTRAIT, opened: PORTRAIT.view - 108 };
+    layAt(mountReader("p4"), exact);
+    settle(1000);
+    expect(native.offset, "the premise: the top less its air is the end").toBe(endOf(exact));
+    expect(endOf(exact)).toBe(tops(exact).opened - 8);
+    layAt(remount(), { ...LANDSCAPE, opened: 1400 });
+    settle(1000);
+    expect(native.offset).toBe(tops(LANDSCAPE).opened - 8);
+  });
 });
 
 /**
