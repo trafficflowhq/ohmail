@@ -14,8 +14,8 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PORT, bootPhone, cables, deliver, dirs, eventsSince, open, post, relaunch, rowOf, seedMailboxId,
-  untilIngested, untilScreened, type Phone,
+  Cable, DELIVER_AT_MS, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, OUTAGE_MS, PORT, bootPhone, cables, deliver, dirs, eventsSince, folderOnServer, open, post, relaunch, rowOf, seedMailboxId,
+  untilIngested, untilScreened, withServer, type Phone,
 } from "./_phone-offline-rig.js";
 import { serviceUp } from "@trafficflow/db/testing";
 
@@ -111,3 +111,28 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("mail that arrives while the phone 
     await expectFiled(phone, first.user, offline);
   }, 600_000);
 });
+
+/* FOLDER-MISSING-FILINGS (the phone): another client deletes ohmail/Screened; a Move there said
+   done and the server kept the letter in the Inbox for as long as the folder was gone. */
+describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a filing into ohmail's folder another client deleted", () => {
+  it("the phone makes the folder again and files the letter there", async () => {
+    const { phone, user } = await organizingPhone("reset");
+    const subject = `kept here ${randomUUID()}`;
+    await deliver(user, "first.contact.kept@stranger.example", subject);
+    expect((await untilScreened(user, subject, 120_000)).at).toBe("ohmail/Screener");
+    await withServer(user, (c) => c.mailboxDelete("ohmail.Screened"));
+    const [id] = (await phone.exec.all("select id from messages where subject = ?", [subject])).rows[0]!;
+    const res = await phone.engine.handle(new Request(`http://sidecar/messages/${String(id)}/move`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${phone.engine.sessionToken}`, "content-type": "application/json", "idempotency-key": randomUUID() },
+      body: JSON.stringify({ folder: "ohmail/Screened" }),
+    }));
+    expect(res.status, await res.clone().text()).toBe(200);
+    let at: string | null = null;
+    for (const t0 = Date.now(); Date.now() - t0 < 120_000 && at !== "ohmail/Screened"; await new Promise((r) => setTimeout(r, 1000))) {
+      at = await folderOnServer(user, subject);
+    }
+    expect(at, `the phone's row ${JSON.stringify(await rowOf(phone, subject))}; events ${eventsSince(phone, 0)}`).toBe("ohmail/Screened");
+  }, 600_000);
+});
+

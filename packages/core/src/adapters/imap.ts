@@ -821,6 +821,33 @@ export class MoveRefusedError extends Error {
 }
 
 /**
+ * The destination folder of a MOVE or COPY is not on the server, and nothing was written. imapflow
+ * swallows a `NO [TRYCREATE]` and its lock reads `mailboxMissing`, so the adapter names it here.
+ * A `responseStatus` NO, so a caller asking {@link isRefusedCommand} still reads a refusal.
+ */
+export class DestinationMissingError extends Error {
+  readonly code = "EMOVEDESTMISSING";
+  readonly responseStatus = "NO" as const;
+  constructor(public toFolder: string) {
+    super(`the folder ${toFolder} is not on the mail server; nothing was written`);
+    this.name = "DestinationMissingError";
+  }
+}
+
+/** Did a filing find its destination folder gone? The code, so a copy across bundles still answers. */
+export function isDestinationMissing(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === "EMOVEDESTMISSING";
+}
+
+/** A refused SELECT of a folder the server says is not there: the code, or imapflow's NO and LIST check. */
+function lockSaysMissing(err: unknown): boolean {
+  const e = err as { responseStatus?: unknown; mailboxMissing?: unknown; serverResponseCode?: unknown } | null;
+  const code = typeof e?.serverResponseCode === "string" ? e.serverResponseCode.toUpperCase() : "";
+  if (code === "NONEXISTENT" || code === "TRYCREATE") return true;
+  return e?.responseStatus === "NO" && e.mailboxMissing === true;
+}
+
+/**
  * One folder's PERSISTED cursor as this build can use it, or `null` when the stored shape is
  * foreign — written by another build, hand-edited, or truncated JSON. Every field is checked
  * because the type is a claim about what SHOULD be there and this value comes off disk.
@@ -2005,11 +2032,34 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
     /* On DavMail only, `ohmail` before the first child CREATE where the LIST names it nowhere, once
        per call, asked at the door like the child. Why, and why DavMail alone: `createParentFirst`. */
-    let parentAsked = !greetsAsDavMail(this.client);
-    for (const canonical of OHMAIL_FOLDERS) {
+    const parentAsked = { done: !greetsAsDavMail(this.client) };
+    for (const canonical of OHMAIL_FOLDERS) await this.createOwnFolder(canonical, list, namespaces, parentAsked, door);
+  }
+
+  /**
+   * Make one of ohmail's own folders again when a filing found it gone (another client deleted it,
+   * or the provider pruned it empty): the attach's create for that one folder, nothing else — no
+   * rename, sweep or delete. Anything outside {@link OHMAIL_FOLDERS} throws before any command.
+   */
+  async ensureOwnFolder(canonical: string, door: WriteDoor): Promise<"made" | "exists"> {
+    if (!(OHMAIL_FOLDERS as readonly string[]).includes(canonical)) {
+      throw new Error(`ensureOwnFolder: ${canonical} is not one of ohmail's own folders`);
+    }
+    const list = await this.listBounded();
+    this.learnPassiveFolders(list);
+    const namespaces = personalNamespacesOf(this.client as unknown as MetaNamespaceSource);
+    return this.createOwnFolder(canonical, list, namespaces, { done: !greetsAsDavMail(this.client) }, door);
+  }
+
+  /** One folder of {@link ensureFolders}' create loop; `parentAsked` is shared across one call. */
+  private async createOwnFolder(
+    canonical: string, list: ListResponse[], namespaces: ReturnType<typeof personalNamespacesOf>,
+    parentAsked: { done: boolean }, door: WriteDoor,
+  ): Promise<"made" | "exists"> {
+    {
       // The pile still lives at the legacy name (the rename above was refused): creating
       // `ohmail/News` beside it would fork the tree. The resolver reaches Reads meanwhile.
-      if (canonical === NEWS_FOLDER && this.newsPhysical !== NEWS_FOLDER) continue;
+      if (canonical === NEWS_FOLDER && this.newsPhysical !== NEWS_FOLDER) return "exists";
       /* `const`: the CREATE address is the adapter's own spelling and nothing may re-point it.
          A mutable binding here is the shape the defect had — `path = at.path` — so the next
          person to reach for it has to change the declaration first and think about why. */
@@ -2028,7 +2078,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
          * the root, or the personal namespace's own root — and anything else is created under our
          * own name, where "already exists" still absorbs a race.
          */
-        if (at.row !== null && this.isOwnFolderPath(at.path, path, namespaces)) continue;
+        if (at.row !== null && this.isOwnFolderPath(at.path, path, namespaces)) return "exists";
       } catch (err) {
         /* NARROW, and named. A bare `catch` here swallowed every throw out of the resolution
            identically — including a programming error inside it — and then proceeded to a
@@ -2042,8 +2092,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
            behaviour this replaced. Fall through to the root-named CREATE the server will file
            under its own prefix anyway, and let "already exists" absorb it as it always did. */
       }
-      if (!parentAsked && parent !== null) {
-        parentAsked = true;
+      if (!parentAsked.done && parent !== null) {
+        parentAsked.done = true;
         if (!parent.listed) {
           this.admitWrite(door, "folder_create");
           try {
@@ -2059,7 +2109,9 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         await this.client.mailboxCreate(path);
       } catch (err) {
         if (!/already exists/i.test(String((err as Error).message))) throw err;
+        return "exists";
       }
+      return "made";
     }
   }
 
@@ -4649,9 +4701,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * safe direction at both call sites: a refusal rather than a guess.
    */
   private async destinationLook(
-    dstPath: string, messageId: string | null, sourceFingerprint: string | null,
+    dstPath: string, messageId: string | null, sourceFingerprint: string | null, beforeWrite: string | null = null,
   ): Promise<{ uidValidity: bigint; candidates: number[]; matches: number[] }> {
-    const lock = await this.bounded(this.client.getMailboxLock(dstPath), dstPath);
+    const lock = beforeWrite === null
+      ? await this.bounded(this.client.getMailboxLock(dstPath), dstPath)
+      : await this.destinationLock(dstPath, beforeWrite);
     try {
       const uidValidity = (this.client.mailbox as MailboxObject).uidValidity;
       const inner = messageId ? messageId.replace(/[<>]/g, "").trim() : "";
@@ -4725,6 +4779,26 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     } finally {
       lock.release();
     }
+  }
+
+  /** The destination lock before any write: a folder the server says is gone is {@link DestinationMissingError}. */
+  private async destinationLock(dstPath: string, toFolder: string): Promise<{ release(): void }> {
+    try {
+      return await this.bounded(this.client.getMailboxLock(dstPath), dstPath);
+    } catch (err) {
+      if (lockSaysMissing(err)) throw new DestinationMissingError(toFolder);
+      throw err;
+    }
+  }
+
+  /**
+   * A MOVE or COPY answered `false` with the letters still at the source: one STATUS of the
+   * destination, and a folder that is not there is {@link DestinationMissingError} (imapflow keeps
+   * the `[TRYCREATE]` to its logger).
+   */
+  private async refusedForMissing(dstPath: string, toFolder: string): Promise<void> {
+    const at = await this.statusAt(dstPath, toFolder, IMAP_READ_DEADLINE_MS);
+    if (at.k === "absent") throw new DestinationMissingError(toFolder);
   }
 
   /**
@@ -4863,12 +4937,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
 
     // Step 2: the destination PRE-CHECK. Separate lock, after releasing the source lock —
     // imapflow locks are not re-entrant on one connection.
-    let look = await this.destinationLook(dstPath, messageId, sourceFingerprint);
+    let look = await this.destinationLook(dstPath, messageId, sourceFingerprint, toFolder);
     // Something is there and we did not pull the body. Pay for it now and look again: this is the
     // rare path by construction, so the common move still costs one SEARCH and no fetch.
     if (look.candidates.length > 0 && sourceFingerprint === null) {
       sourceFingerprint = await this.sourceFingerprintOf(locator, srcPath, uid);
-      look = await this.destinationLook(dstPath, messageId, sourceFingerprint);
+      look = await this.destinationLook(dstPath, messageId, sourceFingerprint, toFolder);
     }
     dstUidValidity = look.uidValidity;
 
@@ -4894,7 +4968,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
             dstUid = caps.uidplus ? (res.uidMap?.get(uid) ?? null) : null;
-          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res);
+          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res, dstPath);
         } else {
           // The pair's one ask: once this COPY has run, the DELETE below follows unasked.
           this.admitWrite(door, "move");
@@ -4902,7 +4976,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           if (res && typeof res !== "boolean") {
             dstUidValidity = res.uidValidity ?? dstUidValidity;
             dstUid = caps.uidplus ? (res.uidMap?.get(uid) ?? null) : null;
-          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res);
+          } else if ((res as unknown) !== true) await this.assertNotTaken(locator, toFolder, uid, res, dstPath);
           // NOT deleted here. See the header: the expunge is last, after the verify.
           sourceAwaitingDelete = true;
           copiedHere = true;
@@ -4956,9 +5030,13 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * refuses with {@link MoveRefusedError}, and a dropped connection throws its own transport error
    * here. A source already gone falls through to the destination look, which finds the copy.
    */
-  private async assertNotTaken(locator: NativeLocator, toFolder: string, uid: number, res: unknown): Promise<void> {
+  private async assertNotTaken(
+    locator: NativeLocator, toFolder: string, uid: number, res: unknown, dstPath: string,
+  ): Promise<void> {
     const still = await this.client.fetchOne(String(uid), { uid: true }, { uid: true });
-    if (still) throw new MoveRefusedError(locator, toFolder, res === false ? "refused" : "not_sent");
+    if (!still) return;
+    if (res === false) await this.refusedForMissing(dstPath, toFolder);
+    throw new MoveRefusedError(locator, toFolder, res === false ? "refused" : "not_sent");
   }
 
   /**
@@ -5059,7 +5137,7 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
       .filter((id) => id !== "");
     let dstUidValidity: bigint;
     {
-      const lock = await this.bounded(this.client.getMailboxLock(dstPath));
+      const lock = await this.destinationLock(dstPath, toFolder);
       try {
         dstUidValidity = (this.client.mailbox as MailboxObject).uidValidity;
         if (ids.length > 0) {
@@ -5101,7 +5179,10 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
           const left = await this.client.fetchAll(uids.join(","), { uid: true }, { uid: true });
           const still = new Set<number>();
           for (const r of left) if (askedRow(r, wanted, "uid")) still.add(r.uid);
-          if (uids.every((u) => still.has(u))) return { outcome: "refused", moved: new Map(), gone: [] };
+          if (uids.every((u) => still.has(u))) {
+            if (res === false) await this.refusedForMissing(dstPath, toFolder);
+            return { outcome: "refused", moved: new Map(), gone: [] };
+          }
           return movedUnmapped;
         }
         // FROM HERE THE MAIL HAS MOVED, so every refusal below answers `moved_unmapped`, never

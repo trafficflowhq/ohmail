@@ -38,8 +38,8 @@ type Disposition =
 const CENSUS: Readonly<Record<string, Disposition>> = {
   "imap.ts:ensureFolders:mailboxRename#1": "door",
   /* #1 is the parent `ohmail`, created first where the LIST names it nowhere; #2 the child. */
-  "imap.ts:ensureFolders:mailboxCreate#1": "door",
-  "imap.ts:ensureFolders:mailboxCreate#2": "door",
+  "imap.ts:createOwnFolder:mailboxCreate#1": "door",
+  "imap.ts:createOwnFolder:mailboxCreate#2": "door",
   "imap.ts:createFolder:mailboxCreate#1": "door",
   "imap.ts:renameFolder:mailboxRename#1": "door",
   "imap.ts:deleteFolderByPath:mailboxDelete#1": "door",

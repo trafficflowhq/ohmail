@@ -178,4 +178,18 @@ describe("the adapter asks the write door at the command", () => {
     expect(creates.length).toBeGreaterThan(0);
     expect(door.asked).toEqual(creates.map(() => "folder_create"));
   });
+
+  it("re-making one of ohmail's folders asks once; refused, nothing is created", async () => {
+    const { adapter, rig } = await adapterOver({ move: true, present: [] });
+    const door = doorOf();
+    door.admit = false;
+    await declinedWith(adapter.ensureOwnFolder("ohmail/Screened", door));
+    expect(rig.calls.some((c) => c.startsWith("CREATE"))).toBe(false);
+    door.admit = true;
+    door.asked.length = 0;
+    expect(await adapter.ensureOwnFolder("ohmail/Screened", door)).toBe("made");
+    expect(rig.calls.filter((c) => c.startsWith("CREATE"))).toEqual(["CREATE ohmail/Screened"]);
+    expect(door.asked).toEqual(["folder_create"]);
+  });
 });
+
