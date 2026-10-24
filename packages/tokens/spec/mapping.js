@@ -54,38 +54,6 @@
     return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
   }
 
-  /* OKLCH, for the one slot an sRGB mix renders grey: the unread wash on a light panel keeps the
-     accent's own hue at a fixed pale lightness and chroma (Bjorn Ottosson's OKLab). */
-  function oklchOf(c) {
-    const lin = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
-    const [r, g, b] = hex(c).map(lin);
-    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
-    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
-    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-    const A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
-    const B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
-    const h = (Math.atan2(B, A) * 180) / Math.PI;
-    return { L: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, C: Math.hypot(A, B), h: h < 0 ? h + 360 : h };
-  }
-  function oklchHex(L, C, h) {
-    const A = C * Math.cos((h * Math.PI) / 180), B = C * Math.sin((h * Math.PI) / 180);
-    const l = Math.pow(L + 0.3963377774 * A + 0.2158037573 * B, 3);
-    const m = Math.pow(L - 0.1055613458 * A - 0.0638541728 * B, 3);
-    const s = Math.pow(L - 0.0894841775 * A - 1.2914855480 * B, 3);
-    const out = (v) => 255 * (v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
-    return toHex([
-      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-      -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
-    ].map(out));
-  }
-  /* An unread message's panel: light keeps the accent's hue, pale; dark mixes 11% accent in. */
-  function unreadWash(accent, panel, mode) {
-    const o = oklchOf(accent);
-    if (mode === "light" && o.C >= 0.02) return oklchHex(0.955, 0.022, o.h);
-    return mix(panel, accent, mode === "light" ? 0.10 : 0.11);
-  }
-
   /* Walk `c` toward `target` in small steps until it clears `floor` against
      `against` — one ground, or a list of grounds that must ALL clear.
      Bounded (20 steps → target itself), monotonic, mechanical.
@@ -153,18 +121,23 @@
     const accStruct = ensure(accSrc, bg, 3, fg);
     if (accStruct.walked) note("--accent", `structural accent walked ${accStruct.walked}% toward foreground (was ${contrast(accSrc, bg).toFixed(2)}:1 vs panel)`);
 
+    /* An unread message's panel. Light: the panel taken toward its own ink by Omarchy's hover
+       fill (.08), no hue of its own, and the text below floors on it too. Dark: 11% accent in. */
+    const wash = mode === "light" ? mix(bg, fg, 0.08) : mix(bg, accStruct.value, 0.11);
+    const text = mode === "light" ? [bg, wash] : bg;
+
     /* Text accent: links, active labels. Floor 4.5:1, same walk. */
-    const accText = ensure(accSrc, bg, 4.5, fg);
+    const accText = ensure(accSrc, text, 4.5, fg);
     if (accText.walked) note("--accent-ink", `text accent walked ${accText.walked}% toward foreground`);
 
     /* Ink ramp: fg is the theme's designed body text (floor 4.5 anyway);
        ink2/ink3 are mechanical mixes toward dark_foreground, floored so
        meta text never sinks below 4.5:1 on weak ramps. */
-    const ink = ensure(fg, bg, 4.5, mode === "dark" ? "#ffffff" : "#000000");
+    const ink = ensure(fg, text, 4.5, mode === "dark" ? "#ffffff" : "#000000");
     if (ink.walked) note("--ink", `foreground walked ${ink.walked}% toward ${mode === "dark" ? "white" : "black"}`);
-    const ink2 = ensure(mix(fg, dfg, 1 / 3), bg, 4.5, fg);
+    const ink2 = ensure(mix(fg, dfg, 1 / 3), text, 4.5, fg);
     if (ink2.walked) note("--ink2", `walked ${ink2.walked}% back toward foreground`);
-    const ink3 = ensure(mix(fg, dfg, 2 / 3), bg, 4.5, fg);
+    const ink3 = ensure(mix(fg, dfg, 2 / 3), text, 4.5, fg);
     if (ink3.walked) note("--ink3", `walked ${ink3.walked}% back toward foreground`);
 
     /* On-accent: whichever of the theme's own poles reads better on the
@@ -233,7 +206,7 @@
       "--accent-hair": alpha(accSrc, 0.42),
       "--accent-wash": alpha(accSrc, 0.06),
       /* the thread-read squares and tint: the unread panel, and a read / own square's opacity */
-      "--unread-wash": unreadWash(accStruct.value, bg, mode),
+      "--unread-wash": wash,
       "--mark-read": mode === "light" ? "0.46" : "0.42",
       "--mark-mine": mode === "light" ? "0.66" : "0.62",
       "--on-accent": onAccent,

@@ -42,7 +42,7 @@ export const ohmarchyPalettes: Record<SchemeName, Palette> = {
     accentHair: "rgba(32,94,166,0.42)",
     onAccent: "#FFFCF0",
     scrim: "rgba(255,252,240,0.5)",
-    unreadWash: "#e7f1ff",
+    unreadWash: "#ece9de",
     markRead: 0.46,
     markMine: 0.66,
     glass: "rgba(255,252,240,0.8)",

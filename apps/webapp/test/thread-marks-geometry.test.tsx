@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -9,6 +9,8 @@ import { MessageRow } from "@ohmail/ui";
 import { ThreadMarksBar, ThreadTip, tipAt, type TipPlace } from "../app/shell/ThreadMarks";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
+import { mapOmarchyThemePair, omarchyMap } from "../../../packages/tokens/omarchy/map";
+import { omarchyRuleText } from "../../../packages/tokens/omarchy/rule";
 
 /**
  * THE COLUMN OF SQUARES NEVER COVERS A MESSAGE — MEASURED IN A REAL ENGINE. jsdom lays nothing out,
@@ -522,6 +524,95 @@ describe("the chip names a square, beside the rail or under the strip, over no m
       expect(r.top - at.button.bottom, "under the square, never on it").toBeCloseTo(4, 1);
       expect(r.left, "inside the list column").toBeGreaterThanOrEqual(at.list.left + 8 - 0.5);
       expect(r.right, "inside the list column").toBeLessThanOrEqual(at.list.right - 8 + 0.5);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+});
+
+/* An OKLab point of an `rgb(r, g, b)` colour (Ottosson). */
+function oklab(rgb: string): [number, number, number] {
+  const lin = (v: number): number => (v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  const [r, g, b] = rgb.match(/\d+/g)!.slice(0, 3).map((v) => lin(Number(v)));
+  const l = Math.cbrt(0.4122214708 * r! + 0.5363325363 * g! + 0.0514459929 * b!);
+  const m = Math.cbrt(0.2119034982 * r! + 0.6806995451 * g! + 0.1073969566 * b!);
+  const s = Math.cbrt(0.0883024619 * r! + 0.2817188376 * g! + 0.6299787005 * b!);
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+}
+/** How far `c` stands off the line from `from` to `to` in OKLab: 0 is a plain mix of the two. */
+function offLine(c: string, from: string, to: string): number {
+  const [C, F, T] = [oklab(c), oklab(from), oklab(to)];
+  const d = T.map((v, i) => v - F[i]!), x = C.map((v, i) => v - F[i]!);
+  const t = x.reduce((a, v, i) => a + v * d[i]!, 0) / d.reduce((a, v) => a + v * v, 0);
+  return Math.hypot(...x.map((v, i) => v - t * d[i]!));
+}
+const hexOf = (rgb: string): string => "#" + rgb.match(/\d+/g)!.slice(0, 3).map((v) => Number(v).toString(16).padStart(2, "0")).join("");
+
+describe("under ohmarchy's light themes an unread message sits on a surface tone, not the accent", () => {
+  /* Flexoki Light's unread messages were light blue: the wash took the accent's hue. The shipped
+     sheet, then every theme's light scheme as the desktop's live feed writes it (its own, or the
+     counterpart it derives). */
+  const rawDir = resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw");
+  const THEMES: [string, string][] = [["the shipped sheet", ""]];
+  for (const f of readdirSync(rawDir).filter((n) => n.endsWith(".colors.toml")).sort()) {
+    const pair = mapOmarchyThemePair({ colorsToml: readFileSync(resolve(rawDir, f), "utf8") });
+    if (pair && (pair.mode === "light" || pair.counterpart))
+      THEMES.push([f.replace(/\.colors\.toml$/, ""), omarchyRuleText(pair.native.tokens, pair.mode, pair.counterpart?.tokens ?? null)]);
+  }
+  const TEXT = ["--ink", "--ink2", "--ink3", "--accent-ink"] as const;
+
+  it("every light theme: the unread panel is the panel taken toward its ink, apart from the read one, its text at 4.5:1", async () => {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } });
+    try {
+      await page.setContent(`<!doctype html><html data-face="ohmarchy" data-theme="light"><head><meta charset="utf-8">
+        <style>${SHEETS}${css("packages/tokens/src/ohmarchy.css")}.conv *{transition:none!important}</style><style id="live"></style></head>
+        <body style="margin:0"><section class="view split" style="grid-template-columns:1004px;height:700px;margin-left:420px">
+        <div class="read-col"><div class="conv" data-thread-read="">${MEMBERS.map((m) => panel(m.id)).join("")}</div></div></section>
+        <i id="probe"></i></body></html>`);
+      await page.evaluate(() => document.querySelector('[data-conv-id="p1"]')!.setAttribute("data-unseen", ""));
+      const law = omarchyMap();
+      const faults: string[] = [];
+      for (const [name, rule] of THEMES) {
+        const r = await page.evaluate(([rule, slots]) => {
+          document.getElementById("live")!.textContent = rule;
+          const probe = document.getElementById("probe")!;
+          const colour = (slot: string): string => { probe.style.color = `var(${slot})`; return getComputedStyle(probe).color; };
+          return {
+            unread: getComputedStyle(document.querySelector('[data-conv-id="p1"]')!).backgroundColor,
+            read: getComputedStyle(document.querySelector('[data-conv-id="p3"]')!).backgroundColor,
+            text: Object.fromEntries(slots.map((s) => [s, colour(s)])),
+          };
+        }, [rule, [...TEXT]] as const);
+        const [unread, read] = [hexOf(r.unread), hexOf(r.read)];
+        const off = offLine(r.unread, r.read, r.text["--ink"]!);
+        if (off > 0.004) faults.push(`${name}: the unread panel ${unread} carries a hue of its own (${off.toFixed(4)} off the panel-ink line)`);
+        if (law.contrast(unread, read) < 1.08) faults.push(`${name}: unread ${unread} and read ${read} look alike`);
+        for (const slot of TEXT) {
+          const c = law.contrast(hexOf(r.text[slot]!), unread);
+          if (c < 4.5) faults.push(`${name}: ${slot} reads ${c.toFixed(2)}:1 on the unread panel`);
+        }
+      }
+      expect(THEMES.length, "no live theme reached the page: this proves nothing").toBeGreaterThan(5);
+      expect(faults).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("RED CONTROL: an accent-tinted unread panel is caught", async () => {
+    const page = await browser!.newPage({ viewport: { width: 800, height: 600 } });
+    try {
+      // The wash light themes shipped before: Flexoki Light's accent hue, pale.
+      await page.setContent(`<!doctype html><html data-face="ohmarchy" data-theme="light" style="--unread-wash:#e7f1ff"><head><meta charset="utf-8">
+        <style>${SHEETS}${css("packages/tokens/src/ohmarchy.css")}.conv *{transition:none!important}</style></head>
+        <body><div class="read-col"><div class="conv" data-thread-read="">${panel("p1")}${panel("p3")}</div></div></body></html>`);
+      const r = await page.evaluate(() => {
+        document.querySelector('[data-conv-id="p1"]')!.setAttribute("data-unseen", "");
+        const bg = (id: string): string => getComputedStyle(document.querySelector(`[data-conv-id="${id}"]`)!).backgroundColor;
+        return { unread: bg("p1"), read: bg("p3"), ink: getComputedStyle(document.body).color };
+      });
+      expect(offLine(r.unread, r.read, r.ink), "the measurement does not see the accent's blue").toBeGreaterThan(0.004);
     } finally {
       await page.close();
     }
