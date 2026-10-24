@@ -156,12 +156,21 @@ export type WithdrawOutcome = "withdrawn" | "on_the_wire" | "gone" | "unknown";
 /** The withdrawn ending's code — see `adapters/refusal-shape.ts`, where the adapter reads it too. */
 export { OUTBOX_WITHDRAWN_CODE };
 
+/**
+ * A QUEUED EDIT KEPT AS A NEW DRAFT: refused `draft_changed` (the row moved elsewhere while it waited),
+ * nobody reading the refusal, so its words were re-issued as a create. `key` is the edit's own,
+ * `from` the row it was for, `row` the new draft once the server made it (`null` before).
+ */
+export interface KeptAsNewDraft { key: string; from: string; row: string | null; revision?: string }
+
 export interface MutationResult {
   id: string;
   /** The Idempotency-Key used on the wire — stable across retries. */
   key: string;
   status: MutationStatus;
   seq: number | null;
+  /** A confirmed `draft_save`'s version of the row ({@link MutationOutcome.revision}). */
+  revision?: string;
   error?: MutationRejectedError;
   /**
    * The server's id for a row this mutation created — see
@@ -381,6 +390,8 @@ interface PendingMutation {
   wired?: true;
   /** A Cancel the server has not answered yet — see {@link PersistedOutboxEntry.withdrawOwed}. */
   withdrawOwed?: true;
+  /** Its caller was answered `queued`: nobody reads its ending, so a refusal has to speak for itself. */
+  told?: true;
   /** Server-answered failures so far. See {@link OUTBOX_MAX_SERVER_FAILURES} for what counts. */
   attempts?: number;
   /** Epoch ms before which no drive may dispatch this verb. */
@@ -2749,6 +2760,10 @@ export class OhmailEngine {
    * surface waits on (a send's settlement, a create's server id) exist nowhere else.
    */
   private readonly lateResults = new Map<string, MutationResult>();
+  /** See {@link keptAsNewDrafts}: newest last, bounded, replaced (never mutated) on each change. */
+  private keptAsNew: readonly KeptAsNewDraft[] = [];
+  /** The create a kept edit became, by its key → the edit's key. */
+  private readonly keptCreates = new Map<string, string>();
   /**
    * Verbs currently ON THE WIRE — dispatched, not yet settled.
    *
@@ -7301,6 +7316,7 @@ export class OhmailEngine {
      */
     const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
     const queued = (): MutationResult => {
+      pending.told = true;
       this.queue.push(pending);
       return { id, key, status: "queued", seq: null };
     };
@@ -7331,6 +7347,7 @@ export class OhmailEngine {
          * later flush dispatched it AGAIN — for a draft create, whose route ignores the key, that
          * is a second draft on the server for one the client already asked for.
          */
+        pending.told = true;
         return { id, key, status: "queued", seq: null };
       }
       if (out.result === null) return queued();
@@ -8463,12 +8480,68 @@ export class OhmailEngine {
     opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void } = {},
   ): Promise<MutationResult> {
     const r = await this.dispatchOnce(p, opts);
+    this.noteKeptRow(p.key, r);
     if (p.mutation.kind === "mail_send" && r.status === "confirmed" && p.createdRow !== undefined) {
       this.confirmedRows.delete(p.key);
       this.confirmedRows.set(p.key, p.createdRow);
       if (this.confirmedRows.size > 64) this.confirmedRows.delete(this.confirmedRows.keys().next().value!);
     }
     return p.mutation.kind === "mail_send" ? await this.oneSpeaker(p, r) : r;
+  }
+
+  /** Queued edits kept as new drafts this session — see {@link KeptAsNewDraft}. Newest last. */
+  keptAsNewDrafts(): readonly KeptAsNewDraft[] {
+    return this.keptAsNew;
+  }
+
+  /**
+   * THE WORDS OF A REFUSED WAITING EDIT, RE-ISSUED AS A CREATE: the create takes the edit's place on
+   * the outbox in one transaction (replayed by any drive, like a restored entry), goes to the wire at
+   * once, and {@link keptAsNewDrafts} says so. The edit's own answer stays the refusal.
+   */
+  private async keepAsNewDraft(
+    p: PendingMutation, from: string, rejection: MutationRejectedError,
+    opts: { deferReconcile?: boolean; onReconcileDeferred?: (mode: "await" | "background") => void },
+  ): Promise<MutationResult> {
+    const { ifContentRevision: _stated, ...words } = p.mutation as Extract<EngineMutation, { kind: "draft_save" }>;
+    // What an edit leaves to its row (the sender, the thread, the forwarded message) comes from it.
+    const was = this.store.get<EngineDraft>("draft", from);
+    const create = this.enrich({
+      ...words, draftId: null,
+      ...(words.mailboxId === undefined && was?.mailboxId ? { mailboxId: was.mailboxId } : {}),
+      ...(words.threadId === undefined && was?.threadId ? { threadId: was.threadId } : {}),
+      ...(words.inReplyToMessageId === undefined && was?.inReplyToMessageId ? { inReplyToMessageId: was.inReplyToMessageId } : {}),
+      ...(words.forwardOfMessageId === undefined && was?.forwardOfMessageId ? { forwardOfMessageId: was.forwardOfMessageId } : {}),
+    });
+    const q: PendingMutation = {
+      id: this.uuid(), key: this.uuid(), mutation: create, at: p.at, n: p.n, restored: true,
+      ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
+    };
+    this.overlays.set(q.id, mutationEffects(this.verbView, create, { now: this.now, uuid: this.uuid }));
+    let swapped = true;
+    try {
+      await this.store.commitLocal([{ type: OUTBOX_TYPE, id: q.id, entity: outboxEntryOf(q) }], [{ type: OUTBOX_TYPE, id: p.id }]);
+    } catch {
+      swapped = false; // the edit stays on disk: a later boot replays it, and is refused into this again
+    }
+    this.keptCreates.set(q.key, p.key);
+    this.keptAsNew = [...this.keptAsNew.slice(-31), { key: p.key, from, row: null }];
+    this.overlayRev++;
+    this.notify();
+    const r = await this.dispatchOnce(q, opts);
+    this.noteKeptRow(q.key, r);
+    if (!swapped && r.status === "confirmed") await this.dropOutbox(p.id);
+    return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+  }
+
+  /** A kept create the server made: its row joins the entry. */
+  private noteKeptRow(key: string, r: MutationResult): void {
+    const edit = this.keptCreates.get(key);
+    if (edit === undefined || r.status !== "confirmed" || !r.entityId) return;
+    this.keptCreates.delete(key);
+    const row = r.entityId;
+    this.keptAsNew = this.keptAsNew.map((k) => (k.key === edit ? { ...k, row, ...(r.revision ? { revision: r.revision } : {}) } : k));
+    this.notify();
   }
 
   /**
@@ -8781,6 +8854,7 @@ export class OhmailEngine {
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
+        ...(outcome.revision ? { revision: outcome.revision } : {}),
         ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
         // Rides the confirmed result for `pendingWith`'s reason: the server answered, and this
         // is the only thing that can say the answer was about an earlier press.
@@ -8863,6 +8937,7 @@ export class OhmailEngine {
           // A wire failure here is not this press's refusal; its overlay and row are gone above.
           return { id: p.id, key: p.key, status: "superseded", seq: null };
         }
+        p.told = true;
         this.queue.push(p);
         // NAMED, not adopted — see {@link MutationResult.entityId}. The adapter created a row for
         // a press that carried none and the send is on the wire about it; the durable send record
@@ -8894,6 +8969,14 @@ export class OhmailEngine {
         this.overlayRev++;
         this.notify();
         return { id: p.id, key: p.key, status: "superseded", seq: null };
+      }
+      /* A WAITING EDIT REFUSED BECAUSE THE ROW MOVED ELSEWHERE: its editor was answered `queued` (or
+         died with its session) and reads nothing now, so its words become a new draft, never dropped. */
+      if (rejection.code === "draft_changed" && p.mutation.kind === "draft_save" && p.mutation.draftId !== null
+        && (p.told === true || p.restored === true)) {
+        // A newer edit of the row carries newer words and gets its own answer: this one goes with it.
+        if (p.supersededBy !== undefined) await this.replacementDecided(p.supersededBy);
+        if (p.supersededBy === undefined) return await this.keepAsNewDraft(p, p.mutation.draftId, rejection, opts);
       }
       // THE SERVER TOMBSTONED THIS KEY (a Cancel, here or in another window): the withdrawn ending,
       // never a refusal record — nothing was sent and nothing will be.

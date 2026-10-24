@@ -409,6 +409,33 @@ export class HttpAdapter implements EngineAdapter {
   private readonly revisionForDraft = new Map<string, string>();
   /** How many drafts' revisions are kept. Far above any one composing session's rows. */
   private static readonly DRAFT_REVISIONS_KEPT = 64;
+  /**
+   * EACH VERSION CHANGE THIS CLIENT'S OWN SAVES CAUSED, per row: from → to. A save queued offline,
+   * or retried after a lost answer, states the version its editor saw; moved forward along this
+   * chain it never refuses against this client's own earlier save. Bounded: 64 rows × 32 steps.
+   * `last` is where this client's latest save left the row: the version is a digest of the words,
+   * so words typed back to an earlier text make the chain a cycle, and the walk stops at `last`.
+   */
+  private readonly ownSteps = new Map<string, { steps: Map<string, string>; last: string }>();
+
+  private noteOwnStep(row: string, from: string | undefined, to: unknown): void {
+    if (!from || typeof to !== "string" || to === "" || to === from) return;
+    const steps = this.ownSteps.get(row)?.steps ?? new Map<string, string>();
+    this.ownSteps.delete(row);
+    this.ownSteps.set(row, { steps, last: to });
+    steps.delete(from);
+    steps.set(from, to);
+    while (steps.size > 32) steps.delete(steps.keys().next().value!);
+    while (this.ownSteps.size > HttpAdapter.DRAFT_REVISIONS_KEPT) this.ownSteps.delete(this.ownSteps.keys().next().value!);
+  }
+
+  /** A stated version, moved forward along this client's own saves of the row, never past the latest. */
+  private ownVersion(row: string, stated: string | undefined): string | undefined {
+    const own = this.ownSteps.get(row);
+    let at = stated;
+    for (let i = 0; at !== undefined && at !== own?.last && own?.steps.has(at) && i < 32; i += 1) at = own.steps.get(at);
+    return at;
+  }
 
   /** One send key's per-request memory, dropped together — the two maps have one lifetime. */
   private forgetSendKey(key: string): void {
@@ -2055,8 +2082,11 @@ export class HttpAdapter implements EngineAdapter {
             }],
             seq,
             entityId: dto.id,
+            ...(typeof dto.contentRevision === "string" && dto.contentRevision !== "" ? { revision: dto.contentRevision } : {}),
           };
         }
+        // The version the editor's words are based on, past this client's own later saves.
+        const stated = this.ownVersion(m.draftId, m.ifContentRevision);
         const res = await this.request("PUT", `/drafts/${encodeURIComponent(m.draftId)}`, {
           // `mailboxId` rides the update too: the sending identity follows the From pick for
           // as long as the row is a draft (the server refuses the move past `draft`), so a
@@ -2065,6 +2095,7 @@ export class HttpAdapter implements EngineAdapter {
             ...fields, ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
             // Absent leaves the row's own (the server's patch rule); `null` clears it.
             ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+            ...(stated ? { ifContentRevision: stated } : {}),
           },
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
@@ -2074,6 +2105,7 @@ export class HttpAdapter implements EngineAdapter {
         // THE AUTOSAVE'S OWN OBSERVATION. This answer names the version the row is now at, and a
         // send whose own PUT fails carries it rather than nothing — the whole of the fallback.
         this.noteDraftRevision(m.draftId, dto.contentRevision);
+        this.noteOwnStep(m.draftId, stated, dto.contentRevision);
         return {
           changes: seq === null || !dto.id ? [] : [{
             type: "draft", op: "update", id: dto.id, seq, updatedAt: dto.updatedAt ?? "",
@@ -2081,6 +2113,7 @@ export class HttpAdapter implements EngineAdapter {
           }],
           seq,
           entityId: dto.id ?? m.draftId,
+          ...(typeof dto.contentRevision === "string" && dto.contentRevision !== "" ? { revision: dto.contentRevision } : {}),
         };
       }
 
@@ -2257,10 +2290,13 @@ export class HttpAdapter implements EngineAdapter {
       let refusal: MutationRejectedError | null = null;
       /** The revision this client last saw for the row, read BEFORE the save moves it. */
       const recordedRevision = this.revisionForKey.get(idempotencyKey) ?? this.revisionForDraft.get(row) ?? null;
+      /** The version the press's words are based on, past this client's own later saves. */
+      let stated: string | undefined;
       /** The save, expressed ONCE — the retry below is this same request, never a second copy. */
       const writeTheRow = async (): Promise<PutEcho | null> => {
         ended = "unanswered";
         refusal = null;
+        stated = this.ownVersion(row, m.ifContentRevision);
         try {
           const put = await this.request("PUT", `/drafts/${encodeURIComponent(row)}`, {
             body: {
@@ -2277,15 +2313,22 @@ export class HttpAdapter implements EngineAdapter {
               ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
               // The original a forward sends, onto the row it sends.
               ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
+              ...(stated ? { ifContentRevision: stated } : {}),
             },
           });
           if (put.ok) {
             const echo = await put.json().catch(() => null) as PutEcho | null;
-            if (echo !== null && typeof echo === "object") { ended = "answered"; return echo; }
+            if (echo !== null && typeof echo === "object") {
+              ended = "answered";
+              this.noteOwnStep(row, stated, echo.contentRevision);
+              return echo;
+            }
             return null;
           }
           refusal = await this.rejectionOf(put);
           if (put.status === 409 && (refusal.code === "draft_sent" || refusal.code === "send_recorded")) ended = "frozen";
+          // The row moved off the version these words were written on: the edit itself is refused.
+          else if (put.status === 409 && refusal.code === "draft_changed") ended = "own";
           else if (EDIT_OWN_REFUSALS.has(`${put.status} ${refusal.code ?? ""}`)) ended = "own";
         } catch { /* see above — the row stands, and the send is what matters */ }
         return null;

@@ -526,3 +526,140 @@ describe("a save that waited offline, then the row was deleted on another device
     });
   }, 90_000);
 });
+
+describe("a draft changed on another device while it is open here", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  async function openVersioned(): Promise<void> {
+    shell = await mountShell("#/drafts", [], [letter()], { versions: true });
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
+    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+  }
+
+  it("typing over the other version keeps both texts: the row keeps theirs, what was typed here is a new draft, and it says so", async () => {
+    await openVersioned();
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await typeSubject("Plans for Friday, typed here");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 40).catch(() => undefined);
+    await sync();
+    expect({
+      creates: creates(), theirs: shell.store.get<EngineDraft>("draft", D)?.body,
+      says: text().includes(compose.changedElsewhere ?? "\u0000"),
+    }, "the other device's words were overwritten, or the typed words were lost in silence").toEqual({
+      creates: [{ row: null, subject: "Plans for Friday, typed here" }], theirs: "Written on the other device.", says: true,
+    });
+  }, 30_000);
+
+  it("Send over the other version sends nothing; Send as new sends what is on screen", async () => {
+    await openVersioned();
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await typeSubject("Plans for Friday, typed here");
+    await press(button("Send"), "Send");
+    await waitFor(() => text().includes(compose.changedElsewhere ?? "\u0000"), "the fork said", 40).catch(() => undefined);
+    await pause(200);
+    await press(button("Send"), "Send again");
+    await pause(200);
+    expect({ note: text().includes(compose.changedElsewhereSend ?? "\u0000"), took: sends().length },
+      "a press sent the other version, or nothing said why").toEqual({ note: true, took: 1 });
+    await press(button(compose.sendAsNew!), "Send as new");
+    await waitFor(() => sends().length === 2, "the words on screen sent");
+    const m = sends()[1] as { draftId?: string | null; subject?: string };
+    expect({ row: m.draftId === D ? "theirs" : "new", subject: m.subject }).toEqual({ row: "new", subject: "Plans for Friday, typed here" });
+  }, 30_000);
+
+  it("Send handed off over the other version: the words typed since the last save become a new draft and stay in the buffer", async () => {
+    shell = await mountShell("#/drafts", [], [letter()], { versions: true, handOff: true });
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
+    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await sync();
+    await typeSubject("Plans for Friday, typed here");
+    await press(button("Send"), "Send");
+    await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 120).catch(() => undefined);
+    expect({ took: sends().length, creates: creates(), buffer: readComposeDraft().subject, says: text().includes(compose.changedElsewhere!) },
+      "the line said the words were kept as a new draft, and none was made").toEqual({
+      took: 1, creates: [{ row: null, subject: "Plans for Friday, typed here" }], buffer: "Plans for Friday, typed here", says: true,
+    });
+  }, 30_000);
+
+  it("autosaved, then the other device's write, then Send: what is on screen becomes a new draft, and the buffer keeps it", async () => {
+    await openVersioned();
+    await typeSubject("Plans for Friday, typed here");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length >= 1, "the autosave", 40);
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await sync();
+    await press(button("Send"), "Send");
+    await waitFor(() => creates().length > 0, "the words on screen saved as a new draft", 120).catch(() => undefined);
+    expect({ creates: creates(), buffer: readComposeDraft().subject, says: text().includes(compose.changedElsewhere!) })
+      .toEqual({ creates: [{ row: null, subject: "Plans for Friday, typed here" }], buffer: "Plans for Friday, typed here", says: true });
+  }, 30_000);
+
+  it("until the new draft is saved, nothing says it is kept", async () => {
+    await openVersioned();
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await sync();
+    await typeSubject("Plans for Friday, typed here");
+    let open: () => void = () => {};
+    shell.saveGate.wait = new Promise<void>((r) => { open = r; });
+    await press(button("Send"), "Send");
+    await waitFor(() => creates().length > 0, "the new draft on the wire", 120).catch(() => undefined);
+    const waiting = { kept: text().includes(compose.changedElsewhere!), unsaved: text().includes(compose.changedElsewhereUnsaved ?? "\u0000") };
+    shell.saveGate.wait = null;
+    open();
+    await waitFor(() => text().includes(compose.changedElsewhere!), "the new draft said kept", 120).catch(() => undefined);
+    expect({ waiting, saved: text().includes(compose.changedElsewhere!) }, "it said kept before anything was saved")
+      .toEqual({ waiting: { kept: false, unsaved: true }, saved: true });
+  }, 30_000);
+
+  it("a save queued offline and refused at reconnect, the composer closed: its words become a new draft, said once", async () => {
+    await openVersioned();
+    shell.offline.on = true;
+    await typeSubject("Plans for Friday, typed offline");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await pause(300);
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    shell.offline.on = false;
+    await act(async () => { await shell.engine.flushPending().catch(() => undefined); });
+    await sync();
+    await pause(300);
+    expect({
+      creates: creates(), theirs: shell.store.get<EngineDraft>("draft", D)?.body,
+      said: text().split(compose.keptAsNewElsewhere ?? "\u0000").length - 1,
+    }, "the words typed offline were dropped in silence").toEqual({
+      creates: [{ row: null, subject: "Plans for Friday, typed offline" }], theirs: "Written on the other device.", said: 1,
+    });
+  }, 30_000);
+
+  it("a save queued offline and refused at reconnect, the composer open: it takes the new draft, and later words save to it", async () => {
+    await openVersioned();
+    shell.offline.on = true;
+    await typeSubject("Plans for Friday, typed offline");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    shell.offline.on = false;
+    await act(async () => { await shell.engine.flushPending().catch(() => undefined); });
+    await sync();
+    await typeSubject("Plans for Friday, typed offline, and after");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    const after = rows(saves()).filter((m) => m.subject === "Plans for Friday, typed offline, and after");
+    expect({
+      creates: creates(), after: after.map((m) => (m.row === null ? "create" : m.row === D ? "theirs" : "the new draft")),
+      says: text().includes(compose.changedElsewhere!),
+    }).toEqual({ creates: [{ row: null, subject: "Plans for Friday, typed offline" }], after: ["the new draft"], says: true });
+  }, 30_000);
+
+  it("this tab's own saves, one after another, never fork", async () => {
+    await openVersioned();
+    await typeSubject("Plans for Friday, once");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await typeSubject("Plans for Friday, twice");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length >= 2, "both saves", 40).catch(() => undefined);
+    expect({ rows: rows(saves()), says: text().includes(compose.changedElsewhere ?? "\u0000") })
+      .toEqual({ rows: [{ row: D, subject: "Plans for Friday, once" }, { row: D, subject: "Plans for Friday, twice" }], says: false });
+  }, 30_000);
+});

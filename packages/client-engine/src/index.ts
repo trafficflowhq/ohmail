@@ -789,6 +789,7 @@ export {
   INLINE_IMAGE_MAX_BYTES,
   INLINE_IMAGE_MAX_PARTS,
   INLINE_IMAGE_MAX_TOTAL_BYTES,
+  type KeptAsNewDraft,
 } from "./engine.js";
 
 /* THE MIRROR'S BOUNDS TABLE — total over every entity type, so a type added without an answer

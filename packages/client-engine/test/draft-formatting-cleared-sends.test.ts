@@ -73,7 +73,19 @@ async function world() {
     kind: "mail_send" as const, inReplyTo: null, draftId, mailboxId, threadId: null,
     subject: "Hi", body, ...(html !== undefined ? { html } : {}), to: TO, cc: [], bcc: [],
   });
-  return { engine, mailboxId, delivered, fetchImpl, row, base, wire, boldDraft, send, net };
+  /** A second device on the same account: its own engine and mirror over the same API. */
+  const another = async (): Promise<OhmailEngine> => {
+    const other = new MemoryMirrorStore();
+    await other.load();
+    const e = new OhmailEngine({
+      adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }), store: other, now: () => FIXED_NOW,
+    });
+    await e.start();
+    return e;
+  };
+  /** Every draft row of the account. */
+  const all = async () => db.select().from(drafts).where(eq(drafts.accountId, s.accountId));
+  return { engine, mailboxId, delivered, fetchImpl, row, all, base, wire, boldDraft, send, net, another };
 }
 
 describe("a draft whose formatting was removed", () => {
@@ -191,5 +203,99 @@ describe("a draft whose formatting was removed", () => {
     const r = await w.engine.mutate(withSignature(w.send(id, "from the phone", undefined), "Anna"));
     expect(r.status, r.error?.message).toBe("confirmed");
     expect(w.delivered.map((m) => [m.text, m.html ?? null])).toEqual([["from the phone\n\nAnna", null]]);
+  });
+});
+
+describe("one draft on two devices: a save on an outdated version is refused, never written over", () => {
+  it("the stale save is refused draft_changed and the row keeps the other device's words", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    const seen = c.revision!;
+    const b = await w.another();
+    await b.syncOnce();
+    const theirs = await b.mutate({
+      kind: "draft_save", draftId: id, ...w.base, body: "from the other device",
+      ifContentRevision: b.read().get<EngineDraft>("draft", id)!.contentRevision,
+    });
+    expect(theirs.status, theirs.error?.message).toBe("confirmed");
+    const mine = await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "typed here", ifContentRevision: seen });
+    expect([mine.status, mine.error?.code]).toEqual(["rolled_back", "draft_changed"]);
+    expect((await w.row(id)).body).toBe("from the other device");
+  });
+
+  it("saves queued offline on one version, then reconnect: none is refused, the row holds the last", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.offline = true;
+    for (const body of ["one", "two"]) {
+      expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body, ifContentRevision: c.revision! })).status).toBe("queued");
+    }
+    w.net.offline = false;
+    const flushed = await w.engine.flushPending();
+    expect(flushed.map((r) => r.error?.code ?? null)).not.toContain("draft_changed");
+    expect((await w.row(id)).body).toBe("two");
+  });
+
+  it("a save whose answer was lost is replayed without a refusal", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.loseAnswer = true;
+    expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "one", ifContentRevision: c.revision! })).status).toBe("queued");
+    const flushed = await w.engine.flushPending();
+    expect(flushed.map((r) => [r.status, r.error?.code ?? null])).toEqual([["confirmed", null]]);
+    expect((await w.row(id)).body).toBe("one");
+  });
+
+  it("words that return to an earlier version: this client's next save and its send are taken", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "Hello" });
+    const id = c.entityId!;
+    let base = c.revision!;
+    const codes: Array<string | null> = [];
+    for (const body of ["Hello wo", "Hello world", "Hello", "Hello there"]) {
+      const r = await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body, ifContentRevision: base });
+      codes.push(r.error?.code ?? null);
+      if (r.revision) base = r.revision;
+    }
+    const sent = await w.engine.mutate({ ...w.send(id, "Hello there", undefined), ifContentRevision: base });
+    expect({ codes, sent: [sent.status, sent.error?.code ?? null], delivered: w.delivered.map((m) => m.text) })
+      .toEqual({ codes: [null, null, null, null], sent: ["confirmed", null], delivered: ["Hello there"] });
+  });
+
+  it("a save queued offline, refused at reconnect because another device changed the row: its words become a new draft", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.offline = true;
+    const queued = await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "typed offline", ifContentRevision: c.revision! });
+    expect(queued.status).toBe("queued");
+    w.net.offline = false;
+    const b = await w.another();
+    await b.syncOnce();
+    expect((await b.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "from the other device" })).status).toBe("confirmed");
+    await w.engine.flushPending();
+    const bodies = (await w.all()).map((r) => (r.id === id ? `theirs: ${r.body}` : `new: ${r.body}`)).sort();
+    const kept = w.engine.keptAsNewDrafts();
+    expect({ bodies, kept: kept.map((k) => [k.from, k.key, k.row !== null && k.row !== id]) }).toEqual({
+      bodies: ["new: typed offline", "theirs: from the other device"], kept: [[id, queued.key, true]],
+    });
+  });
+
+  it("a kept edit that left the sender to its row keeps the row's sender", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.offline = true;
+    await w.engine.mutate({ kind: "draft_save", draftId: id, subject: "Hi", to: TO, cc: [], bcc: [], body: "typed offline", ifContentRevision: c.revision! });
+    w.net.offline = false;
+    const b = await w.another();
+    await b.syncOnce();
+    await b.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "from the other device" });
+    await w.engine.flushPending();
+    expect((await w.all()).filter((r) => r.id !== id).map((r) => [r.body, r.mailboxId === w.mailboxId]))
+      .toEqual([["typed offline", true]]);
   });
 });

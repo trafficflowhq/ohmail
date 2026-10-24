@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
-import type { EmailAddress, EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { EmailAddress, EngineDraft, KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields, ComposeRowHolds } from "./compose";
 import { COMPOSE_SEND_KEY, sendLockOwed, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow, sendRecordNames, type Hold } from "./send-lock";
@@ -159,6 +159,9 @@ export function ownDraftDiscard(draftId: string, asked: boolean): void {
   else ownDiscards.delete(draftId);
 }
 
+/** The engine's kept-as-new-draft entries already said, by the edit's key: each is said once. */
+const keptSaid = new Set<string>();
+
 /** The mirror put this row down on a delta — the authoritative delete. Absence alone is never one. */
 function tombstoned(engine: OhmailEngine, draftId: string): boolean {
   try {
@@ -187,7 +190,8 @@ export function discardKeepsRow(hold: Hold, row: string | null): "held" | "unkno
   return hold.kind === "parked" ? "held" : "unknown";
 }
 
-export interface ComposeElsewhere { why: "sent" | "deleted"; typedSince: boolean; earlier: boolean }
+/** `kept`: for `changed`, the words on screen reached a new draft (its create confirmed or queued). */
+export interface ComposeElsewhere { why: "sent" | "deleted" | "changed"; typedSince: boolean; earlier: boolean; kept: boolean }
 
 export type ComposeFate =
   /**
@@ -213,7 +217,13 @@ export type ComposeFate =
    * for a press that carried none. Nothing was delivered, so the row is an ordinary draft again and
    * this composer takes it, rather than its next pause writing a second row for the same message.
    */
-  | { kind: "refusedWithRow"; rowId: string; aboutThisCompose: boolean };
+  | { kind: "refusedWithRow"; rowId: string; aboutThisCompose: boolean }
+  /**
+   * A send's save was refused because the row moved off the version these words were written on
+   * (another window or device saved since). The row is the other version's: let go, never
+   * overwritten, and what is on screen becomes a new draft.
+   */
+  | { kind: "changedElsewhere"; rowId: string; aboutThisCompose: boolean };
 
 /**
  * WHAT A FLUSH DID — {@link ComposeAutosave.flush}'s answer. `nothing` covers empty, unchanged,
@@ -225,6 +235,8 @@ export type ComposeFate =
 export type ComposeFlush =
   | { kind: "nothing" }
   | { kind: "saved" }
+  /** The row had moved elsewhere: what is on screen was saved as a new draft beside it. */
+  | { kind: "forked" }
   | { kind: "tooLong" }
   | { kind: "failed"; reason: string | null };
 
@@ -244,7 +256,7 @@ export interface ComposeAutosave {
    * resurrected by a PUT), and safe only because the one caller is the
    * Drafts list, built from that same mirror. Deliberately no other caller.
    */
-  adopt: (draftId: string, fields: ComposeFields) => void;
+  adopt: (draftId: string, fields: ComposeFields, revision?: string | null) => void;
   /**
    * Forget the row without deleting it — after a send, when the row has become a sent message.
    * The next compose starts a new one.
@@ -313,6 +325,13 @@ export interface ComposeAutosave {
    * composer holds another message now, and nothing about it is the settlement's to clear.
    */
   epochNow: () => number;
+  /** The row version the text on screen is based on, for the send's save; `null` = not known. */
+  baseNow: () => string | null;
+  /**
+   * The engine's kept-as-new-draft list ({@link OhmailEngine.keptAsNewDrafts}), handed in by the surface
+   * on each change: this composer takes its own, and each is said once.
+   */
+  keptAsNew: (entries: readonly KeptAsNewDraft[]) => void;
 }
 
 /**
@@ -352,6 +371,10 @@ export function useComposeAutosave(opts: {
   onCleared?: (toList: "ohbox" | "drafts") => void;
   /** The surface empties its form: a restored letter whose row was deleted holds nothing new. */
   onEmptied?: () => void;
+  /** A fork was tried: the row had moved elsewhere; `kept` = the words reached a new draft. */
+  onForked?: (kept: boolean) => void;
+  /** An edit that waited on the outbox was kept as a new draft, and no composer on screen says so. */
+  onKeptAsNew?: () => void;
 }): ComposeAutosave {
   const { engine, fields, mailboxId, active } = opts;
   const sendInFlight = opts.sendInFlight ?? false;
@@ -361,6 +384,14 @@ export function useComposeAutosave(opts: {
   onClearedRef.current = opts.onCleared;
   const onEmptiedRef = useRef(opts.onEmptied);
   onEmptiedRef.current = opts.onEmptied;
+  const onForkedRef = useRef(opts.onForked);
+  onForkedRef.current = opts.onForked;
+  const onKeptAsNewRef = useRef(opts.onKeptAsNew);
+  onKeptAsNewRef.current = opts.onKeptAsNew;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  /** The row version the form's words are based on — updates state it, so a moved row refuses them. */
+  const base = useRef<string | null>(null);
   const fieldsRef = useRef(fields);
   fieldsRef.current = fields;
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -408,7 +439,7 @@ export function useComposeAutosave(opts: {
    * arrived; `null` = nothing on screen is the row's (words typed before this page learned of it).
    */
   const [elsewhereAt, setElsewhereAt] = useState<
-    { why: "sent" | "deleted"; rowId: string; at: string | null; earlier: boolean } | null
+    { why: "sent" | "deleted" | "changed"; rowId: string; at: string | null; earlier: boolean; kept?: boolean } | null
   >(null);
   /** A restored form the account may not hold yet — see {@link ComposeAutosave.restored}. */
   const openWrite = useRef(false);
@@ -433,6 +464,8 @@ export function useComposeAutosave(opts: {
       keepUnsure(holds.row, buffer, holds);
       return;
     }
+    // What the row held at this browser's last write is not written back over a newer version.
+    if (holds !== null && holds.row === readComposeRow() && holds.sig === holdsSig(buffer)) return;
     openWrite.current = true;
   }, [keepUnsure]);
   const [saveRefused, setSaveRefused] = useState(false);
@@ -442,6 +475,10 @@ export function useComposeAutosave(opts: {
    * a send went is taken back at once. A door that lets the message go forgets them.
    */
   const waitingCreates = useRef(new Set<string>());
+  /** This composer's saves of its row the outbox holds (answered `queued`), by key: what each carried. */
+  const waitingUpdates = useRef(new Map<string, { sig: string; hash: string; mailbox: string | null }>());
+  /** One of them the engine kept as a new draft the server has not made yet: taken when it does. */
+  const keptPending = useRef<{ key: string; sig: string; hash: string; mailbox: string | null } | null>(null);
   const sendsPressed = useRef(0);
   const takeBack = useCallback((key: string) => {
     if (typeof engine.withdrawQueued === "function") void engine.withdrawQueued(key).catch(() => undefined);
@@ -453,10 +490,13 @@ export function useComposeAutosave(opts: {
     for (const key of keys) takeBack(key);
   }, [takeBack]);
 
-  const adopt = useCallback((id: string, f: ComposeFields) => {
+  const adopt = useCallback((id: string, f: ComposeFields, revision?: string | null) => {
     epoch.current += 1;
+    base.current = revision ?? null;
     waitingCreates.current.clear();
     pendingLand.current = null;
+    waitingUpdates.current.clear();
+    keptPending.current = null;
     openWrite.current = false;
     setDraftId(id);
     // DURABLY, because this hook's state does not survive a reload and the scratch buffer holding
@@ -464,7 +504,7 @@ export function useComposeAutosave(opts: {
     writeComposeRow(id);
     saved.current = signatureOf(f);
     savedHash.current = holdsSig(f);
-    markComposeRowHolds({ row: id, sig: savedHash.current });
+    markComposeRowHolds({ row: id, sig: savedHash.current, ...(revision ? { rev: revision } : {}) });
     savedMailbox.current = f.fromMailboxId;
     // A row taken over is a message this surface holds again — see `abandonedAt`.
     abandonedAt.current = null;
@@ -485,6 +525,8 @@ export function useComposeAutosave(opts: {
     epoch.current += 1;
     waitingCreates.current.clear();
     pendingLand.current = null;
+    waitingUpdates.current.clear();
+    keptPending.current = null;
     openWrite.current = false;
     /* THE CLOSE'S FLUSH MAY NOT RESURRECT THIS — see `abandonedAt`. Recorded here rather than at
        the doors: `discard` releases before it deletes, and every door that lets a message go
@@ -503,6 +545,7 @@ export function useComposeAutosave(opts: {
     saved.current = null;
     savedHash.current = null;
     savedMailbox.current = null;
+    base.current = null;
     setElsewhereAt(null);
     setSaveRefused(false);
   }, []);
@@ -511,7 +554,7 @@ export function useComposeAutosave(opts: {
    * LET GO OF A ROW ANOTHER DEVICE ENDED — sent or deleted. No delete, the form stays, the text the
    * row held is not written again, and anything typed after is the next pause's new row.
    */
-  const letGo = useCallback((why: "sent" | "deleted", rowId: string) => {
+  const letGo = useCallback((why: "sent" | "deleted" | "changed", rowId: string, kept?: { at: string }) => {
     /* WHAT THE ROW HELD AS FAR AS THIS TAB KNOWS, never the form: words typed here that never
        reached the row (a pause not yet run, a save refused offline) are text after it ended, and
        they are kept as the new draft by the next pause rather than counted as the row's. After a
@@ -519,7 +562,10 @@ export function useComposeAutosave(opts: {
        unless a record of this browser's names the message: then the send was its own. */
     const form = signatureOf(fieldsRef.current);
     const own = why === "sent" && sendRecordNames(COMPOSE_SEND_KEY, rowId, composeSessionId());
-    const at = saved.current ?? (own || savedHash.current === holdsSig(fieldsRef.current) ? form : null);
+    /* CHANGED: the row holds the other version now, never this tab's words, so nothing on screen is
+       the row's and the buffer stays — unless those words were already kept as a new draft. */
+    const at = why === "changed" ? kept?.at ?? null
+      : saved.current ?? (own || savedHash.current === holdsSig(fieldsRef.current) ? form : null);
     const holds = readComposeRowHolds();
     const unsure = why === "deleted" && form !== at && holds !== null && holds.row === rowId
       && holds.pending === holdsSig(fieldsRef.current);
@@ -530,8 +576,8 @@ export function useComposeAutosave(opts: {
     }
     abandonedAt.current = at;
     // Nothing new on screen: the buffer is the row's letter, and a reload must not make it a draft.
-    if (form === at) clearComposeDraft();
-    setElsewhereAt({ why, rowId, at, earlier: at === null });
+    if (form === at && why !== "changed") clearComposeDraft();
+    setElsewhereAt({ why, rowId, at, earlier: at === null, ...(why === "changed" ? { kept: kept !== undefined } : {}) });
   }, [release, keepUnsure]);
 
   /**
@@ -638,6 +684,10 @@ export function useComposeAutosave(opts: {
       // What the row holds is known here only as the marker's hash, and only for this row.
       const marked = readComposeRowHolds();
       savedHash.current = marked !== null && marked.row === held ? marked.sig : null;
+      base.current = marked !== null && marked.row === held ? marked.rev ?? null : null;
+      // The stored copy is what the row held at this browser's last write: nothing to write back.
+      const buffer = readComposeDraft();
+      if (savedHash.current !== null && savedHash.current === holdsSig(buffer)) saved.current = signatureOf(buffer);
       setDraftId(held);
       // `saved` stays `null` on purpose: what the account holds for this row is not known to this
       // mount, so the first change writes an UPDATE to it rather than being deduped away.
@@ -747,7 +797,14 @@ export function useComposeAutosave(opts: {
       adoptOff.current?.();
       adoptOff.current = null;
       adopted.current = true;
-      adopt(fate.rowId, fieldsRef.current);
+      adopt(fate.rowId, fieldsRef.current, engine.read().get<EngineDraft>("draft", fate.rowId)?.contentRevision ?? null);
+      return;
+    }
+    if (fate.kind === "changedElsewhere") {
+      if (!fate.aboutThisCompose || (draftId ?? readComposeRow()) !== fate.rowId) return;
+      letGo("changed", fate.rowId);
+      // The send ended refused, so its in-flight state is no reason to hold the words back.
+      void forkNowRef.current().then((next) => { onForkedRef.current?.(next.kind === "saved"); });
       return;
     }
     /**
@@ -780,7 +837,7 @@ export function useComposeAutosave(opts: {
     writeComposeRow(null);
     clearComposeDraft();
     onClearedRef.current?.(fate.toList ?? "ohbox");
-  }, [draftId, adopt]);
+  }, [draftId, adopt, engine, letGo]);
 
   const settled = useCallback(
     (sentDraftId: string | null) => {
@@ -814,7 +871,7 @@ export function useComposeAutosave(opts: {
    * stated on screen for as long as they stand, so a close over one of them loses nothing
    * silently.
    */
-  const writeNow = useCallback(async (asNew = false): Promise<ComposeFlush> => {
+  const writeNow = useCallback(async (asNew = false, fork = false): Promise<ComposeFlush> => {
     const f = fieldsRef.current;
     const row = asNew ? null : draftIdRef.current;
     // A substitute sender is written on a create only — see `keepRowMailbox`.
@@ -872,7 +929,7 @@ export function useComposeAutosave(opts: {
        message, which lands in Drafts looking like an ordinary draft: measured on the release
        candidate as one message leaving two rows behind. The send's own row reaches this hook
        through the settled mutation's `entityId`; nothing needs to be created for it here. */
-    if (row === null && sendInFlightRef.current) return { kind: "nothing" };
+    if (row === null && sendInFlightRef.current && !fork) return { kind: "nothing" };
     inFlight.current = true;
     const era = epoch.current;
     const sendsAt = sendsPressed.current;
@@ -880,6 +937,7 @@ export function useComposeAutosave(opts: {
        refused locally with the same 404 (a resync between pages), and absence is not a delete. */
     const mirrored = row !== null && engine.read().get("draft", row) != null;
     let gone = false;
+    let changed = false;
     let outcome: ComposeFlush = { kind: "failed", reason: null };
     const run = (async () => {
       try {
@@ -891,9 +949,12 @@ export function useComposeAutosave(opts: {
         const to = parseRecipients(f.to).addresses;
         const cc = parseRecipients(f.cc ?? "").addresses;
         const bcc = parseRecipients(f.bcc ?? "").addresses;
+        const stated = row !== null ? base.current : null;
         const result = await engine.mutate({
           kind: "draft_save",
           draftId: row,
+          // The version these words were written on: a row moved off it refuses them.
+          ...(stated ? { ifContentRevision: stated } : {}),
           // The mailbox rides CREATE and UPDATE alike: on an update it re-homes the row to
           // the current From resolution, which is what makes a pick taken after the first
           // keystroke real on the account rather than cosmetic in this tab.
@@ -912,11 +973,16 @@ export function useComposeAutosave(opts: {
         if (result.status === "rolled_back") {
           gone = mirrored && era === epoch.current
             && (result.error?.status === 404 || result.error?.code === "not_found");
+          changed = row !== null && era === epoch.current && result.error?.code === "draft_changed";
           if (!gone && era === epoch.current) setSaveRefused(true);
           outcome = { kind: "failed", reason: result.error?.message ?? null };
           return;
         }
         if (era === epoch.current) setSaveRefused(false);
+        // A create after the row moved elsewhere: the words on screen are kept, and may be said so.
+        if (row === null && era === epoch.current) {
+          setElsewhereAt((e) => (e !== null && e.why === "changed" && e.kept !== true ? { ...e, kept: true } : e));
+        }
         if (result.status !== "confirmed") {
           /* A CREATE THE OUTBOX HOLDS (offline): no row until it lands, and this message's send
              takes it back (`sending`) — at once when the send went while this was answered. */
@@ -924,13 +990,18 @@ export function useComposeAutosave(opts: {
             if (sendsPressed.current !== sendsAt) takeBack(result.key);
             else waitingCreates.current.add(result.key);
           }
+          // An update the outbox holds: if the row moves meanwhile, the engine keeps it as a new draft.
           if (row !== null && result.status === "queued" && era === epoch.current) {
             const hash = holdsSig(f);
+            waitingUpdates.current.set(result.key, { sig: signature, hash, mailbox });
             pendingLand.current = {
               row, signature, hash, shape: rowShapeOf({ subject: f.subject, body: f.body, html: f.html, to, cc, bcc }),
             };
             const prev = readComposeRowHolds();
-            markComposeRowHolds({ row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), pending: hash });
+            markComposeRowHolds({
+              row, sig: savedHash.current ?? (prev?.row === row ? prev.sig : ""), pending: hash,
+              ...(base.current ? { rev: base.current } : {}),
+            });
           }
           openWrite.current = false;
           outcome = { kind: "saved" };
@@ -965,8 +1036,11 @@ export function useComposeAutosave(opts: {
         saved.current = signature;
         savedHash.current = holdsSig(f);
         pendingLand.current = null;
+        if (result.revision) base.current = result.revision;
         const savedRow = row ?? result.entityId;
-        if (savedRow) markComposeRowHolds({ row: savedRow, sig: savedHash.current });
+        if (savedRow) {
+          markComposeRowHolds({ row: savedRow, sig: savedHash.current, ...(base.current ? { rev: base.current } : {}) });
+        }
         if (mailbox) savedMailbox.current = mailbox;
         openWrite.current = false;
         outcome = { kind: "saved" };
@@ -988,8 +1062,24 @@ export function useComposeAutosave(opts: {
       letGo("deleted", row);
       return writeNow(true);
     }
+    /* THE ROW MOVED ELSEWHERE SINCE THESE WORDS' VERSION: never overwritten, never merged. The
+       other version stays the row's; what was typed here becomes a new draft. */
+    if (changed && row !== null && draftIdRef.current === row) {
+      letGo("changed", row);
+      const next = await writeNow(true, true);
+      onForkedRef.current?.(next.kind === "saved");
+      return next.kind === "saved" ? { kind: "forked" } : next;
+    }
     return outcome;
   }, [engine, letGo]);
+  /** The new draft of a fork: after any save on the wire, past the send-in-flight guard. */
+  const forkNow = useCallback(async (): Promise<ComposeFlush> => {
+    const pending = inFlightP.current;
+    if (pending) await pending;
+    return writeNow(true, true);
+  }, [writeNow]);
+  const forkNowRef = useRef(forkNow);
+  forkNowRef.current = forkNow;
 
   useEffect(() => {
     if (!active && !openWrite.current) return;
@@ -1049,7 +1139,7 @@ export function useComposeAutosave(opts: {
           pendingLand.current = null;
           saved.current = land.signature;
           savedHash.current = land.hash;
-          markComposeRowHolds({ row: draftId, sig: land.hash });
+          markComposeRowHolds({ row: draftId, sig: land.hash, ...(base.current ? { rev: base.current } : {}) });
         }
       }
       if (draftIdRef.current !== draftId || sendInFlightRef.current) return;
@@ -1081,10 +1171,57 @@ export function useComposeAutosave(opts: {
     return engine.subscribe(check);
   }, [engine, draftId, letGo]);
 
+  /**
+   * AN EDIT THAT WAITED ON THE OUTBOX, KEPT AS A NEW DRAFT BY THE ENGINE because the row moved
+   * elsewhere meanwhile. This composer's own edit: it takes the new draft, so later words go there
+   * and not to a third. Each is said once — by the composer's alert on screen, otherwise a toast.
+   */
+  const keptAsNew = useCallback((entries: readonly KeptAsNewDraft[]): void => {
+    const say = (key: string, onScreen: boolean): void => {
+      if (keptSaid.has(key)) return;
+      keptSaid.add(key);
+      if (!onScreen) onKeptAsNewRef.current?.();
+    };
+    for (const k of entries) {
+      const waited = waitingUpdates.current.get(k.key);
+      const mine = waited !== undefined && draftIdRef.current === k.from;
+      const pending = keptPending.current?.key === k.key && draftIdRef.current === null ? keptPending.current : null;
+      if (!mine && pending === null) { say(k.key, false); continue; }
+      if (k.row === null) {
+        if (!mine) continue;
+        letGo("changed", k.from, { at: waited!.sig });
+        keptPending.current = { key: k.key, ...waited! };
+        say(k.key, activeRef.current);
+        continue;
+      }
+      const w = mine ? waited! : pending!;
+      adoptOff.current?.();
+      adoptOff.current = null;
+      adopted.current = true;
+      epoch.current += 1;
+      waitingCreates.current.clear();
+      waitingUpdates.current.clear();
+      keptPending.current = null;
+      openWrite.current = false;
+      draftIdRef.current = k.row;
+      setDraftId(k.row);
+      writeComposeRow(k.row);
+      saved.current = w.sig;
+      savedHash.current = w.hash;
+      savedMailbox.current = w.mailbox;
+      base.current = k.revision ?? engine.read().get<EngineDraft>("draft", k.row)?.contentRevision ?? null;
+      markComposeRowHolds({ row: k.row, sig: w.hash, ...(base.current ? { rev: base.current } : {}) });
+      abandonedAt.current = null;
+      setElsewhereAt({ why: "changed", rowId: k.from, at: null, earlier: true, kept: true });
+      say(k.key, activeRef.current);
+    }
+  }, [engine, letGo]);
+
   const elsewhere = elsewhereAt === null ? null : {
     why: elsewhereAt.why,
     typedSince: elsewhereAt.at === null || signatureOf(fields) !== elsewhereAt.at,
     earlier: elsewhereAt.earlier,
+    kept: elsewhereAt.kept === true,
   };
 
   const flush = useCallback(async (): Promise<ComposeFlush> => {
@@ -1100,8 +1237,10 @@ export function useComposeAutosave(opts: {
   settledRef.current = settled;
   settleComposeRef.current = settleCompose;
   const epochNow = useCallback((): number => epoch.current, []);
+  const baseNow = useCallback((): string | null => base.current, []);
 
   return {
     draftId, adopt, release, discard, flush, sending, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
+    baseNow, keptAsNew,
   };
 }

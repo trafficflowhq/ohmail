@@ -187,7 +187,7 @@ describe("the shell recovers into a fresh row, never the stranded one", () => {
       resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8",
     );
     expect(shell, "the reopen adopts a row without asking whether the message is held")
-      .toMatch(/\} else \{[\s\S]{0,900}autosave\.adopt\(d\.id, seeded\);/);
+      .toMatch(/\} else \{[\s\S]{0,900}autosave\.adopt\(d\.id, seeded(?:, d\.contentRevision \?\? null)?\);/);
     expect(shell, "the recovery seed came back — a row a send may still be delivering is armed "
       + "for deletion again")
       .not.toMatch(/recoverySeed\.current =/);

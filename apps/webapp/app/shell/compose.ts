@@ -507,6 +507,8 @@ export interface ComposeRowHolds {
   pending?: string;
   /** The row was deleted elsewhere while `pending` was unknown: those words are not saved again. */
   gone?: boolean;
+  /** The row's version at that write (`contentRevision`), when the server said. */
+  rev?: string;
 }
 /* Read once per key per page. A unit moves INTO a composer's keys only before its composer is ready
    (the handoff, a dead tab's recovery), and the marker is read after; a stale miss reads as unknown. */
@@ -524,6 +526,7 @@ function rowHoldsOf(key: string): ComposeRowHolds | null {
         row: h.row, sig: h.sig,
         ...(typeof h.pending === "string" ? { pending: h.pending } : {}),
         ...(h.gone === true ? { gone: true } : {}),
+        ...(typeof h.rev === "string" && h.rev !== "" ? { rev: h.rev } : {}),
       };
     }
   } catch { /* a refused jar or a foreign shape knows nothing */ }
