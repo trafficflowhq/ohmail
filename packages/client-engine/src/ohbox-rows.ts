@@ -11,6 +11,7 @@ import {
   resurfacedThreads,
   threadOf,
   winningStates,
+  type OhboxView,
   type ResurfacedThreadRow,
 } from "./selectors.js";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
@@ -275,4 +276,21 @@ export function ohboxRows(
   );
   rowsCache.set(reader, { v, openHeld, rows });
   return rows;
+}
+
+/**
+ * THE OHBOX'S UNREAD — the one set the rail, the list header, mark-all-read, the dock badge and the
+ * phone's tab all count: every member of every Resurfaced row, New and Earlier, once each, by the
+ * mailbox's own flag (`m.unread`, never `presentsUnread`). The rail used to count New alone, so a
+ * letter brought back by Resurface > Now stood in the header's number and not in the rail's.
+ */
+export function ohboxUnreadIds(
+  resurfacedRows: readonly { members: readonly EngineMessage[] }[],
+  view: Pick<OhboxView, "newForYou" | "previouslySeen">,
+): string[] {
+  const ids = new Set<string>();
+  for (const row of resurfacedRows) for (const m of row.members) if (m.unread) ids.add(m.id);
+  for (const m of view.newForYou) if (m.unread) ids.add(m.id);
+  for (const m of view.previouslySeen) if (m.unread) ids.add(m.id);
+  return [...ids];
 }

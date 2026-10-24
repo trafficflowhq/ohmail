@@ -483,6 +483,7 @@ export {
   foldOhboxRows,
   parkSubjectIds,
   ohboxRows,
+  ohboxUnreadIds,
   ownFaceOfRow,
   rowOpenTarget,
   triageSubjectIds,

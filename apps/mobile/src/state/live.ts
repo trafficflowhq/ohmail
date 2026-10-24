@@ -119,6 +119,7 @@ import {
   resurfacedThreads,
   ohboxRows,
   parkSubjectIds,
+  ohboxUnreadIds,
   rowOpenTarget,
   threadSubject,
   type OhboxRow,
@@ -1460,13 +1461,10 @@ export function liveOhbox(pres: EntityReader, v: WorldView, openHeld: string | n
      counting THEM would say "1 unread" over a message the mail server calls read. So the set
      is built from the engine's own facts: new-for-you rows plus every unread MEMBER of every
      pinned conversation (folding five unread replies into one row does not make them one
-     message). Mark-all-read flips exactly these ids, and `unread` is this list's length, so
-     the number a person presses on and the ids the press dispatches cannot disagree. */
-  const unreadIds = [
-    // The held open row stands in New and is read: the count follows the read, not the place.
-    ...box.newForYou.filter((m) => m.unread).map((m) => m.id),
-    ...rows.resurfaced.flatMap((r) => r.members.filter((m) => m.unread).map((m) => m.id)),
-  ];
+     message), and Earlier's. Mark-all-read flips exactly these ids, and `unread` is this list's
+     length, so the number a person presses on and the ids the press dispatches cannot disagree.
+     The web's rail and header count the same set (`ohboxUnreadIds`). */
+  const unreadIds = ohboxUnreadIds(rows.resurfaced, box);
   // MESSAGES, like the web's meta and the copy ("{n} messages"): a row can stand for several.
   const total = [...rows.resurfaced, ...rows.new, ...rows.earlier]
     .reduce((n, r) => n + r.members.length, 0);

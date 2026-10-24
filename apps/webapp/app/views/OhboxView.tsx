@@ -12,7 +12,7 @@ import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
 import {
-  arrivalMs, conversationKeyOf, countWhen, createThreadRead, foldOhboxRows, isOwnSent, isResurfaced, listSurface,
+  arrivalMs, conversationKeyOf, countWhen, createThreadRead, foldOhboxRows, isOwnSent, isResurfaced, listSurface, ohboxUnreadIds,
   presentsUnread, saysEmpty,
 } from "@ohmail/client-engine";
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
@@ -586,7 +586,8 @@ export function OhboxView({
 
   // Selection and read-state follow the MESSAGES on screen, top to bottom.
   const all = [...displayResurfaced, ...displayNew, ...displayPrev];
-  const unreadIds = all.filter((m) => m.unread).map((m) => m.id);
+  // The rail's own set (`ohboxUnreadIds`): the session placement moves rows, never membership.
+  const unreadIds = ohboxUnreadIds(resurfacedRows, { newForYou, previouslySeen });
   /**
    * WHAT THIS LIST IS SHOWING — the three groups and the server-paged Older tail, in render order.
    * The one list every VERB resolves against.

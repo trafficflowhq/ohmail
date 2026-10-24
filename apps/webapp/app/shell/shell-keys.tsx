@@ -16,6 +16,7 @@ import {
   countWhen,
   forwardOffered,
   screeningDegrade,
+  ohboxUnreadIds,
   sendAndDonePlanFor,
   type EngineMessage,
   type EntityReader,
@@ -172,6 +173,7 @@ export interface ShellKeysInput {
   folderUnread: ShellDerivations["folderUnread"];
   history: ShellDerivations["history"];
   ohbox: ShellDerivations["ohbox"];
+  resurfacedRows: ShellDerivations["resurfacedRows"];
   openFolder: ShellDerivations["openFolder"];
   ownAddresses: ShellDerivations["ownAddresses"];
   partition: { fresh: EngineMessage[]; seen: EngineMessage[] };
@@ -238,7 +240,7 @@ export function useShellKeys({
   aboutSection, helpOffered, desktopSection, devicesSection, onUnread, savedSettings,
   runArmedUndo,
   allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
-  ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
+  ohbox, resurfacedRows, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
   trashPage,
   barPanel, focused, fr, frValues, picker, railOpen, readerCrossed, readerFor, readerMessage, readerGone,
   selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
@@ -1025,10 +1027,9 @@ export function useShellKeys({
    * the consumer is outside React: it puts a badge on a window, and doing that while rendering is
    * a side effect in the middle of one.
    */
-  /* UNREAD, not the group's length: the row being read stands in New until it is left or answered
-     (`ohboxView`'s `openHeld`), and so does the read history of a waiting conversation — the count
-     follows the read, the place does not. */
-  const ohboxUnread = ohbox.newForYou.filter((m) => m.unread).length;
+  /* UNREAD, not a group's length: the count follows the read, not the place — and it is the list
+     header's own set (`ohboxUnreadIds`), resurfaced letters included. */
+  const ohboxUnread = useMemo(() => ohboxUnreadIds(resurfacedRows, ohbox).length, [resurfacedRows, ohbox]);
   useEffect(() => {
     onUnread?.(ohboxUnread);
   }, [onUnread, ohboxUnread]);

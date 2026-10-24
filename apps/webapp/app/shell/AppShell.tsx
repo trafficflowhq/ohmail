@@ -1985,7 +1985,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
     drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
-    ohbox, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
+    ohbox, resurfacedRows, openFolder, ownAddresses, partition, piles, receipts, scheduled, tagGroups, tags,
     trashPage,
     barPanel, focused, forwardTargetFor, fr, frValues, mirrorHolds, picker, railOpen, readerCrossed, readerFor, readerMessage, readerGone,
     selectedOhbox, senderAudit, senderMenu, senderMenuBack, setBarPanel, setFr, setFrPending, setPicker, setRailOpen,
