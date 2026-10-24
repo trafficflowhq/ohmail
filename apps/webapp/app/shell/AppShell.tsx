@@ -2611,6 +2611,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 threadMarksOf={threadMarksOf}
+                conversationOf={conversationOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}

@@ -6,6 +6,7 @@ import {
 } from "@ohmail/client-engine";
 import { SCROLL_KEYS, cssRect } from "@ohmail/ui";
 import { stampLive } from "./programmatic-scroll";
+import type { ThreadWalkChannel } from "./thread-walk-channel";
 
 /**
  * THE THREAD-READ RULE IN THE READER — the DOM adapter over the engine's `createThreadRead`. Each
@@ -373,6 +374,8 @@ export interface ThreadReadWiring {
   onEnter: () => void;
   /** A panel's ⋯ Mark unread, by that panel's id. */
   onMarkUnread: (id: string) => void;
+  /** The conversation's place, shared by the reader's squares and its list row's (`thread-walk-channel.ts`). */
+  walk?: ThreadWalkChannel;
 }
 
 /**
