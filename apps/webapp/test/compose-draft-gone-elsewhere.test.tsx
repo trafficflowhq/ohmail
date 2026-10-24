@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { composeSessionId, handOffComposer, readComposeDraft, resetComposerForTest } from "../app/shell/compose";
+import { composeSessionId, handOffComposer, readComposeDraft, readComposeRow, resetComposerForTest } from "../app/shell/compose";
 import { COMPOSE_SEND_KEY } from "../app/shell/mail-send";
 import { claimSendLock, SEND_LOCK_FORMAT, type SendLock } from "../app/shell/send-lock";
 import { act, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
@@ -161,6 +161,10 @@ describe("a draft deleted on another device while it is open here", () => {
     await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the refused delete");
     await pause(200);
     shell.refuseDiscard.on = false;
+    // The refused Discard emptied the editor; the letter is opened again from Drafts.
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter still in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter again");
+    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
     shell.remote.push(deletedElsewhere());
     await sync();
     await act(async () => { window.location.hash = "#/compose"; });
@@ -343,5 +347,90 @@ describe("CONTROLS — nothing here is called deleted elsewhere, and nothing sen
     await pause(AUTOSAVE_DELAY_MS + 400);
     expect({ buffer: readComposeDraft().subject, saves: saves().length, kept: text().includes(compose.sentElsewhereKept ?? "\u0000") },
       "a sent letter with nothing new was kept as a draft").toEqual({ buffer: "", saves: 0, kept: false });
+  }, 30_000);
+});
+
+describe("this tab's Discard in Drafts of the letter the editor holds", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  const reload = async (drafts: EngineDraft[] = []): Promise<void> => {
+    await unmountAll();
+    resetComposerForTest();
+    stubDom();
+    shell = await mountShell("#/drafts", [], drafts);
+  };
+
+  it("empties the editor: the next Compose is blank and nothing is written for the letter", async () => {
+    await openLetter();
+    await deleteFromDrafts();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete confirmed");
+    await act(async () => { window.location.hash = "#/compose"; });
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({
+      subject: q<HTMLInputElement>("#compose-subject")?.value ?? null,
+      resumed: text().includes(compose.resumedNote!),
+      buffer: readComposeDraft().subject, row: readComposeRow(), creates: creates(),
+    }, "the discarded letter came back in Compose").toEqual({ subject: "", resumed: false, buffer: "", row: null, creates: [] });
+  }, 30_000);
+
+  it("a reload after the Discard brings nothing back and creates nothing", async () => {
+    await openLetter();
+    await deleteFromDrafts();
+    await waitFor(() => shell.store.isTombstoned("draft", D), "the delete confirmed");
+    await reload();
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({ creates: creates(), buffer: readComposeDraft().subject }, "the reload re-saved the discarded letter")
+      .toEqual({ creates: [], buffer: "" });
+  }, 30_000);
+
+  it("a Discard the server refuses (a send running) leaves the editor empty, the row listed, nothing written", async () => {
+    await openLetter();
+    shell.refuseDiscard.on = true;
+    await deleteFromDrafts();
+    await waitFor(() => shell.sent.some((m) => m.kind === "draft_discard"), "the refused delete");
+    await pause(200);
+    const listed = q(`.draft-row[data-id="${D}"]`) !== null;
+    await act(async () => { window.location.hash = "#/compose"; });
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    expect({ listed, subject: q<HTMLInputElement>("#compose-subject")?.value ?? null, saves: saves().length, row: readComposeRow() },
+      "a refused Discard put the letter back in the editor, or wrote it").toEqual({ listed: true, subject: "", saves: 0, row: null });
+  }, 30_000);
+});
+
+describe("a reload whose stored letter names a row deleted while the tab was closed", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  async function reopenGone(): Promise<void> {
+    handOffComposer();
+    await unmountAll();
+    window.sessionStorage.clear();
+    resetComposerForTest();
+    stubDom();
+    shell = await mountShell("#/compose", [], [], { serverGone: [D] });
+    await sync();
+    await pause(AUTOSAVE_DELAY_MS + 400);
+  }
+
+  it("nothing typed since the last save: the stored copy is cleared and no draft is made", async () => {
+    await openLetter();
+    await typeSubject("Plans for Friday, saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length > 0, "the save");
+    await reopenGone();
+    expect({ form: q<HTMLInputElement>("#compose-subject")?.value ?? null, buffer: readComposeDraft().subject, row: readComposeRow(), creates: creates() },
+      "the reload re-saved a letter deleted on another device").toEqual({ form: "", buffer: "", row: null, creates: [] });
+  }, 30_000);
+
+  it("words typed after the last save are kept as a new draft, and the editor says why", async () => {
+    await openLetter();
+    await typeSubject("Plans for Friday, saved");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length > 0, "the save");
+    await typeSubject("Plans for Friday, typed before closing");
+    await reopenGone();
+    await waitFor(() => creates().length > 0, "the kept words saved", 40).catch(() => undefined);
+    expect({ creates: creates(), toGone: saves().filter((m) => m.draftId === D && m.subject?.includes("closing")).length },
+      "the words typed before closing were lost, or written to the deleted row")
+      .toEqual({ creates: [{ row: null, subject: "Plans for Friday, typed before closing" }], toGone: 0 });
+    expect(text().includes(compose.deletedElsewhereKept ?? "\u0000"), "the editor did not say why").toBe(true);
   }, 30_000);
 });

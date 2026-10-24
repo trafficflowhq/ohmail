@@ -316,6 +316,8 @@ export async function mountShell(
     draftReplyWire?: DraftReplyWire; signatures?: Record<string, string>; handOff?: boolean;
     /** A second sending address (`mb2`), so a reply dock offers a From pick. */
     secondMailbox?: boolean;
+    /** Rows already deleted on the server when the page opens. */
+    serverGone?: string[];
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -328,7 +330,7 @@ export async function mountShell(
   const remote: SyncChange[] = [];
   const offline: DraftShell["offline"] = { on: false };
   const sendGate: DraftShell["sendGate"] = { wait: null };
-  const serverGone = new Set<string>();
+  const serverGone = new Set<string>(options.serverGone ?? []);
   const resync: DraftShell["resync"] = { armed: false, gate: null, phase: 0 };
   const refuseDiscard: DraftShell["refuseDiscard"] = { on: false };
   const spendSentRow: DraftShell["spendSentRow"] = { on: false };
