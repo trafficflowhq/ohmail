@@ -267,6 +267,8 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     probeOperatorTrust: "NODE_EXTRA_CA_CERTS",
     // The adapter's own body cap expressed in raw attachment bytes — config.ts derives the pair.
     sendSurfaceMaxTotalBytes: SELF_HOST_SEND_MAX_TOTAL_BYTES,
+    // A long-lived process: a send's Sent copy is retried in memory after the answer.
+    sendCopyOutlivesAnswer: true,
     // UNMETERED STORAGE, on SELF_HOST_MAILBOX_ALLOWANCE's exact argument above: the operator
     // pays for their own disk, and a value somebody WROTE is the only admissible spelling of
     // that — a bag that declared nothing gets the send route's refusing resolver, never a

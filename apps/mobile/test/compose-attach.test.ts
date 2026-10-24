@@ -29,13 +29,15 @@
  *    live actions — the world facade contributes no code for these two verbs any more), never the
  *    live layer alone, which is the double that answered differently;
  *  · `attach.ts`: the empty-bytes belt dropped from `admitPicked` ⇒ the bytes-absent row RED.
+ *  · `attach.ts`: the `nameFromPick` arm dropped from the duplicate identity ⇒ the re-picked
+ *    photo row RED (each pick names the same picture anew, so it was listed twice).
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-/* @reads: apps/mobile/src/ui/MessageActions.tsx apps/mobile/src/state/world.tsx
+/* @reads: apps/mobile/src/ui/MessageActions.tsx apps/mobile/src/state/world.tsx apps/mobile/src/compose/attach-native.ts
    Read by a path built at runtime, so no landing pass selects this file when that source
    moves — the shape `reads-list.mjs` exists for. */
 
@@ -48,9 +50,12 @@ import {
   base64SizeBytes,
   phoneAttachCap,
   phoneSendNeedsContent,
+  photoName,
+  pickerGaveNoName,
   toComposeAttachments,
   type PhoneComposeAttachment,
 } from "../src/compose/attach";
+import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import type { PhoneMailbox } from "../src/net/mailboxes";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
@@ -151,6 +156,62 @@ describe("the admit pipeline — cap, then duplicate, in pick order", () => {
     for (const n of [0, 1, 2, 3, 4, 100]) {
       expect(base64SizeBytes(Buffer.alloc(n, 7).toString("base64")), String(n)).toBe(n);
     }
+  });
+});
+
+describe("a picked photo keeps a real name, never the picker's media number", () => {
+  const at = new Date("2026-10-23T21:44:05Z");
+  it("a bare number or a cache UUID becomes 'Photo <date>' in the reader's zone; a real name is kept", () => {
+    expect(photoName("19.jpg", "image/jpeg", at, "Europe/Zurich", new Set())).toBe("Photo 2026-10-23 23.44.05.jpg");
+    expect(photoName("1000000033", "image/png", at, "UTC", new Set())).toBe("Photo 2026-10-23 21.44.05.png");
+    expect(photoName("5C8E3F7A-12AB-4ABC-9DEF-0123456789AB.jpeg", "image/heic", at, "UTC", new Set()))
+      .toBe("Photo 2026-10-23 21.44.05.heic");
+    expect(photoName(null, "image/jpeg", at, "UTC", new Set())).toBe("Photo 2026-10-23 21.44.05.jpg");
+    expect(photoName("", null, at, "UTC", new Set())).toBe("Photo 2026-10-23 21.44.05.jpg");
+    expect(photoName("r9-photo.jpg", "image/jpeg", at, "UTC", new Set())).toBe("r9-photo.jpg");
+    expect(photoName("IMG_2041.HEIC", "image/heic", at, "UTC", new Set())).toBe("IMG_2041.HEIC");
+  });
+
+  it("a second photo of the same name in one pick gets ' (2)', and German says 'Foto'", () => {
+    const taken = new Set(["Photo 2026-10-23 21.44.05.jpg", "beach.jpg"]);
+    expect(photoName("20.jpg", "image/jpeg", at, "UTC", taken)).toBe("Photo 2026-10-23 21.44.05 (2).jpg");
+    expect(photoName("beach.jpg", "image/jpeg", at, "UTC", taken)).toBe("beach (2).jpg");
+    try {
+      setActiveLocale("de");
+      expect(photoName("19", "image/jpeg", at, "UTC", new Set())).toBe("Foto 2026-10-23 21.44.05.jpg");
+    } finally {
+      resetLocaleRegisterForTests();
+    }
+  });
+
+  it("the same photo picked again is 'Already attached', though the pick clock named it anew", () => {
+    // What Android's picker hands twice for one picture: the media number and the same bytes.
+    // The name is made at each pick, so it differs; the bytes are the identity then.
+    const bytes = Buffer.alloc(300, "p").toString("base64");
+    const row = (at: Date, taken: ReadonlySet<string> = new Set()): PhoneComposeAttachment => ({
+      filename: photoName("19.jpg", "image/jpeg", at, "UTC", taken),
+      contentType: "image/jpeg",
+      contentBase64: bytes,
+      sizeBytes: 300,
+      ...(pickerGaveNoName("19.jpg") ? { nameFromPick: true as const } : {}),
+    });
+    const first = row(new Date("2026-10-23T21:44:05Z"));
+    const again = row(new Date("2026-10-23T21:44:31Z"));
+    expect(again.filename, "the premise: the second pick is named anew").not.toBe(first.filename);
+    const out = admitPicked([first], [again], 10_000);
+    expect(out.next).toHaveLength(1);
+    expect(out.duplicates).toEqual(["Photo 2026-10-23 21.44.05.jpg"]);
+    // A different picture with a made-up name is a real second file, and a real name is a name.
+    const other = { ...again, contentBase64: Buffer.alloc(300, "q").toString("base64") };
+    expect(admitPicked([first], [other], 10_000).next).toHaveLength(2);
+    expect(pickerGaveNoName("IMG_2041.HEIC")).toBe(false);
+    expect(pickerGaveNoName("1000000033")).toBe(true);
+    expect(pickerGaveNoName(null)).toBe(true);
+  });
+
+  it("the native twin marks a photo it named, so the re-pick check can read it", () => {
+    const native = readFileSync(join(APP, "src/compose/attach-native.ts"), "utf8");
+    expect(native).toContain("pickerGaveNoName(asset.fileName) ? { ...row, nameFromPick: true } : row");
   });
 });
 

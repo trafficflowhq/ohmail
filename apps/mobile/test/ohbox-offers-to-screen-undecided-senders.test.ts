@@ -12,6 +12,13 @@ import {
   liveActions, liveOhbox, liveScreener, liveUnscreened, presentedOf, type WorldView,
 } from "../src/state/live";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
+import { readFoldersEnabled, readSeedReview } from "../src/net/consent";
+import {
+  advanceSeedOffer, bindSeedOfferKV, relaunchSeedOfferForTests, seedAnswered, seedLater, seedNotNowKey, seedOfferOf,
+  seedStage, unscreenedOffered, worldSeedOf, type SeedFacts, type SeedMailbox,
+} from "../src/state/seed-offer";
+import type { SecureKV } from "../src/state/servers";
+import { initialTicks, pressConfirm } from "../src/ui/seed-review";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -92,6 +99,141 @@ describe("the Ohbox offers to screen senders already in the Inbox", () => {
       expect(s.said).toEqual(["Screenen nicht möglich. Versuch es noch einmal."]);
       expect(liveUnscreened(s.engine.read())?.total).toBe(2);
       expect(s.ohboxIds()).toEqual(expect.arrayContaining(["first", "plain"]));
+    } finally { s.close(); }
+  });
+});
+
+/* ── THE SENT-MAIL SEED COMES FIRST ─────────────────────────────────────────────────────────────
+ * Mara is somebody the account wrote to: while the seed is owed, "Screen N" would hold her, so it
+ * waits; the offer names her, its confirm writes her rule and the Ohbox offer then names only the
+ * stranger. "Not now" is kept per account on this device; the cases with nothing to ask ask nothing. */
+const ORGANIZER_ROW = { status: "active", organizerRole: "organizer" as const, initialImportCompletedAt: "2026-08-19T06:00:00Z" };
+const REVIEW = {
+  candidates: [{ address: MARA.address, name: MARA.name, messages: 1, lastWrittenAt: "2026-08-19T07:00:00Z", alreadyDecided: false }],
+  excluded: [], scannedMessages: 1, truncated: false,
+};
+function memoryKV(): SecureKV & { map: Map<string, string> } {
+  const map = new Map<string, string>();
+  return { map, get: async (k) => map.get(k) ?? null, set: async (k, v) => void map.set(k, v), remove: async (k) => void map.delete(k) };
+}
+async function seedScene(o: { confirmedAt?: string | null | undefined; review?: unknown } = {}) {
+  const s = await scene();
+  s.fake.setSeedConfirmedAt("confirmedAt" in o ? o.confirmedAt : null);
+  s.fake.setSeedReview(o.review ?? REVIEW);
+  const origin = `http://127.0.0.1:${(s.fake.server.address() as { port: number }).port}`;
+  const session = { profile: { origin, apiBase: null }, fetch: (url: string, init?: unknown) => globalThis.fetch(url, init as RequestInit) };
+  const facts = async (rows: SeedMailbox[] = [ORGANIZER_ROW], profileQuestionOpen = false): Promise<SeedFacts> => ({
+    seed: worldSeedOf((await readFoldersEnabled(session as never))!.seed), mailboxes: { known: true, rows }, profileQuestionOpen,
+  });
+  const reviewReads = () => s.fake.seen.filter((r) => r.method === "GET" && r.url === "/consent/seed").length;
+  const posts = () => s.fake.seen.filter((r) => r.method === "POST" && r.url === "/consent/seed");
+  return { ...s, session, facts, reviewReads, posts, read: () => readSeedReview(session) };
+}
+
+describe("the sent-mail seed on the phone", () => {
+  afterEach(() => { relaunchSeedOfferForTests(); });
+
+  it("is asked before 'Screen N', and its confirm lets the person written to through", async () => {
+    const s = await seedScene();
+    const kv = memoryKV();
+    bindSeedOfferKV(kv);
+    try {
+      await s.cadence();
+      const facts = await s.facts();
+      expect(seedStage(facts)).toBe("owed");
+      await advanceSeedOffer("owner-a", facts, s.read);
+      const offer = seedOfferOf("owner-a", facts);
+      expect(offer.kind === "offer" && offer.undecided, "the phone never asked the seed").toBe(1);
+      expect(unscreenedOffered(offer, liveUnscreened(s.engine.read())), "'Screen N' would hold Mara first").toBeNull();
+      if (offer.kind !== "offer") return;
+
+      expect(await pressConfirm(s.session, offer.review, initialTicks(offer.review), "press-1")).toBeNull();
+      seedAnswered("owner-a");
+      expect(s.posts().map((p) => [p.body, p.key])).toEqual([[JSON.stringify({ addresses: [MARA.address] }), "press-1"]]);
+      await s.cadence();
+      /* A stale read still saying "never confirmed" does not bring the offer back, and "Screen N" returns. */
+      const stale = { ...facts, seed: { known: true as const, carried: true as const, confirmedAt: null } };
+      const after = seedOfferOf("owner-a", stale);
+      expect(after.kind).toBe("settled");
+      expect(unscreenedOffered(after, liveUnscreened(s.engine.read()))).toEqual({ total: 1, senders: [STRANGER.address] });
+      expect(s.ohboxIds()).toEqual(expect.arrayContaining(["first", "plain"]));
+      expect(s.reviewReads(), "the review was read more than once").toBe(1);
+    } finally { s.close(); }
+  });
+
+  it("'Not now' posts nothing and is kept for this account: a new launch does not ask, another account does", async () => {
+    const s = await seedScene();
+    const kv = memoryKV();
+    bindSeedOfferKV(kv);
+    try {
+      const facts = await s.facts();
+      await advanceSeedOffer("owner-a", facts, s.read);
+      expect(seedOfferOf("owner-a", facts).kind).toBe("offer");
+      await seedLater("owner-a");
+      expect(seedOfferOf("owner-a", facts).kind).toBe("settled");
+      expect(s.posts()).toEqual([]);
+
+      relaunchSeedOfferForTests();
+      bindSeedOfferKV(kv);
+      await advanceSeedOffer("owner-a", facts, s.read);
+      expect(seedOfferOf("owner-a", facts).kind).toBe("settled");
+      expect(s.reviewReads(), "a kept 'Not now' still read the review").toBe(1);
+      await advanceSeedOffer("http://other::acct-2", facts, s.read);
+      expect(seedOfferOf("http://other::acct-2", facts).kind, "account A's answer applied to account B").toBe("offer");
+      expect(kv.map.has(seedNotNowKey("http://other::acct-2"))).toBe(false);
+    } finally { s.close(); }
+  });
+
+  it("asks nothing where nothing is owed or the facts are not in", async () => {
+    const s = await seedScene();
+    try {
+      const reader = { ...ORGANIZER_ROW, organizerRole: "reader" as const };
+      const importing = { ...ORGANIZER_ROW, initialImportCompletedAt: null };
+      for (const [facts, offer] of [
+        [await s.facts([reader]), "settled"],
+        [await s.facts([importing]), "waiting"],
+        [await s.facts([ORGANIZER_ROW], true), "waiting"],
+      ] as const) {
+        await advanceSeedOffer("owner-a", facts, s.read);
+        expect(seedOfferOf("owner-a", facts).kind).toBe(offer);
+      }
+      expect(s.reviewReads()).toBe(0);
+      s.fake.setSeedConfirmedAt(undefined);
+      const older = await s.facts();
+      await advanceSeedOffer("owner-a", older, s.read);
+      expect(seedOfferOf("owner-a", older).kind, "a door with no seed was asked").toBe("settled");
+      expect(s.reviewReads()).toBe(0);
+    } finally { s.close(); }
+  });
+
+  it("nobody undecided, or a review that cannot be read, settles it for this launch", async () => {
+    const decided = { ...REVIEW, candidates: [{ ...REVIEW.candidates[0], alreadyDecided: true }] };
+    const s = await seedScene({ review: decided });
+    try {
+      const facts = await s.facts();
+      await advanceSeedOffer("owner-a", facts, s.read);
+      expect(seedOfferOf("owner-a", facts).kind).toBe("settled");
+      s.fake.failNext("GET", "/consent/seed");
+      await advanceSeedOffer("owner-b", facts, s.read);
+      expect(seedOfferOf("owner-b", facts).kind).toBe("settled");
+      expect(s.posts()).toEqual([]);
+    } finally { s.close(); }
+  });
+
+  it("a refused confirm keeps the ticks, and the retry is a new key with the same list", async () => {
+    const s = await seedScene();
+    try {
+      const review = (await s.read())!;
+      const ticks = initialTicks(review);
+      s.fake.failNext("POST", "/consent/seed");
+      const refused = await pressConfirm(s.session, review, ticks, "press-1");
+      expect(refused).toEqual({ state: "ready", review, error: "refused by test" });
+      expect([...ticks]).toEqual([MARA.address]);
+      expect(await pressConfirm(s.session, review, ticks, "press-2")).toBeNull();
+      expect(s.posts().map((p) => [p.body, p.key])).toEqual([
+        [JSON.stringify({ addresses: [MARA.address] }), "press-1"],
+        [JSON.stringify({ addresses: [MARA.address] }), "press-2"],
+      ]);
     } finally { s.close(); }
   });
 });

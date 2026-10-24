@@ -313,6 +313,13 @@ export interface ApiServices {
    */
   sendSurfaceMaxTotalBytes?: number | null;
   /**
+   * This host keeps running after it answers (the local engine, self-host): a send's Sent copy is
+   * waited for briefly and then retried in memory (`SendDeps.copyOutlivesAnswer`). Absent on Cloud.
+   */
+  sendCopyOutlivesAnswer?: boolean;
+  /** The upload ceiling of a host that keeps running (`SendDeps.submissionCeilingMs`); absent elsewhere. */
+  sendSubmissionCeilingMs?: number;
+  /**
    * See {@link AttachmentStagingPort}. Present on a host with object storage; ABSENT on a local
    * install, where its absence is what keeps the standalone door from staging to Cloud storage.
    */

@@ -573,7 +573,7 @@ export {
   type TabWindows,
 } from "./routing-window.js";
 // Where a surface with no `localStorage` keeps that window's journal: a client-local mirror row.
-export { ROUTING_JOURNAL_TYPE } from "./types.js";
+export { COMPOSE_FILE_TYPE, COMPOSE_LETTER_TYPE, ROUTING_JOURNAL_TYPE } from "./types.js";
 // The held press's presentation — a row shown where it was filed while its rule waits.
 export { presentAt } from "./present-at.js";
 export {
@@ -842,6 +842,7 @@ export { VERB_TARGETS, verbTargetsOf } from "./shadow.js";
    cap rule, here because the webapp AND the phone composer read it. See its header. */
 export {
   COMPOSE_ATTACH_MAX_TOTAL_BYTES,
+  COMPOSE_FORWARD_MAX_TOTAL_BYTES,
   COMPOSE_ATTACH_MIME_ENVELOPE_BYTES,
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES,
   COMPOSE_ATTACH_UNMEASURED_MESSAGE_BYTES,

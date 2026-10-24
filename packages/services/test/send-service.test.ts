@@ -1,11 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
+import net from "node:net";
+import { Duplex } from "node:stream";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends, messages, threads } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SentCopyAppendFailed } from "@trafficflow/core";
-import { SendService, SEND_STALE_AFTER_MS } from "../src/index.js";
+import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions } from "@trafficflow/core";
+import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { SendService, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 const svc = new SendService();
@@ -439,5 +442,178 @@ describe("SendService — reply threading (RFC 5322 §3.6.4)", () => {
     await svc.send(ctx, d!.id, "k-" + randomUUID(), { openSendAdapter: spy });
     expect(sent[0]!.inReplyTo).toBeUndefined();
     expect(sent[0]!.references).toBeUndefined();
+  });
+});
+
+/**
+ * A SLOW SUBMISSION, over a double that fails the way the real adapter does: the end of the
+ * message waits for `beforeRelease`, the IMAP leg dialled before SMTP idles out while the 250 is
+ * slow (its `isLive` reads false and every command throws `NoConnection`), and a fresh dial works.
+ */
+function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean } = {}) {
+  const sentFolder: string[] = [];
+  const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0 };
+  const dead = () => Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+  const factory: OpenSendAdapter = async () => {
+    state.dials += 1;
+    const n = state.dials;
+    if (n > 1 && o.reopenUnreachable) throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    let live = true;
+    return {
+      async send(msg: OutboundMessage, opts?: SendOptions) {
+        await new Promise((r) => { setTimeout(r, 20); });
+        if (o.dropMidUpload) {
+          throw new SendNotSubmitted("data", Object.assign(new Error("Connection closed unexpectedly"), { code: "ECONNECTION" }));
+        }
+        await opts?.beforeRelease?.();
+        state.released += 1;
+        if (o.copyDiesOnFirst || o.lostReply) live = false;   // the IMAP leg idled out under the slow 250
+        if (o.lostReply) throw Object.assign(new Error("Timeout"), { code: "ETIMEDOUT" });
+        state.delivered += 1;
+        const raw = Buffer.from(`Message-ID: ${msg.messageId!}\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n`);
+        return opts?.copy === "caller" ? { providerMessageId: msg.messageId!, unfiledCopy: raw } : { providerMessageId: msg.messageId! };
+      },
+      async fileSentCopy(raw: Buffer, id: string, look?: { look?: boolean }) {
+        if (!live) throw dead();
+        state.looks.push(look?.look === true);
+        if (look?.look === true && sentFolder.includes(id)) return null;
+        sentFolder.push(id);
+        return { locator: { folder: "Sent", ref: `9:${sentFolder.length}` }, raw };
+      },
+      // The old adapter's answer on a dead connection: "not there".
+      async messageInSent(id: string) { state.probes += 1; if (!live && n > 1) throw dead(); return live && sentFolder.includes(id); },
+      isLive: () => live,
+      async close() { live = false; },
+    };
+  };
+  return { factory, state, sentFolder };
+}
+
+/**
+ * The real adapter over a link that carries `rate` bytes a second (bytes wait in the socket's own
+ * write queue, as on a phone), to a submission server that drops the connection after `dropAt`
+ * bytes of DATA. Its Sent folder never holds the message.
+ */
+async function slowLinkSmtp(rate: number, dropAt: number) {
+  const seen = { dataBytes: 0, mark: false };
+  const server = net.createServer((s) => {
+    s.on("error", () => undefined);
+    s.write("220 fake ESMTP\r\n");
+    let inData = false;
+    let buf = "";
+    s.on("data", (d: Buffer) => {
+      buf = inData ? (buf + d.toString("latin1")).slice(-8) : buf + d.toString("latin1");
+      if (inData) {
+        seen.dataBytes += d.length;
+        seen.mark ||= buf.includes("\r\n.\r\n");
+        if (seen.dataBytes > dropAt) s.destroy();
+        return;
+      }
+      for (let i = buf.indexOf("\r\n"); i >= 0 && !inData; i = buf.indexOf("\r\n")) {
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        if (/^DATA/i.test(line)) { s.write("354 go\r\n"); inData = true; buf = ""; }
+        else s.write(/^EHLO/i.test(line) ? "250-fake\r\n250 AUTH PLAIN\r\n" : /^AUTH/i.test(line) ? "235 ok\r\n" : "250 ok\r\n");
+      }
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const port = (server.address() as net.AddressInfo).port;
+  const factory: OpenSendAdapter = async () => {
+    const imap = { list: async () => [{ path: "INBOX", delimiter: "/", flags: new Set() }], on: () => undefined, logout: async () => undefined, close: () => undefined };
+    const a = new ImapAdapter({
+      host: "127.0.0.1", port: 1, secure: false, auth: { user: "u", pass: "p" },
+      smtp: { host: "127.0.0.1", port, secure: false, allowInsecure: true, auth: { user: "u", pass: "p" } },
+    } as never, { client: imap as never });
+    await a.connect();
+    (a as unknown as { transporter: { getSocket: unknown } }).transporter.getSocket = (_o: unknown, cb: (e: null, s: { connection: Duplex }) => void) => {
+      const sock = net.connect(port, "127.0.0.1", () => cb(null, { connection: link }));
+      const link = new Duplex({
+        write(chunk: Buffer, _e, done) { setTimeout(() => { if (!sock.destroyed) sock.write(chunk); done(); }, (chunk.length / rate) * 1000); },
+        read() { /* pushed from the socket */ },
+      });
+      Object.assign(link, { setTimeout: () => link, setKeepAlive: () => link });
+      sock.on("data", (d: Buffer) => link.push(d)).on("error", () => undefined).on("close", () => link.destroy());
+    };
+    return {
+      send: (m: OutboundMessage, o?: SendOptions) => a.send(m, o), fileSentCopy: async () => null,
+      messageInSent: async () => false, isLive: () => true, close: async () => undefined,
+    };
+  };
+  return { factory, seen, close: () => server.close() };
+}
+
+describe("a slow submission: the Sent copy follows every accepted send exactly once", () => {
+  const quick = { graceMs: 2_000, deadlineMs: 2_000, waitsMs: [0, 10, 10] };
+
+  it("the first connection's copy dies; the reopened one files exactly one copy, projected, `sentCopy: filed`", async () => {
+    const { db, ctx, newDraft } = await setup();
+    const draftId = await newDraft();
+    const smtp = slowSmtp({ copyDiesOnFirst: true });
+    const res = await svc.send(ctx, draftId, "slow-1", {
+      openSendAdapter: smtp.factory, copyTiming: quick, resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+    });
+    expect({ status: res.status, sentCopy: res.sentCopy }).toEqual({ status: "sent", sentCopy: "filed" });
+    expect(smtp.state).toMatchObject({ delivered: 1, dials: 2, looks: [true] });
+    expect(smtp.sentFolder, "one copy, under the minted id").toEqual([res.providerMessageId]);
+    const [row] = await db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+    expect({ status: row!.status, offerState: row!.offerState }).toEqual({ status: "sent", offerState: "complete" });
+    const mirrored = await db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.messageIdHeader, res.providerMessageId!.replace(/[<>]/g, "")));
+    expect(mirrored, "the copy is projected").toHaveLength(1);
+  });
+
+  it("on a host that outlives the answer, a copy that cannot land yet answers `pending` and is filed after", async () => {
+    const { ctx, newDraft } = await setup();
+    const draftId = await newDraft();
+    const smtp = slowSmtp({ copyDiesOnFirst: true });
+    const res = await svc.send(ctx, draftId, "slow-2", {
+      openSendAdapter: smtp.factory, copyOutlivesAnswer: true, copyTiming: { graceMs: 0, deadlineMs: 0, waitsMs: [50] },
+    });
+    expect({ status: res.status, sentCopy: res.sentCopy }).toEqual({ status: "sent", sentCopy: "pending" });
+    for (let i = 0; i < 100 && smtp.sentFolder.length === 0; i += 1) await new Promise((r) => { setTimeout(r, 10); });
+    expect(smtp.sentFolder).toEqual([res.providerMessageId]);
+  });
+
+  it("a connection dropped mid-upload is `failed` and the draft a draft again; the key's replay says why", async () => {
+    const { db, ctx, newDraft } = await setup();
+    const draftId = await newDraft();
+    const smtp = slowSmtp({ dropMidUpload: true });
+    const out = await svc.send(ctx, draftId, "slow-3", { openSendAdapter: smtp.factory }).then((r) => r, (e: unknown) => e);
+    expect(out).toMatchObject({ code: "send_upload_dropped", httpStatus: 424, retryable: false });
+    expect((out as Error).message).toBe(SEND_UPLOAD_DROPPED_SENTENCE);
+    const [row] = await db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+    expect({ status: row!.status, retryRefusal: row!.retryRefusal }).toEqual({ status: "failed", retryRefusal: "send_upload_dropped" });
+    expect((await db.select().from(drafts).where(eq(drafts.id, draftId)))[0]!.status).toBe("draft");
+    const replay = await svc.send(ctx, draftId, "slow-3", { openSendAdapter: smtp.factory }).then((r) => r, (e: unknown) => e);
+    expect(replay).toMatchObject({ code: "send_upload_dropped" });
+    expect(smtp.state.delivered).toBe(0);
+  });
+
+  it("over the real adapter, a photo on a slow link dropped half-way is `send_upload_dropped`, the draft a draft again", async () => {
+    const { db, ctx, newDraft } = await setup();
+    const draftId = await newDraft();
+    const smtp = await slowLinkSmtp(2_000_000, 450_000);
+    const photo = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(684 * 1024, 7) };
+    const out = await svc.send(ctx, draftId, "slow-5", { openSendAdapter: smtp.factory }, { attachments: [photo] })
+      .then((r) => r, (e: unknown) => e);
+    smtp.close();
+    expect(out).toMatchObject({ code: "send_upload_dropped" });
+    expect(smtp.seen.mark, "the server never received the end of the message").toBe(false);
+    const [row] = await db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+    expect({ status: row!.status, draft: (await db.select().from(drafts).where(eq(drafts.id, draftId)))[0]!.status })
+      .toEqual({ status: "failed", draft: "draft" });
+  });
+
+  it("an unanswered 250 on a dead connection is probed on a fresh one; unreachable there, it stays `pending` (`queued`)", async () => {
+    const { db, ctx, newDraft } = await setup();
+    const draftId = await newDraft();
+    const smtp = slowSmtp({ lostReply: true, reopenUnreachable: true });
+    const res = await svc.send(ctx, draftId, "slow-4", { openSendAdapter: smtp.factory });
+    expect(res.status).toBe("queued");
+    expect(smtp.state.probes, "the dead connection's \"not there\" is never asked").toBe(0);
+    expect(smtp.state.dials).toBe(2);
+    const [row] = await db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+    expect({ status: row!.status, offerState: row!.offerState }).toEqual({ status: "pending", offerState: "complete" });
   });
 });

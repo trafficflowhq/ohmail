@@ -14,6 +14,8 @@ import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import { File } from "expo-file-system";
 import {
   base64SizeBytes,
+  photoName,
+  pickerGaveNoName,
   shrinkBox,
   type AttachPicker,
   type AttachPickOutcome,
@@ -103,7 +105,7 @@ export function nativeAttachPicker(): AttachPicker {
       return { kind: "picked", files, unreadable };
     },
 
-    async pickPhotos(): Promise<AttachPickOutcome> {
+    async pickPhotos(zone: string): Promise<AttachPickOutcome> {
       let result: ImagePicker.ImagePickerResult;
       try {
         // The system photo picker on both platforms — no roll-wide permission is requested, so
@@ -120,6 +122,8 @@ export function nativeAttachPicker(): AttachPicker {
       if (result.canceled) return { kind: "cancelled" };
       const files: PhoneComposeAttachment[] = [];
       let unreadable = 0;
+      const at = new Date();
+      const taken = new Set<string>();
       for (const asset of result.assets ?? []) {
         const base64 =
           typeof asset.base64 === "string" && asset.base64.length > 0
@@ -129,7 +133,10 @@ export function nativeAttachPicker(): AttachPicker {
           unreadable += 1;
           continue;
         }
-        files.push(toAttachment(base64, asset.fileName, asset.mimeType, asset.uri));
+        const name = photoName(asset.fileName, asset.mimeType, at, zone, taken);
+        taken.add(name);
+        const row = toAttachment(base64, name, asset.mimeType, asset.uri);
+        files.push(pickerGaveNoName(asset.fileName) ? { ...row, nameFromPick: true } : row);
       }
       return { kind: "picked", files, unreadable };
     },

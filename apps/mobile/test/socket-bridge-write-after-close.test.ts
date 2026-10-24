@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it } from "vitest";
 import { arrived, CASE_MS } from "./helpers/arrived";
+import { platformDouble } from "./_platform-socket-double";
 
 const require_ = createRequire(import.meta.url);
 const SHIM = "../src/engine/shims/net.js";
@@ -425,4 +426,54 @@ describe("the refusal in a process with nothing listening", () => {
       .toContain("SURVIVED");
     expect(run.status, "the process exited non-zero — the refusal reached the top").toBe(0);
   }, 30_000);
+});
+
+/**
+ * A LARGE WRITE ON A SLOW LINK KEEPS ITS CONNECTION. The platform's socket timer is reset only
+ * when a whole native write completes or data arrives, and nodemailer hands a photo letter's DATA
+ * to the socket as one ~958 KB write: the timer fired part-way through an upload whose bytes were
+ * still moving. The bridge hands the platform at most 16 KiB per write, so the timer tracks
+ * progress. Time runs scaled: 1 MB/s for the slow link, 250 ms for the 25 s deadline.
+ */
+describe("the bridge on a slow link", () => {
+  it("a 958 KB write arrives as pieces of at most 16 KiB, and the socket timer never fires while bytes move", async () => {
+    const net = await import("node:net");
+    let received = 0;
+    const server = net.createServer((sock) => { sock.on("data", (d) => { received += d.length; }); sock.on("error", () => undefined); });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const double = platformDouble("", { writeRate: 1_000_000 });
+    const Module = require_("node:module") as { _load(req: string, parent: unknown, isMain: boolean): unknown };
+    const original = Module._load;
+    Module._load = function load(request: string, parent: unknown, isMain: boolean): unknown {
+      return request === "react-native-tcp-socket" ? double.module : original.call(this, request, parent, isMain);
+    };
+    let shim: Shim;
+    try {
+      const cache = (require_ as unknown as { cache: Record<string, unknown> }).cache;
+      for (const key of Object.keys(cache)) if (key.includes("engine/shims/net.js")) delete cache[key];
+      shim = require_(SHIM) as Shim;
+    } finally { Module._load = original; }
+    const bridge = shim.connect({ host: "127.0.0.1", port: (server.address() as { port: number }).port }) as Bridge & {
+      setTimeout(ms: number): unknown; destroy(): void;
+    };
+    try {
+      await new Promise<void>((r) => { bridge.once("connect", () => r()); });
+      let timeouts = 0;
+      bridge.on("timeout", () => { timeouts += 1; });
+      bridge.setTimeout(250);
+      const photo = Buffer.alloc(958_386, 0x41);
+      let done: unknown = NEVER;
+      bridge.write(photo, (err) => { done = err ?? null; });
+      await arrived("the write's callback", () => done !== NEVER);
+      expect(done, "the write failed").toBeNull();
+      const writes = double.conns[0]!.writes;
+      expect(Math.max(...writes), "one native write carried more than 16 KiB").toBeLessThanOrEqual(16 * 1024);
+      expect(writes.reduce((a, b) => a + b, 0)).toBe(photo.length);
+      expect(timeouts, "the socket timer fired while the upload was still moving").toBe(0);
+      await arrived("every byte at the server", () => received === photo.length, () => `${received} bytes`);
+    } finally {
+      bridge.destroy();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, CASE_MS);
 });

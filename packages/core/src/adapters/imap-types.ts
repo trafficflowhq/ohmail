@@ -980,7 +980,22 @@ export type SendResult = {
   /** Delivered, and the server's own Sent copy was not found in time: no locator, no bytes. */
   sentLocator: null;
   raw: null;
+  /** `copy: "caller"`: the copy's bytes, for the caller to file with `fileSentCopy`. */
+  unfiledCopy?: Buffer;
 };
+
+/**
+ * How one `send` treats its Sent copy and the end of its upload. `copy: "inline"` (the default)
+ * appends on the send's own connection; `"caller"` appends nothing and hands the bytes back.
+ * `beforeRelease` runs after the last byte of the message and before the end-of-data mark: while
+ * it has not resolved, the server cannot accept the message, and its rejection is a refusal.
+ */
+export interface SendOptions {
+  copy?: "inline" | "caller";
+  beforeRelease?: () => Promise<void>;
+  /** Aborted while the upload runs: it is stopped before its end-of-data mark (a refusal). Ignored after. */
+  signal?: AbortSignal;
+}
 
 /** One attachment BLOB fetched on-demand from IMAP — bytes are NEVER persisted (§13.2/§14). */
 export interface FetchedPart { contentType: string; filename: string | null; body: Uint8Array; }
@@ -1198,7 +1213,7 @@ export interface MailboxAdapter {
    * semantics. A no-op before `watch` and after its unwatch.
    */
   rearmWatch?(): Promise<void>;
-  send(msg: OutboundMessage): Promise<SendResult>;
+  send(msg: OutboundMessage, opts?: SendOptions): Promise<SendResult>;
   /**
    * Fetch a single MIME part's BLOB on-demand. Bytes are NEVER persisted.
    *

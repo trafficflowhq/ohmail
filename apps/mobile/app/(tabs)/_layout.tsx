@@ -14,6 +14,7 @@ import { useWorld } from "../../src/state/world";
 import { beginMark, endMark } from "../../src/engine/ui-marks";
 import { Gated } from "../../src/ui/Gated";
 import { ProfileImportCard } from "../../src/ui/ProfileImportCard";
+import { SeedOfferCard } from "../../src/ui/SeedOfferCard";
 import { type IconName } from "../../src/ui/Icon";
 import { GlassDock, type DockItem } from "../../src/ui/glass";
 import { dockFold, nextRoom } from "../../src/ui/glass/fold";
@@ -66,6 +67,8 @@ export default function TabsLayout() {
       {/* Another ohmail's settings in the mailbox: the organizer files no stranger and writes no
           decision until this is answered, so it stands above the lists. */}
       <ProfileImportCard />
+      {/* The people this account wrote to, once that question is answered: one card at a time. */}
+      <SeedOfferCard />
       <Tabs
         screenOptions={{ headerShown: false, sceneStyle: { backgroundColor: "transparent" } }}
         tabBar={(props) => <GlassNav {...props} />}

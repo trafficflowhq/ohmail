@@ -4,7 +4,9 @@ import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-service.js";
+import {
+  sendService, SEND_ATTEMPT_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_STALE_AFTER_MS, type SendService,
+} from "./send-service.js";
 
 /**
  * THE SCHEDULED-SEND PASS — turns an appointment (`drafts.send_at`, mail 0077) into a delivery:
@@ -26,6 +28,9 @@ import { sendService, SEND_STALE_AFTER_MS, type SendService } from "./send-servi
  * attempted now; everything else stays `'scheduled'` and is untouched.
  */
 export const SCHEDULED_SEND_BATCH = 3;
+
+/** What one send may take at worst where its Sent copy is awaited: its ceiling, the copy's deadline, a margin. */
+export const SCHEDULED_SEND_ROW_MS = SEND_ATTEMPT_CEILING_MS + SEND_COPY_DEADLINE_MS + 5_000;
 
 /**
  * How far past due an appointment may still be KEPT at all. A day: long enough to ride out any
@@ -51,6 +56,12 @@ export interface ScheduledSendPassDeps {
    * cancel", so every hosted caller is unchanged.
    */
   cancelled?: () => boolean;
+  /**
+   * THE INVOCATION'S WALL CLOCK (the hosted route's platform limit). A row is started only while
+   * {@link SCHEDULED_SEND_ROW_MS} still fits; the rest go back to `scheduled` for the next poke.
+   * Absent: no budget.
+   */
+  budgetMs?: number;
 
   /** The send transport — `makeSendAdapter` on the API host, the local dial on the desktop. */
   openSendAdapter: OpenSendAdapter;
@@ -120,13 +131,25 @@ export async function runScheduledSendPass(
   const sends = deps.sends ?? sendService;
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
 
+  const startedAt = now().getTime();
   const rows = await claimDue(db, now(), batch, deps.accountEligible, log, deps.mailboxIds);
   result.claimed = rows.length;
 
-  for (const row of rows) {
+  for (const [i, row] of rows.entries()) {
     /* BETWEEN ROWS, before this one is dialled — see `cancelled`. The rows already claimed
        above are the reconciler's, exactly as they would be after a crash here. */
     if (deps.cancelled?.()) { result.deferred += rows.length - result.sent - result.failed; break; }
+    // Out of time: the rows not started are appointments again under their own keys (a recovered
+    // `sending` row stays the recovery arm's).
+    if (deps.budgetMs !== undefined && now().getTime() - startedAt + SCHEDULED_SEND_ROW_MS > deps.budgetMs) {
+      for (const left of rows.slice(i)) {
+        await bridgeTx(db).update(drafts).set({ status: "scheduled", updatedAt: now() })
+          .where(and(eq(drafts.id, left.id), eq(drafts.status, "draft"), eq(drafts.sendKey, left.sendKey)));
+      }
+      result.deferred += rows.length - i;
+      log.info("scheduled_send_budget_spent", { left: rows.length - i });
+      break;
+    }
     const ctx: ServiceContext = {
       db, accountId: row.accountId, userId: null, now, requestId: `sched:${row.id}`,
     };

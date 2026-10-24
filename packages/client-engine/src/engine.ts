@@ -3086,6 +3086,8 @@ export class OhmailEngine {
     live: boolean;
     expiresAtMs: number;
     forwardOf?: string;
+    /** The parts the forward named (`forwardParts`); absent, every part the server streams. */
+    forwardParts?: readonly string[];
     composeItems: AttachmentItem[];
   }>();
   /** In-flight metadata reads by message id — single-flight, see {@link OhmailEngine.loadAttachments}. */
@@ -9022,7 +9024,7 @@ export class OhmailEngine {
     const expiresAtMs = this.now().getTime() + OPTIMISTIC_SENT_TTL_MS;
     this.overlays.set(overlayId, [{ type: "message", id: sent.id, entity: sent }]);
     this.optimisticSent.set(overlayId, { header, expiresAtMs });
-    this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs, m.forwardOf ?? undefined);
+    this.seedSentAttachments(sent.id, m.attachments ?? [], expiresAtMs, m.forwardOf ?? undefined, m.forwardParts);
     return true;
   }
 
@@ -9046,6 +9048,7 @@ export class OhmailEngine {
     attachments: readonly ComposeAttachment[],
     expiresAtMs: number,
     forwardOf?: string,
+    forwardParts?: readonly string[],
   ): void {
     const composeItems: AttachmentItem[] = attachments.map((a, i) => {
       const bytes = base64ToBytes(a.contentBase64);
@@ -9069,7 +9072,9 @@ export class OhmailEngine {
         ...(minted && minted.url !== undefined ? { objectUrl: minted.url } : {}),
       };
     });
-    this.sentAttachmentSeeds.set(messageId, { live: true, expiresAtMs, forwardOf, composeItems });
+    this.sentAttachmentSeeds.set(messageId, {
+      live: true, expiresAtMs, forwardOf, composeItems, ...(forwardOf && forwardParts ? { forwardParts } : {}),
+    });
 
     if (!forwardOf) {
       // A compose or reply: the mutation's files ARE the delivered files, so the list is complete.
@@ -9124,7 +9129,10 @@ export class OhmailEngine {
     // MEMBERSHIP matches too: the send's capped query and the metadata list are both ordered by
     // attachment id (`send-service.ts` says why from its side), so this prefix names exactly the
     // parts the send streamed, over-cap originals included.
-    const inherited: AttachmentItem[] = parent.items.slice(0, SENT_FORWARD_MAX_PARTS).map((i) => ({
+    // A forward that named its parts streamed exactly those.
+    const kept = seed.forwardParts ? new Set(seed.forwardParts) : null;
+    const streamed = kept ? parent.items.filter((i) => kept.has(i.id)) : parent.items;
+    const inherited: AttachmentItem[] = streamed.slice(0, SENT_FORWARD_MAX_PARTS).map((i) => ({
       id: i.id,
       filename: i.filename,
       mimeType: i.mimeType,

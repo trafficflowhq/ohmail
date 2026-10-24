@@ -535,7 +535,7 @@ export async function runSendReconcilePass(
         }
       }
 
-      if (outcome.status === "forgotten") {
+      if (outcome.status === "forgotten" || outcome.by === "not_offered") {
         result.forgotten += 1;
         log.info("send_reconcile_forgotten", {
           sendId: row.send.id, accountId: row.send.accountId, draftId: row.send.draftId,

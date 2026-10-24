@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
+  COMPOSE_FILE_TYPE,
+  COMPOSE_LETTER_TYPE,
   IndexedDbMirrorStore,
   OUTBOX_TYPE,
   ROUTING_JOURNAL_TYPE,
@@ -335,5 +337,21 @@ describe("the sql mirror keeps the durable outbox through its wipe", () => {
 
     expect((await sqlBoot(world)).keys, "the wipe dropped a press the person had made")
       .toEqual([`${ROUTING_JOURNAL_TYPE}:${id}`]);
+  });
+
+  it("[sql] a letter being written and its file ride the 410: nothing re-derives them", async () => {
+    const world = sqlWorld();
+    const store = new SqlMirrorStore({ owner: OWNER, open: world.open });
+    await store.load();
+    await store.commitLocal([
+      { type: COMPOSE_LETTER_TYPE, id: "l-1", entity: { v: 1, id: "l-1", body: "Half a thought" } },
+      { type: COMPOSE_FILE_TYPE, id: "f-1", entity: { letterId: "l-1", contentBase64: "AAAA" } },
+    ], []);
+
+    await store.resetForBootstrap();
+    store.close();
+
+    expect((await sqlBoot(world)).keys.sort(), "the wipe dropped a letter the person was writing")
+      .toEqual([`${COMPOSE_FILE_TYPE}:f-1`, `${COMPOSE_LETTER_TYPE}:l-1`]);
   });
 });

@@ -1471,6 +1471,7 @@ export const DE: Deck = {
     `Einige Dateien wurden nicht hinzugefügt — sie hätten das Total über ${size} gebracht.`,
   attachUnreadable: "Einige Dateien konnten nicht gelesen werden und wurden nicht hinzugefügt.",
   attachDuplicate: (filenames: string) => `Bereits angehängt: ${filenames}`,
+  photoNamed: (stamp: string) => `Foto ${stamp}`,
   attachRemove: (filename: string) => `${filename} entfernen`,
   attachUnavailable: "Dateien können auf diesem Gerät gerade nicht ausgewählt werden.",
   composeNeedContent: "Schreib etwas oder häng eine Datei an.",
@@ -1514,7 +1515,22 @@ export const DE: Deck = {
     `Das kann nicht als Entwurf behalten werden — es ist über der Grenze von ${size}. Kürze es, oder schließe noch einmal, um es zu verwerfen.`,
   composeKeepTooLongBound: (size: string) =>
     `Diese Änderungen können nicht behalten werden — sie sind über der Grenze von ${size}, darum liegt in den Entwürfen noch die frühere Fassung. Kürze sie, oder schließe noch einmal, um die Änderungen zu verwerfen.`,
-  composeKeepFiles: "Entwürfe behalten keine Anhänge. Schließe noch einmal, um sie zu verwerfen.",
+  composeKeepFiles: (names: string, size: string) =>
+    `Nicht beim Entwurf behalten: ${names}. Dieses Handy behält bis zu ${size} Anhänge bei Entwürfen. Schließe noch einmal, um ihn ohne sie zu behalten.`,
+  composeKeptHere: "In den Entwürfen behalten. Die Anhänge bleiben nur auf diesem Handy.",
+  composeKeptQueuedHere: "Als Entwurf behalten, die Anhänge nur auf diesem Handy. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
+  lettersKept: (n: number) => (n === 1
+    ? "Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen."
+    : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen.`),
+  lettersKeptWithout: (n: number, names: string) => (n === 1
+    ? `Eine Nachricht, die du geschrieben hast, als ohmail beendet wurde, liegt in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`
+    : `${n} Nachrichten, die du geschrieben hast, als ohmail beendet wurde, liegen in den Entwürfen, ohne ${names}: mehr, als dieses Handy bei Entwürfen behält.`),
+  letterSendUnclear: (n: number) => (n === 1
+    ? "Eine Nachricht, die du gesendet hast, als ohmail beendet wurde, liegt in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest."
+    : `${n} Nachrichten, die du gesendet hast, als ohmail beendet wurde, liegen in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest.`),
+  letterSendUnconfirmed: (n: number) => (n === 1
+    ? "Eine Nachricht, deren Senden nie bestätigt wurde, liegt in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest."
+    : `${n} Nachrichten, deren Senden nie bestätigt wurde, liegen in den Entwürfen. Sieh in Gesendet nach, bevor du sie noch einmal sendest.`),
   composeNeedRecipient: "Trag jemanden ein, an den sie gehen soll.",
   composeNoMailbox: "Noch kann kein Postfach auf diesem Handy senden.",
   composeNoMailboxHint: "Sobald dieses Handy Mails hat, kannst du von diesem Postfach aus schreiben.",
@@ -2040,6 +2056,35 @@ export const DE: Deck = {
   pfiReplaceNoteBare:
     "Das Speichern ersetzt die Einstellungen im Postfach innerhalb weniger Minuten durch die dieses ohmail. Solange dieses ohmail keine eigenen hat, behält das Postfach sie.",
   pfiReplacedTitle: "Die Einstellungen dieses ohmail gehen innerhalb weniger Minuten ins Postfach.",
+  seedTitle: (n: number) => `Du hast ${n === 1 ? "1 Person" : `${n} Leuten`} geschrieben.`,
+  seedLede:
+    "Jemandem zu schreiben ist das deutlichste Zeichen, dass du eine Antwort willst. Alle unten angehakten kommen von jetzt an in deine Ohbox. Nimm den Haken weg bei allen, die du lieber screenen willst.",
+  seedTruncated: (scanned: number) =>
+    `Gelesen aus deinen ${scanned} neuesten gesendeten Nachrichten. Wem du davor geschrieben hast, landet weiter im Screener, wenn er sich wieder meldet.`,
+  seedFilterPlaceholder: "Jemanden finden …",
+  seedSelectShown: (n: number) => (n === 1 ? "Alle 1 angezeigte anhaken" : `Alle ${n} angezeigten anhaken`),
+  seedDeselectShown: (n: number) => (n === 1 ? "Haken weg bei 1 angezeigten" : `Haken weg bei allen ${n} angezeigten`),
+  seedWrote: (n: number) => (n === 1 ? "1 Nachricht" : `${n} Nachrichten`),
+  seedAlreadyDecided: "schon entschieden",
+  seedExcludedSummary: (n: number) => (n === 1 ? "1 Adresse wurde ausgelassen" : `${n} Adressen wurden ausgelassen`),
+  seedExcludedRobot: "sieht nach einer Maschinenadresse aus",
+  seedExcludedMachineSent: "in einer automatischen Antwort von dir gefunden",
+  seedExcludedOwn: "eine deiner eigenen Adressen",
+  seedWillDo: (n: number) =>
+    `Das legt eine Regel für ${n === 1 ? "die 1 angehakte Person" : `die ${n} angehakten Personen`} an. Was von ihnen im Screener wartet, kommt in deine Ohbox; der Rest deiner Mails bleibt, wo dein Mailserver ihn hat.`,
+  seedConfirm: (n: number) => `${n === 1 ? "1 Person" : `${n} Leute`} durchlassen`,
+  seedConfirming: "Wird gespeichert …",
+  seedLater: "Nicht jetzt",
+  seedNothingToDecide: "In deinen gesendeten Mails wartet niemand auf eine Entscheidung.",
+  seedClose: "Schließen",
+  seedLoading: "Deine gesendeten Mails werden gelesen …",
+  seedErrorTitle: "Das hat nicht funktioniert.",
+  seedErrorGeneric: "Beim Lesen deiner gesendeten Mails ist etwas schiefgegangen.",
+  seedErrorRetry: "Deine Haken sind noch da. Drück einfach nochmal auf den Button.",
+  seedSettingsLabel: "Leute, denen du schreibst",
+  seedReopenBody:
+    "Schau nochmal auf die Leute, denen du geschrieben hast, und entscheide, wer durchkommt. Wen du schon entschieden hast, bleibt wie er ist; das hier nimmt nur Leute dazu, für die du noch nicht geantwortet hast — und genau die bringt ein neu verbundenes Postfach mit.",
+  seedReopenAction: "Ansehen",
   toastMoveQueuedWithRule: (place: string, holder: string) =>
     `Für ${holder} vorgemerkt: Die Nachricht und die Regel für den Absender gehen beim nächsten Durchgang nach ${place}.`,
   toastMoveQueuedWithRuleUnknown: (place: string) =>

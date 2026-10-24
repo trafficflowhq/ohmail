@@ -15,6 +15,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { sayArg } from "../src/refusal";
+import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
+import { liveActions } from "../src/state/live";
+import { openLetterKeeper } from "../src/compose/letter-keeper";
+import { sweepLetters } from "../src/compose/letter-restore";
+import { letterDoor } from "../src/compose/letter-store";
+import { dto, listen, mailServer } from "./helpers/mail-server";
+import { sqlWorld } from "./helpers/pair-server";
 import { autosaveKeep, keepAct } from "../src/ui/compose-keep";
 import { composeSenderOf } from "../src/ui/compose-sender";
 import { DE } from "../src/copy.de";
@@ -28,7 +36,7 @@ describe("the autosave marks the screen saved only once the keep answered kept",
     await autosaveKeep(saved, "[\"after\"]", async () => "refused");
     expect(saved.current).toBe("[\"before\"]");
     const worth = saved.current !== "[\"after\"]";
-    expect(keepAct({ phase: "idle", worth, files: 0, armed: false })).toBe("keep");
+    expect(keepAct({ phase: "idle", worth, filesOver: 0, armed: false })).toBe("keep");
   });
 
   it("a kept save marks exactly what was on screen when it left", async () => {
@@ -42,7 +50,7 @@ describe("the autosave marks the screen saved only once the keep answered kept",
   });
 
   it("the sheet's autosave goes through it and marks nothing itself", () => {
-    const effect = SHEET.slice(SHEET.indexOf("const timer = setTimeout(() => {"), SHEET.indexOf("}, DRAFT_AUTOSAVE_MS);"));
+    const effect = SHEET.slice(SHEET.indexOf("quietSave.current = () => {"), SHEET.indexOf("}, DRAFT_AUTOSAVE_MS);"));
     expect(effect).toContain("autosaveKeep(saved, onScreen,");
     expect(SHEET).not.toMatch(/saved\.current = onScreen/);
   });
@@ -96,4 +104,67 @@ describe("a bound draft whose mailbox cannot send leaves from one that can, and 
       expect(deck.composeFromSubstitutedUnknown.length).toBeGreaterThan(0);
     }
   });
+});
+
+describe("a kept draft's files stay on the phone with it", () => {
+  const world = sqlWorld();
+  let n = 0;
+  const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
+  const PDF = Buffer.alloc(64, 3).toString("base64");
+  const ROW = { mailboxId: "mb-1", subject: "Plans", to: [{ name: null, address: "peer@fake.test" }], cc: [], bcc: [], status: "draft" };
+
+  async function scene() {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    fake.addMessage(dto("m1", { subject: "Welcome" }));
+    for (const id of ["d-7", "d-8", "d-9"]) fake.addDraft({ id, ...ROW, body: `Words of ${id}` });
+    const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world.drop, uuid };
+    const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    await boot.verifyIdentity();
+    await boot.engine.start();
+    await boot.engine.syncOnce();
+    const letters = letterDoor(boot.store);
+    const actions = liveActions({ engine: boot.engine, toast: (m) => void sayArg(m), uuid, zone: "UTC", letters });
+    /** A letter kept as draft `id` with one file, as a close leaves it. */
+    const keptWith = (id: string) => {
+      const k = openLetterKeeper({
+        door: letters, id: uuid(), newFileId: uuid, draftId: id, savedAs: null,
+        words: { mode: "new", messageId: null, mailboxId: "mb-1", to: "peer@fake.test", cc: "", bcc: "", subject: "Plans", body: `Words of ${id}`, envelope: null },
+      });
+      k.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PDF, sizeBytes: 64 });
+      k.markKeep();
+      k.keepAnswered({ draftId: id, key: null });
+      k.release();
+    };
+    return { fake, boot, letters, actions, keptWith };
+  }
+
+  it("reopening brings the files, Send again carries them, and they go once it is sent", async () => {
+    const s = await scene();
+    s.keptWith("d-7");
+    expect(s.letters.filesOf("d-7").map((f) => [f.filename, f.contentBase64])).toEqual([["plan.pdf", PDF]]);
+    expect(await s.actions.draftSendAgain("d-7")).toBe("sent");
+    const send = s.fake.seen.find((r) => r.method === "POST" && r.url === "/drafts/d-7/send")!;
+    expect((JSON.parse(send.body) as { attachments?: Array<{ filename: string; contentBase64: string }> }).attachments)
+      .toEqual([{ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PDF }]);
+    expect(s.letters.filesOf("d-7")).toEqual([]);
+    s.boot.store.close();
+    s.fake.server.close();
+  }, 30_000);
+
+  it("a draft sent on another device, or discarded here, takes its files with it", async () => {
+    const s = await scene();
+    s.keptWith("d-8");
+    s.keptWith("d-9");
+    s.fake.sendElsewhere("d-8");
+    await s.boot.engine.syncOnce();
+    sweepLetters(s.letters, new Set(), s.actions.draftLeft);
+    expect(s.letters.filesOf("d-8")).toEqual([]);
+    expect(s.letters.filesOf("d-9"), "a draft still in Drafts lost its files").toHaveLength(1);
+    expect(await s.actions.draftDiscard("d-9")).toBe("discarded");
+    expect(s.letters.letters()).toEqual([]);
+    s.boot.store.close();
+    s.fake.server.close();
+  }, 30_000);
 });

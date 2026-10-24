@@ -146,12 +146,12 @@ describe("the consent seam — GET /consent and PATCH /consent/settings on the p
 
     expect(await readFoldersEnabled(session))
       .toEqual({ on: false, storable: true, screening: WINDOW, signatures: {}, themeFace: null,
-        resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false });
+        resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false, seed: null });
     expect(await writeFoldersEnabled(session, true)).toEqual({ on: true });
     expect(fake.foldersOn()).toBe(true);
     expect(await readFoldersEnabled(session))
       .toEqual({ on: true, storable: true, screening: WINDOW, signatures: {}, themeFace: null,
-        resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false });
+        resurfaceTime: null, autoUnsubscribe: true, autoAct: null, autoSuggestOn: false, seed: null });
     expect(await writeFoldersEnabled(session, false)).toEqual({ on: false });
     expect(fake.foldersOn()).toBe(false);
     fake.server.close();
@@ -169,6 +169,18 @@ describe("the consent seam — GET /consent and PATCH /consent/settings on the p
     expect((await readFoldersEnabled(session))!.signatures).toEqual({});
     fake.setSignatures({ "mb-1": 7 } as unknown as Record<string, string>);
     expect((await readFoldersEnabled(session))!.signatures).toEqual({});
+    fake.server.close();
+  });
+
+  it("the sent-mail seed rides the same read: never confirmed, confirmed, or a door without it", async () => {
+    const fake = mailServer();
+    const session = sessionFor(await listen(fake.server));
+    fake.setSeedConfirmedAt(null);
+    expect((await readFoldersEnabled(session))!.seed).toEqual({ confirmedAt: null });
+    fake.setSeedConfirmedAt("2026-10-24T05:00:00.000Z");
+    expect((await readFoldersEnabled(session))!.seed).toEqual({ confirmedAt: "2026-10-24T05:00:00.000Z" });
+    fake.setSeedConfirmedAt(undefined);
+    expect((await readFoldersEnabled(session))!.seed, "an absent field is a door with no seed, not one owed").toBeNull();
     fake.server.close();
   });
 
