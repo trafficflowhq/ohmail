@@ -73,7 +73,17 @@ async function world() {
     kind: "mail_send" as const, inReplyTo: null, draftId, mailboxId, threadId: null,
     subject: "Hi", body, ...(html !== undefined ? { html } : {}), to: TO, cc: [], bcc: [],
   });
-  return { engine, mailboxId, delivered, fetchImpl, row, base, wire, boldDraft, send, net };
+  /** A second device on the same account: its own engine and mirror over the same API. */
+  const another = async (): Promise<OhmailEngine> => {
+    const other = new MemoryMirrorStore();
+    await other.load();
+    const e = new OhmailEngine({
+      adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }), store: other, now: () => FIXED_NOW,
+    });
+    await e.start();
+    return e;
+  };
+  return { engine, mailboxId, delivered, fetchImpl, row, base, wire, boldDraft, send, net, another };
 }
 
 describe("a draft whose formatting was removed", () => {
@@ -191,5 +201,49 @@ describe("a draft whose formatting was removed", () => {
     const r = await w.engine.mutate(withSignature(w.send(id, "from the phone", undefined), "Anna"));
     expect(r.status, r.error?.message).toBe("confirmed");
     expect(w.delivered.map((m) => [m.text, m.html ?? null])).toEqual([["from the phone\n\nAnna", null]]);
+  });
+});
+
+describe("one draft on two devices: a save on an outdated version is refused, never written over", () => {
+  it("the stale save is refused draft_changed and the row keeps the other device's words", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    const seen = c.revision!;
+    const b = await w.another();
+    await b.syncOnce();
+    const theirs = await b.mutate({
+      kind: "draft_save", draftId: id, ...w.base, body: "from the other device",
+      ifContentRevision: b.read().get<EngineDraft>("draft", id)!.contentRevision,
+    });
+    expect(theirs.status, theirs.error?.message).toBe("confirmed");
+    const mine = await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "typed here", ifContentRevision: seen });
+    expect([mine.status, mine.error?.code]).toEqual(["rolled_back", "draft_changed"]);
+    expect((await w.row(id)).body).toBe("from the other device");
+  });
+
+  it("saves queued offline on one version, then reconnect: none is refused, the row holds the last", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.offline = true;
+    for (const body of ["one", "two"]) {
+      expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body, ifContentRevision: c.revision! })).status).toBe("queued");
+    }
+    w.net.offline = false;
+    const flushed = await w.engine.flushPending();
+    expect(flushed.map((r) => r.error?.code ?? null)).not.toContain("draft_changed");
+    expect((await w.row(id)).body).toBe("two");
+  });
+
+  it("a save whose answer was lost is replayed without a refusal", async () => {
+    const w = await world();
+    const c = await w.engine.mutate({ kind: "draft_save", draftId: null, ...w.base, body: "first" });
+    const id = c.entityId!;
+    w.net.loseAnswer = true;
+    expect((await w.engine.mutate({ kind: "draft_save", draftId: id, ...w.base, body: "one", ifContentRevision: c.revision! })).status).toBe("queued");
+    const flushed = await w.engine.flushPending();
+    expect(flushed.map((r) => [r.status, r.error?.code ?? null])).toEqual([["confirmed", null]]);
+    expect((await w.row(id)).body).toBe("one");
   });
 });

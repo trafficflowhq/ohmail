@@ -162,6 +162,8 @@ export interface MutationResult {
   key: string;
   status: MutationStatus;
   seq: number | null;
+  /** A confirmed `draft_save`'s version of the row ({@link MutationOutcome.revision}). */
+  revision?: string;
   error?: MutationRejectedError;
   /**
    * The server's id for a row this mutation created — see
@@ -8779,6 +8781,7 @@ export class OhmailEngine {
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
+        ...(outcome.revision ? { revision: outcome.revision } : {}),
         ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
         // Rides the confirmed result for `pendingWith`'s reason: the server answered, and this
         // is the only thing that can say the answer was about an earlier press.

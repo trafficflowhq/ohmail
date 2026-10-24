@@ -74,6 +74,13 @@ export interface DraftShell {
    * leaves its editor and the sidebar's foot finishes it (`send-handoff.test.tsx`).
    */
   handOff: { on: boolean };
+  /**
+   * With `versions` mounted: each row's version on the server. A save or a send stating another
+   * version is refused 409 `draft_changed`, as the route does, unless it restates the row's words.
+   */
+  versions: Map<string, string>;
+  /** Another device saves `patch` into a row: the server's version moves; the next `/sync` carries it. */
+  editElsewhere: (id: string, patch: Partial<EngineDraft>) => Promise<void>;
 }
 
 let roots: Root[] = [];
@@ -161,6 +168,7 @@ function engineOver(
   refuseDiscard: DraftShell["refuseDiscard"] = { on: false },
   spendSentRow: DraftShell["spendSentRow"] = { on: false },
   withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null },
+  versions: Map<string, string> | null = null,
 ): OhmailEngine {
   return new OhmailEngine({
     store: s,
@@ -212,6 +220,16 @@ function engineOver(
           throw new MutationRejectedError("this message has a send on record", { status: 409, code: "send_recorded", retryable: false });
         }
         if (m.kind === "draft_save" && saveGate.wait) await saveGate.wait;
+        // The route's version check: a row moved off the stated version refuses the edit.
+        const stated = m.kind === "draft_save" || m.kind === "mail_send" ? m.ifContentRevision : undefined;
+        if (versions !== null && named !== null && stated !== undefined && versions.has(named) && versions.get(named) !== stated) {
+          const held = s.get<EngineDraft>("draft", named);
+          const same = m.kind === "draft_save" && held !== undefined && held.subject === m.subject && held.body === m.body;
+          if (same) return { changes: [], seq: null, entityId: named, revision: versions.get(named)! };
+          throw new MutationRejectedError("this draft was changed elsewhere", {
+            status: 409, code: "draft_changed", retryable: false, ...(m.kind === "mail_send" ? { entityId: named } : {}),
+          });
+        }
         if (m.kind === "mail_send" && sendGate.wait) await sendGate.wait;
         if (m.kind === "mail_send" && refuseSend.on && (refuseSend.retryableFirst ?? 0) > 0) {
           refuseSend.retryableFirst! -= 1;
@@ -252,10 +270,16 @@ function engineOver(
             type: "draft", op: "update", id: spent.id, seq: ++seq, updatedAt: NOW.toISOString(), entity: { ...spent, status: "sent" },
           } as unknown as SyncChange);
         }
-        await s.applyChanges(changes);
         // A draft write names its row, as the HTTP adapter's does: a create's id is the server's.
         const entityId = m.kind === "draft_save" ? (m.draftId ?? changes[0]?.id) : undefined;
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}) };
+        let revision: string | undefined;
+        if (versions !== null && entityId) {
+          revision = `rev-${++seq}`;
+          versions.set(entityId, revision);
+          for (const c of changes) if (c.id === entityId && c.entity) (c.entity as { contentRevision?: string }).contentRevision = revision;
+        }
+        await s.applyChanges(changes);
+        return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}) };
       },
       withdrawSend: async () => (offline.on || withdrawAnswer.outcome === null
         ? { outcome: "unreachable" as const }
@@ -316,12 +340,16 @@ export async function mountShell(
     draftReplyWire?: DraftReplyWire; signatures?: Record<string, string>; handOff?: boolean;
     /** A second sending address (`mb2`), so a reply dock offers a From pick. */
     secondMailbox?: boolean;
+    /** Rows carry server versions (`contentRevision`), and the route's version check runs. */
+    versions?: boolean;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const store = await storeWith(messagesIn, drafts);
+  const versions = options.versions === true ? new Map<string, string>() : null;
+  if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
+  const store = await storeWith(messagesIn, versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! })));
   const sent: EngineMutation[] = [];
   const refuseSend: DraftShell["refuseSend"] = { on: false };
   const saveGate: DraftShell["saveGate"] = { wait: null };
@@ -335,6 +363,7 @@ export async function mountShell(
   const withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null };
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
+    versions,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -360,9 +389,18 @@ export async function mountShell(
     }));
   });
   await settleFirstPaint();
+  const editElsewhere = async (id: string, patch: Partial<EngineDraft>): Promise<void> => {
+    const now = store.get<EngineDraft>("draft", id)!;
+    const revision = `rev-${++seq}`;
+    versions?.set(id, revision);
+    remote.push({
+      type: "draft", op: "update", id, seq: 0, updatedAt: NOW.toISOString(),
+      entity: { ...now, ...patch, contentRevision: revision },
+    } as unknown as SyncChange);
+  };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere,
   };
 }
 

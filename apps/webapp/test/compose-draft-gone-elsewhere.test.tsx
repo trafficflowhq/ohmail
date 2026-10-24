@@ -345,3 +345,56 @@ describe("CONTROLS — nothing here is called deleted elsewhere, and nothing sen
       "a sent letter with nothing new was kept as a draft").toEqual({ buffer: "", saves: 0, kept: false });
   }, 30_000);
 });
+
+describe("a draft changed on another device while it is open here", () => {
+  const creates = (): Array<{ row: string | null; subject?: string }> => rows(saves()).filter((m) => m.row === null);
+  async function openVersioned(): Promise<void> {
+    shell = await mountShell("#/drafts", [], [letter()], { versions: true });
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open the letter");
+    await waitFor(() => q<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the editor on the letter");
+  }
+
+  it("typing over the other version keeps both texts: the row keeps theirs, what was typed here is a new draft, and it says so", async () => {
+    await openVersioned();
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await typeSubject("Plans for Friday, typed here");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => creates().length > 0, "the typed words saved as a new draft", 40).catch(() => undefined);
+    await sync();
+    expect({
+      creates: creates(), theirs: shell.store.get<EngineDraft>("draft", D)?.body,
+      says: text().includes(compose.changedElsewhere ?? "\u0000"),
+    }, "the other device's words were overwritten, or the typed words were lost in silence").toEqual({
+      creates: [{ row: null, subject: "Plans for Friday, typed here" }], theirs: "Written on the other device.", says: true,
+    });
+  }, 30_000);
+
+  it("Send over the other version sends nothing; Send as new sends what is on screen", async () => {
+    await openVersioned();
+    await shell.editElsewhere(D, { body: "Written on the other device." });
+    await typeSubject("Plans for Friday, typed here");
+    await press(button("Send"), "Send");
+    await waitFor(() => text().includes(compose.changedElsewhere ?? "\u0000"), "the fork said", 40).catch(() => undefined);
+    await pause(200);
+    await press(button("Send"), "Send again");
+    await pause(200);
+    expect({ note: text().includes(compose.changedElsewhereSend ?? "\u0000"), took: sends().length },
+      "a press sent the other version, or nothing said why").toEqual({ note: true, took: 1 });
+    await press(button(compose.sendAsNew!), "Send as new");
+    await waitFor(() => sends().length === 2, "the words on screen sent");
+    const m = sends()[1] as { draftId?: string | null; subject?: string };
+    expect({ row: m.draftId === D ? "theirs" : "new", subject: m.subject }).toEqual({ row: "new", subject: "Plans for Friday, typed here" });
+  }, 30_000);
+
+  it("this tab's own saves, one after another, never fork", async () => {
+    await openVersioned();
+    await typeSubject("Plans for Friday, once");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await typeSubject("Plans for Friday, twice");
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => saves().length >= 2, "both saves", 40).catch(() => undefined);
+    expect({ rows: rows(saves()), says: text().includes(compose.changedElsewhere ?? "\u0000") })
+      .toEqual({ rows: [{ row: D, subject: "Plans for Friday, once" }, { row: D, subject: "Plans for Friday, twice" }], says: false });
+  }, 30_000);
+});

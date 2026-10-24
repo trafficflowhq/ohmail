@@ -332,7 +332,9 @@ export class DraftsService {
   }
 
   /** PUT/PATCH /drafts/:id â full/partial edit of the composable fields. */
-  async update(ctx: ServiceContext, id: string, patch: PatchDraftBody): Promise<DraftUpdate> {
+  async update(
+    ctx: ServiceContext, id: string, patch: PatchDraftBody, opts: { ifContentRevision?: string } = {},
+  ): Promise<DraftUpdate> {
     // An edit answers a scheduled-send failure â the sentence must not outlive the words it was
     // about, so any edit clears it. A `scheduled` row itself refuses edits below.
     const set: Record<string, unknown> = { updatedAt: ctx.now(), sendError: null };
@@ -355,6 +357,7 @@ export class DraftsService {
     }
     if (patch.subject !== undefined) set.subject = this.validSubject(patch.subject);
     const rich = this.richBody(patch.html, patch.body);
+    let plainOverRich = false;
     if (rich) {
       set.html = rich.html;
       set.body = rich.text;
@@ -367,8 +370,8 @@ export class DraftsService {
         // in their editor, and the text every plaintext recipient would get â and silently
         // dropping the html to make them agree would delete formatting the user can see, in a
         // request that never mentioned it. Demoting a draft to plain text is legal and is spelt
-        // out: send `html: null` in the SAME request.
-        if (patch.html === undefined) await this.refuseIfRich(ctx, id);
+        // out: send `html: null` in the SAME request. Asked of the locked row, below.
+        if (patch.html === undefined) plainOverRich = true;
       }
     }
     const patched: EmailAddress[][] = [];
@@ -409,9 +412,30 @@ export class DraftsService {
       const [locked] = await dialect(ctx.db).forUpdate(tx.select({
         id: drafts.id, inReplyToMessageId: drafts.inReplyToMessageId,
         forwardOfMessageId: drafts.forwardOfMessageId, sendAt: drafts.sendAt, mailboxId: drafts.mailboxId,
+        status: drafts.status, sendKey: drafts.sendKey,
+        subject: drafts.subject, body: drafts.body, html: drafts.html, to: drafts.to, cc: drafts.cc, bcc: drafts.bcc,
       }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
+      /* THE VERSION THIS EDIT WAS MADE ON. A draft moved off it (another window or device saved
+         since) refuses the edit, writing nothing, so neither side's words are lost; one already
+         holding exactly these words answers as written. Absent is unconditional, as before. */
+      if (opts.ifContentRevision !== undefined && locked && locked.status === "draft" && locked.sendKey === null) {
+        const now = draftContentRevision(locked);
+        if (now !== opts.ifContentRevision) {
+          if (draftContentRevision({ ...locked, ...set } as typeof locked) === now) return null;
+          throw new ServiceError(
+            "draft_changed", 409,
+            "this draft was changed in another window or on another device; nothing was saved",
+          );
+        }
+      }
+      if (plainOverRich && locked?.html != null) {
+        throw new ServiceError(
+          "validation_failed", 400,
+          "this draft holds formatted text; send html, or send html: null to make it plain",
+        );
+      }
       if (refusedMove && locked?.mailboxId !== patch.mailboxId) throw refusedMove;
       if (locked) {
         // THE PAIR THE ROW WILL HOLD, read under its lock: a patch naming one side over a row
@@ -811,17 +835,6 @@ export class DraftsService {
       throw new ServiceError(
         "validation_failed", 400,
         "a draft either answers a message or forwards one, not both",
-      );
-    }
-  }
-
-  private async refuseIfRich(ctx: ServiceContext, id: string): Promise<void> {
-    const [row] = await ctx.db.select({ html: drafts.html }).from(drafts)
-      .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);
-    if (row?.html != null) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        "this draft holds formatted text; send html, or send html: null to make it plain",
       );
     }
   }

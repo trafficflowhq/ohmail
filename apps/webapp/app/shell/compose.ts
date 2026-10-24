@@ -500,7 +500,12 @@ export function writeComposeDraft(f: ComposeFields): void {
  * A reload that finds the row sent elsewhere compares it with the buffer, and keeps what the row
  * never held. Read only against the row the composer holds, so one left over names nothing.
  */
-export interface ComposeRowHolds { row: string; sig: string }
+export interface ComposeRowHolds {
+  row: string;
+  sig: string;
+  /** The row's version at that write (`contentRevision`), when the server said. */
+  rev?: string;
+}
 /* Read once per key per page. A unit moves INTO a composer's keys only before its composer is ready
    (the handoff, a dead tab's recovery), and the marker is read after; a stale miss reads as unknown. */
 const rowHolds = new Map<string, ComposeRowHolds | null>();
@@ -512,7 +517,9 @@ function rowHoldsOf(key: string): ComposeRowHolds | null {
   try {
     const raw = window.localStorage.getItem(key);
     const h = raw ? (JSON.parse(raw) as { holds?: Partial<ComposeRowHolds> }).holds : undefined;
-    if (typeof h?.row === "string" && h.row !== "" && typeof h.sig === "string") found = { row: h.row, sig: h.sig };
+    if (typeof h?.row === "string" && h.row !== "" && typeof h.sig === "string") {
+      found = { row: h.row, sig: h.sig, ...(typeof h.rev === "string" && h.rev !== "" ? { rev: h.rev } : {}) };
+    }
   } catch { /* a refused jar or a foreign shape knows nothing */ }
   rowHolds.set(key, found);
   return found;

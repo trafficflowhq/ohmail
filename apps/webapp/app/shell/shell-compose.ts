@@ -1207,15 +1207,19 @@ export function useShellCompose({
   const onSendOutcome = useStableCallback((
     key: string, _m: MailSendMutation, accepted: boolean, phase?: SendPhase, detail?: OutcomeDetail,
   ): boolean => {
+    /* A COMPOSE SAVE REFUSED BECAUSE THE ROW MOVED ELSEWHERE: that row is the other version's, so it
+       is neither marked not sent nor taken; the composer forks and says so once. */
+    const changed = !accepted && key === COMPOSE_SEND_KEY && detail?.ended?.code === "draft_changed";
+    const leftRow = changed ? undefined : detail?.left;
     if (!accepted && detail?.ended !== undefined && detail.shown === false) {
       // The foot line says it, with Open: only the Drafts row is marked, no toast says it again.
-      if (detail.line === true) markNotSentRow(key, detail.ended, detail.left);
-      else sayUnshownEnding(key, detail.ended, detail.left);
+      if (detail.line === true) markNotSentRow(key, detail.ended, leftRow);
+      else sayUnshownEnding(key, detail.ended, leftRow);
     }
     if (!accepted && phase === "failed") handBackLane(key);
     // The row a refusal left is the lane's own: the Drafts door to it gets the press back too.
     const owed = handedPress.current.get(key);
-    if (!accepted && owed !== undefined && detail?.left !== undefined) owed.row = detail.left.rowId;
+    if (!accepted && owed !== undefined && leftRow !== undefined) owed.row = leftRow.rowId;
     // Withdrawn before the wire, once the server answered a Cancel it owed: the words are a draft again.
     if (!accepted && phase === "idle") {
       handedPress.current.delete(key);
@@ -1229,7 +1233,7 @@ export function useShellCompose({
     // A compose send refused for good names its row, and the composer takes it — one draft, not two.
     const left = detail?.left;
     if (!accepted && left !== undefined && key === COMPOSE_SEND_KEY) {
-      settleComposeRef.current({ kind: "refusedWithRow", ...left });
+      settleComposeRef.current({ kind: changed ? "changedElsewhere" : "refusedWithRow", ...left });
     }
     // …and so does a reply or forward lane: its next press sends that row instead of making one.
     if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
@@ -1616,6 +1620,8 @@ export function useShellCompose({
        view's Scheduled group — the Ohbox has nothing to show for mail that has not left, and
        arriving at a list that visibly holds the promise is what makes "Scheduled for Fri 18:00"
        a fact rather than a toast. */
+    // A fork off screen is said by a toast; on screen the composer's own alert says it.
+    onForked: () => { if (routeViewRef.current !== "compose") toast(t("compose.changedElsewhere")); },
     onCleared: (toList) => {
       setCompose(EMPTY_COMPOSE);
       // A send that finished after the person moved on (the hand-off) leaves them where they are.
@@ -1893,7 +1899,7 @@ export function useShellCompose({
            that was opened rather than creating a second one beside it. `holdOf` answers `free`
            only for a row the mirror positively calls `draft`, so there is no second arm here for
            a status this branch would have to decide about. */
-        autosave.adopt(d.id, seeded);
+        autosave.adopt(d.id, seeded, d.contentRevision ?? null);
       }
       composeSeeded.current = true;
       go("compose");
@@ -2216,8 +2222,13 @@ export function useShellCompose({
       consent.signaturesKnown ? consent.signaturesHtml : {},
       composeFrom.mailboxId,
     );
-    const withWhen = (m: MailSendMutation): MailSendMutation =>
-      sendAt ? { ...m, sendAt } : m;
+    // The version the words on screen are based on rides too: the send's save states it, so a row
+    // moved elsewhere refuses the edit and sends nothing.
+    const based = autosave.baseNow();
+    const withWhen = (m: MailSendMutation): MailSendMutation => {
+      const at = sendAt ? { ...m, sendAt } : m;
+      return based !== null && at.draftId ? { ...at, ifContentRevision: based } : at;
+    };
     /**
      * NO FRESH-KEY RESEND AFTER AN UNVERIFIED SEND. This used to shed the draft id and send again. Every part of that
      * was the duplicate: a send with no draft id creates a NEW draft, `useMailSend` mints a NEW key for it, and the
@@ -2342,6 +2353,8 @@ export function useShellCompose({
         );
         return;
       }
+      // The words were kept as a new draft beside a version changed elsewhere: said as the composer goes.
+      if (flushed.kind === "forked") toast(t("compose.changedElsewhere"));
       setComposeCloseRefusal(null);
       go("ohbox");
     })();

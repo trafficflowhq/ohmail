@@ -297,7 +297,7 @@ describe("a message whose formatting was removed, through the shell over the rea
     expect((await w.rows()).filter((r) => r.status === "draft")).toEqual([]);
   }, 40_000);
 
-  it("a save the server refused no longer promises the draft is saved", async () => {
+  it("a save over a version formatted elsewhere keeps both: theirs stands, the words here are a new draft, and it says so", async () => {
     const w = await world();
     await typeInto("#compose-to", "lena@atelier.example");
     await typeInto("#compose-subject", "Hi");
@@ -308,10 +308,12 @@ describe("a message whose formatting was removed, through the shell over the rea
     expect((await w.putElsewhere(id, { subject: "Hi", html: "<p><strong>theirs</strong></p>", to: TO, cc: [], bcc: [] })).status).toBe(200);
     await body(escapeAsParagraphs("mine, more"));
     await pause(AUTOSAVE_DELAY_MS + 1500);
-    // Never flattened: the other device's formatting stands, and the screen does not say "saved".
-    expect((await w.rows())[0]!.html).toBe("<p><strong>theirs</strong></p>");
-    expect(notes()).not.toContain(compose.draftNote);
-    expect(notes()).toContain(compose.draftNotSaved);
+    // Never flattened, never overwritten: the other device's formatting stands on its row, and what
+    // was typed here is a draft of its own beside it, said on screen.
+    const all = await w.rows();
+    expect(all.find((r) => r.id === id)!.html).toBe("<p><strong>theirs</strong></p>");
+    expect(all.filter((r) => r.id !== id).map((r) => r.body)).toEqual(["mine, more"]);
+    expect(container.textContent ?? "").toContain(compose.changedElsewhere);
   }, 40_000);
 
   it("controls: bold kept sends formatted; never formatted sends plain", async () => {
