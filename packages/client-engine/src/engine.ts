@@ -892,6 +892,24 @@ export interface QueuedChange {
 
 const NO_QUEUED: readonly QueuedChange[] = Object.freeze([]);
 
+/**
+ * A SEND THAT HAS WAITED and has not gone — see {@link OhmailEngine.waitingSends}. `draftId` is the
+ * row the send names (its created row, or the bound one), `null` before it has one; `paintId` the
+ * send's own placeholder row in the overlay; `wire` a request for it running now.
+ */
+export interface WaitingSend {
+  readonly id: string;
+  readonly key: string;
+  readonly draftId: string | null;
+  readonly paintId: string | null;
+  readonly wire: boolean;
+  /** Epoch ms of the press. */
+  readonly at: number;
+  readonly mutation: Extract<EngineMutation, { kind: "mail_send" }>;
+}
+
+export const NO_WAITING: readonly WaitingSend[] = Object.freeze([]);
+
 export interface AbandonedMutation {
   id: string;
   key: string;
@@ -2623,6 +2641,8 @@ export class OhmailEngine {
   private queuedDiscardsCache: readonly QueuedChange[] = NO_QUEUED;
   /** See {@link OhmailEngine.queuedChanges}, kept the same way. */
   private queuedChangesCache: readonly QueuedChange[] = NO_QUEUED;
+  /** See {@link OhmailEngine.waitingSends}, kept the same way. */
+  private waitingSendsCache: readonly WaitingSend[] = NO_WAITING;
   /**
    * OVERLAYS WHOSE ECHO HAS NOT BEEN APPLIED YET, overlay id → the {@link drainEpoch} captured when the mutation's
    * POST returned. An entry lands here when the post-confirm reconcile drain FAILED (or was deliberately deferred by
@@ -9288,6 +9308,39 @@ export class OhmailEngine {
           : Object.freeze({ code: p.lastError.code, message: p.lastError.message, status: p.lastError.status }),
       })));
     return this.queuedChangesCache;
+  }
+
+  /**
+   * THE SENDS WAITING TO GO, for a Drafts list that shows them as such: every send on the queue, and
+   * one on the wire that has waited before (an answer heard, or restored from a previous session).
+   * A first attempt on the wire, an appointment, a confirmed send kept for its echo and a Cancel
+   * still owed its answer are not listed. The previous array is kept while every index has the
+   * same id, key, row, paint and wire (`useSyncExternalStore` compares by identity).
+   */
+  waitingSends(): readonly WaitingSend[] {
+    const sends = (p: PendingMutation): boolean =>
+      p.mutation.kind === "mail_send" && !p.mutation.sendAt && p.confirmed !== true && p.withdrawOwed !== true;
+    const next = [
+      ...this.queue.filter(sends).map((p) => [p, false] as const),
+      ...[...this.inFlight.values()]
+        .filter((p) => sends(p) && (p.lastError !== undefined || p.restored === true)).map((p) => [p, true] as const),
+    ].map(([p, wire]) => ({
+      p, wire,
+      draftId: p.createdRow?.id ?? (p.mutation as { draftId?: string }).draftId ?? null,
+      paintId: this.overlays.get(p.id)?.find((e) => e.type === "draft")?.id ?? null,
+    }));
+    const prev = this.waitingSendsCache;
+    if (next.length === prev.length && next.every((x, i) => {
+      const q = prev[i]!;
+      return x.p.id === q.id && x.p.key === q.key && x.draftId === q.draftId && x.paintId === q.paintId && x.wire === q.wire;
+    })) return prev;
+    this.waitingSendsCache = next.length === 0
+      ? NO_WAITING
+      : Object.freeze(next.map((x) => Object.freeze({
+        id: x.p.id, key: x.p.key, draftId: x.draftId, paintId: x.paintId, wire: x.wire, at: x.p.at,
+        mutation: x.p.mutation as Extract<EngineMutation, { kind: "mail_send" }>,
+      })));
+    return this.waitingSendsCache;
   }
 
   /**

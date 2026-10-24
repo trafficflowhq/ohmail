@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { EntityReader, MutationResult } from "@ohmail/client-engine";
+import type { EntityReader, MutationResult, WaitingSend } from "@ohmail/client-engine";
 import { HELD_SEND_RECHECK_MS, SENDING_STALE_AFTER_MS } from "@ohmail/client-engine";
 import { liveActions, liveDrafts, type LiveWorldActions } from "../src/state/live";
 import { sayArg } from "../src/refusal";
@@ -132,24 +132,28 @@ describe("liveDrafts — the rows the Drafts screen renders", () => {
   });
 });
 
-/** The engine seam a press crosses — `mutate` only; nothing else is reached by these arms. */
-function engineAnswering(answer: MutationResult | Error) {
-  const seen: { kind: string; draftId: string; outcome?: string }[] = [];
+/** The engine seam a press crosses — `mutate`, and the waiting sends a discard withdraws first. */
+function engineAnswering(answer: MutationResult | Error, waiting: readonly WaitingSend[] = [], withdraw = "withdrawn") {
+  const seen: { kind: string; draftId?: string; outcome?: string; key?: string }[] = [];
   const engine = {
     mutate: (m: { kind: string; draftId: string; outcome?: string }) => {
       seen.push(m);
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     },
+    waitingSends: () => waiting,
+    withdrawQueued: (key: string) => { seen.push({ kind: "withdraw", key }); return Promise.resolve(withdraw); },
+    read: () => readerOf([draftRow({})]),
+    syncOnce: () => Promise.resolve(),
   };
   return { engine, seen };
 }
 
-function actionsOver(answer: MutationResult | Error): {
+function actionsOver(answer: MutationResult | Error, waiting: readonly WaitingSend[] = [], withdraw = "withdrawn"): {
   actions: LiveWorldActions;
   said: string[];
-  seen: { kind: string; draftId: string; outcome?: string }[];
+  seen: { kind: string; draftId?: string; outcome?: string; key?: string }[];
 } {
-  const { engine, seen } = engineAnswering(answer);
+  const { engine, seen } = engineAnswering(answer, waiting, withdraw);
   const said: string[] = [];
   const actions = liveActions({
     engine: engine as never,
@@ -229,6 +233,72 @@ describe("draftResolve — the one way out of a held send", () => {
     } as unknown as MutationResult);
     expect(await running.actions.draftResolve("d-1", "arrived")).toBe(false);
     expect(running.said).toEqual([DECKS.en.draftsResolveStillRunning]);
+  });
+});
+
+const waitingSend = (over: Partial<WaitingSend> = {}): WaitingSend => ({
+  id: "q-1", key: "k-1", draftId: "d-1", paintId: "p-1", wire: false, at: NOW.getTime() - 60_000,
+  mutation: {
+    kind: "mail_send", inReplyTo: null, mailboxId: "mb-1", subject: "Offline", body: "Written  on a train.",
+    to: [{ name: "Bo", address: "bo@fake.test" }], cc: [], bcc: [],
+  },
+  ...over,
+} as WaitingSend);
+
+describe("a waiting send in the list", () => {
+  it("is listed first as waiting, newest press first, and hides the row and the placeholder it names", () => {
+    const rows = liveDrafts(readerOf([
+      draftRow({ id: "d-1", subject: "the row the send names" }),
+      draftRow({ id: "p-1", status: "sending", updatedAt: staleAt, subject: "Offline", to: [{ name: "Bo", address: "bo@fake.test" }] }),
+      draftRow({ id: "open", updatedAt: "2026-09-20T14:59:00.000Z" }),
+    ]), v, [
+      waitingSend(),
+      waitingSend({ id: "q-2", key: "k-2", draftId: null, paintId: null, at: NOW.getTime() - 5_000, mutation: {
+        ...waitingSend().mutation, subject: "  ",
+      } }),
+    ]);
+    expect(rows.map((r) => [r.id, r.state]), "a waiting send is missing, listed twice, or listed after a draft")
+      .toEqual([["q-2", "waiting"], ["d-1", "waiting"], ["open", "open"]]);
+    expect(rows[0]!.waiting).toEqual({ key: "k-2", wire: false, rowless: true });
+    expect(rows[1]).toMatchObject({
+      subject: "Offline", to: "Bo", preview: "Written on a train.", edit: null, heldSays: null,
+      waiting: { key: "k-1", wire: false, rowless: false },
+    });
+    expect(rows[0]!.subject).toBe(DECKS.en.scheduledNoSubject);
+    expect(rows[2]!.waiting).toBeNull();
+  });
+
+  it("the head counts what waits to send apart from what is not confirmed", () => {
+    expect(DECKS.en.draftsMeta(3, 1, 2)).toBe("3 drafts · 1 not confirmed · 2 waiting to send");
+    expect(DECKS.en.draftsMeta(1, 0, 1)).toBe("1 draft · 1 waiting to send");
+    expect(DECKS.en.draftsMeta(2, 0, 0)).toBe("2 drafts");
+    expect(DECKS.de.draftsMeta(1, 0, 1)).toBe("1 Entwurf · 1 wartet auf den Versand");
+    expect(DECKS.de.draftsMeta(2, 0, 2)).toBe("2 Entwürfe · 2 warten auf den Versand");
+  });
+});
+
+describe("draftDiscard over a waiting send — the Cancel comes first", () => {
+  it("withdraws the send before the delete and says nothing was sent", async () => {
+    const { actions, said, seen } = actionsOver(confirmed, [waitingSend()]);
+    expect(await actions.draftDiscard("d-1")).toBe("discarded");
+    expect(seen.map((x) => x.kind), "the row was deleted under its waiting send").toEqual(["withdraw", "draft_discard"]);
+    expect(said).toEqual([DECKS.en.draftsDiscardedNotSent]);
+  });
+
+  it("a send with no row yet is only withdrawn", async () => {
+    const { actions, said, seen } = actionsOver(confirmed, [waitingSend({ draftId: null })]);
+    expect(await actions.draftDiscard("q-1")).toBe("discarded");
+    expect(seen.map((x) => x.kind)).toEqual(["withdraw"]);
+    expect(said).toEqual([DECKS.en.draftsDiscardedNotSent]);
+  });
+
+  it("a send already on its way, or a Cancel nobody answered, deletes nothing and says nothing here", async () => {
+    for (const [answer, outcome] of [["on_the_wire", "alreadySent"], ["unknown", "cancelUnknown"]] as const) {
+      const { actions, said, seen } = actionsOver(confirmed, [waitingSend()], answer);
+      expect(await actions.draftDiscard("d-1")).toBe(outcome);
+      expect(seen.map((x) => x.kind), `${answer}: the row was deleted`).toEqual(["withdraw"]);
+      expect(said, "the card says it in the row").toEqual([]);
+    }
   });
 });
 

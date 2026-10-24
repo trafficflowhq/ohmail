@@ -137,8 +137,10 @@ import {
   watchWireFailedLists,
   unsubscribeClaim,
   unsubscribeLetterOf,
+  NO_WAITING,
   type MessageBody,
   type UnsubscribeClaim,
+  type WaitingSend,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
@@ -1185,9 +1187,10 @@ export function liveScheduled(reader: EntityReader, v: WorldView): WorldSchedule
  *
  * `open` is an ordinary unsent message. `held` is a send whose verdict never came (`unverified`)
  * and `interrupted` is one still calling itself `sending` past every possible invocation
- * lifetime: both hold the only copy of a message that may never have been delivered.
+ * lifetime: both hold the only copy of a message that may never have been delivered. `waiting`
+ * is a send on this device's queue that has not gone yet (the engine's `waitingSends`).
  */
-export type WorldDraftState = "open" | "held" | "interrupted";
+export type WorldDraftState = "open" | "held" | "interrupted" | "waiting";
 
 /**
  * WHAT IS KNOWN ABOUT A HELD SEND — the webapp `DraftsView`'s `heldSentence`, one reading. The
@@ -1234,6 +1237,11 @@ export interface WorldDraft {
   failure: string | null;
   /** What the phone's composer opens this draft with ({@link draftEditOf}); `null` where it cannot. */
   edit: WorldDraftEdit | null;
+  /**
+   * A send waiting to go: its key, whether a request for it is running now, and whether it has no
+   * draft row yet (its row id is then the queue entry's). `null` for every other row.
+   */
+  waiting: { key: string; wire: boolean; rowless: boolean } | null;
 }
 
 /** An open draft the phone's composer can take whole: the row it writes into and what it seeds. */
@@ -1283,9 +1291,37 @@ export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
  * on Scheduled, which absorbs it ({@link liveScheduled}'s own note). Both sentences are true, and
  * suppressing it on either would hide it from whoever came looking on that one.
  */
-export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
+export function liveDrafts(reader: EntityReader, v: WorldView, waiting: readonly WaitingSend[] = NO_WAITING): WorldDraft[] {
   const staleBefore = v.now.getTime() - SENDING_STALE_AFTER_MS;
-  return draftsList(reader, v.now).map((d) => {
+  const whenOf = (date: string) => messageDisplayTime({ date }, v.now, v.zone, v.locale ?? "en");
+  /* A WAITING SEND IS LISTED AS ONE, newest press first, from its own words (its paint carries the
+     reply's derived envelope). The row it names and its placeholder are not listed again. */
+  const named = new Set(waiting.flatMap((w) => [w.draftId, w.paintId]).filter((id): id is string => id !== null));
+  const sends = [...waiting].sort((a, b) => b.at - a.at).map((w): WorldDraft => {
+    const m = w.mutation;
+    const paint = w.paintId === null ? undefined : reader.get<EngineDraft>("draft", w.paintId);
+    const to = paint?.to ?? m.to ?? [];
+    const subject = paint?.subject ?? m.subject ?? "";
+    const parent = paint?.inReplyToMessageId ?? m.inReplyTo;
+    const repliesHere = parent !== null && reader.get<EngineMessage>("message", parent) !== undefined;
+    return {
+      id: w.draftId ?? w.id,
+      subject: subject.trim() === "" ? Copy.scheduledNoSubject : subject,
+      to: [...to, ...(paint?.cc ?? m.cc ?? []), ...(paint?.bcc ?? m.bcc ?? [])].map((a) => a.name ?? a.address).join(", "),
+      preview: m.body.replace(/\s+/g, " ").trim().slice(0, 140),
+      when: whenOf(new Date(w.at).toISOString()),
+      state: "waiting",
+      heldSays: null,
+      bodyKnown: true,
+      body: m.body,
+      repliesHere,
+      inReplyToMessageId: repliesHere ? parent : null,
+      failure: null,
+      edit: null,
+      waiting: { key: w.key, wire: w.wire, rowless: w.draftId === null },
+    };
+  });
+  return [...sends, ...draftsList(reader, v.now).filter((d) => !named.has(d.id)).map((d): WorldDraft => {
     const parent = d.inReplyToMessageId;
     /* THE ROW'S OWN READING OF "can this device open what it answers" — the webapp asks its shell
        the same question (`repliesHere`) and for the same reason: the answer changes what the row
@@ -1303,7 +1339,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
       subject: d.subject.trim() === "" ? Copy.scheduledNoSubject : d.subject,
       to: [...d.to, ...d.cc, ...d.bcc].map((a) => a.name ?? a.address).join(", "),
       preview: (d.body ?? "").replace(/\s+/g, " ").trim().slice(0, 140),
-      when: messageDisplayTime({ date: d.updatedAt }, v.now, v.zone, v.locale ?? "en"),
+      when: whenOf(d.updatedAt),
       state,
       heldSays: state === "interrupted"
         ? "interrupted"
@@ -1316,8 +1352,9 @@ export function liveDrafts(reader: EntityReader, v: WorldView): WorldDraft[] {
       inReplyToMessageId: repliesHere ? parent : null,
       failure: d.sendError ?? null,
       edit: draftEditOf(d),
+      waiting: null,
     };
-  });
+  })];
 }
 
 /**
@@ -3060,8 +3097,17 @@ export async function flushQueued(
  * confirmed delete. `stillSending` is the server's `send_recorded` 409: a send still `pending`
  * holds its draft, and the card says so IN THE ROW (no toast). `queued` is a wire that could not
  * be reached — the row is still there and the request is still owed. `refused` is everything else.
+ * Over a waiting send the Cancel comes first: `alreadySent` is one already on its way and
+ * `cancelUnknown` a Cancel nobody answered; both delete nothing and are said in the row.
  */
-export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "refused";
+export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "refused" | "alreadySent" | "cancelUnknown";
+
+/**
+ * HOW A CANCEL SEND FROM DRAFTS ENDED: the withdrawal's answer, and for a send with no row whether
+ * its words were written back (`kept`, applied or queued) or not (`notKept`, already said). `null`
+ * is a send whose row holds the words, or an answer that keeps the send.
+ */
+export interface WaitingCancel { said: WithdrawOutcome; kept: "kept" | "notKept" | null }
 
 /**
  * HOW A SEND AGAIN ENDED — `sent`, or why not. Every ending but `sent` and `superseded` (a newer
@@ -3263,7 +3309,8 @@ export interface LiveDeps {
  */
 /* …and the reader type, for the same reason: the world holds the projection the lists are
    drawn from and hands it back through {@link LiveDeps.presented}, so it has to name it. */
-export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange } from "@ohmail/client-engine";
+export type { AbandonedMutation, EntityReader, MutationResult, QueuedChange, WaitingSend } from "@ohmail/client-engine";
+export { NO_WAITING } from "@ohmail/client-engine";
 /* The sheet's step reads the press's forecast and the rules in play by this door too. */
 export type {
   ConflictGroup, ConsentOptions, PressForecast, RuleDTO as WorldRule, RuleLine, RulesInPlay,
@@ -3503,6 +3550,12 @@ export interface LiveWorldActions {
    * a replacement. A send restored after a relaunch is treated the same.
    */
   leaveSend(key: string): void;
+  /**
+   * CANCEL SEND FROM DRAFTS — the waiting send is withdrawn and its words stay a draft: a send with
+   * no row yet writes them back as a new one, on a withdrawal and on a Cancel still owed alike.
+   * `said` is {@link withdrawSend}'s answer; a write-back that did not land is said here.
+   */
+  cancelWaitingSend(key: string): Promise<WaitingCancel>;
   /**
    * TAKE THE APPOINTMENT OFF A SCHEDULED SEND — `draft_schedule_cancel`, the Scheduled
    * screen's one verb. See {@link LiveWorldActions.cancelSchedule}'s implementation for why
@@ -5106,6 +5159,33 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const leaveSend = (key: string): void => { sendsLeftOf(engine).add(key); };
 
+  const cancelWaitingSend = async (key: string): Promise<WaitingCancel> => {
+    const w = engine.waitingSends().find((x) => x.key === key);
+    // Read before the withdrawal takes the paint off: a reply's envelope is derived there.
+    const paint = w?.paintId == null ? undefined : engine.read().get<EngineDraft & { html?: string | null }>("draft", w.paintId);
+    const answer = await engine.withdrawQueued(key);
+    if (w === undefined) return { said: answer, kept: null };
+    /* NO ROW HOLDS THESE WORDS, so they are written back whenever this device will not send them:
+       withdrawn, or owed (the withdraw mark already stops the send here) — the composer's keep. */
+    if (w.draftId === null && (answer === "withdrawn" || answer === "unknown")) {
+      const m = w.mutation;
+      const mailboxId = paint?.mailboxId ?? m.mailboxId;
+      const notKept = refuse(answer === "withdrawn" ? "sendCancelledNotKept" : "replyCancelUnreachableNotKept");
+      if (!mailboxId) { toast(notKept); return { said: answer, kept: "notKept" }; }
+      const v = await engine.mutate({
+        kind: "draft_save", draftId: null, mailboxId, threadId: paint?.threadId ?? m.threadId ?? null,
+        inReplyToMessageId: m.inReplyTo, ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
+        subject: paint?.subject ?? m.subject ?? "", body: m.body, ...(m.html !== undefined ? { html: m.html } : {}),
+        to: paint?.to ?? m.to ?? [], cc: paint?.cc ?? m.cc ?? [], bcc: paint?.bcc ?? m.bcc ?? [],
+      }).then(pressVerdict, () => PRESS_THREW);
+      return { said: answer, kept: said(v, null, notKept) ? "kept" : "notKept" };
+    }
+    if (answer === "withdrawn" && w.draftId !== null && !engine.read().get("draft", w.draftId)) {
+      await engine.syncOnce().catch(() => undefined);
+    }
+    return { said: answer, kept: null };
+  };
+
   const sendReply = async (
     messageId: string,
     body: string,
@@ -5213,6 +5293,21 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * as still owed — the row is on screen either way, so silence would read as a delete that happened.
    */
   const draftDiscard = async (draftId: string): Promise<DraftDiscardOutcome> => {
+    /* A SEND WAITING ON THIS ROW IS CANCELLED FIRST: deleting the row under it left the send to
+       fail on the return ("Sending didn't work") and its refusal standing as a change not saved. */
+    const sends = engine.waitingSends().filter((w) => w.draftId === draftId || (w.draftId === null && w.id === draftId));
+    let withdrew = false;
+    for (const w of sends) {
+      const said = await engine.withdrawQueued(w.key);
+      if (said === "on_the_wire") return "alreadySent";
+      if (said === "unknown") return "cancelUnknown";
+      if (said === "withdrawn") withdrew = true;
+    }
+    if (sends.length > 0 && sends.every((w) => w.draftId === null)) {
+      if (withdrew) toast(refuse("draftsDiscardedNotSent"));
+      return "discarded";
+    }
+    if (withdrew && !engine.read().get("draft", draftId)) await engine.syncOnce().catch(() => undefined);
     const r = await engine
       .mutate({ kind: "draft_discard", draftId })
       .then((res) => pressVerdict(res), () => PRESS_THREW);
@@ -5221,6 +5316,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         // The files kept with it on this phone go with it.
         const letter = deps.letters?.letterOf(draftId);
         if (letter) deps.letters!.drop(letter.id);
+        if (withdrew) toast(refuse("draftsDiscardedNotSent"));
         return "discarded";
       }
       case "queued":
@@ -5918,7 +6014,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
     pileToggle, resurfaceToggle, resurfaceAt, resurfaceNow, resurfaceDone, markSeen, markRowSeen, markGlanced, markAllSeen, move,
     deleteMessage, trashList, trashRestore,
-    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelSchedule, tagToggle, tagCreate, screenSender,
+    sendReply, sendForward, sendNew, sendAndDoneOffered, withdrawSend, leaveSend, cancelWaitingSend, cancelSchedule, tagToggle, tagCreate,
+    screenSender,
     screeningForecast, screeningRules, screeningStayed, stayedWhy, moveStayed, screenUnscreened,
     draftDiscard, draftResolve, draftSendAgain, draftKeep, keepEnvelope, draftSent, draftLeft,
     folderCreate, folderRename, folderDelete, folderDismiss,
@@ -6039,6 +6136,8 @@ export interface WorldActions {
   withdrawSend(key: string): Promise<WithdrawOutcome>;
   /** See {@link LiveWorldActions.leaveSend}. */
   leaveSend(key: string): void;
+  /** Cancel a waiting send from Drafts — see {@link LiveWorldActions.cancelWaitingSend}. */
+  cancelWaitingSend(key: string): Promise<WaitingCancel>;
   /** Cancel a scheduled send — resolves `true` only on the server's CONFIRMED cancellation. */
   cancelSchedule(draftId: string): Promise<boolean>;
   /** Discard a draft — see {@link LiveWorldActions.draftDiscard} for the four endings. */
@@ -6132,6 +6231,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     leaveSend: (key) => current().leaveSend(key),
+    cancelWaitingSend: (key) => current().cancelWaitingSend(key),
     cancelSchedule: (draftId) => current().cancelSchedule(draftId),
     draftDiscard: (draftId) => current().draftDiscard(draftId),
     draftResolve: (draftId, outcome) => current().draftResolve(draftId, outcome),

@@ -2105,6 +2105,7 @@ const TABLE = {
   cancelSend: "Cancel send",
   sendCancelled: "Send cancelled. Nothing was sent.",
   sendCancelledInDrafts: "Send cancelled. The message is in Drafts.",
+  sendCancelledNotKept: "Send cancelled. Nothing was sent, but the words could not be kept as a draft.",
   replySending: "Sending…",
   replySent: "Reply sent.",
   /* WHEN THE SERVER ANSWERED FROM AN EARLIER PRESS. A second press under a resumed send key
@@ -2123,6 +2124,9 @@ const TABLE = {
   replyAlreadySent: "Too late to cancel. This message is already on its way.",
   /* The server could not be asked about a send that may have left; the Cancel is asked again. */
   replyCancelUnreachable: "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again.",
+  /* A send with no row, cancelled from Drafts while the server could not be asked. */
+  replyCancelUnreachableKept: "Couldn't reach the server to cancel. ohmail will keep asking and will not send this again. The words are kept as a draft.",
+  replyCancelUnreachableNotKept: "Couldn't reach the server to cancel, and the words could not be kept as a draft. ohmail will keep asking and will not send this again.",
   replyFailed: "Sending didn't work. Try again.",
   /* A send that never got past securing the connection or signing in: nothing left, and why. */
   replyNotSecured: "Not sent. The connection to your mail server couldn't be secured.",
@@ -2410,9 +2414,10 @@ const TABLE = {
    * (`metaUnreadOf`), and this one carries the fact the screen exists for: how many of these
    * are sends nobody has confirmed.
    */
-  draftsMeta: (total: number, held: number): string => {
+  draftsMeta: (total: number, held: number, waiting: number): string => {
     const drafts = total === 1 ? "1 draft" : `${total} drafts`;
-    return held === 0 ? drafts : `${drafts} · ${held} not confirmed`;
+    const said = held === 0 ? drafts : `${drafts} · ${held} not confirmed`;
+    return waiting === 0 ? said : `${said} · ${waiting} waiting to send`;
   },
   draftsEmptyTitle: "Nothing half-written",
   draftsEmptyHint: "They're saved to your account, so they're here on every device you read your mail on.",
@@ -2432,6 +2437,10 @@ const TABLE = {
   draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
   draftsDiscard: "Discard",
   draftsDiscardWhat: "This deletes the only copy.",
+  /** PHONE-ONLY: a send on this phone's queue, listed in Drafts until it goes. */
+  draftsWaiting: "Waiting to send",
+  draftsDiscardWaitingWhat: "This cancels the send and deletes the only copy.",
+  draftsDiscardedNotSent: "Discarded. Nothing was sent.",
   draftsDiscardConfirm: "Discard",
   draftsDiscardCancel: "Keep",
   draftsDiscardStillSending:

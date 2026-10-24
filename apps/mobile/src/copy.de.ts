@@ -1436,6 +1436,7 @@ export const DE: Deck = {
   cancelSend: "Senden abbrechen",
   sendCancelled: "Senden abgebrochen. Es wurde nichts gesendet.",
   sendCancelledInDrafts: "Senden abgebrochen. Die Nachricht liegt in den Entwürfen.",
+  sendCancelledNotKept: "Senden abgebrochen. Es wurde nichts gesendet, aber der Text konnte nicht als Entwurf behalten werden.",
   replySending: "Wird gesendet …",
   replySent: "Antwort gesendet.",
   replyEarlierWent: "Diese Antwort wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
@@ -1446,6 +1447,8 @@ export const DE: Deck = {
   replyUnverified: "Wir konnten diesen Versand nicht bestätigen. Schau in deinen Gesendet-Ordner, bevor du nochmal sendest.",
   replyAlreadySent: "Zu spät zum Abbrechen. Diese Nachricht ist schon unterwegs.",
   replyCancelUnreachable: "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal.",
+  replyCancelUnreachableKept: "Der Server war zum Abbrechen nicht erreichbar. ohmail fragt weiter nach und sendet das nicht noch einmal. Der Text bleibt als Entwurf erhalten.",
+  replyCancelUnreachableNotKept: "Der Server war zum Abbrechen nicht erreichbar, und der Text konnte nicht als Entwurf behalten werden. ohmail fragt weiter nach und sendet das nicht noch einmal.",
   replyFailed: "Senden hat nicht geklappt. Versuch es nochmal.",
   replyNotSecured: "Nicht gesendet. Die Verbindung zu deinem Mailserver konnte nicht gesichert werden.",
   replyLoginRefused: "Nicht gesendet. Dein Mailserver hat die Anmeldung abgelehnt.",
@@ -1629,9 +1632,10 @@ export const DE: Deck = {
 
   draftsTitle: "Entwürfe",
   draftsExplainer: "Nachrichten, die du begonnen und nicht gesendet hast.",
-  draftsMeta: (total: number, held: number): string => {
+  draftsMeta: (total: number, held: number, waiting: number): string => {
     const drafts = total === 1 ? "1 Entwurf" : `${total} Entwürfe`;
-    return held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
+    const said = held === 0 ? drafts : `${drafts} · ${held} nicht bestätigt`;
+    return waiting === 0 ? said : `${said} · ${waiting} ${waiting === 1 ? "wartet" : "warten"} auf den Versand`;
   },
   draftsEmptyTitle: "Nichts Halbfertiges",
   draftsEmptyHint: "Sie liegen in deinem Account und sind deshalb auf jedem Gerät da, auf dem du deine Mails liest.",
@@ -1647,6 +1651,9 @@ export const DE: Deck = {
   draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",
   draftsDiscard: "Verwerfen",
   draftsDiscardWhat: "Das löscht die einzige Kopie.",
+  draftsWaiting: "Wartet auf den Versand",
+  draftsDiscardWaitingWhat: "Das bricht das Senden ab und löscht die einzige Kopie.",
+  draftsDiscardedNotSent: "Verworfen. Es wurde nichts gesendet.",
   draftsDiscardConfirm: "Verwerfen",
   draftsDiscardCancel: "Behalten",
   draftsDiscardStillSending:

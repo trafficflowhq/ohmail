@@ -56,7 +56,11 @@ function DraftsBody() {
               exists for, so the head carries it where a person scans first. */}
           <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
             {w.boot.settled
-              ? Copy.draftsMeta(rows.length, rows.filter((r) => r.state !== "open").length)
+              ? Copy.draftsMeta(
+                rows.length,
+                rows.filter((r) => r.state === "held" || r.state === "interrupted").length,
+                rows.filter((r) => r.state === "waiting").length,
+              )
               : " "}
           </Txt>
         </View>
@@ -101,9 +105,11 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
       /* The row's whole fact, spoken: what it is about, to whom, and — the half that matters —
          what is known about a send nobody has confirmed. `row-spoken.ts`'s discipline. */
       accessibilityLabel={
-        row.heldSays === null
-          ? Copy.ariaLabelDetail(row.subject, row.to === "" ? Copy.scheduledNoRecipient : row.to)
-          : Copy.ariaLabelDetail(row.subject, heldSentence(row.heldSays))
+        row.waiting !== null
+          ? Copy.ariaLabelDetail(row.subject, Copy.draftsWaiting)
+          : row.heldSays === null
+            ? Copy.ariaLabelDetail(row.subject, row.to === "" ? Copy.scheduledNoRecipient : row.to)
+            : Copy.ariaLabelDetail(row.subject, heldSentence(row.heldSays))
       }
       style={{ paddingHorizontal: 18, paddingVertical: 12, gap: 4 }}
     >
@@ -126,7 +132,11 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
       ) : null}
       {/* A HELD SEND IS NOT AN ORDINARY DRAFT and the list says so where a person is scanning
           it, not only inside the card: the whole reason this destination exists on the phone. */}
-      {row.heldSays !== null ? (
+      {row.waiting !== null ? (
+        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+          {Copy.draftsWaiting}
+        </Txt>
+      ) : row.heldSays !== null ? (
         <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
           {heldSentence(row.heldSays)}
         </Txt>

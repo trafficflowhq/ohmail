@@ -5,10 +5,14 @@
  * (one sentence, Keep, Discard; back keeps); a refused discard is said in the row, never a toast.
  */
 import { Copy } from "../copy";
+import type { queuedCaptionKey } from "../engine/send-waits";
 import type { DraftHeldSays, DraftSendAgainOutcome, WorldDraft } from "../state/world";
 
-/** Why a Discard did not happen, said in the row. One reason today: a send still running. */
-export type DraftDiscardRefusal = "stillSending";
+/**
+ * Why a Discard or a Cancel send did not happen, said in the row: a send still running on the
+ * server, a waiting send already on its way, or a Cancel the server did not answer.
+ */
+export type DraftDiscardRefusal = "stillSending" | "alreadySent" | "cancelUnknown";
 
 /** Why a Send again did not send, said in the row — never a toast. */
 export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent" | "superseded">;
@@ -34,6 +38,10 @@ export function refusalSentence(why: DraftDiscardRefusal): string {
   switch (why) {
     case "stillSending":
       return Copy.draftsDiscardStillSending;
+    case "alreadySent":
+      return Copy.replyAlreadySent;
+    case "cancelUnknown":
+      return Copy.replyCancelUnreachable;
   }
 }
 
@@ -52,6 +60,8 @@ export function sendAgainSentence(why: DraftSendAgainRefusal): string {
 export interface DraftCardPlan {
   /** The held sentence, or `null` for an ordinary draft. */
   held: string | null;
+  /** A send waiting to go: its line, what is known of it, and the Cancel send label. */
+  waiting: { line: string; caption: string; cancelSend: string } | null;
   /**
    * The two acts, offered exactly where there is a held sentence — or, once Send again is
    * pressed, its question standing in their place (the second press the web editor's Send is).
@@ -71,24 +81,37 @@ export interface DraftCardPlan {
 }
 
 export function draftCardPlan(
-  row: Pick<WorldDraft, "heldSays">,
+  row: Pick<WorldDraft, "heldSays"> & Partial<Pick<WorldDraft, "waiting">>,
   ui: {
     confirming: boolean;
     confirmingSendAgain: boolean;
     refusal: DraftDiscardRefusal | null;
     sendRefusal?: DraftSendAgainRefusal | null;
+    /** A waiting send's caption off the network door ({@link queuedCaptionKey}); a send on the wire is still sending. */
+    queued?: ReturnType<typeof queuedCaptionKey>;
   },
 ): DraftCardPlan {
-  const held = row.heldSays === null ? null : heldSentence(row.heldSays);
+  const waiting = row.waiting ?? null;
+  const held = waiting !== null || row.heldSays === null ? null : heldSentence(row.heldSays);
   return {
     held,
+    waiting: waiting === null
+      ? null
+      : {
+        line: Copy.draftsWaiting,
+        caption: waiting.wire ? Copy.replySendingLong : Copy[ui.queued ?? "replyQueued"],
+        cancelSend: Copy.cancelSend,
+      },
     acts: held === null
       ? null
       : ui.confirmingSendAgain
         ? { kind: "confirm", what: Copy.draftsSendAgainWhat, keep: Copy.draftsDiscardCancel, sendAgain: Copy.draftsSendAgain }
         : { kind: "buttons", sendAgain: Copy.draftsSendAgain, itWasSent: Copy.draftsItWasSent },
     discard: ui.confirming
-      ? { kind: "confirm", what: Copy.draftsDiscardWhat, keep: Copy.draftsDiscardCancel, discard: Copy.draftsDiscardConfirm }
+      ? {
+        kind: "confirm", what: waiting !== null ? Copy.draftsDiscardWaitingWhat : Copy.draftsDiscardWhat,
+        keep: Copy.draftsDiscardCancel, discard: Copy.draftsDiscardConfirm,
+      }
       : { kind: "button", label: Copy.draftsDiscard },
     refusal: ui.refusal === null ? null : refusalSentence(ui.refusal),
     sendRefusal: ui.sendRefusal == null ? null : sendAgainSentence(ui.sendRefusal),

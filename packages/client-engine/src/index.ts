@@ -686,6 +686,9 @@ export {
   type AbandonedMutation,
   // A verb waiting on the queue as the strip lists it — `OhmailEngine.queuedDiscards`.
   type QueuedChange,
+  // A send that waits to go, as Drafts lists it — `OhmailEngine.waitingSends`.
+  type WaitingSend,
+  NO_WAITING,
   // The boot replay's per-attempt deadline and the unkeyed-create replay horizon — exported so
   // the guards read the shipped numbers, not copies.
   OUTBOX_REPLAY_DEADLINE_MS,

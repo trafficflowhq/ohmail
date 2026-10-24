@@ -32,6 +32,8 @@
  *  8. `cancelSendPress` saying the cancellation over `gone`, or asking twice → controls 9 and 8.
  *  9. `dispatchSend` joining a send restored after a relaunch by its intent alone → control 7R.
  * 10. `keepAct` closing over the words of a send whose Cancel is owed → control 11.
+ * 11. `cancelWaitingSend` keeping a rowless send's words only on `withdrawn`, or not reading the
+ *     write-back's verdict → controls 12 and 12b.
  * Each was run, watched red by the assertion named beside it, and restored from a pristine copy
  * proved by `cmp`.
  */
@@ -41,7 +43,7 @@ import { OUTBOX_TYPE, type EngineMutation, type WithdrawOutcome } from "@ohmail/
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { flushQueued, liveActions, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
+import { flushQueued, liveActions, liveDrafts, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
 import { keepAct } from "../src/ui/compose-keep";
 import { openLetterKeeper } from "../src/compose/letter-keeper";
 import { letterDoor } from "../src/compose/letter-store";
@@ -498,6 +500,46 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     live.store.close();
     live.fake.server.close();
   });
+
+  for (const kind of ["reply", "new"] as const) {
+    it(`CONTROL 12 (${kind}) — Cancel send from Drafts with no network: nothing goes, and the words stay a draft`, async () => {
+      const live = await scene();
+      const net = airplane();
+      live.tunnel(true);
+      const words = "Second thoughts from Drafts.";
+      const first = kind === "reply"
+        ? await live.actions.sendReply("m-1", words, false, null)
+        : await live.actions.sendNew("mb-1", [{ name: "Bo", address: "bo@fake.test" }], "Offline subject", words);
+      expect(live.engine.waitingSends().map((w) => w.draftId)).toEqual([null]);
+      expect(await live.actions.cancelWaitingSend(first.key!)).toEqual({ said: "unknown", kept: "kept" });
+      const listed = liveDrafts(live.engine.read(), { now: new Date(), zone: "UTC", locale: "en" } as never, live.engine.waitingSends());
+      expect(listed.map((d) => d.body), "the words left Drafts").toEqual([words]);
+      live.tunnel(false);
+      net.set("online");
+      await flushQueued(live.engine, live.actions.releaseConfirmed);
+      expect(live.fake.deliveries(), "a cancelled send went").toEqual([]);
+      const drafts = live.fake.draftRows().map((d) => [(d as { status?: string }).status ?? "draft", (d as { body?: string }).body]);
+      expect(drafts, "Cancel send from Drafts lost the words").toEqual([["draft", words]]);
+      live.store.close();
+      live.fake.server.close();
+    }, 60_000);
+  }
+
+  it("CONTROL 12b — a withdrawn Cancel send whose write-back is refused says the words were not kept", async () => {
+    const live = await scene();
+    const net = airplane();
+    live.tunnel(true);
+    const first = await live.actions.sendReply("m-1", "Words to keep.", false, null);
+    live.tunnel(false);
+    net.set("online");
+    live.fake.answerNext("POST", "/drafts", 422, { error: { code: "invalid_request", message: "refused" } });
+    expect(await live.actions.cancelWaitingSend(first.key!)).toEqual({ said: "withdrawn", kept: "notKept" });
+    expect(live.toasts.at(-1)).toBe(Copy.sendCancelledNotKept);
+    expect(live.toasts).not.toContain(Copy.sendCancelledInDrafts);
+    expect(live.fake.deliveries()).toEqual([]);
+    live.store.close();
+    live.fake.server.close();
+  }, 60_000);
 
   it("CONTROL 5 — a row waiting in the flush's batch is withdrawn and never sent", async () => {
     const live = await scene();
