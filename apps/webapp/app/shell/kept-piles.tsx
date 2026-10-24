@@ -18,8 +18,19 @@
  * in the shell asks `queryVisible` (`visible-dom.ts`), never the raw document, so a hidden pile's
  * row, strip or button is never the one a key presses.
  */
-import { Activity, useState, type ReactNode } from "react";
+import * as React from "react";
+import { useState, type ComponentType, type ReactNode } from "react";
 import { ViewBoundary } from "./ViewBoundary";
+
+/* NEVER A NAMED IMPORT OF `Activity`. Next 15.5's App Router renders the web app with its own vendored
+   React (19.2.0-canary), which exports no `Activity`: the named import was undefined in the web bundle
+   and the first press of News or Receipts threw React #130 (0.30.2). The desktop window's React 19.2.3
+   has it. So it is read at run time, and where it is missing only the pile on screen is mounted: News
+   and Receipts mount at each visit on the web, as before 0.30.2, and stay mounted on the desktop.
+   `kept-piles-next-react.test.tsx` renders this file under the vendored React. */
+const Activity = Reflect.get(React, "Activity") as
+  | ComponentType<{ mode: "visible" | "hidden"; children?: ReactNode }>
+  | undefined;
 
 export type KeptPileName = "reads" | "receipts";
 export const KEPT_PILES: readonly KeptPileName[] = ["reads", "receipts"];
@@ -65,9 +76,9 @@ export function KeptPiles({
   return (
     <>
       {KEPT_PILES.map((p) =>
-        next.has(p) ? (
+        next.has(p) && (Activity !== undefined || p === active) ? (
           <div key={p} data-pile={p} data-pile-active={p === active ? "" : undefined} style={{ display: "contents" }}>
-            <Activity mode={p === active ? "visible" : "hidden"}>
+            <Keep visible={p === active}>
               <ViewBoundary
                 onError={(error) => {
                   onError(p, error);
@@ -77,10 +88,14 @@ export function KeptPiles({
               >
                 {piles[p]}
               </ViewBoundary>
-            </Activity>
+            </Keep>
           </div>
         ) : null,
       )}
     </>
   );
+}
+
+function Keep({ visible, children }: { visible: boolean; children: ReactNode }) {
+  return Activity ? <Activity mode={visible ? "visible" : "hidden"}>{children}</Activity> : <>{children}</>;
 }
