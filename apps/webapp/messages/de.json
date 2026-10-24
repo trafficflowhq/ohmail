@@ -85,7 +85,8 @@
     "inviteOnly": "Neu bei ohmail? Du kannst dich registrieren — ein Einladungscode ist nicht nötig.",
     "inviteOnlyBeta": "Neu bei ohmail? In der Beta gibt es Accounts nur mit Einladung.",
     "inviteOnlySelfhost": "Neu hier? Accounts auf diesem Server entstehen per Einladung — frag die Person, die ihn betreibt.",
-    "haveInvite": "Du hast einen Einladungscode?"
+    "haveInvite": "Du hast einen Einladungscode?",
+    "createAccount": "Account erstellen"
   },
   "setup": {
     "checkingTitle": "Einen Moment",
@@ -2761,6 +2762,7 @@
     "desktopLoading": "Frage die Mail-Engine, welche Postfächer diese Installation öffnet…",
     "desktopNoneLocal": "Diese Installation hat noch kein Postfach — „Postfach hinzufügen“ verbindet eines.",
     "desktopNoneCloud": "Mit diesem Account ist noch kein Postfach verbunden. Verbinden geht in ohmail im Web.",
+    "desktopOpenSetup": "Einrichtung im Browser öffnen",
     "desktopNoneServer": "Mit diesem Account ist noch kein Postfach verbunden. Verbinden geht in der Web-App auf {host}.",
     "desktopNoneHost": "Auf {host} ist noch kein Postfach verbunden. Verbinden geht in ohmail auf {host}.",
     "desktopLastChecked": "Zuletzt geprüft {when}",
@@ -4190,6 +4192,10 @@
     "noBrowser": "Dieser {machine} hat keinen Browser geöffnet. Die Seite liegt unter ohmail.app/link-desktop.",
     "linkNoBrowser": "Dieser {machine} hat keinen Browser geöffnet. Die Adresse lautet {address}.",
     "browserSignInFailed": "Die Anmeldung über den Browser ließ sich nicht starten.",
+    "cloudNoAccount": "Noch kein Account?",
+    "cloudCreateAccount": "Im Browser einen erstellen",
+    "cloudJoinNoBrowser": "Dieser {machine} hat keinen Browser geöffnet. Die Seite liegt unter ohmail.app/join.",
+    "cloudSetupOnWeb": "Postfächer werden in ohmail im Web verbunden. Melde dich hier an, sobald deines verbunden ist.",
     "cloudApproveHint": "Dein Browser öffnet ohmail.app. Bestätige diesen {machine} dort — hier musst du nichts eintippen.",
     "cloudApproveWaiting": "Warte auf deinen Browser …",
     "cloudApproveBusy": "Der ohmail-Server ist ausgelastet. Es wird weiter gewartet.",

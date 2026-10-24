@@ -57,6 +57,7 @@ import { LocalWireError, localPlaintextOffer } from "./local-first-run.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
 import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
 import { openServerMailboxes, openWeb } from "./native.js";
+import { linksOutToBilling } from "./distribution.js";
 
 /** Whether this install can reach ONE mailbox's server right now — see {@link MailboxReachSlice}. */
 export interface MailboxReach {
@@ -2130,6 +2131,18 @@ export function DesktopMailboxes(
               ? t("desktopNoneServer", { host: server! })
               : cloud ? t("desktopNoneCloud") : t("desktopNoneLocal")}
         </p>
+      ) : null}
+      {/* SETUP IN THE BROWSER for a Cloud account with nothing connected. The page leads on to the
+          purchase step, so a store build keeps the sentence alone. */}
+      {listed.length === 0 && cloud && !paired && !selfHosted && linksOutToBilling() ? (
+        <div className="join-actions">
+          <Button
+            variant="primary"
+            onClick={() => void openWeb("setup").catch(() => setProblem(t("desktopNoBrowser")))}
+          >
+            {t("desktopOpenSetup")}
+          </Button>
+        </div>
       ) : null}
       {/* ── ADD MAILBOX — ABOVE THE LIST, because it is about the list, not a row. The route
           (`POST /local/mailboxes`) writes the row, proves its password against its own server

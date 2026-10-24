@@ -111,6 +111,9 @@ export const WEB_PLACES = [
   // given; the shell refuses the key without one.
   "approve",
   "privacy", "subprocessors",
+  // The Cloud door's sign-up page and the setup behind a sign-in; both lead to the purchase step,
+  // so their presses render only where `linksOutToBilling()` is true.
+  "join", "setup",
 ] as const;
 
 export type WebPlace = (typeof WEB_PLACES)[number];

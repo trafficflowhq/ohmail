@@ -20,6 +20,11 @@ export function signupPosture(selfHost: boolean, publicSignup: boolean): SignupP
   return publicSignup ? "managed-open" : "managed-invite";
 }
 
+/** Anyone may make an account here without a code: the posture whose sign-in offers "Create an account". */
+export function anyoneCanSignUp(posture: SignupPosture): boolean {
+  return posture === "managed-open";
+}
+
 /** `login.*` — the note under the sign-in form. One key per posture, and the keys are distinct. */
 export const LOGIN_INVITE_KEY: Readonly<Record<SignupPosture, string>> = {
   selfhost: "inviteOnlySelfhost",

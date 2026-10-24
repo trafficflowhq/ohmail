@@ -58,7 +58,7 @@ const TABLE = {
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
-    "Our hosted service does the organizing; this phone keeps a copy. Sign in on the web, open Settings → Devices, and scan the code it shows.",
+    "Our hosted service does the organizing; this phone keeps a copy. Sign in on the web and connect your mailbox there, then open Settings → Devices and scan the code it shows.",
 
   doorOwnServer: "Your own server",
   doorOwnServerSay:

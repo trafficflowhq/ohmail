@@ -245,6 +245,7 @@ describe("the door chooser", () => {
   const render = async (
     start: "doors" | "local" | "server" | "cloud" = "doors",
     operatorCaFile: string | null = null,
+    cloudAction: "configure" | "signIn" = "configure",
   ): Promise<HTMLElement> => {
     const { DoorChooser } = await import("../src/DoorChooser.js");
     mount = document.createElement("div");
@@ -255,7 +256,7 @@ describe("the door chooser", () => {
         h(
           NextIntlClientProvider,
           { locale: "en", messages: en as never, timeZone: "Europe/Zurich" },
-          h(DoorChooser, { start, onEntered: () => {}, operatorCaFile }),
+          h(DoorChooser, { start, onEntered: () => {}, operatorCaFile, cloudAction }),
         ),
       );
     });
@@ -288,6 +289,44 @@ describe("the door chooser", () => {
 
   const tiles = (el: HTMLElement): HTMLButtonElement[] =>
     [...el.querySelectorAll<HTMLButtonElement>(".door-tile")];
+
+  /* ── THE CLOUD DOOR'S WAY TO AN ACCOUNT ─────────────────────────────────────────────────── */
+
+  const opened: Array<Record<string, unknown> | undefined> = [];
+  const browserShell = (fails = false): void => {
+    opened.length = 0;
+    host.__TAURI_INTERNALS__ = {
+      transformCallback: () => 1,
+      invoke: async (command, payload) => {
+        if (command !== "open_link") return null;
+        if (fails) throw new Error("no browser");
+        opened.push(payload);
+        return null;
+      },
+    };
+  };
+
+  it("the Cloud door offers a person with no account the sign-up page, by its key", async () => {
+    browserShell();
+    const el = await render("cloud");
+    expect(el.textContent).toContain("No account yet?");
+    await press(el, "Create one in your browser");
+    expect(opened).toEqual([{ key: "join" }]);
+  });
+
+  it("a browser that will not open is said with the page's address", async () => {
+    browserShell(true);
+    const el = await render("cloud");
+    await press(el, "Create one in your browser");
+    expect(el.querySelector(".join-error")!.textContent).toContain("ohmail.app/join");
+  });
+
+  it("signing in again to a chosen door offers no sign-up", async () => {
+    browserShell();
+    const el = await render("cloud", null, "signIn");
+    expect(el.textContent).not.toContain("No account yet?");
+    expect([...el.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Create one in your browser");
+  });
 
   /* ── THE FOUR DOORS, IN THE OWNER'S ORDER AND WORDS ───────────────────────────────────── */
 

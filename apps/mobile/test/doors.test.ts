@@ -1425,6 +1425,14 @@ describe("the three doors — the claims, held to the code", () => {
     }
   });
 
+  it("the Cloud door names the web step a new account takes, and offers no sign-up or purchase", () => {
+    expect(DECKS.en.doorCloudSay).toContain("connect your mailbox there");
+    expect(DECKS.de.doorCloudSay).toContain("verbinde dort dein Postfach");
+    for (const deck of Object.values(DECKS)) {
+      expect(deck.doorCloudSay).not.toMatch(/sign up|create an account|subscri|registrier|abonn|https?:|ohmail\.app/i);
+    }
+  });
+
   it("no phone door claims the phone itself organizes anything", () => {
     // The desktop's first door is "On this computer — nothing is sent anywhere". A phone has no
     // IMAP client and no engine dialling a mail server, so an equivalent door here would be a

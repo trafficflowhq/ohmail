@@ -38,7 +38,7 @@ export const DE: Deck = {
 
   doorCloud: "ohmail Cloud",
   doorCloudSay:
-    "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie. Melde dich im Web an, öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
+    "Unser gehosteter Dienst organisiert; dieses Handy hält eine Kopie. Melde dich im Web an und verbinde dort dein Postfach, dann öffne Einstellungen → Geräte und scanne den Code, den es zeigt.",
 
   doorOwnServer: "Dein eigener Server",
   doorOwnServerSay:

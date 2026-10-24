@@ -57,6 +57,7 @@ import {
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { signInLead, type SignInCause } from "./cloud-session.js";
 import { DoorProblem } from "./DoorProblem.js";
+import { linksOutToBilling } from "./distribution.js";
 import { localPlaintextOffer } from "./local-first-run.js";
 import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js";
 
@@ -1481,6 +1482,8 @@ function CloudDoor({
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [handoff, setHandoff] = useState("");
+  /** The sign-up press could not open a browser: said with the page's address. */
+  const [joinProblem, setJoinProblem] = useState<string | null>(null);
   /* The first-run door opens ON the browser path; every other door opens on the password form. */
   const [viaBrowser, setViaBrowser] = useState(addressless);
   /** The browser path asks for a code only when chosen, or when the service has no approval door. */
@@ -1542,6 +1545,7 @@ function CloudDoor({
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
       {problem ? <p className="join-error">{problem}</p> : null}
+      {joinProblem ? <p className="join-error">{joinProblem}</p> : null}
 
       {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen or on the first-run door,
           whose claim names the account; the overlay's fresh door still names the mailbox it will
@@ -1689,6 +1693,26 @@ function CloudDoor({
           </Button>
         ) : null}
       </div>
+
+      {/* A NEW PERSON'S WAY TO AN ACCOUNT, on a door being chosen and never on a sign-in again.
+          The page holds the purchase step, so a store build says where setup happens instead. */}
+      {signInOnly ? null : linksOutToBilling() ? (
+        <p className="join-hint">
+          {DOOR_COPY.cloudNoAccount}{" "}
+          <button
+            type="button"
+            className="join-alt"
+            onClick={() => {
+              setJoinProblem(null);
+              void openWeb("join").catch(() => setJoinProblem(DOOR_COPY.cloudJoinNoBrowser(machineWord())));
+            }}
+          >
+            {DOOR_COPY.cloudCreateAccount}
+          </button>
+        </p>
+      ) : (
+        <p className="join-hint">{DOOR_COPY.cloudSetupOnWeb}</p>
+      )}
     </form>
   );
 }

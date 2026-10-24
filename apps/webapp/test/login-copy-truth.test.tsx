@@ -207,11 +207,24 @@ describe("the sign-in note states this deployment's posture", () => {
     expect(note.textContent).not.toContain("not required");
   });
 
+  it("an OPEN deployment offers 'Create an account' to /join; an invite-only one does not", async () => {
+    const open = (await mountLogin({ publicSignup: true })).querySelector(".login-invite-note")!;
+    const create = [...open.querySelectorAll("a")].find((a) => a.textContent === "Create an account");
+    expect(create, "no sign-up link where anyone can sign up").toBeDefined();
+    expect(create!.getAttribute("href")).toBe("/join");
+    await act(async () => root!.unmount());
+    host?.remove(); root = null; host = null;
+
+    const gated = (await mountLogin({ publicSignup: false })).querySelector(".login-invite-note")!;
+    expect(gated.textContent).not.toContain("Create an account");
+  });
+
   it("…and the link to redeem a code survives in both postures", async () => {
     // The note changes; the way in for somebody holding a code does not.
     for (const publicSignup of [true, false]) {
       const note = (await mountLogin({ publicSignup })).querySelector(".login-invite-note")!;
-      expect(note.querySelector('a[href="/join"]')!.textContent).toBe("Have an invite code?");
+      const redeem = [...note.querySelectorAll('a[href="/join"]')].map((a) => a.textContent);
+      expect(redeem).toContain("Have an invite code?");
       if (root) await act(async () => root!.unmount());
       host?.remove();
       root = null;
