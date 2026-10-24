@@ -50,6 +50,9 @@ import { standaloneHereFor } from "../engine/organizer-session";
 import { readFolderSummary } from "../net/folder-ops";
 import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
+import { openLetterSession, ownedLetters } from "../compose/letter-keeper";
+import { restoreLetters, sayLetterRestore, settleLetters, sweepLetters } from "../compose/letter-restore";
+import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, type FreshestRead } from "./folders-flag";
@@ -63,6 +66,7 @@ import {
   autoUnsubscribeConfirms,
   dispatchHeldRouting,
   answersWaiting, confirmedSendSay, flushQueued, NO_SETTLEMENT, reconnectFlushDue, refusedSendSay, type SendSettlement,
+  keptRecipients,
   liveActions,
   planHeldRouting,
   presentedOptions,
@@ -622,6 +626,7 @@ const NO_ACTIONS: WorldActions = {
   draftSendAgain: () => Promise.resolve("notReached" as const),
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
+  keepEnvelope: () => null,
   draftSent: () => false,
   draftLeft: () => null,
   sendOutcome: () => "unknown",
@@ -1304,6 +1309,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
    * left commit here, before the first paint shows their mail where it was.
    */
   const journal = session?.store ?? null;
+  /* THE LETTERS BEING WRITTEN, on the same journal (`compose/letter-store.ts`): one door per session. */
+  const letters = useMemo(() => (journal ? letterDoor(journal) : null), [journal]);
+  useLayoutEffect(() => {
+    openLetterSession(letters ? { door: letters, uuid: () => Crypto.randomUUID() } : null);
+    return () => openLetterSession(null);
+  }, [letters]);
   useLayoutEffect(() => {
     if (!engine || !journal) return undefined;
     openRoutingSession({
@@ -1348,6 +1359,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     () => (engine
       ? liveActions({
         engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
+        ...(letters ? { letters } : {}),
         // The register, not the hook's value: this facade is built once per session, and a
         // captured `locale` would stamp Trash rows in the mount-time language for ever.
         locale: () => activeLocale(),
@@ -1390,8 +1402,27 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         },
       })
       : null),
-    [engine, showToast, zone],
+    [engine, showToast, zone, letters],
   );
+  /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
+  useEffect(() => {
+    if (!engine || !acts || !letters) return;
+    let live = true;
+    void restoreLetters({
+      door: letters,
+      owned: ownedLetters(),
+      outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+      keep: (k) => acts.draftKeep(k),
+      hasMessage: (id) => engine.read().get("message", id) !== undefined,
+      drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+      firstSync: () => engine.syncOnce().then(() => undefined),
+      parse: keptRecipients,
+    }).then((restored) => {
+      const say = sayLetterRestore(restored);
+      if (live && say !== null) showToast(say);
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [engine, acts, letters, showToast]);
   // The held file lists heal after a drop, for as long as this facade serves (`watchLists`).
   useEffect(() => acts?.watchLists(), [acts]);
 
@@ -1433,6 +1464,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   const saidGoing = useRef(new Set<string>());
   useEffect(() => {
     if (conn.syncing) tried.current.clear();
+    /* A completed drain: a kept draft sent or deleted on another device takes its files with it. */
+    else if (letters && acts) sweepLetters(letters, ownedLetters(), acts.draftLeft);
   }, [conn.syncing]);
   useEffect(() => {
     if (conn.syncing || engine === null || acts === null || flushing.current === engine) return;
@@ -1468,6 +1501,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
         // to the session on screen, and this one's is gone.
         if (backendEngineRef.current !== flushed) return;
+        if (letters) settleLetters(letters, ownedLetters(), settled);
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
           settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
@@ -1598,6 +1632,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           draftResolve: (draftId, outcome) => acts.draftResolve(draftId, outcome),
           draftSendAgain: (draftId) => acts.draftSendAgain(draftId),
           draftKeep: (keep) => acts.draftKeep(keep),
+          keepEnvelope: (mode, messageId) => acts.keepEnvelope(mode, messageId),
           draftSent: (draftId) => acts.draftSent(draftId),
           draftLeft: (draftId) => acts.draftLeft(draftId),
           sendOutcome: (key) => outcomeOf(key),

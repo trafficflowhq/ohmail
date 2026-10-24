@@ -4,8 +4,9 @@
  * so the decision is driven directly and `MessageActions.tsx` is read to prove it takes it).
  *
  * Every road out — Cancel, the backdrop, the back gesture — asks this after `cancelAct` said
- * "close". Text worth a row is kept as a draft first; files a draft cannot hold, or a keep that
- * failed, are said in place and the NEXT close discards, so one stray tap loses nothing.
+ * "close". A letter worth a row is kept as a draft first, its files on this phone
+ * (`compose/letter-store.ts`); files past what the phone keeps, or a keep that failed, are said in
+ * place, so one stray tap loses nothing.
  */
 import type { ComposerPhase } from "./send-cancel";
 
@@ -16,11 +17,11 @@ import type { ComposerPhase } from "./send-cancel";
 export type KeepAct = "keep" | "ask" | "close" | "tooLong";
 
 /**
- * Worth a draft row — the web's `worthCreating`: a body, or a new mail's own subject. A reply's
- * subject and a recipient alone are not something the person wrote.
+ * Worth a draft row — the web's `worthCreating`: a body, a new mail's own subject, or a file. A
+ * reply's subject and a recipient alone are not something the person wrote.
  */
-export function worthKeeping(o: { fresh: boolean; subject: string; body: string }): boolean {
-  return o.body.trim() !== "" || (o.fresh && o.subject.trim() !== "");
+export function worthKeeping(o: { fresh: boolean; subject: string; body: string; files?: number }): boolean {
+  return o.body.trim() !== "" || (o.fresh && o.subject.trim() !== "") || (o.files ?? 0) > 0;
 }
 
 /**
@@ -32,7 +33,8 @@ export function worthKeeping(o: { fresh: boolean; subject: string; body: string 
 export function keepAct(o: {
   phase: ComposerPhase;
   worth: boolean;
-  files: number;
+  /** Files past what this phone keeps with drafts: named before the keep, which goes without them. */
+  filesOver: number;
   armed: boolean;
   /** The body is past `DRAFT_BODY_MAX_BYTES`. */
   tooLong?: boolean;
@@ -42,14 +44,14 @@ export function keepAct(o: {
   const idle = o.phase === "idle" || (o.phase === "queued" && o.cancelOwed === true);
   if (!idle || o.armed) return "close";
   if (o.worth && o.tooLong === true) return "tooLong";
-  if (o.worth) return "keep";
-  return o.files > 0 ? "ask" : "close";
+  if (o.worth && o.filesOver > 0) return "ask";
+  return o.worth ? "keep" : "close";
 }
 
 /**
  * A composer UNMOUNTED without a close (its route replaced or covered by a fold): an idle letter
- * worth a row is kept quietly, as the close would have kept it. Files cannot ride a draft and there
- * is nobody left to ask, so they go; a send in flight or a keep already running keeps its own.
+ * worth a row is kept quietly, as the close would have kept it, with the files that fit; a send in
+ * flight or a keep already running keeps its own.
  */
 export function unmountKeep(o: { phase: ComposerPhase; worth: boolean; keeping: boolean; tooLong?: boolean }): "keep" | "nothing" {
   return o.phase === "idle" && o.worth && !o.keeping && o.tooLong !== true ? "keep" : "nothing";

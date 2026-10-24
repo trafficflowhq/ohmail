@@ -43,6 +43,8 @@ import { queuedCaptionKey } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
 import { flushQueued, liveActions, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
 import { keepAct } from "../src/ui/compose-keep";
+import { openLetterKeeper } from "../src/compose/letter-keeper";
+import { letterDoor } from "../src/compose/letter-store";
 import {
   afterWithdraw, cancelAct, cancelledSay, cancelSendOffered, cancelSendPress, keptSay, type CloseRoad, type SendVerdict, type WithdrawAnswer,
 } from "../src/ui/send-cancel";
@@ -111,11 +113,12 @@ async function scene() {
   await boot.verifyIdentity();
   await boot.engine.start();
   const toasts: string[] = [];
+  const letters = letterDoor(boot.store);
   const actions: LiveWorldActions = liveActions({
-    engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC",
+    engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC", letters,
   });
   return {
-    fake, origin, deps, ...boot, actions, toasts,
+    fake, origin, deps, ...boot, actions, toasts, letters,
     tunnel: (on: boolean) => { offline = on; },
     holdTheSend: () => { holding = true; return { reachedTheDoor, openTheDoor }; },
     loseSendAnswers: (n: number) => { loseSendAnswers = n; },
@@ -447,7 +450,7 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     expect(await pressCancel(live, first.key ?? null, "cancelSend")).toBe("unknown");
     // Back, as the sheet takes it: no row on this door holds the words, so the close keeps them.
     expect(cancelAct({ road: "close", phase: "queued", key: first.key ?? null, alreadySent: false, cancelOwed: true })).toBe("close");
-    if (keepAct({ phase: "queued", worth: true, files: 0, armed: false, cancelOwed: true }) === "keep") {
+    if (keepAct({ phase: "queued", worth: true, filesOver: 0, armed: false, cancelOwed: true }) === "keep") {
       expect(await live.actions.draftKeep({
         mode: "reply", messageId: "m-1", mailboxId: null, to: [], subject: "", body: words, files: 0, draftId: null,
       })).toBe("kept");
@@ -461,6 +464,37 @@ describe("a message the person cancelled is never sent, and never sent twice", (
     const drafts = live.fake.draftRows().map((d) => [(d as { status?: string }).status ?? "draft", (d as { body?: string }).body]);
     expect(drafts, "the cancelled letter was neither sent nor in Drafts").toEqual([["draft", words]]);
     expect(live.toasts.at(-1)).toBe(Copy.composeKeptQueued);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("CONTROL 12 — a refused send leaves its files with the row it left; Cancel send of a letter no row holds drops them", async () => {
+    const live = await scene();
+    const words = { mode: "reply" as const, messageId: "m-1", mailboxId: "mb-1", to: "", cc: "", bcc: "", subject: "", envelope: null };
+    const file = { filename: "plan.pdf", contentType: "application/pdf", contentBase64: Buffer.alloc(32, 5).toString("base64") };
+    const letter = openLetterKeeper({ door: live.letters, id: uuid(), newFileId: uuid, words: { ...words, body: "See the plan." } });
+    letter.addFile({ ...file, sizeBytes: 32 });
+    live.fake.answerNext("POST", "/drafts/d-1/send", 422, { error: { code: "message_rejected", message: "rejected by test", retryable: false } });
+    letter.markSend();
+    const refused = await live.actions.sendReply("m-1", "See the plan.", false, null, null, [file]);
+    letter.sendAnswered(refused);
+    expect(refused).toMatchObject({ outcome: "failed", draftId: "d-1" });
+    expect(live.letters.filesOf("d-1").map((f) => f.filename), "the refusal dropped the files").toEqual(["plan.pdf"]);
+    expect(live.letters.letterOf("d-1")?.send ?? null).toBeNull();
+
+    airplane();
+    live.tunnel(true);
+    const other = openLetterKeeper({ door: live.letters, id: uuid(), newFileId: uuid, words: { ...words, body: "Never mind." } });
+    other.addFile({ ...file, sizeBytes: 32 });
+    other.markSend();
+    const queued = await live.actions.sendReply("m-1", "Never mind.", false, null, null, [file]);
+    other.sendAnswered(queued);
+    expect(queued.outcome).toBe("queued");
+    // The signal back before the press: the server is asked and answers it withdrawn.
+    live.tunnel(false);
+    expect(await pressCancel(live, queued.key ?? null, "cancelSend")).toBe("close");
+    other.cancelled(null);
+    expect(live.letters.letters().map((l) => l.body), "the cancelled letter outlived Nothing was sent").toEqual(["See the plan."]);
     live.store.close();
     live.fake.server.close();
   });

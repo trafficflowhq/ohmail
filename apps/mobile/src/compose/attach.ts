@@ -23,6 +23,8 @@ export interface PhoneComposeAttachment extends ComposeAttachment {
   sizeBytes: number;
   /** Where the picker left the file — what a picture is shrunk from. Never sent. */
   uri?: string;
+  /** Its record on the phone's disk, once written (`letter-store.ts`). Never sent. */
+  fileId?: string;
 }
 
 /**
