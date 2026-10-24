@@ -43,7 +43,7 @@ import {
   makePlatformSignalPort, SSE_DISABLED_REFUSAL,
 } from "@trafficflow/services";
 import {
-  makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf,
+  makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf, nodeMailDns,
 } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { waitUntil } from "@vercel/functions";
@@ -869,6 +869,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
      * value as "fall back to `defaultOrigin(authConfig)`", and an empty string would make
      * `new URL(path, "")` throw inside a redirect handler. */
     appOrigin: cfg.appOrigin ?? undefined,
+    // The DNS `POST /mailboxes/discover` asks — MX and SRV only, named here and nowhere else.
+    mailDns: nodeMailDns,
     /**
      * The OAuth token source, per invocation — the token cache is keyed by mailbox and a
      * serverless invocation serves one request, so a per-request instance spares a redundant

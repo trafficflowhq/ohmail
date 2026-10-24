@@ -3,18 +3,20 @@
 /**
  * The provider picker — the ONE control behind every "connect a mailbox" surface (first-run,
  * Settings → Mailboxes, the desktop's local door): the two bare `<select>`s it replaced drifted
- * twice. The seven named providers render as a radiogroup of tiles; the generic "any IMAP" entry
- * is a different kind of answer and renders as its own recessed row. NO brand logos: hotlinked
- * marks are forbidden (zero off-origin loads), self-drawn trademark imitations are liability.
+ * twice. The named providers render as a radiogroup of tiles; the generic "any IMAP" entry
+ * is a different kind of answer and renders as its own recessed row. Proton is a tile outside the
+ * group: a note behind a button, never a choice, because ohmail cannot connect to it. NO brand
+ * logos: hotlinked marks are forbidden (zero off-origin loads), self-drawn trademark imitations are
+ * liability.
  * Selection reveals the provider's `note` — the sentence that stops someone typing their ACCOUNT
  * password into a third-party form — via `aria-describedby`; only `manual` reveals host fields. A
  * radiogroup with roving tabindex: arrows move focus AND selection (APG), Enter/Space select.
  */
 
-import { useId, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
-import { PROVIDERS, providerById, providerLabel, type ProviderPreset } from "./providers";
+import { PROTON, PROVIDERS, providerById, providerLabel, type ProviderPreset } from "./providers";
 
 const NAMED: ProviderPreset[] = PROVIDERS.filter((p) => !p.manual);
 const MANUAL: ProviderPreset = PROVIDERS.find((p) => p.manual)!;
@@ -42,7 +44,11 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
   const t = useTranslations("providerPicker");
   const labelId = useId();
   const noteId = useId();
+  const protonId = useId();
   const tiles = useRef<Array<HTMLButtonElement | null>>([]);
+  // Proton's note is open: it stands in for the chosen provider's until a provider is chosen.
+  const [proton, setProton] = useState(false);
+  useEffect(() => { setProton(false); }, [value]);
 
   // `providerById` answers the manual entry for an unknown id — the same fallback the
   // callers rely on, so a stale or bogus id can never highlight a wrong named preset.
@@ -59,6 +65,7 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
    * Focus still moves unconditionally — the roving tabindex is about where you ARE.
    */
   const choose = (id: string): void => {
+    setProton(false);
     if (id !== selected?.id) onChange(id);
   };
 
@@ -112,7 +119,7 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
         type="button"
         role="radio"
         aria-checked={on}
-        aria-describedby={on ? noteId : undefined}
+        aria-describedby={on && !proton ? noteId : undefined}
         // Roving tabindex: the checked tile is the group's tab stop; before any choice,
         // the first tile is, so the group is always enterable with one Tab.
         tabIndex={on || (at < 0 && index === 0) ? 0 : -1}
@@ -140,7 +147,23 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
           {tile(MANUAL, NAMED.length)}
         </div>
       </div>
-      {selected ? (
+      <div className="pvp-grid pvp-aside">
+        <button
+          type="button"
+          className="pvp-tile pvp-other"
+          aria-expanded={proton}
+          aria-controls={proton ? protonId : undefined}
+          onClick={() => setProton((open) => !open)}
+        >
+          <span className="pvp-name">{PROTON.label}</span>
+          <span className="pvp-host">{t("protonSub")}</span>
+        </button>
+      </div>
+      {proton ? (
+        <div key="proton" className="pvp-note" id={protonId}>
+          <p>{t("protonNote", { other: t("otherLabel") })}</p>
+        </div>
+      ) : selected ? (
         // Keyed by provider so switching re-runs the rise — the panel visibly answers
         // the click rather than silently swapping its text.
         <ProviderNote key={selected.id} preset={selected} id={noteId} note={note} showHelp={showHelp} />

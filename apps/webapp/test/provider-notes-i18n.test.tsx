@@ -12,7 +12,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { PROVIDERS } from "../app/shell/providers";
+import { PROTON, PROVIDERS } from "../app/shell/providers";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -94,5 +94,39 @@ describe("the picker says it in German", () => {
     expect(text).toContain(pp(de).note_gmx);
     expect(text).toContain(pp(de).help_gmx);
     expect(text).not.toContain("GMX ships with IMAP switched OFF");
+  });
+});
+
+describe("Proton: a note behind its own tile, never a choice", () => {
+  it("opens the German note, reports nothing, and gives way to a provider chosen after it", async () => {
+    const { ProviderPicker } = await import("../app/shell/ProviderPicker.js");
+    const seen: string[] = [];
+    function Picker() {
+      const [value, setValue] = React.useState<string | null>(null);
+      return React.createElement(ProviderPicker, { value, onChange: (id: string) => { seen.push(id); setValue(id); } });
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(React.createElement(NextIntlClientProvider, { locale: "de", messages: de, timeZone: "UTC", children: React.createElement(Picker) }));
+    });
+    const proton = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(PROTON.label))!;
+    const note = pp(de).protonNote!.replace("{other}", pp(de).otherLabel!);
+    expect(proton.getAttribute("role")).toBeNull();
+    expect(host.querySelectorAll('[role="radio"]').length).toBe(PROVIDERS.length);
+    expect(host.textContent).not.toContain(note);
+
+    await act(async () => { proton.click(); });
+    expect(proton.getAttribute("aria-expanded")).toBe("true");
+    expect(host.textContent).toContain(note);
+    expect(seen).toEqual([]);
+
+    const gmail = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((b) => b.textContent?.includes("Gmail"))!;
+    await act(async () => { gmail.click(); });
+    expect(seen).toEqual(["gmail"]);
+    expect(proton.getAttribute("aria-expanded")).toBe("false");
+    expect(host.textContent).not.toContain(note);
+    expect(host.textContent).toContain(pp(de).note_gmail);
   });
 });

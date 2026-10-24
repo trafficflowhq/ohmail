@@ -1,0 +1,5 @@
+### WEB.DE, t-online and bluewin get their own tiles, and Proton Mail says why it cannot connect
+
+The provider picker on the web, in the desktop app and on your own server now offers WEB.DE, t-online and bluewin, with their servers filled in and what each needs before you type a password: WEB.DE's IMAP switch, Telekom's separate e-mail password. On the phone, an address at web.de, t-online.de or bluewin.ch fills in its servers. A Proton Mail tile explains that Proton reaches other mail apps only through Proton Bridge, which ohmail cannot connect through yet, so a Proton address no longer fails without a word. The "Any other IMAP mailbox" tile now tells you to choose Gmail or Microsoft when your own domain's mail is hosted by Google Workspace or Microsoft 365.
+
+ohmail Cloud can now look up which provider hosts a domain's mail from that domain's DNS records alone (MX, and the SRV records of RFC 6186), for the connect forms to suggest a provider. Only the domain is sent, never the part before the @, and nothing about a lookup is stored or logged.

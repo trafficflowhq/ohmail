@@ -4481,6 +4481,14 @@ input.set-tag-input {
   font-size:calc(11px + var(--type-up));
   letter-spacing: 0;
 }
+/* Proton: a quiet tile under the grid that opens a note rather than making a choice. */
+.pvp-aside {
+  margin-top: 8px;
+}
+.pvp-other[aria-expanded="true"] {
+  background: var(--canvas);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
 /* the load-bearing panel: what to fetch from the provider BEFORE typing anything,
    and the one sentence that stops an account password landing here */
 .pvp-note {

@@ -70,6 +70,12 @@ export {
   makeProbeHostGuard, ALLOW_ANY_PROBE_HOST, MAIL_PROBE_PORTS, type ProbeHostGuard,
 } from "./imap-probe.js";
 
+// The mail-domain lookup behind `POST /mailboxes/discover`; the hosted root wires `nodeMailDns`.
+export {
+  discoverMailHosting, nodeMailDns, DISCOVER_MX_PRESETS, DISCOVER_PROTON_MX, NOTHING_DISCOVERED,
+  type MailDnsResolver, type MailboxDiscovery, type DiscoveredServer,
+} from "./mailbox-discovery.js";
+
 // Routing.
 export {
   matchRoute,

@@ -47,14 +47,28 @@ export function refusalAuthHint(err: unknown): AuthHint | null {
 }
 
 /**
+ * The presets whose refused password has a sentence of its own, `mailboxes.probe_auth_<id>`: what
+ * that provider takes instead of the account password. Gmail's comes from the server's `authHint`.
+ * Microsoft's is its app-password path; a screen that offers the Microsoft sign-in says that instead.
+ */
+export const PRESET_AUTH_REFUSALS: ReadonlySet<string> = new Set([
+  "microsoft", "icloud", "yahoo", "fastmail", "gmx", "infomaniak", "webde", "tonline", "bluewin",
+]);
+
+/**
  * The `mailboxes.probe_*` key: a local server's own sentence for `auth`, and for `timeout` on the
  * incoming leg only — the two-minute wait is that leg's; the submission leg keeps its 20 s. Google's
- * refused sign-in says its own (`probe_auth_gmail_<hint>`), the incoming leg only.
+ * refused sign-in says its own (`probe_auth_gmail_<hint>`), and so does a refused password on the
+ * chosen preset (`presetId`, {@link PRESET_AUTH_REFUSALS}), the incoming leg only.
  */
 export function probeCopyKey(
   reason: string, localServer: boolean, transport: "imap" | "smtp" = "imap", authHint?: AuthHint | null,
+  presetId?: string | null,
 ): string {
-  if (reason === "auth" && transport === "imap" && !localServer && authHint) return `probe_auth_gmail_${authHint}`;
+  if (reason === "auth" && transport === "imap" && !localServer) {
+    if (authHint) return `probe_auth_gmail_${authHint}`;
+    if (presetId && PRESET_AUTH_REFUSALS.has(presetId)) return `probe_auth_${presetId}`;
+  }
   const own = reason === "auth" || (reason === "timeout" && transport === "imap");
   return localServer && own ? `probe_${reason}_local` : `probe_${reason}`;
 }
