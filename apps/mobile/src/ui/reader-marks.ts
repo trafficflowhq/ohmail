@@ -104,6 +104,21 @@ export function railOffsetFor(index: number, n: number, pitch: number, room: num
   return Math.max(0, Math.min(max, centre));
 }
 
+/** A list row's strip of the reader's squares: 20dp a square, its face 5dp in (the row's text at 14 over 9 of air). */
+export const STRIP_SLOT = 20;
+export const STRIP_START = 9;
+export const STRIP_END = 14;
+/** Its presses reach down over its air, never up into the row above them nor into a neighbour. */
+export const STRIP_HIT_SLOP = { top: 4, bottom: 10, left: 0, right: 0 } as const;
+
+/** Where a strip that scrolls stands so square `index` is in view, centred where it can be. */
+export function stripOffsetFor(index: number, n: number, room: number): number {
+  const content = STRIP_START + n * STRIP_SLOT + STRIP_END;
+  const max = Math.max(0, content - room);
+  const centre = STRIP_START + index * STRIP_SLOT + STRIP_SLOT / 2 - room / 2;
+  return Math.max(0, Math.min(max, centre));
+}
+
 /** A body's states the read rule takes as final: the text is all there is to show. */
 const FINAL_BODY: ReadonlySet<string> = new Set(["full", "withheld"]);
 

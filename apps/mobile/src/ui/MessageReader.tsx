@@ -46,10 +46,14 @@ import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
   RAIL_HIT_SLOP, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsOf, railOffsetFor, readerChromeOverlap,
-  readerGroups, type MarkKind, type RailItem,
+  readerGroups, type RailItem,
 } from "./reader-marks";
 import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
+import { MARK_RING, MarkSquare, ringRadius } from "./MarkSquare";
+import {
+  bindThreadJump, clearThreadPlace, publishThreadPlace, takeThreadPending, threadPending, threadPlace,
+} from "../state/thread-place";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 
@@ -196,6 +200,16 @@ export function MessageReader({
   shown.current = screenShown;
   /** The anchor on its way to a place: the view shows no place the person chose, so it reads nothing. */
   const anchorRef = useRef<OpenAnchor | null>(null);
+  /* THE CONVERSATION'S SQUARES (the Ohbox only), and A STRIP PRESS THIS OPEN CARRIES: the list row's
+     square pressed with no reader mounted opened the row and left that member pending
+     (`thread-place.ts`); this reader lands on it. Read once per opened id, taken in an effect. */
+  const railItems = m && inOhbox ? railItemsOf(m) : [];
+  const landing = useRef<{ for: string; id: string | null } | null>(null);
+  if (m && landing.current?.for !== id) {
+    const p = threadPending();
+    landing.current = { for: id, id: p !== null && railItems.some((it) => it.id === p) ? p : null };
+  }
+  const landingId = landing.current?.for === id ? landing.current.id : null;
   const seen = useMemo(
     () => createPhoneThreadRead({
       record,
@@ -208,10 +222,18 @@ export function MessageReader({
          AppState stays active under a Modal and under the notification shade (`reader-cover.ts`). */
       active: () => shown.current && readerSees(AppState.currentState) && anchorRef.current?.aiming !== true,
       onHere: setHere,
+      start: paneScrollOf(`msg:${id}`),
     }),
     [id, record],
   );
   useEffect(() => () => seen.dispose(), [seen]);
+  /* THE LANDING PIN: a fresh open rings the message it opens at (or the strip's pressed member) until
+     the person's first scroll (a drag, or any scroll the app did not ask for) — the anchor's own scrolls are the app's, and the walk would ring a
+     neighbour of a short opened message. A remount that resumes a remembered place walks from there. */
+  const freshOpen = useMemo(() => !hasPaneScroll(`msg:${id}`), [id]);
+  useEffect(() => {
+    if (landingId !== null) { takeThreadPending(landingId); seen.pin(landingId); } else if (freshOpen) seen.pin(id);
+  }, [seen, id, landingId, freshOpen]);
   /* Back in the foreground, the window focused again, a sheet gone: look again (nothing is read while
      the app is away, its window blurred — Android's shade — or a modal stands over the reader). */
   useEffect(() => {
@@ -248,7 +270,7 @@ export function MessageReader({
       const p = placeAt(seen.layout(id), y);
       if (p !== null) { place.current = p; recordPanePlace(scrollKey, p); }
     }
-    seen.onScroll(y);
+    seen.onScroll(y, jumpEnd.current !== null || anchorRef.current?.moving === true);
   };
   const box = useRef({ content: 0, view: 0 });
   /** An animated jump's last frames may never reach `onScroll`: once it is done, the reader stands where it ends. */
@@ -278,12 +300,14 @@ export function MessageReader({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
       start: startAt.y,
       target: () => {
+        const l = landing.current;
+        if (l !== null && l.for === id && l.id !== null) return seen.scrollFor(l.id);
         if (place.current !== null) return placeY(seen.layout(id), place.current);
         const top = anchorFacts.current();
         return top === null ? null : top - 8;
       },
       extent: () => box.current,
-      scrollTo: (y) => scrollRef.current?.scrollTo({ y, animated: false }),
+      scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
       stand: (y) => standRef.current(y),
       onPlaced: () => setPlaced(true),
       onSettle: () => seen.poke(),
@@ -304,6 +328,34 @@ export function MessageReader({
     anchor.handOver();
     if (jumpEnd.current) { clearTimeout(jumpEnd.current); jumpEnd.current = null; }
   };
+  /* A SQUARE PRESSED — the rail's or the list row's strip: that message's top to the walk's reading
+     line, its square ringed until the person scrolls. */
+  const jump = (mid: string): void => {
+    handOver();
+    seen.pin(mid);
+    const y = seen.scrollFor(mid);
+    if (y === null) return;
+    const at = Math.min(y, Math.max(0, box.current.content - box.current.view));
+    seen.asked(at);
+    const end = (): void => stand(at);
+    scrollRef.current?.scrollTo({ y, animated: !t.reduceMotion });
+    if (t.reduceMotion) end();
+    else jumpEnd.current = setTimeout(() => { jumpEnd.current = null; end(); }, RAIL_JUMP_SETTLE_MS);
+  };
+  const jumpRef = useRef(jump);
+  jumpRef.current = jump;
+  /* WHERE THE PERSON STOPPED, for the list row's strip: this conversation's squares and the ring, kept
+     after the reader goes. Another open replaces them; one without squares leaves no row ringed. While
+     this reader shows squares, a strip press jumps it. */
+  const railKey = railItems.map((it) => `${it.id}:${it.kind}:${it.sender}`).join("\n");
+  const hasRail = railItems.length > 0;
+  useEffect(() => {
+    if (!m) return;
+    if (hasRail) publishThreadPlace(railItems, here);
+    else if (!threadPlace()?.items.some((it) => it.id === id)) clearThreadPlace();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [railKey, here, id, m === undefined || m === null]);
+  useEffect(() => (hasRail ? bindThreadJump((mid) => jumpRef.current(mid)) : undefined), [hasRail]);
 
   if (!m) {
     return (
@@ -408,22 +460,8 @@ export function MessageReader({
       <View style={{ flex: 1, flexDirection: "row" }}>
       {/* THE RAIL OF SQUARES, in time order — the order the reader draws the conversation in here,
           and the list row's. Only in the Ohbox, and only for a conversation. */}
-      {inOhbox && railItemsOf(m).length > 0 ? (
-        <ReaderRail
-          items={railItemsOf(m)}
-          here={here}
-          over={chromeOver}
-          onJump={(mid) => {
-            handOver();
-            const top = seen.topOf(mid);
-            if (top === null) return;
-            const y = Math.max(0, top - 8);
-            const end = (): void => stand(Math.min(y, Math.max(0, box.current.content - box.current.view)));
-            scrollRef.current?.scrollTo({ y, animated: !t.reduceMotion });
-            if (t.reduceMotion) end();
-            else jumpEnd.current = setTimeout(() => { jumpEnd.current = null; end(); }, RAIL_JUMP_SETTLE_MS);
-          }}
-        />
+      {railItems.length > 0 ? (
+        <ReaderRail items={railItems} here={here} over={chromeOver} onJump={jump} />
       ) : null}
       <Scroller
         key={scrollKey}
@@ -431,11 +469,11 @@ export function MessageReader({
         contentStyle={{ paddingHorizontal: 0 }}
         contentOffset={startAt}
         onScroll={onScroll}
-        onScrollBeginDrag={() => { handOver(); seen.poke(); }}
+        onScrollBeginDrag={() => { handOver(); seen.pin(null); }}
         onScrollEndDrag={onScroll}
         onMomentumScrollEnd={onScroll}
         scrollEventThrottle={16}
-        onContentSizeChange={(cw, h) => { box.current.content = h; widthSeen("content", cw); anchor.layout(); }}
+        onContentSizeChange={(cw, h) => { box.current.content = h; seen.content(h); widthSeen("content", cw); anchor.layout(); }}
         onLayout={(e) => {
           box.current.view = e.nativeEvent.layout.height;
           seen.viewport(e.nativeEvent.layout.height);
@@ -827,42 +865,12 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
   );
 }
 
-/** One square's opacity, settling with the panel's tint. */
-function RailSquare({ kind }: { kind: MarkKind }) {
-  const t = useTheme();
-  const target = kind === "unread" ? 1 : kind === "mine" ? t.c.markMine : t.c.markRead;
-  const v = useRef(new Animated.Value(target)).current;
-  const was = useRef(target);
-  useEffect(() => {
-    if (was.current === target) return;
-    was.current = target;
-    if (t.reduceMotion) { v.setValue(target); return; }
-    Animated.timing(v, {
-      toValue: target,
-      duration: kind === "unread" ? THREAD_UNREAD_BACK_MS : THREAD_READ_FADE_MS,
-      easing: EASE,
-      useNativeDriver: true,
-    }).start();
-  }, [target, kind, t.reduceMotion, v]);
-  return (
-    <Animated.View
-      style={{
-        width: 10,
-        height: 10,
-        opacity: v,
-        backgroundColor: kind === "mine" ? "transparent" : t.c.accent,
-        borderWidth: kind === "mine" ? 2 : 0,
-        borderColor: t.c.accent,
-      }}
-    />
-  );
-}
-
 /**
  * THE RAIL — one square per message beside the reader, 22dp, in time order (oldest first, as the
  * reader draws the conversation here and the row's squares run): solid accent unread, dimmed read,
- * hollow the account's own; the message most in view ringed (neutral, never the accent). A tap
- * brings that message to the top. Marks, never a count. It fits the reader's height less what of the
+ * hollow the account's own; the current message ringed (neutral, never the accent): the engine's
+ * walk, first at the top and last at the very end. A tap brings that message's top to the walk's
+ * reading line and holds its ring until the person drags. Marks, never a count. It fits the reader's height less what of the
  * bottom chrome stands over it — closer squares first, and past that it scrolls, keeping the ringed
  * square in view — so the newest squares are never under the bar or off the screen (`railFit`).
  */
@@ -884,7 +892,7 @@ function ReaderRail({ items, here, over, onJump }: {
     if (!scrolls || room === null || at < 0) return;
     list.current?.scrollTo({ y: railOffsetFor(at, n, pitch, room), animated: false });
   }, [scrolls, room, at, n, pitch]);
-  const ring = Math.min(17, pitch);
+  const ring = Math.min(MARK_RING, pitch);
   const squares = items.map((it, i) => (
     <Tap
       key={it.id}
@@ -901,10 +909,10 @@ function ReaderRail({ items, here, over, onJump }: {
       <View
         style={{
           width: ring, height: ring, alignItems: "center", justifyContent: "center",
-          borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3,
+          borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3, borderRadius: ringRadius(t.radius.focus),
         }}
       >
-        <RailSquare kind={it.kind} />
+        <MarkSquare kind={it.kind} />
       </View>
     </Tap>
   ));

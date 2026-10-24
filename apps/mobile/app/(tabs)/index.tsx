@@ -8,7 +8,7 @@
  * its own. An empty mailbox renders an honest empty state, never sample mail.
  * The rows go through `MailList`, which mounts a window of them, not the mailbox.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AppState, View } from "react-native";
 import { useFocusEffect, useIsFocused, useNavigation } from "expo-router";
 import { Copy } from "../../src/copy";
@@ -35,6 +35,8 @@ import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine, readingAtConnectNow } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
+import { pressThreadPlace, stripOf, threadPlaceOf, useThreadPlace } from "../../src/state/thread-place";
+import { railItemsOf } from "../../src/ui/reader-marks";
 
 export default function OhboxScreen() {
   return (
@@ -64,6 +66,21 @@ function OhboxBody() {
   const shown = heldWhileHidden(focused, kept.current, () => ({ ohbox: w.ohbox, doorbell: w.doorbell }));
   kept.current = shown;
   const { resurfaced, fresh, seen, total, meta } = shown.ohbox;
+  /* THE ROW FOLLOWS THE READER: the conversation an Ohbox reader showed last carries its squares,
+     ringed where the reader is or stopped. A press jumps the reader beside the list; with none
+     mounted it opens the row, and that reader lands on the pressed message. */
+  const thread = useThreadPlace();
+  /* Its squares are the conversation AS IT STANDS, read the way the reader's rail reads it, so a reply
+     or a Mark unread after Back shows; only the ring is the place's (`stripOf`). Asked again when the
+     row changes (its members and marks are on it, and the row object is kept while nothing it shows
+     moved), never per ring step. */
+  const threadRow = thread === null ? null
+    : [...resurfaced, ...fresh, ...seen].find((m) => threadPlaceOf(thread, m) !== null) ?? null;
+  const threadLive = useMemo(() => {
+    const now = threadRow === null ? undefined : w.message(threadRow.id);
+    return now === undefined ? undefined : railItemsOf(now);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadRow]);
   /* WHO ORGANIZES THIS MAILBOX, said where the connect lands when it is not this phone. Scoped to
      the standalone session: the notice is about the engine in this app, never another account. */
   useSyncExternalStore(
@@ -93,7 +110,13 @@ function OhboxBody() {
       <MailList
         groups={groups}
         rowKey={(m) => m.rowKey ?? m.id}
-        renderRow={(m) => <MailRow m={m} onPress={() => openRow(w.rowOpenTarget(m.id))} swipe />}
+        renderRow={(m) => {
+          const press = () => openRow(w.rowOpenTarget(m.id));
+          const at = thread !== null && m === threadRow ? stripOf(thread, threadLive) : null;
+          const strip = at === null ? null
+            : { items: at.items, here: at.here, onPress: (id: string) => { if (!pressThreadPlace(id)) press(); } };
+          return <MailRow m={m} onPress={press} strip={strip} swipe />;
+        }}
         rowInset={6}
         refresh={pull}
         head={

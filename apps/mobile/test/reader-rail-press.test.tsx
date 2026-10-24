@@ -152,6 +152,9 @@ const { MessageReader } = await import("../src/ui/MessageReader");
 const { VISIT_HANDOFF_MS, endIdleVisit, resetVisitsForTests } = await import("../src/ui/visit-records");
 const { hitSlopFor } = await import("../src/theme/tokens");
 const { RAIL_TOP, railFit } = await import("../src/ui/reader-marks");
+const { threadWalk } = await import("@ohmail/client-engine");
+const place = await import("../src/state/thread-place");
+const { forgetPaneScroll } = await import("../src/ui/pane-memory");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const src = (el: El) => String(el.__props?.onLayout ?? "");
@@ -207,6 +210,7 @@ beforeEach(() => {
   world.glanced = [];
   nav.focused = true;
   resetVisitsForTests();
+  place.resetThreadPlaceForTests();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -241,6 +245,9 @@ describe("a press on a rail square reaches that square", () => {
       lay(v.above, { y: 18, height: 200 * (n - 1) });
       for (let i = 0; i < n - 1; i++) lay(v.member(`p${i + 1}`).panel, { y: 200 * i, height: 180 });
       lay(v.opened, { y: 18 + 200 * (n - 1) + 34, height: 180 });
+      native.content = 18 + 200 * (n - 1) + 34 + 180 + 40;
+      lay(v.scroll, { y: 0, height: native.view });
+      act(() => { native.props!.onContentSizeChange?.(360, native.content); });
 
       const taps = all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-"));
       expect(taps.map((x) => x.getAttribute("data-test"))).toEqual([...members.map((m) => `rail-${m.id}`), `rail-p${n}`]);
@@ -264,9 +271,12 @@ describe("a press on a rail square reaches that square", () => {
       expect(wrong, "a press on a square's face reaches another square").toEqual([]);
 
       const topOf = (i: number): number => (i < n - 1 ? 18 + 200 * i : 18 + 200 * (n - 1) + 34);
+      const walk = threadWalk({
+        tops: Array.from({ length: n }, (_, i) => topOf(i)), max: Math.max(0, native.content - native.view), view: native.view, opened: n - 1,
+      });
       for (const i of new Set([0, Math.floor(n / 2), n - 1])) {
         act(() => { taps[i]!.__props!.onPress(); });
-        expect(native.asked.at(-1), `square ${i} brings its message to the top`).toBe(Math.max(0, topOf(i) - 8));
+        expect(native.asked.at(-1), `square ${i} brings its message's top to the reading line`).toBe(walk.scrollFor(i));
       }
     });
   }
@@ -542,5 +552,155 @@ describe("a new width keeps the place in the conversation", () => {
     settle(1000);
     expect(native.offset).toBe(tops(tall).p3 - 8);
     expect(world.glanced.flat()).not.toContain("p2");
+  });
+});
+
+/**
+ * THE WALK IN THE READER (o9): the ring is the engine's walk over the reader's own layout — the first
+ * message at the top, the last at the very end even when it is one line — and a press pins its square
+ * until the person drags. Two members of 900dp above the opened message, which is one line; a 640dp
+ * view over 1954dp of content.
+ */
+describe("the squares walk the conversation", () => {
+  const TOPS = [18, 930, 1864];
+  const CONTENT = 1954;
+  const MAX = CONTENT - 640;
+  const walk = threadWalk({ tops: TOPS, max: MAX, view: 640, opened: 2 });
+  const conversation = (unread = false) => ({
+    ...mailOf("p3", [{ ...memberOf("p1", "Ada"), seen: !unread, later: false }, { ...memberOf("p2", "Ben"), seen: !unread, later: false }]),
+    unread,
+  });
+  const layThree = (el: HTMLElement): void => {
+    const v = views(el);
+    native.content = CONTENT;
+    lay(v.scroll, { y: 0, height: 640 });
+    lay(v.padded, { y: 0, height: CONTENT - 60 });
+    lay(v.above, { y: 18, height: 1812 });
+    for (const [mid, y] of [["p1", 0], ["p2", 912]] as const) {
+      const p = v.member(mid);
+      lay(p.panel, { y, height: 900 });
+      lay(p.header, { y: 18, height: 22 });
+      lay(p.body, { y: 50, height: 0 });
+      lay(p.end, { y: 860, height: 0 });
+    }
+    lay(v.opened, { y: 1864, height: 30 });
+    lay(v.from, { y: 0, height: 20 });
+    lay(v.obody, { y: 20, height: 0 });
+    lay(v.oend, { y: 30, height: 0 });
+    act(() => { native.props!.onContentSizeChange?.(360, CONTENT); });
+  };
+  const settle = (ms = 300): void => {
+    for (let i = 0; i < ms; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    flushNative();
+  };
+  const ringed = (el: HTMLElement): string[] =>
+    all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-") && x.__props?.accessibilityState?.selected === true)
+      .map((x) => x.getAttribute("data-test")!.slice("rail-".length));
+  const dragTo = (y: number): void => {
+    act(() => { native.props!.onScrollBeginDrag?.(); });
+    native.offset = y;
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y } } }); });
+    settle(64);
+  };
+  const press = (el: HTMLElement, mid: string): void => {
+    const tap = all(el).find((x) => x.getAttribute("data-test") === `rail-${mid}`);
+    act(() => { tap!.__props!.onPress(); });
+    settle(64);
+  };
+
+  it("opened on its newest the newest is ringed; the top rings the first, the very end the one-line last", () => {
+    world.mail = conversation();
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    expect(ringed(el)).toEqual(["p3"]);
+    dragTo(0);
+    expect(ringed(el), "at the top only the first").toEqual(["p1"]);
+    dragTo(MAX);
+    expect(ringed(el), "at the very end the last, one line long").toEqual(["p3"]);
+  });
+
+  it("a press lands that message's top on the reading line and holds its ring until the person drags", () => {
+    world.mail = conversation();
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    dragTo(0);
+    press(el, "p2");
+    expect(native.asked.at(-1)).toBe(walk.scrollFor(1));
+    expect(ringed(el)).toEqual(["p2"]);
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y: walk.scrollFor(1) } } }); });
+    settle(64);
+    expect(ringed(el), "the jump's own scroll does not move a pressed ring").toEqual(["p2"]);
+    dragTo(MAX);
+    expect(ringed(el), "the person's drag gives the ring back to the walk").toEqual(["p3"]);
+  });
+
+  it("a scroll the app did not make, with no drag (a screen reader's, a status-bar tap), gives the ring back on the rail and the strip", () => {
+    world.mail = conversation();
+    forgetPaneScroll("msg:p3"); // a fresh open: its landing pins the newest
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    expect(ringed(el)).toEqual(["p3"]);
+    native.offset = 0;
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y: 0 } } }); });
+    act(() => { native.props!.onMomentumScrollEnd?.({ nativeEvent: { contentOffset: { x: 0, y: 0 } } }); });
+    settle(64);
+    expect(ringed(el), "at the top the first, on the rail").toEqual(["p1"]);
+    expect(place.threadPlace()?.here, "and on the list row's strip").toBe("p1");
+    press(el, "p2");
+    expect(ringed(el)).toEqual(["p2"]);
+    native.offset = MAX;
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y: MAX } } }); });
+    settle(64);
+    expect(ringed(el), "a pressed ring goes too").toEqual(["p3"]);
+    expect(place.threadPlace()?.here).toBe("p3");
+  });
+
+  it("the list's strip hears where the reader stopped, and keeps it once the reader is gone", () => {
+    world.mail = conversation();
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    dragTo(walk.scrollFor(1));
+    expect(place.threadPlace()?.items.map((it) => it.id)).toEqual(["p1", "p2", "p3"]);
+    expect(place.threadPlace()?.here).toBe("p2");
+    act(() => root?.unmount());
+    root = null;
+    expect(place.threadPlace()?.here, "back on the list, the row is ringed where the person stopped").toBe("p2");
+    world.mail = { ...mailOf("o1", []), earlier: [] };
+    mountReader("o1");
+    expect(place.threadPlace(), "a single message opened: no row carries the strip").toBeNull();
+  });
+
+  it("with the reader mounted beside the list, a strip press jumps it as its own square does", () => {
+    world.mail = conversation();
+    const el = mountReader("p3");
+    layThree(el);
+    settle();
+    let opened = false;
+    act(() => { opened = !place.pressThreadPlace("p2"); });
+    settle(64);
+    expect(opened, "nothing to open: the reader is there").toBe(false);
+    expect(native.asked.at(-1)).toBe(walk.scrollFor(1));
+    expect(ringed(el)).toEqual(["p2"]);
+  });
+
+  it("a strip press with no reader mounted: the row's open lands on the pressed member, and the newest, never shown, is not read", () => {
+    world.mail = conversation(true);
+    place.publishThreadPlace([{ id: "p1", kind: "unread", sender: "Ada" }, { id: "p2", kind: "unread", sender: "Ben" },
+      { id: "p3", kind: "unread", sender: "Ben" }], "p3");
+    expect(place.pressThreadPlace("p2"), "no reader: the row opens").toBe(false);
+    forgetPaneScroll("msg:p3"); // the row's open is a fresh open (list-detail's `endIdleVisit`)
+    const el = mountReader("p3");
+    layThree(el);
+    settle(1000);
+    expect(native.offset, "landed with the pressed member's top on the line").toBe(walk.scrollFor(1));
+    expect(ringed(el)).toEqual(["p2"]);
+    expect(place.threadPending(), "the press is taken").toBeNull();
+    pass(3000);
+    flushNative();
+    expect(world.glanced.flat(), "the newest was never on screen").not.toContain("p3");
   });
 });
