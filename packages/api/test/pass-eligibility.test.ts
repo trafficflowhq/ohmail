@@ -178,3 +178,20 @@ describe("the away responder defers a parked account whole", () => {
     expect((await res2.json()).deferredAccounts).toBe(0);
   });
 });
+
+describe("the scheduled sender stays inside its invocation", () => {
+  it("starts no send that could not finish before the platform's 60 s; the rest stay appointments", async () => {
+    const { db, deps, fake } = await armed(new Set());
+    let t = deps.now().getTime();
+    deps.now = () => new Date(t);
+    for (let i = 0; i < 3; i += 1) await dueDraft(db, randomUUID(), deps.now());
+    // Each letter's Sent copy is slow: 30 s of the invocation apiece.
+    deps.services!.sendAdapter = async (m) => {
+      const a = await fake.factory(m);
+      return { ...a, send: async (msg: OutboundMessage) => { t += 30_000; return a.send(msg); } };
+    };
+    const body = await (await H(req("GET", SCHEDULED_SEND_CRON_PATH, { bearer: SECRET }), deps)).json();
+    expect(body).toMatchObject({ claimed: 3, sent: 1, deferred: 2 });
+    expect(await db.select().from(drafts).where(eq(drafts.status, "scheduled"))).toHaveLength(2);
+  });
+});

@@ -288,12 +288,13 @@ describe("CONTROLS on the same route", () => {
     expect(w.faults.map((f) => f.status)).toEqual([500]);
   });
 
-  it("an SMTP 550 for the recipient keeps unverified", async () => {
+  it("an SMTP 550 for the recipient is the server's refusal before any data: final, not our fault", async () => {
     const w = await world(production(fakeImap()));
     await credentials(w, { port: await closedPort() }, await smtpServer({ rcpt: "550 5.1.1 no such user\r\n" }));
     const res = await press(w, "rcpt-550");
-    expect(res.status).toBe(200);
-    expect((await res.json() as { status?: string }).status).toBe("unverified");
+    expect(res.status).toBe(424);
+    expect((await res.json() as { error?: { code?: string; retryable?: boolean } }).error)
+      .toMatchObject({ code: "send_refused_by_server", retryable: false });
     expect(w.faults).toEqual([]);
   });
 });

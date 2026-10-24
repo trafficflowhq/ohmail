@@ -36,6 +36,13 @@ function fakeClient() {
       client.appends += 1;
       return { uid: 7, uidValidity: 1n };
     },
+    /** A SELECT: the Sent folder answers while the socket is up; anything else is not there. */
+    async getMailboxLock(path: string) {
+      if (!client.usable) throw Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+      if (path !== "Sent") throw Object.assign(new Error("Mailbox doesn't exist"), { responseStatus: "NO" });
+      return { path, release() { /* nothing held */ } };
+    },
+    async search(): Promise<number[]> { return []; },
     async logout() { client.usable = false; },
     close() { client.usable = false; },
     async noop() { /* fine */ },
@@ -99,5 +106,15 @@ describe("ImapAdapter.isLive — the reuse admission", () => {
     expect(client.appends).toBe(1);
     expect(client.usable).toBe(false);          // the socket was destroyed, not left to a queue
     expect(adapter.isLive()).toBe(false);       // and the keeper reads it dead
+  });
+
+  it("(5) messageInSent on a connection that died throws; it never answers \"not in Sent\"", async () => {
+    const { adapter, client } = await connected();
+    expect(await adapter.messageInSent("<m@x.test>"), "the control: a live, empty Sent").toBe(false);
+    // The socket timed out while the slow SMTP leg ran: imapflow clears `usable`.
+    client.usable = false;
+    const outcome = await adapter.messageInSent("<m@x.test>").then((v) => v, (e: unknown) => e);
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as { code?: string }).code).toBe("NoConnection");
   });
 });

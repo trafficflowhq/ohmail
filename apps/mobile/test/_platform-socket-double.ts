@@ -12,6 +12,8 @@ import tls from "node:tls";
 interface Conn {
   raw: net.Socket; paused: boolean; held: Buffer[]; sockets: Set<PlatformSocket>; pauses: number;
   readonly options: DoubleOptions;
+  /** The size of every native write, in order. */
+  writes: number[];
 }
 
 /**
@@ -30,16 +32,30 @@ export interface DoubleOptions {
   refusedUpgrade?: "close-first" | "error-first";
   say?: (err: Error) => string;
   refusedDial?: (err: Error) => string;
+  /**
+   * A slow link, in bytes per second: a native write completes when its whole chunk is out, after
+   * size / rate. With it, the socket timer is react-native-tcp-socket 6.4.2's: armed by
+   * `setTimeout(ms)`, reset only when a native write completes or data arrives.
+   */
+  writeRate?: number;
 }
 
 export class PlatformSocket extends EventEmitter {
   _paused = false;
   private own: Buffer[] = [];
+  private timeoutMs = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private writing: Promise<void> = Promise.resolve();
   constructor(readonly conn: Conn) {
     super();
     conn.sockets.add(this);
   }
+  private rearmTimer(): void {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = this.timeoutMs > 0 ? setTimeout(() => this.emit("timeout"), this.timeoutMs) : null;
+  }
   deliver(b: Buffer): void {
+    this.rearmTimer();
     if (this._paused) this.own.push(b);
     else this.emit("data", b);
   }
@@ -59,13 +75,29 @@ export class PlatformSocket extends EventEmitter {
     this.conn.raw.resume();
   }
   write(chunk: Buffer, _enc: unknown, cb?: (e?: Error) => void): boolean {
-    return this.conn.raw.write(chunk, (e) => cb?.(e ?? undefined));
+    this.conn.writes.push(chunk.length);
+    const rate = this.conn.options.writeRate;
+    if (rate === undefined) return this.conn.raw.write(chunk, (e) => cb?.(e ?? undefined));
+    // One native write at a time, each done when its last byte is out.
+    this.writing = this.writing
+      .then(() => new Promise<void>((r) => { setTimeout(r, (chunk.length / rate) * 1000); }))
+      .then(() => { this.conn.raw.write(chunk); this.rearmTimer(); cb?.(); });
+    return true;
   }
   end(): void { this.conn.raw.end(); }
-  destroy(): void { this.conn.raw.destroy(); }
+  destroy(): void {
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timeoutMs = 0;
+    this.conn.raw.destroy();
+  }
   setKeepAlive(): this { return this; }
   setNoDelay(): this { return this; }
-  setTimeout(): this { return this; }
+  setTimeout(ms?: number): this {
+    if (this.conn.options.writeRate === undefined) return this;
+    this.timeoutMs = ms ?? 0;
+    this.rearmTimer();
+    return this;
+  }
   address(): object { return {}; }
   getPeerCertificate(): Promise<object> { return Promise.resolve({}); }
 }
@@ -142,7 +174,7 @@ class UpgradedSocket extends PlatformSocket {
 export function platformDouble(ca: string, options: DoubleOptions = {}): { module: object; conns: Conn[] } {
   const conns: Conn[] = [];
   const open = (raw: net.Socket, wireIt: (conn: Conn, raw: net.Socket) => void = wire): PlatformSocket => {
-    const conn: Conn = { raw, paused: false, held: [], sockets: new Set(), pauses: 0, options: { ...options } };
+    const conn: Conn = { raw, paused: false, held: [], sockets: new Set(), pauses: 0, options: { ...options }, writes: [] };
     conns.push(conn);
     wireIt(conn, raw);
     return new PlatformSocket(conn);

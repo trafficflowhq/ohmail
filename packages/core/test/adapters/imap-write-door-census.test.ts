@@ -52,6 +52,8 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "imap.ts:setFlags:messageFlagsRemove#1": "door",
   "imap.ts:resolveSentFolder:mailboxCreate#1": "sender_by_design",
   "imap.ts:send:append#1": "sender_by_design",
+  /* The same APPEND, made by the send service after the 250 (`send` with `copy: "caller"`). */
+  "imap.ts:fileSentCopy:append#1": "sender_by_design",
 };
 
 /** The two `_meta` modules: every write there is the lease medium, counted so none is silent. */

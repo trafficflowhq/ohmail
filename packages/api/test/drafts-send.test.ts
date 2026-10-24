@@ -171,6 +171,51 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
 });
 
 /**
+ * THE ANSWER SAYS WHERE THE SENT COPY STANDS: filed before the answer on Cloud, or still being
+ * retried on a host that outlives it (`sendCopyOutlivesAnswer`).
+ */
+describe("POST /drafts/:id/send — `sentCopy`", () => {
+  function filingAdapter(copy: "files" | "hangs") {
+    const filed: string[] = [];
+    const factory: OpenSendAdapter = async () => ({
+      async send(msg: OutboundMessage, opts?: { copy?: string; beforeRelease?: () => Promise<void> }) {
+        await opts?.beforeRelease?.();
+        return { providerMessageId: msg.messageId!, ...(opts?.copy === "caller" ? { unfiledCopy: Buffer.from("raw") } : {}) };
+      },
+      async fileSentCopy(_raw: Buffer, id: string) {
+        if (copy === "hangs") await new Promise(() => undefined);
+        filed.push(id);
+        return null;
+      },
+      async messageInSent() { return false; },
+      async close() { /* no-op */ },
+    });
+    return { factory, filed };
+  }
+
+  it("Cloud files the copy before it answers: `sentCopy: filed`", async () => {
+    const a = filingAdapter("files");
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: a.factory });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, { bearer: s.token, headers: { "idempotency-key": "copy-1" } }), deps);
+    const body = await res.json();
+    expect({ status: res.status, sent: body.status, sentCopy: body.sentCopy }).toEqual({ status: 200, sent: "sent", sentCopy: "filed" });
+    expect(a.filed).toEqual([body.providerMessageId]);
+  });
+
+  it("a host that outlives the answer does not wait for a slow copy: `sentCopy: pending`", async () => {
+    const a = filingAdapter("hangs");
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: a.factory });
+    deps.services = { ...deps.services!, sendCopyOutlivesAnswer: true };
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, { bearer: s.token, headers: { "idempotency-key": "copy-2" } }), deps);
+    expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "pending" });
+  }, 15_000);
+});
+
+/**
  * THE ACCOUNT'S CLAIM ON THE CONTENT — the duplicate defence that does not need the client's key.
  *
  * These cases are the SHAPE of the guard and they run on PGlite, which means they are worth

@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { OutboundMessage } from "./adapters/imap-types.js";
+import type { OutboundMessage, SendOptions } from "./adapters/imap-types.js";
 import type { NativeLocator } from "./ports.js";
 import { foldMessageIdDomain } from "./identity.js";
 
 // Surface `OutboundMessage` on the core entrypoint so the send seam is usable
 // without importing the adapter subpath (it otherwise lives only on the
 // `@trafficflow/core/adapters/imap` export).
-export type { OutboundMessage } from "./adapters/imap-types.js";
+export type { OutboundMessage, SendOptions } from "./adapters/imap-types.js";
 
 /**
  * The crash-safe send seam. SMTP is not transactional: a crash between "SMTP accepted" and "we
@@ -66,9 +66,19 @@ export interface AppendedSent {
  * that always exists.
  */
 export interface SendAdapter {
-  send(msg: OutboundMessage): Promise<{ providerMessageId: string; appended?: AppendedSent }>;
-  /** True iff a message with `messageId` (an `<id@host>` header) exists in Sent. */
+  /** `opts` reaches the adapter's own send (see {@link SendOptions}); `unfiledCopy` answers `copy: "caller"`. */
+  send(msg: OutboundMessage, opts?: SendOptions): Promise<{ providerMessageId: string; appended?: AppendedSent; unfiledCopy?: Buffer }>;
+  /**
+   * File the Sent copy of a delivered message. `look`: search Sent by Message-ID first and append
+   * only when it is absent, so a retry never adds a second copy. A server that files submissions
+   * itself is only looked in. `null`: the copy is there with nothing to project. Throws when
+   * nothing could be filed. Optional: a double without it keeps the inline copy.
+   */
+  fileSentCopy?(raw: Buffer, messageId: string, opts?: { look?: boolean }): Promise<AppendedSent | null>;
+  /** True iff a message with `messageId` (an `<id@host>` header) exists in Sent. Throws on a dead connection. */
   messageInSent(messageId: string): Promise<boolean>;
+  /** Whether the connection can still carry a command; absent on a double, which is never re-dialled. */
+  isLive?(): boolean;
   close(): Promise<void>;
   /**
    * Tear the connection down NOW, for a caller that has abandoned a timed-out operation. imapflow
@@ -99,9 +109,11 @@ export class SentCopyAppendFailed extends Error {
 
 /**
  * Where a submission stopped before the server was offered anything to deliver. `token`: the OAuth
- * access token could not be fetched, so no session was opened at all.
+ * access token could not be fetched, so no session was opened at all. `data`: the session ended
+ * before the end-of-data mark was released (a refused MAIL/RCPT, a drop mid-upload, a refused
+ * release), so the server cannot have accepted the message.
  */
-export type SendNotSubmittedStep = "connect" | "secure" | "login" | "token";
+export type SendNotSubmittedStep = "connect" | "secure" | "login" | "token" | "data";
 
 /**
  * THE SERVER WAS NEVER OFFERED THE MESSAGE — the access token could not be fetched, the socket
@@ -120,7 +132,8 @@ export class SendNotSubmitted extends Error {
     super(typeof c.message === "string" && c.message !== "" ? c.message
       : step === "connect" ? "the mail server could not be reached"
         : step === "secure" ? "the connection to the mail server could not be secured"
-          : step === "token" ? "the sign-in token could not be fetched" : "the mail server refused the login");
+          : step === "token" ? "the sign-in token could not be fetched"
+            : step === "data" ? "the message did not reach the mail server whole" : "the mail server refused the login");
     this.name = "SendNotSubmitted";
     this.step = step;
     (this as { cause?: unknown }).cause = cause;

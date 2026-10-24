@@ -2185,15 +2185,19 @@ export const outboundSends = pgTable("outbound_sends", {
   // per re-arm. `retry_until` is set only on a `failed` row a same-key replay may re-arm (the end of
   // its window, `SEND_REARM_WINDOW_MS` after `created_at`); NULL is final. `retry_refusal` is the code
   // of the passing refusal it was offered again after, set and cleared with it: a replay after the
-  // window is told that refusal. Written by `SendService` alone, and outside the column-scoped
-  // `ohmail_admin` grant.
+  // window is told that refusal. With `retry_until` NULL it names a final refusal a replay is told
+  // by name (`send_upload_dropped`, `send_refused_by_server`). Written by `SendService` alone, and
+  // outside the column-scoped `ohmail_admin` grant.
   attempts: integer("attempts").notNull().default(1),
   retryUntil: timestamp("retry_until", { withTimezone: true }),
   retryRefusal: text("retry_refusal"),
-  // ── Mail 0162 — may this attempt have offered the message to SMTP? `unoffered` from the
-  // reservation and each re-arm, `offered` once committed right before the first SMTP traffic,
-  // `unknown` for rows older than the column (read as possibly offered). A stale `unoffered` row
-  // sent nothing and is forgotten (`SendService.forgetUnoffered`). Written by `SendService` alone.
+  // ── Mail 0162 — how far this attempt's upload got. `unoffered` from the reservation and each
+  // re-arm; `uploading` committed right before the first SMTP traffic; `complete` committed after
+  // the last byte and before the end-of-data mark may leave. `uploading` and `unoffered` sent
+  // nothing: a stale one is forgotten (`SendService.forgetUnoffered`), or failed where it cannot be
+  // replayed whole. `complete`, `offered` (older builds wrote it after the end of data too) and
+  // `unknown` (rows older than the column) may have been delivered and are checked by Message-ID.
+  // Text with no CHECK, so no migration added the two values. Written by `SendService` alone.
   offerState: text("offer_state").notNull().default("unknown"),
 }, (t) => ({
   ixIdAccount: uniqueIndex("outbound_sends_id_account_uq").on(t.id, t.accountId),
