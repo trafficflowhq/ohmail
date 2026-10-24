@@ -4,6 +4,7 @@ import { OUTBOX_TYPE, type EngineDraft, type EngineMutation } from "@ohmail/clie
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { readComposeRow } from "../app/shell/compose";
 import {
   act, message, mountShell, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -20,7 +21,8 @@ import {
  * A Cancel of that send gives the words back to a draft. The send itself is untouched: one key, one
  * request, and the server's one-per-key reservation behind it.
  * Mutations: `sending` in the reply autosave not called → cases 1 and 2 red; in the compose
- * autosave → case 5 red; `cancelled` not called → case 3 red.
+ * autosave → case 5 red; `cancelled` not called → case 3 red; the editors not taking the row a
+ * landed create made (`createdDraftOf`) → cases 6 to 8 red.
  */
 
 beforeEach(() => {
@@ -184,4 +186,82 @@ describe("a letter sent while offline", () => {
     await rounds(12);
     expect(sends(s)).toHaveLength(1);
   }, 30_000);
+});
+
+describe("a create that waited offline lands on the reconnect", () => {
+  const createsOf = (s: DraftShell, parent: string | null) => s.engine.pendingMutations()
+    .filter((p) => p.mutation.kind === "draft_save" && p.mutation.draftId === null
+      && ((p.mutation as { inReplyToMessageId?: string | null }).inReplyToMessageId ?? null) === parent);
+
+  it("6 — two replies offline: the second reply takes the row its create made, and its Send goes from it", async () => {
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    s.spendSentRow.on = true;
+    s.offline.on = true;
+    await replyOn(s, "m1", "First reply");
+    await waitFor(() => createsOf(s, "m1").length === 1, "the first reply's create waiting", PAUSE_ROUNDS);
+    await act(async () => { replySend(s.el)!.click(); });
+    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    await replyOn(s, "m2", "Second reply");
+    await waitFor(() => createsOf(s, "m2").length === 1, "the second reply's create waiting", PAUSE_ROUNDS);
+    s.offline.on = false;
+    await online();
+    await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
+    await waitFor(() => unsent(s).some((d) => d.inReplyToMessageId === "m2"), "the second reply's row landed");
+    const row = unsent(s).find((d) => d.inReplyToMessageId === "m2")!.id;
+    await rounds(12);
+    await act(async () => { replySend(s.el)!.click(); });
+    await waitFor(() => sends(s).length === 2, "the second reply sent");
+    await rounds(20);
+    expect({ from: (sends(s)[1] as { draftId?: string | null }).draftId ?? null, left: unsent(s).filter((d) => d.inReplyToMessageId === "m2").length },
+      "the second reply went without its row, and the row stayed in Drafts").toEqual({ from: row, left: 0 });
+  }, 60_000);
+
+  it("7 — a letter paused offline beside a reply sent offline: the composer takes its row, one row in Drafts", async () => {
+    const s = await mountShell("#/ohbox", [message("m1")]);
+    s.spendSentRow.on = true;
+    s.offline.on = true;
+    await key("c");
+    await waitFor(() => s.el.querySelector(".view-compose .rte-surface") != null, "the composer");
+    await setInput(s.el.querySelector<HTMLInputElement>("#compose-to")!, "lena@example.invalid, ");
+    await setInput(s.el.querySelector<HTMLInputElement>("#compose-subject")!, "Written offline");
+    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter written offline"); });
+    await settleEditor();
+    await waitFor(() => createsOf(s, null).length >= 1, "the letter's create waiting", PAUSE_ROUNDS);
+    await act(async () => { window.location.hash = "#/ohbox"; });
+    await replyOn(s, "m1", "A reply sent offline");
+    await waitFor(() => createsOf(s, "m1").length === 1, "the reply's create waiting", PAUSE_ROUNDS);
+    await act(async () => { replySend(s.el)!.click(); });
+    await waitFor(() => (s.el.querySelector(".reply .send-status")?.textContent ?? "").includes(en.reply.statusQueued), "Not sent yet");
+    s.offline.on = false;
+    await online();
+    await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
+    await rounds(40);
+    const letters = unsent(s).filter((d) => d.subject === "Written offline");
+    expect({ letters: letters.length, held: readComposeRow() === (letters[0]?.id ?? "none") },
+      "the letter's row was left beside the composer, or written twice").toEqual({ letters: 1, held: true });
+  }, 60_000);
+
+  it("8 — a create taken back while already on the wire is deleted once the send goes from its own row", async () => {
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    s.spendSentRow.on = true;
+    const before = unsent(s).length;
+    s.offline.on = true;
+    await replyOn(s, "m1", "Sent while its create was on the wire");
+    await waitFor(() => createsOf(s, "m1").length === 1, "the create waiting", PAUSE_ROUNDS);
+    let land: () => void = () => {};
+    s.saveGate.wait = new Promise<void>((r) => { land = r; });
+    s.offline.on = false;
+    let flushed: Promise<unknown> = Promise.resolve();
+    await act(async () => { flushed = s.engine.flushPending(); });
+    await waitFor(() => s.sent.some((m) => m.kind === "draft_save"), "the create on the wire");
+    await act(async () => { replySend(s.el)!.click(); });
+    await rounds(4);
+    s.saveGate.wait = null;
+    await act(async () => { land(); await flushed; });
+    await online();
+    await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent.");
+    await rounds(40);
+    expect({ sends: sends(s).length, left: unsent(s).length - before }, "the create that landed beside the send stayed in Drafts")
+      .toEqual({ sends: 1, left: 0 });
+  }, 60_000);
 });

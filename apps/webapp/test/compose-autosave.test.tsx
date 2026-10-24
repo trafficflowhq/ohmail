@@ -1401,7 +1401,7 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(
       sites.length,
       "a site that writes a draft row was added or removed — classify it here before shipping it",
-    ).toBe(7);
+    ).toBe(8);
     /* TWO SAVES NOW, and the second one is classified below with the other write sites: the
        orphaned-lane promotion in `mail-send.ts` (the type it takes, and the call inside it) is one
        site spelled twice. It writes for a message whose PARENT has been deleted, which is not the
@@ -1493,6 +1493,12 @@ describe("the shell is the consumer, not just the harness", () => {
     //    the row it wrote for an update — so a refusal leaves the words where they were.
     expect(send, "the promoted lane is cleared before its row exists")
       .toMatch(/const rowId = result\.entityId \?\? plan\.rowId;\s*if \(result\.status !== "confirmed" \|\| !rowId\) return "refused";/);
+
+    // 7. A create the outbox held that lands beside the row its message holds, or for a message a
+    //    discard or a confirmed send ended: a second copy, deleted unless a send record names it
+    //    and never the row that send went from (S(2)).
+    expect(autosave, "a landed create is deleted without asking the send records")
+      .toMatch(/if \(made\.id !== sentRow\.current && !sendRecordNames\(COMPOSE_SEND_KEY, made\.id, null\)\) \{\n\s*void engine\.mutate\(\{ kind: "draft_discard"/);
 
     /* ── AND THE THREE SITES THAT DECIDE WHAT THE MESSAGE IS ─────────────────────────────────
        Not writes, but they choose the row every later write goes to. All ask the predicate. */

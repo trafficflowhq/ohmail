@@ -831,6 +831,7 @@ export function useShellCompose({
   const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
   const releaseDraftIdRef = useRef<string | null>(null);
   const releaseBindingRef = useRef<() => void>(() => {});
+  const composeNotSentRef = useRef<() => void>(() => {});
   /** Late-bound for the same reason as {@link settleComposeRef} — see below where it is assigned. */
   const openMessageRef = useRef<(m: EngineMessage, opts?: { reply?: boolean }) => void>(() => {});
   /**
@@ -952,6 +953,7 @@ export function useShellCompose({
       // A reply seeded from a draft row settled: the row's message has been delivered (the send
       // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
       dropReplySeed(key, m.draftId);
+      replyAutosave.settled(key, m.draftId ?? null);
       replyAutosave.forget(key);
     }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
@@ -1233,6 +1235,9 @@ export function useShellCompose({
     }
     // …and so does a reply or forward lane: its next press sends that row instead of making one.
     if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
+    // Nothing went: a create the press took back too late is the message's row again, or a copy.
+    if (!accepted && phase === "failed" && key === COMPOSE_SEND_KEY) composeNotSentRef.current();
+    if (!accepted && (phase === "failed" || phase === "idle") && key !== COMPOSE_SEND_KEY) replyAutosave.notSent(key);
     const intent = detail?.andDone;
     if (intent === undefined || !accepted) return false;
     /* The release read NOW, from the Ohbox as presented — and the row's own Done door
@@ -1629,6 +1634,7 @@ export function useShellCompose({
   restoredRef.current = autosave.restored;
   releaseDraftIdRef.current = autosave.draftId;
   releaseBindingRef.current = autosave.release;
+  composeNotSentRef.current = autosave.notSent;
   /**
    * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
    * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
