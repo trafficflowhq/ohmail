@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ANCHOR_SETTLE_MS, createOpenAnchor, type OpenAnchor } from "../src/ui/open-anchor";
+import { ANCHOR_SETTLE_MS, createOpenAnchor, placeAt, placeY, type OpenAnchor } from "../src/ui/open-anchor";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /**
@@ -64,9 +64,14 @@ beforeEach(() => {
   positions = new Set([0]);
   asked = 0;
   placed = 0;
-  anchor = createOpenAnchor({
+  anchor = build();
+});
+
+const build = (applies?: () => boolean, start = 0): OpenAnchor =>
+  createOpenAnchor({
     holding: true,
-    start: 0,
+    ...(applies ? { applies } : {}),
+    start,
     target: () => (openedTop === null ? null : openedTop - 8),
     extent: () => told,
     scrollTo,
@@ -75,7 +80,6 @@ beforeEach(() => {
     frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
     now: () => clock,
   });
-});
 
 /** The members as snippets: three short panels above the opened message, all of it mounted. */
 const snippets = (): void => {
@@ -193,6 +197,83 @@ describe("the open anchor on a fresh start", () => {
     expect(asked, "no scroll asked past the bound").toBe(after);
     expect(native.at).toBe(200);
     expect(heard.at(-1)).toBe(200);
+  });
+});
+
+describe("settling: what the view shows is no place the person chose", () => {
+  it("from the open until the view stands at its place", () => {
+    openedTop = 1600;
+    told.content = 2600;
+    native.content = 1000;
+    expect(anchor.settling, "before any layout").toBe(true);
+    anchor.layout();
+    frameFor(48);
+    expect(anchor.settling, "clamped short of it").toBe(true);
+    mount();
+    frameFor(100);
+    expect(native.at).toBe(1592);
+    expect(anchor.settling).toBe(false);
+  });
+
+  it("again after a layout that moves the place, and after a rearm (a new width)", () => {
+    snippets();
+    openedTop = 1600;
+    told.content = 2600;
+    mount();
+    anchor.layout();
+    frameFor(100);
+    expect(anchor.settling).toBe(false);
+    openedTop = 1900;
+    told.content = 2900;
+    anchor.layout();
+    expect(anchor.settling, "the place moved").toBe(true);
+    mount();
+    frameFor(100);
+    expect(anchor.settling).toBe(false);
+    anchor.handOver();
+    openedTop = 2200;
+    told.content = 3200;
+    anchor.rearm();
+    expect(anchor.settling, "a new width aims again").toBe(true);
+    mount();
+    frameFor(100);
+    expect([native.at, anchor.settling]).toEqual([2192, false]);
+  });
+
+  it("past the settle bound short of its place it stays settling until the person's own scroll", () => {
+    openedTop = 1600;
+    told.content = 2600;
+    native.content = 1000;
+    anchor.layout();
+    frameFor(ANCHOR_SETTLE_MS + 200);
+    expect(native.at, "the premise: given up short of it").toBe(200);
+    expect(anchor.settling).toBe(true);
+    anchor.handOver();
+    expect(anchor.settling).toBe(false);
+  });
+
+  it("a kept start past the end of a content that now fits stands at once: the view clamped it to 0 and reported nothing", () => {
+    anchor = build(undefined, 2600);
+    openedTop = 600;
+    told.content = 700;
+    mount();
+    anchor.layout();
+    frameFor(ANCHOR_SETTLE_MS + 200);
+    expect({ at: native.at, heard, settling: anchor.settling, placed }).toEqual({ at: 0, heard: [], settling: false, placed: 1 });
+  });
+
+  it("never where no place applies", () => {
+    anchor = build(() => false);
+    openedTop = 1600;
+    told.content = 2600;
+    anchor.layout();
+    expect(anchor.settling).toBe(false);
+  });
+
+  it("a view above every panel keeps the first panel, as far above its top, and lands there at any width", () => {
+    const at = placeAt([{ id: "a", top: 18, height: 200 }, { id: "b", top: 230, height: 500 }], 0, { content: 2000, view: 640 });
+    expect(at).toEqual({ id: "a", dy: -18, h: 200 });
+    expect(placeY([{ id: "a", top: 18, height: 400 }, { id: "b", top: 430, height: 900 }], at!, { content: 3000, view: 400 })).toBe(0);
   });
 });
 

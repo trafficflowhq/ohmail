@@ -523,6 +523,20 @@ describe("a fold keeps the visit (the reader remounts for the same message)", ()
     expect(reads.flat(), "read back after the fold").not.toContain("open");
   });
 
+  it("a dwell under way when the reader remounts starts over: the new mount does not finish it on its first look", () => {
+    const first = core();
+    laidOut(first);
+    pass(HOLD - 100);
+    expect(reads, "the premise: the dwell is under way").toEqual([]);
+    first.dispose();
+    const again = core();
+    laidOut(again);
+    pass(150);
+    expect(reads, "the dwell carried across the remount").toEqual([]);
+    pass(HOLD);
+    expect(reads).toEqual([["open", "m1"]]);
+  });
+
   it("a real leave ends the visit after the grace; the next visit is a fresh record", () => {
     const first = visitRecordFor("open", clock);
     showVisit("open", clock);

@@ -62,6 +62,8 @@ export interface PhoneThreadRead {
   scrollFor: (id: string) => number | null;
   /** Look again in the next frame (a read state or a body changed, the app came back). */
   poke: () => void;
+  /** A new width reflowed every panel: every dwell under way starts over. */
+  restart: () => void;
   /** Every panel laid out, top to bottom, the opened message (`openedId`) among them: the reader's place reads it. */
   layout: (openedId: string) => { id: string; top: number; height: number }[];
   /** Where a panel's top sits in the scroll content, for a jump to it; `null` before its layout. */
@@ -236,7 +238,11 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     if (!live || pending) return;
     pending = frame(look);
   }
+  /* Every dwell starts over: what an earlier mount saw (the record outlives it) is not on this screen. */
+  const restart = (): void => { o.record.observe([], null, NOTHING, now()); schedule(); };
+  restart();
   return {
+    restart,
     viewport: (h) => { height = h; moved(); },
     chrome: (overlap) => { chrome = Math.max(0, overlap); moved(); },
     offset: (which, v) => { offsets[which] = v; moved(); },

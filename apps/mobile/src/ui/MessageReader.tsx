@@ -180,11 +180,14 @@ export function MessageReader({
   const [frameHistory, setFrameHistory] = useState<{ id: string; at: "trailing" | "leading" } | null>(null);
   const [historyFor, setHistoryFor] = useState<string | null>(null);
   const framed = m != null && m.html != null && m.html !== "" && textFor !== m.id;
-  const facts = useRef<{ inOhbox: boolean; unread: (mid: string) => boolean; ready: (mid: string) => boolean }>({
-    inOhbox, unread: () => false, ready: () => false,
+  const facts = useRef<{
+    inOhbox: boolean; unread: (mid: string) => boolean; ready: (mid: string) => boolean; has: (mid: string) => boolean;
+  }>({
+    inOhbox, unread: () => false, ready: () => false, has: () => false,
   });
   facts.current = {
     inOhbox,
+    has: (mid) => mid === m?.id || (m?.earlier.some((h) => h.id === mid) ?? false),
     unread: (mid) => (mid === m?.id ? m.unread === true : m?.earlier.some((h) => h.id === mid && !h.seen) ?? false),
     ready: (mid) => (mid === m?.id
       ? openedBodyFinal(m, { framed, final: frameFinalFor === m.id })
@@ -220,7 +223,7 @@ export function MessageReader({
       lines: (mid) => THREAD_TOP_LINES * (mid === id ? lineOf.current.opened : lineOf.current.member),
       /* In sight: its screen in front, the app in the foreground, its window focused, and no sheet or composer over it.
          AppState stays active under a Modal and under the notification shade (`reader-cover.ts`). */
-      active: () => shown.current && readerSees(AppState.currentState) && anchorRef.current?.aiming !== true,
+      active: () => shown.current && readerSees(AppState.currentState) && anchorRef.current?.settling !== true,
       onHere: setHere,
       start: paneScrollOf(`msg:${id}`),
     }),
@@ -304,28 +307,44 @@ export function MessageReader({
   standRef.current = stand;
   const anchorFacts = useRef(() => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null));
   anchorFacts.current = () => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null);
+  /** The person's own scroll or press in this reader: the strip's landing is spent. */
+  const handed = useRef<string | null>(null);
   /** The strip's pressed member this open lands on, if any. */
   const landingOf = (): string | null => {
     const l = landing.current;
-    return l !== null && l.for === id ? l.id : null;
+    return l !== null && l.for === id && handed.current !== id ? l.id : null;
   };
   /** Where the open aims: the pressed member, the kept place, or the opened message's top less its air. */
   const openTarget = (): number | null => {
     const l = landingOf();
     if (l !== null) return seen.scrollFor(l);
-    if (place.current !== null) return placeY(seen.layout(id), place.current, box.current);
+    if (place.current !== null) {
+      const y = placeY(seen.layout(id), place.current, box.current);
+      /* A kept place whose message left the conversation gives way to the open's own landing. */
+      if (y !== null || place.current.end === true || facts.current.has(place.current.id)) return y;
+    }
     const top = anchorFacts.current();
     return top === null ? null : top - 8;
   };
   const anchor = useMemo(
     () => createOpenAnchor({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
+      applies: () => landingOf() !== null || place.current !== null || (facts.current.inOhbox && aboveCount.current > 0),
       start: startAt.y,
       target: () => openTarget(),
       extent: () => box.current,
       scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
       stand: (y) => standRef.current(y),
-      onPlaced: () => setPlaced(true),
+      onPlaced: () => {
+        setPlaced(true);
+        /* A strip landing that needed no scroll sent no report: keep it, as `stand()` keeps a clamped one, for the next mount. */
+        const l = landingOf();
+        const top = l === null ? null : seen.topOf(l);
+        const y = l === null ? null : seen.scrollFor(l);
+        if (l === null || top === null || y === null || hasPaneScroll(scrollKey) || panePlaceOf(scrollKey) !== null) return;
+        recordPaneScroll(scrollKey, startAt.y);
+        recordPanePlace(scrollKey, { id: l, dy: y - top, h: seen.layout(id).find((x) => x.id === l)?.height ?? 0 });
+      },
       onSettle: () => seen.poke(),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,9 +357,10 @@ export function MessageReader({
   const widthSeen = (which: "view" | "content", width: number): void => {
     const was = widths.current[which];
     widths.current[which] = width;
-    if (was > 0 && width > 0 && Math.abs(width - was) >= 1) anchor.rearm();
+    if (was > 0 && width > 0 && Math.abs(width - was) >= 1) { anchor.rearm(); seen.restart(); }
   };
   const handOver = (): void => {
+    handed.current = id;
     anchor.handOver();
     if (jumpEnd.current) { clearTimeout(jumpEnd.current); jumpEnd.current = null; }
   };
