@@ -31,6 +31,8 @@ export interface LetterKeep {
   files: number;
   draftId: string | null;
   quiet: true;
+  /** A forward's kept files (`Letter.forwardKept`). */
+  forwardParts?: readonly string[];
   row: (r: KeptRow) => void;
 }
 
@@ -151,6 +153,8 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
       files: letter.files.length,
       draftId: letter.draftId,
       quiet: true,
+      // A forward's kept files ride its row.
+      ...(!asNew && letter.mode === "forward" && letter.forwardKept ? { forwardParts: letter.forwardKept } : {}),
       row: (r) => { row = r; },
     });
     if (answer !== "kept" || row === null) return false;

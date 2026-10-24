@@ -1266,6 +1266,8 @@ export interface WorldDraftEdit {
   subject: string;
   /** The message a forward draft forwards; `null` for every other draft. */
   forwardOf: string | null;
+  /** The original's files the row keeps, beside a forward (another device's choice included); `null`: every file. */
+  forwardParts: string[] | null;
 }
 
 /**
@@ -1288,6 +1290,7 @@ export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
   return {
     mailboxId: d.mailboxId, to: typed(d.to), cc: typed(d.cc), bcc: typed(d.bcc), subject: d.subject,
     forwardOf: d.forwardOfMessageId ?? null,
+    forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
   };
 }
 
@@ -3174,6 +3177,8 @@ export interface DraftKeep {
   draftId?: string | null;
   /** A composer's own save as it goes: the row is written and nothing is said. */
   quiet?: boolean;
+  /** A forward's kept files once one was removed: the row holds them, so another device sends only those. */
+  forwardParts?: readonly string[];
   /** The bound row was sent from another device, so the keep wrote a NEW row: bind to it. */
   rebind?: (draftId: string) => void;
   /** The row the keep made or updated, or the key its queued save waits under. */
@@ -5563,6 +5568,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         kind: "draft_save", draftId: target, mailboxId,
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
+        ...(k.mode === "forward" && parent && k.forwardParts ? { forwardParts: [...k.forwardParts] } : {}),
         subject, body: k.body, to, cc: env ? env.cc : (k.cc ?? []), bcc: env ? [] : (k.bcc ?? []),
       })
       .then((res) => res, () => null);

@@ -451,10 +451,12 @@ describe("a letter being written survives a hard stop", () => {
       kept.forwardKept(["att-1"]);
       kept.markKeep();
       await first.actions.draftKeep({
-        mode: "forward", messageId: "m1", mailboxId: "mb-1", to: TO, subject: FWD.subject, body: FWD.body, files: 0, row: (r) => kept.keepAnswered(r),
+        mode: "forward", messageId: "m1", mailboxId: "mb-1", to: TO, subject: FWD.subject, body: FWD.body, files: 0,
+        forwardParts: ["att-1"], row: (r) => kept.keepAnswered(r),
       });
       const keptRow = kept.current().draftId!;
       expect(first.letters.letterOf(keptRow)?.forwardKept, "the keep dropped the choice").toEqual(["att-1"]);
+      expect(fake.draft(keptRow)?.forwardParts, "the row does not hold the kept files").toEqual(["att-1"]);
 
       const refused = first.compose({ words: FWD });
       refused.forwardKept(["att-2"]);
@@ -500,6 +502,7 @@ describe("a letter being written survives a hard stop", () => {
       await next.letters.landed();
       const row = drafts(fake).find((d) => d.body === "Typed before the kill")!;
       expect(next.letters.letterOf(String(row.id))?.forwardKept, "the restore dropped the choice").toEqual(["att-2"]);
+      expect(row.forwardParts, "the restored row does not hold the kept files").toEqual(["att-2"]);
       expect(next.letters.letterOf(sentFrom)?.forwardKept).toEqual(["att-1"]);
     } finally { fake.server.close(); }
   }, 60_000);

@@ -1337,8 +1337,13 @@ export function ComposeSheet({
   const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body };
   /* THE ORIGINAL'S FILES, LISTED (`compose/forward-files.ts`): held while the sheet stands, removable
      where the server sends only the parts the forward names, and weighed apart from the phone's own. */
-  /* The ids kept once one was removed (`Letter.forwardKept`), so a reopened or restored forward keeps its choice. */
-  const [forwardKept, setForwardKept] = useState<readonly string[] | null>(() => keeper?.current().forwardKept ?? null);
+  /* The ids kept once one was removed (`Letter.forwardKept`), so a reopened or restored forward keeps its choice;
+     else the row's, so a draft trimmed on another device opens listing only the kept files. */
+  const [forwardKept, setForwardKept] = useState<readonly string[] | null>(
+    () => keeper?.current().forwardKept ?? draft?.forwardParts ?? null,
+  );
+  /** The kept files every save of a forward writes onto its row; never a clearing null. */
+  const keptOnRow = forward && forwardKept !== null ? { forwardParts: forwardKept } : {};
   const [forwardNote, setForwardNote] = useState<Refusal | null>(null);
   useEffect(() => {
     if (!forward || m === null) return undefined;
@@ -1442,7 +1447,7 @@ export function ComposeSheet({
        A forward draft is saved as a forward of its original, never as a new mail. */
     void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
       mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
-      mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
+      mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
       rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; },
     })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot); }).catch(() => undefined).finally(() => {
       if (savingFor.current === snapshot) savingFor.current = null;
@@ -1686,6 +1691,7 @@ export function ComposeSheet({
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
           ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          ...keptOnRow,
           rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
         });
         keeping.current = false;
@@ -1743,7 +1749,7 @@ export function ComposeSheet({
     /* Answered after the sheet is gone; a keep that never answers is the next launch's to settle. */
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true,
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true, ...keptOnRow,
       rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
     });
     keeper?.release();

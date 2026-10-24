@@ -9,7 +9,7 @@ import { Copy } from "../src/copy";
 import { DE } from "../src/copy.de";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
-import { flushQueued, liveActions, refusedSendSay, stableActions, type LiveWorldActions } from "../src/state/live";
+import { flushQueued, liveActions, liveDrafts, refusedSendSay, stableActions, type LiveWorldActions } from "../src/state/live";
 import { forwardCaps } from "../src/compose/attach";
 import { forwardFilesPlan } from "../src/compose/forward-files";
 import { openLetterKeeper } from "../src/compose/letter-keeper";
@@ -127,6 +127,25 @@ async function listed(live: Awaited<ReturnType<typeof scene>>, o: { kept?: strin
 const optsOf = (wire: string[] | undefined) => (wire !== undefined ? { forwardParts: wire } : {});
 
 describe("Forward lists the letter's files and sends only those kept", () => {
+  it("a row trimmed on the web opens here listing only the kept files, and sends only those", async () => {
+    const live = await scene();
+    live.fake.setFiles("m1", FILES);
+    live.fake.addDraft({
+      id: "d-1", mailboxId: "mb-1", threadId: null, inReplyToMessageId: null, forwardOfMessageId: "m1",
+      forwardParts: ["att-1", "att-3"], subject: "Fwd: Scan", body: "see below", to: peer, cc: [], bcc: [],
+      rationale: null, status: "draft", createdAt: "2026-10-25T08:00:00.000Z", updatedAt: "2026-10-25T08:00:00.000Z",
+    });
+    await live.engine.syncOnce();
+    const edit = liveDrafts(live.engine.read(), { now: new Date() } as never).find((d) => d.id === "d-1")?.edit;
+    expect(edit?.forwardParts, "the row's kept files did not reach the composer").toEqual(["att-1", "att-3"]);
+    const plan = await listed(live, { kept: edit!.forwardParts });
+    expect(plan.kept).toEqual(["att-1", "att-3"]);
+    const res = await live.world.sendForward("m1", peer, "see below", null, [], false, false, "d-1", optsOf(plan.wire));
+    expect(res.outcome).toBe("sent");
+    expect(sentBody(live.fake).forwardParts).toEqual(["att-1", "att-3"]);
+    expect(sentCopyFiles(live)).toEqual(["rota-plan.pdf", "rota-data.bin"]);
+  }, 30_000);
+
   it("one of three removed: two go, through the world's own wrapper, and the Sent copy lists two", async () => {
     const live = await scene();
     live.fake.setFiles("m1", FILES);
