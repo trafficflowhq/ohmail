@@ -1,5 +1,5 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import { planHintOf, type ReleaseOutcome } from "@trafficflow/db";
+import { planHintOf, storageFactsOf, type ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
@@ -183,6 +183,12 @@ export const accountRoutes: Route[] = [
       // records them before it spends them.
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       if (caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
+      // THE PERSON'S OWN STORAGE, where a cap is a number: one primary-key read of their counter
+      // row. A failed read leaves the block out (nothing drawn); it never fails the wall's read.
+      const cap = verdict.limits.storageBytes;
+      const storage = typeof cap === "number"
+        ? await storageFactsOf(ctx.db, ctx.accountId).then((f) => ({ ...f, limitBytes: cap }), () => null)
+        : null;
       return json({
         metered: true,
         access: "open",
@@ -197,6 +203,12 @@ export const accountRoutes: Route[] = [
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
         exportPath: "/account/export",
         ...(caughtUp !== null && caughtUp !== "fault" ? { caughtUp } : {}),
+        ...(storage !== null ? {
+          storage: {
+            usedBytes: storage.usedBytes, limitBytes: storage.limitBytes, emptiedForSpace: storage.emptiedForSpace,
+            firstEmptiedAt: storage.firstEmptiedAt, keptFrom: storage.keptFrom, withheldOnArrival: storage.withheldOnArrival,
+          },
+        } : {}),
       }, 200);
     },
   },

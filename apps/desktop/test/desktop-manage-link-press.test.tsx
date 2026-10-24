@@ -371,7 +371,8 @@ describe("the press", () => {
 });
 
 /* A TRANSIENT NEVER REMOVES THE PANE FOR THE SESSION: a read that failed leaves the offer
-   UNKNOWN, and the next return to the window asks once more; an answered offer asks nothing. */
+   UNKNOWN, and the next return to the window asks once more; an answered offer asks nothing
+   until the quiet floor has passed. */
 describe("the offer after a failed read", () => {
   const reads = (): number => enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length;
   async function backToTheWindow(): Promise<void> {
@@ -412,5 +413,78 @@ describe("the offer after a failed read", () => {
     await backToTheWindow();
     expect(reads() - before, "an answered offer asked again").toBe(0);
     expect(nav()).not.toContain(SETTINGS.billing);
+  });
+});
+
+describe("the emptied-text notice on the Cloud door", () => {
+  const EMPTIED = {
+    usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
+    firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04",
+  };
+  const withStorage = (storage: unknown, state = "trialing"): { status: number; body: string } => ({
+    status: 200,
+    body: JSON.stringify({
+      metered: true, access: "open", canAddMailbox: true, mailboxes: 1,
+      lifecycle: { state, closedReason: null }, storage,
+    }),
+  });
+  const notice = (): HTMLElement | null => mountPoint!.querySelector("[data-storage-notice]");
+
+  it("the same access read draws it, with the plan sentence and a way to the Subscription pane", async () => {
+    globalThis.localStorage.clear();
+    access = withStorage(EMPTIED);
+    await open(CLOUD_SERVING);
+    expect(notice()?.textContent).toContain("no longer stores the text of your 80,000 oldest letters");
+    expect(notice()?.textContent).toContain("A bigger plan keeps more text from now on.");
+    expect(notice()?.querySelector("a")?.getAttribute("href")).toBe("#/settings/billing");
+    // The first paint's read and the offer's, as on any first launch: the notice asks nothing of its own.
+    expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH)).toHaveLength(2);
+  });
+
+  it("the cap is crossed while the window is open: a return after the quiet floor draws it", async () => {
+    globalThis.localStorage.clear();
+    localStorage.setItem("ohmail.access.mbx-1", "open");
+    access = withStorage({ ...EMPTIED, usedBytes: 1_990_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null });
+    await open(CLOUD_SERVING);
+    expect(notice()).toBeNull();
+    const before = enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length;
+    access = withStorage(EMPTIED, "active");
+    const start = Date.now();
+    const backAt = async (ms: number): Promise<void> => {
+      vi.spyOn(Date, "now").mockReturnValue(start + ms);
+      await act(async () => { window.dispatchEvent(new Event("focus")); });
+      await settle(20);
+    };
+    await backAt(60_000);
+    expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length - before, "a return inside the floor asked").toBe(0);
+    await backAt(16 * 60_000);
+    expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length - before).toBe(1);
+    expect(notice()?.textContent).toContain("no longer stores the text of your 80,000 oldest letters");
+    globalThis.localStorage.clear();
+  });
+
+  it("put away, it stays away on the next launch", async () => {
+    globalThis.localStorage.clear();
+    access = withStorage(EMPTIED, "active");
+    await open(CLOUD_SERVING);
+    await press(byText("button", "Dismiss")!);
+    expect(notice()).toBeNull();
+    await act(async () => { root!.unmount(); });
+    mountPoint!.remove();
+    await open(CLOUD_SERVING);
+    expect(notice()).toBeNull();
+    globalThis.localStorage.clear();
+  });
+
+  it("a standalone install and an answer with nothing emptied draw nothing", async () => {
+    globalThis.localStorage.clear();
+    access = withStorage(EMPTIED);
+    await open(LOCAL_SERVING);
+    expect(notice()).toBeNull();
+    await act(async () => { root!.unmount(); });
+    mountPoint!.remove();
+    access = withStorage({ ...EMPTIED, emptiedForSpace: 0 });
+    await open(CLOUD_SERVING);
+    expect(notice()).toBeNull();
   });
 });

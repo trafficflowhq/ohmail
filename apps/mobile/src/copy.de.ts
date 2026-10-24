@@ -1171,7 +1171,7 @@ export const DE: Deck = {
   liveBodyLoading: "Die ganze Nachricht wird geladen…",
   liveBodyFailed: "Nur die Vorschau ließ sich laden. Öffne sie erneut, um es nochmal zu versuchen.",
   liveBodyWithheld:
-    "Nicht gespeichert — dein Speicherplatz war voll, als sie ankam. Das hier ist die Vorschau; die Nachricht selbst liegt sicher in deinem Postfach auf deinem Mailserver.",
+    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. Ein größerer Tarif speichert ab jetzt mehr Text; diesen bringt er nicht zurück.",
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
@@ -2042,6 +2042,23 @@ export const DE: Deck = {
   stripLater: "Später",
   stripCaughtUp: (date: string) => `ohmail holt die Nachrichten nach, die seit dem ${date} angekommen sind.`,
   stripDismiss: "Verstanden",
+  storageNoticeEmptied: (cap: string, count: number) =>
+    `Damit die ${cap} GB deines Tarifs reichen, speichert ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr.`,
+  storageNoticeEmptiedBefore: (count: number) =>
+    `Damit der Speicher deines Tarifs damals reichte, hat ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr gespeichert.`,
+  storageNoticeKeptFrom: (month: string) => `Für Nachrichten ab ${month} bleibt der Text gespeichert.`,
+  storageNoticeKeptFromExcept: (month: string, count: number) =>
+    `Für Nachrichten ab ${month} bleibt der Text gespeichert, außer bei ${count === 1 ? "einer Nachricht, die ankam" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen`}, als dein Speicher voll war.`,
+  storageNoticeOnArrival: (count: number) =>
+    count === 1
+      ? "Eine Nachricht, die ankam, als dein Speicher voll war, ist ohne ihren Text gespeichert."
+      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen, als dein Speicher voll war, sind ohne ihren Text gespeichert.`,
+  storageNoticeSafe: "Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver und bleiben hier gelistet und auffindbar.",
+  storageNoticeTrial: "Ein größerer Tarif speichert ab jetzt mehr Text. Bereits entfernten Text bringt er nicht zurück.",
+  storageNoticeActive:
+    "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text. Bereits entfernten Text bringt das nicht zurück.",
+  storageNoticeManage: "Abo verwalten",
+  storageNoticeDismiss: "Schließen",
 
   renderErrorTitle: "Auf diesem Bildschirm ist etwas schiefgegangen.",
   renderErrorWhere: (surface: string) => `${surface} konnte nicht gezeichnet werden.`,

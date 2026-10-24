@@ -1,56 +1,94 @@
 import { describe, it, expect } from "vitest";
-import { formatStorageBytes, storageState, STORAGE_NEAR_CAP_RATIO } from "../app/shell/storage-state";
-import type { SubscriptionStatus } from "../app/api-client";
+import {
+  formatStorageBytes, storageFactsOf, storageKeptLine, storageMonthName, storageNoticeDue, storagePlanOf, storageState,
+  STORAGE_NEAR_CAP_RATIO, STORAGE_TRIM_BAND_RATIO,
+} from "../app/shell/storage-state";
 
 /**
- * THE STORAGE SENTENCE'S DERIVATION — pure over the DTO. No pane calls it now; the module's
- * own header says why it stays.
- *
- * The absent-field cases carry the weight: `storageUsedBytes` and
- * `entitlements.storageBytesLimit` are optional on the wire (an older server omits them), and
- * absence must mean "say nothing", never "0 of 0" — a row that rendered every account as at
- * once empty and capped would be the exact broken claim the optional-read rule
- * (`trialCredits`'s) exists to prevent.
+ * THE STORAGE SENTENCE'S DERIVATION — pure over `GET /account/access`'s `storage` block. An absent or
+ * malformed block says nothing, never "0 of 0"; mail is never said to stop at the cap.
  */
-function dto(over: {
-  used?: number | undefined;
-  cap?: number | undefined;
-}): SubscriptionStatus {
-  return {
-    subscription: null,
-    balance: 0,
-    ...(over.used !== undefined ? { storageUsedBytes: over.used } : {}),
-    entitlements: {
-      mailboxLimit: 5, canAddMailbox: true, aiEnabled: true, syncEnabled: true,
-      ...(over.cap !== undefined ? { storageBytesLimit: over.cap } : {}),
-      reason: "active",
-    },
-    plans: {},
-  } as SubscriptionStatus;
-}
+const block = (over: Record<string, unknown> = {}) => ({
+  usedBytes: 1_000, limitBytes: 5_000_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null, withheldOnArrival: 0, ...over,
+});
+
+describe("storageFactsOf", () => {
+  it("narrows a well-formed block and drops what it cannot read", () => {
+    expect(storageFactsOf(block({
+      emptiedForSpace: 80_000, keptFrom: "2019-04", firstEmptiedAt: "2026-10-20T03:00:00.000Z", withheldOnArrival: 12,
+    }))).toEqual({
+      usedBytes: 1_000, limitBytes: 5_000_000_000, emptiedForSpace: 80_000, firstEmptiedAt: "2026-10-20T03:00:00.000Z",
+      keptFrom: "2019-04", withheldOnArrival: 12,
+    });
+    expect(storageFactsOf(block({ keptFrom: "April" }))?.keptFrom).toBeNull();
+  });
+
+  it("an older server's block has no arrivals; never more of them than letters emptied", () => {
+    const older = { usedBytes: 1_000, limitBytes: 5_000_000_000, emptiedForSpace: 5, firstEmptiedAt: null, keptFrom: null };
+    expect(storageFactsOf(older)?.withheldOnArrival).toBe(0);
+    expect(storageFactsOf(block({ emptiedForSpace: 5, withheldOnArrival: 9 }))?.withheldOnArrival).toBe(5);
+  });
+
+  it("an absent block, a missing figure or a zero cap is no block at all", () => {
+    expect(storageFactsOf(undefined)).toBeNull();
+    expect(storageFactsOf(block({ usedBytes: undefined }))).toBeNull();
+    expect(storageFactsOf(block({ emptiedForSpace: "3" }))).toBeNull();
+    expect(storageFactsOf(block({ limitBytes: 0 }))).toBeNull();
+  });
+});
 
 describe("storageState", () => {
+  const cap = 5_000_000_000;
   it("says nothing below ninety percent — the row's numbers are the whole statement", () => {
-    expect(storageState(dto({ used: 0, cap: 5_000_000_000 }))).toBeNull();
-    expect(storageState(dto({ used: 4_499_999_999, cap: 5_000_000_000 }))).toBeNull();
-  });
-
-  it("near_cap from exactly ninety percent; at_cap from exactly the cap", () => {
-    const cap = 5_000_000_000;
-    const near = Math.ceil(cap * STORAGE_NEAR_CAP_RATIO);
-    expect(storageState(dto({ used: near, cap }))).toEqual({ kind: "near_cap", usedBytes: near, capBytes: cap });
-    expect(storageState(dto({ used: cap, cap }))).toEqual({ kind: "at_cap", usedBytes: cap, capBytes: cap });
-    // Over-cap (the crossing message's bounded overshoot) is still at_cap, not a fourth state.
-    expect(storageState(dto({ used: cap + 999, cap }))?.kind).toBe("at_cap");
-  });
-
-  it("an absent figure — either one — says NOTHING, and so does a zero cap", () => {
-    expect(storageState(dto({ used: undefined, cap: 5_000_000_000 }))).toBeNull();
-    expect(storageState(dto({ used: 100, cap: undefined }))).toBeNull();
-    // Cap 0 is the zero-entitlement shape, whose syncEnabled:false already stops ingest — a
-    // full-red storage row on a suspended account would name the wrong problem.
-    expect(storageState(dto({ used: 100, cap: 0 }))).toBeNull();
+    expect(storageState(storageFactsOf(block({ usedBytes: 0 })))).toBeNull();
+    expect(storageState(storageFactsOf(block({ usedBytes: cap * STORAGE_NEAR_CAP_RATIO - 1 })))).toBeNull();
     expect(storageState(null)).toBeNull();
+  });
+
+  it("near from ninety percent, full at the cap, and emptied letters outrank both", () => {
+    expect(storageState(storageFactsOf(block({ usedBytes: Math.ceil(cap * STORAGE_NEAR_CAP_RATIO) })))).toEqual({ kind: "near" });
+    expect(storageState(storageFactsOf(block({ usedBytes: cap + 999 })))).toEqual({ kind: "full" });
+    expect(storageState(storageFactsOf(block({ usedBytes: cap - 1, emptiedForSpace: 7 }))))
+      .toEqual({ kind: "emptied", count: 7, current: true });
+    // The count is of the oldest letters: those that arrived while the storage was full are not among them.
+    expect(storageState(storageFactsOf(block({ usedBytes: cap - 1, emptiedForSpace: 7, withheldOnArrival: 2 }))))
+      .toEqual({ kind: "emptied", count: 5, current: true });
+  });
+
+  it("emptied letters below the trim band were emptied under an earlier state, not the current cap", () => {
+    expect(storageState(storageFactsOf(block({ usedBytes: 10, emptiedForSpace: 7 }))))
+      .toEqual({ kind: "emptied", count: 7, current: false });
+    expect(storageState(storageFactsOf(block({ usedBytes: cap * STORAGE_TRIM_BAND_RATIO, emptiedForSpace: 7 }))))
+      .toEqual({ kind: "emptied", count: 7, current: true });
+  });
+
+  it("the notice is due only while letters are emptied and the device has not put it away", () => {
+    expect(storageNoticeDue(storageFactsOf(block({ emptiedForSpace: 1 })), false)).toBe(true);
+    expect(storageNoticeDue(storageFactsOf(block({ emptiedForSpace: 1 })), true)).toBe(false);
+    expect(storageNoticeDue(storageFactsOf(block()), false)).toBe(false);
+    expect(storageNoticeDue(null, false)).toBe(false);
+  });
+
+  it("a trial is offered a bigger plan, an active subscription the plan or the add-on, nothing else anything", () => {
+    expect(storagePlanOf("trialing")).toBe("trial");
+    expect(storagePlanOf("active")).toBe("active");
+    for (const state of ["past_due", "grace", "closed", undefined]) expect(storagePlanOf(state), String(state)).toBeNull();
+  });
+
+  it("names the kept-from month in the reader's language, in any zone", () => {
+    expect(storageMonthName("2019-04", "en")).toBe("April 2019");
+    expect(storageMonthName("2019-01", "de")).toBe("Januar 2019");
+  });
+
+  it("the month's sentence excepts the letters that arrived while the storage was full", () => {
+    const facts = (over: Record<string, unknown>) => storageFactsOf(block({ emptiedForSpace: 9, ...over }))!;
+    expect(storageKeptLine(facts({ keptFrom: "2019-04" }), "en"))
+      .toEqual({ key: "storageNoticeKeptFrom", values: { month: "April 2019" } });
+    expect(storageKeptLine(facts({ keptFrom: "2019-04", withheldOnArrival: 2 }), "en"))
+      .toEqual({ key: "storageNoticeKeptFromExcept", values: { month: "April 2019", count: 2 } });
+    expect(storageKeptLine(facts({ withheldOnArrival: 2 }), "en"))
+      .toEqual({ key: "storageNoticeOnArrival", values: { count: 2 } });
+    expect(storageKeptLine(facts({}), "en")).toBeNull();
   });
 });
 

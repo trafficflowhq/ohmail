@@ -9,6 +9,8 @@
  * engine over a pipe; reaching for anything here throws rather than quietly opening a socket.
  */
 
+import type { StorageFacts } from "../../webapp/app/shell/storage-state";
+
 const UNAVAILABLE = "the ohmail Cloud API is not part of this build — the desktop tier talks to its own local engine";
 
 const refuse = (): never => {
@@ -135,6 +137,13 @@ export const reResolveApiOwner: () => void = () => {};
  * the real client.
  */
 export const forgetAccess: () => void = () => {};
+
+/**
+ * The account answer's storage block. Always `null` here, for `forgetAccess`'s reason: this door
+ * reads no account limits, so there are no storage facts to narrow (the desktop reads its own
+ * through the engine, `DesktopSubscription.tsx`).
+ */
+export const accessStorage: (a: AccountAccess | null | undefined) => StorageFacts | null = () => null;
 
 /**
  * The account-header negotiation, for the shared shell's types. Always `null` here — "nobody has

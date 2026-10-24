@@ -323,6 +323,10 @@ describe("the reach-past body door, through the shipped shell", () => {
 
     // The storage-cap sentence, verbatim from the catalogue — a terminal state.
     expect(textOf(el)).toContain(en.body.withheld);
+    // It says why and where the letter is, and never that a bigger plan brings this text back.
+    expect(textOf(el)).toContain("to stay within your plan's storage space");
+    expect(textOf(el)).toContain("complete in your mailbox on your mail server");
+    expect(textOf(el)).toContain("it does not bring this text back");
     // And no body-retry control anywhere in the reading column: a retry cannot change a policy.
     const pane = el.querySelector(".view-folder") as HTMLElement;
     const retries = [...pane.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry");

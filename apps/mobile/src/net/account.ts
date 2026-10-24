@@ -32,6 +32,43 @@ export interface AccountAccess {
   exportPath?: string;
   /** The one-time catch-up after a reopening, keyed by `since` for its dismissal. */
   caughtUp?: { since: string };
+  /** Stored letter text against the plan's cap: a metered account with a cap, on a server that says. */
+  storage?: StorageFacts;
+}
+
+/**
+ * `GET /account/access`'s storage block. When stored text reaches the cap, ohmail empties the text of
+ * the oldest letters; they stay complete on the mail server. `keptFrom` is "YYYY-MM": text is kept for
+ * letters from that month on, but for the `withheldOnArrival` letters: of `emptiedForSpace`, those
+ * stored without their text because they arrived while the storage was full.
+ */
+export interface StorageFacts {
+  usedBytes: number;
+  limitBytes: number;
+  emptiedForSpace: number;
+  firstEmptiedAt: string | null;
+  keptFrom: string | null;
+  withheldOnArrival: number;
+}
+
+const count = (v: unknown): number | null =>
+  (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+/** Narrow the block; an absent or malformed one is none, never "0 of 0". */
+export function storageOf(raw: unknown): StorageFacts | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const usedBytes = count(r.usedBytes);
+  const limitBytes = count(r.limitBytes);
+  const emptiedForSpace = count(r.emptiedForSpace);
+  if (usedBytes === null || limitBytes === null || limitBytes <= 0 || emptiedForSpace === null) return null;
+  return {
+    usedBytes, limitBytes, emptiedForSpace,
+    firstEmptiedAt: str(r.firstEmptiedAt) ?? null,
+    keptFrom: typeof r.keptFrom === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(r.keptFrom) ? r.keptFrom : null,
+    // An older server sends none; never more than the letters emptied.
+    withheldOnArrival: Math.min(count(r.withheldOnArrival) ?? 0, emptiedForSpace),
+  };
 }
 
 const str = (v: unknown): string | undefined =>
@@ -50,6 +87,7 @@ export function accessOf(body: unknown): AccountAccess | null {
   /* The date is the catch-up: without `since` there is no sentence and no key to dismiss it by. An
      older API's count is dropped (mail 0135) — it counted the closure's mail, not the catch-up. */
   const caughtUp = c && typeof c.since === "string" && c.since.length > 0 ? { since: c.since } : undefined;
+  const storage = storageOf(raw.storage);
   return {
     metered: true,
     ...(raw.access === "open" || raw.access === "refused" ? { access: raw.access } : {}),
@@ -57,6 +95,7 @@ export function accessOf(body: unknown): AccountAccess | null {
     ...(manageUrl ? { manageUrl } : {}),
     ...(exportPath ? { exportPath } : {}),
     ...(caughtUp ? { caughtUp } : {}),
+    ...(storage ? { storage } : {}),
   };
 }
 

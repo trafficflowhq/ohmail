@@ -14,8 +14,9 @@ import { useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
-import { useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
+import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
 import { linkHref, useRenderedLinks } from "../../webapp/app/shell/rendered-links";
+import { storageFactsOf, type StorageFacts } from "../../webapp/app/shell/storage-state";
 
 /**
  * The hosted route this pane addresses, root-relative like every path in this window.
@@ -49,6 +50,10 @@ export interface ManageOffer {
   manageOffered: boolean;
   /** Take the pane away for the rest of this session: the press found nowhere to go. */
   withdrawManage: () => void;
+  /** The same answer's storage block (`storage-state.ts`), for the emptied-text notice; null for none. */
+  storage: StorageFacts | null;
+  /** The same answer's lifecycle state, which picks the notice's plan sentence. */
+  lifecycleState: string | null;
 }
 
 /** What the offer knows: nothing yet (a failed read leaves it here), or an answer's verdict. */
@@ -59,27 +64,41 @@ type OfferState = "unknown" | "offered" | "not-offered";
  * CALLS rather than a `return null` inside the pane: `SettingsView` grows the nav entry from the PROP
  * being present, so a node that renders nothing still puts "Subscription" in the nav above an empty
  * pane. Any ANSWER settles it — `metered`, a 402 (a program that refused this account, whose way back
- * the lock leaves open), `metered:false`, no hosted account — and only a FAILED read leaves it unknown,
- * which is the one state the next return to the window asks again in, through the shell's own schedule.
+ * the lock leaves open), `metered:false`, no hosted account — and only a FAILED read leaves it unknown.
+ * A return to the window asks again through the shell's own schedule: at once while unknown, else after
+ * the quiet floor, which keeps the storage block (the emptied-text notice's facts) current.
  */
 export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   const [state, setState] = useState<OfferState>("unknown");
+  const [storage, setStorage] = useState<StorageFacts | null>(null);
+  const [lifecycleState, setLifecycleState] = useState<string | null>(null);
   /** The account door an answer belongs to: one for an earlier door is dropped. */
   const door = useRef(0);
   const flight = useRef<Promise<boolean> | null>(null);
+  /** When the last answer came; the return floor counts from it. */
+  const answeredAt = useRef(0);
+  /** The press found nowhere to go: the pane stays away for this door. */
+  const withdrawn = useRef(false);
   const readOffer = useCallback((): Promise<boolean> => {
     // One read at a time: the mount's and a return's join, so a return inside it asks nothing more.
     if (flight.current !== null) return flight.current;
     const asked = door.current;
     const read = (async (): Promise<boolean> => {
       let next: OfferState | null = null;
+      let body = null as { metered?: unknown; storage?: unknown; lifecycle?: { state?: unknown } } | null;
       try {
         const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
         if (res.status === ACCESS_REFUSED) next = "offered";
-        else if (res.ok) next = ((await res.json()) as { metered?: unknown }).metered === true ? "offered" : "not-offered";
+        else if (res.ok) {
+          body = (await res.json()) as NonNullable<typeof body>;
+          next = body?.metered === true ? "offered" : "not-offered";
+        }
       } catch { /* no answer: still unknown */ }
       if (next === null || asked !== door.current) return false;
-      setState(next);
+      answeredAt.current = Date.now();
+      setState(withdrawn.current ? "not-offered" : next);
+      setStorage(body?.metered === true ? storageFactsOf(body.storage) : null);
+      setLifecycleState(typeof body?.lifecycle?.state === "string" ? body.lifecycle.state : null);
       return true;
     })().finally(() => { if (flight.current === read) flight.current = null; });
     flight.current = read;
@@ -88,9 +107,13 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   useEffect(() => {
     door.current += 1;
     flight.current = null;
+    answeredAt.current = 0;
+    withdrawn.current = false;
     /* NO ACCOUNT DOOR, NO ASK. A standalone install and one paired to another computer have no
        hosted account and no server holding this state, so asking would put a route on the wire
        that nothing behind this door serves. Any offer an earlier door made goes with it. */
+    setStorage(null);
+    setLifecycleState(null);
     if (!accountDoor) {
       setState("not-offered");
       return;
@@ -98,10 +121,18 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
     setState("unknown");
     void readOffer();
   }, [accountDoor, readOffer]);
-  // A return to the window asks while, and only while, no answer has come; never on a clock.
-  useAccessSchedule({ read: accountDoor && state === "unknown" ? readOffer : undefined, minute: null, owner: null });
-  const withdrawManage = useCallback(() => { setState("not-offered"); }, []);
-  return { manageOffered: state === "offered", withdrawManage };
+  /* A return to the window asks again: at once while no answer has come, then on the web strip's
+     quiet floor, so a session that crosses the storage cap draws the notice. Never on a clock. */
+  useAccessSchedule({
+    read: accountDoor ? readOffer : undefined,
+    minute: null,
+    owner: null,
+    returnFloor: () => (state === "unknown" ? RETURN_DEBOUNCE_MS : QUIET_RETURN_MS),
+    lastAsked: () => answeredAt.current,
+  });
+  // A withdrawal holds for the session: a later answer does not bring the pane back.
+  const withdrawManage = useCallback(() => { withdrawn.current = true; setState("not-offered"); }, []);
+  return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState };
 }
 
 /** Nothing drawn yet. */

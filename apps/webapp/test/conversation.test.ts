@@ -1221,7 +1221,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
    * Retry is asserted ABSENT, not merely unused: withheld is an ANSWER, and a control that
    * cannot change the answer is the dead end the failed arm's own control exists to avoid.
    */
-  it("a WITHHELD sibling says the stored copy gave way within the storage space, and offers no Retry", async () => {
+  it("a WITHHELD sibling says its text was emptied to stay within the plan, and offers no Retry", async () => {
     bodyState = "withheld";
     conversation = [A, B, C];
     await mountPane(B);
@@ -1229,7 +1229,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
     expect(notes, "every sibling at the cap must carry the note").toHaveLength(2);
     for (const n of notes) {
-      expect(n.textContent).toContain("older stored copies give way to newer mail");
+      expect(n.textContent).toContain("stopped storing the text of older letters");
       expect(n.textContent).not.toContain("Loading the full message");
       expect(n.textContent).not.toContain("Couldn't load the full message");
     }
@@ -1257,7 +1257,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     expect(notes).toHaveLength(2);
     for (const n of notes) {
       expect(n.textContent).toContain("your spam verdict filed this message to the Junk folder");
-      expect(n.textContent).not.toContain("older stored copies give way");
+      expect(n.textContent).not.toContain("stopped storing the text of older letters");
     }
   });
 
@@ -1305,7 +1305,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
       expect(n.textContent).toContain("every copy of this message is gone");
       // The storage sentence's reassurance is FALSE here — that is why the marker exists.
       expect(n.textContent).not.toContain("safe in your mailbox");
-      expect(n.textContent).not.toContain("older stored copies give way");
+      expect(n.textContent).not.toContain("stopped storing the text of older letters");
     }
   });
 
@@ -1321,12 +1321,12 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     for (const n of notes) {
       expect(n.textContent).toContain(`larger than ${MAX_RAW_MESSAGE_BYTES / (1024 * 1024)} MB`);
       expect(n.textContent).toContain("Open it in your mail provider");
-      expect(n.textContent).not.toContain("older stored copies give way");
+      expect(n.textContent).not.toContain("stopped storing the text of older letters");
     }
     expect([...host!.querySelectorAll("button")].find((x) => x.textContent?.includes("Retry"))).toBeUndefined();
   });
 
-  it("the storage-cap marker keeps the storage sentence, upgrade path included", async () => {
+  it("the storage-cap marker keeps the storage sentence, and promises no text back", async () => {
     bodyState = "withheld";
     bodyWithheld = "storage_cap";
     conversation = [A, B, C];
@@ -1334,8 +1334,8 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
     expect(notes).toHaveLength(2);
     for (const n of notes) {
-      expect(n.textContent).toContain("older stored copies give way to newer mail");
-      expect(n.textContent).toContain("A bigger plan adds storage space");
+      expect(n.textContent).toContain("stopped storing the text of older letters");
+      expect(n.textContent).toContain("it does not bring this text back");
     }
   });
 

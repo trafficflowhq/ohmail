@@ -145,6 +145,34 @@ function keptFromPast(current: string | null, emptied: Date | null): string | nu
   return current !== null && current > after ? current : after;
 }
 
+/** What the person's own client is told about their stored letters (`GET /account/access`). */
+export interface StorageFacts {
+  usedBytes: number;
+  emptiedForSpace: number;
+  /** ISO instant of the first trim that emptied a letter; null when none is recorded. */
+  firstEmptiedAt: string | null;
+  /** "YYYY-MM": text is kept for letters from this month on, but the `withheldOnArrival` ones; null for none. */
+  keptFrom: string | null;
+  /** Of `emptiedForSpace`, the letters stored without their text because they arrived while the storage was full. */
+  withheldOnArrival: number;
+}
+
+/** One primary-key read of the account's counter row; no row reads as nothing stored. */
+export async function storageFactsOf(tx: Tx, accountId: string): Promise<StorageFacts> {
+  const [row] = await tx.select({
+    bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace, first: accountStorage.firstHuskedAt,
+    keptFrom: accountStorage.keptFrom, onArrival: accountStorage.withheldOnArrival,
+  }).from(accountStorage).where(eq(accountStorage.accountId, accountId)).limit(1);
+  const first = row?.first == null ? null : new Date(row.first as Date | string);
+  return {
+    usedBytes: Number(row?.bytes ?? 0),
+    emptiedForSpace: Number(row?.husked ?? 0),
+    firstEmptiedAt: first === null || !Number.isFinite(first.getTime()) ? null : first.toISOString(),
+    keptFrom: row?.keptFrom == null ? null : String(row.keptFrom).slice(0, 7),
+    withheldOnArrival: Number(row?.onArrival ?? 0),
+  };
+}
+
 /** Make the account's counter row exist and lock it; returns the bytes read under the lock. */
 export async function lockAccountStorage(tx: Tx, d: Dialect, accountId: string): Promise<number> {
   await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();

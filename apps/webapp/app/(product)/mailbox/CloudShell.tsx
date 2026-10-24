@@ -26,6 +26,7 @@ import { useErasedWall, watchErasedElsewhere } from "../../erased-door";
 import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
 import { LifecycleBanner } from "./LifecycleBanner";
+import { CloudStorageNotice } from "./CloudStorageNotice";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
 import { SecuritySection } from "./SecuritySection";
@@ -328,7 +329,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
            cannot disagree. That is what licenses it here and nowhere the node paints at once —
            measured, not assumed: on a prerendered demo page this was a live `GET /account/access`
            the row that found the other five never named. */
-        accountNotice={resolvedDemo ? undefined : <LifecycleBanner />}
+        /* …and under it the one-time notice that letter text was emptied for space, from the same feed. */
+        accountNotice={resolvedDemo ? undefined : <><LifecycleBanner /><CloudStorageNotice /></>}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}

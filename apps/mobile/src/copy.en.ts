@@ -1781,7 +1781,7 @@ const TABLE = {
    * needs, and the preview above the note is real.
    */
   liveBodyWithheld:
-    "Not stored — your storage space was full when this arrived. This is the preview; the message itself is safe in your mailbox on your mail server.",
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. A bigger plan keeps more text from now on; it does not bring this text back.",
   /**
    * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
    * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
@@ -2965,6 +2965,29 @@ const TABLE = {
   stripLater: "Later",
   stripCaughtUp: (date: string) => `ohmail is catching up on mail that arrived since ${date}.`,
   stripDismiss: "Got it",
+  /**
+   * THE EMPTIED-TEXT NOTICE (`ui/StorageNotice.tsx`): what happened, that the letters stay complete
+   * on the mail server, and what keeps more text from now on. Never that emptied text comes back.
+   */
+  storageNoticeEmptied: (cap: string, count: number) =>
+    `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
+  storageNoticeEmptiedBefore: (count: number) =>
+    `To stay within your plan's storage at the time, ohmail stopped storing the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
+  storageNoticeKeptFrom: (month: string) => `Text is kept for letters from ${month} on.`,
+  /** The month's sentence with the letters that arrived while the storage was full excepted. */
+  storageNoticeKeptFromExcept: (month: string, count: number) =>
+    `Text is kept for letters from ${month} on, apart from ${count === 1 ? "one letter that" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that`} arrived while your storage was full.`,
+  /** Those letters alone, when no month is recorded. */
+  storageNoticeOnArrival: (count: number) =>
+    count === 1
+      ? "One letter that arrived while your storage was full is stored without its text."
+      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that arrived while your storage was full are stored without their text.`,
+  storageNoticeSafe: "Those letters stay complete in your mailbox on your mail server, and stay listed and findable here.",
+  storageNoticeTrial: "A bigger plan keeps more text from now on. It does not bring back text that was already emptied.",
+  storageNoticeActive:
+    "A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.",
+  storageNoticeManage: "Manage subscription",
+  storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one
      verb. The cause goes to the device's log, never to the screen. */
   renderErrorTitle: "Something went wrong on this screen.",

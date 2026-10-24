@@ -164,10 +164,11 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "in this file goes through the rule; neither of these is a message's date.",
   },
   "apps/mobile/src/ui/day-stamp.ts": {
-    calls: 2,
+    calls: 3,
     why: "The phone twin of `format.ts`'s `dayStamp`, and pinned for the same reason: the day a "
       + "standing fact became true — a closure's date on the wall and its strips — with no clock "
-      + "on it. Its second call is the reduced-ICU fallback on a runtime that refuses the locale.",
+      + "on it. Its second call is the reduced-ICU fallback on a runtime that refuses the locale. "
+      + "The third is `monthStamp`: the month text is kept from, in the emptied-text notice.",
   },
   "apps/webapp/app/shell/format.ts": {
     calls: 2,
@@ -193,9 +194,9 @@ const PINNED: Record<string, { calls: number; why: string }> = {
      day one of these files formats an instant instead of a byte count, the number moves and this
      census asks why. Both are thousands separators. */
   "apps/webapp/app/shell/storage-state.ts": {
-    calls: 1,
-    why: "A NUMBER, not a date — a byte figure in the reader's digit grouping. No pane calls it "
-      + "now; the file's own header says why it stays.",
+    calls: 2,
+    why: "A byte figure in the reader's digit grouping, and the MONTH text is kept from "
+      + "(\"April 2019\") — a month name in a storage sentence, never a mail stamp.",
   },
 };
 
