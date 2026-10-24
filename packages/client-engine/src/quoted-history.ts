@@ -118,6 +118,8 @@ const MONTH = String.raw`(?:jan|feb|m[äa]r|apr|ma[iy]|jun|jul|aug|sep|o[ck]t|no
 /** What the first line of a wrapped attribution carries: its date, time or address. */
 const DATED = new RegExp(String.raw`\b(?:19|20)\d\d\b|\b\d{1,2}:\d\d\b|@|\b\d{1,2}[./]\d{1,2}[./]|\b${MONTH}[\p{L}]*\.?\s+\d|\d\.?\s+${MONTH}`, "iu");
 const ANSWER_PREFIX = /^(?:\[[A-Z]{1,4}\]|->|=>|A:|Antwort:)/;
+/** Outlook's inline-answer mark, the writer's initials or name ("[Ana Example] "): an answer when a hop repeats it. */
+const ANSWER_MARK = /^\[(\p{L}[\p{L} .'-]{0,40})\]\s/u;
 /** What a picture contributes to its line: content, matched by no rule. */
 const PICTURE = "￼";
 
@@ -401,16 +403,36 @@ function introAbove(L: Line[], f: Facts, s: number, run: boolean): number {
   }
 }
 
+/** An explicit answer mark: bracketed initials ("[AE] ") or a mark the hop repeats (`marks`). */
+function bracketed(l: Line, marks: ReadonlySet<string>): boolean {
+  return /^\[[A-Z]{1,4}\]/.test(l.text) || marks.has(ANSWER_MARK.exec(l.text)?.[1] ?? "");
+}
+
 /**
  * A line in another hand than its hop's body: mostly highlighted, mostly in another ink than the
- * hop's own, or bold with an answer prefix. In plain text: an answer prefix.
+ * hop's own, opening with an answer mark at any weight, or bold with an answer prefix ("->", "A:").
+ * In plain text: an answer mark or prefix.
  */
-function foreign(l: Line, hopInk: string, html: boolean): boolean {
-  if (!html) return ANSWER_PREFIX.test(l.text);
+function foreign(l: Line, hopInk: string, html: boolean, marks: ReadonlySet<string>): boolean {
+  const bracket = bracketed(l, marks);
+  if (!html) return bracket || ANSWER_PREFIX.test(l.text);
   if (l.chars === 0) return false;
   if (l.mark * 10 >= l.chars * 6) return true;
   if (l.ink !== hopInk && l.inkShare >= 0.6) return true;
-  return l.bold === l.chars && ANSWER_PREFIX.test(l.text);
+  return bracket || (l.bold === l.chars && ANSWER_PREFIX.test(l.text));
+}
+
+/** The answer marks two or more body lines of the hop `a..b` open with (one "[EXTERNAL]" banner is none). */
+function marksOf(L: Line[], f: Facts, a: number, b: number, html: boolean): Set<string> {
+  const seen = new Set<string>();
+  const marks = new Set<string>();
+  for (let i = a; i < b; i++) {
+    const m = bodyLine(L, f, i, html) ? ANSWER_MARK.exec(L[i]!.text)?.[1] : undefined;
+    if (m === undefined) continue;
+    if (seen.has(m)) marks.add(m);
+    seen.add(m);
+  }
+  return marks;
 }
 
 /** A line of the history's own body (not a header block's, not empty). */
@@ -445,6 +467,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
     let hopInk = "";
     let most = -1;
     for (const [ink, w] of weight) if (w > most) { most = w; hopInk = ink; }
+    const marks = marksOf(L, f, a, b, html);
     // A heading ("URGENT", "Bitte beachten:") is the hop's own emphasis: its one foreign line with no
     // lowercase letter or ending in ':', not under a question. Several, or one under a question, answer.
     let heading = -1;
@@ -454,7 +477,7 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
       for (let i = a; i < b; i++) {
         if (!bodyLine(L, f, i, html)) continue;
         const t = L[i]!.text;
-        if ((t.endsWith(":") || !/\p{Ll}/u.test(t)) && foreign(L[i]!, hopInk, html)) {
+        if ((t.endsWith(":") || !/\p{Ll}/u.test(t)) && foreign(L[i]!, hopInk, html, marks)) {
           shaped++;
           heading = shaped === 1 && !above.endsWith("?") ? i : -1;
         }
@@ -467,7 +490,12 @@ function answersInside(L: Line[], f: Facts, s: number, html: boolean, end = L.le
     for (let i = a; i < b; i++) {
       if (!bodyLine(L, f, i, html) || i === heading) continue;
       const l = L[i]!;
-      if (foreign(l, hopInk, html)) { if (before) pending = true; continue; }
+      if (foreign(l, hopInk, html, marks)) {
+        // A marked answer needs no prose after it: it may answer the last question.
+        if (before && bracketed(l, marks)) return true;
+        if (before) pending = true;
+        continue;
+      }
       if (html && l.ink !== hopInk) continue;
       if (pending && (!html || prose(l))) return true;
       before = true;
@@ -485,6 +513,8 @@ interface Cand { kind: "run" | "header"; line: number; end: number; node: number
  * with To or Cc (a memo; a date first is GMX's and WEB.DE's reply header).
  */
 function pastedBlock(L: Line[], f: Facts, s: number, line: number): boolean {
+  let first = line;
+  while (first > 0 && !L[first - 1]!.blank && L[first - 1]!.depth === 0 && f.label[first - 1] !== null) first--;
   let k = s - 1;
   while (k >= 0 && L[k]!.blank) k--;
   if (k >= 0) {
@@ -492,8 +522,6 @@ function pastedBlock(L: Line[], f: Facts, s: number, line: number): boolean {
     if (t.endsWith(":")) return true;
     if (SENTENCE_END.test(t) && !ABBREVIATION_END.test(t) && !DISCLAIMER.test(t) && t.split(" ").length >= 5) return true;
   }
-  let first = line;
-  while (first > 0 && !L[first - 1]!.blank && L[first - 1]!.depth === 0 && f.label[first - 1] !== null) first--;
   return f.label[first] === "to" || f.label[first] === "cc";
 }
 
@@ -862,7 +890,8 @@ function linearize<N>(root: N, tree: QuotedTree<N>, sheets: readonly string[] = 
     const quiet = fr.depth === 0 && !fr.boxed;
     if (container) markers.push({ kind: "container", line: lines.length, node: index });
     else if (quiet && hasToken(id, HEADER_ID)) markers.push({ kind: "header", line: lines.length, node: index });
-    else if (quiet && tag === "div" && /border-top\s*:\s*solid/i.test(style)) markers.push({ kind: "border", line: lines.length, node: index });
+    // Outlook's border-top div; GMX's, WEB.DE's and mail.com's border-left quote box.
+    else if (quiet && tag === "div" && /border-top\s*:\s*solid|border-left\s*:[^;]*\bsolid/i.test(style)) markers.push({ kind: "border", line: lines.length, node: index });
     const w = CANVAS.has(tag) ? tree.attr(n, "width") : null;
     const canvas = CANVAS.has(tag) && ((w !== null && /^\s*\d+\s*$/.test(w) && canvasPx(Number(w))) || declaresCanvas(style));
     if (canvas) designed = true;

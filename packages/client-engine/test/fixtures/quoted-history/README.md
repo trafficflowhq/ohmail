@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-123 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+124 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -33,6 +33,9 @@ A forward whose history opens with the forward's own introducer ('Forwarded mess
 Nachricht', 'Begin forwarded message:') shows the forwarded message whole: it is the content the forward
 delivers (19, 26, 32, 86). An Outlook forward reads like an Outlook reply in its body and still folds (02, 11,
 104). Fixture 123 is tester A's round-43 reply that quotes such a forward: it folds at its attribution.
+Fixture 124 is an Outlook reply whose answers sit inside the history in the body's own black ink, marked only
+by the writer's initials ('[AE] '); a mark two lines of one hop repeat ('[Ana Example] ') counts the same, a single
+'[EXTERNAL]' banner does not.
 
 ## Sidecar schema (`*.expected.json`)
 
@@ -200,3 +203,4 @@ which belong to the new message and stay visible.
 | 121 | `121-gmail-de-ink-first-lead-caps-answers.eml` | gmail | de | inline | 1 | none (MUST NOT FOLD) | Gmail, German: lead 'In Rot meine Antworten.', the answers JA, 5000 CHF, 14:00 in red inside the quote |
 | 122 | `122-gmail-en-split-lead-caps-answers.eml` | gmail | en | inline | 1 | none (MUST NOT FOLD) | Gmail, English: lead 'My answers are, as usual, in red.', the answers YES, CHF 5'000, 14:00 in red inside the quote |
 | 123 | `123-r43-gmail-en-reply-quoting-forward.eml` | gmail | en | reply | 2 | trailing | Gmail, English: a reply whose quote holds a forward with a note; folds at 'On ... wrote:' |
+| 124 | `124-outlook-en-black-initials-answers.eml` | outlook_win | en | inline | 1 | none (MUST NOT FOLD) | Outlook for Windows, English: lead 'thanks, done.', black answers inside the history marked '[AE] ' in bold italic |
