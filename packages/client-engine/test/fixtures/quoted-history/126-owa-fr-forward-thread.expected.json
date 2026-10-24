@@ -1,0 +1,44 @@
+{
+  "id": "126",
+  "file": "126-owa-fr-forward-thread.eml",
+  "shape": "owa-fr-forward-thread",
+  "description": "Outlook on the web, French: TR: of a two-message thread with a note; underscore rules in text/plain, divRplyFwdMsg in HTML",
+  "client": "owa",
+  "ui_language": "fr",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ana Example",
+    "Ben Sample"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "trailing",
+    "text": {
+      "visibleFirstLine": "Bonjour Clara,",
+      "visibleLastLine": "mardi 3 novembre à 9h00 nous convient parfaitement.",
+      "historyStartLine": "De : Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "De : Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "#x_appendonsend",
+      "attributionBefore": null,
+      "historyStartText": "De : Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Bonjour Clara,",
+      "visibleLastText": "mardi 3 novembre à 9h00 nous convient parfaitement."
+    }
+  },
+  "notes": "The subject's forward prefix says the first quoted message is what the forward delivers: it stays open, and the history folds from the hop below it."
+}

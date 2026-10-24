@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ThrottleKeys } from "./auth/throttle-keys.js";
-import { and, asc, eq, exists, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
-import type { AccessLifecycle, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
+import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
 import { bridgeTx, type Db } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { deleteAccount } from "./account-deletion-service.js";
@@ -14,9 +14,13 @@ import type { MailContext } from "./mail/index.js";
  * erasures. It iterates `accounts WHERE erased_at IS NULL` having at least one user, acts only on a
  * verdict the plane ANSWERED, and owes at most one mail per FACT: idempotency is the
  * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), `anchor` the plane's own ISO
- * instant. A re-run inserts nothing, a NEW closure is a new anchor. Due erasures are NAMED
+ * instant. A re-run inserts nothing, a NEW closure is a new anchor. A row is a claim until
+ * `delivered_at` (cloud 0052) says the provider took the mail. Due erasures are NAMED
  * (`erasureDue`) and each is erased in its own call by {@link eraseOneDueAccount}, which with
- * `DELETE /account` is the only caller of `deleteAccount`. The sweep stops at its budget with `next`.
+ * `DELETE /account` is the only caller of `deleteAccount`, and only after the erasure-week warning
+ * for that date was delivered. The sweep stops at its budget with `next`. Behind its own switch it
+ * also owes one connect reminder per trial that has connected no mailbox and began at or after the
+ * switch-on (cloud 0053).
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
@@ -25,10 +29,57 @@ export const TRIAL_REMINDER_AHEAD_MS = 2 * 24 * 60 * 60 * 1000;
 export const ERASURE_REMINDER_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
 /** The slack past `erasureAt` before anything is erased. */
 export const ERASURE_SLACK_MS = 24 * 60 * 60 * 1000;
+/** How old an undelivered claim is before a pass claims it again: a skipped send, or a pass that died. */
+export const NOTICE_CLAIM_STALE_MS = 60 * 60 * 1000;
 /** One sweep's wall clock, under the platform's 60 s ceiling; checked before every chunk. */
 export const ACCOUNT_LIFECYCLE_BUDGET_MS = 45_000;
 /** Due erasures one sweep names before it stops and answers `next` — bounds the answer's size. */
 export const ERASURE_DUE_PER_RUN = 100;
+/** How long after its start a trial with no mailbox is reminded: whoever connects in a day hears nothing. */
+export const CONNECT_REMINDER_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The connect reminder's switch (`TF_CONNECT_REMINDER` on the managed host). `log`, the default: the
+ * pass names each reminder it would send and writes nothing. `send`: it claims and sends them, only
+ * beside its cutoff ({@link readConnectReminderSwitch}).
+ */
+export type ConnectReminderMode = "log" | "send";
+
+/**
+ * The switch as one pass reads it. `send` carries its cutoff (`TF_CONNECT_REMINDER_SINCE`) and reminds
+ * only trials begun at or after it, so a switch-on never reaches the trials that began before. `send`
+ * without one that is an instant is `refused`: it reminds nobody, never every trial. `log` keeps a
+ * cutoff it can read, for its count.
+ */
+export type ConnectReminderSwitch =
+  | { mode: "log"; since: Date | null }
+  | { mode: "send"; since: Date }
+  | { mode: "refused"; why: "not_set" | "not_an_instant" };
+
+/** A full ISO 8601 instant with its zone, as `toISOString` or `date -Iseconds` prints it, each field in range. */
+const ISO_INSTANT =
+  /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
+
+/**
+ * The switch from the host's two values. The cutoff is read only as a full instant with its zone: a
+ * date alone, a number or a local time can name an earlier instant than meant, and an earlier cutoff
+ * reaches trials that were to be held. The 30th of February is no day, where `Date.parse` reads the
+ * 2nd of March.
+ */
+export function readConnectReminderSwitch(
+  mode: ConnectReminderMode | undefined, since: string | null | undefined,
+): ConnectReminderSwitch {
+  const text = since?.trim() ?? "";
+  const m = ISO_INSTANT.exec(text);
+  const ms = m && new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!)).getUTCDate() === +m[3]! ? Date.parse(text) : Number.NaN;
+  const at = Number.isFinite(ms) ? new Date(ms) : null;
+  if (mode !== "send") return { mode: "log", since: at };
+  if (at !== null) return { mode: "send", since: at };
+  return { mode: "refused", why: text === "" ? "not_set" : "not_an_instant" };
+}
+
+/** Whether a trial that began at `start` is one the cutoff admits: begun at it or after. */
+const fromCutoff = (start: Date, since: Date): boolean => start.getTime() >= since.getTime();
 
 /**
  * The one method this pass needs of `MailService` — structural, so the API's dependency bag
@@ -48,6 +99,11 @@ export interface LifecycleNoticeMailer {
     // The WEAKEST shape the pass reads — `status` alone — so the API's structural declaration of
     // this method (which cannot name `MailSendResult`) satisfies it; `MailService`'s own richer
     // result remains assignable.
+  ): Promise<{ status: "sent" | "skipped" | "failed" }>;
+  /** The connect reminder; a mailer without it leaves the reminder unmailable. */
+  sendConnectReminder?(
+    ctx: MailContext,
+    input: { to: string; locale: "en" | "de"; anchor: Date },
   ): Promise<{ status: "sent" | "skipped" | "failed" }>;
 }
 
@@ -78,6 +134,10 @@ export interface AccountLifecyclePassDeps {
   /** Test seams: the wall-clock budget and the clock it is read from. */
   budgetMs?: number;
   clock?: () => number;
+  /** The connect reminder's switch; absent is `log`. */
+  connectReminder?: ConnectReminderMode;
+  /** `TF_CONNECT_REMINDER_SINCE` as the host read it: the instant `send` counts from, judged by the pass. */
+  connectReminderSince?: string | null;
 }
 
 export interface AccountLifecyclePassResult {
@@ -85,8 +145,16 @@ export interface AccountLifecyclePassResult {
   accounts: number;
   /** Verdicts that carried a lifecycle block. Old plane ⇒ 0, and nothing else happens. */
   withLifecycle: number;
-  /** Notices newly claimed AND sent, by kind. */
-  sent: { trial_two_days: number; closed: number; erasure_week: number };
+  /** Notices newly claimed AND delivered, by kind. */
+  sent: { trial_two_days: number; closed: number; erasure_week: number; connect_reminder: number };
+  /**
+   * The switch this pass ran under (`refused`: `send` beside no cutoff that is an instant) and its
+   * cutoff. `owed`: the reminders named (`log`, every trial owed one) or claimed (`send`). `owedSince`,
+   * in `log` mode beside a cutoff: how many of `owed` began at or after it, which `send` would claim.
+   */
+  connectReminder: { mode: ConnectReminderSwitch["mode"]; since: string | null; owed: number; owedSince: number | null };
+  /** Notices claimed and not delivered: every recipient skipped, or none was left. Sent again once stale. */
+  skipped: number;
   /** Owed notices left unclaimed because no mailer is configured. */
   unmailable: number;
   /** Accounts whose erasure is due, for {@link eraseOneDueAccount} one at a time. Never erased here. */
@@ -102,6 +170,9 @@ interface DueNotice {
   anchor: Date;
   erasureAt: Date | null;
 }
+
+/** Every kind this pass writes to the notice ledger. */
+type PassNoticeKind = DueNotice["kind"] | "connect_reminder";
 
 /** The notices a verdict owes RIGHT NOW — pure, so the truth table is a unit test. */
 export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
@@ -122,17 +193,49 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
   // contract), so the erasure notice below and the erasure itself cannot fire for one either.
   if (lc.state === "closed" && closedAt !== null && lc.closedReason !== "suspended") {
     // A NOTICE STATES ONLY A DATE THE ERASURE WILL KEEP. The epoch belt refuses a date it cannot
-    // floor, so the same reading gates the mail: no erasure week, and no date in the closure.
+    // floor, so the same reading gates the mail: no erasure week, and no date in the closure. Nor
+    // does a closure name a date already past.
     const stated = erasureAt !== null && erasureClearsEpoch(lc) ? erasureAt : null;
-    out.push({ kind: "closed", anchor: closedAt, erasureAt: stated });
-    if (stated !== null) {
-      const ahead = stated.getTime() - now.getTime();
-      if (ahead > 0 && ahead <= ERASURE_REMINDER_AHEAD_MS) {
-        out.push({ kind: "erasure_week", anchor: stated, erasureAt: stated });
-      }
+    const ahead = stated === null ? 0 : stated.getTime() - now.getTime();
+    out.push({ kind: "closed", anchor: closedAt, erasureAt: ahead > 0 ? stated : null });
+    // Owed past the date too: the erasure waits for it, and a late one names a date a week out.
+    if (stated !== null && ahead <= ERASURE_REMINDER_AHEAD_MS) {
+      out.push({
+        kind: "erasure_week", anchor: stated,
+        erasureAt: ahead > 0 ? stated : new Date(now.getTime() + ERASURE_REMINDER_AHEAD_MS),
+      });
     }
   }
   return out;
+}
+
+/**
+ * The connect reminder a verdict owes RIGHT NOW, anchored on the trial's start — pure, so the truth
+ * table is a unit test. Due while trialing, a day or more after the start, more than two days before
+ * the end, with no cancellation scheduled. A fact the program did not state is not due; whether the
+ * account has a mailbox is the database's to say.
+ */
+export function connectReminderDue(
+  lc: AccessLifecycle, trial: AccessTrial | undefined, now: Date,
+): { anchor: Date } | null {
+  if (lc.state !== "trialing" || trial?.cancelScheduled !== false) return null;
+  const started = Date.parse(trial.startedAt ?? "");
+  const ends = Date.parse(lc.trialEndsAt ?? "");
+  if (!Number.isFinite(started) || !Number.isFinite(ends)) return null;
+  const t = now.getTime();
+  if (t - started < CONNECT_REMINDER_AFTER_MS || ends - t <= TRIAL_REMINDER_AHEAD_MS) return null;
+  return { anchor: new Date(started) };
+}
+
+/**
+ * The instant a retention erasure may count from, given when its erasure-week warning was
+ * delivered: none without a delivery, the plane's date for a warning delivered by then, and a
+ * week after the delivery for a late one, which is the date that mail named.
+ */
+export function erasureWarnedFrom(anchor: Date, deliveredAt: Date | null): Date | null {
+  if (deliveredAt === null) return null;
+  return deliveredAt.getTime() <= anchor.getTime()
+    ? anchor : new Date(deliveredAt.getTime() + ERASURE_REMINDER_AHEAD_MS);
 }
 
 /** The program's stated lifecycle epoch as a positive instant, or why it is not one. */
@@ -185,11 +288,25 @@ export async function runAccountLifecyclePass(
   const clock = deps.clock ?? Date.now;
   const started = clock();
   const budgetMs = deps.budgetMs ?? ACCOUNT_LIFECYCLE_BUDGET_MS;
+  const reminderSwitch = readConnectReminderSwitch(deps.connectReminder, deps.connectReminderSince);
   const result: AccountLifecyclePassResult = {
     accounts: 0, withLifecycle: 0,
-    sent: { trial_two_days: 0, closed: 0, erasure_week: 0 },
-    unmailable: 0, erasureDue: [], faults: 0, next: null,
+    sent: { trial_two_days: 0, closed: 0, erasure_week: 0, connect_reminder: 0 },
+    connectReminder: {
+      mode: reminderSwitch.mode,
+      since: reminderSwitch.mode === "refused" ? null : reminderSwitch.since?.toISOString() ?? null,
+      owed: 0,
+      owedSince: reminderSwitch.mode === "log" && reminderSwitch.since !== null ? 0 : null,
+    },
+    skipped: 0, unmailable: 0, erasureDue: [], faults: 0, next: null,
   };
+  if (reminderSwitch.mode === "refused") {
+    log.error("account_connect_reminder_refused", {
+      since: reminderSwitch.why,
+      reason: "TF_CONNECT_REMINDER is send but TF_CONNECT_REMINDER_SINCE is not an ISO instant with its zone, " +
+        "so no trial is reminded; set it to the switch-on time, and only trials begun at or after it are",
+    });
+  }
 
   let epochAbsentSaid = false;
   // Keyset pages over the live accounts — the erased are out by the WHERE. `done` is the last id
@@ -243,6 +360,8 @@ export async function runAccountLifecyclePass(
           for (const due of noticesDue(lc, now())) {
             await claimAndSend(db, deps, id, due, result, log);
           }
+          const reminder = connectReminderDue(lc, verdict.trial, now());
+          if (reminder) await remindToConnect(db, deps, id, reminder.anchor, reminderSwitch, result, log);
 
           // The refusal above is silent by itself, and a drift nobody sees is a drift nobody
           // fixes. Reported once per pass, never acted on — the hold stays a staff act.
@@ -293,13 +412,15 @@ export async function runAccountLifecyclePass(
 
 /** What the erasure door did for one account — a closed set, answered on the route. */
 export type EraseOneOutcome =
-  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated";
+  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated" | "unwarned";
 
 /**
  * THE ERASURE DOOR, one account per call: the program is asked AGAIN, past every cache, and only
  * its answer erases; the money is stopped first, exactly as `DELETE /account` does, and then
  * `deleteAccount` runs its ONE transaction. Idempotent by `accounts.erased_at`. A read the program
- * did not answer, or a verdict that no longer asks for erasure, changes nothing.
+ * did not answer, or a verdict that no longer asks for erasure, changes nothing. Neither does an
+ * erasure whose week's warning was never delivered, or was delivered late and its week has not
+ * passed: the door FAILS CLOSED on the warning as the epoch belt does on the date.
  */
 export async function eraseOneDueAccount(
   db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, accountId: string,
@@ -328,11 +449,37 @@ export async function eraseOneDueAccount(
     });
     return fresh && fresh.state === "closed" ? "reactivated" : "not_due";
   }
+  const anchor = new Date(fresh.erasureAt!);
+  const [warning] = await db.select({ deliveredAt: accountLifecycleNotices.deliveredAt })
+    .from(accountLifecycleNotices)
+    .where(and(
+      eq(accountLifecycleNotices.accountId, accountId),
+      eq(accountLifecycleNotices.kind, "erasure_week"),
+      eq(accountLifecycleNotices.anchor, anchor),
+    ))
+    .limit(1);
+  const warnedFrom = erasureWarnedFrom(anchor, warning?.deliveredAt ?? null);
+  if (warnedFrom === null) {
+    log.error("account_erasure_held_unwarned", {
+      accountId, kind: "erasure_week",
+      reason: "the erasure is due but its week's warning was never delivered; nothing was released " +
+        "or erased, and the pass sends the warning late, naming a date a week out",
+    });
+    return "unwarned";
+  }
+  if (warnedFrom.getTime() + ERASURE_SLACK_MS > now().getTime()) {
+    log.warn("account_erasure_held_for_late_warning", {
+      accountId, kind: "erasure_week",
+      reason: "the week's warning went out late; the erasure waits for the date that mail named, " +
+        "plus the day of slack",
+    });
+    return "unwarned";
+  }
   const outcome = await deps.port.releaseAccount(accountId);
   // This pass runs only against an entitlements program, so a refund drain runs beside it.
   await deleteAccount(
     { db, accountId, userId: null, now, requestId: randomUUID() },
-    { throttleKeys: deps.throttleKeys, drainsRefunds: true },
+    { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor },
   );
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
@@ -342,52 +489,134 @@ export async function eraseOneDueAccount(
   return "erased";
 }
 
-/** Claim one notice by its PK, send it, and un-claim on a FAILED send so the next run retries. */
-async function claimAndSend(
-  db: Db, deps: AccountLifecyclePassDeps, accountId: string, due: DueNotice,
-  result: AccountLifecyclePassResult, log: Logger,
-): Promise<void> {
-  if (deps.mail === null) {
-    result.unmailable += 1;
-    return;
-  }
-  const claimed = await bridgeTx(db).insert(accountLifecycleNotices)
-    .values({ accountId, kind: due.kind, anchor: due.anchor })
-    .onConflictDoNothing()
-    .returning({ accountId: accountLifecycleNotices.accountId });
-  if (claimed.length === 0) return; // already sent for this fact — the PK is the idempotency
+/** Any mailbox row, a removed one included: only an account deletion removes one. */
+async function anyMailboxRow(db: Db, accountId: string): Promise<boolean> {
+  return (await db.select({ id: mailboxes.id }).from(mailboxes)
+    .where(eq(mailboxes.accountId, accountId)).limit(1)).length > 0;
+}
 
+/** The notice row (account, kind, anchor) while it is not delivered. */
+const undeliveredNotice = (accountId: string, kind: PassNoticeKind, anchor: Date) => and(
+  eq(accountLifecycleNotices.accountId, accountId),
+  eq(accountLifecycleNotices.kind, kind),
+  eq(accountLifecycleNotices.anchor, anchor),
+  isNull(accountLifecycleNotices.deliveredAt),
+);
+
+/** Claim one notice by its PK: a new row, or an undelivered one whose claim is stale. */
+async function claimNotice(db: Db, accountId: string, kind: PassNoticeKind, anchor: Date, now: Date): Promise<boolean> {
+  const claimed = await bridgeTx(db).insert(accountLifecycleNotices)
+    .values({ accountId, kind, anchor, sentAt: now })
+    .onConflictDoUpdate({
+      target: [accountLifecycleNotices.accountId, accountLifecycleNotices.kind, accountLifecycleNotices.anchor],
+      set: { sentAt: now },
+      // A delivered row is never touched again: it is the record an erasure keeps.
+      setWhere: and(isNull(accountLifecycleNotices.deliveredAt),
+        lt(accountLifecycleNotices.sentAt, new Date(now.getTime() - NOTICE_CLAIM_STALE_MS))),
+    })
+    .returning({ accountId: accountLifecycleNotices.accountId });
+  return claimed.length > 0; // none: delivered, or claimed by a pass within the hour
+}
+
+/**
+ * Send a claimed notice to every user of the account, then settle the claim: handed back on a FAILED
+ * send so the next run retries, left undelivered when nobody was sent it (claimed again once stale),
+ * and stamped delivered once the provider took it.
+ */
+async function sendClaimed(
+  db: Db, deps: AccountLifecyclePassDeps, accountId: string, kind: PassNoticeKind, anchor: Date,
+  result: AccountLifecyclePassResult, log: Logger,
+  send: (to: string, locale: "en" | "de") => Promise<{ status: "sent" | "skipped" | "failed" }>,
+): Promise<void> {
   const recipients = await db.select({ email: users.email }).from(users)
     .where(eq(users.accountId, accountId));
   const [settings] = await db.select({ locale: accountSettings.locale }).from(accountSettings)
     .where(eq(accountSettings.accountId, accountId)).limit(1);
   const locale: "en" | "de" = settings?.locale === "de" ? "de" : "en";
-  // Read at send time: only an account deletion removes a mailbox row, so none means never connected.
-  const noMailbox = (await db.select({ id: mailboxes.id }).from(mailboxes)
-    .where(eq(mailboxes.accountId, accountId)).limit(1)).length === 0;
 
   let anyFailed = false;
+  let anySent = false;
   for (const r of recipients) {
-    const sent = await deps.mail.sendLifecycleNotice(
-      { db, now: deps.now },
-      { to: r.email, kind: due.kind, locale, anchor: due.anchor, erasureAt: due.erasureAt, noMailbox },
-    );
+    const sent = await send(r.email, locale);
     if (sent.status === "failed") anyFailed = true;
+    if (sent.status === "sent") anySent = true;
   }
+  const undelivered = undeliveredNotice(accountId, kind, anchor);
   if (anyFailed) {
     // The claim is handed back so the next nightly run retries; the mailer's own idempotency
     // key (recipient, kind, anchor) keeps a half-delivered account from double-mailing.
-    await bridgeTx(db).delete(accountLifecycleNotices).where(and(
-      eq(accountLifecycleNotices.accountId, accountId),
-      eq(accountLifecycleNotices.kind, due.kind),
-      eq(accountLifecycleNotices.anchor, due.anchor),
-    ));
+    await bridgeTx(db).delete(accountLifecycleNotices).where(undelivered);
     result.faults += 1;
     log.error("account_lifecycle_notice_send_failed", {
-      accountId, kind: due.kind,
+      accountId, kind,
       reason: "the notice's claim was handed back; the next nightly run sends it again",
     });
     return;
   }
-  result.sent[due.kind] += 1;
+  if (!anySent) {
+    result.skipped += 1;
+    log.warn("account_lifecycle_notice_skipped", {
+      accountId, kind,
+      reason: "no recipient was sent the notice (the mail limiter, an invalid address, or no user " +
+        "left); it is not delivered, and a pass an hour on or later sends it again",
+    });
+    return;
+  }
+  await bridgeTx(db).update(accountLifecycleNotices).set({ deliveredAt: deps.now() }).where(undelivered);
+  result.sent[kind] += 1;
+}
+
+/** Claim one lifecycle notice by its PK, send it, and settle the claim ({@link sendClaimed}). */
+async function claimAndSend(
+  db: Db, deps: AccountLifecyclePassDeps, accountId: string, due: DueNotice,
+  result: AccountLifecyclePassResult, log: Logger,
+): Promise<void> {
+  const mail = deps.mail;
+  if (mail === null) {
+    result.unmailable += 1;
+    return;
+  }
+  if (!(await claimNotice(db, accountId, due.kind, due.anchor, deps.now()))) return;
+  // Read at send time: only an account deletion removes a mailbox row, so none means never connected.
+  const noMailbox = !(await anyMailboxRow(db, accountId));
+  await sendClaimed(db, deps, accountId, due.kind, due.anchor, result, log, (to, locale) =>
+    mail.sendLifecycleNotice(
+      { db, now: deps.now },
+      { to, kind: due.kind, locale, anchor: due.anchor, erasureAt: due.erasureAt, noMailbox },
+    ));
+}
+
+/**
+ * THE CONNECT REMINDER for an account with no mailbox row, once per trial: keyed (account,
+ * `connect_reminder`, the trial's start). Log-only unless the switch says `send`, and `send` reminds
+ * only a trial begun at or after its cutoff: one begun before the switch-on is never claimed.
+ */
+async function remindToConnect(
+  db: Db, deps: AccountLifecyclePassDeps, accountId: string, anchor: Date, sw: ConnectReminderSwitch,
+  result: AccountLifecyclePassResult, log: Logger,
+): Promise<void> {
+  if (sw.mode === "refused" || (sw.mode === "send" && !fromCutoff(anchor, sw.since))) return;
+  if (await anyMailboxRow(db, accountId)) return;
+  if (sw.mode === "log") {
+    result.connectReminder.owed += 1;
+    if (sw.since !== null && fromCutoff(anchor, sw.since)) {
+      result.connectReminder.owedSince = (result.connectReminder.owedSince ?? 0) + 1;
+    }
+    log.info("account_connect_reminder_would_send", {
+      accountId, startedAt: anchor.toISOString(),
+      reason: "a trial a day old with no mailbox is owed the connect reminder; TF_CONNECT_REMINDER is " +
+        "not send, so nothing was claimed or sent",
+    });
+    return;
+  }
+  const mail = deps.mail;
+  const sendReminder = mail?.sendConnectReminder?.bind(mail);
+  if (!sendReminder) {
+    result.unmailable += 1;
+    return;
+  }
+  if (!(await claimNotice(db, accountId, "connect_reminder", anchor, deps.now()))) return;
+  result.connectReminder.owed += 1;
+  await sendClaimed(db, deps, accountId, "connect_reminder", anchor, result, log, (to, locale) =>
+    sendReminder({ db, now: deps.now }, { to, locale, anchor }));
 }

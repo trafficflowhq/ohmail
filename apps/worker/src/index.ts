@@ -11,7 +11,7 @@ import {
   makeEntitlementsClient, refundObligationsOn, makeOwnedDb, makeChangeWakeHub, type OwnedDb, type ChangeWakeFanout,
   entitlementsFaultRecorder, alertReadersOf,
   markScreenerSuggestOwed, owedSuggestAccounts, clearScreenerSuggestOwed,
-  pruneErasedBearers, pruneAuthThrottle, plantReopenedCatchUp, dropUntoldCatchUps } from "@trafficflow/db/cloud";
+  pruneErasedBearers, pruneErasedNotices, pruneAuthThrottle, plantReopenedCatchUp, dropUntoldCatchUps } from "@trafficflow/db/cloud";
 import {
   runAlertPass, firingToLog, planeOpsStateLine,
   webhookAlertSink,
@@ -5691,6 +5691,12 @@ export async function startWorkerWithLock(
             const pruned = await pruneErasedBearers(db as unknown as Tx, new Date());
             if (pruned > 0) log.info("erased_bearers_pruned", { pruned });
           }, (err) => { log.error("erased_bearers_prune_failed", { err }); });
+          // An erased account's notice rows (cloud 0052): the warning a retention erasure keeps goes
+          // ten years after the erasure, the billing record's period; nothing else deletes it.
+          await runTailStage("cycle.pruneErasedNotices", "database", async () => {
+            const pruned = await pruneErasedNotices(db as unknown as Tx, new Date());
+            if (pruned > 0) log.info("erased_notices_pruned", { pruned });
+          }, (err) => { log.error("erased_notices_prune_failed", { err }); });
           // Sign-in throttle rows past retention (48 h; a known client 90 d). The API writes them and
           // only an erasure deleted them, so every typed address and client hash stayed for ever.
           await runTailStage("cycle.pruneAuthThrottle", "database", async () => {

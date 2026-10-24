@@ -1,0 +1,44 @@
+{
+  "id": "128",
+  "file": "128-apple-mail-de-forward-of-forward.eml",
+  "shape": "apple-mail-de-forward-of-forward",
+  "description": "Apple Mail, German: Fwd: Fwd: with a note; the forwarded forward's own note, then a nested 'Anfang der weitergeleiteten Nachricht:' over the offer it delivers",
+  "client": "apple",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "none",
+    "text": {
+      "visibleFirstLine": "Hallo Clara,",
+      "visibleLastLine": "Ana Example",
+      "historyStartLine": null,
+      "historyStartLineNormalized": null
+    },
+    "html": {
+      "historyStartSelector": null,
+      "attributionBefore": null,
+      "historyStartText": null,
+      "visibleFirstText": "Hallo Clara,",
+      "visibleLastText": "Die Preise gelten bis zum 30. November 2026."
+    }
+  },
+  "notes": "A forward of a forward: the inner forward's introducer says the offer below it is what both forwards deliver, and nothing is below the offer to fold."
+}

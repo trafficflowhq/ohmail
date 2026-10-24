@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // The metering program's card, from the byte copy of its contract: this tree holds no price.
 import { PLANE_PRICES } from "../packages/services/test/helpers/plane-pricing.js";
+import { LARGEST_PLAN_STORAGE_BYTES } from "@trafficflow/db";
 
 /**
  * THE PLAN CARD, AS LITERALS — and the change of kind is the whole point.
@@ -466,6 +467,10 @@ describe("the landing's Cloud tiers are the plan card the API enforces", () => {
       expect(groups, `${locale} ${tier.storage}: ${JSON.stringify(pricing[tier.storage])}`)
         .toHaveLength(1);
     }
+  });
+
+  it("the storage notice's largest plan is the card's: from it on only the add-on adds room", () => {
+    expect(LARGEST_PLAN_STORAGE_BYTES).toBe(Math.max(...Object.values(PLAN_LIMITS).map((p) => p.storageBytes)));
   });
 
   it("the clients' per-email byte estimate is the plan card's", () => {

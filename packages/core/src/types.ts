@@ -184,6 +184,21 @@ export function retroWalkWouldMove(row: RetroCandidateRow, destination: string):
 }
 
 /**
+ * A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE: the letters in `from` (the place it filed into,
+ * either News spelling) that the pass could move to `to`. No `placeDecided` clause: a placement made
+ * before the Change goes with the pile (`rule-retro.ts`, the refile walk).
+ */
+export function refileWouldMove(row: RetroCandidateRow, from: string, to: string): boolean {
+  return canonicalDestination(row.physicalFolder ?? row.folder) === canonicalDestination(from)
+    && retroPassWouldMove(row, to);
+}
+
+/** How long a Change's toast offers Undo. */
+export const REFILE_UNDO_WINDOW_MS = 8000;
+/** The refile walk waits this long after the press, so an online Undo lands before anything moves. */
+export const REFILE_HOLD_MS = 2 * REFILE_UNDO_WINDOW_MS;
+
+/**
  * User-commanded folder names — the shared validator (FOLDERS-SPEC.md stage 2). Create/rename
  * take a canonical `/`-joined path chosen by the user, and the client (the honest sentence before
  * the wire) and the server (the refusal is the contract) must ask the same question, so the

@@ -1,5 +1,5 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import { planHintOf, storageFactsOf, type ReleaseOutcome } from "@trafficflow/db";
+import { planHintOf, storageEmptyingNow, storageFactsOf, storageUpgradeOf, type ReleaseOutcome } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
@@ -189,6 +189,9 @@ export const accountRoutes: Route[] = [
       const storage = typeof cap === "number"
         ? await storageFactsOf(ctx.db, ctx.accountId).then((f) => ({ ...f, limitBytes: cap }), () => null)
         : null;
+      // The trial's floor: the plan's own, lower limit and when it applies again.
+      const carry = storage !== null && verdict.trialStorage && verdict.trialStorage.planBytesLimit < storage.limitBytes
+        ? verdict.trialStorage : null;
       return json({
         metered: true,
         access: "open",
@@ -207,6 +210,9 @@ export const accountRoutes: Route[] = [
           storage: {
             usedBytes: storage.usedBytes, limitBytes: storage.limitBytes, emptiedForSpace: storage.emptiedForSpace,
             firstEmptiedAt: storage.firstEmptiedAt, keptFrom: storage.keptFrom, withheldOnArrival: storage.withheldOnArrival,
+            upgrade: storageUpgradeOf(carry?.planBytesLimit ?? storage.limitBytes),
+            emptyingNow: storageEmptyingNow(storage, storage.limitBytes, deps.now()),
+            ...(carry !== null ? { planLimitBytes: carry.planBytesLimit, limitDropsAt: carry.until } : {}),
           },
         } : {}),
       }, 200);

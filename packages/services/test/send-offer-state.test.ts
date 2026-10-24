@@ -308,6 +308,52 @@ describe("an attempt still running in this process outlives the stale cutoff", (
   });
 });
 
+describe("a Send again that offered nothing is held again, never forgotten", () => {
+  /** The first press was taken and its answer lost: held `unverified`, not in Sent. */
+  async function held(w: World) {
+    const lost = transport({ holdReply: true });
+    const first = outcome(press(w, "first", lost.factory));
+    await until(() => lost.state.marks === 1);
+    lost.release();
+    expect(await first).toMatchObject({ status: "unverified" });
+  }
+
+  it("a stale one comes back `unverified`, keeps its row and its claim, and its replay sends nothing", async () => {
+    const w = await world();
+    await held(w);
+    const slow = transport({ holdUpload: true });
+    const again = outcome(press(w, "again", slow.factory, {}, { again: true }));
+    await until(() => slow.state.submits === 1);
+    const left = (await w.row("again"))!;
+    expect({ offerState: left.offerState, mark: left.retryRefusal }).toEqual({ offerState: "uploading", mark: "send_unverified" });
+    w.advance(SEND_STALE_AFTER_MS + 1);
+    const out = await elsewhere.resolveStale(w.ctx, left, w.mailboxId, null, "defer");
+    expect({ status: out.status, by: out.by }).toEqual({ status: "unverified", by: "earlier_unverified" });
+    expect((await w.row("again"))?.status, "not deleted").toBe("unverified");
+    expect(await w.claims(left.id), "the claim stays with it").toBe(1);
+    expect((await w.draft()).status).toBe("unverified");
+    slow.release(true);
+    await again;
+    const replay = transport();
+    expect(await press(w, "again", replay.factory, {}, { again: true })).toMatchObject({ status: "unverified" });
+    expect([replay.state.submits, slow.state.marks], "nothing goes").toEqual([0, 0]);
+  });
+
+  it("the start's pass holds an unoffered one again rather than forgetting it", async () => {
+    const w = await world();
+    await held(w);
+    const slow = transport({ holdDial: true });
+    const again = outcome(press(w, "again", slow.factory, {}, { again: true }));
+    await until(() => slow.state.dials === 1);
+    const left = (await w.row("again"))!;
+    expect(await elsewhere.forgetInherited(w.ctx, [left.id])).toEqual({ forgotten: 0, remaining: [] });
+    expect((await w.row("again"))?.status).toBe("unverified");
+    slow.release();
+    await again;
+    expect((await w.row("again"))?.status).toBe("unverified");
+  });
+});
+
 describe("CONTROLS: a reservation that may have been offered keeps verify-by-Sent", () => {
   it("a `complete` row (its mark released, no reply yet) is probed and becomes `unverified`", async () => {
     const w = await world();

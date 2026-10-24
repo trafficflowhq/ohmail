@@ -1,12 +1,12 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import {
-  approvals, auditAction, auditLog, drafts, folderState, mailboxes, messageBodies,
-  messageStates, messages, OwnAddressesPerPass, recordChange, recordRuleDelta, rules as rulesTbl, rulesTheActWrote,
-  weAnsweredThisSenderWhere,
-  type LedgerTx, type Tx,
+  approvals, auditAction, auditLog, drafts, folderState, isRefileRun, mailboxes, messageBodies,
+  messageStates, messages, OwnAddressesPerPass, PARKED_FENCE_PREFIX, pendingRefileFrom, recordChange, recordRuleDelta,
+  rules as rulesTbl, rulesTheActWrote, weAnsweredThisSenderWhere,
+  type LedgerTx, type RefileState, type Tx,
 } from "@trafficflow/db";
 import {
-  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
+  DEFAULT_OHBOX_POLICY, ORGANIZED_FOLDERS, REFILE_HOLD_MS, authVerdictFromHeaders, canonicalDestination, evaluateRules,
   identityOfRow, silentLogger, type Destination, type KnownSenders, type Logger, type NormalizedMessage,
   type Rule,
   /* The mail leaf, never the barrel: the local engines bundle this pass, and a value import from
@@ -196,6 +196,25 @@ interface OwedRule {
    */
   provenance: string;
   personDecidedAt: Date | null;
+  /** `rules.refile_from` / `refile_at`: a Rules-page Change's re-filing while `isRefileRun`. */
+  refileFrom: string | null;
+  refileAt: Date | null;
+  /** Read with the cursor for `pendingRefileFrom`, which the page's first move can end. */
+  retroDoneAt: Date | null;
+  retroMoved: number;
+}
+
+/** A refile walk waits out the Change's Undo window before it moves anything. */
+function refileHeld(rule: Pick<OwedRule, "refileAt" | "retroRequestedAt">, now: Date): boolean {
+  return isRefileRun(rule) && now.getTime() - rule.retroRequestedAt!.getTime() < REFILE_HOLD_MS;
+}
+
+/** The rule's re-filing state as {@link pendingRefileFrom} reads it, at a cursor and a count. */
+function refileState(rule: OwedRule, retroCursor: string | null, retroMoved: number): RefileState {
+  return {
+    refileFrom: rule.refileFrom, refileAt: rule.refileAt, retroRequestedAt: rule.retroRequestedAt,
+    retroDoneAt: rule.retroDoneAt, retroMoved, retroCursor,
+  };
 }
 
 /**
@@ -242,6 +261,9 @@ export async function ruleRetroPass(
          and mb.status <> 'disabled'
          and mb.organizer_role = 'organizer'
     )`,
+    // A Change's re-filing younger than the hold is not owed yet: its Undo may still come.
+    sql`not (${rulesTbl.refileAt} is not null and ${rulesTbl.refileAt} = ${rulesTbl.retroRequestedAt}
+      and ${rulesTbl.retroRequestedAt} > ${dialect(db).ts(new Date(now.getTime() - REFILE_HOLD_MS))})`,
   ];
   const owed = await db.select({ id: rulesTbl.id, accountId: rulesTbl.accountId })
     .from(rulesTbl).where(and(...owedFilters))
@@ -314,6 +336,8 @@ export async function ruleRetroPass(
           match: rulesTbl.match, destination: rulesTbl.destination, cursor: rulesTbl.retroCursor,
           releaseHeldAt: rulesTbl.releaseHeldAt, retroRequestedAt: rulesTbl.retroRequestedAt,
           provenance: rulesTbl.provenance, personDecidedAt: rulesTbl.personDecidedAt,
+          refileFrom: rulesTbl.refileFrom, refileAt: rulesTbl.refileAt,
+          retroDoneAt: rulesTbl.retroDoneAt, retroMoved: rulesTbl.retroMoved,
         }).from(rulesTbl)
           .where(and(
             eq(rulesTbl.id, row.id),
@@ -327,6 +351,10 @@ export async function ruleRetroPass(
         }
 
         const rule = live as OwedRule;
+        // A Change made since the probe: leave it to a later cycle, unstamped.
+        if (refileHeld(rule, now)) {
+          return { gone: true, rows: 0, moved: 0, kept: 0, cursor: null, resumedFrom: null, done: false, parked: false };
+        }
 
         // A WALK PARKED at the end of the mailboxes this install organizes ({@link parkedFence})
         // stays finished until a mailbox comes under this install: none left outside, or one
@@ -455,13 +483,20 @@ export async function ruleRetroPass(
            * lock sits. `retro_moved` advances UNCONDITIONALLY in the same statement (it counts written
            * rows; a reset re-opens the WALK, not the history), so the two cannot disagree.
            */
-          await tx.update(rulesTbl)
+          const [after] = await tx.update(rulesTbl)
             .set({
               retroCursor: sql`case when ${rulesTbl.retroCursor} is not distinct from ${rule.cursor}
                                then ${d.castUuid(lastId)} else ${rulesTbl.retroCursor} end`,
               retroMoved: sql`${rulesTbl.retroMoved} + ${moved}`,
             })
-            .where(eq(rulesTbl.id, rule.id));
+            .where(eq(rulesTbl.id, rule.id))
+            .returning({ cursor: rulesTbl.retroCursor, moved: rulesTbl.retroMoved });
+          // A re-filing's first move ends its origin (`pendingRefileFrom`), which `RuleDTO.retro.from`
+          // reads: announced in this transaction, as the stamp announces its own.
+          if (after && pendingRefileFrom(refileState(rule, rule.cursor, rule.retroMoved))
+            !== pendingRefileFrom(refileState(rule, after.cursor, after.moved))) {
+            await recordRuleDelta(tx as unknown as LedgerTx, rule.accountId, [rule.id], "update");
+          }
         }
 
         return {
@@ -561,12 +596,20 @@ export async function ruleRetroPass(
   return result;
 }
 
+/** The columns `pendingRefileFrom` reads, as the stamp returns them. */
+const REFILE_STATE = {
+  refileFrom: rulesTbl.refileFrom, refileAt: rulesTbl.refileAt, retroRequestedAt: rulesTbl.retroRequestedAt,
+  retroDoneAt: rulesTbl.retroDoneAt, retroMoved: rulesTbl.retroMoved, retroCursor: rulesTbl.retroCursor,
+};
+
 /**
  * THE FINISHED STAMP, one statement deciding it (the block above says why), and the rule delta
  * announcing it in the SAME transaction — the stamp is on `RuleDTO`, so a client learns the pass
  * finished only from a change row. The UPDATE takes the rule row before `recordRuleDelta` takes
  * `account_sync_state`, the page transaction's order. `WHERE retro_done_at IS NULL` is the answer
  * when two drivers finish at once: one writes the stamp and its delta, the other writes nothing.
+ * A park that ends a re-filing still waiting (`pendingRefileFrom`, which `RuleDTO.retro.from`
+ * reads) files the delta too: a parked walk is never stamped, and its origin ends there.
  */
 async function stampRetroDone(
   db: Tx, accountId: string,
@@ -591,9 +634,14 @@ async function stampRetroDone(
           then ${d.castUuid(park)} else ${rulesTbl.retroCursor} end`,
       })
       .where(and(eq(rulesTbl.id, a.ruleId), isNull(rulesTbl.retroDoneAt)))
-      .returning({ doneAt: rulesTbl.retroDoneAt, cursor: rulesTbl.retroCursor });
-    if (decided?.doneAt != null) await recordRuleDelta(tx as unknown as LedgerTx, accountId, [a.ruleId], "update");
-    return decided;
+      .returning(REFILE_STATE);
+    if (decided === undefined) return undefined;
+    // The row as it stood: owed, and the fence this pass left wherever the park replaced it.
+    const parkedNow = decided.retroCursor !== null && decided.retroCursor.toLowerCase() === park.toLowerCase();
+    const was: RefileState = { ...decided, retroDoneAt: null, retroCursor: parkedNow ? a.walkedTo : decided.retroCursor };
+    const told = decided.retroDoneAt != null || pendingRefileFrom(was) !== pendingRefileFrom(decided);
+    if (told) await recordRuleDelta(tx as unknown as LedgerTx, accountId, [a.ruleId], "update");
+    return { doneAt: decided.retroDoneAt, cursor: decided.retroCursor };
   });
 }
 
@@ -602,18 +650,17 @@ async function stampRetroDone(
  * mailbox of the account is outside it. The rule stays owed (the press still holds for that
  * mailbox), and `retro_cursor` holds this value instead of NULL, so the next cycles do not walk the
  * whole backlog again. It sorts above every v4 and v7 uuid (version nibble `f`), and its last 64
- * bits are the instant it was parked, which the re-arm compares against `organizer_event_at`.
+ * bits are the instant it was parked, which the re-arm compares against `organizer_event_at`. The
+ * prefix is `rule-key.ts`'s, which `pendingRefileFrom` reads.
  */
-const PARKED_PREFIX = "ffffffff-ffff-ffff-";
-
 function parkedFence(at: Date): string {
   const hex = Math.max(0, Math.trunc(at.getTime())).toString(16).padStart(16, "0");
-  return `${PARKED_PREFIX}${hex.slice(0, 4)}-${hex.slice(4)}`;
+  return `${PARKED_FENCE_PREFIX}${hex.slice(0, 4)}-${hex.slice(4)}`;
 }
 
 function parkedSince(cursor: string | null): Date | null {
-  if (cursor === null || !cursor.toLowerCase().startsWith(PARKED_PREFIX)) return null;
-  const ms = Number.parseInt(cursor.slice(PARKED_PREFIX.length).replace("-", ""), 16);
+  if (cursor === null || !cursor.toLowerCase().startsWith(PARKED_FENCE_PREFIX)) return null;
+  const ms = Number.parseInt(cursor.slice(PARKED_FENCE_PREFIX.length).replace("-", ""), 16);
   return Number.isFinite(ms) ? new Date(ms) : null;
 }
 
@@ -651,6 +698,9 @@ async function selectCandidates(
 ): Promise<RetroRow[]> {
   const { rule } = opts;
   const d = dialect(t);
+  const refile = isRefileRun(rule) && rule.refileFrom !== null;
+  const pile = rule.refileFrom === null ? []
+    : ORGANIZED_FOLDERS.filter((f) => canonicalDestination(f) === canonicalDestination(rule.refileFrom!));
   const filters = [
     eq(messages.accountId, rule.accountId),
     matchPredicate(rule, d),
@@ -691,6 +741,11 @@ async function selectCandidates(
              and ${folderState.desiredFolder} = ${SCREENER_GATE}
              and ${folderState.observedFolder} = ${SCREENER_GATE})`
       : inArray(folderState.lastSetBy, ["us", "peer"]),
+    /* A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE: only the letters in the place it filed into,
+       in either News spelling. Everything outside it stays where the person was told it would. */
+    ...(refile ? [pile.length === 0 ? sql`false` : sql`${folderState.desiredFolder} in ${sql`(${sql.join(
+      pile.map((f) => sql`${f}`), sql`, `,
+    )})`}`] : []),
     /* THE MAILBOX IS ONE THIS INSTALL STILL ORGANIZES — BOTH HALVES (mail 0083).
      * `status = 'disabled'` alone stopped being sufficient once the loser of an organizer lease
      * became a READER (which is `connected`) rather than a disabled row: without the second clause
@@ -740,7 +795,10 @@ async function selectCandidates(
        another client, and an answer the gate admitted for itself alone. A rule about the sender never
        moves it. A letter put back at the gate waits for a decision about its sender, and a rule the
        person made is that decision (the act's own rule leaves it: 6 below). */
-    filters.push(sql`(${folderState.decidedAt} is null or ${folderState.desiredFolder} = ${SCREENER_GATE})`);
+    // A refile walk takes a placement made in the pile before the Change with it; a later one stays.
+    filters.push(refile
+      ? sql`(${folderState.decidedAt} is null or ${folderState.decidedAt} <= ${rule.retroRequestedAt === null ? sql`null` : d.ts(rule.retroRequestedAt)})`
+      : sql`(${folderState.decidedAt} is null or ${folderState.desiredFolder} = ${SCREENER_GATE})`);
   }
   // 6 — THE ACT ON SUGGESTIONS' RULE LEAVES WHAT THE PERSON PUT BACK (mail 0138): it re-walks the
   // sender's backlog, and a filing the person undid is not an automatic decision's to make again.

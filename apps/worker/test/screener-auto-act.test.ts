@@ -173,6 +173,28 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(await desiredOf(unsure)).toBe(SPAM);
   });
 
+  it("acts on a sender whose old-dated letter arrived inside the cutline, as the queue lists them", async () => {
+    const w = await newWorld();
+    const day = 86_400_000;
+    await db.insert(accountSettings).values({
+      accountId: w.accountId, screeningBaselineAt: new Date(Date.now() - day), screeningScope: "window",
+    });
+    // Recorded after the first import: an imported letter waits by its Date alone.
+    await db.update(mailboxes).set({ initialImportCompletedAt: new Date(Date.now() - 2 * day) }).where(eq(mailboxes.id, w.mailboxId));
+    // One header 200 days old each; only the server's receipt differs.
+    const old = new Date(Date.now() - 200 * day);
+    const ids: Record<string, string> = {};
+    for (const [from, receivedAt] of [["arrived@spam.test", new Date(Date.now() - day / 2)], ["received-old@spam.test", old]] as const) {
+      const id = await held(w, from);
+      await db.update(messages).set({ date: old, arrivedAt: receivedAt }).where(eq(messages.id, id));
+      await suggest(w, id, SPAM, 0.95);
+      ids[from] = id;
+    }
+    expect(await screenerAutoActPass(db, { accountId: w.accountId, consent: GIVEN })).toMatchObject({ ran: true, filed: 1 });
+    expect(await desiredOf(ids["arrived@spam.test"]!)).toBe(SPAM);
+    expect(await desiredOf(ids["received-old@spam.test"]!)).toBe(SCREENER);
+  });
+
   // ══════════════════════════════════════════════════════════════════════════════════════════
   //  (c) THE DESTINATION PREDICATE — what a decision may not file to
   // ══════════════════════════════════════════════════════════════════════════════════════════

@@ -1,5 +1,5 @@
 /**
- * WHICH ACCOUNTS THIS PHONE PUT THE EMPTIED-TEXT NOTICE AWAY FOR — once per device and account, so
+ * WHERE THIS PHONE PUT THE STORAGE NOTICE AWAY — per account, level and cap (`ui/storage-notice.ts`), so
  * unlike the lifecycle strip's per-run dismissal it is kept in the keystore. One row, bounded. A
  * refused or locked keystore keeps the dismissal for this run only: showing the notice again is a
  * smaller failure than never showing it.
@@ -8,8 +8,8 @@ import type { SecureKV } from "./servers";
 
 export const STORAGE_NOTICE_KEY = "ohmail.storageNotice";
 
-/** Accounts a phone keeps a dismissal for; past this the oldest goes. */
-export const STORAGE_NOTICES_KEPT = 16;
+/** Dismissals a phone keeps; past this the oldest goes. */
+export const STORAGE_NOTICES_KEPT = 48;
 
 let held: string[] = [];
 let kv: SecureKV | null = null;
@@ -33,7 +33,8 @@ export function bindStorageNotices(store: SecureKV): Promise<void> {
   kv = store;
   loading = (async () => {
     try {
-      for (const key of decode(await store.get(STORAGE_NOTICE_KEY))) if (!held.includes(key)) held.push(key);
+      const read = decode(await store.get(STORAGE_NOTICE_KEY));
+      held = [...read.filter((k) => !held.includes(k)), ...held].slice(-STORAGE_NOTICES_KEPT);
     } catch { /* nothing kept: the notice may show again */ }
     for (const l of [...listeners]) l();
   })();
@@ -42,6 +43,11 @@ export function bindStorageNotices(store: SecureKV): Promise<void> {
 
 export function storageNoticePutAway(key: string): boolean {
   return held.includes(key);
+}
+
+/** The dismissals as one value that changes with them, for a subscription's snapshot. */
+export function storageNoticesHeld(): readonly string[] {
+  return held;
 }
 
 export function putAwayStorageNotice(key: string): void {

@@ -8,6 +8,7 @@ import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import type { FirstRunHost, FirstRunMailboxInput } from "../app/shell/first-run-host";
 import type { OnboardingFacts } from "../app/shell/onboarding";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * THE ADD-A-MAILBOX RUN CAN CONNECT A HOME MAIL SERVER WITHOUT TLS. Setup's mailbox step and
@@ -156,5 +157,103 @@ describe("the add-a-mailbox run and a home mail server without TLS", () => {
     await ui.press("Test connection");
     expect(ui.consent(IMAP_LINE)).toBeNull();
     expect(ui.consent(SMTP_LINE)).toBeNull();
+  });
+});
+
+describe("the add run asks for the address first", () => {
+  /** The add run's form, nothing typed; `discover` answers the lookup the way the hosted route does. */
+  async function form(discover?: (domain: string) => unknown) {
+    const lookups: unknown[] = [];
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const root = createRoot(el);
+    roots.push(root);
+    const host = {
+      door: "cloud", ai: "on",
+      probe: async () => { throw new Error("unreachable"); },
+      connect: async () => ({ id: "mb-2" }),
+      organize: async () => "stored",
+      complete: async () => { /* nothing to finish here */ },
+      setAiEnabled: async () => { /* answered */ },
+      probeReason: () => "connect",
+      probeMessage: () => null,
+      ...(discover ? {
+        discover: async (body: { domain: string }) => { lookups.push(body); return discover(body.domain); },
+      } : {}),
+    } as unknown as FirstRunHost;
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC",
+        children: h(KeymapProvider, {
+          children: h(FirstRun, {
+            host, facts, onRefresh: () => {}, onLeave: () => {}, add: true,
+            pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: null,
+          }),
+        }),
+      }));
+    });
+    const field = (suffix: string) => el.querySelector<HTMLInputElement>(`input:not([type="checkbox"]):not([type="radio"])[id$='-${suffix}']`);
+    const address = async (value: string): Promise<void> => {
+      const input = field("address")!;
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      await act(async () => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+      await act(async () => { input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+      await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    };
+    const chosen = () => el.querySelector<HTMLInputElement>('input[type="radio"]:checked')?.value;
+    const choose = async (id: string) => {
+      await act(async () => { el.querySelector<HTMLInputElement>(`input[type="radio"][value="${id}"]`)!.click(); });
+    };
+    return { el, field, address, chosen, choose, lookups };
+  }
+
+  it("the address field comes before the choice, and its domain moves the choice", async () => {
+    const ui = await form((domain) => (domain === "acme-365.example"
+      ? { preset: "microsoft", proton: false, imap: null, smtp: null } : null));
+    const order = [...ui.el.querySelectorAll('input[id$="-address"], input[type="radio"]')].map((n) => (n as HTMLInputElement).type);
+    expect(order[0]).toBe("email");
+    await ui.address(personalAt("fixture.pat", "web.de"));
+    expect(ui.chosen()).toBe("webde");
+    await ui.address("pat@acme-365.example");
+    expect(ui.chosen()).toBe("microsoft");
+    expect(ui.lookups).toEqual([{ domain: "acme-365.example" }]);
+  });
+
+  it("a choice made by hand stays, and a Proton address says why it cannot connect", async () => {
+    const ui = await form();
+    await ui.choose("infomaniak");
+    await ui.address(personalAt("fixture.pat", "gmx.net"));
+    expect(ui.chosen()).toBe("infomaniak");
+    await ui.address(personalAt("fixture.pat", "proton.me"));
+    expect(ui.el.textContent).toContain(messages.providerPicker.protonNote.replace("{other}", messages.providerPicker.otherLabel));
+  });
+
+  it("an unreachable host on the generic entry offers the hosts the lookup found, and the press fills them", async () => {
+    const ui = await form(() => ({
+      preset: null, proton: false,
+      imap: { host: "imap.acme-srv.example", port: 993, secure: true }, smtp: { host: "smtp.acme-srv.example", port: 587, secure: false },
+    }));
+    await ui.address("pat@acme-srv.example");
+    await ui.choose("imap");
+    const typeInto = async (suffix: string, value: string) => {
+      const input = ui.field(suffix)!;
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      await act(async () => { input.dispatchEvent(new Event("input", { bubbles: true })); });
+    };
+    await typeInto("imap", "mail.acme-srv.example");
+    await typeInto("pass", "app-password-fixture");
+    expect(ui.el.textContent).not.toContain("imap.acme-srv.example");
+    const press = async (label: string) => {
+      const b = [...ui.el.querySelectorAll("button")].find((x) => (x.textContent ?? "").trim() === label);
+      expect(b, `no button ${label}`).toBeTruthy();
+      await act(async () => { b!.click(); });
+      await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
+    };
+    await press(messages.onboarding.test);
+    await press(messages.providerPicker.discoveredUse);
+    expect(ui.field("imap")!.value).toBe("imap.acme-srv.example");
+    expect(ui.field("imap-port")!.value).toBe("993");
+    expect(ui.field("smtp")!.value).toBe("smtp.acme-srv.example");
+    expect(ui.field("smtp-port")!.value).toBe("587");
   });
 });

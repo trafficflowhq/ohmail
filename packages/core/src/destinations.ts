@@ -10,6 +10,8 @@
  */
 export {
   DESTINATIONS, ORGANIZED_FOLDERS, isOrganizedFolder, retroPassWouldMove, retroWalkWouldMove,
+  // A Rules-page Change's re-filing: the count's predicate and the Undo window the walk waits out.
+  refileWouldMove, REFILE_UNDO_WINDOW_MS, REFILE_HOLD_MS,
   // The Screener's decided/consenting classification — the client cutline reads it from here.
   GATE_FOLDER, DECIDED_DESTINATIONS, CONSENTING_DESTINATIONS, isDecidedDestination, isConsentingDestination,
   // Where a message is held — the Ohbox's conversations leave these out (the fold's `placed`).

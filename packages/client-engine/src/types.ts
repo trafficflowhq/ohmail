@@ -735,7 +735,11 @@ export interface RuleDTO {
    * ABSENT IS UNKNOWN — an older server or sidecar does not send it — and never reads as done:
    * a surface then never says every message arrived when past mail was asked for.
    */
-  retro?: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
+  retro?: {
+    requestedAt: ISODateTime | null; doneAt: ISODateTime | null;
+    /** While a Rules-page re-filing is owed, where a Change takes the rule's mail from; absent or null: none. */
+    from?: Folder | null;
+  };
   /**
    * THE ACT ON SUGGESTIONS WROTE THIS RULE and no person has decided about the sender since.
    * Absent from an older server, and from a copy that does not carry it; both read as a person's.
@@ -794,6 +798,11 @@ export interface EngineDraft {
   accepted?: boolean;
   /** The server's version of the row's words; absent from an older server or an overlay. */
   contentRevision?: string;
+  /**
+   * Client-local, never on a server row or the wire: the Idempotency-Key of the `draft_save` create
+   * that painted this row and has not settled. Its id is local until then; a door binds the key.
+   */
+  pendingCreate?: string;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -1444,6 +1453,13 @@ export type EngineMutation =
        * bytes and no forward reference, so the adapter refuses the combination.
        */
       sendAt?: string;
+      /**
+       * SEND THE HELD MESSAGE AGAIN — the server sends the row {@link draftId} names under its held
+       * attempt's Message-ID, after looking in Sent, with {@link attachments} as the files that went
+       * the first time. No save and no staging: the held row's frozen words are what goes. Needs
+       * `draftId`; never with `sendAt`, `forwardOf` or `forwardParts` (a held forward names its original).
+       */
+      again?: true;
     }
   | { kind: "draft_accept"; draftId: string }
   /**
@@ -1555,6 +1571,11 @@ export type EngineMutation =
       keepProvenance?: boolean;
       /** With `keepProvenance`: the inferred value the undo read, restored only over a `manual` row. */
       restoreProvenance?: "promoted" | "seeded-from-sent" | "migrated";
+      /**
+       * A Rules-page Change: re-file the mail the rule filed in its place, and nothing else. Sent
+       * beside `applyRetro: false`, so a server that predates it moves nothing.
+       */
+      refile?: true;
     }
   /**
    * Make a rule from past the gate — the verb that did not exist. Creating a rule must also

@@ -617,3 +617,173 @@ describe("a slow submission: the Sent copy follows every accepted send exactly o
     expect({ status: row!.status, offerState: row!.offerState }).toEqual({ status: "pending", offerState: "complete" });
   });
 });
+
+/**
+ * SEND AGAIN: the held attempt goes again under its own Message-ID and content claim, Sent checked
+ * first, one row per press. A mail server double: what it took, what its Sent folder holds, and how
+ * the next submission and the next look end.
+ */
+function heldServer() {
+  const s = {
+    sentFolder: [] as string[], taken: [] as OutboundMessage[], dials: 0, looks: 0,
+    submit: "ok" as "ok" | "lost" | "drop" | "hold", look: "answer" as "answer" | "hang", dial: "ok" as "ok" | "refused",
+  };
+  let hold: () => void = () => undefined;
+  const factory: OpenSendAdapter = async () => {
+    s.dials += 1;
+    if (s.dial === "refused") throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+    return {
+      async send(msg: OutboundMessage, opts?: SendOptions) {
+        if (s.submit === "drop") throw new SendNotSubmitted("data", Object.assign(new Error("closed"), { code: "ECONNECTION" }));
+        if (s.submit === "hold") await new Promise<void>((r) => { hold = r; });
+        await opts?.beforeRelease?.();
+        s.taken.push(msg);
+        // Taken, and the answer lost on the way back.
+        if (s.submit === "lost") throw Object.assign(new Error("Timeout"), { code: "ETIMEDOUT" });
+        return { providerMessageId: msg.messageId! };
+      },
+      async messageInSent(id: string) {
+        s.looks += 1;
+        if (s.look === "hang") return new Promise<boolean>(() => undefined);
+        return s.sentFolder.includes(id);
+      },
+      async close() { /* nothing held */ },
+    };
+  };
+  return { s, factory, release: () => hold() };
+}
+
+const PHOTO = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(684 * 1024, 7) };
+
+/** A photo letter the server took and whose answer was lost: held `unverified`, nothing in Sent. */
+async function heldLetter() {
+  const w = await setup();
+  const draftId = await w.newDraft();
+  const mail = heldServer();
+  mail.s.submit = "lost";
+  const first = await svc.send(w.ctx, draftId, "first", { openSendAdapter: mail.factory }, { attachments: [PHOTO] });
+  expect(first.status).toBe("unverified");
+  const rows = async () => w.db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+  const held = (await rows())[0]!;
+  const draft = async () => (await w.db.select().from(drafts).where(eq(drafts.id, draftId)))[0]!;
+  const again = (key: string, input: Record<string, unknown> = { attachments: [PHOTO] }, more: Record<string, unknown> = {}) =>
+    svc.send(w.ctx, draftId, key, { openSendAdapter: mail.factory, ...more } as never, { again: true, ...input } as never)
+      .then((r) => r, (e: unknown) => e);
+  return { ...w, draftId, mail, held, rows, draft, again };
+}
+
+describe("Send again: the held message, once, under its own Message-ID", () => {
+  it("found in Sent on the press's own look: nothing is submitted and the press says the earlier send", async () => {
+    const h = await heldLetter();
+    h.mail.s.sentFolder.push(h.held.mintedMessageId);
+    h.mail.s.submit = "ok";
+    const out = await h.again("again-1") as { status: string; firstSend?: unknown };
+    expect(out).toMatchObject({ status: "sent", firstSend: { status: "sent" } });
+    expect(h.mail.s.taken, "only the first press was taken").toHaveLength(1);
+    const rows = await h.rows();
+    expect(rows.map((r) => [r.idempotencyKey, r.status, r.resolvedBy]).sort()).toEqual([
+      ["again-1", "sent", "sent_folder"], ["first", "unverified", "resent"],
+    ]);
+    expect((await h.draft()).status).toBe("sent");
+    expect(await h.again("again-1"), "its replay still says the earlier send").toMatchObject({ firstSend: { status: "sent" } });
+    const fresh = await svc.send(h.ctx, h.draftId, "fresh", { openSendAdapter: h.mail.factory }).then((r) => r, (e: unknown) => e);
+    expect(fresh, "an ordinary fresh-key press is still refused").toMatchObject({ httpStatus: 409 });
+  });
+
+  it("found in the mirror: answered without a dial", async () => {
+    const h = await heldLetter();
+    const dials = h.mail.s.dials;
+    await h.db.insert(messages).values({
+      accountId: h.A, mailboxId: h.mailboxId, messageIdHeader: h.held.mintedMessageId.replace(/[<>]/g, ""),
+      bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "Re: hi", fromAddress: "mila@lichtgrat.example",
+      snippet: "Thanks!", nativeLocator: { folder: "Sent", ref: "1:9" },
+    });
+    expect(await h.again("again-m")).toMatchObject({ status: "sent", firstSend: { status: "sent" } });
+    expect(h.mail.s.dials, "no dial").toBe(dials);
+    expect(h.mail.s.taken).toHaveLength(1);
+  });
+
+  it("not in Sent: exactly one submission, with the held Message-ID and the photo", async () => {
+    const h = await heldLetter();
+    h.mail.s.submit = "ok";
+    const went = await h.again("again-2") as { status: string; firstSend?: unknown };
+    expect(went).toMatchObject({ status: "sent" });
+    expect(went.firstSend, "this press sent it").toBeUndefined();
+    expect(h.mail.s.taken).toHaveLength(2);
+    expect(h.mail.s.taken[1]!.messageId, "the same message, not a new one").toBe(h.held.mintedMessageId);
+    expect(h.mail.s.taken[1]!.attachments?.map((a) => [a.filename, a.content.byteLength])).toEqual([["photo.jpg", 684 * 1024]]);
+    expect(h.mail.s.looks, "Sent was looked in before it went").toBe(2);
+    expect((await h.draft()).status).toBe("sent");
+    const replay = await h.again("again-2") as { status: string; firstSend?: unknown };
+    expect(replay, "its key answers its replay").toMatchObject({ status: "sent" });
+    expect(replay.firstSend, "the replay of the press that sent it never says nothing went").toBeUndefined();
+    expect(h.mail.s.taken).toHaveLength(2);
+  });
+
+  it("a Send later held unverified goes again with its own Message-ID", async () => {
+    const w = await setup();
+    // As the schedule pass leaves it: a draft again, its appointment and key standing.
+    const [d] = await w.db.insert(drafts).values({
+      accountId: w.A, mailboxId: w.mailboxId, subject: "later", body: "words", to: [{ name: null, address: "you@example.com" }],
+      status: "draft", sendAt: new Date(NOW.getTime() - 60_000), sendKey: "sched-key",
+    }).returning();
+    const mail = heldServer();
+    mail.s.submit = "lost";
+    expect((await svc.send(w.ctx, d!.id, "sched-key", { openSendAdapter: mail.factory })).status).toBe("unverified");
+    mail.s.submit = "ok";
+    expect(await svc.send(w.ctx, d!.id, "again-s", { openSendAdapter: mail.factory }, { again: true }).then((r) => r, (e: unknown) => e))
+      .toMatchObject({ status: "sent" });
+    expect(mail.s.taken.map((m) => m.messageId)).toEqual([mail.s.taken[0]!.messageId, mail.s.taken[0]!.messageId]);
+  });
+
+  it("other files are refused, and nothing is written", async () => {
+    const h = await heldLetter();
+    const dials = h.mail.s.dials;
+    expect(await h.again("again-3", {})).toMatchObject({ code: "send_again_changed", httpStatus: 409, retryable: false });
+    const rows = await h.rows();
+    expect(rows.map((r) => [r.idempotencyKey, r.status, r.resolvedBy])).toEqual([["first", "unverified", null]]);
+    expect({ draft: (await h.draft()).status, dials: h.mail.s.dials }).toEqual({ draft: "unverified", dials });
+  });
+
+  it("a replay of an unconfirmed Send again submits nothing more", async () => {
+    const h = await heldLetter();
+    expect(await h.again("again-4")).toMatchObject({ status: "unverified" });
+    expect(h.mail.s.taken).toHaveLength(2);
+    expect(await h.again("again-4")).toMatchObject({ status: "unverified" });
+    expect(await svc.send(h.ctx, h.draftId, "first", { openSendAdapter: h.mail.factory }).then((r) => r, (e: unknown) => e))
+      .toMatchObject({ status: "unverified" });
+    expect(h.mail.s.taken, "no replay sends").toHaveLength(2);
+    expect(h.mail.s.taken.map((m) => m.messageId)).toEqual([h.held.mintedMessageId, h.held.mintedMessageId]);
+  });
+
+  it("a second key while one runs is refused as in flight, never retryable", async () => {
+    const h = await heldLetter();
+    h.mail.s.submit = "hold";
+    const running = h.again("again-5", { attachments: [PHOTO] }, { attemptCeilingMs: 60_000 });
+    for (let i = 0; i < 200 && (await h.draft()).status !== "sending"; i += 1) await new Promise((r) => { setTimeout(r, 5); });
+    expect(await h.again("again-6")).toMatchObject({ code: "send_again_in_flight", retryable: false });
+    h.mail.release();
+    expect(await running).toMatchObject({ status: "sent" });
+    expect(h.mail.s.taken).toHaveLength(2);
+  });
+
+  it("a refused dial, a dropped upload or a look that never answers holds it again, never re-armed", async () => {
+    const h = await heldLetter();
+    h.mail.s.dial = "refused";
+    expect(await h.again("again-7", { attachments: [PHOTO] }, { rearmTransient: true }))
+      .toMatchObject({ code: "send_unreachable", retryable: false });
+    h.mail.s.dial = "ok";
+    h.mail.s.submit = "drop";
+    expect(await h.again("again-8")).toMatchObject({ code: "send_upload_dropped", retryable: false });
+    h.mail.s.look = "hang";
+    expect(await h.again("again-9", { attachments: [PHOTO] }, { attemptCeilingMs: 50 }))
+      .toMatchObject({ code: "send_again_unchecked", httpStatus: 424, retryable: false });
+    const rows = (await h.rows()).sort((a, b) => a.idempotencyKey.localeCompare(b.idempotencyKey));
+    expect(rows.map((r) => [r.idempotencyKey, r.status, r.retryUntil, r.resolvedBy, r.mintedMessageId === h.held.mintedMessageId])).toEqual([
+      ["again-7", "unverified", null, "resent", true], ["again-8", "unverified", null, "resent", true],
+      ["again-9", "unverified", null, null, true], ["first", "unverified", null, "resent", true],
+    ]);
+    expect((await h.draft()).status).toBe("unverified");
+    expect(h.mail.s.taken).toHaveLength(1);
+  });
+});

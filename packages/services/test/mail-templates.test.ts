@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { JSDOM } from "jsdom";
 import {
-  renderTemplate, safeUrl, esc, TEMPLATE_NAMES,
+  renderTemplate, safeUrl, esc, TEMPLATE_NAMES, providerClassOf,
   type TemplateDataMap, type TemplateName, type WaitlistTier,
 } from "../src/index.js";
 
@@ -114,6 +114,14 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     billingUrl: "https://ohmail.app/account/manage",
     supportEmail: "support@ohmail.app",
   },
+  // The connect reminder: a language, the advice's class (from the login domain, never the address),
+  // the sign-in door to the mailbox step and the support address.
+  connect_reminder: {
+    locale: "en",
+    provider: "other",
+    setupUrl: "https://app.ohmail.app/login?next=join",
+    supportEmail: "support@ohmail.app",
+  },
 };
 
 const ALL = TEMPLATE_NAMES;
@@ -124,7 +132,7 @@ const ALL = TEMPLATE_NAMES;
 const ALLOWED_HOSTS = new Set(["ohmail.app", "app.ohmail.app", "admin.ohmail.app", "localhost"]);
 
 describe("templates — the set is closed and complete", () => {
-  it("is exactly the ten templates — eight customer mails and two operator mails", () => {
+  it("is exactly the eleven templates — nine customer mails and two operator mails", () => {
     expect(ALL).toEqual([
       "waitlist_confirmation", "invite", "new_device_signin",
       // The sign-in throttle's notices, argued at the definition: a closed kind, a time and the
@@ -151,6 +159,9 @@ describe("templates — the set is closed and complete", () => {
       // The one mail staff send by hand (`POST /admin/accounts/:id/billing-link`): a language,
       // the app's billing door and the support address; capped per account by the route.
       "billing_link",
+      // Once per trial, to a trial that connected no mailbox (the lifecycle pass, behind its switch):
+      // a language, a closed provider class, the sign-in door and the support address.
+      "connect_reminder",
     ]);
   });
 
@@ -518,6 +529,18 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
       expect(out.replyTo).toBeUndefined();
     }
   });
+
+  it("the erasure week names the date the erasure keeps, not a plane's date already past", () => {
+    for (const locale of ["en", "de"] as const) {
+      const { text, html } = renderTemplate("lifecycle_notice", {
+        ...FIXTURES.lifecycle_notice, kind: "erasure_week", locale,
+      });
+      for (const part of [text, html]) {
+        expect(part, locale).toContain(FIXTURES.lifecycle_notice.erasureDate);
+        expect(part, locale).not.toContain(FIXTURES.lifecycle_notice.anchorDate);
+      }
+    }
+  });
 });
 
 describe("the billing link — the app's billing door, support's address, and nothing else", () => {
@@ -560,5 +583,84 @@ describe("the billing link — the app's billing door, support's address, and no
   it("refuses a door that is not https before anything renders", () => {
     expect(() => renderTemplate("billing_link", { ...FIXTURES.billing_link, billingUrl: "javascript:alert(1)" }))
       .toThrow(/non-https/);
+  });
+});
+
+describe("the connect reminder — once per trial, both languages, advice by login domain, no tracking", () => {
+  const SETUP = FIXTURES.connect_reminder.setupUrl;
+  const URL_RE = /https?:\/\/[^\s"'<>]+/g;
+  const ADDRESS_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+  const providers = ["gmail", "microsoft", "other"] as const;
+  const render = (locale: "en" | "de", provider: (typeof providers)[number]) =>
+    renderTemplate("connect_reminder", { ...FIXTURES.connect_reminder, locale, provider });
+
+  it("the provider class comes from the login domain and from nothing else", () => {
+    // Joined at run time: the domain is what the class reads.
+    const classOf = (domain: string) => providerClassOf(["someone", domain].join("@"));
+    expect(["gmail.com", "GoogleMail.com"].map(classOf)).toEqual(["gmail", "gmail"]);
+    expect(providerClassOf(` ${["someone", "gmail.com"].join("@")} `)).toBe("gmail");
+    expect(["outlook.com", "hotmail.de", "live.co.uk", "msn.com", "outlook.com.au"].map(classOf))
+      .toEqual(Array(5).fill("microsoft"));
+    expect(["example.com", "mail.gmail.com", "gmail.com.evil.test", "outlookmail.com"].map(classOf))
+      .toEqual(Array(4).fill("other"));
+    expect(["gmail.com", ""].map(providerClassOf)).toEqual(["other", "other"]);
+  });
+
+  for (const locale of ["en", "de"] as const) {
+    it(`${locale}: links only to the mailbox step's sign-in door, names no address but support's, no host and no tracking`, () => {
+      for (const provider of providers) {
+        const out = render(locale, provider);
+        const said = `${locale}/${provider}`;
+        expect(out.text, said).toContain(SETUP);
+        expect(out.html, said).toContain(`href="${SETUP}"`);
+        expect(out.html, said).toContain(`lang="${locale}"`);
+        expect(out.replyTo, `${said}: replies reach a person`).toBe("support@ohmail.app");
+        expect(out.headers, `${said}: a service mail, no unsubscribe header`).toBeUndefined();
+        for (const part of [out.subject, out.text, out.html]) {
+          for (const url of part.match(URL_RE) ?? []) expect(url, `${said}: another link`).toBe(SETUP);
+          for (const a of part.match(ADDRESS_RE) ?? []) expect(a, `${said}: another address`).toBe("support@ohmail.app");
+          expect(part, said).not.toMatch(/utm_|imap|smtp|\bport\b|\bhost\b|server/i);
+          for (const word of [/\$\s?\d|€|CHF/, /\bplan\b/i, /price|preis/i]) expect(part, said).not.toMatch(word);
+        }
+      }
+    });
+  }
+
+  it("says it is sent once and that a person answers, in both languages", () => {
+    expect(render("en", "other").text).toMatch(/We send this reminder once\.[^\n]*a person answers/);
+    expect(render("de", "other").text).toMatch(/Wir schicken diese Erinnerung nur einmal\.[^\n]*ein Mensch antwortet dir/);
+  });
+
+  it("Gmail gets the app password route; every class keeps the Microsoft 365 sign-in; only Microsoft's own domains are told to reply for help", () => {
+    for (const locale of ["en", "de"] as const) {
+      const gmail = render(locale, "gmail").text;
+      expect(gmail).toMatch(locale === "de" ? /App-Passwort[^\n]*Bestätigung in zwei Schritten/ : /app password[^\n]*2-Step Verification/);
+      const microsoft = render(locale, "microsoft").text;
+      expect(microsoft).toMatch(locale === "de"
+        ? /Outlook\.com- oder Hotmail-Adresse[^\n]*antworte auf diese Mail/
+        : /Outlook\.com or Hotmail address, reply to this mail/);
+      for (const provider of ["microsoft", "other"] as const) {
+        expect(render(locale, provider).text, provider).toMatch(locale === "de"
+          ? /Microsoft-365-Postfach deiner Arbeit oder Schule[^\n]*„Outlook verbinden“/
+          : /Microsoft 365 work or school account[^\n]*Connect Outlook/);
+      }
+      // A personal Microsoft mailbox is never promised a sign-in it may not have yet.
+      for (const provider of providers) {
+        expect(render(locale, provider).text, provider).not.toMatch(/(Outlook\.com|Hotmail)[^.\n]*(sign in with Microsoft|bei Microsoft an)/);
+      }
+      for (const provider of ["gmail", "other"] as const) {
+        expect(render(locale, provider).text, provider).not.toMatch(/Hotmail|Outlook\.com/);
+      }
+    }
+  });
+
+  it("German says Mail and Account, as the app does, and an unknown locale is English", () => {
+    for (const provider of providers) {
+      const { subject, text } = render("de", provider);
+      for (const part of [subject, text]) expect(part, provider).not.toMatch(/E-Mail|Konto|\bPost\b/);
+    }
+    expect(renderTemplate("connect_reminder", { ...FIXTURES.connect_reminder, locale: "fr" as never }).subject)
+      .toBe(render("en", "other").subject);
+    expect(Object.keys(FIXTURES.connect_reminder).sort()).toEqual(["locale", "provider", "setupUrl", "supportEmail"]);
   });
 });

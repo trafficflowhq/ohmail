@@ -29,6 +29,19 @@ export function dayStamp(iso: string | null | undefined, locale: string, zone?: 
 }
 
 /**
+ * A day with its month spelled out, "November 8, 2026": the day the plan's own storage limit applies
+ * again, in the storage notice. A runtime that refuses the locale gets its own default.
+ */
+export function longDayStamp(iso: string, locale: string): string {
+  const at = new Date(iso);
+  try {
+    return at.toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
+  } catch {
+    return at.toLocaleDateString();
+  }
+}
+
+/**
  * "2019-04" as the reader's month, "April 2019": the month text is kept from. Mid-month at noon UTC,
  * formatted in UTC, so no zone moves it. A runtime that refuses the locale gets the month as it came.
  */

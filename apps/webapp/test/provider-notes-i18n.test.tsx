@@ -56,9 +56,17 @@ describe("the catalogue carries every preset's note and help label", () => {
   it("no key for a preset the table does not have", () => {
     const ids = new Set(PROVIDERS.map((p) => p.id));
     for (const m of [en, de]) {
-      for (const key of Object.keys(pp(m)).filter((k) => /^(note|help|prereq)_/.test(k))) {
-        expect(ids.has(key.replace(/^(note|help|prereq)_/, "")), key).toBe(true);
+      for (const key of Object.keys(pp(m)).filter((k) => /^(note|help|prereq|need)_/.test(k))) {
+        expect(ids.has(key.replace(/^(note|help|prereq|need)_/, "")), key).toBe(true);
       }
+    }
+  });
+
+  it("every preset says what you'll need, in both languages", () => {
+    for (const p of PROVIDERS) {
+      expect(pp(en)[`need_${p.id}`], p.id).toBeTruthy();
+      expect(pp(de)[`need_${p.id}`], p.id).toBeTruthy();
+      expect(pp(de)[`need_${p.id}`], p.id).not.toBe(pp(en)[`need_${p.id}`]);
     }
   });
 });
@@ -76,6 +84,7 @@ describe("the picker says it in German", () => {
       }));
     });
     expect(host.textContent ?? "").toContain(pp(de).note_gmail);
+    expect(host.querySelector(".pvp-need")?.textContent).toBe(`${pp(de).needLabel} ${pp(de).need_gmail}`);
     expect([...host.querySelectorAll(".pvp-note a")].map((a) => a.textContent)).toEqual([pp(de).prereq_gmail, pp(de).help_gmail]);
   });
 

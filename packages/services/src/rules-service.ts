@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule, endOwedWalk,
-  ruleKeyIsOwnAddress, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
+  ruleKeyIsOwnAddress, owesWholeWalk, pendingRefileFrom, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -85,6 +85,11 @@ export type PatchRuleBody = Partial<CreateRuleBody> & {
    * person's. Written only over a `manual` row (`restoredProvenanceSql`); it never makes a claim.
    */
   restoreProvenance?: string;
+  /**
+   * A RULES-PAGE CHANGE: re-file the mail the rule filed in its old place to the new one, and nothing
+   * else (`rule-retro.ts`, the refile walk). Only with `applyRetro: false` and a destination.
+   */
+  refile?: boolean;
 };
 
 /**
@@ -241,6 +246,7 @@ function ruleRequestPayload(
   applyRetro?: boolean,
   keepProvenance?: boolean,
   restoreProvenance?: string,
+  refile?: boolean,
 ): Record<string, unknown> {
   return {
     key: {
@@ -251,6 +257,7 @@ function ruleRequestPayload(
     ...(applyRetro === undefined ? {} : { applyRetro }),
     ...(keepProvenance === true ? { keepProvenance: true } : {}),
     ...(restoreProvenance === undefined ? {} : { restoreProvenance }),
+    ...(refile === true ? { refile: true } : {}),
   };
 }
 
@@ -554,6 +561,7 @@ export class RulesService {
      * re-walk the whole backlog (`rules-subject-term.test.ts` pins that it must not).
      */
     const retroAsked = patch.applyRetro === true;
+    const refile = this.validRefile(patch);
 
     return withAccountTx(ctx, async (tx) => {
       // Fence, then the rule-key lock before the first `rules` statement: this door reads the key's
@@ -586,6 +594,9 @@ export class RulesService {
         enabled: rules.enabled,
         bodyContains: rules.bodyContains, match: rules.match, priority: rules.priority,
         provenance: rules.provenance, personDecidedAt: rules.personDecidedAt, demotions: rules.demotions,
+        // A re-filing still waiting keeps its origin through a second Change (`pendingRefileFrom`).
+        refileFrom: rules.refileFrom, refileAt: rules.refileAt, retroRequestedAt: rules.retroRequestedAt,
+        retroDoneAt: rules.retroDoneAt, retroMoved: rules.retroMoved, retroCursor: rules.retroCursor,
         // The key's match as the store itself folds it, so the lookup below compares one
         // normaliser with itself (SQL `lower` and JS `toLowerCase` differ past ASCII on some stores).
         matchKey: sql<string>`${ruleMatchKeySql(rules.match)}`,
@@ -710,7 +721,7 @@ export class RulesService {
            value in the reader's cycle once every holder the press went to has applied it. */
         travel = await fanOutRuleEdit(
           bridgeTx(tx), ctx, plan, "rule.update",
-          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
+          ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance, refile),
           at,
         );
         const unchanged = await materializeRule(asDb(tx), ctx.accountId, id);
@@ -750,8 +761,23 @@ export class RulesService {
       // Where the sender's mail has actually been going is the ACTING row's place, not the pressed
       // row's: a PATCH naming the pressed row's own destination over a twin acting elsewhere moves
       // the routing, and the backlog it claims is re-asked.
-      rearm(set.destination !== undefined
-        && canonicalDestination(set.destination as string) !== canonicalDestination(acting.destination));
+      const destinationMoved = set.destination !== undefined
+        && canonicalDestination(set.destination as string) !== canonicalDestination(acting.destination);
+      if (refile && destinationMoved && (set.enabled ?? before.enabled) === true) {
+        /* A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE, from where it filed (or where a re-filing
+           still waiting started), and starts the walk and its refile mark at one instant. A walk
+           the sender sheet asked for and still owed goes to the new place whole, unmarked. */
+        set.retroRequestedAt = at;
+        set.retroDoneAt = null;
+        set.retroCursor = null;
+        set.retroMoved = 0;
+        if (!owesWholeWalk(before)) {
+          set.refileAt = at;
+          set.refileFrom = pendingRefileFrom(before) ?? canonicalDestination(acting.destination);
+        }
+      } else {
+        rearm(destinationMoved);
+      }
       // A person's pause makes the row theirs whatever wrote it: no graduation switches it back on,
       // and a HEY import no longer counts it as its own to retarget or undo.
       const paused = set.enabled === false;
@@ -794,7 +820,7 @@ export class RulesService {
       if (!travelled(plan)) return { rule, seq: Number(seq) };
       travel = await fanOutRuleEdit(
         bridgeTx(tx), ctx, plan, "rule.update",
-        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance),
+        ruleRequestPayload(keyOf(), travelSet(), patch.applyRetro === undefined ? undefined : applyRetro, keepProvenance, restoreProvenance, refile),
         at,
       );
       return { rule, seq: Number(seq), travel };
@@ -959,6 +985,20 @@ export class RulesService {
     if (!keep || !withDestination || typeof v !== "string" || !RESTORABLE_PROVENANCE.has(v)) {
       throw new ServiceError("validation_failed", 400,
         "restoreProvenance must be promoted, seeded-from-sent or migrated, and needs keepProvenance and a destination");
+    }
+    return v;
+  }
+
+  /** `refile`: a boolean, true only beside an explicit `applyRetro: false`, a destination and no key or undo field. */
+  private validRefile(patch: PatchRuleBody): boolean {
+    const v: unknown = patch.refile;
+    if (v === undefined) return false;
+    if (typeof v !== "boolean") throw new ServiceError("validation_failed", 400, "refile must be a boolean");
+    if (v && (patch.applyRetro !== false || patch.destination === undefined || patch.kind !== undefined
+      || patch.match !== undefined || patch.subjectContains !== undefined || patch.bodyContains !== undefined
+      || patch.keepProvenance !== undefined)) {
+      throw new ServiceError("validation_failed", 400,
+        "refile needs applyRetro: false and a destination, and changes nothing else about the rule");
     }
     return v;
   }

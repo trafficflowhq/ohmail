@@ -1,8 +1,8 @@
 import { and, asc, eq, getTableColumns, inArray, isNotNull, isNull, sql, type SQL, type Table } from "drizzle-orm";
 import { foldersEnabled, userFolderById, type UserFolderRow } from "../folders.js";
 import {
-  asAuthVerdict, capSuggestion, draftBodyOverCeiling, ownedSenderName, resolveOhboxPolicy, senderCheckAll, senderDomainOf,
-  type CheckedSuggestion, type EmailAddress,
+  asAuthVerdict, canonicalDestination, capSuggestion, draftBodyOverCeiling, ownedSenderName, resolveOhboxPolicy, senderCheckAll,
+  senderDomainOf, type CheckedSuggestion, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { reasonDetail, suggestionAdvice } from "../screener-advice.js";
@@ -11,7 +11,7 @@ import {
   invitationWithoutEventWhere, itipReplyHeaderWhere, listAddresses,
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
-  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote,
+  SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
   type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -92,7 +92,11 @@ export function ruleRowToDTO(r: typeof rules.$inferSelect, byOhmail = false): Ru
     stats: { hits: r.hits, lastHitAt: iso(r.lastHitAt), demotions: r.demotions },
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
-    retro: { requestedAt: iso(r.retroRequestedAt), doneAt: iso(r.retroDoneAt) },
+    retro: {
+      requestedAt: iso(r.retroRequestedAt), doneAt: iso(r.retroDoneAt),
+      // Past its wait, a re-filing names the rule's own place: null reads as a walk a Change takes whole.
+      from: (pendingRefileFrom(r) ?? (refileOwed(r) ? canonicalDestination(r.destination) : null)) as Folder | null,
+    },
     byOhmail,
   };
 }
@@ -1053,7 +1057,7 @@ function profileRuleToDTO(mailboxId: string, at: number, e: unknown, asOf: strin
     stats: { hits: 0, lastHitAt: null, demotions: 0 },
     createdAt: asOf,
     updatedAt: asOf,
-    retro: { requestedAt: null, doneAt: null },
+    retro: { requestedAt: null, doneAt: null, from: null },
     // The published document carries no mark, so a holder's rule read here reads as a person's.
     byOhmail: false,
   };

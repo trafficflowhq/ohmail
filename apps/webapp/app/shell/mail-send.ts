@@ -453,6 +453,16 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
   return null;
 }
 
+/** Whether a send of this lane still on its way (queued, on the wire or on disk) goes from this row. */
+export function sendNamesRow(engine: OhmailEngine, lane: string, row: string): boolean {
+  const names = (m: { kind?: string } | undefined): boolean => m?.kind === "mail_send"
+    && sendKeyOf(m as unknown as MailSend) === lane && (m as unknown as MailSend).draftId === row;
+  const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
+  if ([...engine.pendingMutations(), ...wire].some((p) => names(p.mutation))) return true;
+  const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
+  return (disk as ReadonlyArray<OutboxRow>).some((r) => pendingSendRow(r) && names(r.mutation));
+}
+
 /**
  * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer. {@link
  * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a lone RESTORED send
@@ -787,11 +797,14 @@ export interface ReplyEditorMeta {
   sig?: SignatureState;
   /**
    * The account row this browser last wrote or opened for the lane, at its stored stamp; `holds` hashes
-   * its text, `pending` the text of a later save the outbox took and the row was not yet seen holding.
+   * its text, `pending` the text of a later save the outbox took and the row was not yet seen holding;
+   * `made`: a create of this lane made it.
    */
-  row?: { id: string; at: string; holds?: string; pending?: string };
+  row?: { id: string; at: string; holds?: string; pending?: string; made?: true };
   /** What the editor showed while it held text — see {@link LaneEnvelope}. */
   envelope?: LaneEnvelope;
+  /** The keys of the creates the lane claims (`draft-creates.ts`), at most eight: keys only, never words. */
+  creates?: string[];
 }
 
 /**
@@ -851,8 +864,11 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
           id: row.id, at: row.at,
           ...(typeof row.holds === "string" ? { holds: row.holds } : {}),
           ...(typeof row.pending === "string" ? { pending: row.pending } : {}),
+          ...(row.made === true ? { made: true as const } : {}),
         } }
         : {}),
+      ...(Array.isArray(parsed.creates) && parsed.creates.every((k) => typeof k === "string") && parsed.creates.length > 0
+        ? { creates: parsed.creates.slice(-8) } : {}),
       ...(sig?.kind === "removed" ? { sig: { kind: "removed" as const } }
         : sig?.kind === "edited" && typeof sig.text === "string"
           ? { sig: { kind: "edited" as const, text: sig.text } }
@@ -865,7 +881,8 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
-  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined) {
+  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined
+    && (meta.creates === undefined || meta.creates.length === 0)) {
     durableRemove(replyMetaKey(lane), "reply.meta");
     return;
   }

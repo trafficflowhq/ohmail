@@ -162,14 +162,76 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
     await db.insert(accountStorage).values({
       accountId: s.accountId, bytes: 1_868_000_000, huskedForSpace: 80_000,
-      firstHuskedAt: new Date("2026-10-20T03:00:00.000Z"), lastHuskedAt: new Date("2026-10-24T03:00:00.000Z"),
+      firstHuskedAt: new Date("2026-10-20T03:00:00.000Z"), lastHuskedAt: new Date("2026-07-27T03:00:00.000Z"),
       keptFrom: "2019-04-01", withheldOnArrival: 12,
     });
     const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
     expect(body.storage).toEqual({
       usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
-      firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 12,
+      firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 12, upgrade: "plan",
+      emptyingNow: true,
     });
+  });
+
+  it("…and whether the current cap is what empties text: at it, or a trim this week near it; never after a bigger plan", async () => {
+    const DAY = 86_400_000;
+    for (const [cap, bytes, lastAgo, now] of [
+      [2_000_000_000, 1_868_000_000, DAY, true],
+      [2_000_000_000, 2_000_000_000, null, true],
+      // A bigger plan since the trim: 37% of the new cap, and 92% with no trim for a month.
+      [5_000_000_000, 1_868_000_000, DAY, false],
+      [5_000_000_000, 4_600_000_000, 30 * DAY, false],
+      [2_000_000_000, 1_868_000_000, 8 * DAY, false],
+    ] as const) {
+      const { db, deps } = await depsWith(stubPort({
+        access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: cap, canAddMailbox: true, aiEnabled: true } }),
+      }));
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      await db.insert(accountStorage).values({
+        accountId: s.accountId, bytes: bytes, huskedForSpace: 80_000,
+        lastHuskedAt: lastAgo === null ? null : new Date(FIXED_NOW.getTime() - lastAgo),
+      });
+      const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+      expect(body.storage.emptyingNow, `${cap} ${bytes} ${lastAgo}`).toBe(now);
+    }
+  });
+
+  it("…and inside the trial's storage floor, the plan's own limit and when it applies again", async () => {
+    for (const until of ["2026-08-08T12:00:00.000Z", null]) {
+      const { db, deps } = await depsWith(stubPort({
+        access: async () => ({
+          ok: true, limits: { mailboxes: 1, storageBytes: 4_000_000_000, canAddMailbox: true, aiEnabled: true },
+          trialStorage: { planBytesLimit: 2_000_000_000, until },
+        }),
+      }));
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+      expect(body.storage).toMatchObject({ limitBytes: 4_000_000_000, planLimitBytes: 2_000_000_000, limitDropsAt: until });
+    }
+    // A carry that does not lower the limit is no carry.
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({
+        ok: true, limits: { mailboxes: 1, storageBytes: 4_000_000_000, canAddMailbox: true, aiEnabled: true },
+        trialStorage: { planBytesLimit: 4_000_000_000, until: null },
+      }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+    expect("planLimitBytes" in body.storage).toBe(false);
+  });
+
+  it("…and what adds room: a bigger plan below the largest plan's limit, the storage add-on from it on", async () => {
+    // Solo, a trial's 4 GB floor, Plus, Pro, Solo with one add-on.
+    for (const [cap, upgrade] of [
+      [2_000_000_000, "plan"], [4_000_000_000, "plan"], [5_000_000_000, "plan"], [10_000_000_000, "addon"], [12_000_000_000, "addon"],
+    ] as const) {
+      const { db, deps } = await depsWith(stubPort({
+        access: async () => ({ ok: true, limits: { mailboxes: 5, storageBytes: cap, canAddMailbox: true, aiEnabled: true } }),
+      }));
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+      expect(body.storage.upgrade, String(cap)).toBe(upgrade);
+    }
   });
 
   it("…an account with no counter row yet reads zero, never an absent block", async () => {
@@ -180,6 +242,7 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
     expect(body.storage).toEqual({
       usedBytes: 0, limitBytes: 5_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null, withheldOnArrival: 0,
+      upgrade: "plan", emptyingNow: false,
     });
   });
 

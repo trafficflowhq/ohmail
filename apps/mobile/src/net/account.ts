@@ -49,6 +49,14 @@ export interface StorageFacts {
   firstEmptiedAt: string | null;
   keptFrom: string | null;
   withheldOnArrival: number;
+  /** What adds room: a bigger plan, or (on the largest plan) the storage add-on alone. */
+  upgrade: "plan" | "addon";
+  /** The server's word: is the current cap what empties text now? */
+  emptyingNow: boolean;
+  /** Inside the trial's storage floor: the plan's own, lower limit, else `null`. */
+  planLimitBytes: number | null;
+  /** When the plan's limit applies again (ISO); `null` until a first payment dates it. */
+  limitDropsAt: string | null;
 }
 
 const count = (v: unknown): number | null =>
@@ -62,12 +70,21 @@ export function storageOf(raw: unknown): StorageFacts | null {
   const limitBytes = count(r.limitBytes);
   const emptiedForSpace = count(r.emptiedForSpace);
   if (usedBytes === null || limitBytes === null || limitBytes <= 0 || emptiedForSpace === null) return null;
+  const plan = count(r.planLimitBytes);
+  const planLimitBytes = plan !== null && plan > 0 && plan < limitBytes ? plan : null;
   return {
     usedBytes, limitBytes, emptiedForSpace,
     firstEmptiedAt: str(r.firstEmptiedAt) ?? null,
     keptFrom: typeof r.keptFrom === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(r.keptFrom) ? r.keptFrom : null,
     // An older server sends none; never more than the letters emptied.
     withheldOnArrival: Math.min(count(r.withheldOnArrival) ?? 0, emptiedForSpace),
+    // An older server names none: a bigger plan, as it said before.
+    upgrade: r.upgrade === "addon" ? "addon" : "plan",
+    // An older server does not say: only at the cap.
+    emptyingNow: typeof r.emptyingNow === "boolean" ? r.emptyingNow : usedBytes >= limitBytes,
+    planLimitBytes,
+    limitDropsAt: planLimitBytes !== null && typeof r.limitDropsAt === "string" && Number.isFinite(Date.parse(r.limitDropsAt))
+      ? r.limitDropsAt : null,
   };
 }
 

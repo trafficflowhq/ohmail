@@ -49,8 +49,8 @@ describe("the phone's tree and the DOM agree on every fixture", () => {
     it(fx.name, () => {
       const web = new DOMParser().parseFromString(fx.html!, "text/html").body as unknown as QuotedDomNode;
       const phone = phoneBody(fx.html!);
-      const a = quotedHistoryOfHtml(web, quotedDomTree);
-      const b = quotedHistoryOfHtml(phone, phoneQuotedTree);
+      const a = quotedHistoryOfHtml(web, quotedDomTree, { subject: fx.subject });
+      const b = quotedHistoryOfHtml(phone, phoneQuotedTree, { subject: fx.subject });
       expect(b === null, "both fold, or neither").toBe(a === null);
       if (a === null || b === null) return;
       expect(b.at).toBe(a.at);

@@ -229,6 +229,12 @@ export interface FirstRunHost {
   plaintextOffer?: (err: unknown) => "imap" | "smtp" | null;
 
   /**
+   * WHICH PROVIDER HOSTS A DOMAIN'S MAIL — `POST /mailboxes/discover`, the domain only. Absent on a door
+   * with no lookup (the desktop's own engine), where the address's own table is the whole guess.
+   */
+  discover?: (body: { domain: string }, signal: AbortSignal) => Promise<unknown>;
+
+  /**
    * THE STANDALONE DOOR'S AI PROVIDER FORM, injected. See the header. Absent everywhere else.
    */
   providerForm?: ReactNode;

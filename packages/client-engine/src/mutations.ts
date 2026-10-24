@@ -192,6 +192,8 @@ export interface MutationEffect {
 export interface EffectContext {
   now: () => Date;
   uuid: () => string;
+  /** The verb's Idempotency-Key: a `draft_save` create writes it on the row it paints. */
+  key?: string;
 }
 
 const SEG_FOLDER: Record<string, Folder> = {
@@ -814,6 +816,12 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     case "mail_send": {
+      // ── SEND AGAIN: the held row itself goes to `sending`, never a second overlay row ─────
+      if (m.again === true) {
+        const held = m.draftId ? reader.get<EngineDraft>("draft", m.draftId) : undefined;
+        if (!held) return [];
+        return [{ type: "draft", id: held.id, entity: { ...held, status: "sending" as const, updatedAt: iso } }];
+      }
       // ── A REPLY: the parent IS the mutation ───────────────────────────────────────────
       //
       // It supplies the recipient, the mailbox and the thread. An id the mirror does not know
@@ -906,6 +914,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           bcc: m.bcc,
           rationale: null,
           status: "draft",
+          ...(ctx.key !== undefined ? { pendingCreate: ctx.key } : {}),
           createdAt: iso,
           updatedAt: iso,
         };
@@ -1038,7 +1047,12 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           ...(m.priority === undefined ? {} : { priority: m.priority }),
           // The server re-arms the backlog on a retarget unless told not to, and on an explicit
           // yes; the finished stamp is its own to write, never this overlay's.
-          ...(rearmsRetro(rule, m) ? { retro: { requestedAt: iso, doneAt: null } } : {}),
+          ...(rearmsRetro(rule, m) ? {
+            retro: {
+              requestedAt: iso, doneAt: null,
+              ...(m.refile === true ? { from: walkOwed(rule) ? null : rule.retro?.from ?? (canonicalDestination(rule.destination) as Folder) } : {}),
+            },
+          } : {}),
         } satisfies RuleDTO,
       }];
     }
@@ -1100,8 +1114,16 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
   }
 }
 
+/** A walk still owed that is not a re-filing (`rule-key.ts#owesWholeWalk`): a Change takes it whole. */
+export function walkOwed(rule: RuleDTO): boolean {
+  return rule.enabled && rule.retro != null && rule.retro.requestedAt !== null && rule.retro.doneAt === null
+    && rule.retro.from == null;
+}
+
 /** `RulesService.update`'s re-arm: an explicit yes, or a moved destination unless told no. */
 function rearmsRetro(rule: RuleDTO, m: Extract<EngineMutation, { kind: "rule_update" }>): boolean {
+  // A re-filing starts only when the place moves on a rule that is on (`RulesService.update`).
+  if (m.refile === true) return rule.enabled && canonicalDestination(m.destination) !== canonicalDestination(rule.destination);
   if (m.applyRetro === true) return true;
   if (m.applyRetro === false) return false;
   return canonicalDestination(m.destination) !== canonicalDestination(rule.destination);

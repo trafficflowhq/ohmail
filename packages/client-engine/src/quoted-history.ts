@@ -8,9 +8,10 @@
  * runs over the lines. The answer is a RANGE: the history normally runs to the body's end, but
  * stops before a signature or list footer of the new message (mutt, Thunderbird with the
  * signature below). When in doubt the answer is `null` — folding new words is the failure that
- * matters, so every guard (Subject in a header block, a forward's own forwarded message, the
- * designed-layout gate, an announcement of inline answers, coloured answers inside the history, `>`
- * depth returning to prose) says "do not fold". One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
+ * matters, so every guard (Subject in a header block, the designed-layout gate, an announcement of
+ * inline answers, coloured answers inside the history, `>` depth returning to prose) says "do not
+ * fold". A forward (its subject's prefix, or its body's own introducer) keeps the message it forwards
+ * open and folds only the hops below it. One linear pass, bounded by {@link QUOTED_HISTORY_LIMITS}.
  */
 
 export type QuotedAt = "trailing" | "leading";
@@ -38,6 +39,9 @@ export type QuotedVerdict = QuotedAt | null | "unread";
 /** `start` and everything after it in document order up to `end` (exclusive; null = the body's end). */
 export interface QuotedNodeRange<N> { at: QuotedAt; start: N; end: N | null }
 
+/** What the reader knows beside the body: the message's subject (a forward's prefix). */
+export interface QuotedHint { subject?: string | null }
+
 /** Past any of these the body is not read, and nothing folds. */
 export const QUOTED_HISTORY_LIMITS = { chars: 524_288, lines: 32_768, nodes: 16_384 } as const;
 
@@ -47,13 +51,14 @@ const QUOTE_PREFIX = /^[ \t]{0,3}((?:>[ \t]?)+)/;
 /** Lines longer than this are prose, never a label, separator or attribution. */
 const MAX_LINE = 400;
 
+const SUBJECT_LABEL = /^(?:betreff|subject|objet|oggetto|asunto|onderwerp)\s?:\s*(.*)$/i;
 type Label = "from" | "date" | "to" | "cc" | "subject" | "other";
 const LABELS: Array<[Label, RegExp]> = [
   ["from", /^(?:von|from|de|da|van)\s?:\s*(.*)$/i],
   ["date", /^(?:gesendet|sent|datum|date|envoy[ée]|inviato|enviado(?: el)?|fecha|verzonden|verstuurd|data)\s?:\s*(.*)$/i],
   ["to", /^(?:an|to|[àa]|para|aan)\s?:\s*(.*)$/i],
   ["cc", /^(?:cc|bcc|kopie|copie|cco)\s?:\s*(.*)$/i],
-  ["subject", /^(?:betreff|subject|objet|oggetto|asunto|onderwerp)\s?:\s*(.*)$/i],
+  ["subject", SUBJECT_LABEL],
   ["other", /^(?:reply-to|antwort an|r[ée]pondre [àa]|rispondi a|responder a|wichtigkeit|importance|priorit[äa]t|anlagen|attachments|pi[èe]ces jointes|allegati|datos adjuntos|bijlagen)\s?:\s*(.*)$/i],
 ];
 
@@ -61,6 +66,8 @@ const SEPARATOR = /^-{2,}\s*(?:original message|urspr[üu]ngliche nachricht|orig
 /** A forward's own introducer (never a reply's "Original Message"): what follows is the forward's content. */
 const FORWARD_SEPARATOR = /^-{2,}\s*(?:forwarded message|weitergeleitete nachricht|message transf[ée]r[ée]|messaggio inoltrato|mensaje reenviado|doorgestuurd bericht)\s*-{2,}$/i;
 const FORWARD = /^(?:begin forwarded message|anfang der weitergeleiteten nachricht|d[ée]but du message r[ée]exp[ée]di[ée]|inizio messaggio inoltrato|comienzo del mensaje reenviado|begin doorgestuurd bericht)\s?:$/i;
+/** A subject's outermost prefix is a forward's (Fwd, FW, WG, TR, I, RV, Doorst), after any bracketed tag. */
+const FORWARD_SUBJECT = /^\s*(?:\[[^\]]{0,40}\]\s*)*(?:fwd?|wg|tr|i|rv|doorst)\s?:/i;
 const UNDERSCORE_RULE = /^_{10,}$/;
 const FOOTER_RULE = /^(?:_{20,}|={20,})$/;
 const SIG_DASHES = /^--$/;
@@ -546,6 +553,67 @@ function leadOf(L: Line[], s: number): string {
   return lead;
 }
 
+/** The message is a forward by its subject: what its history opens with is the content it delivers. */
+export function isForwardSubject(subject: string | null | undefined): boolean {
+  return typeof subject === "string" && FORWARD_SUBJECT.test(subject.slice(0, MAX_LINE));
+}
+
+/** The Subject value of the header block starting at line `h`, or null. */
+function hopSubject(L: Line[], f: Facts, h: number): string | null {
+  for (let j = h; j < L.length && j < h + HEADER_SPAN && f.inHeader[j]; j++) {
+    const m = L[j]!.text.length <= MAX_LINE ? SUBJECT_LABEL.exec(L[j]!.text) : null;
+    if (m) return m[1] ?? "";
+  }
+  return null;
+}
+
+/**
+ * A forward's history from line `s` to `end`: its first forwarded message is the content, so the fold
+ * starts at the hop below that message (a header block, separator, attribution, or a deeper quote that
+ * runs to `end`). A forwarded message that is itself a forward (its header's subject, or the hop's own
+ * introducer) delivers the hop below it too. No such hop, or answers in what would fold: nothing folds.
+ */
+function belowForward(L: Line[], f: Facts, s: number, end: number, html: boolean): Decision | typeof NO {
+  let base = -1;
+  // The header block of the message kept open.
+  let head = -1;
+  for (let i = s; i < end; i++) {
+    const l = L[i]!;
+    if (l.blank) continue;
+    const rule = UNDERSCORE_RULE.test(l.text);
+    let opens = f.hop[i] || separatorLine(l.text) || strongAttribution(l.text) || l.intro || (rule && f.hop[nextFilled(L, i + 1)] === true);
+    if (base < 0) {
+      if (f.hop[i]) head = i;
+      if (!opens && !rule && !f.inHeader[i]) base = l.depth;
+      continue;
+    }
+    if (opens && (forwardAt(L, i) || (head >= 0 && isForwardSubject(hopSubject(L, f, head))))) {
+      base = -1;
+      head = f.hop[i] ? i : -1;
+      continue;
+    }
+    if (!opens && l.depth > base) {
+      let j = i;
+      while (j < end && (L[j]!.blank || L[j]!.depth > base)) j++;
+      if (j < end) { i = j - 1; continue; }
+      opens = true;
+    }
+    if (!opens) continue;
+    let h = introAbove(L, f, i, true);
+    while (h - 1 > s && L[h - 1]!.hr) h--;
+    if (h <= s) return NO;
+    let deeper = false;
+    for (let j = h; j < end; j++) {
+      const k = L[j]!;
+      if (k.depth > base) deeper = true;
+      else if (deeper && !k.blank && (k.depth > 0 || f.words[j])) return NO;
+    }
+    if (answersInside(L, f, h, html, end)) return NO;
+    return { at: "trailing", start: h, end, node: L[h]!.at };
+  }
+  return NO;
+}
+
 /** A guard's no (`decide`): unlike finding nothing, it holds the text part too. */
 const NO = "no" as const;
 
@@ -553,8 +621,11 @@ const NO = "no" as const;
  * `null`: no history found; {@link NO}: a guard says this body must not fold.
  * `quotesOnly`: the html part was not read, so only `>` runs may fold (no depth-0 history).
  * `vouched`: the html part folds as trailing; a bare block in the text is then no paste.
+ * `forward`: the subject says the message is a forward ({@link belowForward}).
  */
-function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, quotesOnly = false, vouched = false): Decision | typeof NO | null {
+function decide(
+  L: Line[], markers: Marker[], designed: boolean, html: boolean, quotesOnly = false, vouched = false, forward = false,
+): Decision | typeof NO | null {
   const n = L.length;
   if (n === 0) return null;
   const f = factsOf(L, !html);
@@ -601,12 +672,14 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
     if (c.kind === "header") {
       // Unquoted history runs to the body's end, and only behind guards.
       const s = introAbove(L, f, c.line, false);
-      if (!f.wordsBefore[s]) return NO;
+      const fwd = forward || forwardAt(L, s);
+      if (!f.wordsBefore[s] && !fwd) return NO;
       if (ANNOUNCEMENT.test(leadOf(L, s))) return NO;
       if (f.commentFrom[c.line]) return NO;
+      if (fwd) return belowForward(L, f, s, n, html);
       const bare = c.node < 0 && s === c.line && f.header[c.line] && !separatorLine(L[c.line]!.text);
       if (bare && !vouched && pastedBlock(L, f, s, c.line)) return NO;
-      if (answersInside(L, f, c.line, html) || forwardAt(L, s)) return NO;
+      if (answersInside(L, f, c.line, html)) return NO;
       return { at: "trailing", start: s, end: n, node: s === c.line && c.node >= 0 ? c.node : L[s]!.at };
     }
     const firstRun = runs++ === 0;
@@ -623,16 +696,18 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
     if ((designed || head.cell) && !introduced && !head.boxed) continue;
     const k = nextFilled(L, c.end);
     if (k >= n || signatureAt(L, f, k) || (f.wordsBefore[s] && footerAt(L, f, k, html))) {
-      if (!f.wordsBefore[s]) return NO;
+      const fwd = forward || forwardAt(L, s);
+      if (!f.wordsBefore[s] && !fwd) return NO;
       // Above the new message's signature or footer, an unintroduced quote is the writer's own passage.
       if (k < n && !introduced) continue;
       // Answers typed inside the first quote: the lead says so, or they are in another hand.
-      if (firstRun && (ANNOUNCEMENT.test(leadOf(L, s)) || answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end)))) return NO;
-      if (forwardAt(L, s)) return NO;
+      if (firstRun && ANNOUNCEMENT.test(leadOf(L, s))) return NO;
+      if (fwd) return belowForward(L, f, s, k, html);
+      if (firstRun && answersInside(L, f, c.line, html, firstHopEnd(L, f, c.line, c.end))) return NO;
       return { at: "trailing", start: s, end: k, node: L[s]!.at };
     }
     // Bottom-posted: an introducer and its quote come first, the reply below, nothing quoted after.
-    if (ci === 0 && cands.length === 1 && introduced && !f.wordsBefore[s] && f.wordsFrom[c.end] && !f.quoteFrom[c.end]) {
+    if (!forward && ci === 0 && cands.length === 1 && introduced && !f.wordsBefore[s] && f.wordsFrom[c.end] && !f.quoteFrom[c.end]) {
       return { at: "leading", start: s, end: k, node: L[s]!.at };
     }
   }
@@ -646,7 +721,7 @@ function decide(L: Line[], markers: Marker[], designed: boolean, html: boolean, 
  * ({@link quotedHistoryVerdictOfHtml}) — the text folds only where the html folds, at the same kind,
  * and only `>` runs when the html could not be read. Absent when the message has no html part.
  */
-export function quotedHistoryOfText(lines: readonly string[], opts: { html?: QuotedVerdict } = {}): QuotedTextRange | null {
+export function quotedHistoryOfText(lines: readonly string[], opts: { html?: QuotedVerdict } & QuotedHint = {}): QuotedTextRange | null {
   if (opts.html === null) return null;
   if (lines.length > QUOTED_HISTORY_LIMITS.lines) return null;
   let chars = 0;
@@ -659,7 +734,7 @@ export function quotedHistoryOfText(lines: readonly string[], opts: { html?: Quo
     const depth = m ? (m[1]!.match(/>/g) ?? []).length : 0;
     L.push(newLine(normalize(m ? raw.slice(m[0].length) : raw), depth, raw));
   }
-  const d = decide(L, [], false, false, opts.html === "unread", opts.html === "trailing");
+  const d = decide(L, [], false, false, opts.html === "unread", opts.html === "trailing", isForwardSubject(opts.subject));
   if (d === null || d === NO || (opts.html !== undefined && opts.html !== "unread" && d.at !== opts.html)) return null;
   return { at: d.at, start: d.start, end: d.end };
 }
@@ -973,25 +1048,25 @@ function empty<N>(n: N, tree: QuotedTree<N>, budget: { left: number }): boolean 
  * mail (a 520–1000 px canvas) lets only client markers start a history. `sheets`: style sheets
  * outside the tree (the head's), read for that canvas only.
  */
-export function quotedHistoryReadingOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } = {}): {
+export function quotedHistoryReadingOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } & QuotedHint = {}): {
   range: QuotedNodeRange<N> | null;
   verdict: QuotedVerdict;
 } {
   const lin = linearize(root, tree, opts.sheets);
   if (lin === null) return { range: null, verdict: "unread" };
-  const d = decide(lin.lines, lin.markers, lin.designed, true);
+  const d = decide(lin.lines, lin.markers, lin.designed, true, false, false, isForwardSubject(opts.subject));
   if (d === null) return { range: null, verdict: "unread" };
   if (d === NO) return { range: null, verdict: null };
   return { range: rangeOf(root, tree, lin, d), verdict: d.at };
 }
 
 /** The history in a sanitized html tree, as a node range, or `null`. */
-export function quotedHistoryOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } = {}): QuotedNodeRange<N> | null {
+export function quotedHistoryOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } & QuotedHint = {}): QuotedNodeRange<N> | null {
   return quotedHistoryReadingOfHtml(root, tree, opts).range;
 }
 
 /** The html part's verdict for its text part ({@link quotedHistoryReadingOfHtml}). */
-export function quotedHistoryVerdictOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } = {}): QuotedVerdict {
+export function quotedHistoryVerdictOfHtml<N>(root: N, tree: QuotedTree<N>, opts: { sheets?: readonly string[] } & QuotedHint = {}): QuotedVerdict {
   return quotedHistoryReadingOfHtml(root, tree, opts).verdict;
 }
 

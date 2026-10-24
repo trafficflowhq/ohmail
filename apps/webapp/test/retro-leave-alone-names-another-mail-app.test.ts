@@ -11,7 +11,9 @@ import de from "../messages/de.json";
 const KEYS = [
   "footRuleRetro", "footRuleRetroDomain", "footWillRuleRetro", "footWillRuleRetroDomain",
   "footWillRuleRetroChip", "footWillRuleRetroDomainChip",
-  "subjectConfirmFine", "bodyConfirmMore", "subjectConfirmMore", "rules.retargetExplainRetro",
+  "subjectConfirmFine", "bodyConfirmMore", "subjectConfirmMore",
+  // A Change that takes a walk still owed to the new place whole: the ordinary walk's set.
+  "rules.retargetExplainWalk",
 ] as const;
 
 type Catalogue = Record<string, Record<string, string>>;
@@ -32,6 +34,22 @@ describe("the retro's leave-alone sentence names a filing in another mail app", 
         expect(s, `${lang}.${k}`).toMatch(says);
         expect(s, `${lang}.${k} claims a move inside ohmail stays`).not.toMatch(never);
       }
+    });
+  }
+});
+
+/* The Rules page's Change moves only the mail the rule filed in its place, so its sentence names that
+   place and a filing in another mail app, and never claims the person's own filing here stays. */
+describe("the Rules page's Change names the rule's place and another mail app", () => {
+  for (const [lang, cat, says, never] of [
+    ["en", screening(en), /filed in another mail app/, /filed yourself here/],
+    ["de", screening(de), /in einer anderen Mail-App einsortiert/, /selbst hier/],
+  ] as const) {
+    it(lang, () => {
+      const s = cat("rules.retargetExplainRetro");
+      expect(s).toMatch(says);
+      expect(s).toContain("{from}");
+      expect(s).not.toMatch(never);
     });
   }
 });

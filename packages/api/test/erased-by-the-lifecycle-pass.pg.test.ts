@@ -2,7 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { accounts, refreshTokens, sessions, users } from "@trafficflow/db";
-import { makeOwnedDb } from "@trafficflow/db/cloud";
+import { accountLifecycleNotices, makeOwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { AccessLifecycle } from "@trafficflow/db";
 import { createApp, apiRoutes, ACCOUNT_HEADER, ERASED_ANSWER_HEADER, type ApiDeps } from "@trafficflow/api";
@@ -81,6 +81,12 @@ describe.skipIf(!PG_UP)("an account erased by the lifecycle pass, read from its 
     const db = owned!.db as unknown as Db;
     const device = await seedDevice(db);
     const lifecycle = pastRetention();
+    // The week's warning went out on time; the erasure door holds an account without one.
+    const warnedAt = new Date(Date.parse(lifecycle.erasureAt!) - 7 * DAY);
+    await db.insert(accountLifecycleNotices).values({
+      accountId: device.accountId, kind: "erasure_week", anchor: new Date(lifecycle.erasureAt!),
+      sentAt: warnedAt, deliveredAt: warnedAt,
+    });
     const deps = {
       port: {
         accessOrFault: async (id: string) => (id === device.accountId

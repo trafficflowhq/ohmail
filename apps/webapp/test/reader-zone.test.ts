@@ -176,7 +176,7 @@ describe("the resurface presets mint 09:00 in the reader's zone", () => {
     /* Auckland is +12/+13: 09:00 local is the PREVIOUS day in UTC, so slicing the ISO string
        would floor the picker a day early and let the reader choose a horizon in the past. */
     setActiveFormatZone("Pacific/Auckland");
-    const tomorrow = tomorrowNine(new Date("2026-08-11T14:32:00Z"));
+    const tomorrow = tomorrowNine(new Date("2026-08-11T20:32:00Z")); // 08:32 on the 12th there
     expect(tomorrow).toBe("2026-08-12T21:00:00.000Z"); // 09:00 on the 13th, NZST (+12)
     expect(dayValue(tomorrow)).toBe("2026-08-13");
   });

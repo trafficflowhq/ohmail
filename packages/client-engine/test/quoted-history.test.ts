@@ -21,15 +21,15 @@ const strip = (l: string): string => qhNorm(l.replace(/^[\s>]+/, ""));
 
 function textCase(fx: QhFixture) {
   const lines = fx.text.split("\n");
-  const r = quotedHistoryOfText(lines);
+  const r = quotedHistoryOfText(lines, { subject: fx.subject });
   const visible = r === null ? lines : [...lines.slice(0, r.start), ...lines.slice(r.end)];
   return { lines, r, visible: visible.map(strip) };
 }
 
-function htmlCase(html: string) {
+function htmlCase(html: string, subject?: string) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const root = doc.body as unknown as QuotedDomNode;
-  const r = quotedHistoryOfHtml(root, quotedDomTree);
+  const r = quotedHistoryOfHtml(root, quotedDomTree, { subject });
   const cut = r === null ? { history: [], after: [] } : quotedHistoryCut(root, quotedDomTree, r);
   const historyText = qhNorm(cut.history.map((n) => (n as unknown as Node).textContent ?? "").join(" "));
   for (const n of cut.history) (n as unknown as ChildNode).remove();
@@ -79,7 +79,7 @@ describe("the html part: every fixture's expected range", () => {
       const e = fx.expect;
       const before = new DOMParser().parseFromString(fx.html!, "text/html");
       const marked = h.historyStartSelector ? before.querySelector(h.historyStartSelector) : null;
-      const { r, historyText, visibleText } = htmlCase(fx.html!);
+      const { r, historyText, visibleText } = htmlCase(fx.html!, fx.subject);
       if (!qhFolds(e)) {
         expect(r, "this body must not fold").toBeNull();
       } else {
@@ -189,6 +189,63 @@ describe("each guard is what keeps its fixture open", () => {
     expect(quotedHistoryOfText(fixture("123").text.split("\n"))).not.toBeNull();
   });
 
+  it("a forward's subject keeps what it forwards open, in every client's prefix; a reply's does not", () => {
+    const lines = fixture("11").text.split("\n");
+    const at = (subject: string): string | undefined => {
+      const r = quotedHistoryOfText(lines, { subject });
+      return r === null ? undefined : lines[r.start + 1];
+    };
+    for (const p of ["WG: AW:", "Fwd:", "FW:", "Fw :", "TR:", "I:", "RV:", "Doorst:", "[EXTERN] WG:"]) {
+      expect(at(`${p} Wartung`), p).toBe("Von: Ana Example <ana.example@example.com>");
+    }
+    for (const p of ["AW: WG:", "Re: FW:", "Wartung", ""]) expect(at(`${p} Wartung`), p).toBe("Von: Ben Sample <ben.sample@example.org>");
+    // The html reads the same hint: 11 folds at its second hop with it, at its first without.
+    expect(htmlCase(fixture("11").html!, fixture("11").subject).historyText).toMatch(/^Von: Ana Example/);
+    expect(htmlCase(fixture("11").html!).historyText).toMatch(/^Von: Ben Sample/);
+  });
+
+  it("a forward of one message folds nothing; a forward with nothing typed folds only below what it forwards", () => {
+    expect(htmlCase(fixture("104").html!, "WG: Wartung").r).toBeNull();
+    expect(verdictOf(fixture("104").html!, "WG: Wartung")).toBeNull();
+    const bare = fixture("11").text.split("\n").slice(8);
+    expect(quotedHistoryOfText(bare), "no hint: a bare block is nobody's words").toBeNull();
+    const r = quotedHistoryOfText(bare, { subject: "WG: Wartung" })!;
+    expect(bare.slice(0, r.start).join("\n")).toContain("vielen Dank für das Angebot.");
+    expect(bare[r.start + 1]).toBe("Von: Ana Example <ana.example@example.com>");
+  });
+
+  it("a forward's introducer alone keeps the forwarded message open and folds the thread below it", () => {
+    const nested = "\n\nOn Wed, 21 Oct 2026 at 10:00, Dana Example <dana@example.net> wrote:\n> Is the fair open on Sunday?\n> Dana";
+    const text = fixture("86").text.replace(/\n*$/, nested);
+    const r = foldText(text)!;
+    expect(r).not.toBeNull();
+    expect(visibleOf(text, r)).toContain("you are invited to the regional crafts fair");
+    expect(visibleOf(text, r)).not.toContain("Is the fair open on Sunday?");
+    // Answers in the hop below stay open: nothing folds.
+    expect(foldText(text.replace("> Dana", "Yes, from 10:00.\n> Dana"))).toBeNull();
+  });
+
+  it("a forward of a forward keeps open what the inner forward delivers; a reply's hop below it still folds", () => {
+    const fx = fixture("130");
+    const at = (text: string, subject = fx.subject): string | undefined => {
+      const lines = text.split("\n");
+      const r = quotedHistoryOfText(lines, { subject });
+      return r === null ? undefined : lines[r.start];
+    };
+    expect(at(fx.text)).toBe("Von: Ben Sample <ben.sample@example.org>");
+    // The kept hop's own Betreff decides: an AW: there makes the invoice the history.
+    expect(at(fx.text.replace("Betreff: WG: Rechnung", "Betreff: AW: Rechnung"), "WG: AW: Rechnung 4711")).toBe("Von: Ana Example <ana.example@example.com>");
+    // A forward the invoice answers is history like any other hop.
+    expect(at(fx.text.replace("Betreff: Rechnung 4711", "Betreff: WG: Rechnung 4711"))).toBe("Von: Ben Sample <ben.sample@example.org>");
+    // With nothing below the delivered letter, nothing folds.
+    expect(at(fx.text.slice(0, fx.text.indexOf("\nVon: Ben Sample")))).toBeUndefined();
+    expect(htmlCase(fx.html!, fx.subject).historyText).toMatch(/^Von: Ben Sample/);
+    // An introducer alone says the same, with no subject: Apple Mail's and Gmail's.
+    expect(foldText(fixture("128").text)).toBeNull();
+    expect(htmlCase(fixture("128").html!).r).toBeNull();
+    expect(strip(fixture("129").text.split("\n")[foldText(fixture("129").text)!.start]!)).toMatch(/^On Fri, 23 Oct 2026/);
+  });
+
   it("a bottom-posted reply folds the quote at the top and leaves the reply whole", () => {
     const lines = fixture("31").text.split("\n");
     const r = quotedHistoryOfText(lines)!;
@@ -209,12 +266,15 @@ describe("bounded", () => {
     expect(htmlCase(html).r).toBeNull();
   });
 
-  it("32,000 hostile attribution and label lines are read in one linear pass", { timeout: 2000 }, () => {
+  it("32,000 hostile attribution and label lines are read in one linear pass", { timeout: 4000 }, () => {
     const hostile: string[] = ["Hi"];
     for (let i = 0; i < 8000; i++) hostile.push(`On ${i} Mon, ${"x ".repeat(60)} wrote:`, "Von: a@example.com", "> q", "answer");
     const t0 = Date.now();
     quotedHistoryOfText(hostile);
     expect(Date.now() - t0).toBeLessThan(1500);
+    const t1 = Date.now();
+    quotedHistoryOfText(hostile, { subject: "Fwd: x" });
+    expect(Date.now() - t1, "as a forward").toBeLessThan(1500);
   });
 
   it("4,000 container runs between label lines are read in one linear pass", { timeout: 4000 }, () => {
@@ -227,7 +287,7 @@ describe("bounded", () => {
 });
 
 const domOf = (html: string): QuotedDomNode => new DOMParser().parseFromString(html, "text/html").body as unknown as QuotedDomNode;
-const verdictOf = (html: string) => quotedHistoryVerdictOfHtml(domOf(html), quotedDomTree);
+const verdictOf = (html: string, subject?: string) => quotedHistoryVerdictOfHtml(domOf(html), quotedDomTree, { subject });
 const foldText = (text: string, html?: Parameters<typeof quotedHistoryOfText>[1]) => quotedHistoryOfText(text.split("\n"), html);
 const visibleOf = (text: string, r: { start: number; end: number } | null): string => {
   const lines = text.split("\n");
@@ -251,8 +311,8 @@ describe("the html part's verdict holds its text part", () => {
   it("every fixture: the text folds only where its html folds, at the same kind", () => {
     for (const fx of FIXTURES) {
       if (fx.html === null) continue;
-      const v = verdictOf(fx.html);
-      const r = foldText(fx.text, { html: v });
+      const v = verdictOf(fx.html, fx.subject);
+      const r = foldText(fx.text, { html: v, subject: fx.subject });
       if (v === null) expect(r, fx.name).toBeNull();
       else if (r !== null && v !== "unread") expect(r.at, fx.name).toBe(v);
       // A phone member reads the text part: where the html folds, so does it.

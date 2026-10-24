@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/db/cloud";
 import type { EntitlementsFetch } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import type { AccessLifecycle, AccessVerdict } from "@trafficflow/db";
+import type { AccessLifecycle, AccessTrial, AccessVerdict } from "@trafficflow/db";
 import { runAccountLifecyclePass, eraseOneDueAccount } from "../src/index.js";
 import type { AccountLifecyclePassDeps, AccountLifecyclePassResult } from "../src/index.js";
 
@@ -79,8 +79,10 @@ function fakePort(byAccount: Map<string, AccessLifecycle>): {
   };
 }
 
-function fakeMail(status: "sent" | "failed" = "sent") {
-  const sent: Array<{ to: string; kind: string; locale: string; anchor: string; noMailbox?: boolean }> = [];
+function fakeMail(status: "sent" | "failed" | "skipped" = "sent", delayMs = 0) {
+  const sent: Array<{
+    to: string; kind: string; locale: string; anchor: string; erasureAt: string | null; noMailbox?: boolean;
+  }> = [];
   return {
     sent,
     mail: {
@@ -88,12 +90,33 @@ function fakeMail(status: "sent" | "failed" = "sent") {
         _ctx: unknown,
         input: { to: string; kind: string; locale: string; anchor: Date; erasureAt: Date | null; noMailbox?: boolean },
       ) => {
-        sent.push({ to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString(), noMailbox: input.noMailbox });
+        if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        sent.push({
+          to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString(),
+          erasureAt: input.erasureAt?.toISOString() ?? null, noMailbox: input.noMailbox,
+        });
+        return { status };
+      },
+      sendConnectReminder: async (_ctx: unknown, input: { to: string; locale: string; anchor: Date }) => {
+        sent.push({
+          to: input.to, kind: "connect_reminder", locale: input.locale, anchor: input.anchor.toISOString(), erasureAt: null,
+        });
         return { status };
       },
     } as unknown as AccountLifecyclePassDeps["mail"],
   };
 }
+
+/** The erasure-week warning as the pass records a delivered one, a week before the plane's date. */
+async function warned(accountId: string, lc: AccessLifecycle): Promise<void> {
+  const anchor = new Date(lc.erasureAt!);
+  const at = new Date(anchor.getTime() - 7 * DAY);
+  await db.insert(accountLifecycleNotices).values({ accountId, kind: "erasure_week", anchor, sentAt: at, deliveredAt: at });
+}
+
+/** The account's notice rows, oldest anchor first. */
+const noticesOf = async (accountId: string) => (await db.select().from(accountLifecycleNotices)
+  .where(eq(accountLifecycleNotices.accountId, accountId))).sort((a, b) => a.anchor.getTime() - b.anchor.getTime());
 
 /**
  * What the driver does in one fire: the sweep, then the erase door once per account it named —
@@ -108,9 +131,14 @@ async function sweepThenErase(deps: AccountLifecyclePassDeps): Promise<AccountLi
 
 /** A logger that keeps the events it was handed, so a refusal can be read back. */
 function fakeLog() {
-  const events: Array<{ level: string; event: string; accountId: unknown; epoch?: unknown }> = [];
-  const at = (level: string) => (event: string, fields?: Record<string, unknown>) =>
-    { events.push({ level, event, accountId: fields?.accountId, epoch: fields?.epoch }); };
+  const events: Array<{
+    level: string; event: string; accountId: unknown; epoch?: unknown; startedAt?: unknown; since?: unknown;
+  }> = [];
+  const at = (level: string) => (event: string, fields?: Record<string, unknown>) => {
+    events.push({
+      level, event, accountId: fields?.accountId, epoch: fields?.epoch, startedAt: fields?.startedAt, since: fields?.since,
+    });
+  };
   const log = {
     level: "info", child: () => log,
     debug: at("debug"), info: at("info"), warn: at("warn"), error: at("error"),
@@ -220,7 +248,8 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
       erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
     });
     const { port, released } = fakePort(new Map([[accountId, lc]]));
-    // No mailer: erasure is not gated on mail — the notices are reported owed and the act runs.
+    // The week's warning went out on time; without it the door holds (the cases below).
+    await warned(accountId, lc);
     const r1 = await sweepThenErase({ port, mail: null, now: () => NOW });
     expect(r1.erased).toBe(1);
     expect(released, "the money is stopped through the port, before the delete").toEqual([accountId]);
@@ -281,6 +310,7 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
         closedReason: "suspended", closedAt: closedLong, erasureAt: past })],
       [ended.accountId, closedLifecycle({ closedAt: closedLong, erasureAt: past })],
     ]));
+    await warned(ended.accountId, closedLifecycle({ erasureAt: past }));
     const { events, log } = fakeLog();
 
     const r = await sweepThenErase({ port, mail: null, log, now: () => NOW });
@@ -498,6 +528,7 @@ describe.skipIf(!PG_UP)("the erasure door, through the entitlements client", () 
     const { accountId } = await seedAccount();
     const t = 1_000;
     const plane = planeFor(accountId, [due()]);
+    await warned(accountId, due());
     const r = await sweepThenErase({
       port: clientOn(plane.impl, () => t), mail: null, now: () => NOW,
     });
@@ -596,6 +627,7 @@ describe.skipIf(!PG_UP)("the erase door on real Postgres", () => {
       erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
     });
     const { port, released } = fakePort(new Map([[accountId, lc]]));
+    await warned(accountId, lc);
     const sweep = await runAccountLifecyclePass(db, { port, mail: null, now: () => NOW });
     expect(sweep.erasureDue).toContain(accountId);
     expect(released, "the sweep stopped a subscription itself").toEqual([]);
@@ -607,5 +639,266 @@ describe.skipIf(!PG_UP)("the erase door on real Postgres", () => {
     expect(released, "a repeated poke stopped the money twice").toEqual([accountId]);
     expect(await eraseOneDueAccount(db, { port, now: () => NOW }, other.accountId)).toBe("not_due");
     expect(await db.select().from(users).where(eq(users.accountId, other.accountId))).toHaveLength(1);
+  });
+});
+
+/**
+ * NO ERASURE WITHOUT A DELIVERED WARNING, AND THE WARNING OUTLIVES THE ERASURE
+ * (ERASURE-WEEK-MAIL-LEAVES-NO-TRACE). The erasure deleted every notice row, so nothing could show
+ * afterwards whether the week's warning went out; and nothing waited for it.
+ */
+describe.skipIf(!PG_UP)("the erasure waits for a delivered warning, and keeps it", () => {
+  const due = () => closedLifecycle({
+    closedAt: new Date(NOW.getTime() - 32 * DAY).toISOString(),
+    erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+  });
+  const at = (ms: number) => () => new Date(NOW.getTime() + ms);
+  const HOUR = 60 * 60 * 1000;
+  const said = (events: ReturnType<typeof fakeLog>["events"], accountId: string) =>
+    events.filter((e) => e.accountId === accountId).map((e) => `${e.level} ${e.event}`);
+  const kept = async (accountId: string) =>
+    (await noticesOf(accountId)).map((n) => [n.kind, n.anchor.toISOString(), n.deliveredAt]);
+
+  it("never warned: the door holds at ERROR; the late warning names a week from now, and the erasure waits for it", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = due();
+    const { port, released } = fakePort(new Map([[accountId, lc]]));
+    const held = fakeLog();
+    expect((await runAccountLifecyclePass(db, { port, mail: null, now: () => NOW })).erasureDue).toContain(accountId);
+    expect(await eraseOneDueAccount(db, { port, log: held.log, now: () => NOW }, accountId)).toBe("unwarned");
+    expect(said(held.events, accountId)).toEqual(["error account_erasure_held_unwarned"]);
+    expect(released, "the subscription is not stopped for a held erasure").toEqual([]);
+    expect(await db.select().from(users).where(eq(users.accountId, accountId))).toHaveLength(1);
+    expect((await db.select().from(accounts).where(eq(accounts.id, accountId)))[0]!.erasedAt).toBeNull();
+
+    const m = fakeMail();
+    await runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => [s.kind, s.erasureAt])).toEqual([
+      ["closed", null], ["erasure_week", new Date(NOW.getTime() + 7 * DAY).toISOString()],
+    ]);
+    const late = fakeLog();
+    for (const later of [0, 8 * DAY - HOUR]) {
+      expect(await eraseOneDueAccount(db, { port, log: late.log, now: at(later) }, accountId), `+${later}`).toBe("unwarned");
+    }
+    expect(said(late.events, accountId)).toEqual(Array(2).fill("warn account_erasure_held_for_late_warning"));
+    expect(await eraseOneDueAccount(db, { port, now: at(8 * DAY + HOUR) }, accountId)).toBe("erased");
+    expect(released).toEqual([accountId]);
+    expect(await kept(accountId), "the delivered warning alone survives the erasure").toEqual([
+      ["erasure_week", lc.erasureAt, NOW],
+    ]);
+  });
+
+  it("warned in its week: the erasure runs on the plane's date, and only that warning survives it", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle({ erasureAt: new Date(NOW.getTime() + 5 * DAY).toISOString() });
+    const { port } = fakePort(new Map([[accountId, lc]]));
+    const m = fakeMail();
+    await runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => [s.kind, s.erasureAt]))
+      .toEqual([["closed", lc.erasureAt], ["erasure_week", lc.erasureAt]]);
+    expect(await eraseOneDueAccount(db, { port, now: at(6 * DAY) }, accountId)).toBe("erased");
+    expect(await kept(accountId)).toEqual([["erasure_week", lc.erasureAt, NOW]]);
+  });
+
+  it("a notice every recipient skipped is not delivered, and is sent again once its claim is an hour old", async () => {
+    const { accountId, email } = await seedAccount();
+    const { port } = fakePort(new Map([[accountId, closedLifecycle()]]));
+    const { events, log } = fakeLog();
+    const r = await runAccountLifecyclePass(db, { port, mail: fakeMail("skipped").mail, log, now: () => NOW });
+    expect([r.skipped, r.sent.closed]).toEqual([1, 0]);
+    expect(said(events, accountId)).toEqual(["warn account_lifecycle_notice_skipped"]);
+    expect((await noticesOf(accountId)).map((n) => n.deliveredAt)).toEqual([null]);
+    const perPass: number[] = [];
+    for (const later of [HOUR / 2, 2 * HOUR, 4 * HOUR]) {
+      const m = fakeMail();
+      await runAccountLifecyclePass(db, { port, mail: m.mail, now: at(later) });
+      perPass.push(m.sent.filter((s) => s.to === email).length);
+    }
+    expect(perPass, "held at 30 minutes, sent at two hours, and never again").toEqual([0, 1, 0]);
+    expect((await noticesOf(accountId)).map((n) => n.deliveredAt)).toEqual([at(2 * HOUR)()]);
+  });
+
+  /** A claim an hour stale with no delivery: a pass that died between its claim and its send. */
+  const stale = async (accountId: string, lc: AccessLifecycle) => db.insert(accountLifecycleNotices).values({
+    accountId, kind: "closed", anchor: new Date(lc.closedAt!), sentAt: new Date(NOW.getTime() - 2 * HOUR),
+  });
+
+  it("a stale claim without a delivery is sent again and stamped delivered", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle();
+    await stale(accountId, lc);
+    const m = fakeMail();
+    const r = await runAccountLifecyclePass(db, { port: fakePort(new Map([[accountId, lc]])).port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => s.kind)).toEqual(["closed"]);
+    expect(r.sent.closed).toBe(1);
+    expect((await noticesOf(accountId)).map((n) => [n.sentAt, n.deliveredAt])).toEqual([[NOW, NOW]]);
+  });
+
+  it("two passes racing for one stale claim send it once", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle();
+    await stale(accountId, lc);
+    const { port } = fakePort(new Map([[accountId, lc]]));
+    const m = fakeMail("sent", 50);
+    await Promise.all([1, 2].map(() => runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW })));
+    expect(m.sent.filter((s) => s.to === email)).toHaveLength(1);
+  });
+});
+
+/**
+ * THE CONNECT REMINDER (onboarding 2026-10-25): one mail to a trial a day old that has no mailbox, keyed
+ * (account, connect_reminder, the trial's start), claimed before the send and handed back if it fails.
+ * It ships log-only; `send` is the switch, and it reminds only trials begun at or after its cutoff
+ * (`TF_CONNECT_REMINDER_SINCE`), so the trials that began before the switch-on are never mailed.
+ */
+describe.skipIf(!PG_UP)("the connect reminder", () => {
+  const STARTED = new Date(NOW.getTime() - 2 * DAY);
+  /** Switched on before every trial these cases start, so the cutoff holds none of them back. */
+  const SEND = { connectReminder: "send", connectReminderSince: new Date(STARTED.getTime() - DAY).toISOString() } as const;
+  const OPEN = { mailboxes: null, storageBytes: null, canAddMailbox: true, aiEnabled: true };
+  const trialLc = (): AccessLifecycle => ({
+    state: "trialing", closedReason: null, trialEndsAt: new Date(NOW.getTime() + 10 * DAY).toISOString(),
+    graceUntil: null, closedAt: null, erasureAt: null, erasedAt: null, formerlyPaid: false,
+  });
+  /** The program's trialing answer for one account, with the trial object it states; every other account open. */
+  const trialPort = (
+    accountId: string, trial: AccessTrial | null = { startedAt: STARTED.toISOString(), cancelScheduled: false },
+  ): AccountLifecyclePassDeps["port"] => ({
+    accessOrFault: async (id) => (id === accountId
+      ? { ok: true, limits: OPEN, lifecycle: trialLc(), ...(trial ? { trial } : {}) }
+      : { ok: true, limits: OPEN }),
+    releaseAccount: async () => "none",
+  });
+  /** The program's trialing answer for each account by the start it states; every other account open. */
+  const trialsPort = (starts: Map<string, Date>): AccountLifecyclePassDeps["port"] => ({
+    accessOrFault: async (id) => {
+      const start = starts.get(id);
+      return start
+        ? { ok: true, limits: OPEN, lifecycle: trialLc(), trial: { startedAt: start.toISOString(), cancelScheduled: false } }
+        : { ok: true, limits: OPEN };
+    },
+    releaseAccount: async () => "none",
+  });
+  const remindersTo = (m: ReturnType<typeof fakeMail>, email: string) =>
+    m.sent.filter((s) => s.to === email && s.kind === "connect_reminder");
+  const reminderRows = async (accountId: string) => (await noticesOf(accountId))
+    .filter((n) => n.kind === "connect_reminder").map((n) => [n.anchor.toISOString(), n.deliveredAt]);
+
+  it("one mail per trial, anchored on its start and recorded delivered; a later pass sends nothing", async () => {
+    const { accountId, email } = await seedAccount();
+    const port = trialPort(accountId);
+    const m1 = fakeMail();
+    const r1 = await runAccountLifecyclePass(db, { ...SEND, port, mail: m1.mail, now: () => NOW });
+    expect(remindersTo(m1, email).map((s) => [s.anchor, s.locale])).toEqual([[STARTED.toISOString(), "en"]]);
+    expect([r1.sent.connect_reminder, r1.connectReminder])
+      .toEqual([1, { mode: "send", since: SEND.connectReminderSince, owed: 1, owedSince: null }]);
+    expect(await reminderRows(accountId)).toEqual([[STARTED.toISOString(), NOW]]);
+    const m2 = fakeMail();
+    await runAccountLifecyclePass(db, { ...SEND, port, mail: m2.mail, now: () => new Date(NOW.getTime() + DAY) });
+    expect(remindersTo(m2, email), "at most one per trial").toEqual([]);
+  });
+
+  it("send reminds only trials begun at its cutoff or after: one a millisecond earlier never, on any pass", async () => {
+    const since = new Date(NOW.getTime() - 2 * DAY);
+    const before = await seedAccount();
+    const at = await seedAccount();
+    const after = await seedAccount();
+    const port = trialsPort(new Map([
+      [before.accountId, new Date(since.getTime() - 1)], [at.accountId, since],
+      [after.accountId, new Date(since.getTime() + 60 * 60 * 1000)],
+    ]));
+    const passes: Array<ReturnType<typeof fakeMail>> = [];
+    // Every pass while the trial still owes the reminder by the rule: more than two days of it left.
+    for (const when of [NOW, new Date(NOW.getTime() + DAY), new Date(NOW.getTime() + 5 * DAY)]) {
+      const m = fakeMail();
+      const r = await runAccountLifecyclePass(db, {
+        port, mail: m.mail, now: () => when, connectReminder: "send", connectReminderSince: since.toISOString(),
+      });
+      if (when === NOW) expect(r.connectReminder).toEqual({ mode: "send", since: since.toISOString(), owed: 2, owedSince: null });
+      passes.push(m);
+    }
+    expect(passes.map((m) => remindersTo(m, before.email).length), "begun before the cutoff").toEqual([0, 0, 0]);
+    expect(passes.map((m) => remindersTo(m, at.email).length), "begun at the cutoff").toEqual([1, 0, 0]);
+    expect(passes.map((m) => remindersTo(m, after.email).length), "begun after the cutoff").toEqual([1, 0, 0]);
+    expect(await reminderRows(before.accountId), "nothing claimed for the held trial").toEqual([]);
+    expect(await reminderRows(at.accountId)).toEqual([[since.toISOString(), NOW]]);
+  });
+
+  it("send without a cutoff that is an instant mails nothing, claims nothing, and says why once per pass", async () => {
+    const { accountId, email } = await seedAccount();
+    for (const [since, why] of [
+      [null, "not_set"], ["", "not_set"], ["2026-09-18", "not_an_instant"], ["yesterday", "not_an_instant"],
+    ] as const) {
+      const { events, log } = fakeLog();
+      const m = fakeMail();
+      const r = await runAccountLifecyclePass(db, {
+        port: trialPort(accountId), mail: m.mail, log, now: () => NOW, connectReminder: "send", connectReminderSince: since,
+      });
+      expect(remindersTo(m, email), String(since)).toEqual([]);
+      expect(r.connectReminder, String(since)).toEqual({ mode: "refused", since: null, owed: 0, owedSince: null });
+      expect(events.filter((e) => e.event.startsWith("account_connect_reminder")).map((e) => [e.level, e.event, e.since]), String(since))
+        .toEqual([["error", "account_connect_reminder_refused", why]]);
+    }
+    expect(await reminderRows(accountId)).toEqual([]);
+  });
+
+  it("any mailbox row counts as connected, a removed and erased one too", async () => {
+    const { accountId, email } = await seedAccount();
+    await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `gone-${randomUUID().slice(0, 8)}@wall.test`, status: "disabled", erasedAt: NOW,
+    });
+    const m = fakeMail();
+    await runAccountLifecyclePass(db, { ...SEND, port: trialPort(accountId), mail: m.mail, now: () => NOW });
+    expect(remindersTo(m, email)).toEqual([]);
+    expect(await reminderRows(accountId)).toEqual([]);
+  });
+
+  it("a fact the program did not state sends nothing: no trial object, no start, no cancellation word", async () => {
+    for (const trial of [null, { cancelScheduled: false }, { startedAt: STARTED.toISOString() }]) {
+      const { accountId, email } = await seedAccount();
+      const m = fakeMail();
+      await runAccountLifecyclePass(db, { ...SEND, port: trialPort(accountId, trial), mail: m.mail, now: () => NOW });
+      expect(remindersTo(m, email), JSON.stringify(trial)).toEqual([]);
+      expect(await reminderRows(accountId), JSON.stringify(trial)).toEqual([]);
+    }
+  });
+
+  it("a failed send hands the claim back, and the next pass sends it once", async () => {
+    const { accountId, email } = await seedAccount();
+    const port = trialPort(accountId);
+    const r1 = await runAccountLifecyclePass(db, { ...SEND, port, mail: fakeMail("failed").mail, now: () => NOW });
+    expect(r1.faults).toBeGreaterThan(0);
+    expect(await reminderRows(accountId), "the claim was handed back").toEqual([]);
+    const m2 = fakeMail();
+    await runAccountLifecyclePass(db, { ...SEND, port, mail: m2.mail, now: () => NOW });
+    expect(remindersTo(m2, email)).toHaveLength(1);
+    expect(await reminderRows(accountId)).toEqual([[STARTED.toISOString(), NOW]]);
+  });
+
+  it("log-only unless switched to send: nothing claimed or sent, one line naming the account and the trial's start", async () => {
+    const { accountId, email } = await seedAccount();
+    const { events, log } = fakeLog();
+    const m = fakeMail();
+    const r = await runAccountLifecyclePass(db, { port: trialPort(accountId), mail: m.mail, log, now: () => NOW });
+    expect(remindersTo(m, email)).toEqual([]);
+    expect(await reminderRows(accountId)).toEqual([]);
+    expect(events.filter((e) => e.accountId === accountId).map((e) => [e.event, e.startedAt]))
+      .toEqual([["account_connect_reminder_would_send", STARTED.toISOString()]]);
+    expect([r.sent.connect_reminder, r.connectReminder]).toEqual([0, { mode: "log", since: null, owed: 1, owedSince: null }]);
+  });
+
+  it("log-only beside a cutoff counts the trials owed with it and without it, and still names each and sends nothing", async () => {
+    const since = new Date(NOW.getTime() - 2 * DAY);
+    const before = await seedAccount();
+    const from = await seedAccount();
+    const port = trialsPort(new Map([[before.accountId, new Date(since.getTime() - 1)], [from.accountId, since]]));
+    const { events, log } = fakeLog();
+    const m = fakeMail();
+    const r = await runAccountLifecyclePass(db, { port, mail: m.mail, log, now: () => NOW, connectReminderSince: since.toISOString() });
+    expect(m.sent).toEqual([]);
+    expect(r.connectReminder).toEqual({ mode: "log", since: since.toISOString(), owed: 2, owedSince: 1 });
+    expect(events.filter((e) => e.event === "account_connect_reminder_would_send").map((e) => e.accountId).sort())
+      .toEqual([before.accountId, from.accountId].sort());
+    expect([...await reminderRows(before.accountId), ...await reminderRows(from.accountId)]).toEqual([]);
   });
 });

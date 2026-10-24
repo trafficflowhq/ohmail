@@ -165,6 +165,40 @@ describe.skipIf(!PG_UP)("the Screener list consults the cutline", () => {
     expect(counts.activeUndecidedSenders).toBe(2);
   });
 
+  it("a held letter is dated by its ARRIVAL: an old Date received yesterday waits, one received in May does not", async () => {
+    const accountId = randomUUID();
+    const MAY = new Date("2026-05-02T09:00:00.000Z");
+    await db.insert(accounts).values({ id: accountId, name: `arr-${accountId.slice(0, 8)}` });
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `arr-${accountId.slice(0, 8)}@example.test`,
+      initialImportCompletedAt: MAY,
+    }).returning();
+    // 60 days from the baseline: the cutline sits at 2026-06-13.
+    await db.insert(accountSettings).values({
+      accountId, screeningBaselineAt: BASELINE, dormancyDays: 60, screeningScope: "window", updatedAt: NOW,
+    });
+    const YESTERDAY = new Date("2026-09-10T00:00:00.000Z");
+    for (const [i, [from, unread, received]] of ([
+      ["arrivednow@ex.test", false, YESTERDAY], ["receivedmay@ex.test", true, MAY],
+    ] as const).entries()) {
+      const [m] = await db.insert(messages).values({
+        accountId, mailboxId: mb!.id, bodyHash: `a${i}`, dedupKey: `arr:${randomUUID()}`, subject: `A${i}`,
+        snippet: "", fromAddress: from, date: MAY, unread, createdAt: YESTERDAY, arrivedAt: received,
+        nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
+      }).returning();
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+    }
+    const page = await new ScreenerService({}).list(ctx(accountId), { limit: 100 });
+    expect(page.items.map((i) => i.sender.address)).toEqual(["arrivednow@ex.test"]);
+    expect(page.total).toBe(1);
+    expect(await new ScreenerService({}).waitingCount(ctx(accountId), mb!.id)).toEqual({ senders: 1 });
+    const counts = await cutlineCounts(ctx(accountId), { baselineAt: BASELINE, dormancyDays: 60, scope: "window" });
+    expect(counts.activeUndecidedSenders).toBe(1);
+  });
+
   it("`all_time` brings every retired sender back into the list", async () => {
     const { accountId } = await seed("all_time");
     expect(await listed(accountId)).toEqual(

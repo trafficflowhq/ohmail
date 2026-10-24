@@ -31,13 +31,14 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, Icon, ListGroupLabel, SettingsNote, SettingsSection, Switch, TextField, useToast, type ToastOptions } from "@ohmail/ui";
-import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, pressVerdict, tallyVerdicts } from "@ohmail/client-engine";
+import { FOLDER_OF_VIEW, PROFILE_RULES_SENT_MAX, REFILE_UNDO_WINDOW_MS, pressVerdict, tallyVerdicts, walkOwed } from "@ohmail/client-engine";
 import type { Folder, PressAnswer, QueuedRuleWrite, RuleDTO, WaitingOnOrganizerView } from "@ohmail/client-engine";
 import { browserOffline, queuedSentence } from "../shell/queued-sentence";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { usePileNames } from "../shell/decision-copy";
 import { placeLabel } from "../shell/format";
 import { RETRO_DEFAULT_ON, SCREENING_DESTS } from "../shell/sender-screening";
+import { pileOf } from "../shell/rule-past-mail";
 import { displayRuleMatch } from "../shell/idn";
 import { useListWindow } from "../shell/list-window";
 import { organizerRefusalOf, organizerRefusalSentence } from "../shell/organizer-refusal";
@@ -230,8 +231,8 @@ export interface RulesViewProps {
   rules: RuleDTO[];
   /** `engine.mutate({ kind: "rule_delete", ruleId })`. */
   onRevoke: (ruleId: string) => Promise<RuleOutcome>;
-  /** `engine.mutate({ kind: "rule_update", ruleId, destination, applyRetro })` — the answer always sent. */
-  onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
+  /** `engine.mutate(ruleRetarget(ruleId, destination, refile))`: the rule's pile re-filed, the rule alone, or its walk asked again. */
+  onRetarget: (ruleId: string, destination: Folder, refile: boolean | "walk") => Promise<RuleOutcome>;
   /** `rule-past-mail.ts#rulePastMail` over the mirror: null where this device cannot count. */
   pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
   /** What a press can do here, from the roster (`rulesPostureOf`); absent reads as organizer. */
@@ -396,32 +397,43 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
   const retargetSaid = { queued: t("toastRetargetQueued"), failing: t("toastRetargetFailing"), unsent: t("toastRetargetUnsent") };
 
   /**
-   * A CHANGE SAYS WHAT IT DOES TO THE MAIL ALREADY FILED. The answer is always sent:
-   * absent, the server re-arms the past mail on a retarget, which moved a screened-out sender's
-   * mail into the Ohbox under "Mail already filed stays where it is". The count is read before the
-   * press; Undo puts the rule back with the same answer, so the pass moves that mail back too.
+   * A CHANGE DOES WHAT ITS SENTENCE SAYS. With the switch on it re-files the mail the rule filed in
+   * its place (`pileOf`) and nothing else; off, it moves the rule alone. A walk the sender sheet
+   * asked for and still owed (`walkOwed`) goes to the new place whole, and Undo asks for it again
+   * where it was. The count is read before the press. A re-filing waits out the Undo window, so an
+   * Undo ends it before anything moved, and puts back a re-filing that was still waiting.
    */
-  const retarget = (rule: RuleDTO, folder: Folder, applyRetro: boolean): void => {
+  const retarget = (rule: RuleDTO, folder: Folder, refile: boolean): void => {
     setOpen(null);
     setRefusal(null);
-    const from = canonicalDestination(rule.destination) as Folder;
+    const back = canonicalDestination(rule.destination) as Folder;
+    const pile = pileOf(rule);
+    const from = placeName(pile);
     const place = placeName(folder);
-    const moved = applyRetro ? pastMail(rule, folder) : null;
-    const said = !applyRetro ? t("toastRetargeted", { place })
-      : moved === null ? t("toastRetargetedRetroUncounted", { place })
-        : moved === 0 ? t("toastRetargetedRetroNone", { place })
-          : t("toastRetargetedRetro", { place, count: moved });
-    const back = placeName(from);
+    const walk = walkOwed(rule);
+    const moved = refile ? pastMail(rule, folder) : null;
+    const said = !refile ? t("toastRetargeted", { place })
+      : walk ? (moved === null ? t("toastRetargetedWalkUncounted", { place, from })
+        : moved === 0 ? t("toastRetargetedWalkNone", { place, from })
+          : t("toastRetargetedWalk", { place, count: moved, from }))
+        : moved === null ? t("toastRetargetedRetroUncounted", { place, from })
+          : moved === 0 ? t(canonicalDestination(folder) === pile ? "toastRetargetedRetroThere" : "toastRetargetedRetroNone", { place, from })
+            : t("toastRetargetedRetro", { place, count: moved, from });
+    // Undo restores a re-filing only where one was waiting before this press, from another place;
+    // one under way names the rule's own place, and nothing waits there.
+    const restore = refile && rule.retro?.from != null && pile !== back;
     const undo: ToastOptions = {
       action: t("undo"),
-      duration: 8000,
+      duration: REFILE_UNDO_WINDOW_MS,
       onAction: () => {
-        void onRetarget(rule.id, from, applyRetro).then((r) =>
-          report(r, t(applyRetro ? "toastRetargetUndoneRetro" : "toastRetargetUndone", { place: back }),
-            retargetSaid, t("toastRetargetFailed")));
+        void onRetarget(rule.id, back, walk ? "walk" : restore).then((r) =>
+          report(r, walk ? t("toastRetargetUndoneWalk", { place: placeName(back) })
+            : restore ? t("toastRetargetUndoneRefile", { place: placeName(back), from })
+              : t(refile ? "toastRetargetUndoneRetro" : "toastRetargetUndone", { place: placeName(back) }),
+          retargetSaid, t("toastRetargetFailed")));
       },
     };
-    void onRetarget(rule.id, folder, applyRetro).then((r) =>
+    void onRetarget(rule.id, folder, refile).then((r) =>
       report(r, said, retargetSaid, t("toastRetargetFailed"), undo));
   };
 
@@ -658,18 +670,23 @@ export function RulesView({ rules: allRules, onRevoke, onRetarget, pastMail, pos
 
         {openHere && open.mode === "retarget" ? (() => {
           const matched = pastMail(rule, null);
+          const from = placeName(pileOf(rule));
+          // A walk still owed is named as the walk: it goes to the new place whole.
+          const walk = walkOwed(rule);
+          const toggle = t(walk ? "retroToggleWalk" : "retroToggle", { from });
           return (
             <div className="rules-confirm" ref={confirmRef}>
               <b className="what">{what}</b>
-              <span>{t(retro ? "retargetExplainRetro" : "retargetExplain")}</span>
+              <span>{retro ? t(walk ? "retargetExplainWalk" : "retargetExplainRetro", { from }) : t("retargetExplain")}</span>
               <span className="rules-retro">
                 <span className="lab">
-                  <b>{t("retroToggle")}</b>
+                  <b>{toggle}</b>
                   <small>
-                    {matched === null ? t("retroToggleUncounted") : t("retroToggleNote", { count: matched })}
+                    {matched === null ? t("retroToggleUncounted")
+                      : t(walk ? "retroToggleNoteWalk" : "retroToggleNote", { count: matched, from })}
                   </small>
                 </span>
-                <Switch checked={retro} onChange={setRetro} ariaLabel={t("retroToggle")} />
+                <Switch checked={retro} onChange={setRetro} ariaLabel={toggle} />
               </span>
               <span className="acts">
                 {/* The sender sheet's places, the current one marked and not pressable:

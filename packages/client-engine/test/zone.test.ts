@@ -14,7 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  composeZonedWallClock, zonedDayNumber, zonedFields, zonedInstant, zonedWeekday,
+  composeZonedWallClock, firstDayOffset, morningDayOffset, zonedDayNumber, zonedFields, zonedInstant, zonedWeekday,
 } from "../src/zone.js";
 
 const Z = "Europe/Zurich";
@@ -200,5 +200,30 @@ describe("composeZonedWallClock", () => {
     const composed = composeZonedWallClock({ year: 2026, month: 8, day: 32, hour: 9 }, Z);
     expect(composed.instant.toISOString()).toBe("2026-09-01T07:00:00.000Z");
     expect([composed.verdict, composed.hour]).toEqual(["exact", 9]);
+  });
+});
+
+describe("morningDayOffset and firstDayOffset", () => {
+  const nine = { hour: 9, minute: 0 };
+  it("after midnight on the autumn night, 'tomorrow morning' is the coming one, across the change", () => {
+    // 00:28 CEST on Sunday 25 October 2026; the clocks go back at 03:00, 09:00 is CET.
+    const from = at("2026-10-24T22:28:00Z");
+    expect(morningDayOffset(from, Z, nine)).toBe(0);
+    expect(firstDayOffset(from, Z, nine)).toBe(0);
+  });
+
+  it("…and on the spring night", () => {
+    expect(morningDayOffset(at("2027-03-27T23:28:00Z"), Z, nine)).toBe(0);
+  });
+
+  it("is tomorrow once the night is over, or once the hour has gone", () => {
+    expect(morningDayOffset(at("2026-10-25T05:00:00Z"), Z, nine)).toBe(1); // 06:00 CET
+    expect(morningDayOffset(at("2026-10-24T22:28:00Z"), Z, { hour: 0, minute: 15 })).toBe(1);
+    expect(morningDayOffset(at("2026-08-11T12:00:00Z"), Z, { hour: 18, minute: 0 })).toBe(1);
+  });
+
+  it("firstDayOffset lets a later hour today be booked at any time of day", () => {
+    expect(firstDayOffset(at("2026-08-11T12:00:00Z"), Z, { hour: 18, minute: 0 })).toBe(0);
+    expect(firstDayOffset(at("2026-08-11T12:00:00Z"), Z, nine)).toBe(1);
   });
 });

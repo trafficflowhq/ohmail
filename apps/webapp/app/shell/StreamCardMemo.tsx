@@ -159,6 +159,7 @@ function StreamCardMemoInner({
     viewer && bodyState === "full" && bodyHtml ? (
       <MessageBodyView
         messageId={m.id}
+        subject={m.subject}
         text={bodyText}
         html={bodyHtml}
         remoteLoaded={

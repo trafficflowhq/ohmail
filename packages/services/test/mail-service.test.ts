@@ -205,6 +205,28 @@ describe("MailService — the lifecycle notices' links", () => {
   });
 });
 
+describe("MailService — the connect reminder", () => {
+  it("advises by the recipient's own login domain, links to the mailbox step through sign-in, and carries no address", async () => {
+    const h = await harness();
+    // Joined at run time: the domain is what the advice reads.
+    const [gmail, hotmail, other] = [["ann", "gmail.com"], ["Bob", "Hotmail.de"], ["cy", "example.com"]].map((p) => p.join("@"));
+    for (const to of [gmail!, hotmail!, other!]) {
+      expect((await h.svc.sendConnectReminder(h.ctx, { to, locale: "de", anchor: START })).status).toBe("sent");
+    }
+    const sends = h.spy.ofTemplate("connect_reminder");
+    const common = { locale: "de", setupUrl: "https://app.ohmail.app/login?next=join", supportEmail: "support@ohmail.app" };
+    expect(sends.map((s) => s.data)).toEqual([
+      { ...common, provider: "gmail" }, { ...common, provider: "microsoft" }, { ...common, provider: "other" },
+    ]);
+    expect(sends[0]!.rendered.replyTo).toBe("support@ohmail.app");
+    // Keyed on the recipient and the trial's start: a re-driven send is one mail.
+    expect(sends[1]!.idempotencyKey).toBe(`connect:${hashToken(`${hotmail!.toLowerCase()}|${START.toISOString()}`)}`);
+    const [slot] = await h.db.select().from(authThrottle)
+      .where(eq(authThrottle.key, `mail:transactional:${hashToken(gmail!)}`));
+    expect(slot?.failures).toBe(1);
+  });
+});
+
 describe("MailService — recipient hygiene", () => {
   it("refuses an address that cannot be a recipient, without touching the mailer", async () => {
     const h = await harness();

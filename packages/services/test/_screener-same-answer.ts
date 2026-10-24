@@ -4,7 +4,7 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import {
   accounts, contacts, folderState, mailboxes, messages, organizerRequests, rules,
   activeSenderExpr, anyOf, cutlineArms, cutlineInstant, perMailboxSql, resolveCutline, ruleNamesSenderSql,
-  senderHasHeldClaimSql, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql,
+  senderHasHeldArrivalSql, senderHasHeldClaimSql, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql,
   CUTLINE_PRESENTED_FOLDERS, type CutlineSet, type ResolvedCutline,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -96,6 +96,8 @@ export async function seed(given?: Db): Promise<World> {
     date: daysAgo(480), createdAt: daysAgo(1), arrivedAt: daysAgo(480), unread: false,
     marked: true, by: "ingest", brand: "Acme",
   });
+  // An old Date the server received yesterday, read: waiting by its arrival alone, as the gate dated it.
+  await message("arrival@d9.test", GATE, { date: daysAgo(480), createdAt: daysAgo(1), arrivedAt: daysAgo(1), unread: false, marked: false });
   // Decided AND claimed: the claim keeps them waiting.
   await message("p3@d3.test", GATE, { date: daysAgo(480), createdAt: daysAgo(1), marked: true, by: "ingest" });
   // The account's own address, held: never a decision.
@@ -186,9 +188,11 @@ export class Probe extends ScreenerService {
     const { reps, d } = this.heldSenderReps(ctx);
     const sender = sql`lower(${reps.fromAddress})`;
     const claim = cutline ? senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS) : undefined;
+    // The held arrival asked of every sender, with no window mark in front of it.
+    const arrival = cutline ? senderHasHeldArrivalSql(d, ctx.accountId, sender, cutline) : undefined;
     const filters = [
       eq(reps.rank, 1),
-      cutline ? sql`(${groupedActiveSql(d, ctx.accountId, sender, cutline)} or ${claim})` : undefined,
+      cutline ? sql`(${groupedActiveSql(d, ctx.accountId, sender, cutline)} or ${claim} or ${arrival})` : undefined,
       claim
         ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`
         : sql`not ${senderIsDecidedSql(d, ctx.accountId, sender)}`,
@@ -265,6 +269,7 @@ export async function walksMatch(w: World): Promise<void> {
   const ctx = ctxOf(w);
   let marked = 0;
   let rows = 0;
+  let arrived = 0;
   for (const [name, set] of cutlines(w)) {
     for (const limit of [3, 50]) {
       const before = await walk((after) => probe.oldPage(ctx, after, limit, set), limit);
@@ -274,10 +279,12 @@ export async function walksMatch(w: World): Promise<void> {
       const all = after.pages.flat();
       rows += all.length;
       marked += all.filter((r) => r.markedBrand !== null).length;
+      if (set !== undefined && name !== "all time") arrived += all.filter((r) => r.fromAddress === "arrival@d9.test").length;
       // The in-flight senders are on the pages and out of the total, as before.
       expect(after.total!, name).toBeLessThan(all.length);
     }
   }
   expect(rows, "the walks list somebody").toBeGreaterThan(0);
   expect(marked, "a marked sender reaches a page: the claim gate is exercised").toBeGreaterThan(0);
+  expect(arrived, "a sender kept by a held arrival reaches a page under a window").toBeGreaterThan(0);
 }

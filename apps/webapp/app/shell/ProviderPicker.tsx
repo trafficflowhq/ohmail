@@ -23,10 +23,12 @@ const MANUAL: ProviderPreset = PROVIDERS.find((p) => p.manual)!;
 /** Focus/arrow order: the grid left-to-right, then the manual row. */
 const ORDER: ProviderPreset[] = [...NAMED, MANUAL];
 
-export function ProviderPicker({ value, onChange, note, showHelp = true }: {
+export function ProviderPicker({ value, onChange, note, showHelp = true, proton: protonAddress = false }: {
   /** The selected provider id, or `null` while nothing is chosen yet. */
   value: string | null;
   onChange: (id: string) => void;
+  /** The typed address is on Proton (`useAddressFirst`): its note opens until a provider is chosen. */
+  proton?: boolean;
   /**
    * Override the selected provider's own `note`. The preset note is written for the app-password
    * path; a caller that connects the SAME provider a different way (Microsoft by sign-in, when the
@@ -47,8 +49,9 @@ export function ProviderPicker({ value, onChange, note, showHelp = true }: {
   const protonId = useId();
   const tiles = useRef<Array<HTMLButtonElement | null>>([]);
   // Proton's note is open: it stands in for the chosen provider's until a provider is chosen.
-  const [proton, setProton] = useState(false);
-  useEffect(() => { setProton(false); }, [value]);
+  const [proton, setProton] = useState(protonAddress);
+  useEffect(() => { if (value !== null) setProton(false); }, [value]);
+  useEffect(() => { setProton(protonAddress); }, [protonAddress]);
 
   // `providerById` answers the manual entry for an unknown id — the same fallback the
   // callers rely on, so a stale or bogus id can never highlight a wrong named preset.
@@ -190,6 +193,10 @@ export function ProviderNote({ preset, id, note, showHelp = true }: {
   const t = useTranslations("providerPicker");
   return (
     <div className="pvp-note" id={id}>
+      {/* What to have at hand, for the preset's own path; a caller's own note is another path. */}
+      {note === undefined ? (
+        <p className="pvp-need"><strong>{t("needLabel")}</strong> {t(`need_${preset.id}` as Parameters<typeof t>[0])}</p>
+      ) : null}
       <p>{note ?? t(`note_${preset.id}` as Parameters<typeof t>[0])}</p>
       {showHelp ? <ProviderHelpLinks preset={preset} /> : null}
     </div>

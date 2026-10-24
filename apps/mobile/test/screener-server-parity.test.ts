@@ -35,7 +35,7 @@ import {
 } from "../src/state/live";
 import { readFoldersEnabled } from "../src/net/consent";
 import type { ConnectedSession } from "../src/net/pairing";
-import { dto, listen, mailServer } from "./helpers/mail-server";
+import { dto, listen, mailServer, type Dto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
 const NOW = new Date("2026-09-11T12:00:00.000Z");
@@ -295,6 +295,40 @@ describe("six waiting senders on the server are six on the phone", () => {
       ).waiting;
       expect(narrow).toHaveLength(0);
       boot.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  it("a held letter is dated by its ARRIVAL: an old Date received now waits, read or unread, after a reload too", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      const JUNE = "2026-06-02T09:00:00.000Z";
+      const held = (id: string, who: string, unread: boolean, sortAt: string) => fake.addMessage({
+        ...dto(id, { folder: FOLDER_OF_VIEW.screener, from: { name: who, address: `${who}@fake.test` }, date: JUNE, unread }),
+        sortAt,
+      } as Dto);
+      held("u1", "udo", true, "2026-09-11T11:58:00.000Z");
+      held("o1", "olga", false, "2026-09-11T11:58:00.000Z");
+      // The same June letter, received in June: History, unread as it is.
+      held("j1", "june", true, JUNE);
+      const windowed = screeningAnswered({ dormancyDays: 60, baselineAt: "2026-09-01T00:00:00.000Z", scope: "window" });
+      const lists = (reader: ReturnType<Awaited<ReturnType<typeof bootOn>>["engine"]["read"]>) => {
+        const parted = presentedWorld(reader, NOW, false, windowed);
+        return {
+          waiting: liveScreener(parted.reader, view).waiting.map((r) => r.address).sort(),
+          history: liveHistory(reader, parted.history, view).items.map((m) => m.id),
+        };
+      };
+      const expected = { waiting: ["olga@fake.test", "udo@fake.test"], history: ["j1"] };
+      const boot = await bootOn(fake, origin);
+      expect(lists(boot.engine.read())).toEqual(expected);
+      boot.store.close();
+      // A second engine over the same store gives the same answer.
+      const again = await bootOn(fake, origin);
+      expect(lists(again.engine.read())).toEqual(expected);
+      again.store.close();
     } finally {
       fake.server.close();
     }

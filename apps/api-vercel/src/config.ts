@@ -242,6 +242,16 @@ export interface HostConfig {
    */
   cronSecret: string | null;
   /**
+   * `TF_CONNECT_REMINDER`: the lifecycle pass's connect reminder sends only when this reads `send`.
+   * Unset, and every other value, is `log`: the pass names what it would send and writes nothing.
+   */
+  connectReminder: "log" | "send";
+  /**
+   * `TF_CONNECT_REMINDER_SINCE`, trimmed, null unset or blank: the instant `send` counts from. The pass
+   * judges it, and reminds nobody under `send` without one that is an ISO instant with its zone.
+   */
+  connectReminderSince: string | null;
+  /**
    * The absolute origin the OAuth bounce redirects a browser to. `TF_APP_URL`
    * through {@link assertAppUrl}: it is a redirect target, so it is validated
    * like one — an arbitrary string here is an open redirect on a high-trust
@@ -934,6 +944,9 @@ export function loadHostConfig(env: NodeJS.ProcessEnv): HostConfig {
       const raw = env.CRON_SECRET?.trim();
       return raw && raw.length >= 24 ? raw : null;
     })(),
+    // Customer mail ships log-only: a mistyped value logs, it never sends.
+    connectReminder: env.TF_CONNECT_REMINDER?.trim() === "send" ? "send" : "log",
+    connectReminderSince: env.TF_CONNECT_REMINDER_SINCE?.trim() || null,
     // Validated by assertAppUrl (a redirect target). A value it REFUSES falls back to
     // `defaultOrigin(authConfig)` rather than failing boot: this is not a new reason for a host to
     // refuse to start, and the fallback is itself a boot-validated first-party origin.

@@ -1314,7 +1314,7 @@ export function DesktopGate() {
            `Notification.requestPermission()` resolves here without granting anything: the master
            switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
         notificationHost={desktopNotificationHost}
-        /* THE EMPTIED-TEXT NOTICE, on the Cloud door only: the same answer the Subscription offer
+        /* THE STORAGE NOTICE, on the Cloud door only: the same answer the Subscription offer
            reads carries the storage block. Standalone has none and draws nothing. */
         {...(accountDoor && storage !== null
           ? {

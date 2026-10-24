@@ -63,6 +63,7 @@ import {
 } from "../../shell/providers";
 import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
 import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
+import { DiscoveredHostsOffer, hostFieldOf, useAddressFirst } from "../../shell/address-first";
 import {
   noPortProbeSentence, plaintextOfferOf, probeReasonOf, probeTlsOf, type ProbeTlsInfo,
 } from "../../shell/probe-refusal";
@@ -1391,12 +1392,12 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
    * (No declaration-shaped literals in this comment either: the test finds its window with indexOf, and a comment
    * that quotes the anchor verbatim becomes the anchor.)
    */
-  const probeErrorCopy = (err: unknown, reason: string): string => {
+  const probeErrorCopy = (err: unknown, reason: string, presetId?: string): string => {
     const tls = probeTlsOf(err);
     const hint = reason === "auth" ? refusalAuthHint(err) : null;
     setAuthHelp(hint);
-    // Google's refused sign-in says why (`probe_auth_gmail_*`); every other reason, its own line.
-    if (!tls || reason !== "tls") return t(probeCopyKey(reason, false, refusalTransport(err), hint));
+    // Google's refused sign-in says why (`probe_auth_gmail_*`), a named preset its own line, the rest the pane's.
+    if (!tls || reason !== "tls") return t(probeCopyKey(reason, false, refusalTransport(err), hint, ownRefusalOf(presetId)));
     const protocol = tls.transport === "smtp" ? "SMTP" : "IMAP";
     if (tls.kind === "tls_unavailable") {
       // A line for THIS protocol, only where the server said the host is on a private network.
@@ -1542,7 +1543,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
         setStage("form");
         // The connect form has no port field, so its refusal names none (`noPortProbeSentence`).
         const said = noPortProbeSentence(err, manual);
-        setError(said ? t(said.key, { field: said.field }) : probeErrorCopy(err, reason));
+        setError(said ? t(said.key, { field: said.field }) : probeErrorCopy(err, reason, body.provider));
+        setHostRefused(manual && (reason === "connect" || reason === "timeout"));
         return;
       }
       if (gatedRefusal(err, afterFactor) === "factor") {
@@ -1792,6 +1794,24 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
    */
   const microsoftOauth = connectsBySignIn(typed.provider?.id, oauthAvailable || deviceAvailable, msAppPassword);
 
+  /** The preset whose own refused-password sentence applies; Microsoft's where this pane offers no sign-in. */
+  const ownRefusalOf = (presetId?: string): string | undefined =>
+    presetId === "microsoft" && (oauthAvailable || deviceAvailable) ? undefined : presetId;
+
+  /* THE ADDRESS FIRST: its domain preselects a tile the person can change (`address-first.tsx`). */
+  const addressFirst = useAddressFirst({
+    address: typed.address,
+    lookup: mailboxApi.discover,
+    chosen: typed.provider?.id ?? null,
+    choose: (id) => {
+      if (id !== null) { pickProvider(id); return; }
+      retireOauth();
+      setTyped((v) => ({ ...v, provider: null }));
+      setMsAppPassword(false);
+      retireHostEvidence();
+    },
+  });
+
   /**
    * TEST CONNECTION: This form had no way to check a mailbox's login before storing it, and `POST /mailboxes/probe`
    * shipped with no caller at all. This block is that caller, and it is worth more here than anywhere else in the
@@ -1847,6 +1867,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     setProbeBad(null);
     setProbing(false);
     setTestStepUp(false);
+    setHostRefused(false);
     /* THE FAILED WRITE'S SENTENCE BELONGS HERE, not only to a host change. It was retired when the
        HOST moved, which covers "the certificate is for another name" and misses the commoner one:
        an auth refusal, then the person corrects the PASSWORD, and "That mail server refused the
@@ -1887,6 +1908,8 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     // EVERY field edit, not only on a host change.
   }, [clearVerdict]);
   const [probeOk, setProbeOk] = useState<{ host: string; user: string; folders: number | null } | null>(null);
+  /** The last refusal was an unreachable host on the manual tile: the lookup's hosts may be offered. */
+  const [hostRefused, setHostRefused] = useState(false);
   const [probeBad, setProbeBad] = useState<{
     reason: string | null; message: string; noPort: ReturnType<typeof noPortProbeSentence>;
     /** Why Google refused the test's sign-in, or `null`. */
@@ -1953,6 +1976,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
         return;
       }
       const noTls = probeTlsOf(err)?.kind === "tls_unavailable";
+      setHostRefused(typed.provider?.manual === true && ["connect", "timeout"].includes(probeReasonOf(err) ?? ""));
       setProbeBad({
         reason: probeReasonOf(err), message: messageOf(err),
         authHint: refusalAuthHint(err), transport: refusalTransport(err),
@@ -2576,9 +2600,22 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
               password, which is the trip the five-minute window used to be spent on. On the
               Microsoft sign-in path that app-password note would be a false instruction, so it
               is overridden with the sign-in sentence and the app-password help link is dropped. */}
+          {/* THE ADDRESS FIRST: its domain preselects a tile; leaving it looks up one the table does not know. */}
+          <label className="join-label" htmlFor="mb-address">{t("addressLabel")}</label>
+          <input
+            id="mb-address" className="join-input" type="email" autoComplete="off"
+            value={typed.address} onChange={(e) => { setTyped((v) => ({ ...v, address: e.target.value })); clearVerdict(); }}
+            required={!microsoftOauth}
+            onBlur={addressFirst.lookUp}
+            onKeyDown={(e) => { if (e.key === "Enter") addressFirst.lookUp(); }}
+          />
+          {addressFirst.looking ? (
+            <p className="join-hint" role="status">{tp("lookingUp", { domain: typed.address.trim().split("@").pop() ?? "" })}</p>
+          ) : null}
           <ProviderPicker
             value={typed.provider?.id ?? null}
-            onChange={pickProvider}
+            onChange={(id) => { addressFirst.pick(id); pickProvider(id); }}
+            proton={addressFirst.guess?.proton === true}
             note={microsoftOauth ? t("microsoftOauthNote") : undefined}
             showHelp={!microsoftOauth}
           />
@@ -2598,13 +2635,6 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
 
           {typed.provider && !microsoftOauth ? (
             <>
-              <label className="join-label" htmlFor="mb-address">{t("addressLabel")}</label>
-              <input
-                id="mb-address" className="join-input" type="email" autoComplete="off"
-                value={typed.address} onChange={(e) => { setTyped((v) => ({ ...v, address: e.target.value })); clearVerdict(); }}
-                required
-              />
-
               {typed.provider.manual ? (
                 <>
                   <label className="join-label" htmlFor="mb-imap">{t("imapLabel")}</label>
@@ -2630,6 +2660,19 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                     }}
                     required
                   />
+                  {hostRefused ? (
+                    <DiscoveredHostsOffer
+                      guess={addressFirst.guess} imapHost={typed.imapHost} smtpHost={typed.smtpHost}
+                      onUse={({ imap, smtp }) => {
+                        setTyped((v) => ({
+                          ...v,
+                          imapHost: imap ? hostFieldOf(imap, "imap") : v.imapHost,
+                          smtpHost: smtp ? hostFieldOf(smtp, "smtp") : v.smtpHost,
+                        }));
+                        retireHostEvidence();
+                      }}
+                    />
+                  ) : null}
                   {suggestion ? (
                     // The vanity-CNAME correction: the refused certificate is valid and names
                     // the provider's real host, so one press moves the field(s) to a name the
@@ -2724,7 +2767,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
               headline={probeBad.said ?? (probeBad.noPort
                 ? t(probeBad.noPort.key, { field: probeBad.noPort.field })
                 : probeBad.reason
-                  ? t(probeCopyKey(probeBad.reason, false, probeBad.transport, probeBad.authHint) as "probe_auth")
+                  ? t(probeCopyKey(probeBad.reason, false, probeBad.transport, probeBad.authHint, ownRefusalOf(typed.provider?.id)) as "probe_auth")
                   : probeBad.message)}
               hint={probeBad.reason === "auth" && probeBad.transport !== "smtp" && probeBad.authHint
                 && authHintWantsLinks(probeBad.authHint) ? <ProviderHelpLinks preset={authHintPreset()} /> : undefined}

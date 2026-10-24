@@ -14,10 +14,12 @@ import {
   MutationRejectedError,
   OhmailEngine,
   decodeSeqCursor,
+  draftsList,
   encodeSeqCursor,
   ohboxView,
   pressVerdict,
   type EngineAdapter,
+  type EngineDraft,
   type EngineMessage,
   type EngineMutation,
   type MessageStateDTO,
@@ -248,5 +250,125 @@ describe("a confirmed verb's row is not shown in its old place by a copy that pr
     expect(inOhbox(engine)).toBe("resurfaced");
     await engine.syncOnce();
     expect(inOhbox(engine)).toBe("resurfaced");
+  });
+});
+
+/**
+ * ONE ACCOUNT'S DRAFTS FOR TWO DEVICES: the drafts and send routes' answers over one change log. A
+ * sent row answers a save that states no version with its own words 200 and no seq; any other save
+ * on it is refused 409 `draft_sent`; a send of a row that is not a draft is refused 409 `conflict`.
+ */
+class DraftsDoor {
+  log: SyncChange[] = [];
+  rows = new Map<string, EngineDraft>();
+  private n = 0;
+  constructor(seed: EngineDraft[]) { for (const d of seed) this.commit({ ...d, contentRevision: this.rev() }, "create"); }
+  private rev(): string { return `rev-${++this.n}`; }
+  private commit(d: EngineDraft, op: "create" | "update"): SyncChange {
+    this.rows.set(d.id, d);
+    const entity = d.status === "sent" ? { ...d, body: null, html: null, bodyOmitted: "sent" } : d;
+    const c = { type: "draft", op, id: d.id, seq: this.log.length + 1, updatedAt: NOW.toISOString(), entity } as unknown as SyncChange;
+    this.log.push(c);
+    return c;
+  }
+  private answer(m: EngineMutation): { changes: SyncChange[]; seq: number | null; entityId?: string; revision?: string } {
+    const refuse = (status: number, code: string): never => { throw new MutationRejectedError(code, { status, code, retryable: false }); };
+    if (m.kind === "draft_save" && m.draftId !== null) {
+      const row = this.rows.get(m.draftId) ?? refuse(404, "not_found");
+      const same = row.subject === m.subject && row.body === m.body;
+      if (row.status === "sent") {
+        if (m.ifContentRevision === undefined && same) return { changes: [], seq: null, entityId: row.id };
+        refuse(409, "draft_sent");
+      }
+      if (m.ifContentRevision !== undefined && m.ifContentRevision !== row.contentRevision) refuse(409, "draft_changed");
+      const c = this.commit({ ...row, subject: m.subject, body: m.body, contentRevision: this.rev() }, "update");
+      return { changes: [c], seq: c.seq, entityId: row.id, revision: this.rows.get(row.id)!.contentRevision ?? undefined };
+    }
+    if (m.kind === "mail_send" && m.draftId) {
+      const row = this.rows.get(m.draftId);
+      if (row?.status !== "draft") refuse(409, "conflict");
+      const c = this.commit({ ...row!, status: "sent" }, "update");
+      return { changes: [c], seq: c.seq };
+    }
+    return { changes: [], seq: null };
+  }
+  adapter(offline = { on: false }): EngineAdapter {
+    return {
+      sync: async (p: { since: string }): Promise<SyncResponse> => {
+        const rows = this.log.slice(decodeSeqCursor(p.since) ?? 0);
+        return {
+          changes: { creates: rows.filter((c) => c.op === "create"), updates: rows.filter((c) => c.op === "update"), moves: [], deletes: [] },
+          cursor: encodeSeqCursor(this.log.length), hasMore: false, serverTime: NOW.toISOString(),
+        };
+      },
+      mutate: async (m: EngineMutation) => {
+        if (offline.on) throw new MutationRejectedError("no signal", { code: "network", retryable: true });
+        return this.answer(m);
+      },
+      withdrawSend: async () => ({ outcome: "unsupported" as const }),
+      fetchBody: async () => null,
+    } as unknown as EngineAdapter;
+  }
+}
+
+const D = "d-letter";
+const LETTER = {
+  id: D, mailboxId: "mb", threadId: null, inReplyToMessageId: null, subject: "Plans for Friday", body: "Shall we meet?",
+  html: null, to: [{ name: null, address: "mila@example.test" }], cc: [], bcc: [], rationale: null, status: "draft",
+  createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+} as unknown as EngineDraft;
+const saveOf = (d: EngineDraft, over: Partial<Extract<EngineMutation, { kind: "draft_save" }>> = {}): EngineMutation => ({
+  kind: "draft_save", draftId: d.id, mailboxId: d.mailboxId, subject: d.subject, body: d.body ?? "", html: null,
+  to: d.to, cc: d.cc, bcc: d.bcc, ...over,
+} as EngineMutation);
+const sendOf = (d: EngineDraft): EngineMutation => ({
+  kind: "mail_send", inReplyTo: null, draftId: d.id, mailboxId: d.mailboxId, subject: d.subject, body: d.body ?? "",
+  to: d.to, cc: d.cc, bcc: d.bcc,
+} as EngineMutation);
+const listed = (engine: OhmailEngine): boolean => draftsList(engine.read(), NOW).some((d) => d.id === D);
+
+describe("a save of a draft another device already sent", () => {
+  it("answered 200 with no seq, it leaves nothing listed once the send's drain lands", async () => {
+    const door = new DraftsDoor([LETTER]);
+    const a = engineOver(door.adapter());
+    const b = engineOver(door.adapter());
+    await a.start();
+    await b.start();
+    expect((await b.mutate(sendOf(LETTER))).status).toBe("confirmed");
+    expect((await a.mutate(saveOf(LETTER))).status, "the late save of the same words").toBe("confirmed");
+    const shown: boolean[] = [];
+    for (let i = 0; i < SHADOW_DRAIN_BOUND; i++) {
+      await a.syncOnce();
+      shown.push(listed(a));
+    }
+    expect(shown, "the sent row stayed in Drafts behind the save's shadow").toEqual(shown.map(() => false));
+  });
+
+  it("stating its version, replayed after a restart, it is refused: no record, no new row, nothing listed", async () => {
+    const factory = new IDBFactory();
+    const door = new DraftsDoor([LETTER]);
+    const offline = { on: false };
+    const store1 = new IndexedDbMirrorStore({ owner: "acct-sent-save", factory });
+    const a1 = engineOver(door.adapter(offline), store1);
+    await a1.start();
+    const revision = a1.read().get<EngineDraft>("draft", D)?.contentRevision ?? undefined;
+    expect(revision, "premise: the row carries its version").toBeTruthy();
+    offline.on = true;
+    expect((await a1.mutate(saveOf(LETTER, { body: "Shall we meet at noon?", ifContentRevision: revision }))).status).toBe("queued");
+    store1.close();
+
+    const b = engineOver(door.adapter());
+    await b.start();
+    expect((await b.mutate(sendOf(LETTER))).status).toBe("confirmed");
+    offline.on = false;
+    const store2 = new IndexedDbMirrorStore({ owner: "acct-sent-save", factory });
+    const a2 = engineOver(door.adapter(offline), store2);
+    await a2.start();
+    await a2.syncOnce();
+    expect({
+      records: a2.abandoned().length, kept: a2.keptAsNewDrafts().length, rows: [...door.rows.keys()],
+      waiting: a2.pendingMutations().length, listed: listed(a2),
+    }).toEqual({ records: 0, kept: 0, rows: [D], waiting: 0, listed: false });
+    store2.close();
   });
 });

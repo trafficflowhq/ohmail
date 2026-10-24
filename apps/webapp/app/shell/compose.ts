@@ -405,6 +405,7 @@ export function resetComposerForTest(): void {
   recoveries.clear();
   unannounced.clear();
   rowHolds.clear();
+  createsMem.clear();
 }
 
 /** The un-owned key this browser may still hold. Removed on clear, never read. */
@@ -496,8 +497,42 @@ export function writeComposeDraft(f: ComposeFields): void {
   // `locked`: written while this page holds its composer, so a crash leaves a unit it may adopt.
   const locked = composerLocked ? { ...persisted, locked: true } : persisted;
   const holds = rowHoldsOf(composeDraftKey());
-  const stored = holds === null ? locked : { ...locked, holds };
+  const creates = createsOf(composeDraftKey());
+  const stored = { ...locked, ...(holds !== null ? { holds } : {}), ...(creates.length > 0 ? { creates } : {}) };
   durableSet(composeDraftKey(), JSON.stringify(stored), "compose.draft");
+}
+
+/* THE KEYS OF THE CREATES THE COMPOSER CLAIMS for the message in the buffer, kept inside it like the
+   marker below: keys only, never words, moved with the unit and gone with it. */
+const createsMem = new Map<string, string[]>();
+
+function createsOf(key: string): string[] {
+  const known = createsMem.get(key);
+  if (known !== undefined) return known;
+  let found: string[] = [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    const c = raw ? (JSON.parse(raw) as { creates?: unknown }).creates : undefined;
+    if (Array.isArray(c)) found = c.filter((k): k is string => typeof k === "string" && k !== "");
+  } catch { /* a refused jar or a foreign shape knows nothing */ }
+  createsMem.set(key, found);
+  return found;
+}
+
+export function readComposeCreates(owner: string | null = storageOwner()): string[] {
+  adoptHandoff(owner);
+  return createsOf(composeDraftKey(owner));
+}
+
+export function writeComposeCreates(keys: readonly string[], owner: string | null = storageOwner()): void {
+  const key = composeDraftKey(owner);
+  createsMem.set(key, [...keys]);
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return;
+    const { creates: _was, ...rest } = JSON.parse(raw) as Record<string, unknown>;
+    durableSet(key, JSON.stringify(keys.length > 0 ? { ...rest, creates: keys } : rest), "compose.draft");
+  } catch { /* the keys stay in this page's memory */ }
 }
 
 /**
@@ -678,6 +713,7 @@ export function writeComposeRow(id: string | null, owner: string | null = storag
 export function clearComposeDraft(owner: string | null = storageOwner()): void {
   // FIRST, because the remembered row must not survive a clear of the message it names.
   composeRowInMemory.delete(composeRowKey(owner));
+  createsMem.delete(composeDraftKey(owner));
   /*
    * FOUR INDEPENDENT REMOVALS, not one try block. Under a shared `try` the first refusal skipped
    * every line below it, so a quota that rejected the buffer's removal left the session id and

@@ -660,15 +660,17 @@ function plainPart(text: string, key: string, links: string[], ownEnd: boolean):
  * {@link quotedHistoryOfText}. `ownImages`: the message's own embedded-picture URLs, the only
  * `blob:` srcs {@link inlineImageAdmitted} draws. `foldKey` names the message for the open state
  * (the text otherwise). `htmlFold`: the message's html part's own reading of its history — the
- * text part folds only where it folds; absent when there is no html part.
+ * text part folds only where it folds; absent when there is no html part. `subject`: the message's,
+ * whose forward prefix keeps the forwarded message open.
  */
-export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, foldKey, htmlFold }: {
+export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, foldKey, htmlFold, subject }: {
   text: string;
   rich?: BodyNode[] | null;
   richHistory?: RichFold | null;
   ownImages?: ReadonlySet<string>;
   foldKey?: string;
   htmlFold?: QuotedVerdict;
+  subject?: string | null;
 }) {
   /**
    * The fold's state keys on the MESSAGE, not on the component instance: `open` is only true while
@@ -684,8 +686,8 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
   // CRLF is what an IMAP body actually carries; the detector and the parts read the same lines.
   const lines = useMemo(() => body.replace(/\r\n?/g, "\n").split("\n"), [body]);
   const range = useMemo(
-    () => (useRich || body.length > QUOTED_HISTORY_LIMITS.chars ? null : quotedHistoryOfText(lines, { html: htmlFold })),
-    [useRich, body, lines, htmlFold],
+    () => (useRich || body.length > QUOTED_HISTORY_LIMITS.chars ? null : quotedHistoryOfText(lines, { html: htmlFold, subject })),
+    [useRich, body, lines, htmlFold, subject],
   );
   const open = openedFor === key;
   // Every href drawn below, reported as on screen (`rendered-links.ts`): a folded history draws

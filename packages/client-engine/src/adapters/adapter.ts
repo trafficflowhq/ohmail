@@ -87,6 +87,11 @@ export interface MutationOutcome {
    */
   earlierWordsKept?: boolean;
   /**
+   * Where a delivered send's Sent copy stands, as the server said it: `filed`, `pending` (still being
+   * retried) or `missing` (delivered, and no copy could be written). Only on a `mail_send` it delivered.
+   */
+  sentCopy?: "filed" | "pending" | "missing";
+  /**
    * The decision was accepted for somebody else to carry out — who, by
    * name. Only `screener_decide` carries it, and only where the mailbox is
    * organized by another install: the server records the decision, answers

@@ -381,9 +381,13 @@ export function useShellDispatch({
    * same offer through the one door (`undo-door.ts`), which every held window's Undo is raised
    * through as well. Undo dispatches the inverses through the ordinary seam, so the overlay, the
    * outbox and the refusal vocabulary all apply — never a local state hack. Bounded by `UNDO_MS`,
-   * the Screener's own window; a late press takes nothing back and claims nothing.
+   * the Screener's own window; a late press takes nothing back and says there is nothing to undo.
    */
-  const runArmedUndo = door.press;
+  const runArmedUndo = useStableCallback((): boolean => {
+    const took = door.press();
+    if (!took) toast(t("shortcuts.nothingToUndo"));
+    return took;
+  });
   /**
    * AND A ROUTING PRESS TAKES BACK A SECOND THING, which is the one shape an inverse cannot
    * carry: the rule it was about has not been sent yet, so Undo CANCELS it rather than reversing

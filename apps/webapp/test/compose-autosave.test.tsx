@@ -1370,6 +1370,7 @@ describe("the shell is the consumer, not just the harness", () => {
     const autosave = read("compose-autosave.ts");
     const send = read("mail-send.ts");
     const lock = read("send-lock.ts");
+    const creates = read("draft-creates.ts");
 
     /* ── THE PREDICATE ITSELF, IN ONE PLACE, WITH BOTH WITNESSES ─────────────────────────────
        The record speaks for a row the server still calls `draft`; the server's mark speaks for the
@@ -1393,6 +1394,9 @@ describe("the shell is the consumer, not just the harness", () => {
     const sites: Array<[string, string]> = [];
     for (const [name, src] of [
       ["shell-compose.ts", shell], ["compose-autosave.ts", autosave], ["mail-send.ts", send],
+      // The copy a landed create left (`dropCopy`): a delete that never takes a row a send
+      // record names nor the row the send went from (S(2)); held in `sent-offline-leaves-drafts`.
+      ["draft-creates.ts", creates],
     ] as Array<[string, string]>) {
       for (const m of src.matchAll(/kind: "draft_(save|discard)"/g)) {
         sites.push([name, m[1]!]);
@@ -1401,7 +1405,7 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(
       sites.length,
       "a site that writes a draft row was added or removed — classify it here before shipping it",
-    ).toBe(7);
+    ).toBe(8);
     /* TWO SAVES NOW, and the second one is classified below with the other write sites: the
        orphaned-lane promotion in `mail-send.ts` (the type it takes, and the call inside it) is one
        site spelled twice. It writes for a message whose PARENT has been deleted, which is not the

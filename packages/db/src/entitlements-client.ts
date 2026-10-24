@@ -1,6 +1,7 @@
 import {
   AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
-  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
+  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
+  type TrialStorageCarry,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
@@ -248,6 +249,24 @@ function lifecycleOf(raw: unknown, syncEnabled: boolean): AccessLifecycle | null
 }
 
 /**
+ * The `trial` object, read FIELD BY FIELD and never a refusal: unlike the block above it carries no
+ * fact the wall decides on, so a field that is missing, null or of the wrong type is absent, and an
+ * object with neither field is no object. The verdict then reads as if the program sent none.
+ */
+function trialOf(raw: unknown): AccessTrial | null {
+  const t = obj(raw);
+  if (!t) return null;
+  const startedAt = typeof t.startedAt === "string" && Number.isFinite(Date.parse(t.startedAt))
+    ? t.startedAt : undefined;
+  const cancelScheduled = typeof t.cancelScheduled === "boolean" ? t.cancelScheduled : undefined;
+  if (startedAt === undefined && cancelScheduled === undefined) return null;
+  return {
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(cancelScheduled !== undefined ? { cancelScheduled } : {}),
+  };
+}
+
+/**
  * THE `access` ANSWER — the full entitlement, from which the open side derives what it needs.
  * The refusal is `syncEnabled === false`: the program deliberately does not send an ok/refused
  * pair, because `reason`, `syncEnabled` and `canAddMailbox` are three different questions.
@@ -268,6 +287,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
   // hand a locked screen no dates to render, silently.
   const lifecycle = lifecycleOf(b.lifecycle, e.syncEnabled);
   if (lifecycle !== null && "bad" in lifecycle) return lifecycle;
+  const trial = trialOf(b.trial);
 
   const url = typeof b.manageUrl === "string" && b.manageUrl.length > 0 ? b.manageUrl : undefined;
   if (!e.syncEnabled) {
@@ -275,6 +295,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
       ok: false, reason: refusalOf(e.reason),
       ...(url ? { manageUrl: url } : {}),
       ...(lifecycle ? { lifecycle } : {}),
+      ...(trial ? { trial } : {}),
     };
   }
   const num = (v: unknown, field: string): number | null | { bad: string } =>
@@ -289,6 +310,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
       mailboxes, storageBytes, canAddMailbox: e.canAddMailbox, aiEnabled: e.aiEnabled,
     },
     ...(lifecycle ? { lifecycle } : {}),
+    ...(trial ? { trial } : {}),
   };
 }
 
@@ -309,6 +331,23 @@ function pricesOf(raw: unknown): ActionPrices | null | { bad: string } {
     card[action] = v;
   }
   return card;
+}
+
+/**
+ * The `trialStorage` block: absent or null is no carry. One that cannot be read is a drift, named,
+ * and reads as no carry; the limit beside it already holds the floor, so the verdict stands.
+ */
+function trialStorageOf(raw: unknown): TrialStorageCarry | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const t = obj(raw);
+  if (!t) return { bad: "trialStorage" };
+  const limit = t.planBytesLimit;
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) return { bad: "trialStorage.planBytesLimit" };
+  const until = t.until ?? null;
+  if (until !== null && (typeof until !== "string" || !Number.isFinite(Date.parse(until)))) {
+    return { bad: "trialStorage.until" };
+  }
+  return { planBytesLimit: limit, until };
 }
 
 /** The program's five spend verdicts. `fault` is never one of them — see {@link SpendOutcome}. */
@@ -505,7 +544,12 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
-        const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
+        const carry = read.ok ? trialStorageOf(obj(res.body)?.trialStorage) : null;
+        if (carry !== null && "bad" in carry) named("/v1/access", res.status, carry.bad);
+        const carried = carry !== null && !("bad" in carry);
+        const verdict: AccessVerdict = read.ok
+          ? { ...read, ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}) }
+          : read;
         const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
         // A call that began earlier and answered later never replaces a newer verdict.
         const prev = cache.get(accountId);

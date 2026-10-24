@@ -39,6 +39,8 @@ export interface MailDocInputs {
   loadPixels: boolean;
   hasText: boolean;
   darkWanted: boolean;
+  /** The subject is a forward's: the history fold differs. */
+  forward: boolean;
 }
 
 /** A frame's fitted height, remembered for the next element that shows the same document. */
@@ -86,6 +88,7 @@ function keyOf(i: MailDocInputs): string {
     i.loadPixels ? "x" : "-",
     i.hasText ? "t" : "-",
     i.darkWanted ? "d" : "-",
+    i.forward ? "f" : "-",
   ].join("\u0000");
 }
 

@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { rowThreadOf } from "../shell/row-thread";
-import { forwardOffered, type EngineMessage, type TagDTO, type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
+import { type EngineMessage, type TagDTO, type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
   Icon,
@@ -26,8 +26,7 @@ import {
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useKeyBindings } from "../shell/keymap";
-import { useMessageChrome } from "../shell/message-chrome";
-import { pressResurfaceKey } from "../shell/message-verbs";
+import { useMessageVerbs } from "../shell/message-verbs";
 import { useZoneNav } from "../shell/zone-nav";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "../shell/list-window";
@@ -89,6 +88,9 @@ export function TriageView({
   hydrateBody,
   onAction,
   onAddTag,
+  onScreen = () => {},
+  canDelete = () => false,
+  canReplyAll = () => false,
 }: {
   piles: TriagePiles;
   /** `MailState.settled` / `owed`: an empty pile is said only over a read mirror. */
@@ -144,13 +146,15 @@ export function TriageView({
   hydrateBody: (id: string, opts?: { retry?: boolean }) => void;
   onAction: (action: MessageAction, message: EngineMessage) => void;
   onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /** The shell's gates for the message verbs — see `useMessageVerbs`. A bare mount (tests)
+   *  leaves delete and reply-all resting. */
+  onScreen?: (messageId: string, anchor: HTMLElement | null) => void;
+  canDelete?: (message: EngineMessage) => boolean;
+  canReplyAll?: (message: EngineMessage) => boolean;
 }) {
   const t = useTranslations("triage");
   const rowBadge = useRowBadgeCopy();
   const { row: senderCheckRow } = useSenderCheckWords();
-  /* The message verbs' own labels, shared with the global map — the `?` sheet must read one
-     sentence for `a` whether the Ohbox's binding answers or this view's does. */
-  const ts = useTranslations("shortcuts");
   /* The "Done" release control's copy lives in the Ohbox namespace with the verb's other faces
      (the action bar's `actionDone`, the pinned row's) — ONE wording source, not a per-view copy. */
   const to = useTranslations("ohbox");
@@ -182,27 +186,6 @@ export function TriageView({
   }, [shown?.id, hydrateBody]);
 
   // `f` starts the Reply Run from here without the shell's "go to Triage first" hop.
-  // The message verbs, alive in the piles: `a`, `e`, `b` and `r` were dead here — the global bindings act
-  // on the shell's `focused`, which has no arm for this view, because the cursor here (`shown`) is
-  // view-local state the shell cannot see. So the view declares its own, exactly as the registry intends,
-  // acting on the message the reading column shows — the same `onAction` seam the pane's footer
-  // dispatches through, so key and button remain one code path; `a`/`e` in the pile a message is
-  // already in take it OUT (`state:"none"`), `b` opens the chooser as its button does. `⇧F` joins for the same
-  // reason: the pill prints a `⇧F` keycap from the registry and the shell's binding is `disabled` here —
-  // a bar must not advertise a dead key. Gated on `no_forward` like the
-  // button (`ActionBar#canForward`); the mirror half needs no gate — every triage row is local.
-  const chrome = useMessageChrome();
-  const verbs = shown
-    ? ([
-        { chord: "a", key: "answerLater", action: "later" },
-        { chord: "e", key: "park", action: "aside" },
-        { chord: "b", key: "resurface", action: "resurface" },
-        { chord: "r", key: "reply", action: "reply" },
-        ...(forwardOffered(shown)
-          ? [{ chord: "shift+f", key: "forward", action: "forward" }] as const
-          : []),
-      ] as const)
-    : [];
   useKeyBindings([
     {
       chord: "f",
@@ -211,18 +194,6 @@ export function TriageView({
       disabled: piles.replyLater.length === 0,
       run: onStartFR,
     },
-    ...verbs.map((v) => ({
-      chord: v.chord,
-      group: "message" as const,
-      label: ts(v.key),
-      /* `b` is the Resurface button's chord, so on a booked row it opens that chooser
-         (`pressResurfaceKey`); `a` and `e` still take a row out of their pile. */
-      run: () => {
-        if (!shown) return;
-        if (v.action === "resurface") pressResurfaceKey(shown, chrome, (m) => onAction("resurface", m));
-        else onAction(v.action, shown);
-      },
-    })),
   ]);
 
   /**
@@ -270,6 +241,13 @@ export function TriageView({
       }
     });
   };
+  /* The message verbs over this view's cursor, from the one table Folder, Tag and History use:
+     the global ones act on the shell's `focused`, which has no arm for this view. */
+  useMessageVerbs({
+    shown, scope: ".view-triage", onAction, onAddTag, onScreen, canDelete, canReplyAll,
+    rows: openable, select: selectRow,
+  });
+
   useZoneNav({
     list: {
       followId: shown?.id ?? null,

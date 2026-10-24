@@ -438,6 +438,7 @@ export function MessageCard({
             messageId={message.id}
             text={body.text}
             html={body.html}
+            subject={message.subject}
             remoteLoaded={
               body.loadedRemoteContent ||
               autoLoadsImages(chrome.remoteImages, message) ||

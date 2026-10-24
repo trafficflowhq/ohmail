@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, eszettForms, partWordTails, partWordsOf, typoTrigramsOf } from "./index.js";
+import { type LockMode, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, eszettForms, partOperandsOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -27,10 +27,21 @@ const TEXT_SEARCH_CONFIG = "english";
  * is immutable — it folds to one constant at plan time, priced by the vector's statistics.
  */
 function partTsquery(q: string): SQL | null {
+  const groups = partGroups(q);
+  return groups === null ? null : sql.raw(andTsquery(groups));
+}
+
+/** Inlined groups ANDed into one tsquery, a null group dropped. */
+function andTsquery(groups: readonly string[]): string {
+  return `(nullif(substr(${groups.map((g) => `coalesce(' & ' || ${g}, '')`).join(" || ")}, 4), '')::tsquery)`;
+}
+
+/** Each part-word's group as an inlined text expression (null for a dropped stopword). */
+function partGroups(q: string): string[] | null {
   const words = partWordsOf(q);
   if (words === null) return null;
   const lit = (s: string): string => `'${s}'`;
-  const groups = words.map((w, i) => {
+  return words.map((w, i) => {
     const long = [...w].length >= PART_PREFIX_MIN_CHARS;
     // One alternative per ß/ss form of the word (`eszettForms`), each the shape it always had.
     const one = (v: string): string => {
@@ -42,11 +53,60 @@ function partTsquery(q: string): SQL | null {
     };
     const variants = eszettForms(w).map(one);
     const group = variants.length === 1 ? variants[0]! : `'(' || ${variants.join(" || ' | ' || ")} || ')'`;
-    const kept = long && i === words.length - 1 ? group
+    return long && i === words.length - 1 ? group
       : `case when length(to_tsvector('${TEXT_SEARCH_CONFIG}', ${lit(w)})) = 0 then null else ${group} end`;
-    return `coalesce(' & ' || ${kept}, '')`;
   });
-  return sql.raw(`(nullif(substr(${groups.join(" || ")}, 4), '')::tsquery)`);
+}
+
+/** Each typed operand's kept part-words together in `head` or in `text` ({@link partOperandsOf}), ANDed; inlined. */
+function partLetter(q: string, head: SQL, text: SQL): SQL | null {
+  const ops = partOperandsOf(q);
+  const groups = partGroups(q);
+  if (ops === null || groups === null) return null;
+  return sql`(${sql.join(ops.map((op) => {
+    const t = sql.raw(andTsquery(op.map((i) => groups[i]!)));
+    return sql`(${head} @@ ${t} or ${text} @@ ${t})`;
+  }), sql` and `)})`;
+}
+
+/** One operand anywhere in the letter: in `head` or in `text`, every ß/ss form unless excluded. */
+function inLetter(o: QueryOperand, head: SQL, text: SQL, fold: boolean): SQL {
+  const typed = o.quoted ? `"${o.text}"` : o.text;
+  const t = fold ? foldedTsquery(typed) : sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${typed})`;
+  return sql`(${head} @@ ${t} or ${text} @@ ${t})`;
+}
+
+/** No excluded operand anywhere in the letter; undefined when nothing is excluded. */
+function noneOf(ops: QueryOperands, head: SQL, text: SQL): SQL | undefined {
+  return ops.none.length === 0 ? undefined
+    : sql`(${sql.join(ops.none.map((o) => sql`not ${inLetter(o, head, text, false)}`), sql` and `)})`;
+}
+
+/**
+ * The query over the whole letter, read once a query straddles its parts ({@link straddlesParts}):
+ * every operand of a group in `head` or `text`. `head` keeps its own rank but is held to the letter,
+ * so no arm admits a letter this reading refuses; no excluded operand in either is `excluded`, for
+ * the caller to hold every arm to.
+ */
+function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recency: SQL, tsq: SQL): MailWordArms | null {
+  const ops = queryOperandsOf(q);
+  if (!straddlesParts(ops)) return null;
+  const groups = ops.any.map((g) => sql`(${sql.join(g.map((o) => inLetter(o, headTsv, textTsv, true)), sql` and `)})`);
+  const none = noneOf(ops, headTsv, textTsv);
+  const letter = groups.length === 0 ? sql`true` : sql`(${sql.join(groups, sql` or `)})`;
+  // Each group with every excluded operand as one tsquery, which the text GIN answers whole: one
+  // group is the typed query itself; of several, `websearch_to_tsquery` would hold only the last
+  // group to an exclusion, so each is typed again with them.
+  const typed = (o: QueryOperand): string => (o.quoted ? `"${o.text}"` : o.text);
+  const noHead = ops.none.map((o) => sql`not ${headTsv} @@ websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${typed(o)})`);
+  const alone = none ? ops.any.map((g, i) => {
+    const t = ops.any.length === 1 ? tsq : foldedTsquery([...g.map(typed), ...ops.none.map((o) => `-${typed(o)}`)].join(" "));
+    return { pred: sql`(${textTsv} @@ ${t} and ${sql.join(noHead, sql` and `)})`, letter: groups[i]!, whole: g.length === 1 };
+  }) : null;
+  return {
+    head: { pred: sql`(${head.pred} and ${letter})`, rank: head.rank }, text: { pred: letter, rank: recency },
+    across: true, ...(none ? { excluded: none } : {}), ...(alone ? { alone } : {}),
+  };
 }
 
 /** The typed query as a tsquery, every ß/ss form of it OR-ed (`eszettForms`); one form is the old shape. */
@@ -293,15 +353,17 @@ export function pgDialect(): Dialect {
       },
       words: (q: string): MailWordArms => {
         const tsq = foldedTsquery(q);
-        return {
-          head: { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` },
-          text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: sql`coalesce(extract(epoch from m.date), 0)` },
-        };
+        const head = { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
+        const recency = sql`coalesce(extract(epoch from m.date), 0)`;
+        return acrossOf(q, head, sql`s.head_tsv`, sql`s.text_tsv`, recency, tsq)
+          ?? { head, text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency } };
       },
       partWords: (q: string): MailWordArms | null => {
         const tsq = partTsquery(q);
         if (tsq === null) return null;
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
+        const letter = partLetter(q, sql`s.head_tsv`, sql`s.text_tsv`);
+        if (letter !== null) return { head: { pred: letter, rank: recency }, text: { pred: letter, rank: recency }, across: true };
         return {
           head: { pred: sql`s.head_tsv @@ ${tsq}`, rank: recency },
           text: { pred: sql`s.text_tsv @@ ${tsq}`, rank: recency },
@@ -319,6 +381,12 @@ export function pgDialect(): Dialect {
         const recency = sql`coalesce(extract(epoch from m.date), 0)`;
         const sim = (col: SQL): SQL => (opts.trigram ? sql`word_similarity(${q}, ${col})` : recency);
         const part = partTsquery(q);
+        const ops = queryOperandsOf(q);
+        // A guess holds no excluded operand: each table's own NOT, a row without a body kept.
+        const none = !straddlesParts(ops) || ops.none.length === 0 ? null : ops.none.map((o) => {
+          const t = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${o.quoted ? `"${o.text}"` : o.text})`;
+          return sql`not coalesce(m.subject_tsv @@ ${t}, false) and not coalesce(b.body_tsv @@ ${t}, false)`;
+        });
         return {
           words: {
             head: { pred: sql`m.subject_tsv @@ ${tsq}`, rank: sql`ts_rank(m.subject_tsv, ${tsq})` },
@@ -328,6 +396,7 @@ export function pgDialect(): Dialect {
             head: { pred: sql`m.subject_tsv @@ ${part}`, rank: recency },
             text: { pred: sql`b.body_tsv @@ ${part}`, rank: recency },
           },
+          ...(none === null ? {} : { excluded: sql`(${sql.join(none, sql` and `)})` }),
           substring: [
             { pred: likeAny(sql`m.subject`, q), rank: sim(sql`m.subject`) },
             { pred: likeAny(sql`m.from_address`, q), rank: sim(sql`m.from_address`) },

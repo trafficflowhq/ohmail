@@ -361,7 +361,7 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     expect(src).toMatch(/resurfaceTime: consent\.resurfaceTime,/);
     const pane = read("../app/shell/MessagePane.tsx");
     expect(pane).toMatch(/resurfaceClock\(chrome\.resurfaceTime\)/);
-    expect(pane).toMatch(/tomorrowAt\(base, resurfaceAt\)/);
+    expect(pane).toMatch(/resurfaceHorizons\(base, resurfaceAt\)/);
   });
 });
 

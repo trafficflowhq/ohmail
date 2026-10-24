@@ -8,13 +8,14 @@ import {
   outboundSendFingerprints, outboundSends, pairingTokens, users,
 } from "@trafficflow/db";
 import {
-  attachmentStaging, claimRefundObligations, creditRefundObligations, schema,
+  accountLifecycleNotices, attachmentStaging, claimRefundObligations, creditRefundObligations,
+  pruneErasedNotices, schema,
 } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import { ERASED_REFRESH_KEEP_DAYS } from "../../db/src/erased-bearers.js";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { deleteAccount, type ServiceContext } from "../src/index.js";
+import { deleteAccount, ErasureUnwarnedError, type ServiceContext } from "../src/index.js";
 import {
   EMAIL_NOT_A_CUSTOMERS, EXPIRED_NOT_DELETED, LATER, NOW, RETAINED, accountScopedTables,
   emailBearingTables, erasureScopeTables, rowsOf, seedFullAccount, unseededScopedTables, type Db,
@@ -70,6 +71,15 @@ async function countFor(table: string, accountId: string): Promise<number> {
     sql`select count(*)::int as c from ${sql.identifier(table)} where account_id = ${accountId}`,
   );
   return rowsOf<{ c: number }>(rows)[0]!.c;
+}
+
+/** The columns of a table that can hold free text — what a row kept past erasure must rule on. */
+async function freeTextColumns(table: string): Promise<string[]> {
+  return rowsOf<{ column_name: string }>(await db.execute(sql`
+    select column_name from information_schema.columns
+    where table_schema = 'public' and table_name = ${table}
+      and data_type in ('text', 'character varying', 'character', 'json', 'jsonb')
+    order by column_name`)).map((r) => r.column_name);
 }
 
 describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", () => {
@@ -243,6 +253,81 @@ describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", 
     // `settings-reset-deadlock.pg.test.ts`).
     expect(acct!.erasedAt, "the erasure fence's stamp is missing").not.toBeNull();
   }, 60_000);
+
+  /**
+   * THE ONE ROW A RETENTION ERASURE KEEPS: the delivered erasure warning for the date it erases on,
+   * so ohmail can still show the warning went out, until the worker's prune ten years after the
+   * erasure. A self-serve erasure keeps none.
+   */
+  describe("the delivered erasure warning", () => {
+    const A = new Date("2026-08-20T00:00:00.000Z");
+    const B = new Date("2026-08-27T00:00:00.000Z");
+    /** A full account with a delivered warning at A and a claim never delivered at B. */
+    async function warnedAccount(name: string) {
+      const seeded = await seedFullAccount(db, name);
+      await db.insert(accountLifecycleNotices).values([
+        { accountId: seeded.accountId, kind: "erasure_week", anchor: A, sentAt: A, deliveredAt: A },
+        { accountId: seeded.accountId, kind: "erasure_week", anchor: B, sentAt: B },
+      ]);
+      return seeded;
+    }
+
+    it("a retention erasure keeps that warning and nothing else; a self-serve twin keeps nothing", async () => {
+      const scope = new Set(await erasureScopeTables(db));
+      const scoped = (await accountScopedTables(db)).filter((t) => scope.has(t));
+      const survivors = async (accountId: string) => {
+        const out: string[] = [];
+        for (const t of scoped) {
+          if (RETAINED.has(t) || EXPIRED_NOT_DELETED.has(t)) continue;
+          const c = await countFor(t, accountId);
+          if (c > 0) out.push(`${t} (${c})`);
+        }
+        return out;
+      };
+      const retention = await warnedAccount("Retention");
+      await deleteAccount(ctxFor(retention.accountId, retention.userId), { warnedFor: A });
+      expect(await survivors(retention.accountId)).toEqual(["account_lifecycle_notices (1)"]);
+      expect((await db.select().from(accountLifecycleNotices)
+        .where(eq(accountLifecycleNotices.accountId, retention.accountId)))
+        .map((n) => [n.kind, n.anchor, n.deliveredAt])).toEqual([["erasure_week", A, A]]);
+
+      const selfServe = await warnedAccount("Self Serve");
+      await deleteAccount(ctxFor(selfServe.accountId, selfServe.userId));
+      expect(await survivors(selfServe.accountId)).toEqual([]);
+    }, 60_000);
+
+    it("REFUSES a retention erasure whose date has no delivered warning, and erases nothing", async () => {
+      const seeded = await warnedAccount("Unwarned");
+      await expect(deleteAccount(ctxFor(seeded.accountId, seeded.userId), { warnedFor: B }))
+        .rejects.toBeInstanceOf(ErasureUnwarnedError);
+      const [acct] = await db.select().from(accounts).where(eq(accounts.id, seeded.accountId));
+      expect(acct!.erasedAt, "the fence's stamp committed without the erasure").toBeNull();
+      expect(await db.select().from(users).where(eq(users.accountId, seeded.accountId))).toHaveLength(1);
+      expect(await countFor("account_lifecycle_notices", seeded.accountId)).toBe(3);
+    }, 60_000);
+
+    it("the hourly prune deletes it ten years after the erasure, and nothing of an account not erased", async () => {
+      const erased = await warnedAccount("Pruned");
+      await deleteAccount(ctxFor(erased.accountId, erased.userId), { warnedFor: A });
+      const live = await warnedAccount("Not Erased");
+      const tenYearsOn = new Date(NOW);
+      tenYearsOn.setUTCFullYear(NOW.getUTCFullYear() + 10);
+      await pruneErasedNotices(db as unknown as Tx, new Date(tenYearsOn.getTime() - 60_000));
+      expect(await countFor("account_lifecycle_notices", erased.accountId)).toBe(1);
+      await pruneErasedNotices(db as unknown as Tx, tenYearsOn);
+      expect(await countFor("account_lifecycle_notices", erased.accountId)).toBe(0);
+      await pruneErasedNotices(db as unknown as Tx, new Date("2040-01-01T00:00:00.000Z"));
+      expect(await countFor("account_lifecycle_notices", live.accountId)).toBe(3);
+    }, 60_000);
+
+    it("CENSUS — the kept row's only free-text column is its kind, a closed set", async () => {
+      expect(await freeTextColumns("account_lifecycle_notices")).toEqual(["kind"]);
+      const checks = rowsOf<{ def: string }>(await db.execute(sql`
+        select pg_get_constraintdef(oid) as def from pg_constraint
+        where conname = 'account_lifecycle_notices_kind_closed'`));
+      expect(checks[0]?.def ?? "", "`kind` is no longer a closed set").toMatch(/kind.*(IN|ANY)/i);
+    });
+  });
 
   it("REFUSES a table the fixture cannot seed — the census's positive control", async () => {
     // The admitting shape, planted: an account-scoped table with no seeder and no deleter. BOTH
@@ -599,13 +684,6 @@ describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", 
       attempt_key: "an id this server minted",
       attempt: "the attempt id the program returned",
     };
-    async function freeTextColumns(table: string): Promise<string[]> {
-      return rowsOf<{ column_name: string }>(await db.execute(sql`
-        select column_name from information_schema.columns
-        where table_schema = 'public' and table_name = ${table}
-          and data_type in ('text', 'character varying', 'character', 'json', 'jsonb')
-        order by column_name`)).map((r) => r.column_name);
-    }
 
     it("CENSUS — no column of a kept debt but meta and last_fault can carry free text", async () => {
       const cols = await freeTextColumns("credit_refund_obligations");

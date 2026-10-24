@@ -632,7 +632,7 @@ const NO_ACTIONS: WorldActions = {
   cancelSchedule: () => Promise.resolve(false),
   draftDiscard: () => Promise.resolve("refused" as const),
   draftResolve: () => Promise.resolve(false),
-  draftSendAgain: () => Promise.resolve("notReached" as const),
+  draftSendAgain: () => Promise.resolve("failed" as const),
   // Nothing is connected, so nothing can be kept: the sheet says so and stays open.
   draftKeep: () => Promise.resolve("refused" as const),
   keepEnvelope: () => null,

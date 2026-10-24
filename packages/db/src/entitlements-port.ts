@@ -44,6 +44,18 @@ export function planHintOf(plan: unknown, interval: unknown): PlanHint {
 }
 
 /**
+ * THE LARGEST PLAN'S STORED-TEXT LIMIT on the operator's card (Pro, 10 GB). The program names no plan
+ * on `/v1/access`, so the cap decides what adds room: below this a bigger plan, from it on only the
+ * storage add-on. `test/landing-pricing-matches-plan-card.test.ts` holds it to the card.
+ */
+export const LARGEST_PLAN_STORAGE_BYTES = 10_000_000_000;
+export type StorageUpgrade = "plan" | "addon";
+
+export function storageUpgradeOf(limitBytes: number): StorageUpgrade {
+  return limitBytes < LARGEST_PLAN_STORAGE_BYTES ? "plan" : "addon";
+}
+
+/**
  * The program's `lifecycle` block, carried VERBATIM (ISO strings, not Dates): every consumer is a
  * renderer or a comparator, and parsing dates here would put a timezone decision in a port.
  * Absent on the wire = an old program = today's behaviour, so the field below is optional on both
@@ -70,15 +82,40 @@ export interface AccessLifecycle {
 }
 
 /**
+ * The program's `trial` object (2026-10-25), BESIDE the lifecycle block: when the trial began and
+ * whether its cancellation is scheduled, the two facts the connect reminder reads. Each field is
+ * kept only when it reads as its type; a missing or unreadable one is absent, never a refusal.
+ */
+export interface AccessTrial {
+  /** ISO instant the trial began, as the program states it. */
+  startedAt?: string;
+  /** The trial ends without converting. */
+  cancelScheduled?: boolean;
+}
+
+/**
  * What one action of each call site costs, in credits — the card the program states on
  * `/v1/access`. Carried, never held: this tree has no price of its own.
  */
 export type ActionPrices = Record<SpendAction, number>;
 
+/**
+ * The trial's stored-text floor where it raises `storageBytes` (wire contract, 2026-10-24): the plan's
+ * own limit, add-ons included, and the ISO instant it applies again; `until` null while no first
+ * payment has started the 14 days.
+ */
+export interface TrialStorageCarry {
+  planBytesLimit: number;
+  until: string | null;
+}
+
 /** May this account use the service, and within what limits. `prices` absent = unpriced. */
 export type AccessVerdict =
-  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices }
-  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle };
+  | {
+    ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices; trial?: AccessTrial;
+    trialStorage?: TrialStorageCarry;
+  }
+  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
 
 /**
  * `null` means UNBOUNDED, never unknown: a fault answers with the last known verdict and defaults

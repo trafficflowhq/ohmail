@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
 import type { MailState } from "../app/shell/mail-state";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * SETTINGS > MAILBOXES > CONNECT HAS NO PORT FIELD, so its refusals name none; a port goes after the
@@ -44,6 +45,9 @@ const healthy = {
 /** `mock`-prefixed: `vi.mock`'s factory is hoisted above the imports. */
 let mockProbeThrows: unknown = null;
 let mockCreateThrows: unknown = null;
+/** What `POST /mailboxes/discover` answers, by domain; anything else is refused. */
+let mockDiscover: Record<string, unknown> = {};
+let mockLookups: unknown[] = [];
 
 vi.mock("../app/api-client", async () => {
   const actual = await vi.importActual<typeof import("../app/api-client")>("../app/api-client");
@@ -62,6 +66,11 @@ vi.mock("../app/api-client", async () => {
       list: async () => ({ items: [] as MailboxDTO[] }),
       probe: async () => { if (mockProbeThrows) throw mockProbeThrows; return { verdict: "ok" }; },
       create: async () => { throw mockCreateThrows; },
+      discover: async (b: { domain: string }) => {
+        mockLookups.push(b);
+        if (!(b.domain in mockDiscover)) throw new actual.ApiError(503, "discover_unconfigured", "no lookup");
+        return mockDiscover[b.domain];
+      },
     },
   };
 });
@@ -128,7 +137,7 @@ async function ceremony(el: HTMLElement): Promise<void> {
   await submit(el.querySelector("#mb-address")!.closest("form"));
 }
 
-beforeEach(() => { mockProbeThrows = null; mockCreateThrows = null; });
+beforeEach(() => { mockProbeThrows = null; mockCreateThrows = null; mockDiscover = {}; mockLookups = []; });
 afterEach(async () => {
   if (root) { const r = root; await act(async () => { r.unmount(); }); root = null; }
   host?.remove();
@@ -164,5 +173,69 @@ describe("Settings > Connect names no port field", () => {
     const el = await typedForm();
     await ceremony(el);
     expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_tls_self_signed);
+  });
+});
+
+describe("Settings > Connect asks for the address first", () => {
+  async function openForm(): Promise<HTMLDivElement> {
+    const { MailboxSection } = await import("../app/(product)/mailbox/MailboxSection.js");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, { locale: "en", messages, children: h(MailboxSection) }));
+    });
+    await settle();
+    await click(press(host, copy.connect!));
+    return host;
+  }
+  async function address(el: HTMLElement, value: string): Promise<void> {
+    await typeInto(el.querySelector("#mb-address"), value);
+    await act(async () => { el.querySelector("#mb-address")!.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+    await settle();
+  }
+  const checked = (el: HTMLElement) => [...el.querySelectorAll('[role="radio"][aria-checked="true"] .pvp-name')]
+    .map((n) => n.textContent);
+
+  it("the address is asked before any tile, and its domain preselects one", async () => {
+    mockDiscover["acme-workspace.example"] = { preset: "gmail", proton: false, imap: null, smtp: null };
+    const el = await openForm();
+    expect(checked(el)).toEqual([]);
+    expect(el.querySelector("#mb-address"), "the address is on screen before a choice").toBeTruthy();
+    await address(el, personalAt("fixture.person", "icloud.com"));
+    expect(checked(el)).toEqual(["iCloud Mail"]);
+    await address(el, "person@acme-workspace.example");
+    expect(checked(el)).toEqual(["Gmail"]);
+    expect(mockLookups).toEqual([{ domain: "acme-workspace.example" }]);
+  });
+
+  it("a refused password behind a preset says that provider's own sentence", async () => {
+    mockCreateThrows = refused("auth");
+    const el = await openForm();
+    await address(el, personalAt("fixture.person", "t-online.de"));
+    expect(checked(el)).toEqual(["t-online"]);
+    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await ceremony(el);
+    expect(el.querySelector('[role="alert"]')?.textContent).toBe(copy.probe_auth_tonline);
+  });
+
+  it("an unreachable host on the generic entry offers the hosts the lookup found, as a fill", async () => {
+    mockDiscover["acme-srv.example"] = {
+      preset: null, proton: false,
+      imap: { host: "imap.acme-srv.example", port: 993, secure: true }, smtp: { host: "smtp.acme-srv.example", port: 465, secure: true },
+    };
+    mockCreateThrows = refused("connect");
+    const el = await openForm();
+    await address(el, "person@acme-srv.example");
+    expect(checked(el), "an unknown provider leaves the choice to the person").toEqual([]);
+    await click(press(el, picker.otherLabel!));
+    await typeInto(el.querySelector("#mb-imap"), "mail.acme-srv.example");
+    await typeInto(el.querySelector("#mb-smtp"), "mail.acme-srv.example");
+    await typeInto(el.querySelector("#mb-pass"), "app-password-fixture");
+    await ceremony(el);
+    await click(press(el, picker.discoveredUse!));
+    expect((el.querySelector("#mb-imap") as HTMLInputElement).value).toBe("imap.acme-srv.example");
+    expect((el.querySelector("#mb-smtp") as HTMLInputElement).value).toBe("smtp.acme-srv.example");
+    expect(el.querySelector('[role="alert"]'), "the old refusal goes with the hosts it was about").toBeNull();
   });
 });

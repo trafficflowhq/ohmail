@@ -45,7 +45,8 @@ const RULES_TABLE = new Set(["rules", "rulesTbl"]);
 /**
  * Columns no client can see. `RuleDTO` carries kind, match, destination, priority, provenance,
  * enabled, the two extra terms, the stats and the backlog pass's asked/finished stamps; the walk's
- * cursor and its counter are the organizer's own bookkeeping and ship to nobody. `updatedAt`
+ * cursor and its counter are the organizer's own bookkeeping and ship to nobody (they end a
+ * re-filing's wait, `pendingRefileFrom`, and the page or stamp that ends it files that delta). `updatedAt`
  * rides along with whatever moved and is never the whole of a write on its own. `settledPressAt`
  * (mail 0159) is the reader belt's own ordering stamp, written where nothing a client reads moved
  * and on no DTO (`settled-press-stamp-census.test.ts` holds it to that one writer).
@@ -66,9 +67,12 @@ const EXEMPT_WRITE_SITES: Record<string, string> = {
   "apps/worker/src/rule-retro.ts#ruleRetroPass":
     "the retro walk's own cursor and counter — `retro_cursor`/`retro_moved`, which are not on "
     + "`RuleDTO`. The mail the walk MOVES is announced as `message` deltas by the same transaction; "
+    + "a page whose first move ends a re-filing's wait files a rule delta itself; "
     + "the finished stamp is `stampRetroDone`'s, which files its own.",
   "apps/worker/src/mailboxes.ts#clearOwedRetroFences":
-    "`retro_cursor` alone, cleared at a promotion so an owed walk restarts. Not on `RuleDTO`.",
+    "`retro_cursor` alone, cleared at a promotion so an owed walk restarts. Not on `RuleDTO`; a parked "
+    + "re-filing that moved nothing reads as waiting again until its re-run moves, parks or stamps, "
+    + "each of which files a delta.",
   "apps/sidecar/src/cloud-mirror.ts#applyAccountUpsert":
     "the mirror APPLYING a delta the Cloud already filed. A delta here would announce the "
     + "account's own sync back to it.",

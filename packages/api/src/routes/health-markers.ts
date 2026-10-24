@@ -862,6 +862,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // letter withheld for space and the erase write `husked_for_space` with the bytes, and the staff
   // account page reads it. Deploy order migration → API → worker.
   ["account_storage", "husked_for_space"],
+  // mail 0167_rules_refile — a Rules-page Change's re-filing, two columns added in one entry (one
+  // facet). LOUD, on 0159's whole-row argument: every `select().from(rules)` names both, so a worker
+  // or an API ahead of the migration 42703s. Deploy order migration → worker → API.
+  ["rules", "refile_from"],
 ] as const;
 
 /**
@@ -1288,7 +1292,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0166_account_storage_facts";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0167_rules_refile";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

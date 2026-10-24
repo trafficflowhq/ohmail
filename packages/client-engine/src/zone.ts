@@ -248,3 +248,28 @@ export function composeZonedWallClock(wall: ZonedWallClock, zone: string): Zoned
   const f = zonedFields(instant, zone);
   return { instant, verdict, hour: f.hour, minute: f.minute };
 }
+
+/** Before this hour a person still up says "tomorrow morning" and means the one coming. */
+export const SMALL_HOURS_END = 5;
+
+/**
+ * Days from `from` to the first day whose `clock` in `zone` is still ahead: 0 or 1. The floor a
+ * day picker may book from, so a later hour today is choosable.
+ */
+export function firstDayOffset(
+  from: Date, zone: string, clock: { hour: number; minute: number },
+): 0 | 1 {
+  const f = zonedFields(from, zone);
+  const today = composeZonedWallClock({ year: f.year, month: f.month, day: f.day, ...clock }, zone);
+  return today.instant.getTime() > from.getTime() ? 0 : 1;
+}
+
+/**
+ * Days from `from` to "tomorrow" at `clock`, as a person means it: 1, except in the small hours
+ * (before {@link SMALL_HOURS_END}) while that clock is still ahead today — then the coming morning.
+ */
+export function morningDayOffset(
+  from: Date, zone: string, clock: { hour: number; minute: number },
+): 0 | 1 {
+  return zonedFields(from, zone).hour < SMALL_HOURS_END ? firstDayOffset(from, zone, clock) : 1;
+}

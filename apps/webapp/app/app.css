@@ -4511,6 +4511,10 @@ input.set-tag-input {
   line-height: 1.6;
   color: var(--ink2);
 }
+.pvp-note p.pvp-need {
+  margin-bottom: 6px;
+  color: var(--ink);
+}
 .pvp-links {
   display: flex;
   flex-wrap: wrap;

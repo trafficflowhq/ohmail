@@ -114,7 +114,9 @@ export { owaInvitationStub, type OwaInvitationStub } from "@trafficflow/core/ics
  * question and the fifty they move stay a subset of what the worker's pass would move. Here
  * because this package is the one both of them compile; the phone reaches core only through it.
  */
-export { retroPassWouldMove, retroWalkWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
+export {
+  retroPassWouldMove, retroWalkWouldMove, refileWouldMove, REFILE_UNDO_WINDOW_MS, REFILE_HOLD_MS, type RetroCandidateRow,
+} from "@trafficflow/core/destinations";
 
 /**
  * WHETHER SOMEBODY STILL ORGANIZES A MAILBOX — a named holder whose lease has not lapsed. The
@@ -358,6 +360,9 @@ export {
 // horizons with it, rather than each keeping a copy that drifts on a DST edge.
 export {
   composeZonedWallClock,
+  firstDayOffset,
+  morningDayOffset,
+  SMALL_HOURS_END,
   zonedDayNumber,
   zonedFields,
   zonedInstant,
@@ -525,6 +530,7 @@ export {
   mutationEffects,
   replySubject,
   sentOverlayMessage,
+  walkOwed,
   type EffectContext,
   type MutationEffect,
 } from "./mutations.js";
@@ -948,6 +954,7 @@ export {
 // Where a body's quoted history starts and ends — one reading for every reader. See `quoted-history.ts`.
 export {
   QUOTED_HISTORY_LIMITS,
+  isForwardSubject,
   quotedDomTree,
   quotedHistoryCut,
   quotedHistoryOfHtml,

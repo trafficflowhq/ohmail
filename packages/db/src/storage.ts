@@ -155,21 +155,43 @@ export interface StorageFacts {
   keptFrom: string | null;
   /** Of `emptiedForSpace`, the letters stored without their text because they arrived while the storage was full. */
   withheldOnArrival: number;
+  /** ISO instant of the latest trim that emptied a letter; null when none is recorded. */
+  lastEmptiedAt: string | null;
+}
+
+/** A trim this recent counts as the current cap emptying text (the console's window). */
+export const STORAGE_EMPTIED_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+/** The trim brings the counter to nine tenths of the cap; below this share a trim was under an earlier cap. */
+export const STORAGE_TRIM_BAND_RATIO = 0.85;
+
+/**
+ * Is the current cap what empties text now: at the cap, or a trim this week with the counter still in
+ * the trim band. Text emptied under a smaller cap (a bigger plan since) or long ago is not.
+ */
+export function storageEmptyingNow(
+  facts: Pick<StorageFacts, "usedBytes" | "lastEmptiedAt">, limitBytes: number, now: Date,
+): boolean {
+  if (facts.usedBytes >= limitBytes) return true;
+  const last = facts.lastEmptiedAt === null ? NaN : Date.parse(facts.lastEmptiedAt);
+  return Number.isFinite(last) && now.getTime() - last <= STORAGE_EMPTIED_RECENT_MS
+    && facts.usedBytes >= limitBytes * STORAGE_TRIM_BAND_RATIO;
 }
 
 /** One primary-key read of the account's counter row; no row reads as nothing stored. */
 export async function storageFactsOf(tx: Tx, accountId: string): Promise<StorageFacts> {
   const [row] = await tx.select({
     bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace, first: accountStorage.firstHuskedAt,
-    keptFrom: accountStorage.keptFrom, onArrival: accountStorage.withheldOnArrival,
+    keptFrom: accountStorage.keptFrom, onArrival: accountStorage.withheldOnArrival, last: accountStorage.lastHuskedAt,
   }).from(accountStorage).where(eq(accountStorage.accountId, accountId)).limit(1);
   const first = row?.first == null ? null : new Date(row.first as Date | string);
+  const last = row?.last == null ? null : new Date(row.last as Date | string);
   return {
     usedBytes: Number(row?.bytes ?? 0),
     emptiedForSpace: Number(row?.husked ?? 0),
     firstEmptiedAt: first === null || !Number.isFinite(first.getTime()) ? null : first.toISOString(),
     keptFrom: row?.keptFrom == null ? null : String(row.keptFrom).slice(0, 7),
     withheldOnArrival: Number(row?.onArrival ?? 0),
+    lastEmptiedAt: last === null || !Number.isFinite(last.getTime()) ? null : last.toISOString(),
   };
 }
 

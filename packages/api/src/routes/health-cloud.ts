@@ -194,6 +194,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // on `GET /account/access` is best-effort by contract (a banner must not fail the wall's read),
   // so its absence is silent twice over. `503 schema_incomplete` at the deploy gate names it.
   ["account_lifecycle_notices", "sent_at"],
+  // cloud 0052_lifecycle_notice_delivered — `delivered_at`, its one column. The SWALLOWED kind, as above:
+  // absent, every claim faults inside the pass's catch and every erasure door answers 503.
+  ["account_lifecycle_notices", "delivered_at"],
   // cloud 0041_attachment_staging_digest — the column the send's content check READS. Without it
   // the mint's insert 42703s, so every staged send fails at the upload step on a deployment whose
   // API has taken the change and whose database has not; the marker turns that into a 503 at the
@@ -229,9 +232,10 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
      Against a 0043 database the poll's partial row is refused by the old CHECK and the window
      writes nothing, the silence 0044 exists to remove. */
   ["platform_signals_sample_cause_check", "upstream_refused"],
-  /* Cloud 0050_billing_link_notices — `billing_link` joins the notice kinds. Against a 0049
-     database every staff billing-link claim is refused by the old CHECK: 503, nothing sent. */
-  ["account_lifecycle_notices_kind_closed", "billing_link"],
+  /* Cloud 0053_connect_reminder_notices — `connect_reminder` joins the notice kinds, re-creating the
+     CHECK 0050 widened with `billing_link`, so this needle covers both. Against a 0052 database every
+     reminder claim is refused by the old CHECK inside the pass's catch: nothing sent, a fault counted. */
+  ["account_lifecycle_notices_kind_closed", "connect_reminder"],
 ] as const;
 
 /**

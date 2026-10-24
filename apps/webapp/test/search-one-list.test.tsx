@@ -216,6 +216,22 @@ describe("Search pages the store", () => {
     expect(text()).toContain("Showing the 9 best matches — sort by date to walk them all.");
   });
 
+  it("a cut exact page with no row whose count lands as 0 says nothing matched, and no best matches", async () => {
+    // The store's shape for `kai survey -samples` when every newest letter with both words holds
+    // `samples`: the page is the exact tier, cut and empty; the estimate counts the set whole.
+    const asked: string[] = [];
+    const engine = await engineWith([], async (_q, o) => {
+      asked.push(o.parts ?? "both");
+      return o.parts === "estimate" ? { items: [], total: 0, totalExact: true }
+        : { items: [], total: 0, totalExact: false, nextCursor: null, bounded: true, ms: 11 };
+    });
+    await render(engine, "kai survey -samples");
+    await settle();
+    expect(text()).toContain("Searched your whole mailbox — nothing matched");
+    expect(host.querySelector('[data-testid="search-bounded"]'), "no best matches to show").toBeNull();
+    expect(asked).toEqual(["page", "estimate"]);
+  });
+
   it("…and says neither once the store is indexed and the set is whole", async () => {
     const engine = await engineWith([], async (_q, o) => (o.parts === "summary"
       ? { items: [], total: 9, totalExact: true }

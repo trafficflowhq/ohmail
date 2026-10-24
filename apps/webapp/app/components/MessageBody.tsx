@@ -38,7 +38,7 @@ import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
-import { QUOTED_HISTORY_LIMITS, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
+import { QUOTED_HISTORY_LIMITS, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
@@ -2122,11 +2122,11 @@ function buildRichNodesOf(root: Element, own: ReadonlySet<string>): BodyNode[] |
  * for the text part that renders instead: read under the detector's own bounds, never sanitized for
  * display. Past those bounds the answer is "unread" and the text folds only `>` runs.
  */
-export function unrenderedHtmlVerdict(html: string): QuotedVerdict {
+export function unrenderedHtmlVerdict(html: string, subject?: string | null): QuotedVerdict {
   if (html.length > QUOTED_HISTORY_LIMITS.chars || !treeWithin(html, { elements: QUOTED_HISTORY_LIMITS.nodes }).fits) return "unread";
   const doc = new DOMParser().parseFromString(html, "text/html");
   const sheets = [...doc.head.querySelectorAll("style")].map((el) => el.textContent ?? "");
-  return quotedHistoryVerdictOfHtml(doc.body as unknown as QuotedDomNode, quotedDomTree, { sheets });
+  return quotedHistoryVerdictOfHtml(doc.body as unknown as QuotedDomNode, quotedDomTree, { sheets, subject });
 }
 
 export interface SanitizeOptions {
@@ -2172,6 +2172,8 @@ export interface SanitizeOptions {
    * reader that draws the toggle asks for it.
    */
   history?: boolean;
+  /** The message's subject, read with {@link history}: a forward's prefix keeps the forwarded message open. */
+  subject?: string | null;
 }
 
 export interface SanitizedMail {
@@ -2719,7 +2721,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // Last, because it cuts the tree: everything above is about the whole document.
   const folded = opts.history === true
     ? foldSanitized(sanitized, {
-      prose: rich !== null, blocked, cids, links, met, walk: (holder) => buildRichNodesOf(holder, ownImages),
+      prose: rich !== null, blocked, cids, links, met, walk: (holder) => buildRichNodesOf(holder, ownImages), subject: opts.subject,
     })
     : null;
   return {
@@ -3389,6 +3391,8 @@ export interface MessageBodyProps {
   text: string;
   /** The stored `text/html` part, or `null`. Sensitive mail stores none (pipeline.ts). */
   html?: string | null;
+  /** The message's subject: a forward's prefix ("WG:", "Fwd:") keeps the message it forwards out of the history fold. */
+  subject?: string | null;
   /** Whether the reader has already consented to remote content for THIS message. */
   remoteLoaded?: boolean;
   /**
@@ -3509,6 +3513,7 @@ export function MessageBody({
   messageId,
   text,
   html,
+  subject = null,
   remoteLoaded = false,
   imageProxy = null,
   onLoadRemote,
@@ -3638,7 +3643,7 @@ export function MessageBody({
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
-      loadPixels: loadTrackingPixels, hasText, darkWanted,
+      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject),
     };
     const kept = cache?.read(inputs);
     if (kept) return kept.value;
@@ -3650,11 +3655,11 @@ export function MessageBody({
     // The length first, so a part past it is parsed by nobody; then the tree the first parse in
     // `sanitizeMailHtml` would build, counted under a budget before anything else parses it.
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
-      return { state: "oversize" as const, historyAt: unrenderedHtmlVerdict(html) };
+      return { state: "oversize" as const, historyAt: unrenderedHtmlVerdict(html, subject) };
     }
     const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links, fold, historyAt = "unread" } =
       sanitizeMailHtml(html, {
-        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true,
+        imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject,
       });
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
@@ -3735,7 +3740,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId]);
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject]);
 
   /**
    * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
@@ -4122,7 +4127,7 @@ export function MessageBody({
   }, [onNotice, noticeKind, noticeCaption, noticeText]);
 
   // ── no html, or nothing left after sanitizing: the text part, unchanged ──
-  if (!mail) return <BodyText text={text} />;
+  if (!mail) return <BodyText text={text} subject={subject} />;
 
   // ── a DOM the sanitizer could not use (a server render), or an html part past the size
   //    cap. Both render the text WITH THE REASON — never the raw html, never a blank frame. ──
@@ -4132,7 +4137,7 @@ export function MessageBody({
         {/* Before the mount the sanitizer is not asked yet: this text is a stand-in for the
             frame about to replace it, and its top is no top (the read rule waits, `reader-seen.ts`). */}
         {mounted ? null : <span data-body-pending="" hidden />}
-        <BodyText text={text} htmlFold={mail.historyAt} />
+        <BodyText text={text} htmlFold={mail.historyAt} subject={subject} />
         <p className="mb-note">
           {mail.state === "oversize" ? COPY.oversize : COPY.unsupported}
         </p>
@@ -4285,8 +4290,8 @@ export function MessageBody({
         mail.fold?.rich
           ? <BodyText text={text} rich={mail.rich} richHistory={mail.fold.rich} ownImages={ownImages} foldKey={foldId} />
           : mail.fold
-            ? <BodyText text={text} foldKey={foldId} htmlFold={mail.fold.at} />
-            : <BodyText text={text} rich={mail.rich} ownImages={ownImages} htmlFold={mail.historyAt} />
+            ? <BodyText text={text} foldKey={foldId} htmlFold={mail.fold.at} subject={subject} />
+            : <BodyText text={text} rich={mail.rich} ownImages={ownImages} htmlFold={mail.historyAt} subject={subject} />
       ) : (
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light

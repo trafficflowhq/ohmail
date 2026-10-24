@@ -3,7 +3,7 @@ import { DEFAULT_DORMANCY_DAYS, LEGACY_NEWS_FOLDER, SCREENING_AUTH_VERDICTS, typ
 import type { ServiceContext } from "./context.js";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 import {
-  activeSenderExpr, anyOf, cutlineArms, cutlineInstant, destinationIsDecisionSql, heldClaimWaitsSql, perMailboxSql,
+  activeSenderExpr, anyOf, cutlineArms, cutlineInstant, destinationIsDecisionSql, heldArrivedInsideSql, heldClaimWaitsSql, perMailboxSql,
   resolveCutline, ruleMatchKeySql, senderHasHeldClaimSql, senderIsDecidedSql, senderIsOwnSql, type CutlineSet,
   type ResolvedCutline,
 } from "@trafficflow/db";
@@ -212,7 +212,13 @@ export async function cutlineCounts(
                recordedAt: sql`m.created_at`, mailboxId: sql`m.mailbox_id`,
                sender: sql`lower(m.from_address)`, auth: sql`m.auth_verdict`, brand: sql`m.sender_check_brand`,
              }, set, SCREENING_AUTH_VERDICTS))}
-               as held_claim
+               as held_claim,
+             -- A letter at the gate that arrived inside the cutline, whatever its Date: the queue's term.
+             ${anyOf(heldArrivedInsideSql(d, {
+               folder: sql`fs.desired_folder`, deletedAt: sql`m.deleted_at`, date: sql`m.date`,
+               arrivedAt: sql`m.arrived_at`, recordedAt: sql`m.created_at`, mailboxId: sql`m.mailbox_id`,
+             }, set))}
+               as held_arrival
         from messages m
         join folder_state fs on fs.message_id = m.id
        where m.account_id = ${d.castUuid(ctx.accountId)}
@@ -237,7 +243,7 @@ export async function cutlineCounts(
                                where dd.m = ${d.substr(sql`i.addr`, sql`${d.strpos(sql`i.addr`, sql`'@'`)} + 1`)}))
               or ${senderIsDecidedSql(d, ctx.accountId, sql`i.addr`)})
               and not ${senderHasHeldClaimSql(d, ctx.accountId, sql`i.addr`, set, SCREENING_AUTH_VERDICTS)}) as decided,
-             (${active} or i.held_claim) as active
+             (${active} or i.held_claim or i.held_arrival) as active
         from inbound i
     )${perMailbox === null ? sql`` : sql`,
     per_sender as (

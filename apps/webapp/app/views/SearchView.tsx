@@ -766,7 +766,8 @@ export function SearchView({
       {ready?.importing && !ready.fromMirror ? (
         <span className="search-indexing" data-testid="search-syncing">{" "}{t("syncing")}</span>
       ) : null}
-      {ready?.bounded && walker.atEnd() ? (
+      {/* A count that landed as exactly 0 has no best matches to show, nor a rest to walk. */}
+      {ready?.bounded && walker.atEnd() && !(ready.totalExact && ready.total === 0) ? (
         <span className="search-bounded" data-testid="search-bounded">
           {" "}{t("bounded", { count: storeLength })}
         </span>

@@ -216,6 +216,119 @@ export interface SearchDocumentParts {
 export interface MailWordArms {
   readonly head: SearchArm;
   readonly text: SearchArm;
+  /** `text` reads the whole letter: each operand in any part, joined as typed ({@link straddlesParts}). */
+  readonly across?: boolean;
+  /**
+   * No excluded operand anywhere in the letter. Not in `head` or `text`: the caller holds every arm
+   * and the typo tier to it, on rows an arm has already cut where the store can.
+   */
+  readonly excluded?: SQL;
+  /**
+   * With an exclusion, one per `or` group: `pred`, every operand of the group in the text and no
+   * excluded one anywhere, read off the text index alone (an exclusion there is the index's own);
+   * `letter`, the group's operands each in any part. `whole`: one operand, so `pred` and `head` held
+   * to `excluded` are every match of the group, and `letter` is not read.
+   */
+  readonly alone?: ReadonlyArray<{ readonly pred: SQL; readonly letter: SQL; readonly whole: boolean }>;
+}
+
+/**
+ * Postgres's `english` stopwords (`tsearch_data/english.stop`), which its parser drops from a query
+ * and a part-word arm alike. `and`, `or` and `not` are among them, so FTS5's operator words go too.
+ * The device's index keeps every word, so a query that kept one asked for a word the server never asks for.
+ */
+export const ENGLISH_STOPWORDS: ReadonlySet<string> = new Set(`
+  i me my myself we our ours ourselves you your yours yourself yourselves he him his
+  himself she her hers herself it its itself they them their theirs themselves what which who
+  whom this that these those am is are was were be been being have has had
+  having do does did doing a an the and but if or because as until while
+  of at by for with about against between into through during before after above below to
+  from up down in out on off over under again further then once here there when
+  where why how all any both each few more most other some such no nor not
+  only own same so than too very s t can will just don should now
+`.trim().split(/\s+/));
+
+/** Between words, as `websearch_to_tsquery` reads them: `! & | ( ) < :` separate ANDed words. */
+const QUERY_SEPARATOR = /[\s!&|()<:]/u;
+/** A join the server's parser keeps inside one token (`sign-in`, `3.14`, `and/or`, an address). */
+const WORD_JOIN = /^[-./@]$/;
+
+/** One typed operand's letter-and-digit runs, a stopword at either end dropped unless joined; null if none stay. */
+export function operandRuns(text: string): string[] | null {
+  const runs = [...text.matchAll(/[\p{L}\p{N}]+/gu)].map((m) => ({ w: m[0], at: m.index, end: m.index + m[0].length }));
+  const bound = (i: number): boolean =>
+    (i > 0 && WORD_JOIN.test(text.slice(runs[i - 1]!.end, runs[i]!.at)))
+    || (i < runs.length - 1 && WORD_JOIN.test(text.slice(runs[i]!.end, runs[i + 1]!.at)));
+  const drop = (i: number): boolean => ENGLISH_STOPWORDS.has(runs[i]!.w.toLowerCase()) && !bound(i);
+  let lo = 0;
+  let hi = runs.length - 1;
+  while (lo <= hi && drop(lo)) lo++;
+  while (hi >= lo && drop(hi)) hi--;
+  return lo > hi ? null : runs.slice(lo, hi + 1).map((r) => r.w);
+}
+
+/** One operand as typed: a word, a punctuated word or a quoted span. */
+export interface QueryOperand { readonly text: string; readonly quoted: boolean }
+/** A query's operands: `or`-separated groups of ANDed operands, and the excluded ones. */
+export interface QueryOperands {
+  readonly any: ReadonlyArray<ReadonlyArray<QueryOperand>>;
+  readonly none: ReadonlyArray<QueryOperand>;
+}
+
+/**
+ * THE QUERY'S OPERANDS, as `websearch_to_tsquery` reads the typed text: a quoted span or a run of
+ * non-separators is one operand, `-` before one excludes it (`--` does not), a bare `or` between
+ * operands starts another group, and an operand of stopwords alone is dropped. Both stores read a
+ * query's structure from here.
+ */
+export function queryOperandsOf(q: string): QueryOperands {
+  const any: QueryOperand[][] = [[]];
+  const none: QueryOperand[] = [];
+  for (const { text, quoted, negated } of queryTokens(q)) {
+    if (!quoted && !negated && /^or$/i.test(text)) {
+      if (any[any.length - 1]!.length > 0) any.push([]);
+      continue;
+    }
+    if (operandRuns(text) === null) continue;
+    (negated ? none : any[any.length - 1]!).push({ text, quoted });
+  }
+  if (any[any.length - 1]!.length === 0) any.pop();
+  return { any, none };
+}
+
+/** Every typed token, `or` and stopwords included: a quoted span or a run of non-separators. */
+function queryTokens(q: string): Array<QueryOperand & { readonly negated: boolean }> {
+  const out: Array<QueryOperand & { readonly negated: boolean }> = [];
+  let dashes = 0;
+  for (let i = 0; i < q.length;) {
+    const c = q[i]!;
+    if (QUERY_SEPARATOR.test(c)) { i++; continue; }
+    if (c === "-") { dashes++; i++; continue; }
+    let text: string;
+    const quoted = c === '"';
+    if (quoted) {
+      const close = q.indexOf('"', i + 1);
+      text = q.slice(i + 1, close < 0 ? q.length : close);
+      i = close < 0 ? q.length : close + 1;
+    } else {
+      let j = i;
+      while (j < q.length && q[j] !== '"' && !QUERY_SEPARATOR.test(q[j]!)) j++;
+      text = q.slice(i, j);
+      i = j;
+    }
+    out.push({ text, quoted, negated: dashes % 2 === 1 });
+    dashes = 0;
+  }
+  return out;
+}
+
+/**
+ * Can the operands sit in different parts of one letter: two ANDed, or one excluded? Past
+ * {@link PART_MAX_WORDS} operands no: each costs one index read per part, so the query is read per part.
+ */
+export function straddlesParts(ops: QueryOperands): boolean {
+  const total = ops.none.length + ops.any.reduce((n, g) => n + g.length, 0);
+  return total <= PART_MAX_WORDS && (ops.none.length > 0 || ops.any.some((g) => g.length > 1));
 }
 
 /**
@@ -224,11 +337,14 @@ export interface MailWordArms {
  * while the account's backfill is unfinished. `null` on a store whose word index covers every row.
  */
 export interface UnindexedMailArms {
+  /** Per part, whatever the query: a predicate across the two tables is served by neither GIN. */
   readonly words: MailWordArms;
   /** {@link Dialect.search.partWords} over the pre-0125 columns; `null` when the query has no part. */
   readonly part: MailWordArms | null;
   readonly substring: readonly SearchArm[];
   readonly fuzzy: readonly SearchArm[];
+  /** No excluded operand in the subject or the body: what the typo tier's guesses hold. */
+  readonly excluded?: SQL;
 }
 
 /** From this many characters a query word is also read as the START of a longer word. */
@@ -256,6 +372,31 @@ export function partWordsOf(q: string): string[] | null {
   const words = q.match(/[\p{L}\p{N}]+/gu) ?? [];
   if (words.length === 0 || words.length > PART_MAX_WORDS) return null;
   return words.some((w) => [...w].length >= PART_PREFIX_MIN_CHARS) ? words : null;
+}
+
+/** Does the part-word arm keep word `i`: not a stopword, unless the last and long (`over` starts `overview`)? */
+export function partWordKept(words: readonly string[], i: number): boolean {
+  return !ENGLISH_STOPWORDS.has(words[i]!.toLowerCase()) || (i === words.length - 1 && [...words[i]!].length >= PART_PREFIX_MIN_CHARS);
+}
+
+/**
+ * The part-word arm's kept words ({@link partWordsOf} indices) of each typed token that keeps one,
+ * when the query straddles the letter's parts and two tokens do; else null, and the arm reads the
+ * query per part. A token's words stay in one part: `anna@club.ch` is never `anna` in the sender
+ * and `club` in the text.
+ */
+export function partOperandsOf(q: string): number[][] | null {
+  const words = partWordsOf(q);
+  if (words === null || !straddlesParts(queryOperandsOf(q))) return null;
+  const out: number[][] = [];
+  let at = 0;
+  for (const { text } of queryTokens(q)) {
+    const n = (text.match(/[\p{L}\p{N}]+/gu) ?? []).length;
+    const kept = Array.from({ length: n }, (_, j) => at + j).filter((i) => partWordKept(words, i));
+    if (kept.length > 0) out.push(kept);
+    at += n;
+  }
+  return at === words.length && out.length > 1 ? out : null;
 }
 
 /**

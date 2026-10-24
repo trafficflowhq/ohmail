@@ -48,15 +48,18 @@ const ZONE = "Europe/Zurich";
 const LATE = new Date("2026-09-12T21:59:00.000Z");
 /** 00:01 local on 13 September — the same open app, two minutes later. */
 const PAST_MIDNIGHT = new Date("2026-09-12T22:01:00.000Z");
+/** 05:01 local on the 13th — the strip left open through the night ("Tomorrow" is the 14th). */
+const NEXT_MORNING = new Date("2026-09-13T03:01:00.000Z");
 /** 22:00 local on the 12th: a minute's tick from here cannot cross midnight. */
 const EVENING = new Date("2026-09-12T20:00:00.000Z");
 /**
- * 23:59 local on SUNDAY 13 September, and 00:01 on the Monday. "Next week" is the discriminating
+ * 04:59 local on SUNDAY 13 September, and 00:01 on the Monday. "Next week" is the discriminating
  * pair: from the Sunday the coming Monday is the 14th, from the Monday it is the 21st — a control
  * chosen from a subject that HAS the property under test, which the Saturday pair does not (both
- * sides of that midnight answer the 14th).
+ * sides of that midnight answer the 14th). In the small hours, because from 05:00 on a Sunday
+ * "Next week" is Tomorrow's Monday and is not offered.
  */
-const SUNDAY_LATE = new Date("2026-09-13T21:59:00.000Z");
+const SUNDAY_SMALL_HOURS = new Date("2026-09-13T02:59:00.000Z");
 const MONDAY_EARLY = new Date("2026-09-13T22:01:00.000Z");
 
 /** The calendar day an instant reads as WHERE THE READER IS. */
@@ -163,18 +166,19 @@ afterEach(async () => {
 });
 
 describe("the horizon is minted from the clock at the press", () => {
-  it("mounted at 23:59 and pressed at 00:01, Tomorrow is the NEW tomorrow", async () => {
+  it("mounted at 23:59 and pressed at 05:01, Tomorrow is the NEW tomorrow", async () => {
     await mountBar();
     await openStrip();
-    // The day turns while the strip stands open — nothing re-mounts, nothing re-renders.
-    clock = PAST_MIDNIGHT;
+    // The day turns while the strip stands open — nothing re-mounts, nothing re-renders. Past
+    // the small hours, because until 05:00 "Tomorrow" is the coming morning, the 13th.
+    clock = NEXT_MORNING;
     await act(async () => { byText("Tomorrow").click(); });
     expect(readerDay(booked()), "the booking came from the day the app was opened on")
       .toBe("2026-09-14");
   });
 
   it("Next week moves with it", async () => {
-    clock = SUNDAY_LATE;
+    clock = SUNDAY_SMALL_HOURS;
     await mountBar();
     await openStrip();
     clock = MONDAY_EARLY;
@@ -185,7 +189,7 @@ describe("the horizon is minted from the clock at the press", () => {
   });
 
   it("…and from the Sunday it would have been the 14th (the pair's other side)", async () => {
-    clock = SUNDAY_LATE;
+    clock = SUNDAY_SMALL_HOURS;
     await mountBar();
     await openStrip();
     await act(async () => { byText("Next week").click(); });

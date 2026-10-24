@@ -295,7 +295,7 @@ export {
   type AwayThrottle, type AwayResponderPassDeps, type AwayResponderPassResult,
 } from "./away-responder-pass.js";
 export {
-  SendService, sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS,
+  SendService, sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_MIRROR_MS,
   SEND_SUBMISSION_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_COPY_GRACE_MS, SEND_COPY_RETRY_WAITS_MS,
   SEND_UPLOAD_DROPPED_SENTENCE, SEND_REFUSED_BY_SERVER_SENTENCE, type SendCopyTiming,
   SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS, inUnverifiedProbeWindow, SEND_FAILED_SENTENCE,
@@ -320,16 +320,17 @@ export {
 // Blocking precondition for the "delete your account anytime"
 // sentence on the landing page.
 export {
-  deleteAccount, erasureOutcome, type DeleteAccountResult,
+  deleteAccount, erasureOutcome, ErasureUnwarnedError, type DeleteAccountResult,
 } from "./account-deletion-service.js";
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
 // the erasure door, one account per call, through the same path DELETE /account runs.
 export {
   runAccountLifecyclePass, eraseOneDueAccount, noticesDue, erasureDue, erasureClearsEpoch,
+  connectReminderDue, CONNECT_REMINDER_AFTER_MS,
   TRIAL_REMINDER_AHEAD_MS, ERASURE_REMINDER_AHEAD_MS, ERASURE_SLACK_MS,
   ACCOUNT_LIFECYCLE_BUDGET_MS, ERASURE_DUE_PER_RUN,
   type AccountLifecyclePassDeps, type AccountLifecyclePassResult, type LifecycleNoticeMailer,
-  type EraseOneOutcome,
+  type EraseOneOutcome, type ConnectReminderMode,
 } from "./account-lifecycle-pass.js";
 export * from "./auth/index.js";
 // Transactional mail: MailerPort, the policy layer above it, and the templates —

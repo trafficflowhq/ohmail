@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { accessOf, type AccessFeed } from "../src/net/account";
-import { capGigabytes, storageNoticeKey, storageNoticeOf, storageNoticeText } from "../src/ui/storage-notice";
+import {
+  capGigabytes, storageNoticeCap, storageNoticeKey, storageNoticeOf, storageNoticeText, type StorageLevel,
+} from "../src/ui/storage-notice";
 import { monthStamp } from "../src/ui/day-stamp";
 import {
   bindStorageNotices, putAwayStorageNotice, resetStorageNoticesForTests, storageNoticePutAway,
@@ -18,8 +20,11 @@ import type { SecureKV } from "../src/state/servers";
 
 const EMPTIED = {
   usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
-  firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 0,
+  firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 0, emptyingNow: true,
 };
+const FACTS = { ...EMPTIED, upgrade: "plan", planLimitBytes: null, limitDropsAt: null };
+const NEAR = { ...EMPTIED, usedBytes: 1_820_000_000, emptiedForSpace: 0, keptFrom: null };
+const none = (): boolean => false;
 const feed = (body: Record<string, unknown>): AccessFeed => ({ answer: accessOf(body)!, caughtUp: null, at: 0 });
 const open = (storage: unknown, state = "trialing") => ({
   metered: true, access: "open", lifecycle: { state, closedReason: null }, storage,
@@ -39,7 +44,19 @@ beforeEach(() => { resetStorageNoticesForTests(); });
 
 describe("the storage block", () => {
   it("is parsed from the access answer, and a malformed one is none", () => {
-    expect(accessOf(open(EMPTIED))!.storage).toEqual(EMPTIED);
+    expect(accessOf(open(EMPTIED))!.storage).toEqual(FACTS);
+    // An older server does not say whether the cap empties text now: only at the cap.
+    const { emptyingNow: _said, ...older } = EMPTIED;
+    expect(accessOf(open(older))!.storage?.emptyingNow).toBe(false);
+    expect(accessOf(open({ ...older, usedBytes: 2_000_000_000 }))!.storage?.emptyingNow).toBe(true);
+    // The trial's floor: the plan's lower limit and when it applies, or nothing.
+    const carry = { ...EMPTIED, limitBytes: 4_000_000_000, planLimitBytes: 2_000_000_000 };
+    expect(accessOf(open({ ...carry, limitDropsAt: "2026-11-08T12:00:00.000Z" }))!.storage)
+      .toMatchObject({ planLimitBytes: 2_000_000_000, limitDropsAt: "2026-11-08T12:00:00.000Z" });
+    expect(accessOf(open({ ...carry, limitDropsAt: "soon" }))!.storage?.limitDropsAt).toBeNull();
+    expect(accessOf(open({ ...carry, planLimitBytes: 4_000_000_000 }))!.storage?.planLimitBytes).toBeNull();
+    expect(accessOf(open({ ...EMPTIED, upgrade: "addon" }))!.storage?.upgrade).toBe("addon");
+    expect(accessOf(open({ ...EMPTIED, upgrade: "gold" }))!.storage?.upgrade).toBe("plan");
     expect(accessOf(open({ ...EMPTIED, keptFrom: "April" }))!.storage?.keptFrom).toBeNull();
     expect(accessOf(open({ ...EMPTIED, limitBytes: 0 }))!.storage).toBeUndefined();
     expect(accessOf(open(undefined))!.storage).toBeUndefined();
@@ -55,26 +72,30 @@ describe("the storage block", () => {
 
 describe("when the notice is due, and what it offers", () => {
   it("due while letters are emptied; a trial is offered a bigger plan, a paid account the add-on too", () => {
-    expect(storageNoticeOf(feed(open(EMPTIED)), false, "sideload"))
-      .toEqual({ facts: EMPTIED, current: true, plan: "trial", manage: true });
-    expect(storageNoticeOf(feed(open(EMPTIED, "active")), false, "sideload")?.plan).toBe("active");
+    expect(storageNoticeOf(feed(open(EMPTIED)), none, "sideload"))
+      .toEqual({ facts: FACTS, level: "full", current: true, plan: "trial", manage: true });
+    expect(storageNoticeOf(feed(open(EMPTIED, "active")), none, "sideload")?.plan).toBe("active");
   });
 
   it("the store face names no plan and offers no press", () => {
-    expect(storageNoticeOf(feed(open(EMPTIED)), false, "store"))
-      .toEqual({ facts: EMPTIED, current: true, plan: null, manage: false });
+    expect(storageNoticeOf(feed(open(EMPTIED)), none, "store"))
+      .toEqual({ facts: FACTS, level: "full", current: true, plan: null, manage: false });
+    // Near the cap the store face says so, with no purchase.
+    const near = storageNoticeOf(feed(open(NEAR, "active")), none, "store")!;
+    expect(storageNoticeText(near, EN, "en")).toContain("Storage is nearly full.");
+    expect(storageNoticeText(near, EN, "en")).not.toMatch(/bigger plan|add-on/);
   });
 
   it("past due or in grace: the press stays, no plan and no add-on is offered", () => {
     for (const state of ["past_due", "grace"]) {
-      const n = storageNoticeOf(feed(open(EMPTIED, state)), false, "sideload")!;
+      const n = storageNoticeOf(feed(open(EMPTIED, state)), none, "sideload")!;
       expect({ plan: n.plan, manage: n.manage }, state).toEqual({ plan: null, manage: true });
       expect(storageNoticeText(n, EN, "en"), state).not.toMatch(/bigger plan|add-on/);
     }
   });
 
   it("upgraded to 10 GB, 19% used: what happened then, without the cap and without an offer", () => {
-    const n = storageNoticeOf(feed(open({ ...EMPTIED, limitBytes: 10_000_000_000 }, "active")), false, "sideload")!;
+    const n = storageNoticeOf(feed(open({ ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false }, "active")), none, "sideload")!;
     expect({ current: n.current, plan: n.plan }).toEqual({ current: false, plan: null });
     const said = storageNoticeText(n, EN, "en");
     expect(said).toContain("To stay within your plan's storage at the time, ohmail stopped storing the text of your 80,000 oldest letters.");
@@ -84,19 +105,19 @@ describe("when the notice is due, and what it offers", () => {
   });
 
   it("at the cap of a trial: the cap, the month, and a bigger plan", () => {
-    const said = storageNoticeText(storageNoticeOf(feed(open(EMPTIED)), false, "sideload")!, EN, "en");
+    const said = storageNoticeText(storageNoticeOf(feed(open(EMPTIED)), none, "sideload")!, EN, "en");
     expect(said).toContain("To stay within your plan's 2 GB, ohmail no longer stores the text of your 80,000 oldest letters.");
     expect(said).toContain("Text is kept for letters from April 2019 on.");
     expect(said).toContain("A bigger plan keeps more text from now on.");
-    expect(storageNoticeText(storageNoticeOf(feed(open(EMPTIED)), false, "sideload")!, DE, "de"))
+    expect(storageNoticeText(storageNoticeOf(feed(open(EMPTIED)), none, "sideload")!, DE, "de"))
       .toContain("Für Nachrichten ab April 2019 bleibt der Text gespeichert.");
   });
 
   it("letters that arrived while the storage was full are counted apart, never as the oldest", () => {
-    const said = storageNoticeText(storageNoticeOf(feed(open({ ...EMPTIED, withheldOnArrival: 12 })), false, "sideload")!, EN, "en");
+    const said = storageNoticeText(storageNoticeOf(feed(open({ ...EMPTIED, withheldOnArrival: 12 })), none, "sideload")!, EN, "en");
     expect(said).toContain("ohmail no longer stores the text of your 79,988 oldest letters.");
     expect(said).toContain("Text is kept for letters from April 2019 on, apart from 12 letters that arrived while your storage was full.");
-    const only = storageNoticeOf(feed(open({ ...EMPTIED, emptiedForSpace: 2, withheldOnArrival: 2, keptFrom: null })), false, "sideload")!;
+    const only = storageNoticeOf(feed(open({ ...EMPTIED, emptiedForSpace: 2, withheldOnArrival: 2, keptFrom: null })), none, "sideload")!;
     expect(storageNoticeText(only, EN, "en")).toContain("2 letters that arrived while your storage was full are stored without their text.");
     expect(storageNoticeText(only, EN, "en")).not.toContain("oldest");
     expect(storageNoticeText(only, DE, "de"))
@@ -104,10 +125,100 @@ describe("when the notice is due, and what it offers", () => {
   });
 
   it("nothing emptied, no block, put away, or no feed: nothing drawn", () => {
-    expect(storageNoticeOf(feed(open({ ...EMPTIED, emptiedForSpace: 0 })), false, "sideload")).toBeNull();
-    expect(storageNoticeOf(feed(open(undefined)), false, "sideload")).toBeNull();
-    expect(storageNoticeOf(feed(open(EMPTIED)), true, "sideload")).toBeNull();
-    expect(storageNoticeOf(null, false, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open({ ...EMPTIED, emptiedForSpace: 0, usedBytes: 1_000 })), none, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open(undefined)), none, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open(EMPTIED)), () => true, "sideload")).toBeNull();
+    expect(storageNoticeOf(null, none, "sideload")).toBeNull();
+  });
+});
+
+describe("the upgrade message at ninety percent and at the cap, by plan", () => {
+  const said = (storage: Record<string, unknown>, state: string): string =>
+    storageNoticeText(storageNoticeOf(feed(open(storage, state)), none, "sideload")!, EN, "en");
+
+  it("near the cap: what will happen and what keeps more, before any text is emptied", () => {
+    const trial = said(NEAR, "trialing");
+    expect(trial).toContain("Storage is nearly full.");
+    expect(trial).toContain("A bigger plan keeps more text from now on.");
+    expect(trial).not.toContain("does not bring back");
+    expect(said({ ...NEAR, usedBytes: 2_000_000_000 }, "active")).toContain("Storage is full.");
+  });
+
+  it("Solo and Plus: a bigger plan or the add-on; Pro: the add-on alone; a Pro trial: once paid", () => {
+    for (const limitBytes of [2_000_000_000, 5_000_000_000]) {
+      expect(said({ ...EMPTIED, limitBytes, usedBytes: limitBytes * 0.9 }, "active"), String(limitBytes))
+        .toContain("A bigger plan or the storage add-on keeps more text from now on.");
+    }
+    const pro = said({ ...EMPTIED, limitBytes: 10_000_000_000, usedBytes: 9_000_000_000, upgrade: "addon" }, "active");
+    expect(pro).toContain("The storage add-on keeps more text from now on.");
+    expect(pro).not.toContain("bigger plan");
+    expect(pro).toContain("does not bring back");
+    expect(said({ ...NEAR, limitBytes: 10_000_000_000, usedBytes: 9_500_000_000, upgrade: "addon" }, "trialing"))
+      .toContain("Once your subscription is paid, the storage add-on keeps more text from now on.");
+    expect(storageNoticeText(storageNoticeOf(feed(open({ ...EMPTIED, upgrade: "addon" }, "active")), none, "sideload")!, DE, "de"))
+      .toContain("Das Speicher-Add-on speichert ab jetzt mehr Text.");
+  });
+
+  it("text emptied under the old cap, then a bigger plan: nearing the new cap is near, never the new cap emptying", () => {
+    const upgraded = { ...EMPTIED, limitBytes: 5_000_000_000, emptyingNow: false };
+    const n = storageNoticeOf(feed(open({ ...upgraded, usedBytes: 4_600_000_000 }, "active")), none, "sideload")!;
+    expect(n.level).toBe("near");
+    const near = storageNoticeText(n, EN, "en");
+    expect(near).toContain("To stay within your plan's storage at the time, ohmail stopped storing the text of your 80,000 oldest letters.");
+    expect(near).toContain("Storage is nearly full.");
+    expect(near).not.toContain("To stay within your plan's 5 GB");
+    expect(storageNoticeOf(feed(open({ ...upgraded, usedBytes: 4_300_000_000 }, "active")), none, "sideload")?.level).toBe("past");
+  });
+
+  it("put away at a level, it comes back at a worse one or under a new cap", () => {
+    const held = new Set([storageNoticeKey("a", "near", 2_000_000_000)]);
+    const putAway = (level: StorageLevel, cap: number | string) => held.has(storageNoticeKey("a", level, cap));
+    expect(storageNoticeOf(feed(open(NEAR, "active")), putAway, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open(EMPTIED, "active")), putAway, "sideload")?.level).toBe("full");
+    held.add(storageNoticeKey("a", "full", 2_000_000_000));
+    held.delete(storageNoticeKey("a", "near", 2_000_000_000));
+    expect(storageNoticeOf(feed(open(NEAR, "active")), putAway, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open({ ...NEAR, limitBytes: 5_000_000_000, usedBytes: 4_600_000_000 }, "active")), putAway, "sideload")?.level)
+      .toBe("near");
+  });
+});
+
+describe("inside the trial's 4 GB floor, before the plan's own limit applies", () => {
+  const CARRY = {
+    usedBytes: 3_500_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null,
+    withheldOnArrival: 0, emptyingNow: false, planLimitBytes: 2_000_000_000,
+  };
+  const said = (storage: Record<string, unknown>, state: string, deck = EN, locale = "en"): string =>
+    storageNoticeText(storageNoticeOf(feed(open(storage, state)), none, "sideload")!, deck, locale);
+
+  it("a Solo trial at 3.5 of 4 GB is told before anything is emptied, and offered a bigger plan", () => {
+    const trial = said({ ...CARRY, limitDropsAt: null }, "trialing");
+    expect(trial).toContain(
+      "Until 14 days after your first payment, ohmail keeps up to 4 GB of letter text. From then on your plan keeps 2 GB, "
+      + "and ohmail stops storing the text of your oldest letters beyond it.");
+    expect(trial).toContain("A bigger plan keeps more text from now on.");
+    expect(trial).not.toMatch(/Storage is (nearly )?full/);
+    expect(storageNoticeOf(feed(open({ ...CARRY, usedBytes: 1_700_000_000, limitDropsAt: null })), none, "sideload")).toBeNull();
+  });
+
+  it("a paid Solo inside the 14 days is told the date, and offered the plan or the add-on", () => {
+    const paid = said({ ...CARRY, limitDropsAt: "2026-11-08T12:00:00.000Z" }, "active");
+    expect(paid).toContain("Until November 8, 2026, ohmail keeps up to 4 GB of letter text. From then on your plan keeps 2 GB");
+    expect(paid).toContain("A bigger plan or the storage add-on keeps more text from now on.");
+    expect(said({ ...CARRY, limitDropsAt: "2026-11-08T12:00:00.000Z" }, "active", DE, "de"))
+      .toContain("Bis zum 8. November 2026 speichert ohmail bis zu 4 GB Nachrichtentext. Danach umfasst dein Tarif 2 GB");
+  });
+
+  it("put away inside the floor, it comes back once a payment dates it and once the plan's limit applies", () => {
+    const held = new Set<string>();
+    const putAway = (level: StorageLevel, cap: number | string) => held.has(storageNoticeKey("a", level, cap));
+    const n = storageNoticeOf(feed(open({ ...CARRY, limitDropsAt: null })), putAway, "sideload")!;
+    expect(n.level).toBe("carry");
+    held.add(storageNoticeKey("a", n.level, storageNoticeCap(n.facts)));
+    expect(storageNoticeOf(feed(open({ ...CARRY, limitDropsAt: null })), putAway, "sideload")).toBeNull();
+    expect(storageNoticeOf(feed(open({ ...CARRY, limitDropsAt: "2026-11-08T12:00:00.000Z" }, "active")), putAway, "sideload")?.level)
+      .toBe("carry");
+    expect(storageNoticeOf(feed(open({ ...EMPTIED, usedBytes: 1_800_000_000 }, "active")), putAway, "sideload")?.level).toBe("full");
   });
 });
 
@@ -115,7 +226,7 @@ describe("putting it away", () => {
   it("is kept in the keystore, so the next launch reads it back", async () => {
     const kv = memoryKV();
     await bindStorageNotices(kv);
-    const key = storageNoticeKey("owner-a");
+    const key = storageNoticeKey("owner-a", "full", 2_000_000_000);
     putAwayStorageNotice(key);
     await storageNoticeWritesSettled();
     expect(JSON.parse(kv.map.get(STORAGE_NOTICE_KEY)!)).toEqual([key]);
@@ -123,7 +234,7 @@ describe("putting it away", () => {
     expect(storageNoticePutAway(key)).toBe(false);
     await bindStorageNotices(kv);
     expect(storageNoticePutAway(key)).toBe(true);
-    expect(storageNoticePutAway(storageNoticeKey("owner-b"))).toBe(false);
+    expect(storageNoticePutAway(storageNoticeKey("owner-b", "full", 2_000_000_000))).toBe(false);
   });
 
   it("a keystore that refuses keeps it for this run", async () => {
@@ -157,7 +268,7 @@ describe("the copy", () => {
     expect(EN.liveBodyWithheld).toContain("space was full when it arrived");
     expect(EN.liveBodyWithheld).toContain("it does not bring this text back");
     expect(DE.liveBodyWithheld).toContain("diesen bringt er nicht zurück");
-    expect(EN.storageNoticeTrial).toContain("does not bring back");
-    expect(DE.storageNoticeActive).toContain("nicht zurück");
+    expect(EN.storageNoticeNoRestore).toContain("does not bring back");
+    expect(DE.storageNoticeNoRestore).toContain("nicht zurück");
   });
 });

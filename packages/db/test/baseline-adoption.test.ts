@@ -278,7 +278,11 @@ describe("the baseline cutoff is frozen", () => {
     // redefined on an existing table, adopting nothing.
     // `- 30` → `- 31`: cloud 0051_alert_drills — ONE entry above the cutoff, a NEW table, its index
     // and a role-guarded grant on it, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 31);
+    // `- 31` → `- 32`: cloud 0052_lifecycle_notice_delivered — ONE entry above the cutoff, a column
+    // on an existing table and a backfill of its earlier rows, adopting nothing.
+    // `- 32` → `- 33`: cloud 0053_connect_reminder_notices — ONE entry above the cutoff, a CHECK
+    // redefined on an existing table, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 33);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -885,6 +889,9 @@ describe("the baseline cutoff is frozen", () => {
       // constant default), its CHECK dropped and re-added, the count of letters already emptied
       // filled from their marker, and a grant guarded on the staff role. Safe over any history.
       "0166_account_storage_facts",
+      // A Rules-page Change's re-filing: two nullable ADD COLUMN IF NOT EXISTS on rules, no data.
+      // Safe over any history.
+      "0167_rules_refile",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting
@@ -1000,6 +1007,12 @@ describe("the baseline cutoff is frozen", () => {
       // Alert drills: a new table and its index, IF NOT EXISTS, empty, and the staff role's grant
       // on it only where `ohmail_admin` exists. Safe over any history.
       "0051_alert_drills",
+      // A notice's delivery time: a nullable column, IF NOT EXISTS, and the pass's earlier rows
+      // stamped delivered (nothing can tell otherwise). Safe over any history that has not run it.
+      "0052_lifecycle_notice_delivered",
+      // The connect reminder's notice kind: the kind CHECK dropped IF EXISTS and added again NOT VALID,
+      // a superset of 0050's. Safe over any history.
+      "0053_connect_reminder_notices",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

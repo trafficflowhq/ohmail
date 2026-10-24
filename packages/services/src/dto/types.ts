@@ -1026,9 +1026,11 @@ export interface RuleDTO {
   /**
    * The backlog pass: when past mail was asked for (`null` = nobody asked) and when the
    * organizer's pass finished it (`null` = not yet). No count and no cursor: the count is taken
-   * from the filed folder and the cursor is the walk's own bookkeeping.
+   * from the filed folder and the cursor is the walk's own bookkeeping. `from` is where a Change
+   * takes the rule's mail from while a Rules-page re-filing is owed: its origin while it waits
+   * (`pendingRefileFrom`), the rule's own place once a page moved mail or the walk parked; else null.
    */
-  retro: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
+  retro: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null; from: Folder | null };
   /**
    * The act on suggestions wrote this rule and no person has decided about the sender since
    * (`rulesTheActWrote`). `false` for every other rule, and for a holder's rule read from its

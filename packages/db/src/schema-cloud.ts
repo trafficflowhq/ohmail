@@ -964,20 +964,23 @@ export const screenerSuggestOwed = pgTable("screener_suggest_owed", {
  * catch-up banner's row, in one of two states with one writer each: UNTOLD (`sent_at = anchor`),
  * planted by the hosted worker before its roster pass clears the facts it is dated from; TOLD, by
  * `GET /account/access` on the first open read, which also inserts it when it reads first
- * (`reopen-catch-up.ts`).
+ * (`reopen-catch-up.ts`). For the pass's three kinds `sent_at` is the claim and `delivered_at`
+ * (cloud 0052) the provider's acceptance; a retention erasure keeps its delivered `erasure_week` row.
  */
 export const accountLifecycleNotices = pgTable("account_lifecycle_notices", {
   accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
   kind: text("kind").notNull(),
   anchor: timestamp("anchor", { withTimezone: true }).notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 }, (t) => ({
   pk: primaryKey({ name: "account_lifecycle_notices_pk", columns: [t.accountId, t.kind, t.anchor] }),
-  // The closed set, at rest — the four kinds the pass and the access route write, and the staff
-  // billing link (cloud 0050). Declared here to keep the TS schema honest; the migrations create it.
+  // The closed set, at rest — the four kinds the pass and the access route write, the staff billing
+  // link (cloud 0050) and the connect reminder (cloud 0053). Declared here to keep the TS schema
+  // honest; the migrations create it.
   ckKind: check(
     "account_lifecycle_notices_kind_closed",
-    sql`${t.kind} in ('trial_two_days', 'closed', 'erasure_week', 'reopened', 'billing_link')`,
+    sql`${t.kind} in ('trial_two_days', 'closed', 'erasure_week', 'reopened', 'billing_link', 'connect_reminder')`,
   ),
 }));
 

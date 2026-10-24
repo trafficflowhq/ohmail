@@ -160,6 +160,115 @@ async function storeWith(messagesIn: EngineMessage[], drafts: EngineDraft[]): Pr
   return s;
 }
 
+/**
+ * ONE ACCOUNT'S DRAFTS ON A SERVER TWO DEVICES SHARE: rows, a change log, and the drafts and send
+ * routes' answers. Device A is a mounted shell (`mountShell(..., { server })`), device B a headless
+ * engine over the same server ({@link DraftServer.device}). A sent row's text is withheld from the log.
+ */
+export class DraftServer {
+  rows = new Map<string, EngineDraft>();
+  log: SyncChange[] = [];
+  constructor(seed: EngineDraft[] = []) {
+    for (const d of seed) this.commit({ ...d, contentRevision: `rev-${++seq}` }, "create");
+  }
+  private commit(d: EngineDraft, op: "create" | "update" | "delete"): SyncChange {
+    if (op === "delete") this.rows.delete(d.id);
+    else this.rows.set(d.id, d);
+    const entity = op === "delete" ? null
+      : d.status === "sent" ? { ...d, body: null, html: null, bodyOmitted: "sent" } : d;
+    const c = { type: "draft", op, id: d.id, seq: ++seq, updatedAt: NOW.toISOString(), entity } as unknown as SyncChange;
+    this.log.push(c);
+    return c;
+  }
+  /** The log after `cursor`, as `/sync` pages it. */
+  since(cursor: string | null | undefined): { changes: SyncChange[]; cursor: string } {
+    const from = Number(/^srv-(\d+)$/.exec(cursor ?? "")?.[1] ?? 0);
+    return { changes: this.log.slice(from), cursor: `srv-${this.log.length}` };
+  }
+  /**
+   * The routes: a create; an update with the version check, and on a sent row only an unstated
+   * restatement of its words (200, no seq), else 409 `draft_sent`; a delete; a send moves a draft to
+   * `sent`, and any other row answers 409 `conflict`. Other verbs are not this server's (`null`).
+   */
+  answer(m: EngineMutation): { changes: SyncChange[]; seq: number | null; entityId?: string; revision?: string } | null {
+    const refuse = (status: number, code: string): never => {
+      throw new MutationRejectedError(code, { status, code, retryable: false });
+    };
+    const at = NOW.toISOString();
+    if (m.kind === "draft_save") {
+      const fields = {
+        subject: m.subject, body: m.body, html: m.html ?? null, to: m.to, cc: m.cc, bcc: m.bcc,
+        ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
+      };
+      if (m.draftId === null) {
+        const id = `srv-row-${++seq}`;
+        const d = {
+          id, mailboxId: "mb1", threadId: m.threadId ?? null, inReplyToMessageId: m.inReplyToMessageId ?? null,
+          rationale: null, status: "draft", createdAt: at, updatedAt: at, contentRevision: `rev-${++seq}`, ...fields,
+        } as unknown as EngineDraft;
+        const c = this.commit(d, "create");
+        return { changes: [c], seq: c.seq, entityId: id, revision: d.contentRevision! };
+      }
+      const row = this.rows.get(m.draftId) ?? refuse(404, "not_found");
+      const who = (xs: readonly { address: string }[]): string => xs.map((a) => a.address.toLowerCase()).join(",");
+      const same = row.subject === m.subject && row.body === m.body && who(row.to) === who(m.to);
+      if (row.status === "sent") {
+        if (m.ifContentRevision === undefined && same) return { changes: [], seq: null, entityId: row.id };
+        refuse(409, "draft_sent");
+      }
+      if (row.status !== "draft") refuse(409, "send_recorded");
+      if (m.ifContentRevision !== undefined && m.ifContentRevision !== row.contentRevision) refuse(409, "draft_changed");
+      const d = { ...row, ...fields, updatedAt: at, contentRevision: `rev-${++seq}` } as EngineDraft;
+      const c = this.commit(d, "update");
+      return { changes: [c], seq: c.seq, entityId: row.id, revision: d.contentRevision! };
+    }
+    if (m.kind === "draft_discard") {
+      const row = this.rows.get(m.draftId) ?? refuse(404, "not_found");
+      const c = this.commit(row, "delete");
+      return { changes: [c], seq: c.seq };
+    }
+    if (m.kind === "mail_send") {
+      const row = m.draftId ? this.rows.get(m.draftId) : undefined;
+      if (m.draftId && row?.status !== "draft") refuse(409, "conflict");
+      const id = row?.id ?? `srv-row-${++seq}`;
+      const d = {
+        ...(row ?? { id, threadId: null, inReplyToMessageId: m.inReplyTo, rationale: null, createdAt: at }),
+        mailboxId: m.mailboxId ?? row?.mailboxId ?? "mb1", subject: m.subject ?? row?.subject ?? "", body: m.body,
+        html: m.html ?? null, to: m.to ?? row?.to ?? [], cc: m.cc ?? row?.cc ?? [], bcc: m.bcc ?? row?.bcc ?? [],
+        status: "sent", updatedAt: at,
+      } as unknown as EngineDraft;
+      const c = this.commit(d, row ? "update" : "create");
+      return { changes: [c], seq: c.seq };
+    }
+    return null;
+  }
+  /** Device B: a headless engine over this server, drained once. */
+  async device(): Promise<OhmailEngine> {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = new OhmailEngine({
+      store, now: () => NOW,
+      adapter: {
+        sync: async ({ since }: { since: string | null }) => {
+          const page = this.since(since);
+          return {
+            changes: {
+              creates: page.changes.filter((c) => c.op === "create"), updates: page.changes.filter((c) => c.op === "update"),
+              moves: [], deletes: page.changes.filter((c) => c.op === "delete"),
+            },
+            cursor: page.cursor, hasMore: false, serverTime: NOW.toISOString(),
+          };
+        },
+        mutate: async (m: EngineMutation) => this.answer(m) ?? { changes: [], seq: null },
+        withdrawSend: async () => ({ outcome: "unsupported" as const }),
+        fetchBody: async () => null,
+      },
+    } as never);
+    await engine.start();
+    return engine;
+  }
+}
+
 function engineOver(
   s: MirrorStore, sent: EngineMutation[], refuseSend: DraftShell["refuseSend"], saveGate: DraftShell["saveGate"],
   remote: SyncChange[] = [],
@@ -172,11 +281,14 @@ function engineOver(
   withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null },
   versions: Map<string, string> | null = null,
   loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false },
+  replayDeadlineMs?: number,
+  server?: DraftServer,
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
+    ...(replayDeadlineMs !== undefined ? { outboxReplayDeadlineMs: replayDeadlineMs } : {}),
     adapter: {
       sync: async () => {
         if (resync.armed) {
@@ -204,6 +316,14 @@ function engineOver(
           resync.phase = 0;
           if (resync.gate) await resync.gate;
         }
+        if (server !== undefined) {
+          const page = server.since(s.getCursor());
+          const all = [...page.changes, ...remote.splice(0).map((c) => ({ ...c, seq: ++seq }))];
+          return {
+            changes: { creates: all.filter((c) => c.op !== "delete"), updates: [], moves: [], deletes: all.filter((c) => c.op === "delete") },
+            cursor: page.cursor, hasMore: false, serverTime: NOW.toISOString(),
+          };
+        }
         const changes = remote.splice(0).map((c) => ({ ...c, seq: ++seq }));
         return {
           changes: {
@@ -228,6 +348,25 @@ function engineOver(
           throw new MutationRejectedError("this message has a send on record", { status: 409, code: "send_recorded", retryable: false });
         }
         if (m.kind === "draft_save" && saveGate.wait) await saveGate.wait;
+        if (m.kind === "mail_send" && sendGate.wait && server !== undefined) await sendGate.wait;
+        // The shared server answers the drafts and send routes; the mirror takes what it answered.
+        const served = server?.answer(m);
+        if (served != null) {
+          const local = m.kind === "mail_send"
+            ? mutationEffects(s, m, { now: () => NOW, uuid: () => `id-${++seq}` })
+              .filter((e) => e.type !== "draft")
+              .map((e) => ({
+                type: e.type, op: e.entity === null ? "delete" : "update", id: e.id, seq: ++seq,
+                updatedAt: NOW.toISOString(), entity: e.entity,
+              }) as unknown as SyncChange)
+            : [];
+          await s.applyChanges([...local, ...served.changes]);
+          if (sendKey !== null) delivered.add(sendKey);
+          return {
+            changes: [...local, ...served.changes], seq: served.seq,
+            ...(served.entityId ? { entityId: served.entityId } : {}), ...(served.revision ? { revision: served.revision } : {}),
+          };
+        }
         // The route's version check: a row moved off the stated version refuses the edit.
         const stated = m.kind === "draft_save" || m.kind === "mail_send" ? m.ifContentRevision : undefined;
         if (versions !== null && named !== null && stated !== undefined && versions.has(named) && versions.get(named) !== stated) {
@@ -356,6 +495,14 @@ export async function mountShell(
     serverGone?: string[];
     /** Rows carry server versions (`contentRevision`), and the route's version check runs. */
     versions?: boolean;
+    /** The store a page before this one left: a reload over the same browser. */
+    store?: MirrorStore;
+    /** The outbox's replay deadline, short so a hung save arms the hold within a test. */
+    outboxReplayDeadlineMs?: number;
+    /** A server another device shares: its rows seed this mirror, and its routes answer the draft verbs. */
+    server?: DraftServer;
+    /** No signal from the first moment: a boot's replay cannot reach the routes. */
+    startOffline?: boolean;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -363,12 +510,14 @@ export async function mountShell(
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const versions = options.versions === true ? new Map<string, string>() : null;
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
-  const store = await storeWith(messagesIn, versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! })));
+  const seeded = options.server !== undefined ? [...options.server.rows.values()]
+    : versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! }));
+  const store = options.store ?? await storeWith(messagesIn, seeded);
   const sent: EngineMutation[] = [];
   const refuseSend: DraftShell["refuseSend"] = { on: false };
   const saveGate: DraftShell["saveGate"] = { wait: null };
   const remote: SyncChange[] = [];
-  const offline: DraftShell["offline"] = { on: false };
+  const offline: DraftShell["offline"] = { on: options.startOffline === true };
   const sendGate: DraftShell["sendGate"] = { wait: null };
   const serverGone = new Set<string>(options.serverGone ?? []);
   const resync: DraftShell["resync"] = { armed: false, gate: null, phase: 0 };
@@ -378,7 +527,7 @@ export async function mountShell(
   const loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false };
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
-    versions, loseSendAnswer,
+    versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);

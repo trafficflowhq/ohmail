@@ -781,8 +781,8 @@ export interface AdminMailboxDetail extends MailboxHealth {
 }
 
 export interface AdminLifecycleNotice {
-  /** `billing_link`: a link to the billing page that staff mailed (cloud 0050). */
-  kind: "trial_two_days" | "closed" | "erasure_week" | "reopened" | "billing_link";
+  /** `billing_link`: a link to the billing page that staff mailed (cloud 0050); `connect_reminder` (cloud 0053). */
+  kind: "trial_two_days" | "closed" | "erasure_week" | "reopened" | "billing_link" | "connect_reminder";
   anchor: string;
   sentAt: string;
 }

@@ -35,7 +35,7 @@ import {
   ComposeAttach, composeAttachCap, composeAttachCapBinding,
 } from "../components/ComposeAttach";
 import {
-  composedLocalInput, localInputValue, nextWeekNine, scheduleLabel, todayEvening, tomorrowNine,
+  composedLocalInput, localInputValue, scheduleLabel, sendLaterMornings, todayEvening,
 } from "../shell/format";
 import { activeFormatLocale, activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "../shell/compose";
@@ -467,6 +467,7 @@ export function ComposeView({
   // 18:00" is a promise measured in seconds, and the honest menu simply omits it.
   const eveningIso = todayEvening(openedAt).instant.toISOString();
   const eveningUsable = Date.parse(eveningIso) - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const mornings = sendLaterMornings(openedAt);
   /* THE TYPED CLOCK, COMPOSED — the presets name hours no transition crosses, this field names
      any hour at all, so it is the one appointment on this screen whose wall clock can be missing
      or doubled. It carries the verdict; the sentence below states it before the press. */
@@ -552,7 +553,7 @@ export function ComposeView({
       label: t("keyLaterTomorrow"),
       inWriting: true,
       disabled: !sendLaterOpen,
-      run: () => pickSendLater(tomorrowNine(openedAt)),
+      run: () => pickSendLater(mornings.tomorrow),
     },
     {
       chord: "3",
@@ -560,7 +561,7 @@ export function ComposeView({
       label: t("keyLaterMonday"),
       inWriting: true,
       disabled: !sendLaterOpen,
-      run: () => pickSendLater(nextWeekNine(openedAt)),
+      run: () => pickSendLater(mornings.monday ?? mornings.tomorrow),
     },
     {
       chord: "4",
@@ -1081,12 +1082,14 @@ export function ComposeView({
                       {t("sendLaterTonight", { when: scheduleLabel(eveningIso, openedAt) })}
                     </Button>
                   ) : null}
-                  <Button variant="ghost" onClick={() => pickSendLater(tomorrowNine(openedAt))}>
-                    {t("sendLaterTomorrow", { when: scheduleLabel(tomorrowNine(openedAt), openedAt) })}
+                  <Button variant="ghost" onClick={() => pickSendLater(mornings.tomorrow)}>
+                    {t("sendLaterTomorrow", { when: scheduleLabel(mornings.tomorrow, openedAt) })}
                   </Button>
-                  <Button variant="ghost" onClick={() => pickSendLater(nextWeekNine(openedAt))}>
-                    {t("sendLaterMonday", { when: scheduleLabel(nextWeekNine(openedAt), openedAt) })}
-                  </Button>
+                  {mornings.monday ? (
+                    <Button variant="ghost" onClick={() => pickSendLater(mornings.monday!)}>
+                      {t("sendLaterMonday", { when: scheduleLabel(mornings.monday, openedAt) })}
+                    </Button>
+                  ) : null}
                 </div>
                 <div className="send-later-custom">
                   <label htmlFor="compose-send-at">{t("sendLaterPick")}</label>

@@ -206,6 +206,8 @@ export interface MutationResult {
   firstSend?: { status: string; at: string };
   /** The press's newer words were kept back — see {@link MutationOutcome.earlierWordsKept}. */
   earlierWordsKept?: true;
+  /** Where a delivered send's Sent copy stands — see {@link MutationOutcome.sentCopy}. */
+  sentCopy?: "filed" | "pending" | "missing";
   /**
    * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
    * mutation reached the wire and the wire took it; what has NOT happened is the act. The
@@ -2856,6 +2858,8 @@ export class OhmailEngine {
    * fresh expression of intent under a reused key is not withdrawn.
    */
   private readonly withdrawnKeys = new Set<string>();
+  /** Fresh `draft_save` creates from their paint until their dispatch starts, by key. */
+  private readonly awaitingTurn = new Map<string, PendingMutation>();
   /**
    * SENDS WHOSE CANCEL THE SERVER HAS NOT ANSWERED, by entry id: off the queue (they are never sent)
    * and on disk marked withdrawn and owed. Every drive and every flush asks again, on the backoff.
@@ -3738,7 +3742,7 @@ export class OhmailEngine {
       // must not stamp its waterline (or any optimistic `updatedAt`) with boot time — the
       // effects are rebuilt under the clock the verb was expressed at.
       const asExpressed = () => new Date(e.at);
-      const effects = mutationEffects(this.verbView, e.mutation, { now: asExpressed, uuid: this.uuid });
+      const effects = this.paintOf(e.mutation, e.key, asExpressed);
       if (effects.length > 0) this.overlays.set(e.id, effects);
       else this.unpaintedRestored.add(e.id);
     } catch { /* a malformed or out-of-vocabulary mutation paints nothing; the wire decides */ }
@@ -3926,7 +3930,7 @@ export class OhmailEngine {
       const q = this.queue.find((p) => p.id === id);
       if (!q || this.overlays.has(id)) { this.unpaintedRestored.delete(id); continue; }
       try {
-        const effects = mutationEffects(this.verbView, q.mutation, { now: () => new Date(q.at), uuid: this.uuid });
+        const effects = this.paintOf(q.mutation, q.key, () => new Date(q.at));
         if (effects.length === 0) continue;
         this.overlays.set(id, effects);
         moved = true;
@@ -7185,6 +7189,11 @@ export class OhmailEngine {
     return result;
   }
 
+  /** A verb's paint: a `draft_save` create's row carries its key ({@link EngineDraft.pendingCreate}). */
+  private paintOf(m: EngineMutation, key: string, now: () => Date): MutationEffect[] {
+    return mutationEffects(this.verbView, m, { now, uuid: this.uuid, key });
+  }
+
   private async mutateOnce(
     m: EngineMutation, opts: { key?: string; andDone?: SendAndDonePlan; onDurable?: () => void },
   ): Promise<MutationResult> {
@@ -7194,6 +7203,16 @@ export class OhmailEngine {
     // A key the caller owns can be re-expressed after a withdrawal (the send path reuses one
     // intent's key). The mark belongs to the row that was cancelled, never to the key for ever.
     this.withdrawnKeys.delete(key);
+    /* A WRITE NAMING A ROW WHOSE CREATE HAS NOT SETTLED names an id the server never held: answered as
+       the server answers it, before anything is painted, kept or sent. */
+    const named = enriched.kind === "draft_save" || enriched.kind === "draft_discard" || enriched.kind === "mail_send"
+      ? enriched.draftId ?? null : null;
+    if (named !== null && this.pendingCreateOf(named) !== null) {
+      return {
+        id, key, status: "rolled_back", seq: null,
+        error: new MutationRejectedError("draft not found", { status: 404, code: "not_found" }),
+      };
+    }
 
     // THE EFFECTS ARE COMPUTED BEFORE SUPERSESSION, deliberately: they must be read over the
     // superseded verbs' overlays. A reversal is the case that breaks the other order — a
@@ -7201,7 +7220,7 @@ export class OhmailEngine {
     // already dropped the mirror says "it is in INBOX", the reversal computes zero effects,
     // and mutate() would reject a verb the server absolutely needs (the queued move may have
     // COMMITTED with its response lost, and only the reversal on the wire can undo it).
-    const effects = mutationEffects(this.verbView, enriched, { now: this.now, uuid: this.uuid });
+    const effects = this.paintOf(enriched, key, this.now);
 
     // THEN supersession, still SYNCHRONOUS — the first frame after mutate() must already show the newer verb's
     // overlay (re-resurface-first-frame pins that mutate() publishes before its first await), and enrich above read
@@ -7226,6 +7245,7 @@ export class OhmailEngine {
     this.overlayRev++;
     this.endHoldActedAway(effects);
     this.notify();
+    const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
 
     /**
      * The verb is durable before it is sent — the outbox write ahead of the wire POST (INSTANT-ARCH §6.2(b)). The
@@ -7253,6 +7273,21 @@ export class OhmailEngine {
       // With the send's durable row, never in a surface's memory: the arm outlives the surface.
       ...andDoneOf({ mutation: enriched, andDone: opts.andDone }),
     };
+    // A create waits its turn painted and in no collection: a take-back reaches it here.
+    if (awaitsHold) this.awaitingTurn.set(key, pending);
+    try {
+      return await this.dispatchFresh(pending, superseded, settleMarks, opts, awaitsHold);
+    } finally {
+      if (this.awaitingTurn.get(key) === pending) this.awaitingTurn.delete(key);
+    }
+  }
+
+  /** {@link mutateOnce} past the paint: the outbox write, then the wire. */
+  private async dispatchFresh(
+    pending: PendingMutation, superseded: SupersedeEffect, settleMarks: () => void,
+    opts: { key?: string; andDone?: SendAndDonePlan; onDurable?: () => void }, awaitsHold: boolean,
+  ): Promise<MutationResult> {
+    const { id, key, mutation: enriched } = pending;
     // ONE TRANSACTION: the newer row in, the rows it supersedes out, and every abandoned record it
     // marks stale. See `supersedeQueued` for why the removal may not be a separate best-effort
     // delete, and `commitReplacement` for why the marks may not be separate writes either.
@@ -7336,7 +7371,8 @@ export class OhmailEngine {
      * THIS result and has no retry path, so it joins the gate and waits — a late-adopted draft id is correct; an
      * orphaned `queued` create is a twin factory.
      */
-    const awaitsHold = enriched.kind === "draft_save" && enriched.draftId === null;
+    // Taken back while its row was being written: the row is marked too, so no boot replays it.
+    if (awaitsHold && this.withdrawnKeys.has(key)) await this.markWithdrawn(pending, false);
     const queued = (): MutationResult => {
       pending.told = true;
       this.queue.push(pending);
@@ -7474,6 +7510,7 @@ export class OhmailEngine {
     owed: "await" | "background" | null;
   }> {
     if (this.outboxHold) return { result: null, timedOut: false, held: true, owed: null };
+    if (this.awaitingTurn.get(p.key) === p) this.awaitingTurn.delete(p.key);
     let owed: "await" | "background" | null = null;
     const { result, timedOut } = await this.dispatchWithDeadline(p, {
       deferReconcile: true,
@@ -8005,9 +8042,7 @@ export class OhmailEngine {
     try {
       // The cast is the point: the signature promises an array because the switch is exhaustive
       // over the KNOWN union, and a persisted row's kind is a plain string that need not be in it.
-      built = mutationEffects(this.verbView, e.mutation, {
-        now: () => new Date(e.at), uuid: this.uuid,
-      }) as MutationEffect[] | undefined;
+      built = this.paintOf(e.mutation, e.key, () => new Date(e.at)) as MutationEffect[] | undefined;
     } catch {
       return refuse(e, "outbox_unknown_kind", "This change cannot be retried by this version.");
     }
@@ -8435,9 +8470,7 @@ export class OhmailEngine {
           if (lineSuperseded && narrowedMutation.kind === "feed_mark_seen") delete narrowedMutation.upToId;
           q.mutation = narrowedMutation;
           try {
-            const effects = mutationEffects(this.verbView, q.mutation, {
-              now: () => new Date(q.at), uuid: this.uuid,
-            });
+            const effects = this.paintOf(q.mutation, q.key, () => new Date(q.at));
             if (effects.length > 0) this.overlays.set(q.id, effects);
             else this.overlays.delete(q.id);
           } catch { this.overlays.delete(q.id); }
@@ -8482,9 +8515,7 @@ export class OhmailEngine {
     for (const { entry, mutation } of effect.undo) {
       entry.mutation = mutation;
       if (!this.queue.includes(entry)) this.queue.push(entry);
-      const effects = mutationEffects(this.verbView, mutation, {
-        now: () => new Date(entry.at), uuid: this.uuid,
-      });
+      const effects = this.paintOf(mutation, entry.key, () => new Date(entry.at));
       if (effects.length > 0) this.overlays.set(entry.id, effects);
     }
     this.queue.sort((a, b) => (a.at - b.at) || (a.n - b.n));
@@ -8542,7 +8573,7 @@ export class OhmailEngine {
       id: this.uuid(), key: this.uuid(), mutation: create, at: p.at, n: p.n, restored: true,
       ...(this.ownerName !== null ? { owner: this.ownerName } : {}),
     };
-    this.overlays.set(q.id, mutationEffects(this.verbView, create, { now: this.now, uuid: this.uuid }));
+    this.overlays.set(q.id, this.paintOf(create, q.key, this.now));
     let swapped = true;
     try {
       await this.store.commitLocal([{ type: OUTBOX_TYPE, id: q.id, entity: outboxEntryOf(q) }], [{ type: OUTBOX_TYPE, id: p.id }]);
@@ -8864,6 +8895,9 @@ export class OhmailEngine {
       // Sweep the confirm's own drain-side reconcile (a real Sent row for an EARLIER send may have
       // just landed) and any expired copies, so the map cannot accumulate across a long session.
       this.reconcileOptimisticSent();
+      if (p.mutation.kind === "draft_save" && p.mutation.draftId === null && outcome.entityId) {
+        this.noteCreatedDraft(p.key, outcome.entityId, outcome.revision, outcome.changes);
+      }
       this.overlayRev++;
       this.notify();
       // `entityId` rides the CONFIRMED result here. The queued arm below carries its own, taken
@@ -8885,6 +8919,7 @@ export class OhmailEngine {
         // is the only thing that can say the answer was about an earlier press.
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
         ...(outcome.earlierWordsKept === true ? { earlierWordsKept: true as const } : {}),
+        ...(outcome.sentCopy ? { sentCopy: outcome.sentCopy } : {}),
         ...(intent !== undefined ? { andDone: intent } : {}),
       };
     } catch (err) {
@@ -8994,6 +9029,14 @@ export class OhmailEngine {
         this.overlayRev++;
         this.notify();
         return { id: p.id, key: p.key, status: "superseded", seq: null };
+      }
+      /* A SAVE OF A ROW ALREADY SENT: the send carried the message, so the save ends silent — no
+         refusal record, and never kept as a new draft (only `draft_changed` keeps one). */
+      if (rejection.code === "draft_sent" && p.mutation.kind === "draft_save") {
+        await this.dropOutbox(p.id);
+        this.overlayRev++;
+        this.notify();
+        return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
       }
       /* A WAITING EDIT REFUSED BECAUSE THE ROW MOVED ELSEWHERE: its editor was answered `queued` (or
          died with its session) and reads nothing now, so its words become a new draft, never dropped. */
@@ -9440,7 +9483,9 @@ export class OhmailEngine {
    */
   async withdrawQueued(key: string, opts: { askedElsewhere?: boolean; answered?: "withdrawn" } = {}): Promise<WithdrawOutcome> {
     for (const p of this.inFlight.values()) if (p.key === key) return "on_the_wire";
-    const rows = this.queue.filter((p) => p.key === key);
+    // A create waiting its turn at the gate or behind a hold is taken back as a queued one is.
+    const waiting = this.awaitingTurn.get(key);
+    const rows = [...this.queue.filter((p) => p.key === key), ...(waiting !== undefined ? [waiting] : [])];
     // A CANCEL ALREADY OWED is asked again: the press is a request for the server's answer.
     const owed = [...this.owedWithdraws.values()].filter((p) => p.key === key);
     if (rows.length === 0 && owed.length > 0) return this.reaskOwed(owed, opts);
@@ -9460,12 +9505,15 @@ export class OhmailEngine {
          goes back on the queue as it was, and the answer is `unknown`. */
       const owe = p.mutation.kind === "mail_send" && opts.answered !== "withdrawn";
       if (!await this.markWithdrawn(p, owe) && this.ownershipOn()) {
-        this.queue.push(p);
-        this.queue.sort(byAtN);
+        if (p !== waiting) {
+          this.queue.push(p);
+          this.queue.sort(byAtN);
+        }
         if (paint !== undefined) this.overlays.set(p.id, paint);
         unrecorded = true;
         continue;
       }
+      if (p === waiting) this.awaitingTurn.delete(key);
       marked.push(p);
     }
     if (rows.length === 0) return "gone";
@@ -10756,6 +10804,35 @@ export class OhmailEngine {
    */
   drainsCompleted(): number {
     return this.drainsDone;
+  }
+
+  /**
+   * THE ROW A CONFIRMED `draft_save` CREATE MADE, by its key — on every road it confirmed by, the
+   * reconnect flush and a boot's replay included, where no surface holds the result. An editor
+   * whose create waited offline takes its row from here. Bounded, oldest dropped.
+   */
+  createdDraftOf(key: string): { id: string; revision: string | null } | null {
+    return this.createdDrafts.get(key) ?? null;
+  }
+
+  /**
+   * THE KEY OF THE `draft_save` CREATE STILL WAITING THAT PAINTS `draftId`, or `null` for a row the
+   * server holds. That id is local until the create confirms: a door binds the create, never the id.
+   */
+  pendingCreateOf(draftId: string): string | null {
+    const painted = this.read().get<EngineDraft>("draft", draftId)?.pendingCreate;
+    return typeof painted === "string" ? painted : null;
+  }
+
+  private readonly createdDrafts = new Map<string, { id: string; revision: string | null }>();
+
+  private noteCreatedDraft(key: string, id: string, said: string | undefined, changes: readonly SyncChange[]): void {
+    const echo = changes.find((c) => c.type === "draft" && c.id === id)?.entity as { contentRevision?: unknown } | null | undefined;
+    const revision = said ? said
+      : typeof echo?.contentRevision === "string" && echo.contentRevision !== "" ? echo.contentRevision : null;
+    this.createdDrafts.delete(key);
+    this.createdDrafts.set(key, { id, revision });
+    while (this.createdDrafts.size > 64) this.createdDrafts.delete(this.createdDrafts.keys().next().value!);
   }
 
   /** Drop the cached pages — a History visit starts from the store's present; `list` narrows it. */

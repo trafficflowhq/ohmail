@@ -1,0 +1,44 @@
+{
+  "id": "125",
+  "file": "125-outlook-win-en-forward-thread.eml",
+  "shape": "outlook-win-en-forward-thread",
+  "description": "Outlook for Windows, English: FW: of a two-message thread with a note; From/Sent blocks under border-top divs, no forward wording in the body",
+  "client": "outlook_win",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ana Example",
+    "Ben Sample"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "trailing",
+    "text": {
+      "visibleFirstLine": "Clara, for your planning. The second truck is confirmed.",
+      "visibleLastLine": "Ana Example",
+      "historyStartLine": "From: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "From: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "#prior",
+      "attributionBefore": null,
+      "historyStartText": "From: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Clara, for your planning. The second truck is confirmed.",
+      "visibleLastText": "we can load the second truck on Thursday, 12 November, from 7:00."
+    }
+  },
+  "notes": "The subject's forward prefix says the first quoted message is what the forward delivers: it stays open, and the history folds from the hop below it."
+}

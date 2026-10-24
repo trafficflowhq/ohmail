@@ -318,6 +318,39 @@ describe.skipIf(!PG_UP)("the duplicate-send guard against real Postgres", () => 
     expect(await mine()).toHaveLength(0);
   });
 
+  it("A HELD SEND'S CLAIM SURVIVES THE PRUNE, so Send again a day later still proves its message", async () => {
+    const state = { sendCalls: 0 };
+    const factory: OpenSendAdapter = async () => ({
+      async send(msg: OutboundMessage) {
+        state.sendCalls += 1;
+        // The first is taken and its answer lost; the press again is answered.
+        if (state.sendCalls === 1) throw Object.assign(new Error("Timeout"), { code: "ETIMEDOUT" });
+        return { providerMessageId: msg.messageId! };
+      },
+      async messageInSent() { return false; },
+      async close() { /* no-op */ },
+    });
+    const { token, accountId, mailboxId } = await seed();
+    const draftId = await seedDraft(accountId, mailboxId);
+    const held = await H(sendReq(draftId, { bearer: token, key: `h1-${randomUUID()}` }), depsOn(dbA, factory));
+    expect((await held.json()).status).toBe("unverified");
+
+    const dayLater = new Date(FIXED_NOW.getTime() + SEND_FINGERPRINT_RETENTION_MS + 3_600_000);
+    await pruneSendFingerprints(dbA as never, dayLater);
+    const claims = await dbA.select().from(outboundSendFingerprints).where(eq(outboundSendFingerprints.accountId, accountId));
+    expect(claims, "the held send's claim is kept").toHaveLength(1);
+
+    const again = await H(new Request(`http://localhost/drafts/${draftId}/send`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "idempotency-key": `h2-${randomUUID()}`, "content-type": "application/json" },
+      body: JSON.stringify({ again: true }),
+    }), depsOn(dbA, factory, () => dayLater));
+    expect(again.status, await again.clone().text()).toBe(200);
+    expect(state.sendCalls).toBe(2);
+    const rows = await dbA.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
+    expect(new Set(rows.map((r) => r.mintedMessageId)).size, "one message, two attempts").toBe(1);
+  });
+
   it("TWO REQUESTS IN FLIGHT on two physical connections → one 200, one 409, ONE submission", async () => {
     const { factory, state } = fakeAdapter({ inSent: true });
     const depsA = depsOn(dbA, factory);

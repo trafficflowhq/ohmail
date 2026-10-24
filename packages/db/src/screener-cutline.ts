@@ -299,6 +299,48 @@ export function heldClaimInsideSql(
 }
 
 /**
+ * A LETTER AT THE GATE THAT ARRIVED INSIDE THE CUTLINE: a live row in the Screener dated by its arrival
+ * key ({@link Dialect.arrivalKey}, the wire's `sortAt`), the clock the gate held it by. An old `Date:`
+ * (a calendar stamp, a re-sent letter) cannot retire mail the gate just held. A row with no recorded
+ * arrival (`arrived_at`, mail 0119) never counts, nor does one the mailbox's first import recorded
+ * (old mail, as {@link heldClaimInsideSql} reads it). All time and an unnamed mailbox read no window.
+ * The client's twin is `consent-cutline.ts#senderActivity`.
+ */
+export function heldArrivedInsideSql(
+  d: Dialect,
+  r: { folder: SQL; deletedAt: SQL; date: SQL; arrivedAt: SQL; recordedAt: SQL; mailboxId: SQL },
+  set: CutlineSet,
+): SQL {
+  const importDone = sql`(select mbi.initial_import_completed_at from mailboxes mbi where mbi.id = ${r.mailboxId})`;
+  const inside = (c: ResolvedCutline | null): SQL => {
+    const held = sql`${r.folder} = ${CUTLINE_GATE_FOLDER} and ${r.deletedAt} is null and ${r.arrivedAt} is not null`;
+    const window = c === null || c.allTime ? sql`` : sql` and ${d.arrivalKey(r.date, r.arrivedAt)} >= ${d.ts(c.cutoff)}`;
+    // Last, so the mailbox is looked up only for a row inside the window.
+    return sql`(${held}${window} and ${r.recordedAt} > ${importDone})`;
+  };
+  const split = cutlineArms(set);
+  return "one" in split ? inside(split.one) : perMailboxSql(d, split.arms, r.mailboxId, inside, inside(null));
+}
+
+/**
+ * THIS SENDER HAS A LETTER AT THE GATE THAT ARRIVED INSIDE THE CUTLINE ({@link heldArrivedInsideSql}),
+ * as a correlated probe: the readers carry it as a window mark instead; this is the reference shape.
+ * Undecided senders only, by the caller.
+ */
+export function senderHasHeldArrivalSql(d: Dialect, accountId: string, senderExpr: SQL, set: CutlineSet): SQL {
+  return sql`exists (
+    select 1 from messages am
+      join folder_state af on af.message_id = am.id
+     where am.account_id = ${d.castUuid(accountId)}
+       and lower(am.from_address) = ${senderExpr}
+       and ${heldArrivedInsideSql(d, {
+         folder: sql`af.desired_folder`, deletedAt: sql`am.deleted_at`, date: sql`am.date`,
+         arrivedAt: sql`am.arrived_at`, recordedAt: sql`am.created_at`, mailboxId: sql`am.mailbox_id`,
+       }, set)}
+  )`;
+}
+
+/**
  * HELD BY THE IDENTITY FACT (mail 0148): a message of this sender sits at the gate naming a company
  * its address is not — whatever rule or contact decided the sender otherwise (the act's promotion, a
  * domain rule, an inferred contact). Such a sender is waiting again while the claim keeps them so

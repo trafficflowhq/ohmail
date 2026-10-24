@@ -117,7 +117,8 @@ describe("a kept draft's files stay on the phone with it", () => {
     const fake = mailServer();
     const origin = await listen(fake.server);
     fake.addMessage(dto("m1", { subject: "Welcome" }));
-    for (const id of ["d-7", "d-8", "d-9"]) fake.addDraft({ id, ...ROW, body: `Words of ${id}` });
+    // d-7 is held: its first send could not be confirmed.
+    for (const id of ["d-7", "d-8", "d-9"]) fake.addDraft({ id, ...ROW, body: `Words of ${id}`, ...(id === "d-7" ? { status: "unverified" } : {}) });
     const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world.drop, uuid };
     const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
     if (boot.kind !== "ready") throw new Error("boot refused");
@@ -145,9 +146,11 @@ describe("a kept draft's files stay on the phone with it", () => {
     s.keptWith("d-7");
     expect(s.letters.filesOf("d-7").map((f) => [f.filename, f.contentBase64])).toEqual([["plan.pdf", PDF]]);
     expect(await s.actions.draftSendAgain("d-7")).toBe("sent");
+    expect(s.fake.seen.filter((r) => r.url.startsWith("/drafts/d-7")).map((r) => `${r.method} ${r.url}`))
+      .toEqual(["POST /drafts/d-7/send"]);
     const send = s.fake.seen.find((r) => r.method === "POST" && r.url === "/drafts/d-7/send")!;
-    expect((JSON.parse(send.body) as { attachments?: Array<{ filename: string; contentBase64: string }> }).attachments)
-      .toEqual([{ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PDF }]);
+    expect(JSON.parse(send.body) as { again?: boolean; attachments?: Array<{ filename: string; contentBase64: string }> })
+      .toEqual({ again: true, attachments: [{ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PDF }] });
     expect(s.letters.filesOf("d-7")).toEqual([]);
     s.boot.store.close();
     s.fake.server.close();

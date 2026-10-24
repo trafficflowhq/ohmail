@@ -99,3 +99,47 @@ export const RETRO_ORDER_FIXTURE: readonly RetroFixtureRow[] = Array.from(
 /** The fifty of the fifty-one a newest-first slice keeps — everything but the oldest. */
 export const RETRO_ORDER_MOVES: readonly string[] =
   RETRO_ORDER_FIXTURE.slice(1).map((r) => r.id);
+
+/**
+ * A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE: the letters in the place it filed into (either
+ * News spelling), moved to the new place; nothing anywhere else. `REFILE_MOVES` is what the server's
+ * refile walk moves; `REFILE_COUNTED` what the client's `refileWouldMove` counts, which over-counts
+ * the four exclusions only the server can see and a placement made after the press.
+ */
+export const REFILE_FROM = "ohmail/News";
+export const REFILE_TO = "ohmail/Receipts";
+
+export interface RefileFixtureRow {
+  id: string;
+  folder: string;
+  triage: string | null;
+  /** `folder_state.decided_at` before or after the Change; the wire says only `placeDecided`. */
+  decided?: "before" | "after";
+  /** An exclusion the wire does not carry. */
+  serverOnly?: "external" | "draft" | "approval" | "answered";
+  why: string;
+}
+
+export const REFILE_FIXTURE: readonly RefileFixtureRow[] = [
+  { id: "f-pile", folder: REFILE_FROM, triage: null, why: "in the rule's pile, nobody decided it" },
+  { id: "f-legacy", folder: "ohmail/Reads", triage: null, why: "the pile's pre-0.22 spelling" },
+  { id: "f-decided-before", folder: REFILE_FROM, triage: null, decided: "before",
+    why: "placed in the pile before the Change: it goes with the pile" },
+  { id: "f-decided-after", folder: REFILE_FROM, triage: null, decided: "after",
+    why: "placed after the Change: the person's newer word stands" },
+  { id: "f-ohbox", folder: "INBOX", triage: null, why: "outside the pile: the Ohbox keeps it" },
+  { id: "f-there", folder: REFILE_TO, triage: null, why: "already at the new place" },
+  { id: "f-screened", folder: "ohmail/Screened", triage: null, why: "another pile" },
+  { id: "f-archive", folder: "Archive", triage: null, why: "a folder ohmail does not organize" },
+  { id: "f-set-aside", folder: REFILE_FROM, triage: "set_aside", why: "set aside" },
+  { id: "f-external", folder: REFILE_FROM, triage: null, serverOnly: "external", why: "filed in another mail app" },
+  { id: "f-draft", folder: REFILE_FROM, triage: null, serverOnly: "draft", why: "a reply is being written" },
+  { id: "f-approval", folder: REFILE_FROM, triage: null, serverOnly: "approval", why: "an AI proposal was decided" },
+  { id: "f-answered", folder: REFILE_FROM, triage: null, serverOnly: "answered", why: "the person replied to the sender" },
+];
+
+export const REFILE_MOVES: readonly string[] = ["f-pile", "f-legacy", "f-decided-before"];
+
+export const REFILE_COUNTED: readonly string[] = [
+  ...REFILE_MOVES, "f-decided-after", "f-external", "f-draft", "f-approval", "f-answered",
+];

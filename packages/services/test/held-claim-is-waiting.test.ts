@@ -103,14 +103,18 @@ async function consented(cs: readonly Consent[], o: { date?: Date; auth?: string
   await db.insert(accounts).values({ id: accountId, name: `pc-${accountId.slice(0, 8)}` });
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`, organizerRole: "organizer",
+    ...(o.date ? { initialImportCompletedAt: new Date("2026-01-01T00:00:00.000Z") } : {}),
   }).returning();
   // Held before the consent, then stamped by the identity check: inside the cutline by its arrival.
+  // With an old `date` the server received it then too, and only the fact, written at ingest after the
+  // first import, is inside the cutline: a held letter is dated by its arrival.
   const at = new Date("2026-10-06T09:00:00.000Z");
   const [m] = await db.insert(messages).values({
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `pc:${randomUUID()}`,
     subject: "Ihre Karte", snippet: "", fromAddress: SENDER, fromName: "PostFinance",
     senderCheck: "impersonation", senderCheckBrand: "PostFinance", authVerdict: o.auth ?? null,
-    date: o.date ?? at, arrivedAt: at, unread: false, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
+    date: o.date ?? at, arrivedAt: o.date ?? at, unread: false, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
+    ...(o.date ? { senderCheckBy: "ingest" } : {}),
   }).returning();
   await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
   await db.insert(folderState).values({

@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
 import { ENGLISH_STOPWORDS, ftsQueryOf } from "../src/dialect/sqlite.js";
-import { partWordTails } from "../src/dialect/index.js";
+import { partOperandsOf, partWordTails, queryOperandsOf, straddlesParts } from "../src/dialect/index.js";
 
 type Sqlite = { exec(sql: string): void; prepare(sql: string): { all(...p: unknown[]): unknown[] } };
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as { DatabaseSync: new (path: string) => Sqlite };
@@ -91,5 +91,37 @@ describe("the device store's full-text query builder", () => {
     expect(rows(ftsQueryOf("elevat repo", "parts").match!)).toEqual([1]);
     const bare = [group("elevat"), group("repo")].map((g) => g.slice(1, -1)).join(" AND ");
     expect(rows(bare), "the control: without the parentheses the lone word matches").toEqual([1, 2]);
+  });
+});
+
+describe("a query's operands, as both stores read its structure", () => {
+  const w = (text: string, quoted = false) => ({ text, quoted });
+  it("groups ANDed operands by `or`, sets excluded ones apart and drops stopword-only ones", () => {
+    expect(queryOperandsOf("kai lanternfish")).toEqual({ any: [[w("kai"), w("lanternfish")]], none: [] });
+    expect(queryOperandsOf("from:kai survey"), "`:` separates, `from` is a stopword").toEqual({ any: [[w("kai"), w("survey")]], none: [] });
+    expect(queryOperandsOf("kai samples or food")).toEqual({ any: [[w("kai"), w("samples")], [w("food")]], none: [] });
+    expect(queryOperandsOf("kai -lanternfish")).toEqual({ any: [[w("kai")]], none: [w("lanternfish")] });
+    expect(queryOperandsOf('"lanternfish survey" sign-in')).toEqual({ any: [[w("lanternfish survey", true), w("sign-in")]], none: [] });
+    expect(queryOperandsOf("--fixture or or"), "`--` does not exclude; a trailing `or` starts nothing").toEqual({ any: [[w("fixture")]], none: [] });
+    expect(queryOperandsOf("the of -the")).toEqual({ any: [], none: [] });
+  });
+
+  it("straddles the letter's parts with two ANDed operands or an exclusion, up to eight operands", () => {
+    expect(straddlesParts(queryOperandsOf("lanternfish"))).toBe(false);
+    expect(straddlesParts(queryOperandsOf('"lanternfish survey"'))).toBe(false);
+    expect(straddlesParts(queryOperandsOf("kai or food"))).toBe(false);
+    expect(straddlesParts(queryOperandsOf("kai lanternfish"))).toBe(true);
+    expect(straddlesParts(queryOperandsOf("-lanternfish"))).toBe(true);
+    expect(straddlesParts(queryOperandsOf("a1 a2 a3 a4 a5 a6 a7 a8"))).toBe(true);
+    expect(straddlesParts(queryOperandsOf("a1 a2 a3 a4 a5 a6 a7 a8 a9")), "past eight: read per part").toBe(false);
+  });
+
+  it("keeps a typed operand's part-words together in one part; one operand is read per part", () => {
+    expect(partOperandsOf("anna@club.ch"), "an address is one operand").toBeNull();
+    expect(partOperandsOf("re-enter")).toBeNull();
+    expect(partOperandsOf("the lantern"), "a stopword-only operand is dropped").toBeNull();
+    expect(partOperandsOf("lantern kai")).toEqual([[0], [1]]);
+    expect(partOperandsOf("anna@club.ch dinner")).toEqual([[0, 1, 2], [3]]);
+    expect(partOperandsOf("kai samples or food"), "`or` keeps no word").toEqual([[0], [1], [3]]);
   });
 });

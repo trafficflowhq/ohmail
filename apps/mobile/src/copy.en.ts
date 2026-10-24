@@ -2172,6 +2172,13 @@ const TABLE = {
   composeNotSentOffline: "Not sent. This phone can't reach your mail server. It's kept in Drafts — send it again once you're back online.",
   /* Send pressed again over an unconfirmed send: a second copy could reach them twice. */
   replyUnverifiedAgain: "Not sent again. The first send may already have gone, so check your Sent folder first.",
+  /**
+   * PHONE-ONLY: the held sheet's Send again and Close. Send again looks in Sent first; a mail server
+   * that keeps no sent mail cannot be looked in, and the sentence says what that costs.
+   */
+  replyUnverifiedSendAgain:
+    "Send again looks in your Sent folder first and sends it only if it isn't there. If your mail server doesn't keep sent mail, it may arrive twice.",
+  replyUnverifiedClose: "Close",
   /* THE COMPOSER'S ATTACHMENTS — the webapp's `compose.attach*` keys, mirrored (the phone has
      two pickers where the web has one input, so the verb splits in two). The cap sentence's
      number comes from the ONE shared bound (`composeAttachCap`, client-engine). */
@@ -2221,6 +2228,8 @@ const TABLE = {
   composeFromSubstitutedUnknown: "The address this draft was written from is disconnected, so it sends from the address above.",
   composeSent: "Sent.",
   composeEarlierWent: "This message had already been sent. Your newer text was not sent as a second copy.",
+  /** PHONE-ONLY: a delivered letter whose Sent copy could not be written, one line after what it says. */
+  sentCopyMissing: (said: string) => `${said} Its copy couldn't be put in your Sent folder.`,
   /* A CLOSED COMPOSER KEEPS ITS TEXT. The pill's Undo discards the draft it just kept. */
   composeKept: "Kept in Drafts.",
   composeKeptWithoutFiles: "Kept in Drafts. The attachments were not kept.",
@@ -2459,6 +2468,14 @@ const TABLE = {
   draftsResolveFailed: "That didn't reach the server. The message is still held here.",
   draftsResolveStillRunning: "This send may still be running. You can answer for it once it has stopped.",
   draftsBodyUnavailable: "This draft's text hasn't reached this device yet. Try again in a moment.",
+  /** PHONE-ONLY: Send again's own endings — the server looks in Sent before it sends anything. */
+  draftsSendAgainAlreadyWent: "It had already gone — it's in your Sent folder. Nothing was sent again.",
+  draftsSendAgainChanged:
+    "Not sent again. It can't be matched to the message that was held, so it can't go as the same one. If it didn't arrive, make it a draft again and send it as a new message.",
+  draftsNotArrived: "Make it a draft again",
+  draftsSendAgainUnchecked: "Not sent again. Your Sent folder couldn't be checked first. Try again in a moment.",
+  draftsSendAgainNotHeld: "This message isn't waiting to be sent again any more.",
+  draftsSendAgainBusy: "This message is being sent right now.",
   draftsDiscard: "Discard",
   draftsDiscardWhat: "This deletes the only copy.",
   /** PHONE-ONLY: a send on this phone's queue, listed in Drafts until it goes. */
@@ -3016,9 +3033,22 @@ const TABLE = {
       ? "One letter that arrived while your storage was full is stored without its text."
       : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that arrived while your storage was full are stored without their text.`,
   storageNoticeSafe: "Those letters stay complete in your mailbox on your mail server, and stay listed and findable here.",
-  storageNoticeTrial: "A bigger plan keeps more text from now on. It does not bring back text that was already emptied.",
-  storageNoticeActive:
-    "A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.",
+  /** Near the cap and at it before any text is emptied: the web's Settings sentences. */
+  storageNoticeNear:
+    "Storage is nearly full. When it is full, ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
+  storageNoticeFull:
+    "Storage is full. ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
+  /** Inside the trial's 4 GB floor: when the plan's own limit applies, dated or not yet. */
+  storageNoticeCarry: (date: string, limit: string, cap: string) =>
+    `Until ${date}, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
+  storageNoticeCarryUnpaid: (limit: string, cap: string) =>
+    `Until 14 days after your first payment, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
+  /** What keeps more text: by subscription, and on the largest plan the add-on alone. */
+  storageOfferTrial: "A bigger plan keeps more text from now on.",
+  storageOfferTrialTop: "Once your subscription is paid, the storage add-on keeps more text from now on.",
+  storageOfferActive: "A bigger plan or the storage add-on keeps more text from now on.",
+  storageOfferActiveTop: "The storage add-on keeps more text from now on.",
+  storageNoticeNoRestore: "It does not bring back text that was already emptied.",
   storageNoticeManage: "Manage subscription",
   storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one

@@ -10,6 +10,7 @@ import {
   MAIL_ALLOWED_ATTR,
   MAIL_MAX_HTML_CHARS,
   QUOTED_HISTORY_LIMITS,
+  isForwardSubject,
   quotedHistoryVerdictOfHtml,
   type QuotedTree,
   type QuotedVerdict,
@@ -47,10 +48,12 @@ const verdicts = new Map<string, QuotedVerdict>();
 /**
  * The html part's own reading of its quoted history, for its text part (`quotedHistoryOfText`'s
  * `html`): the same parse and tree the frame's fold reads (`sanitize.ts`), so a member's text folds
- * only where its opened frame would. Kept for the last few parts read.
+ * only where its opened frame would. Kept for the last few parts read. `subject`: the message's, whose
+ * forward prefix keeps the forwarded message open.
  */
-export function htmlHistoryVerdict(html: string): QuotedVerdict {
-  const known = verdicts.get(html);
+export function htmlHistoryVerdict(html: string, subject?: string | null): QuotedVerdict {
+  const key = `${isForwardSubject(subject) ? "f" : "-"}${html}`;
+  const known = verdicts.get(key);
   if (known !== undefined) return known;
   let v: QuotedVerdict = "unread";
   if (html.length <= MAIL_MAX_HTML_CHARS && html.length <= QUOTED_HISTORY_LIMITS.chars) {
@@ -59,9 +62,9 @@ export function htmlHistoryVerdict(html: string): QuotedVerdict {
     const body = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "body");
     const head = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "head");
     const sheets = (head?.children ?? []).filter((n): n is Element => n instanceof Element && n.tagName === "style").map(sheetText);
-    v = quotedHistoryVerdictOfHtml<AnyNode>(body ?? doc, phoneQuotedTree, { sheets });
+    v = quotedHistoryVerdictOfHtml<AnyNode>(body ?? doc, phoneQuotedTree, { sheets, subject });
   }
   if (verdicts.size >= 64) verdicts.delete(verdicts.keys().next().value!);
-  verdicts.set(html, v);
+  verdicts.set(key, v);
   return v;
 }

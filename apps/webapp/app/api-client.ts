@@ -1953,6 +1953,13 @@ export const mailboxes = {
   create: (b: CreateMailboxBody) => api<MailboxDTO>("/mailboxes", { method: "POST", body: b }),
 
   /**
+   * `POST /mailboxes/discover`: which provider hosts a domain's mail. The body is `{ domain }` and nothing else
+   * (`discoveryRequestFor`); the answer only pre-fills a form, read through `readDiscovery`.
+   */
+  discover: (b: { domain: string }, signal?: AbortSignal) =>
+    api<unknown>("/mailboxes/discover", { method: "POST", body: b, ...(signal ? { signal } : {}) }),
+
+  /**
    * Test a connection without creating anything — `POST /mailboxes/probe`. `connection`-classed and `stepUp`-gated
    * with {@link create}, because the body carries a mailbox password; no `:id` because no row exists yet, and it
    * writes nothing at all. The failure shape is `create`'s by construction: the server throws the same

@@ -320,6 +320,54 @@ describe("access — the lifecycle block (wire contract v1 + the wall, 2026-09-2
   });
 });
 
+describe("access — the trial object (2026-10-25), read field by field and never a refusal", () => {
+  /* The connect reminder's two facts ride beside the block. A malformed one must never take the
+     body's fault path (last verdict, else allow): it is absent, and the verdict reads as without it. */
+  const trialing = (): Record<string, unknown> => wire("access-200-trialing") as Record<string, unknown>;
+  const withTrial = (trial: unknown): Record<string, unknown> => ({ ...trialing(), trial });
+  const withoutTrial = (): Record<string, unknown> => {
+    const { trial: _drop, ...body } = trialing();
+    return body;
+  };
+
+  it("a trialing answer carries when the trial began and whether it is set to cancel", async () => {
+    const c = client([{ status: 200, body: trialing() }]);
+    const v = await c.port.access(ACC);
+    expect(v.trial).toEqual({ startedAt: "2026-09-01T00:00:00.000Z", cancelScheduled: false });
+    expect(v.lifecycle?.state).toBe("trialing");
+    expect(c.faults).toEqual([]);
+  });
+
+  it("an absent, null or wrong-type object or field leaves the verdict byte-identical and names no drift", async () => {
+    const plain = client([{ status: 200, body: withoutTrial() }]);
+    const base = JSON.stringify(await plain.port.access(ACC));
+    expect("trial" in JSON.parse(base)).toBe(false);
+    for (const trial of [
+      null, "trialing", 7, true, [], {}, { startedAt: null, cancelScheduled: null },
+      { startedAt: 1790000000000, cancelScheduled: "no" }, { startedAt: "soon", cancelScheduled: 0 },
+    ]) {
+      const c = client([{ status: 200, body: withTrial(trial) }]);
+      expect(JSON.stringify(await c.port.access(ACC)), JSON.stringify(trial)).toBe(base);
+      expect(c.faults, JSON.stringify(trial)).toEqual([]);
+    }
+  });
+
+  it("a readable field is kept on its own, and the other one is absent rather than guessed", async () => {
+    const started = client([{ status: 200, body: withTrial({ startedAt: "2026-09-01T00:00:00.000Z", cancelScheduled: "no" }) }]);
+    expect((await started.port.access(ACC)).trial).toEqual({ startedAt: "2026-09-01T00:00:00.000Z" });
+    const cancelling = client([{ status: 200, body: withTrial({ startedAt: null, cancelScheduled: true }) }]);
+    expect((await cancelling.port.access(ACC)).trial).toEqual({ cancelScheduled: true });
+  });
+
+  it("a body the lifecycle refuses is refused as before, whatever the trial object says", async () => {
+    const body = trialing() as Record<string, unknown> & { lifecycle: Record<string, unknown> };
+    body.lifecycle.state = "parked";
+    const c = client([{ status: 200, body }]);
+    await expect(c.port.access(ACC)).resolves.toEqual(UNMETERED_ACCESS);
+    expect(c.faults.map((f) => f.field)).toEqual(["lifecycle.state"]);
+  });
+});
+
 describe("A 200 NOBODY CAN PARSE IS A FAULT, REPORTED BY NAME — never a silent allow", () => {
   /* The drift the two sides can grow: a renamed field, a proxy rewriting a body. Reading it as
    * "no verdict, therefore fine" is metering that has stopped applying with nothing in any log. */
@@ -1226,6 +1274,49 @@ describe("access — the price card", () => {
     const r = client([{ status: 200, body: refused }]);
     await expect(pricingOf(r.port).priceOf(ACC, "screener")).resolves.toBeNull();
   });
+});
+
+/** THE TRIAL'S STORAGE FLOOR (2026-10-24): the plan's own limit and when it applies again ride the verdict. */
+describe("access — the trialStorage block", () => {
+  const withCarry = (trialStorage: unknown): Record<string, unknown> => {
+    const body = wire("access-200-trialing") as Record<string, unknown> & { entitlements: Record<string, unknown> };
+    return { ...body, entitlements: { ...body.entitlements, storageBytesLimit: 4_000_000_000 }, trialStorage };
+  };
+
+  it("is carried beside the limits: the plan's own limit, and the instant it applies again or null", async () => {
+    for (const until of ["2026-11-08T12:00:00.000Z", null]) {
+      const c = client([{ status: 200, body: withCarry({ planBytesLimit: 2_000_000_000, until }) }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok && v.limits.storageBytes).toBe(4_000_000_000);
+      expect(v.ok && v.trialStorage).toEqual({ planBytesLimit: 2_000_000_000, until });
+      expect(c.faults).toEqual([]);
+    }
+  });
+
+  it("absent or null is no carry, and no drift", async () => {
+    for (const body of [wire("access-200-trialing"), withCarry(null)]) {
+      const c = client([{ status: 200, body }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok).toBe(true);
+      expect("trialStorage" in v).toBe(false);
+      expect(c.faults).toEqual([]);
+    }
+  });
+
+  for (const [what, block, field] of [
+    ["a string limit", { planBytesLimit: "2000000000", until: null }, "trialStorage.planBytesLimit"],
+    ["a negative limit", { planBytesLimit: -1, until: null }, "trialStorage.planBytesLimit"],
+    ["an unreadable instant", { planBytesLimit: 2_000_000_000, until: "soon" }, "trialStorage.until"],
+    ["a block that is not an object", [2_000_000_000], "trialStorage"],
+  ] as const) {
+    it(`${what} is a drift, named, read as no carry — and the access verdict stands`, async () => {
+      const c = client([{ status: 200, body: withCarry(block) }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok && v.limits.storageBytes).toBe(4_000_000_000);
+      expect("trialStorage" in v).toBe(false);
+      expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field }]);
+    });
+  }
 });
 
 describe("`aiPricing` — /health's reading of where a quote's price comes from", () => {

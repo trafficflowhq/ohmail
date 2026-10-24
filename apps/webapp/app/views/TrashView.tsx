@@ -564,7 +564,7 @@ function TrashLiveRead({
       </header>
       <p className="trash-live-note trash-live-readonly">{t("liveReadOnly")}</p>
       {body.phase === "ready" ? (
-        <BodyText text={body.text} />
+        <BodyText text={body.text} subject={item.subject} />
       ) : body.phase === "failed" ? (
         <p className="trash-live-note" role="status">
           {t("liveBodyFailed")}{" "}

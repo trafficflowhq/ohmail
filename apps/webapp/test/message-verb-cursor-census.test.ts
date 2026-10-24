@@ -70,9 +70,8 @@ const EXEMPT: Record<string, string> = {
     "⇧⌫ acts on the row the reading column shows, which falls back to the bin's first row; it "
     + "rests only on an empty bin or on a live row, which has no restore — no placement answers either",
   "views/TriageView.tsx":
-    "the pile verbs are DECLARED only over a cursor — `shown` falls back to the pile's first "
-    + "openable row, so the array is empty rather than disabled when there is nothing to act on; "
-    + "`f` rests on an empty Answer Later pile, which is its own reason",
+    "only `f` is declared here — the pile's message verbs come from `useMessageVerbs`, which "
+    + "names the reason; `f` rests on an empty Answer Later pile, which is its own reason",
 };
 
 /**

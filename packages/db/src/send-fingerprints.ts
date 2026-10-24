@@ -1,6 +1,6 @@
-import { lt } from "drizzle-orm";
+import { and, lt, sql } from "drizzle-orm";
 /* The mail half directly — see the note in `change-log.ts`. This is a mail table. */
-import { outboundSendFingerprints } from "./schema-mail.js";
+import { outboundSendFingerprints, outboundSends } from "./schema-mail.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -22,12 +22,17 @@ export const SEND_FINGERPRINT_RETENTION_MS = 24 * 60 * 60 * 1000;
  * A SIZE control and never a correctness one. Row growth is bounded by DISTINCT sends rather than
  * by attempts — the send path re-points an existing claim instead of inserting a second — so the
  * table is small by construction and a failed sweep costs a little disk and nothing else. Nothing
- * waits on it and no send's answer changes because it did or did not run.
+ * waits on it and no send's answer changes because it did or did not run. A claim whose send is held
+ * (`unverified`, nobody has answered for it) is kept whatever its age: Send again proves its message by it.
  */
 export async function pruneSendFingerprints(tx: Tx, now: Date): Promise<number> {
   const gone = await tx
     .delete(outboundSendFingerprints)
-    .where(lt(outboundSendFingerprints.createdAt, new Date(now.getTime() - SEND_FINGERPRINT_RETENTION_MS)))
+    .where(and(
+      lt(outboundSendFingerprints.createdAt, new Date(now.getTime() - SEND_FINGERPRINT_RETENTION_MS)),
+      sql`not exists (select 1 from ${outboundSends} where ${outboundSends.id} = ${outboundSendFingerprints.sendId}
+        and ${outboundSends.status} = 'unverified' and ${outboundSends.resolvedBy} is null)`,
+    ))
     .returning({ id: outboundSendFingerprints.id });
   return gone.length;
 }

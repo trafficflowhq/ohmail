@@ -2,9 +2,10 @@
  * A SENT ROW'S WORDS ARE THE ACCOUNT'S RECORD OF WHAT WENT (REPRESS-WITH-EDITED-WORDS-SENDS-THE-EARLIER-ONES).
  * `update()` writes only where `status = 'draft' AND send_key IS NULL`. A sent row restated with its
  * own words answers 200 and writes nothing (an older client replaying a confirmed send after a kill);
- * different words answer 409 `draft_sent`; `sending`/`unverified` answer `send_recorded`.
- * Mutations: the predicate back to `ne(status,'scheduled')` reddens control 4; dropping the compare
- * reddens the restatement.
+ * different words answer 409 `draft_sent`; `sending`/`unverified` answer `send_recorded`. A save that
+ * states the version it was made on is a current editor's, never a replay: 409 `draft_sent` even with
+ * the same words. Mutations: the predicate back to `ne(status,'scheduled')` reddens control 4; dropping
+ * the compare reddens the restatement; the stated version ignored reddens the stated restatement.
  */
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, drafts, mailboxes } from "@trafficflow/db";
 import { and, eq } from "drizzle-orm";
 import { DraftsService } from "../src/index.js";
+import { draftContentRevision } from "../src/draft-revision.js";
 import type { ServiceContext } from "../src/index.js";
 
 const svc = new DraftsService();
@@ -54,7 +56,18 @@ describe("a content PUT on a sent draft", () => {
     });
   });
 
-  it("the restatement — the same words answer 200, the row byte-equal and no change written", async () => {
+  it("the stated restatement — the same words with the version they were made on answer 409 draft_sent and write nothing", async () => {
+    const s = await sentRow();
+    const before = await s.read();
+    const changes = await s.changes();
+    const answer = await answerOf(svc.update(s.ctx, s.id, {
+      subject: "Re: invoice", body: EARLIER, to: TO, cc: [], bcc: [], mailboxId: s.mb,
+    }, { ifContentRevision: draftContentRevision(before) }));
+    expect({ answer, row: await s.read(), changes: await s.changes() })
+      .toEqual({ answer: { httpStatus: 409, code: "draft_sent" }, row: before, changes });
+  });
+
+  it("the restatement — the same words, no version stated, answer 200, the row byte-equal and no change written", async () => {
     const s = await sentRow();
     const before = await s.read();
     const changes = await s.changes();

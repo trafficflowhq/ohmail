@@ -17,7 +17,7 @@ import {
   // 0.14.1, 0.14.1 — the request path. See `screener-apply.ts` and `organizer-role.ts` in
   // `@trafficflow/db` for why the transactional core and the eligibility read live there.
   senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type CutlineSet,
-  senderHasHeldClaimSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
+  senderHasHeldClaimSql, heldArrivedInsideSql, heldRowById, applyScreenerDecision, AccountErasedError, readAccountErasedAt, domainOf, ruleNamesSenderSql,
   readRequestEligibility, decisionCanBeApplied, readListAddresses,
   listOutstandingForAccount,
   OrganizedElsewhereError, MailboxNotFoundError, ringFilingDoorbell,
@@ -1630,9 +1630,9 @@ export class ScreenerReadService {
    * rows back by id. The window sorts every held message of the account; carried whole (subject,
    * snippet, locator) that sort left memory for disk on a large mailbox (74k: 12k held rows, 6 MB).
    */
-  private heldSenderKeys(ctx: ServiceContext, mailboxId?: string) {
+  private heldSenderKeys(ctx: ServiceContext, mailboxId?: string, cutline?: CutlineSet) {
     // A mailbox narrows the held rows only; activity, decided and own stay account-wide.
-    const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId));
+    const { d, filters, window } = this.heldWindow(ctx, mailboxId === undefined ? undefined : eq(messages.mailboxId, mailboxId), cutline);
     // scoped-by: `filters` leads with eq(messages.accountId, ctx.accountId)
     const reps = ctx.db.select({ messageId: messages.id, fromAddress: messages.fromAddress, ...window }).from(messages)
       .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -1642,7 +1642,7 @@ export class ScreenerReadService {
   }
 
   /** The window's predicate and its four columns, ONE definition for both projections above. */
-  private heldWindow(ctx: ServiceContext, extra?: SQL) {
+  private heldWindow(ctx: ServiceContext, extra?: SQL, cutline?: CutlineSet) {
     const d = dialect(ctx.db);
     // The one sort key (`@trafficflow/db#heldSortKey`): the header, else the mailbox's arrival —
     // the two worker passes choose the same representative by it.
@@ -1673,6 +1673,14 @@ export class ScreenerReadService {
         partition by ${sender}
         order by case when ${messages.senderCheck} = 'impersonation' then 1 else 0 end desc, ${sortKey} desc, ${messages.id} desc
       )`.as("sender_marked_brand"),
+      /* A held letter that arrived inside the cutline (`heldArrivedInsideSql`), over the same
+         partition: the partition is the sender's held rows, so no per-sender probe is needed. */
+      heldArrival: (cutline
+        ? sql<number>`max(case when ${heldArrivedInsideSql(d, {
+          folder: sql`${folderState.desiredFolder}`, deletedAt: sql`${messages.deletedAt}`, date: sql`${messages.date}`,
+          arrivedAt: sql`${messages.arrivedAt}`, recordedAt: sql`${messages.createdAt}`, mailboxId: sql`${messages.mailboxId}`,
+        }, cutline)} then 1 else 0 end) over (partition by ${sender})`
+        : sql<number>`0`).as("held_arrival"),
     };
     return { d, sortKey, filters, window };
   }
@@ -1704,7 +1712,7 @@ export class ScreenerReadService {
       mailboxId?: string;
     },
   ): Promise<{ rows: ScreenerRow[]; total: number | undefined }> {
-    const held = this.heldSenderKeys(ctx, opts.mailboxId);
+    const held = this.heldSenderKeys(ctx, opts.mailboxId, opts.cutline);
     const { reps, d } = held;
 
     /* ── THE CUTLINE, WITH THE RANK AND BEFORE THE LIMIT ────────────────────────────────────
@@ -1777,9 +1785,11 @@ export class ScreenerReadService {
     const claim = cutline
       ? sql`(${reps.senderMarked} = 1 and ${senderHasHeldClaimSql(d, ctx.accountId, sender, cutline, SCREENING_AUTH_VERDICTS)})`
       : undefined;
+    // A held letter that arrived inside the cutline whatever its Date, as the gate dated it.
+    const arrival = cutline ? sql`${reps.heldArrival} = 1` : undefined;
     return [
       eq(reps.rank, 1),
-      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim})` : undefined,
+      cutline ? sql`(${senderIsActiveSql(d, ctx.accountId, sender, cutline)} or ${claim} or ${arrival})` : undefined,
       // A decided sender is waiting again while the gate holds such a claim of theirs.
       claim
         ? sql`(not ${senderIsDecidedSql(d, ctx.accountId, sender)} or ${claim})`

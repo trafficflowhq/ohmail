@@ -58,6 +58,22 @@ describe("GET /internal/account-lifecycle/run and /erase", () => {
     expect((await H(get("/internal/account-lifecycle/run?after=1%20or%201=1"), d)).status).toBe(400);
   });
 
+  it("the sweep runs the connect reminder log-only unless the host switched it to send, and send only beside its cutoff", async () => {
+    const d = await armed();
+    const run = async (deps: ApiDeps) =>
+      ((await (await H(get("/internal/account-lifecycle/run"), deps)).json()) as { connectReminder: unknown }).connectReminder;
+    const since = "2026-10-25T18:00:00Z";
+    expect(await run(d)).toEqual({ mode: "log", since: null, owed: 0, owedSince: null });
+    expect(await run({ ...d, connectReminderSince: since } as ApiDeps))
+      .toEqual({ mode: "log", since: "2026-10-25T18:00:00.000Z", owed: 0, owedSince: 0 });
+    expect(await run({ ...d, connectReminder: "send", connectReminderSince: since } as ApiDeps))
+      .toEqual({ mode: "send", since: "2026-10-25T18:00:00.000Z", owed: 0, owedSince: null });
+    for (const without of [{}, { connectReminderSince: "2026-10-25" }]) {
+      expect(await run({ ...d, connectReminder: "send", ...without } as ApiDeps), JSON.stringify(without))
+        .toEqual({ mode: "refused", since: null, owed: 0, owedSince: null });
+    }
+  });
+
   it("the erase door answers {skipped} for an account that is not due, and 400 without a uuid", async () => {
     const reads: string[] = [];
     const d = await armed(reads);
