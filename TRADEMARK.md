@@ -27,9 +27,9 @@ Switzerland. They are *included* in this repository because the project builds
 with them — not offered under AGPL-3.0.
 
 The image files above are the only binary artwork excluded from the AGPL grant.
-The other binaries in this tree — the feature recordings under
-`docs/assets/feature-wall/` — are renders of this source tree over its built-in
-fictional mailbox and are AGPL-covered along with it; see
+The other binaries in this tree — the screenshots and recordings under
+`docs/assets/readme/` — are renders of this source tree over an invented
+mailbox seeded for them, and are AGPL-covered along with it; see
 [COPYRIGHT](COPYRIGHT). Everything else here is source, and all of that source
 is AGPL-3.0.
 

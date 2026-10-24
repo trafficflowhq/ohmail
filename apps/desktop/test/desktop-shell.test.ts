@@ -3509,7 +3509,7 @@ describe("the window's content policy, per platform", () => {
     const block = /\*\*2 · The CSP forbids[^\n]*\n\n```\n([\s\S]*?)\n```/.exec(read("README.md"))?.[1];
     expect(block?.replace(/\n/g, " ")).toBe(cspFor("linux"));
     const said = (text: string) => text.split("connect-src 'none'").length - 1;
-    for (const [rel, nones] of [["README.md", 0], ["README.ohmarchy.md", 0], ["SECURITY.md", 1], ["apps/desktop/README.md", 2]] as const) {
+    for (const [rel, nones] of [["docs/how-it-works.md", 0], ["SECURITY.md", 1], ["apps/desktop/README.md", 2]] as const) {
       const text = doc(rel);
       expect(text, rel).toMatch(/in-process command scheme/);
       expect(text, rel).toMatch(/tauri\.(?:<os>|linux|macos|windows)\.conf\.json/);

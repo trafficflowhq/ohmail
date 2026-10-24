@@ -80,15 +80,17 @@ describe("the pile is News in every user-facing catalogue", () => {
     for (const [id, label] of named) expect(label, `the View menu's ${id} label`).toBe(place[id]);
   });
 
-  it("public/ohmail/README.md: the word is gone — the tree names the folder the product makes", () => {
-    const raw = fs.readFileSync(path.join(ROOT, publicRel("README.md")), "utf8");
-    const strays = raw
-      .split("\n")
-      .map((line, i) => [i + 1, line] as const)
-      .filter(([, line]) => WORD.test(line));
-    expect(strays.map(([n, l]) => `${n}: ${l.trim()}`), '"Reads" in the public README').toEqual([]);
-    // Anti-vacuity: the tree line is there under the new name, and the views heading says News.
-    expect(raw).toContain("├── News");
-    expect(raw).toContain("## Ohbox · News · Receipts");
+  it("the README, its twin and docs/how-it-works.md: the word is gone — the tree names the folder the product makes", () => {
+    const read = (rel: string) => fs.readFileSync(path.join(ROOT, publicRel(rel)), "utf8");
+    for (const rel of ["README.md", "README.ohmarchy.md", "docs/how-it-works.md"]) {
+      const strays = read(rel)
+        .split("\n")
+        .map((line, i) => [i + 1, line] as const)
+        .filter(([, line]) => WORD.test(line));
+      expect(strays.map(([n, l]) => `${n}: ${l.trim()}`), `"Reads" in ${rel}`).toEqual([]);
+    }
+    // Anti-vacuity: the tree line is there under the new name, and the README's row says News.
+    expect(read("docs/how-it-works.md")).toContain("├── News");
+    expect(read("README.md")).toContain("### News and Receipts");
   });
 });
