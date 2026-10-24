@@ -522,7 +522,7 @@ describe("the reader wires it", () => {
     expect(reader).toMatch(/const \{ above, below \} = readerGroups\(m, inOhbox\);/);
     expect(reader).toMatch(/\{above\.map\(\(h\) => memberPanel\(h, "above"\)\)\}[\s\S]*seen\.offset\("opened"[\s\S]*\{below\.map\(\(h\) => memberPanel\(h, "below"\)\)\}/);
     expect(reader).toMatch(/anchorFacts\.current = \(\) => \(facts\.current\.inOhbox && aboveCount\.current > 0 \? seen\.topOf\(id\) : null\);/);
-    expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\),/);
+    expect(reader).toMatch(/holding: !hasPaneScroll\(scrollKey\) \|\| place\.current !== null,/);
     expect(reader, "the oldest member is not flashed before the anchor places the opened one").toMatch(/opacity: unplaced \? 0 : 1/);
     expect(reader).toMatch(/onScrollBeginDrag=\{\(\) => \{ handOver\(\); seen\.poke\(\); \}\}/);
   });

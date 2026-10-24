@@ -164,7 +164,7 @@ describe("the screen and the three nav entries, in the structure idiom", () => {
     expect(screen).toMatch(/useEffect\(\(\) => \{\s*warm\.current\(\);\s*\}, \[\]\);/);
     // And nothing else on this screen may depend on a value the world rebuilds per render.
     const deps = [...screen.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\);/g)].map((m) => m[1]!.trim());
-    expect(deps).toEqual([""]);
+    expect(deps.filter((d) => d !== "")).toEqual([]);
   });
 
   it("every navigation entry opens the one screen — dock/rail, More, the iOS pane foot", () => {

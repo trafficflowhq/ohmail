@@ -28,6 +28,7 @@ import { SlotHeights } from "../src/ui/history-slot";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { holdWhileOpen } from "../src/ui/reader-held";
 import type { WorldMail } from "../src/state/world";
 
 /** A row of the one list: the device's own, or a store slot read at render. */
@@ -67,6 +68,10 @@ function SearchBody() {
   warm.current = w.search.warm;
   useEffect(() => {
     warm.current();
+  }, []);
+  /* A result opened from here stays over Search, on two panes too: Back returns to the query. */
+  useEffect(() => {
+    return holdWhileOpen(Symbol("search"));
   }, []);
 
   const trimmed = q.trim();
@@ -152,6 +157,7 @@ function SearchBody() {
       <MailList
         groups={groups}
         rowKey={(r) => r.key}
+        topFor={addr === null ? `q:${trimmed}` : `a:${dir}:${addr}`}
         renderRow={(r): ReactElement => {
           if ("device" in r) {
             return <MailRow m={r.device} onPress={() => router.push(`/message/${r.device.id}`)} />;

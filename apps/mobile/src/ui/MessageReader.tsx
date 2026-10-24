@@ -34,8 +34,8 @@ import { MessageActions } from "./MessageActions";
 import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
 import { scaffoldPlan } from "./scaffold/plan";
-import { hasPaneScroll, paneScrollOf, recordPaneScroll } from "./pane-memory";
-import { createOpenAnchor } from "./open-anchor";
+import { hasPaneScroll, panePlaceOf, paneScrollOf, recordPanePlace, recordPaneScroll } from "./pane-memory";
+import { createOpenAnchor, placeAt, placeY, type OpenAnchor } from "./open-anchor";
 import {
   THREAD_READ_FADE_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createPhoneThreadRead,
 } from "./reader-seen";
@@ -190,6 +190,8 @@ export function MessageReader({
   const screenShown = useIsFocused();
   const shown = useRef(screenShown);
   shown.current = screenShown;
+  /** The anchor on its way to a place: the view shows no place the person chose, so it reads nothing. */
+  const anchorRef = useRef<OpenAnchor | null>(null);
   const seen = useMemo(
     () => createPhoneThreadRead({
       record,
@@ -200,7 +202,7 @@ export function MessageReader({
       lines: (mid) => THREAD_TOP_LINES * (mid === id ? lineOf.current.opened : lineOf.current.member),
       /* In sight: its screen in front, the app in the foreground, its window focused, and no sheet or composer over it.
          AppState stays active under a Modal and under the notification shade (`reader-cover.ts`). */
-      active: () => shown.current && readerSees(AppState.currentState),
+      active: () => shown.current && readerSees(AppState.currentState) && anchorRef.current?.aiming !== true,
       onHere: setHere,
     }),
     [id, record],
@@ -232,8 +234,16 @@ export function MessageReader({
      own jumps. */
   const scrollKey = `msg:${id}`;
   const startAt = useMemo(() => ({ x: 0, y: paneScrollOf(scrollKey) }), [scrollKey]);
+  /* THE PLACE: the message under the view's top and how far into it (`pane-memory`). A new width aims
+     at it again, never at the offset. It moves with the person's scroll and a landing, not with an aim. */
+  const place = useMemo(() => ({ current: panePlaceOf(scrollKey) }), [scrollKey]);
   const stand = (y: number): void => {
     recordPaneScroll(scrollKey, y);
+    const a = anchorRef.current;
+    if (a !== null && (!a.holding || a.settled)) {
+      const p = placeAt(seen.layout(id), y);
+      if (p !== null) { place.current = p; recordPanePlace(scrollKey, p); }
+    }
     seen.onScroll(y);
   };
   const box = useRef({ content: 0, view: 0 });
@@ -261,18 +271,31 @@ export function MessageReader({
   anchorFacts.current = () => (facts.current.inOhbox && aboveCount.current > 0 ? seen.topOf(id) : null);
   const anchor = useMemo(
     () => createOpenAnchor({
-      holding: !hasPaneScroll(scrollKey),
+      holding: !hasPaneScroll(scrollKey) || place.current !== null,
       start: startAt.y,
-      target: () => { const top = anchorFacts.current(); return top === null ? null : top - 8; },
+      target: () => {
+        if (place.current !== null) return placeY(seen.layout(id), place.current);
+        const top = anchorFacts.current();
+        return top === null ? null : top - 8;
+      },
       extent: () => box.current,
       scrollTo: (y) => scrollRef.current?.scrollTo({ y, animated: false }),
       stand: (y) => standRef.current(y),
       onPlaced: () => setPlaced(true),
+      onSettle: () => seen.poke(),
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [seen, scrollKey],
   );
+  anchorRef.current = anchor;
   useEffect(() => () => anchor.dispose(), [anchor]);
+  /** The widths the view and its content were laid out at: a new one reflows every panel. */
+  const widths = useRef({ view: 0, content: 0 });
+  const widthSeen = (which: "view" | "content", width: number): void => {
+    const was = widths.current[which];
+    widths.current[which] = width;
+    if (was > 0 && width > 0 && Math.abs(width - was) >= 1) anchor.rearm();
+  };
   const handOver = (): void => {
     anchor.handOver();
     if (jumpEnd.current) { clearTimeout(jumpEnd.current); jumpEnd.current = null; }
@@ -316,7 +339,7 @@ export function MessageReader({
   /** A member's panel, above or below the opened message: its header, its body, its own files. */
   const memberPanel = (h: WorldEarlier, group: "above" | "below") => (
     <Panel key={h.id} radius={t.radius.card} style={{ padding: 18 }}
-      onLayout={(e) => seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height)}>
+      onLayout={(e) => { seen.panel(h.id, group, e.nativeEvent.layout.y, e.nativeEvent.layout.height); anchor.layout(); }}>
       {inOhbox ? (
         <ReadTint unread={!h.seen} style={{ top: 0, left: 0, right: 0, bottom: 0, borderRadius: t.radius.card }} />
       ) : null}
@@ -401,8 +424,13 @@ export function MessageReader({
         onScrollEndDrag={onScroll}
         onMomentumScrollEnd={onScroll}
         scrollEventThrottle={16}
-        onContentSizeChange={(_w, h) => { box.current.content = h; anchor.layout(); }}
-        onLayout={(e) => { box.current.view = e.nativeEvent.layout.height; seen.viewport(e.nativeEvent.layout.height); anchor.layout(); }}
+        onContentSizeChange={(cw, h) => { box.current.content = h; widthSeen("content", cw); anchor.layout(); }}
+        onLayout={(e) => {
+          box.current.view = e.nativeEvent.layout.height;
+          seen.viewport(e.nativeEvent.layout.height);
+          widthSeen("view", e.nativeEvent.layout.width);
+          anchor.layout();
+        }}
       >
         <View
           style={{ paddingHorizontal: 20, paddingTop: 18, opacity: unplaced ? 0 : 1 }}

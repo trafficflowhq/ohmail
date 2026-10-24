@@ -11,7 +11,12 @@
  * until the view stands where it asked, or at the end of the content it was told about, bounded by
  * `ANCHOR_SETTLE_MS` after the last layout. And where the reader stands — the read rule's view, the
  * pane memory — is only ever an offset the view reported (`reached`), never the one asked for.
+ *
+ * A NEW WIDTH AIMS AGAIN. A rotation, a fold or a density change reflows every panel, and the offset
+ * the view kept then points into another message: `rearm` aims at the kept place (`placeAt`,
+ * `placeY`) until the person's own scroll, and while it is on its way (`aiming`) nothing is read.
  */
+import type { PanePlace } from "./pane-memory";
 
 /** How long after the last layout the anchor keeps aiming at a place the view has not reached. */
 export const ANCHOR_SETTLE_MS = 1500;
@@ -19,6 +24,12 @@ export const ANCHOR_SETTLE_MS = 1500;
 export interface OpenAnchor {
   /** Still holding the opened message at the top: no hand-over yet. */
   readonly holding: boolean;
+  /** On its way to a place it has not reached: what the view shows is no place the person chose. */
+  readonly aiming: boolean;
+  /** Standing at the place itself, not at a content end short of it. */
+  readonly settled: boolean;
+  /** A new width: hold the place again, as on the open. */
+  rearm: () => void;
   /** A layout moved the opened message, the content or the view: aim again, and keep aiming until reached. */
   layout: () => void;
   /** The scroll view reports where it stands (a scroll event, a drag's or a fling's end). */
@@ -42,6 +53,8 @@ export interface OpenAnchorOptions {
   stand: (y: number) => void;
   /** The opened message stands where it should, once: the column may be drawn. */
   onPlaced: () => void;
+  /** The aim stopped, reached or given up: the read rule may look again. */
+  onSettle?: () => void;
   /** The frame scheduler and the clock; tests run them by hand. */
   frame?: (run: () => void) => () => void;
   now?: () => number;
@@ -74,14 +87,30 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     if (w === null) return;
     if (Math.abs(at - w) <= 1) {
       if (!placed) { placed = true; o.onPlaced(); }
+      o.onSettle?.();
       return;
     }
-    if (now() > until) return;
+    if (now() > until) { o.onSettle?.(); return; }
     o.scrollTo(w);
     pending = frame(aim);
   };
   return {
     get holding() { return holding; },
+    get aiming() {
+      if (!holding || now() > until) return false;
+      const w = want();
+      return w !== null && Math.abs(at - w) > 1;
+    },
+    get settled() {
+      const t = o.target();
+      return t !== null && Math.abs(at - Math.max(0, t)) <= 1;
+    },
+    rearm: () => {
+      holding = true;
+      until = now() + ANCHOR_SETTLE_MS;
+      pending?.();
+      aim();
+    },
     layout: () => {
       if (!holding) return;
       until = now() + ANCHOR_SETTLE_MS;
@@ -103,4 +132,26 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
       pending = null;
     },
   };
+}
+
+/** A panel of the reader, top to bottom: its id, its top in the scroll content and its height. */
+export interface PlacePanel { id: string; top: number; height: number }
+
+/** The air a jump leaves above a panel's top: a view standing in it stands at that panel. */
+const PLACE_AIR = 8;
+
+/** Where the view at `y` stands: the panel under its top line, and how far into it. */
+export function placeAt(panels: readonly PlacePanel[], y: number): PanePlace | null {
+  let at: PlacePanel | null = null;
+  for (const p of panels) if (p.top <= y + PLACE_AIR + 1) at = p;
+  return at === null ? null : { id: at.id, dy: y - at.top, h: at.height };
+}
+
+/** Where `place` stands in today's layout: the same distance above the top, as far into the panel, or past its end. */
+export function placeY(panels: readonly PlacePanel[], place: PanePlace): number | null {
+  const p = panels.find((x) => x.id === place.id);
+  if (!p) return null;
+  if (place.dy <= 0 || place.h <= 0 || p.height <= 0) return p.top + place.dy;
+  if (place.dy >= place.h) return p.top + p.height + (place.dy - place.h);
+  return p.top + (place.dy * p.height) / place.h;
 }

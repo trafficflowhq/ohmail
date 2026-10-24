@@ -27,6 +27,8 @@ const native = vi.hoisted(() => ({
   events: [] as (() => void)[],
   props: null as null | Record<string, any>,
   asked: [] as number[],
+  /** A scroll asked is not reached while set: the view stays where it stands. */
+  stuck: false,
 }));
 
 vi.mock("react-native", async () => {
@@ -62,6 +64,7 @@ vi.mock("../src/ui/base", async () => {
     const handle = {
       scrollTo: ({ y }: { y: number }) => {
         native.asked.push(y);
+        if (native.stuck) return;
         const max = Math.max(0, native.content - native.view);
         const next = Math.max(0, Math.min(y, max));
         if (next !== native.offset) {
@@ -149,7 +152,7 @@ const { RAIL_TOP, railFit } = await import("../src/ui/reader-marks");
 type El = HTMLElement & { __props?: Record<string, any> };
 const src = (el: El) => String(el.__props?.onLayout ?? "");
 const all = (root: Element): El[] => [...root.querySelectorAll<El>("[data-rn]")];
-const lay = (el: El | undefined, layout: { y: number; height: number }) => {
+const lay = (el: El | undefined, layout: { y: number; height: number; width?: number }) => {
   if (!el) throw new Error("no such view");
   act(() => { el.__props!.onLayout({ nativeEvent: { layout: { x: 0, width: 360, ...layout } } }); });
 };
@@ -196,7 +199,7 @@ let host: HTMLElement | null = null;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
-  native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = [];
+  native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
   world.glanced = [];
   nav.focused = true;
   resetVisitsForTests();
@@ -417,5 +420,123 @@ describe("a conversation opens on its newest, every time", () => {
     pass(500);
     mountReader("d4");
     expect(native.props!.contentOffset, "the remount starts where the person stood").toEqual({ x: 0, y: 3000 });
+  });
+});
+
+/**
+ * A NEW WIDTH KEEPS THE PLACE (a rotation, a fold to the outer screen, a density change): every panel
+ * reflows, so the offset the view kept points into another message. The reader keeps the message under
+ * the view's top and how far into it, and lands there again once the panels have their new heights;
+ * nothing turns read while it is on its way. Three members above the opened message, the second and
+ * the third taller than the screen; the narrow width doubles every member's height.
+ */
+describe("a new width keeps the place in the conversation", () => {
+  type Geo = { width: number; view: number; heights: [number, number, number]; opened: number };
+  const WIDE: Geo = { width: 700, view: 400, heights: [150, 600, 600], opened: 300 };
+  const NARROW: Geo = { width: 360, view: 640, heights: [200, 1200, 1200], opened: 400 };
+  /** The tops in the scroll content, as the reader draws them: padded 18, gaps 12, 34 above the opened message. */
+  const tops = (g: Geo) => {
+    const [a, b, c] = g.heights;
+    const p1 = 18, p2 = p1 + a + 12, p3 = p2 + b + 12, opened = p3 + c + 34;
+    return { p1, p2, p3, opened, content: opened + g.opened + 100 };
+  };
+  const layAt = (el: HTMLElement, g: Geo, told = true): void => {
+    const v = views(el);
+    const at = tops(g);
+    const [a, b, c] = g.heights;
+    lay(v.padded, { y: 0, height: at.content - 100, width: g.width });
+    lay(v.above, { y: 18, height: a + b + c + 24, width: g.width });
+    for (const [mid, h] of [["p1", a], ["p2", b], ["p3", c]] as const) {
+      const p = v.member(mid);
+      lay(p.panel, { y: at[mid] - 18, height: h, width: g.width - 40 });
+      lay(p.header, { y: 18, height: 22 });
+      lay(p.body, { y: 50, height: 0 });
+      lay(p.end, { y: h - 18, height: 0 });
+    }
+    lay(v.opened, { y: at.opened, height: g.opened, width: g.width - 40 });
+    lay(v.from, { y: 0, height: 20 });
+    lay(v.obody, { y: 120, height: 0 });
+    lay(v.oend, { y: g.opened, height: 0 });
+    if (told) {
+      native.content = at.content;
+      native.view = g.view;
+    }
+    lay(v.scroll, { y: 0, height: g.view, width: g.width });
+    act(() => { native.props!.onContentSizeChange?.(g.width, at.content); });
+  };
+  const thread = (unread: string[] = []) => ({
+    ...mailOf("p4", ["p1", "p2", "p3"].map((id) => ({ ...memberOf(id, "Mara"), seen: !unread.includes(id), later: false }))),
+    unread: false,
+  });
+  /** The person drags the reader to `y`. */
+  const dragTo = (y: number): void => {
+    act(() => { native.props!.onScrollBeginDrag?.(); });
+    native.offset = y;
+    act(() => { native.props!.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y } } }); });
+    act(() => { native.props!.onScrollEndDrag?.({ nativeEvent: { contentOffset: { x: 0, y } } }); });
+  };
+  const settle = (ms = 300): void => {
+    for (let i = 0; i < ms; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    flushNative();
+  };
+
+  for (const [from, to, name] of [[NARROW, WIDE, "a rotation to landscape"], [WIDE, NARROW, "a fold to the narrow screen"],
+    [NARROW, { ...NARROW, width: 338, heights: [212, 1290, 1290], opened: 430 } as Geo, "a density change"]] as const) {
+    it(`${name}: a member's top stays at the top, and a place inside a member stays as far into it`, () => {
+      world.mail = thread();
+      const el = mountReader("p4");
+      layAt(el, from);
+      settle();
+      dragTo(tops(from).p3 - 8);
+      settle();
+      layAt(el, to);
+      settle();
+      expect(native.offset, "the third member's top, at the new width").toBe(tops(to).p3 - 8);
+
+      dragTo(tops(to).p2 + to.heights[1] * 0.4);
+      settle();
+      layAt(el, from);
+      settle();
+      expect(native.offset, "40% into the second member, at the old width again").toBeCloseTo(tops(from).p2 + from.heights[1] * 0.4, 0);
+    });
+  }
+
+  it("a fold that remounts the reader lands on the same message, not on the old offset", () => {
+    world.mail = thread();
+    const el = mountReader("p4");
+    layAt(el, NARROW);
+    settle();
+    dragTo(tops(NARROW).p3 - 8);
+    settle();
+    act(() => root?.unmount());
+    host?.remove();
+    pass(300);
+    const again = mountReader("p4");
+    expect(native.props!.contentOffset, "the remount starts where the view stood").toEqual({ x: 0, y: tops(NARROW).p3 - 8 });
+    layAt(again, WIDE);
+    settle();
+    expect(native.offset, "then lands on the third member's top at the new width").toBe(tops(WIDE).p3 - 8);
+  });
+
+  it("nothing turns read while the reader is on its way back to its place", () => {
+    world.mail = thread(["p2"]);
+    const el = mountReader("p4");
+    layAt(el, NARROW);
+    settle();
+    dragTo(tops(NARROW).p3 - 8);
+    settle(1000);
+    expect(world.glanced.flat(), "the premise: the second member's top was never on screen").not.toContain("p2");
+    // A narrower screen, its first member far taller: the old offset now stands at the second member's top.
+    const tall: Geo = { ...NARROW, width: 320, heights: [tops(NARROW).p3 - 8 - 18 - 12 - 18 + 4, 1200, 1200] };
+    expect(tops(tall).p2, "the premise: the second member's top is at the old offset").toBeLessThan(tops(NARROW).p3 - 8 + 40);
+    native.stuck = true;
+    layAt(el, tall);
+    settle(1000);
+    expect(native.offset, "the premise: the view has not moved yet").toBe(tops(NARROW).p3 - 8);
+    expect(world.glanced.flat(), "the second member read under a place the person never chose").not.toContain("p2");
+    native.stuck = false;
+    settle(1000);
+    expect(native.offset).toBe(tops(tall).p3 - 8);
+    expect(world.glanced.flat()).not.toContain("p2");
   });
 });

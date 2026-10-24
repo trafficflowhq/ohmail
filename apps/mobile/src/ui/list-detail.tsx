@@ -9,9 +9,9 @@
  * the route's `open` param, and when the pane goes the reading migrates to the pushed route.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Platform, ScrollView, StyleSheet, View } from "react-native";
+import { BackHandler, Platform, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { router, useLocalSearchParams, usePathname } from "expo-router";
+import { router, useIsFocused, useLocalSearchParams, usePathname } from "expo-router";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
@@ -99,6 +99,17 @@ export function ListDetail({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [twoPane, open]);
+
+  /* SYSTEM BACK CLOSES THE READING PANE first: the selection is a param, not a screen on the stack,
+     so Back went past it and left the app. Only the screen in front answers. */
+  const focused = useIsFocused();
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!twoPane || open === null || !focused) return undefined;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => { closeRef.current(); return true; });
+    return () => sub.remove();
+  }, [twoPane, open, focused]);
 
   /* ONE TREE ON EVERY POSTURE (`pairSlots`): the slots are restyled, never swapped or re-parented.
      The transition frame before the effect lands keeps the reader up — never a list flash. */

@@ -9,19 +9,44 @@
  */
 const CAP = 64;
 
-const offsets = new Map<string, number>();
+/**
+ * A place in the conversation, kept beside the offset: the panel under the view's top line (a
+ * member, or the opened message) and how far into it the view stands. A new width reflows every
+ * panel, so the offset alone points into another message; the place does not.
+ */
+export interface PanePlace {
+  id: string;
+  /** The view's top, less the panel's top; within the panel it scales with the panel's height. */
+  dy: number;
+  /** The panel's height when the place was taken. */
+  h: number;
+}
 
-export function recordPaneScroll(key: string, y: number): void {
+const offsets = new Map<string, { y: number; place: PanePlace | null }>();
+
+const keep = (key: string, y: number, place: PanePlace | null): void => {
   offsets.delete(key); // re-insert so Map order is recency, and the eviction below is LRU
-  offsets.set(key, y);
+  offsets.set(key, { y, place });
   if (offsets.size > CAP) {
     const oldest = offsets.keys().next().value;
     if (oldest !== undefined) offsets.delete(oldest);
   }
+};
+
+export function recordPaneScroll(key: string, y: number): void {
+  keep(key, y, offsets.get(key)?.place ?? null);
+}
+
+export function recordPanePlace(key: string, place: PanePlace): void {
+  keep(key, offsets.get(key)?.y ?? 0, place);
 }
 
 export function paneScrollOf(key: string): number {
-  return offsets.get(key) ?? 0;
+  return offsets.get(key)?.y ?? 0;
+}
+
+export function panePlaceOf(key: string): PanePlace | null {
+  return offsets.get(key)?.place ?? null;
 }
 
 /** Was an offset kept for `key` — a remount that has a place to resume, not a first open. */
