@@ -20,7 +20,7 @@
     "David Placeholder"
   ],
   "expect": {
-    "fold": "trailing",
+    "fold": "none",
     "mustNotFold": false,
     "onlyHistory": false,
     "text": {
@@ -39,5 +39,5 @@
     "inlineAnswers": [],
     "trailingTail": null
   },
-  "notes": "A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+  "notes": "A forward with a note: the forwarded message is the content the forward delivers and shows whole; the note above it stays visible."
 }

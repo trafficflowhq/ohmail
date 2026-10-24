@@ -1,0 +1,34 @@
+From: Jonas Sample <jonas.sample@example.org>
+To: Alex Reader <alex.reader@example.com>
+Subject: Re: Invitation to the fair
+Date: Fri, 23 Oct 2026 10:30:00 +0200
+Message-ID: <q8.2.r43@mail.example.com>
+MIME-Version: 1.0
+In-Reply-To: <q8.1.r42@mail.example.com>
+References: <q8.0.r42@mail.example.com> <q8.1.r42@mail.example.com>
+Content-Type: multipart/alternative; boundary="r43-q8-2-r43"
+
+--r43-q8-2-r43
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Yes, let us share a stand. I can do the morning shift.
+
+On Fri, 24 Oct 2026 at 03:21 Samir Muster <samir.muster@example.net> wrote:
+
+> Samir, see the invitation below. Shall we take a stand together?
+>
+> ---------- Forwarded message ---------
+> From: Jonas Sample <jonas.sample@example.org>
+> Date: Fri, 24 Oct 2026 at 03:05
+> Subject: Invitation to the fair
+> To: Alex Reader <alex.reader@example.com>
+>
+> Hello,
+> you are invited to the regional crafts fair on 30 November. Stands are free for members.
+--r43-q8-2-r43
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><div dir="ltr"><div>Yes, let us share a stand. I can do the morning shift.</div></div><br><div class="gmail_quote gmail_quote_container"><div dir="ltr" class="gmail_attr">On Fri, 24 Oct 2026 at 03:21 Samir Muster &lt;<a href="mailto:samir.muster@example.net">samir.muster@example.net</a>&gt; wrote:<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"><div dir="ltr"><div>Samir, see the invitation below. Shall we take a stand together?</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">---------- Forwarded message ---------<br>From: <strong class="gmail_sendername" dir="auto">Jonas Sample</strong> <span dir="auto">&lt;jonas.sample@example.org&gt;</span><br>Date: Fri, 24 Oct 2026 at 03:05<br>Subject: Invitation to the fair<br>To: &lt;Alex Reader <alex.reader@example.com>&gt;<br></div><br><br><div dir="ltr"><div>Hello,</div><div>you are invited to the regional crafts fair on 30 November. Stands are free for members.</div></div></div></div></blockquote></div></body></html>
+--r43-q8-2-r43--

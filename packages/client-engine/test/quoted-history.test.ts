@@ -172,6 +172,23 @@ describe("each guard is what keeps its fixture open", () => {
     }
   });
 
+  it("a forward with a note shows its forwarded message whole; a reply quoting that forward folds", () => {
+    for (const id of ["19", "26", "32", "86"]) {
+      expect(quotedHistoryOfText(fixture(id).text.split("\n")), id).toBeNull();
+      expect(htmlCase(fixture(id).html!).r, id).toBeNull();
+      expect(quotedHistoryVerdictOfHtml(new DOMParser().parseFromString(fixture(id).html!, "text/html").body as unknown as QuotedDomNode, quotedDomTree), id).toBeNull();
+    }
+    expect(htmlCase(fixture("86").html!).visibleText).toContain("you are invited to the regional crafts fair");
+    // The forward's wording is what keeps it open: the same block under a reply's separator folds.
+    const asReply = (s: string): string => s.replace("---------- Forwarded message ---------", "-----Original Message-----");
+    expect(quotedHistoryOfText(asReply(fixture("86").text).split("\n"))).not.toBeNull();
+    expect(htmlCase(asReply(fixture("86").html!)).r).not.toBeNull();
+    const reply = htmlCase(fixture("123").html!);
+    expect(reply.r).not.toBeNull();
+    expect(reply.visibleText).not.toContain("Forwarded message");
+    expect(quotedHistoryOfText(fixture("123").text.split("\n"))).not.toBeNull();
+  });
+
   it("a bottom-posted reply folds the quote at the top and leaves the reply whole", () => {
     const lines = fixture("31").text.split("\n");
     const r = quotedHistoryOfText(lines)!;
@@ -340,6 +357,56 @@ describe("the colour guard reads the history's own ink", () => {
       'production de décembre.<o:p></o:p></p><p class="MsoNormal"><span style="color:#C00000">5 000 CHF</span></p>');
     expect(htmlCase(two).r, "two such lines").toBeNull();
     expect(htmlCase(two).visibleText).toContain("5 000 CHF");
+  });
+});
+
+describe("answers marked with the writer's initials or name, in the body's own ink", () => {
+  const both = (html: string, text: string) => {
+    const v = verdictOf(html);
+    return { v, html: htmlCase(html).r, text: foldText(text), held: foldText(text, { html: v }) };
+  };
+  const named = (s: string): string => s.replace(/\[AE\] /g, "[Ana Example] ");
+
+  it("124: black '[AE] ' answers keep the html and the text open", () => {
+    const fx = fixture("124");
+    expect(both(fx.html!, fx.text)).toEqual({ v: null, html: null, text: null, held: null });
+  });
+
+  it("124 with '[Ana Example] ' answers stays open on both parts", () => {
+    const fx = fixture("124");
+    expect(both(named(fx.html!), named(fx.text))).toEqual({ v: null, html: null, text: null, held: null });
+  });
+
+  it("an '[EXTERNAL]' banner and '[cid:...]' placeholders in the history still fold", () => {
+    const fx = fixture("124");
+    const html = fx.html!.replace(/<b><i>\[AE\] <\/i><\/b>/g, "")
+      .replace("<p class=\"MsoNormal\">Hi Ana,", "<p class=\"MsoNormal\">[EXTERNAL] This message comes from outside the organisation.</p><p class=\"MsoNormal\">Hi Ana,")
+      .replace("Ben Sample<o:p></o:p></p></div>", "Ben Sample<o:p></o:p></p><p class=\"MsoNormal\">[cid:image001.png] [cid:image002.png]</p><p class=\"MsoNormal\">[cid:image001.png] Example Works</p><p class=\"MsoNormal\">[Example Works logo] Example Works AG</p><p class=\"MsoNormal\">Musterstrasse 1, 8000 Zürich</p></div>");
+    const text = fx.text.replace(/\[AE\] /g, "").replace("\nHi Ana,", "\n[EXTERNAL] This message comes from outside the organisation.\nHi Ana,")
+      .replace(/Ben Sample\n?$/, "Ben Sample\n[cid:image001.png] [cid:image002.png]\n[cid:image001.png] Example Works\n[Example Works logo] Example Works AG\nMusterstrasse 1, 8000 Zürich\n");
+    for (const s of [html, text]) expect(s).toMatch(/\[EXTERNAL\][^]*\[cid:image001\.png\][^]*\[Example Works logo\] [^]*Musterstrasse/);
+    const r = both(html, text);
+    expect(r.v).toBe("trailing");
+    expect(r.html).not.toBeNull();
+    expect(r.text).not.toBeNull();
+    expect(r.held).not.toBeNull();
+  });
+});
+
+describe("a GMX, WEB.DE or mail.com reply header (the date first) folds whatever its lead", () => {
+  const lead = (s: string): string => s.replace("Dienstag passt mir gut, ich bringe die Pläne mit.", "Ja, Dienstag um 10 Uhr passt mir gut.")
+    .replace(/Gruss Clara\n\n/, "").replace("<div>Gruss Clara</div><div>&nbsp;</div>", "");
+
+  it("108 with a one-sentence lead folds trailing on both parts", () => {
+    const fx = fixture("108");
+    const html = lead(fx.html!);
+    expect(html).not.toContain("Gruss Clara");
+    expect(verdictOf(html)).toBe("trailing");
+    expect(htmlCase(html).visibleText).toContain("Ja, Dienstag um 10 Uhr passt mir gut.");
+    const text = lead(fx.text);
+    expect(text).not.toContain("Gruss Clara");
+    expect(foldText(text)?.at).toBe("trailing");
+    expect(foldText(text, { html: verdictOf(html) })?.at).toBe("trailing");
   });
 });
 

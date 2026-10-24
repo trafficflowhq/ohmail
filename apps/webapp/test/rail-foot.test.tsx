@@ -58,6 +58,16 @@ describe("the rail's footer box exists only when something is in it", () => {
     expect(c.querySelector(".rail-mail")).toBeNull();
   });
 
+  it("the foot (sync, dock, account line) follows the scroller, outside it", async () => {
+    const c = await mount(h(RailNav, {
+      composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [{ items: [{ id: "ohbox", label: "Ohbox" }] }],
+      sync: h("span", null, "Sending"), dock: h("span", null, "dock"), footer: h("span", null, "me@example.test"),
+    }));
+    const kids = [...c.querySelector("nav")!.children].map((e) => e.className);
+    expect(kids).toEqual(["rail-scroll", "rail-sync-slot", "rail-dock", "rail-mail"]);
+    expect(c.querySelector(".rail-scroll [data-rail-id=\"ohbox\"]")).not.toBeNull();
+  });
+
   it("…and a real footer still gets its box (the control case)", async () => {
     const c = await mount(h(RailNav, { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [], footer: h("span", null, "me@example.test") }));
     const box = c.querySelector(".rail-mail");
@@ -74,7 +84,7 @@ describe("the notice slot stands under the piles, before the first list group", 
   const custom = { items: [], custom: h("div", { className: "folders-probe" }, "Folders") };
   const notice = h("div", { className: "rail-notice" }, "n");
   const foot = { sync: h("span", null, "sync"), dock: h("span", null, "dock") };
-  const rgroups = (c: HTMLElement): Element[] => [...c.querySelector("nav")!.children].filter((e) => e.classList.contains("rgroup"));
+  const rgroups = (c: HTMLElement): Element[] => [...c.querySelector("nav > .rail-scroll")!.children].filter((e) => e.classList.contains("rgroup"));
 
   it("notice: undefined renders NO slot", async () => {
     const c = await mount(h(RailNav, { ...base, groups: [places, piles, tags, custom], ...foot }));
