@@ -37,6 +37,8 @@ export function sendFingerprint(m: MailSend): string {
     JSON.stringify((m.attachments ?? []).map((a) => [
       a.filename, a.contentType, a.contentBase64.length, fnv1a(a.contentBase64),
     ])),
+    // Only when named, so every lock stored before the field existed still resumes.
+    ...(m.forwardParts !== undefined ? [JSON.stringify([...new Set(m.forwardParts)].sort())] : []),
   ].join("\u0000");
   return fnv1a(parts);
 }

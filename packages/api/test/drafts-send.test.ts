@@ -4,7 +4,7 @@ import { drafts, outboundSends, outboundSendFingerprints } from "@trafficflow/db
 import { eq } from "drizzle-orm";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { SEND_STALE_AFTER_MS, sendContentFingerprint } from "@trafficflow/services";
-import { makeDeps, seedSession, seedMailbox, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -179,6 +179,51 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
  * `packages/api/test/send-duplicate-guard.pg.test.ts` on real Postgres over two physical
  * connections. Kept here anyway so the fast suite notices if the refusal stops firing at all.
  */
+describe("POST /drafts/:id/send — forwardParts is refused unless it is a list of ids beside forwardOf", () => {
+  const ID = "aaaaaaaa-0000-4000-8000-000000000001";
+  const FWD = "bbbbbbbb-0000-4000-8000-000000000002";
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ["without forwardOf", { forwardParts: [ID] }],
+    ["not an array", { forwardOf: FWD, forwardParts: ID }],
+    ["null", { forwardOf: FWD, forwardParts: null }],
+    ["a non-id member", { forwardOf: FWD, forwardParts: [ID, "x"] }],
+    ["a non-string member", { forwardOf: FWD, forwardParts: [7] }],
+    ["over the part ceiling", { forwardOf: FWD, forwardParts: Array.from({ length: 101 }, (_, i) => `aaaaaaaa-0000-4000-8000-${String(i).padStart(12, "0")}`) }],
+  ];
+  for (const [what, body] of bad) {
+    it(`${what} → 400, nothing sent`, async () => {
+      const { factory, state } = fakeAdapter();
+      const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: factory });
+      const s = await seedSession(db, { now: FIXED_NOW });
+      const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+      const draftId = await seedDraft(db, s.accountId, mailboxId);
+      const res = await H(req("POST", `/drafts/${draftId}/send`, {
+        bearer: s.token, headers: { "idempotency-key": `fp-${what}` }, body: JSON.stringify(body),
+      }), deps);
+      expect(res.status).toBe(400);
+      expect(state.sendCalls).toBe(0);
+      expect(await db.select().from(outboundSends)).toHaveLength(0);
+    });
+  }
+
+  it("a well-formed list reaches the send: a part not in the original is 409 forward_parts_changed", async () => {
+    const { factory, state } = fakeAdapter();
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: factory });
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const orig = await seedMessage(db, { accountId: s.accountId, mailboxId });
+    await seedBody(db, { messageId: orig.id, text: "the original" });
+    const draftId = await seedDraft(db, s.accountId, mailboxId);
+    const res = await H(req("POST", `/drafts/${draftId}/send`, {
+      bearer: s.token, headers: { "idempotency-key": "fp-ok" },
+      body: JSON.stringify({ forwardOf: orig.id, forwardParts: [ID, ID] }),
+    }), deps);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe("forward_parts_changed");
+    expect(state.sendCalls).toBe(0);
+  });
+});
+
 describe("POST /drafts/:id/send — an identical message is refused as a duplicate", () => {
   it("a SECOND DRAFT with the same content, a fresh key → 409 duplicate_send and ONE submission", async () => {
     const { factory, state } = fakeAdapter();

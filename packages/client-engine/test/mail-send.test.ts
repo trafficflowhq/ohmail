@@ -119,8 +119,10 @@ async function world(opts: { subject?: string } = {}) {
    */
   type Intercept = (url: string, pass: () => Promise<Response>) => Promise<Response> | null;
   let intercept: Intercept | null = null;
+  const sendBodies: string[] = [];
   const fetchImpl: FetchLike = async (url, init) => {
     calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+    if (new URL(url).pathname.endsWith("/send")) sendBodies.push(String(init?.body ?? ""));
     const pass = (): Promise<Response> => base(url, init);
     return intercept?.(url, pass) ?? pass();
   };
@@ -156,7 +158,7 @@ async function world(opts: { subject?: string } = {}) {
   ]);
 
   return {
-    db, deps, spy, engine, calls, parent,
+    db, deps, spy, engine, calls, parent, sendBodies,
     accountId: s.accountId,
     setIntercept: (fn: Intercept | null) => { intercept = fn; },
   };
@@ -607,6 +609,28 @@ describe("mail_send — the client half of the gated send", () => {
     });
     expect(res.status).toBe("confirmed");
     expect(w.spy.delivered).toHaveLength(1);
+  });
+
+  it("forwardParts rides the send only beside forwardOf; absent, the request is the one it always was", async () => {
+    const w = await world();
+    const to = [{ name: "Sam", address: "sam@colleague.test" }];
+    const kept = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, forwardOf: w.parent.id, forwardParts: [],
+      subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to,
+    });
+    expect(kept.status).toBe("confirmed");
+    expect(JSON.parse(w.sendBodies[0]!)).toMatchObject({ forwardOf: w.parent.id, forwardParts: [] });
+    expect(w.spy.delivered[0]!.attachments ?? []).toEqual([]);
+    const all = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, forwardOf: w.parent.id, subject: "Fwd: Werkstatt-Besuch?", body: "fyi too", to,
+    });
+    expect(all.status).toBe("confirmed");
+    expect(JSON.parse(w.sendBodies[1]!)).not.toHaveProperty("forwardParts");
+    // A reply carrying the field by mistake sends no field: there is no original to choose from.
+    expect((await w.engine.mutate({
+      kind: "mail_send", inReplyTo: w.parent.id, forwardParts: ["aaaaaaaa-0000-4000-8000-000000000001"], body: "ok",
+    })).status).toBe("confirmed");
+    expect(w.sendBodies[2] ?? "").not.toContain("forwardParts");
   });
 
   it("a forward's quoted date is the sender's clock — adapter and route carry the zone and language", async () => {

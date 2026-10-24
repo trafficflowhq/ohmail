@@ -14,7 +14,7 @@ type MailSend = Extract<EngineMutation, { kind: "mail_send" }>;
 /** Every key of the type, each with one changed value; `draftId` is the container and must NOT move it. */
 const MOVED: { [K in keyof Required<MailSend>]: MailSend[K] | null } = {
   kind: "mail_send",
-  inReplyTo: "petra", forwardOf: "flurina", forwardConfirmed: true,
+  inReplyTo: "petra", forwardOf: "flurina", forwardParts: ["p-1"], forwardConfirmed: true,
   forwardClock: { zone: "Europe/Zurich", locale: "de" }, draftId: "d-2",
   body: "a different plain text half", html: "<p>a different rich half</p>",
   mailboxId: "mb-2", threadId: "th-2", subject: "Re: something else",
@@ -42,6 +42,8 @@ const NOT_IN_THE_IDENTITY: Record<string, string> = {
 };
 
 const fp = (m: Partial<MailSend>): string => sendFingerprint({ ...FULL, ...m } as MailSend);
+/** FULL as a forward, hashed before `forwardParts` existed: a lock stored then must still resume. */
+const FWD_LOCK = "9rkpgp";
 
 describe("sendFingerprint", () => {
   it("every key of the mail_send type moves it, and the named exclusions do not", () => {
@@ -55,6 +57,15 @@ describe("sendFingerprint", () => {
     }
     expect(blind, "fields the wire carries that the fingerprint cannot see").toEqual([]);
     expect(wronglyCovered, "the container is back inside the identity").toEqual([]);
+  });
+
+  it("forwardParts: absent keeps every stored lock; the selection moves it, its order does not", () => {
+    const fwd = { inReplyTo: null, forwardOf: "flurina" };
+    expect(fp({ ...fwd, forwardParts: undefined })).toBe(fp(fwd));
+    expect(fp(fwd)).toBe(FWD_LOCK);
+    expect(fp({ ...fwd, forwardParts: ["a"] })).not.toBe(fp({ ...fwd, forwardParts: ["b"] }));
+    expect(fp({ ...fwd, forwardParts: [] })).not.toBe(fp(fwd));
+    expect(fp({ ...fwd, forwardParts: ["a", "b"] })).toBe(fp({ ...fwd, forwardParts: ["b", "a"] }));
   });
 
   it("one message in two rows, and in none, is one fingerprint; the content still decides", () => {

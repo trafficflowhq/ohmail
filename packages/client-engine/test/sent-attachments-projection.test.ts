@@ -371,12 +371,13 @@ describe("a forward's sent copy — the inherited files ride the seed", () => {
     const ready = engine.store.applyChanges([
       { type: "message", op: "create", id: parent.id, seq: 1, updatedAt: parent.updatedAt, entity: parent },
     ]);
-    const sendForward = async () => {
+    const sendForward = async (forwardParts?: string[]) => {
       await ready;
       const res = await engine.mutate({
         kind: "mail_send",
         inReplyTo: null,
         forwardOf: PARENT_ID,
+        ...(forwardParts ? { forwardParts } : {}),
         mailboxId: "mb-1",
         subject: "Fwd: the invoice",
         body: "see below",
@@ -529,6 +530,20 @@ describe("a forward's sent copy — the inherited files ride the seed", () => {
    * Mutation: drop the `slice(0, SENT_FORWARD_MAX_PARTS)`. Real failure text:
    *   AssertionError: the copy claims parts the send never streamed: expected 106 to be 101
    */
+  it("a forward that named its parts lists only the parts it kept", async () => {
+    const w = forwardWorld();
+    await w.engine.loadAttachments(PARENT_ID);
+    const copy = await w.sendForward(["att-real-2"]);
+    const view = w.engine.attachmentsOf(copy.id, { includeInlineParts: true });
+    expect(view.state === "ready" && view.items.map((i) => i.filename)).toEqual(["note.txt", "logo.png"]);
+    expect(copy.attachmentCount).toBe(1);
+    const none = forwardWorld();
+    await none.engine.loadAttachments(PARENT_ID);
+    const bare = await none.sendForward([]);
+    const files = none.engine.attachmentsOf(bare.id, { includeInlineParts: true });
+    expect(files.state === "ready" && files.items.map((i) => i.filename)).toEqual(["note.txt"]);
+  });
+
   it("a forward of a >cap original lists at most the streamed subset", async () => {
     const w = forwardWorld({ partCount: SENT_FORWARD_MAX_PARTS + 5 });
     await w.engine.loadAttachments(PARENT_ID);
