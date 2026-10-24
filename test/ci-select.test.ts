@@ -49,6 +49,8 @@ const M = (p: string) => ({ s: "M", p });
 describe("the scope: who runs the whole suite", () => {
   it("selects for a maintainer's pr/ branch, and runs every other run whole with its reason", () => {
     expect(eventWhole(pr())).toBeNull();
+    /* Marked ready for review: the run that starts then is selected like any push to it. */
+    expect(eventWhole({ ...pr({ draft: false }), event: { ...pr({ draft: false }).event, action: "ready_for_review" } } as Ctx)).toBeNull();
     expect(decideScope({ root: ROOT, ctx: pr(), changes: [M("apps/webapp/app/views/OhboxView.tsx")] }).scope).toBe("selected");
     const cases: Array<[string, Ctx, RegExp]> = [
       ["schedule", pr({}, { event_name: "schedule" }), /a schedule run is whole/],

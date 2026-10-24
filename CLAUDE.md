@@ -76,7 +76,8 @@ which run it is and why, and `main` is proven whole by the batch and the nightly
 and on `main`: on macOS, Windows and Linux it typechecks the window, builds the UI bundle and smokes it, runs the Rust tests in both configurations,
 packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
 phone app. On a pull request the platform jobs and the phone build run only when it changes what they build
-(`.github/scripts/pr-build-scope.sh`); the engine jobs always run. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
+(`.github/scripts/pr-build-scope.sh`); the engine jobs always run. A draft pull request runs only `dco.yml`, `guard.yml`
+and the `changes` jobs; marking it ready for review (`ready_for_review`) starts every other job. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
 their tools or the push gate's baseline. `contributor.yml` (weekly, and by dispatch; no pull request) runs the marked
 blocks of the READMEs and CONTRIBUTING.md on a fresh clone on Linux, macOS and Windows. A fork's pull request runs every job on GitHub's runners. Tests sit beside the code they cover: `apps/desktop/test`, and the
 `*_tests.rs` files in `apps/desktop/src-tauri/src`. Add or extend a test for behaviour you change.
