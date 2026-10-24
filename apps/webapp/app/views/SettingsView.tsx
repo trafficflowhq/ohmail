@@ -459,7 +459,7 @@ export function SettingsView({
     items: RuleDTO[];
     /** `engine.mutate({ kind: "rule_delete", ruleId })` — the RESULT decides what is said. */
     onRevoke: (ruleId: string) => Promise<RuleOutcome>;
-    onRetarget: (ruleId: string, destination: Folder, applyRetro: boolean) => Promise<RuleOutcome>;
+    onRetarget: (ruleId: string, destination: Folder, refile: boolean | "walk") => Promise<RuleOutcome>;
     /** How much of a rule's mail a change would ask the pass to move — see `RulesView`. */
     pastMail: (rule: RuleDTO, destination: Folder | null) => number | null;
     /** Where a press can land, from the roster — see `RulesPosture`. Absent reads as organizer. */

@@ -1080,6 +1080,14 @@ export const rules = pgTable("rules", {
    * DTO, no document and no delta. NULL is the resting state, no backfill. LAST, for the reason above.
    */
   settledPressAt: timestamp("settled_press_at", { withTimezone: true }),
+  /**
+   * A RULES-PAGE CHANGE RE-FILES THE RULE'S OWN PILE (mail 0167): `refile_from` is the canonical place
+   * the walk takes mail from, `refile_at` the press. A walk is a refile walk only while
+   * `refile_at = retro_requested_at` (`rule-key.ts#isRefileRun`); any other writer that starts a walk
+   * moves `retro_requested_at` and lifts it. NULL is the resting state, no backfill. LAST, as above.
+   */
+  refileFrom: text("refile_from"),
+  refileAt: timestamp("refile_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

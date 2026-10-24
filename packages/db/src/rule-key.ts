@@ -234,3 +234,54 @@ export function endOwedWalk(tx: unknown, now: Date): SQL {
   return sql`case when ${rulesTbl.retroRequestedAt} is not null and ${rulesTbl.retroDoneAt} is null
     then ${dialect(tx).ts(now)} else ${rulesTbl.retroDoneAt} end`;
 }
+
+/** The columns {@link isRefileRun} and {@link pendingRefileFrom} read off a rule row. */
+export interface RefileState {
+  refileFrom: string | null;
+  refileAt: Date | null;
+  retroRequestedAt: Date | null;
+  retroDoneAt: Date | null;
+  retroMoved: number;
+  retroCursor: string | null;
+}
+
+/**
+ * The walk's PARKED fence (`rule-retro.ts#parkedFence`): finished for the mailboxes this install
+ * organizes while a live one is outside it. Owed still, and stamped never, until a promotion.
+ */
+export const PARKED_FENCE_PREFIX = "ffffffff-ffff-ffff-";
+
+export function isParkedFence(cursor: string | null): boolean {
+  return cursor !== null && cursor.toLowerCase().startsWith(PARKED_FENCE_PREFIX);
+}
+
+/**
+ * IS THE WALK OWED BY THIS RULE A RULES-PAGE CHANGE'S RE-FILING? The Change writes `refile_at` and
+ * `retro_requested_at` from one instant; every other writer that starts a walk moves only the
+ * second, so the two part company and the walk is the whole backlog again (`isReleaseRun`'s pattern).
+ */
+export function isRefileRun(row: Pick<RefileState, "refileAt" | "retroRequestedAt">): boolean {
+  return row.refileAt != null && row.retroRequestedAt != null
+    && row.refileAt.getTime() === row.retroRequestedAt.getTime();
+}
+
+/**
+ * The place a re-filing still WAITING takes mail from: nothing moved, nothing finished, not parked;
+ * else null. It ends with the walk's first move or its park, never later: a walk parked behind a
+ * mailbox only read here is never stamped, and a later Change must take the place the rule files
+ * now. The page and the stamp that end it file a rule delta (`rule-retro.ts`).
+ */
+export function pendingRefileFrom(row: RefileState): string | null {
+  return isRefileRun(row) && row.retroDoneAt === null && row.retroMoved === 0 && !isParkedFence(row.retroCursor)
+    ? row.refileFrom : null;
+}
+
+/** A Rules-page re-filing is owed (waiting, under way, or parked). */
+export function refileOwed(row: Pick<RefileState, "refileAt" | "retroRequestedAt" | "retroDoneAt">): boolean {
+  return row.retroDoneAt === null && isRefileRun(row);
+}
+
+/** A walk still owed that is not a re-filing (`RuleDTO.retro.from` null): a Change takes it whole. */
+export function owesWholeWalk(row: Pick<RefileState, "refileAt" | "retroRequestedAt" | "retroDoneAt">): boolean {
+  return row.retroRequestedAt !== null && row.retroDoneAt === null && !isRefileRun(row);
+}

@@ -1938,6 +1938,8 @@ export class HttpAdapter implements EngineAdapter {
             // rule to my old mail" even when the destination did not move. Sending the default
             // anyway would make every habit-click PATCH a whole-backlog walk.
             ...(m.applyRetro === undefined ? {} : { applyRetro: m.applyRetro }),
+            // A Rules-page Change's re-filing, always beside `applyRetro: false`.
+            ...(m.refile === true ? { refile: true } : {}),
             // An undo keeps the rule's provenance; a press omits it and makes the rule the person's.
             ...(m.keepProvenance === true ? { keepProvenance: true } : {}),
             ...(m.keepProvenance === true && m.restoreProvenance !== undefined ? { restoreProvenance: m.restoreProvenance } : {}),

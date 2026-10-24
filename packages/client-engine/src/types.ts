@@ -735,7 +735,11 @@ export interface RuleDTO {
    * ABSENT IS UNKNOWN — an older server or sidecar does not send it — and never reads as done:
    * a surface then never says every message arrived when past mail was asked for.
    */
-  retro?: { requestedAt: ISODateTime | null; doneAt: ISODateTime | null };
+  retro?: {
+    requestedAt: ISODateTime | null; doneAt: ISODateTime | null;
+    /** While a Rules-page re-filing is owed, where a Change takes the rule's mail from; absent or null: none. */
+    from?: Folder | null;
+  };
   /**
    * THE ACT ON SUGGESTIONS WROTE THIS RULE and no person has decided about the sender since.
    * Absent from an older server, and from a copy that does not carry it; both read as a person's.
@@ -1555,6 +1559,11 @@ export type EngineMutation =
       keepProvenance?: boolean;
       /** With `keepProvenance`: the inferred value the undo read, restored only over a `manual` row. */
       restoreProvenance?: "promoted" | "seeded-from-sent" | "migrated";
+      /**
+       * A Rules-page Change: re-file the mail the rule filed in its place, and nothing else. Sent
+       * beside `applyRetro: false`, so a server that predates it moves nothing.
+       */
+      refile?: true;
     }
   /**
    * Make a rule from past the gate — the verb that did not exist. Creating a rule must also

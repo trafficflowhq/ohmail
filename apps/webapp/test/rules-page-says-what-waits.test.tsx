@@ -37,7 +37,7 @@ const rule = (id: string, kind: "sender" | "domain", match: string, over: Partia
 let host: HTMLDivElement;
 let root: Root | null = null;
 
-let retargets: Array<[string, string, boolean]>;
+let retargets: Array<[string, string, boolean | "walk"]>;
 async function open(
   rules: RuleDTO[], waiting: WaitingOnOrganizerView[] = [], lang: "en" | "de" = "en",
 ): Promise<void> {
@@ -47,7 +47,7 @@ async function open(
       items: rules, waiting,
       mailboxLabel: (id: string) => (id === "mb-other" ? "other@shop.test" : null),
       onRevoke: async () => ({ status: "confirmed" as const }),
-      onRetarget: async (id: string, d: string, r: boolean) => { retargets.push([id, d, r]); return { status: "confirmed" as const }; },
+      onRetarget: async (id: string, d: string, r: boolean | "walk") => { retargets.push([id, d, r]); return { status: "confirmed" as const }; },
       pastMail: () => null,
     },
   });

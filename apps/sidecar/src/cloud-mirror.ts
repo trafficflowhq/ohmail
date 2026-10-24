@@ -1542,6 +1542,9 @@ async function applyAccountUpsert(
         // un-set reason: an account that asks for the pass again clears `doneAt`, here too.
         retroRequestedAt: asDate(r.retro?.requestedAt),
         retroDoneAt: asDate(r.retro?.doneAt),
+        // A re-filing owed, so this store answers the same `retro.from` (`pendingRefileFrom`).
+        refileFrom: r.retro?.from ?? null,
+        refileAt: r.retro?.from ? asDate(r.retro.requestedAt) : null,
         updatedAt: asDate(r.updatedAt) ?? now,
       };
       /* THE CREATION INSTANT TRAVELS WITH THE RULE, in the insert AND the conflict set. Without

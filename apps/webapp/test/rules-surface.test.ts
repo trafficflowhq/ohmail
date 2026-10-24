@@ -62,7 +62,7 @@ let root: Root | null = null;
 
 interface Dispatched {
   revoked: string[];
-  retargeted: Array<[string, Folder, boolean]>;
+  retargeted: Array<[string, Folder, boolean | "walk"]>;
 }
 
 async function renderSettings(
@@ -82,7 +82,7 @@ async function renderSettings(
               seen.revoked.push(id);
               return { status };
             },
-            onRetarget: async (id: string, dest: Folder, applyRetro: boolean) => {
+            onRetarget: async (id: string, dest: Folder, applyRetro: boolean | "walk") => {
               seen.retargeted.push([id, dest, applyRetro]);
               return { status };
             },

@@ -224,7 +224,8 @@ export {
 } from "./request-apply.js";
 export {
   convergeRuleKey, writeRuleUnderKey, lockAccountRuleKeys, keptProvenance, endOwedWalk,
-  type ConvergedKey, type FoundRule, type KeyWriteResult, type RuleRowWrite,
+  isRefileRun, owesWholeWalk, pendingRefileFrom, refileOwed, isParkedFence, PARKED_FENCE_PREFIX,
+  type ConvergedKey, type FoundRule, type KeyWriteResult, type RefileState, type RuleRowWrite,
 } from "./rule-key.js";
 
 export {

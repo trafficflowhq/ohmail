@@ -940,6 +940,9 @@ export const rules = sqliteTable("rules", {
   // Mail 0159: the last reader press the belt settled on this row without writing it; see the pg
   // twin. Written and read by `settleReaderRuleRows` alone. LAST.
   settledPressAt: integer("settled_press_at", { mode: "timestamp_ms" }),
+  // Mail 0167: a Rules-page Change's re-filing, its canonical origin and press; see the pg twin. LAST.
+  refileFrom: text("refile_from"),
+  refileAt: integer("refile_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**

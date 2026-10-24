@@ -114,7 +114,9 @@ export { owaInvitationStub, type OwaInvitationStub } from "@trafficflow/core/ics
  * question and the fifty they move stay a subset of what the worker's pass would move. Here
  * because this package is the one both of them compile; the phone reaches core only through it.
  */
-export { retroPassWouldMove, retroWalkWouldMove, type RetroCandidateRow } from "@trafficflow/core/destinations";
+export {
+  retroPassWouldMove, retroWalkWouldMove, refileWouldMove, REFILE_UNDO_WINDOW_MS, REFILE_HOLD_MS, type RetroCandidateRow,
+} from "@trafficflow/core/destinations";
 
 /**
  * WHETHER SOMEBODY STILL ORGANIZES A MAILBOX — a named holder whose lease has not lapsed. The
@@ -525,6 +527,7 @@ export {
   mutationEffects,
   replySubject,
   sentOverlayMessage,
+  walkOwed,
   type EffectContext,
   type MutationEffect,
 } from "./mutations.js";

@@ -889,6 +889,9 @@ describe("the baseline cutoff is frozen", () => {
       // constant default), its CHECK dropped and re-added, the count of letters already emptied
       // filled from their marker, and a grant guarded on the staff role. Safe over any history.
       "0166_account_storage_facts",
+      // A Rules-page Change's re-filing: two nullable ADD COLUMN IF NOT EXISTS on rules, no data.
+      // Safe over any history.
+      "0167_rules_refile",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

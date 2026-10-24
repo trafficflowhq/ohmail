@@ -14,7 +14,7 @@ import { clampPressInstant, placementDecidedAfter, pressIsAged } from "./press-f
 import { NEWS_FOLDER, RULE_PRIORITY_MAX, canonicalNewsSpelling, ruleMatchKey } from "./screener-apply.js";
 import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
-import { convergeRuleKey, endOwedWalk, findRulesByKey, type FoundRule, type RuleKey } from "./rule-key.js";
+import { convergeRuleKey, endOwedWalk, findRulesByKey, owesWholeWalk, pendingRefileFrom, type FoundRule, type RuleKey } from "./rule-key.js";
 import { ruleKeyIsOwnAddress, type OwnAddressesPerPass } from "./own-mail.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
@@ -729,6 +729,8 @@ export interface ValidatedRuleUpdate {
   keepProvenance?: boolean;
   /** With `keepProvenance` only: the inferred value an undo puts back over a `manual` row. */
   restoreProvenance?: RestorableProvenance;
+  /** A Rules-page Change: re-file the rule's own pile (`RulesService.update`'s `refile`). */
+  refile?: boolean;
 }
 
 /**
@@ -862,8 +864,13 @@ export function validateRulePayload(kind: string, payload: unknown): ValidatedRu
     const restore = o.restoreProvenance;
     if (restore !== undefined && (o.keepProvenance !== true || set.destination === undefined || typeof restore !== "string"
       || !RESTORABLE_PROVENANCE.has(restore))) return null;
+    // A re-filing travels beside an explicit no and a destination, never with an undo's fields.
+    if (o.refile !== undefined && typeof o.refile !== "boolean") return null;
+    if (o.refile === true && (o.applyRetro !== false || set.destination === undefined
+      || o.keepProvenance !== undefined || restore !== undefined)) return null;
     return {
       op: "update", key, set, applyRetro, retroAsked: o.applyRetro === true,
+      ...(o.refile === true ? { refile: true } : {}),
       ...(o.keepProvenance === true ? { keepProvenance: true } : {}),
       ...(restore === undefined ? {} : { restoreProvenance: restore as RestorableProvenance }),
     };
@@ -1108,10 +1115,25 @@ export async function applyRuleRequest(
      rules against each other without changing what any one of them files, and `enabled` is
      handled by the pass itself. */
   const retargeted = set.destination !== undefined && set.destination !== found.destination;
-  // …or the request asked for the backlog outright, which is the one way to re-open a rule whose
-  // routing did not move. `retroAsked` and not `applyRetro`: the latter defaults an absent field to
-  // true, and a travelled habit-click would then re-walk everything.
-  if ((retargeted && payload.applyRetro) || payload.retroAsked) {
+  if (payload.refile === true && retargeted && (set.enabled ?? found.enabled)) {
+    // A Rules-page Change re-files the rule's own pile, or takes a walk still owed whole:
+    // `RulesService.update`'s start, one instant.
+    const [state] = await tx.select({
+      refileFrom: rulesTbl.refileFrom, refileAt: rulesTbl.refileAt, retroRequestedAt: rulesTbl.retroRequestedAt,
+      retroDoneAt: rulesTbl.retroDoneAt, retroMoved: rulesTbl.retroMoved, retroCursor: rulesTbl.retroCursor,
+    }).from(rulesTbl).where(and(eq(rulesTbl.id, found.id), eq(rulesTbl.accountId, accountId))).limit(1);
+    set.retroRequestedAt = now;
+    set.retroDoneAt = null;
+    set.retroCursor = null;
+    set.retroMoved = 0;
+    if (!(state && owesWholeWalk(state))) {
+      set.refileAt = now;
+      set.refileFrom = (state ? pendingRefileFrom(state) : null) ?? canonicalNewsSpelling(found.destination);
+    }
+  } else if ((retargeted && payload.applyRetro) || payload.retroAsked) {
+    // …or the request asked for the backlog outright, which is the one way to re-open a rule whose
+    // routing did not move. `retroAsked` and not `applyRetro`: the latter defaults an absent field to
+    // true, and a travelled habit-click would then re-walk everything.
     set.retroRequestedAt = now;
     set.retroDoneAt = null;
     set.retroCursor = null;
@@ -1239,7 +1261,7 @@ export async function settleReaderRuleRows(
   if (v.op === "create" && rows.length === 0 && await laterPressSettled(tx, accountId, v.key, at) === "delete") return { settled: false, skipped: "removed_after" };
   const bare: ValidatedRuleRequest = v.op === "delete" ? v
     : v.op === "create" ? { ...v, applyRetro: false }
-      : { ...v, applyRetro: false, retroAsked: false };
+      : { ...v, applyRetro: false, retroAsked: false, refile: false };
   const out = await applyRuleRequest(tx, { accountId, payload: bare, now: at });
   if (!out.applied) return { settled: false };
   /* THE PRESS STAMP. A create the row already held wrote nothing, so `updated_at` cannot order an

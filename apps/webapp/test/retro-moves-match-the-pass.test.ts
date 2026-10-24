@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
   pressForecast,
+  refileWouldMove,
   retroPassWouldMove,
   type EngineMessage,
   type Folder,
@@ -28,6 +29,10 @@ import {
   RETRO_ORDER_FIXTURE,
   RETRO_ORDER_MOVES,
   RETRO_SENDER,
+  REFILE_COUNTED,
+  REFILE_FIXTURE,
+  REFILE_FROM,
+  REFILE_TO,
   type RetroFixtureRow,
 } from "../../../test/support/retro-candidates.js";
 
@@ -150,5 +155,15 @@ describe("a rule's past mail is the pass's to move, and the press moves none of 
     const ids = movedBy(await planOf(RETRO_ORDER_FIXTURE, false));
     expect(ids).toHaveLength(50);
     expect([...ids].sort()).toEqual([...RETRO_ORDER_MOVES].sort());
+  });
+});
+
+describe("a Rules-page Change counts the rule's own pile", () => {
+  it("refileWouldMove answers exactly the rows the client can count", () => {
+    for (const r of REFILE_FIXTURE) {
+      const m = row({ id: r.id, folder: r.folder, triage: r.triage, date: "2026-08-20T09:00:00.000Z", why: r.why,
+        ...(r.decided ? { placeDecided: true } : {}) });
+      expect(refileWouldMove(m, REFILE_FROM, REFILE_TO), `${r.id} — ${r.why}`).toBe(REFILE_COUNTED.includes(r.id));
+    }
   });
 });
