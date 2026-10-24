@@ -168,6 +168,7 @@ export function parseSystem(raw: OmarchySystemRaw | null | undefined): OmarchySe
 /** The width `mapping.js` writes into the three tile rings, named so the rewrite below is a
  *  stated contract with that file rather than a magic string. */
 const MAPPED_RING = "0 0 0 2px ";
+const MAPPED_RING_PX = 2;
 
 /**
  * Lay the known settings over a mapped token set (the token law's settings table):
@@ -175,7 +176,7 @@ const MAPPED_RING = "0 0 0 2px ";
  *   --font-ui         the live fc-match families, then the same static tail
  *   --font-size-base  shell.toml base-size
  *   --gap-tile        gaps_in × 2   (5 between two tiles is 10 of rhythm)
- *   --gap-edge        gaps_out
+ *   --gap-edge        gaps_out, never narrower than the tile ring
  *   --focus-w         border_size   (the focus cursor is the active-window border)
  *   --lift-1/2/3      ring width rewritten to border_size (lift-0 stays 1px — that is
  *                     shell.toml's own control border, not the window border)
@@ -193,7 +194,12 @@ export function applySettings(
   }
   if (settings.fontSizePx !== null) out["--font-size-base"] = `${settings.fontSizePx}px`;
   if (settings.gapsInPx !== null) out["--gap-tile"] = `${settings.gapsInPx * 2}px`;
-  if (settings.gapsOutPx !== null) out["--gap-edge"] = `${settings.gapsOutPx}px`;
+  if (settings.gapsOutPx !== null) {
+    /* The tile rings stand outside their boxes: an edge narrower than the ring draws the rail,
+       list and reader flush to the window with their outer borders off it. */
+    const ring = settings.borderPx !== null && settings.borderPx >= 1 ? settings.borderPx : MAPPED_RING_PX;
+    out["--gap-edge"] = `${Math.max(settings.gapsOutPx, ring)}px`;
+  }
   if (settings.borderPx !== null && settings.borderPx >= 1) {
     out["--focus-w"] = `${settings.borderPx}px`;
     for (const slot of ["--lift-1", "--lift-2", "--lift-3"]) {
