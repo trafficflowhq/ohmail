@@ -247,6 +247,33 @@ describe("the organizer lease permit — a dated receipt, not a boolean", () => 
     expect(err).not.toBeInstanceOf(OrganizerStandDownError);
   });
 
+  /* A BAD NETWORK INSIDE ONE PERMIT: a renewal commits and its answer is lost, the next never lands.
+     Remembering one nonce forgot the committed claim, and the permit stood its own install down. */
+  it("a renewal that lost its answer, then one that never landed: the permit still organizes", async () => {
+    const meta = new FakeMetaFolder();
+    const t = new PermitClock(1_000_000);
+    const permit = await acquireLeasePermit({
+      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, ...t.pair, ttlMs: 60_000,
+    });
+    const append = meta.appendClaim.bind(meta);
+    const faults: Array<"lose" | "drop"> = ["lose", "drop"];
+    meta.appendClaim = async (raw: string): Promise<void> => {
+      const fault = faults.shift();
+      if (fault === "drop") throw new Error("the socket closed before the APPEND reached the server");
+      await append(raw);
+      if (fault === "lose") throw new Error("the socket closed before the APPEND was answered");
+    };
+    for (let i = 0; i < 2; i++) {
+      t.advance(60_000);
+      await expect(permit.check()).rejects.toBeInstanceOf(LeaseUnavailableError);
+    }
+    t.advance(60_000);
+    await permit.check();
+    expect(permit.revoked, "the permit read its own committed renewal as a copy of itself").toBe(false);
+    expect(permit.names.mintedNonces, "the permit forgot a nonce it minted").toHaveLength(4);
+    expect(meta.messages, "the renewal left more than its own claim standing").toHaveLength(1);
+  });
+
   it("acquiring against a mailbox ALREADY held refuses up front — the CLI never starts", async () => {
     const meta = new FakeMetaFolder();
     meta.messages.push({
@@ -639,7 +666,7 @@ describe("a permit's baseline is the reading its own claim was verified in", () 
     const meta = new FakeMetaFolder();
     const t = new PermitClock(1_000_000);
     const outcome = await readMailboxLease({
-      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: new Date(t.ms),
+      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: new Date(t.ms), onNonceMinted: () => undefined,
     });
     expect(outcome.organize, "the fixture's own gate did not take the mailbox").toBe(true);
     if (!outcome.organize) return;
@@ -683,7 +710,7 @@ describe("a permit's baseline is the reading its own claim was verified in", () 
     const meta = new FakeMetaFolder();
     const t = new PermitClock(1_000_000);
     const outcome = await readMailboxLease({
-      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: new Date(t.ms),
+      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, now: new Date(t.ms), onNonceMinted: () => undefined,
     });
     expect(outcome.organize).toBe(true);
     if (!outcome.organize) return;

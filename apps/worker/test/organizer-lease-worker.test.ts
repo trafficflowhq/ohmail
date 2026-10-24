@@ -219,7 +219,7 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     await expect(readMailboxLease({
       adapter: naked,
       self: { installId: "x", kind: "cloud", displayName: "x", lastNonce: null },
-      now: new Date(),
+      now: new Date(), onNonceMinted: () => undefined,
     })).rejects.toThrow(LeaseUnavailableError);
     // …and releasing on a teardown path must NOT throw for the same absence: a teardown that can
     // be aborted by bookkeeping is a teardown that leaks a connection.
@@ -252,7 +252,7 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     const verdict = await readMailboxLease({
       adapter,
       self: { installId: "us", kind: "cloud", displayName: "Cloud", lastNonce: null },
-      now: new Date(),
+      now: new Date(), onNonceMinted: () => undefined,
     }).then(
       () => "resolved",
       (err: unknown) => (err instanceof LeaseUnavailableError
@@ -1617,6 +1617,42 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     // One-shot, as every becoming is.
     expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).takeoverAuthorizedAt === null))
       .toBe(true);
+  }, 60_000);
+
+  /* A READER WHOSE HOLDER IS ITS OWN LAPSED CLAIM is not waiting for a press: nobody else holds the
+     mailbox and nobody stopped it, so it takes it back by itself. A released one never does. */
+  it("a reader whose own lapsed claim is the holder takes it back with no press; a released one does not", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const own = await seedMailbox(db, undefined, { consented: true, role: "reader" });
+    const released = await seedMailbox(db, undefined, { consented: true, role: "reader" });
+    for (const mb of [own, released]) {
+      await db.update(mailboxes).set({
+        organizedByKind: "cloud", organizedByName: "Cloud", organizedByInstallId: "cloud-test",
+        organizerState: "stopped", ...(mb === released ? { organizerReleasedAt: new Date() } : {}),
+      }).where(eq(mailboxes.id, mb.mailboxId));
+      fleet.seedClaim(mb.mailboxId, formatClaim({
+        installId: "cloud-test", kind: "cloud", displayName: "Cloud", authorizedAt: null, capabilities: [],
+        heartbeat: new Date(Date.now() - 3_600_000), claimedAt: new Date(Date.now() - 7_200_000),
+        nonce: "an-answer-that-was-lost",
+      }));
+    }
+    const appendsBefore = fleet.metaFor(released.mailboxId).appends;
+
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, sentDomain: "trafficflow.test",
+      adapterFactory: fleet.factory,
+      organizer: { installId: "cloud-test", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+
+    expect(await waitFor(async () => (await rowOf(db, own.mailboxId)).organizerRole === "organizer"),
+      "this install's own lapsed claim was never taken back").toBe(true);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect((await rowOf(db, released.mailboxId)).organizerRole, "a released mailbox resumed by itself")
+      .toBe("reader");
+    expect(fleet.metaFor(released.mailboxId).appends, "a released mailbox was claimed with no press")
+      .toBe(appendsBefore);
   }, 60_000);
 
   /**

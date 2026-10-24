@@ -136,6 +136,8 @@ export interface EnabledMailbox {
    * at all — reading the lease first would renew a claim this install is about to delete.
    */
   releaseRequestedAt: Date | null;
+  /** Mail 0088. WHEN THE PERSON'S STOP WAS RECORDED, or NULL — a released mailbox never resumes by itself. */
+  organizerReleasedAt: Date | null;
   /**
    * Mail 0135. WHEN THE WALL RELEASED THIS MAILBOX, or NULL. Read so the roster can resume it once
    * the account is open again ({@link resumeParkedMailbox}); a release the person asked for is NULL
@@ -302,6 +304,7 @@ export async function loadRosterMailboxes(
       organizedByInstallId: mailboxes.organizedByInstallId,
       organizeConsentedAt: mailboxes.organizeConsentedAt,
       releaseRequestedAt: mailboxes.releaseRequestedAt,
+      organizerReleasedAt: mailboxes.organizerReleasedAt,
       organizerParkedAt: mailboxes.organizerParkedAt,
       kickStamp: sql<string | null>`${mailboxes.syncRequestedAt}::text`,
       syncBlockedReason: mailboxes.syncBlockedReason,
@@ -336,6 +339,7 @@ export async function loadRosterMailboxes(
     organizedByInstallId: r.organizedByInstallId ?? null,
     organizeConsentedAt: r.organizeConsentedAt ?? null,
     releaseRequestedAt: r.releaseRequestedAt ?? null,
+    organizerReleasedAt: r.organizerReleasedAt ?? null,
     organizerParkedAt: r.organizerParkedAt ?? null,
     kickStamp: r.kickStamp ?? null,
     syncBlockedReason: r.syncBlockedReason ?? null,

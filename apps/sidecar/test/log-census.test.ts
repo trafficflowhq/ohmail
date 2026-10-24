@@ -977,6 +977,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      instead of a fixture's invocation. That pair is in `apps/worker/src`, which this census does
      not scan — the same split the `_failed` line above records. */
   organizer_row_promoted: "info",
+  /* …AND THE ONE PROMOTION NO PRESS ASKED FOR: this install's own claim lapsed with nobody else
+     holding the mailbox and nobody having stopped it. Ordinary, so `info`; the mailbox, the state
+     and a constant sentence. */
+  organizer_own_claim_resumed: "info",
   // The agree's sweep after that promotion (`agreeSweepPass`): what it did, or the failure that leaves
   // the counted letters to the Screener's offer.
   organizer_agree_sweep: "info",

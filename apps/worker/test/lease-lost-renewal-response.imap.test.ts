@@ -235,7 +235,7 @@ describe("a renewal whose response never arrived, on a real server", () => {
 
     const removed = await releaseMailboxClaim(
       a.adapter, a.self.installId, mailboxId, permit.names.nonce,
-      { now: new Date(t.ms), pendingNonce: permit.names.pendingNonce },
+      { now: new Date(t.ms), mintedNonces: permit.names.mintedNonces },
     );
     expect(removed, "the claim this install's own lost answer left behind was not released").toBe(2);
     expect(await claimsIn(cfg), `${META_FOLDER} still holds a claim nobody is behind`).toEqual([]);

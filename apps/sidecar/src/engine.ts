@@ -170,7 +170,7 @@ import {
   answerLeasePeek, deriveRequestKey, makeClockCorrectionWatch, type LeasePeekIo,
   type LeasePeekAnswer, type LeaseOp, type OrganizerKind,
   type OrganizerIntent,
-  isMalformed, metaReadBudget, parseClaim, writtenByThisProcess, type LeaseSelf,
+  isMalformed, metaReadBudget, parseClaim, resumesOwnClaim, withMinted, writtenByThisProcess, type LeaseSelf,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
@@ -984,13 +984,13 @@ async function releaseOwnClaim(
   installId: string,
   mailboxId: string,
   /**
-   * THE TWO NONCES THIS INSTALL CAN NAME AS ITS OWN. A release is addressed by (install, nonce), so
-   * a restored image does not lose its claim to a sibling's stop; a `current` of `null` is refused
-   * inside rather than widened to the id. BOTH FIELDS REQUIRED, no default: `pending` is the nonce
-   * a renewal minted and never heard back about (`LeaseSelf.pendingNonce`), and an optional field
-   * would let a call site forget it and clear every record EXCEPT the one holding the mailbox.
+   * THE NONCES THIS INSTALL CAN NAME AS ITS OWN. A release is addressed by (install, nonce), so a
+   * restored image does not lose its claim to a sibling's stop; a `current` of `null` is refused
+   * inside rather than widened to the id. BOTH FIELDS REQUIRED, no default: `minted` is every nonce
+   * this runtime minted here (`LeaseSelf.mintedNonces`), and an optional field would let a call
+   * site forget it and clear every record EXCEPT the one holding the mailbox.
    */
-  nonce: { current: string | null; pending: string | null },
+  nonce: { current: string | null; minted: readonly string[] },
   log: Diagnostic,
   reason: string,
   /** The configured window the stale term is measured against — one clock on every tier. */
@@ -999,7 +999,7 @@ async function releaseOwnClaim(
   try {
     return await releaseMailboxClaim(adapter, installId, mailboxId, nonce.current, {
       ...(staleAfterMs !== undefined ? { staleAfterMs } : {}),
-      ...(nonce.pending != null ? { pendingNonce: nonce.pending } : {}),
+      mintedNonces: nonce.minted,
     });
   } catch (err) {
     if (err instanceof ClaimReleaseError && err.code === "nonce_unknown") {
@@ -1030,11 +1030,13 @@ function ownClaimTerm(
   by: { installId: string; nonce: string } | null,
   installId: string,
   lastNonce: string | null,
+  /** Every nonce this runtime minted here: one of them is ours too ({@link LeaseSelf.mintedNonces}). */
+  minted: readonly string[] = [],
 ): "no_holder" | "install_id" | "other_nonce" | "our_last_nonce" | "no_armed_nonce" {
   if (by === null) return "no_holder";
   if (by.installId !== installId) return "install_id";
   if (lastNonce === null) return "no_armed_nonce";
-  return by.nonce === lastNonce ? "our_last_nonce" : "other_nonce";
+  return by.nonce === lastNonce || minted.includes(by.nonce) ? "our_last_nonce" : "other_nonce";
 }
 
 /**
@@ -3993,10 +3995,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             .then(() => candidate.close()).catch(() => undefined);
           /* WHAT THE RUNNING MAILBOX HOLDS, and what this move minted on ANOTHER server — kept apart
              until the keep, because nothing renews either while the queue is held. */
-          const running = { current: leaseNonce, pending: leasePendingNonce };
+          const running = { current: leaseNonce, minted: leaseMinted };
           let minted: string | null = null;
           let sameFolder = false;
-          const releaseOn = (conn: MailboxAdapter, nonce: { current: string | null; pending: string | null },
+          const releaseOn = (conn: MailboxAdapter, nonce: { current: string | null; minted: readonly string[] },
             why: string): Promise<number | "sibling" | null> =>
             metaReadBudget().race(releaseOwnClaim(conn, installId, mb.id, nonce, log, why))
               .catch((err: unknown) => {
@@ -4010,14 +4012,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await candidate.connect();
             const self: LeaseSelf = {
               installId, kind: organizerKind, displayName: machineName,
-              lastNonce: leaseNonce, pendingNonce: leasePendingNonce,
+              lastNonce: leaseNonce, mintedNonces: leaseMinted,
             };
             sameFolder = await holdsOwnClaim(candidate, self);
             const outcome = await readMailboxLease({
               adapter: candidate, mailboxId: mb.id, self, now: now(),
               hasRequestKey: requestKey !== null, takeover: null,
               ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
-              onNonceMinted: (n: string) => { if (sameFolder) leasePendingNonce = n; else minted = n; },
+              onNonceMinted: (n: string) => { if (sameFolder) noteMinted(n); else minted = n; },
               log,
             });
             if (!outcome.organize) {
@@ -4039,7 +4041,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             }
             /* THE SAME FOLDER UNDER ANOTHER NAME: the gate renewed the running claim in place, so its
                nonce is this runtime's from now, kept or not. */
-            if (sameFolder) { leaseNonce = outcome.nonce; leasePendingNonce = null; }
+            if (sameFolder) leaseNonce = outcome.nonce;
             const candidateNonce = outcome.nonce;
             log("organizer_host_change", {
               mailboxId: mb.id, verdict: "claimed", state: sameFolder ? "same_folder" : "other_server",
@@ -4059,7 +4061,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                   claimedHost = { host: dial.host, user: dial.user };
                   const followed = await adoptRowDial();
                   if (!followed && !sameFolder) {
-                    await releaseOn(candidate, { current: candidateNonce, pending: minted },
+                    await releaseOn(candidate, { current: candidateNonce, minted: minted === null ? [] : [minted] },
                       "the claim on the new server could not be removed; it ages out of ohmail/_meta there");
                     return;
                   }
@@ -4067,7 +4069,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     await releaseOn(old, running, "the claim on the previous server could not be "
                       + "removed after the mailbox moved; it ages out of ohmail/_meta there");
                     leaseNonce = candidateNonce;
-                    leasePendingNonce = null;
                   }
                   if (followed) {
                     await rereadCredential();
@@ -4094,7 +4095,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 settled = true;
                 try {
                   if (!sameFolder) {
-                    await releaseOn(candidate, { current: candidateNonce, pending: minted },
+                    await releaseOn(candidate, { current: candidateNonce, minted: minted === null ? [] : [minted] },
                       "the claim on the new server could not be removed after the change was not "
                         + "kept; it ages out of ohmail/_meta there");
                   }
@@ -4112,9 +4113,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await held;
           } catch (err) {
             /* NOTHING WAS KEPT. A claim minted on another server before the throw is taken back; one
-               minted in the running folder is the runtime's own (`leasePendingNonce`) and stands. */
+               minted in the running folder is the runtime's own (`leaseMinted`) and stands. */
             if (!sameFolder && minted !== null) {
-              await releaseOn(candidate, { current: minted, pending: null },
+              await releaseOn(candidate, { current: minted, minted: [] },
                 "a claim on the new server could not be removed after the change failed; it ages out");
             }
             await closeCandidate();
@@ -4703,13 +4704,15 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        *  resumption work. See `LeaseSelf` in the engine. */
       let leaseNonce: string | null = null;
       /**
-       * THE NONCE A RENEWAL MINTED AND NEVER GOT AN ANSWER ABOUT — beside {@link leaseNonce}, in
-       * memory for the same reason. A renewal that commits and loses its response leaves the folder
-       * carrying a claim this install wrote and was never told about; with only the acknowledged
-       * nonce remembered, the next gate reads it as a restored clone and stands the RUNNING install
-       * down over its own write. Set before the append, cleared by the read that answered.
+       * EVERY NONCE THIS RUNTIME MINTED FOR A CLAIM IN THIS MAILBOX'S FOLDER — beside {@link
+       * leaseNonce}, in memory for the same reason. A renewal that commits and loses its response
+       * leaves the folder carrying a claim this install wrote and was never told about; with only
+       * the acknowledged nonce remembered, the next gate read it as a restored clone and stood the
+       * RUNNING install down over its own write. Grown before each append (`withMinted`, a new array
+       * each time), never cleared by an answer.
        */
-      let leasePendingNonce: string | null = null;
+      let leaseMinted: readonly string[] = [];
+      const noteMinted = (n: string): void => { leaseMinted = withMinted(leaseMinted, n); };
       /* THE CORRECTION COUNT THIS MAILBOX HAS ALREADY ACTED ON. Seeded with the CURRENT count
          rather than 0: a runtime attaching now has no record of its own to re-admit — its first
          gate runs with `lastNonce` null, which is the launch arm — so a difference here would be
@@ -5262,6 +5265,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         let rowRead = false;
         /** Mail 0088 — "stop organizing this mailbox and keep my mail", if it has been asked. */
         let releaseRequested: Date | null = null;
+        /** This install's own claim lapsed with nobody's Stop on it ({@link resumesOwnClaim}). */
+        let resumesOwn = false;
         try {
           const [row] = await db.select({
             at: mailboxes.takeoverAuthorizedAt,
@@ -5295,6 +5300,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             capabilities: mailboxes.organizedByCapabilities,
             // Mail 0092 — the sixth, in the same read for the same reason.
             byInstallId: mailboxes.organizedByInstallId,
+            // The person's recorded Stop: a released mailbox never resumes by itself.
+            releasedAt: mailboxes.organizerReleasedAt,
           })
             .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1);
           if (row) {
@@ -5315,6 +5322,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             holderSeen.state = row.state;
             holderSeen.capabilities = row.capabilities;
             holderSeen.installId = row.byInstallId;
+            resumesOwn = row.at === null && resumesOwnClaim({
+              organizerRole: row.role, organizeConsentedAt: row.consentedAt,
+              organizedByInstallId: row.byInstallId, organizerState: row.state,
+              organizerReleasedAt: row.releasedAt, releaseRequestedAt: row.releaseAt,
+            }, installId);
           }
         } catch (err) {
           log("organizer_takeover_reread_failed", {
@@ -5351,7 +5363,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           const settingsLeft = organizer.organizing && organizer.claimed
             ? await profileSync.flushBeforeLeaving(leasePermit, adapter, await leavingGap()) : undefined;
           const released = await releaseOwnClaim(
-            adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+            adapter, installId, mb.id, { current: leaseNonce, minted: leaseMinted }, log,
             "the claim ages out of the mailbox on its own; until it does, another "
               + "install that tries to take this mailbox over stands itself down again",
           );
@@ -5639,7 +5651,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           organizer = { ...organizer, organizing: false };
           return false;
         }
-        if (!rowRead || (rowRole === "reader" && !takeoverAuthorized)) {
+        /* …and THIS install's own consented tenure, lapsed with nobody's Stop on it, is not a reader
+           waiting for a press: the gate runs with no takeover, and rule 3 decides. */
+        if (!rowRead || (rowRole === "reader" && !takeoverAuthorized && !resumesOwn)) {
           if (!rowRead) {
             log("organizer_row_unreadable", {
               reason: "this pass could not read the row that says whether this install organizes "
@@ -5739,8 +5753,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           mailboxId: mb.id,
           self: {
             installId, kind: organizerKind, displayName: machineName, lastNonce: leaseNonce,
-            /* BOTH VALUES: an install recognises its own claim whatever happened to the response. */
-            pendingNonce: leasePendingNonce,
+            /* AND EVERY NONCE MINTED HERE: an install recognises its own claim whatever happened
+               to the response. */
+            mintedNonces: leaseMinted,
             ...(correctionsNow !== seenClockCorrections ? { clockCorrected: true } : {}),
           },
           hasRequestKey: requestKey !== null,
@@ -5763,7 +5778,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           ...(config.leaseStaleAfterMs !== undefined ? { staleAfterMs: config.leaseStaleAfterMs } : {}),
           log,
         };
-        const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt });
+        /* THE GATE'S OWN MINT IS RECORDED TOO, before its append: unrecorded, a renewal that
+           committed and lost its answer read as a copy of this install on the next pass. */
+        const outcome = await readMailboxLease({ ...leaseArgs, now: gateAskedAt, onNonceMinted: noteMinted });
         holderLooked = true;
         /* SPENT BY THE GATE THAT READ IT, and only once it RETURNED: a cycle that threw on the
            network never offered the correction to the lease, and spending it there would lose the
@@ -5771,9 +5788,6 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         seenClockCorrections = correctionsNow;
         if (outcome.organize) {
           leaseNonce = outcome.nonce;
-          /* THE ANSWER ARRIVED, so nothing is pending — the widening is one value and it is dropped
-             the moment the write it covers is acknowledged. */
-          leasePendingNonce = null;
           /*
            * THE ROW FOLLOWS THE CLAIM, WITH NOTHING BETWEEN THEM. `readMailboxLease` has just said
            * ORGANIZE, so this install's claim stands in `ohmail/_meta` and is verified there. From that
@@ -5790,7 +5804,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // reader against a row that says `organizer`, which is the two halves disagreeing in the
           // other direction. See {@link priorStandDown}.
           priorStandDown = null;
-          if (takeoverAuthorized) {
+          if (takeoverAuthorized || resumesOwn) {
             // Spend it — one becoming, not a standing right: leaving the stamp set would let
             // this install seize the mailbox back on a later launch after a human moved it
             // elsewhere. The stand-down is cleared in the same statement, here and nowhere
@@ -5896,6 +5910,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 reason: "the lease said organize and this install's claim stands in the folder, so " +
                   "the row moved from reader to organizer before the permit was taken",
               });
+              if (resumesOwn) {
+                log("organizer_own_claim_resumed", {
+                  mailboxId: mb.id,
+                  state: "organizer",
+                  reason: "this install's own claim had lapsed with nobody else holding the mailbox and " +
+                    "nobody having stopped it, so it organizes the mailbox again with no press",
+                });
+              }
               // The next organizing drain asks, once, whether this was a person's first agree.
               agreeStamp = spentStamp;
             } catch (err) {
@@ -5921,6 +5943,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // beside a fixed believability cutoff is silently the smaller of the two.
           leasePermit = await acquireLeasePermit({
             ...leaseArgs, adopt: { outcome, at: gateAskedAt }, now,
+            /* The ring as it stands now, the gate's own mint included. */
+            self: { ...leaseArgs.self, mintedNonces: leaseMinted },
             monotonic,
             /* ── A RENEWAL THIS INSTALL PERFORMED IS THIS INSTALL'S CLAIM ─────────────────
              *
@@ -5932,11 +5956,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * "stop organizing here" released nothing. One writer owns the settled nonce.
              */
             onRenew: ({ nonce: renewed, at }) => {
-              leaseNonce = renewed; leasePendingNonce = null; lastLeaseRenewalAt = at;
+              leaseNonce = renewed; lastLeaseRenewalAt = at;
             },
             /* AND WHAT THE PERMIT MINTED, before the append that carries it — a renewal inside the
                permit whose answer is lost still leaves this install able to name what it wrote. */
-            onNonceMinted: (minted: string) => { leasePendingNonce = minted; },
+            onNonceMinted: noteMinted,
           });
           // The gate renewed this install's claim with `gateAskedAt` as its heartbeat — the fact
           // the release's lapse bound reads. See `lastLeaseRenewalAt`.
@@ -5979,7 +6003,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           state: outcome.state,
           // HOW THE HOLDER RELATES TO THIS INSTALL — see {@link ownClaimTerm}. Anything but
           // `install_id` on this line is an install standing down from a claim of its own.
-          ownClaimTerm: ownClaimTerm(outcome.by, installId, leaseNonce),
+          ownClaimTerm: ownClaimTerm(outcome.by, installId, leaseNonce, leaseMinted),
           reason: "another organizer holds this mailbox; this install becomes a READER of it — it " +
             "keeps its login and its poll timer, its mirror goes on growing, it can mark mail read " +
             "and send, and it moves, files and deletes nothing",
@@ -7515,7 +7539,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) {
             if (permitted) {
               const released = await releaseOwnClaim(
-                conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+                conn, installId, mb.id, { current: leaseNonce, minted: leaseMinted }, log,
                 "the claim this pass renewed could not be released; it ages out of " +
                   "ohmail/_meta on its own and another install takes the mailbox then",
               );
@@ -8066,7 +8090,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await pinPlaintextDial(imapConfig);
             await fresh.connect();
             releasedOnStop(await releaseOwnClaim(
-              fresh, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+              fresh, installId, mb.id, { current: leaseNonce, minted: leaseMinted }, log,
               "this install is quitting, its pass was cut and its claim could not be removed; it "
                 + "ages out of ohmail/_meta on its own and another install takes the mailbox then",
             ));
@@ -8098,7 +8122,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              against a 300 ms bound. */
           const politely = giving.then((give) => (give
             ? settings.then(() => releaseOwnClaim(
-              adapter, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+              adapter, installId, mb.id, { current: leaseNonce, minted: leaseMinted }, log,
               "this install is stopping and its claim could not be removed; it ages out of "
                 + "ohmail/_meta on its own and another install takes the mailbox then",
             )).then(releasedOnStop)
@@ -8164,10 +8188,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         set foldersEnsured(v) { foldersEnsured = v; },
         get leaseNonce() { return leaseNonce; },
         set leaseNonce(v) { leaseNonce = v; },
-        /* READ-ONLY on the record: the pending nonce is written by the gate and by the permit, at
-           the instant a claim is minted, and a setter would be a second writer of an identity only
-           the write path can know. See the field. */
-        get leasePendingNonce() { return leasePendingNonce; },
+        /* READ-ONLY on the record: the ring is written by the gate and by the permit, at the
+           instant a claim is minted, and a setter would be a second writer of an identity only the
+           write path can know. See the field. */
+        get leaseMintedNonces() { return leaseMinted; },
         get profileSync() { return profileSync; },
         get holderLooked() { return holderLooked; },
         /* THE CONNECTION'S OWN ANSWER, derived and never stored: the pair of closure fields IS
@@ -8538,7 +8562,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 settingsLeft = await profileSync.flushBeforeLeaving(leasePermit, conn, leaving);
               }
               return releaseOwnClaim(
-                conn, installId, mb.id, { current: leaseNonce, pending: leasePendingNonce }, log,
+                conn, installId, mb.id, { current: leaseNonce, minted: leaseMinted }, log,
                 "this install was asked to hand the mailbox back and the claim could not be "
                   + "removed; it ages out of ohmail/_meta on its own and another install takes the "
                   + "mailbox then",
@@ -8591,7 +8615,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                launch's state. Removing this line reddens no cell: the next successful gate arms
                its own nonce over it, so the claim here is the log's truthfulness, not a defect. */
             leaseNonce = null;
-            leasePendingNonce = null;
+            /* THE RING STAYS: a claim of ours the release could not remove is still ours. */
             /* CARRIED: a hand-back removes the CLAIM and deliberately leaves the row saying
                organizer, so it neither makes nor spends a person's stop. */
             organizer = { organizing: false, reason: null, heldBy: null, unreadableSince: null, unreadableReason: null,
@@ -10271,7 +10295,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               if (removed) {
                 const released = await releaseOwnClaim(
                   removed.adapter, installId, mailboxId,
-                  { current: removed.leaseNonce, pending: removed.leasePendingNonce }, log,
+                  { current: removed.leaseNonce, minted: removed.leaseMintedNonces }, log,
                   "the claim ages out of ohmail/_meta on its own; until it does, another "
                     + "install connecting this mailbox stands itself down against a claim "
                     + "nothing holds",

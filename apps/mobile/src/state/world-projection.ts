@@ -39,6 +39,7 @@ import {
   liveTags,
   liveUnscreened,
   mirrorNewestFirst,
+  NOBODY_ORGANIZES,
   OHBOX_VISIT_ID,
   filedSinceVisit,
   phoneOrganizer,
@@ -52,6 +53,7 @@ import {
   zonedDayNumber,
   type ConsentOptions,
   type EntityReader,
+  type PhoneOrganizer,
   type ScreeningPosture,
   type SessionRenewalDoor,
   type StoreSearchWalker,
@@ -60,6 +62,7 @@ import {
   type WorldView,
 } from "./live";
 import { routingReader } from "./held-routing";
+import { holderKind } from "../ui/standalone-form";
 
 /** The Screener's meta: the count, and beside a folder-whole one the sentence that says why (RULING-026). */
 export function screenerMetaOf(source: string, waiting: number, posture: ScreeningPosture): string {
@@ -113,6 +116,13 @@ export interface ProjectionInputs {
   heldDeletes: ReadonlySet<string>;
   heldPlaces: Parameters<typeof routingReader>[1];
   mailboxes: readonly PhoneMailbox[] | null;
+  /**
+   * ON A STANDALONE WORLD, THE CLAIM THE CARD AND THE STRIP READ (`claimHere`), `null` while unread;
+   * absent on a paired world, whose rows name the holder. See {@link organizerOfClaim}.
+   */
+  standaloneClaim?: StandaloneClaim | null;
+  /** …and the holder the door's last look named (`StandaloneHere.heldBy`), which a free card does not carry. */
+  standaloneHolder?: StandaloneHolder | null;
   /** When the mailbox facts were last read — a stable function over the provider's ref. */
   mailboxesReadAt: () => number | null;
   ownAddresses: readonly string[];
@@ -125,6 +135,36 @@ export interface ProjectionInputs {
 }
 
 export type Projected = Omit<World, "boot" | "abandoned" | "queued" | "face" | "autoAct" | "sendOutcome" | "sendSettlement">;
+
+/** The arms of the card's claim this projection reads (`PhoneClaim`, `ui/standalone-form.ts`). */
+export type StandaloneClaim = { readonly k: "theirs"; readonly name: string; readonly kind: string } | { readonly k: string };
+
+/** The holder the door's look named, as this projection reads it (`StandDownHolder`, `engine/organizer-session.ts`). */
+export type StandaloneHolder = {
+  readonly name: string; readonly standDownReason: string | null; readonly holderState: "held" | "stopped" | "none" | null;
+};
+
+/**
+ * THE HOLDER A STANDALONE WORLD NAMES — the card's own claim, so the banner, the sender sheet and
+ * the send-later sentence say what Settings says. `null` is this phone's own tenure (or a card not
+ * read yet) and `theirs` names its holder. A free card is nothing organizing: the holder the look
+ * saw stop is named, unless the rows say that claim is this install's own, else nobody is.
+ */
+export function organizerOfClaim(
+  claim: StandaloneClaim | null,
+  holder: StandaloneHolder | null,
+  rows: readonly Pick<PhoneMailbox, "organizedByThisInstall">[],
+): PhoneOrganizer | null {
+  if (claim !== null && claim.k === "theirs" && "name" in claim && claim.name.trim() !== "") {
+    return { name: claim.name, kind: claim.kind, stopped: false };
+  }
+  if (claim === null || claim.k !== "free") return null;
+  if (holder !== null && holder.holderState === "stopped" && holder.name.trim() !== ""
+    && !rows.some((m) => m.organizedByThisInstall)) {
+    return { name: holder.name, kind: holderKind(holder.standDownReason), stopped: true };
+  }
+  return NOBODY_ORGANIZES;
+}
 
 /** How many derivations this projector ran, by list — the ratchet's counter, and the `ui_vitals` line's source. */
 export interface ProjectorStats { runs: number; lists: Record<string, number> }
@@ -198,7 +238,10 @@ export function createProjector(): { project(inp: ProjectionInputs): Projected; 
       mailboxes: {
         known: inp.mailboxes !== null,
         ownAddresses: inp.ownAddresses,
-        organizer: inp.mailboxes === null ? null : phoneOrganizer(inp.mailboxes),
+        organizer: inp.mailboxes === null ? null
+          : inp.standaloneClaim !== undefined
+            ? organizerOfClaim(inp.standaloneClaim, inp.standaloneHolder ?? null, inp.mailboxes)
+            : phoneOrganizer(inp.mailboxes),
         rows: mailboxes,
         sendingId: kept("sendingId", [base, stamp], () => sendingMailboxId(base)),
         settingsBell: raw.entries("settings")[0]?.seq ?? null,

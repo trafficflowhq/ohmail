@@ -2,7 +2,7 @@ import {
   CAPABILITY_REQUESTS, CAPABILITY_MOVES, CAPABILITY_PROFILE, CAPABILITY_RULES, deriveRequestKey,
   DEFAULT_STALE_AFTER_MS, LeaseUnavailableError, META_FOLDER, clockSkewBoundMs,
   ClaimReleaseError,
-  isMalformed, parseClaim, peekLease, runLeaseGate, sameMetaStamp,
+  isMalformed, parseClaim, peekLease, runLeaseGate, sameMetaStamp, withMinted,
   type ClaimRecord, type LeaseIo, type LeaseOp, type LeaseSelf, type LeaseVerdict, type MetaBaselineReading,
   type MetaFolderStamp,
   type OrganizerClaim,
@@ -201,8 +201,12 @@ export interface MailboxLeaseInput {
   /** The press, with its instant, or `null` when nobody asked for this install. */
   takeover?: TakeoverAuthorization | null;
   staleAfterMs?: number;
-  /** See {@link LeaseGateInput.onNonceMinted} — the identity moves with the write, not the answer. */
-  onNonceMinted?: (nonce: string) => void;
+  /**
+   * See {@link LeaseGateInput.onNonceMinted} — the identity moves with the write, not the answer.
+   * REQUIRED, so the compiler names every gate call site: one that dropped it stood its own
+   * install down over a renewal whose answer was lost.
+   */
+  onNonceMinted: (nonce: string) => void;
   /** See {@link LeaseGateInput.residue}; the host's `TF_LEASE_RESIDUE`, absent meaning `remove`. */
   residue?: "remove" | "count";
   log?: (event: string, detail: Record<string, unknown>) => void;
@@ -256,7 +260,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
     capabilities: organizerCapabilitiesFor({ hasRequestKey: input.hasRequestKey }),
     ...(input.takeover !== undefined ? { takeover: input.takeover } : {}),
     ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
-    ...(input.onNonceMinted !== undefined ? { onNonceMinted: input.onNonceMinted } : {}),
+    onNonceMinted: input.onNonceMinted,
     ...(input.residue !== undefined ? { residue: input.residue } : {}),
     ...(leaseLog !== undefined ? { log: leaseLog } : {}),
   });
@@ -366,12 +370,12 @@ export async function releaseMailboxClaim(
     staleAfterMs?: number;
     now?: Date;
     /**
-     * THE NONCE A RENEWAL MINTED AND GOT NO ANSWER ABOUT — the second value this install can name
-     * as its own. A claim left by a lost response is ours and has to leave with the rest, or the
-     * person's stop clears everything except the record that is actually holding the mailbox. See
-     * {@link LeaseSelf.pendingNonce}; absent, this behaves exactly as it did.
+     * EVERY NONCE THIS PROCESS MINTED HERE — the other values this install can name as its own. A
+     * claim left by a lost response is ours and has to leave with the rest, or the person's stop
+     * clears everything except the record actually holding the mailbox. See
+     * {@link LeaseSelf.mintedNonces}; absent, this behaves exactly as it did.
      */
-    pendingNonce?: string | null;
+    mintedNonces?: readonly string[];
   } = {},
 ): Promise<number> {
   if (!hasLeaseIo(adapter)) return 0;
@@ -424,9 +428,9 @@ export async function releaseMailboxClaim(
    */
   const stale = (c: OrganizerClaim): boolean =>
     c.heartbeat.getTime() <= now.getTime() - staleAfterMs;
-  /** Is this nonce one this install wrote — the acknowledged one, or one it never heard back about? */
+  /** Is this nonce one this install wrote — the acknowledged one, or one it minted here? */
   const named = (c: OrganizerClaim): boolean =>
-    c.nonce === nonce || (opts.pendingNonce != null && c.nonce === opts.pendingNonce);
+    c.nonce === nonce || (opts.mintedNonces?.includes(c.nonce) ?? false);
   /** OUR CLAIM, or a STRANDED record of ours — the two terms of one address. */
   const releasableIn = (messages: RawClaimMessage[]): OrganizerClaim[] =>
     ownClaimsIn(messages).filter((c) => named(c) || stale(c));
@@ -676,12 +680,12 @@ export interface PermitIdentity {
   readonly uidValidity: number | bigint | null;
   readonly nonce: string | null;
   /**
-   * THE NONCE A RENEWAL MINTED AND GOT NO ANSWER ABOUT, or `null`. Named beside {@link nonce}
-   * rather than folded into it because the two say different things: one claim this install wrote
-   * was acknowledged and one may be standing unacknowledged, and a release has to be able to
-   * address both ({@link releaseMailboxClaim}).
+   * EVERY NONCE THIS PERMIT'S PROCESS MINTED HERE, newest last. Named beside {@link nonce} rather
+   * than folded into it because the two say different things: one claim this install wrote was
+   * acknowledged, others may stand unacknowledged, and a release has to be able to address them
+   * all ({@link releaseMailboxClaim}).
    */
-  readonly pendingNonce: string | null;
+  readonly mintedNonces: readonly string[];
   readonly issuedAt: Date;
 }
 
@@ -697,7 +701,9 @@ export type PermitClocks =
 
 export type LeasePermitInput = LeasePermitOptions & PermitClocks;
 
-export interface LeasePermitOptions extends Omit<MailboxLeaseInput, "now"> {
+export interface LeasePermitOptions extends Omit<MailboxLeaseInput, "now" | "onNonceMinted"> {
+  /** Told of every nonce the permit's own renewals mint; the permit keeps its ring either way. */
+  onNonceMinted?: (nonce: string) => void;
   /**
    * See {@link DEFAULT_PERMIT_TTL_MS}. Clamped UP to {@link MIN_PERMIT_TTL_MS} — a shorter permit
    * is not "more careful", it is the same-instant re-entry that arm's docblock measures.
@@ -796,14 +802,13 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   // The nonce this permit has written, threaded into every later read — see the docblock.
   let lastNonce: string | null = input.self.lastNonce;
   /**
-   * THE NONCE A RENEWAL MINTED BUT NEVER GOT AN ANSWER ABOUT. Carried in from the caller (a
-   * longer-lived memory than this receipt: the runtime's, across permits) and updated the instant
-   * the gate mints one, so an append that commits and loses its response cannot leave this permit
-   * unable to name what it wrote. Cleared on the read that DID answer, because from then on the
-   * pending value names a superseded record and keeping it would widen what this install calls its
-   * own for no reason. See {@link LeaseSelf.pendingNonce}.
+   * EVERY NONCE MINTED FOR THIS MAILBOX, seeded from the caller (the runtime's memory, longer-lived
+   * than this receipt) and grown the instant the gate mints one, so appends that commit and lose
+   * their responses cannot leave this permit unable to name what it wrote. An answer clears
+   * nothing: a later attempt can fail after an earlier one committed. See
+   * {@link LeaseSelf.mintedNonces}.
    */
-  let pendingNonce: string | null = input.self.pendingNonce ?? null;
+  let mintedNonces: readonly string[] = input.self.mintedNonces ?? [];
   let verifiedAt: Date;
   /** `mono()` at the same look as `verifiedAt` — the second source {@link permitAge} reads. */
   let monoAt: number;
@@ -910,10 +915,10 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     // on the strength of a read that failed.
     const outcome = await readMailboxLease({
       ...base,
-      self: { ...input.self, lastNonce, pendingNonce },
+      self: { ...input.self, lastNonce, mintedNonces },
       now: at,
       onNonceMinted: (minted: string) => {
-        pendingNonce = minted;
+        mintedNonces = withMinted(mintedNonces, minted);
         input.onNonceMinted?.(minted);
       },
     } as MailboxLeaseInput);
@@ -935,9 +940,6 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     // the clock says. Two `null`s are not a match — unknown is not "the same".
     uidValidity = outcome.uidValidity;
     lastNonce = outcome.nonce;
-    /* THE ANSWER ARRIVED, so there is nothing pending. Clearing is what keeps the widening to one
-       value: a pending nonce left standing would name a record this renew has just superseded. */
-    pendingNonce = null;
     verifiedAt = at;
     monoAt = monoRead;
     writesSinceRead = 0;
@@ -957,7 +959,6 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
   if (input.adopt) {
     uidValidity = input.adopt.outcome.uidValidity;
     lastNonce = input.adopt.outcome.nonce;
-    pendingNonce = null;
     verifiedAt = input.adopt.at;
     // The adopted look is older than this call by the wall delta, never by less than nothing.
     monoAt = mono() - Math.max(0, clock().getTime() - input.adopt.at.getTime());
@@ -990,7 +991,7 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
     get names(): PermitIdentity {
       return {
         installId: input.self.installId, mailboxId: input.mailboxId,
-        uidValidity, nonce: lastNonce, pendingNonce, issuedAt,
+        uidValidity, nonce: lastNonce, mintedNonces, issuedAt,
       };
     },
     get verifiedAt(): Date { return verifiedAt; },

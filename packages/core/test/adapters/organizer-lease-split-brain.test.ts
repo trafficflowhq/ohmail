@@ -5,9 +5,13 @@ import {
   decideLease,
   formatClaim,
   parseClaim,
+  resumesOwnClaim,
+  runLeaseGate,
   type ClaimRecord,
+  type LeaseIo,
   type LeaseSelf,
   type LeaseVerdict,
+  type RawClaimMessage,
 } from "../../src/adapters/organizer-lease.js";
 
 /**
@@ -639,5 +643,81 @@ describe("a 0.14 install and a 0.14.1 install converge on one organizer", () => 
       installId: "cloud-b", kind: "cloud", heartbeat: T, capabilities: ["requests"],
     });
     expect((fresh as Exclude<ClaimRecord, { malformed: true }>).capabilities).toEqual(["requests"]);
+  });
+});
+
+/**
+ * A CLAIM THIS INSTALL WROTE IS ITS OWN, UNDER EVERY NONCE IT MINTED. A phone on a bad network
+ * renewed, the APPEND committed and the answer was lost, a retry minted another nonce; the next gate
+ * read the committed claim as a copy of itself and stood the only install down, for good.
+ */
+describe("a claim this install wrote is its own under every nonce it minted", () => {
+  const NOW = "2026-10-24T00:15:24.000Z";
+  const ago = (min: number): string => new Date(at(NOW).getTime() - min * 60_000).toISOString();
+  const own = (nonce: string, heartbeat: string): ClaimRecord =>
+    claim({ installId: "phone", kind: "local", heartbeat, claimedAt: ago(60), nonce });
+  const me = (lastNonce: string | null, mintedNonces?: readonly string[]): LeaseSelf =>
+    ({ installId: "phone", kind: "local", displayName: "phone", lastNonce, ...(mintedNonces ? { mintedNonces } : {}) });
+
+  it("a renewal whose answer was lost, then a retry under a newer nonce, leave it organizing", () => {
+    const folder = [own("acked", ago(2)), own("answer-lost", ago(1))];
+    expect(decide(me("acked", ["answer-lost", "retried"]), folder, NOW).verdict).toBe("organize");
+  });
+
+  it("GUARD: the same folder with nothing minted is still a live copy of this install", () => {
+    const folder = [own("acked", ago(2)), own("answer-lost", ago(1))];
+    expect(decide(me("acked", []), folder, NOW).verdict).toBe("stand_down");
+  });
+
+  it("a lone own claim nothing renews any more is taken back at its lapse, with no press", () => {
+    expect(decide(me("acked"), [own("answer-lost", ago(18))], NOW).verdict).toBe("organize");
+  });
+
+  it("GUARD: a stronger live foreign claim stands it down; a stale one waits for a person", () => {
+    const laptop = (heartbeat: string): ClaimRecord =>
+      claim({ installId: "laptop", kind: "local", heartbeat, claimedAt: ago(120), nonce: "laptop-nonce" });
+    expect(decide(me("acked", ["answer-lost"]), [own("acked", ago(2)), laptop(ago(0.5))], NOW).verdict).toBe("stand_down");
+    expect(decide(me("acked", ["answer-lost"]), [laptop(ago(18))], NOW).verdict).toBe("available");
+  });
+
+  it("the confirm keeps the claim it just wrote when the ring already names its nonce", async () => {
+    const kept = formatClaim({
+      installId: "phone", kind: "local", displayName: "phone", heartbeat: at(ago(1)), claimedAt: at(ago(60)),
+      nonce: "P", authorizedAt: null, capabilities: [],
+    });
+    const folder: RawClaimMessage[] = [{ ref: 1, raw: kept, internalDate: null }];
+    let uid = 1;
+    const io: LeaseIo = {
+      ensureMetaFolder: async () => undefined,
+      listClaims: async () => folder.map((m) => ({ ...m })),
+      appendClaim: async (raw: string) => { folder.push({ ref: ++uid, raw, internalDate: null }); },
+      removeClaims: async (refs: readonly unknown[]) => {
+        const gone = new Set(refs);
+        for (let i = folder.length - 1; i >= 0; i--) if (gone.has(folder[i]!.ref)) folder.splice(i, 1);
+      },
+      uidValidity: () => 1,
+    };
+    const gate = await runLeaseGate({
+      io, self: me(null, ["N"]), now: at(NOW), capabilities: [], newNonce: () => "N",
+    });
+    expect(gate.verdict.verdict).toBe("organize");
+    expect(folder.map((m) => parseClaim(m.raw) as { nonce: string }).map((c) => c.nonce)).toEqual(["N"]);
+  });
+
+  it("the row resumes its own lapsed claim only while every term holds", () => {
+    const row = {
+      organizerRole: "reader", organizeConsentedAt: at(ago(60)), organizedByInstallId: "phone",
+      organizerState: "stopped", organizerReleasedAt: null as Date | null, releaseRequestedAt: null as Date | null,
+    };
+    expect(resumesOwnClaim(row, "phone")).toBe(true);
+    const broken: Array<Partial<typeof row>> = [
+      { organizerRole: "organizer" }, { organizeConsentedAt: null as unknown as Date },
+      { organizedByInstallId: "laptop" }, { organizedByInstallId: null as unknown as string },
+      { organizerState: "held" }, { organizerState: null as unknown as string },
+      { organizerReleasedAt: at(ago(5)) }, { releaseRequestedAt: at(ago(5)) },
+    ];
+    for (const over of broken) {
+      expect(resumesOwnClaim({ ...row, ...over }, "phone"), JSON.stringify(over)).toBe(false);
+    }
   });
 });

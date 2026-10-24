@@ -120,7 +120,7 @@ describe("the organizer permit against a chosen handover, on a real server", () 
 
     const seized = await readMailboxLease({
       adapter: b.adapter, self: b.self, mailboxId, now: new Date(t0.getTime() + 1_000),
-      hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+      hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
     });
     expect(seized.organize).toBe(true);
 
@@ -211,7 +211,7 @@ describe("the organizer permit against a chosen handover, on a real server", () 
         // rival's gate displaces our claim and appends its own, through the product's own door.
         const seized = await readMailboxLease({
           adapter: b.adapter, self: b.self, mailboxId, now: new Date(t0.getTime() + 1_000),
-          hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+          hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
         });
         seizedOk = seized.organize;
       },
@@ -257,7 +257,7 @@ describe("the organizer permit against a chosen handover, on a real server", () 
     });
     await readMailboxLease({
       adapter: b.adapter, self: b.self, mailboxId, now: new Date(t0.getTime() + 1_000),
-      hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" },
+      hasRequestKey: false, takeover: { authorizedAt: t0, intent: "takeover" }, onNonceMinted: () => undefined,
     });
 
     // The pre-fix behaviour, and it is the honest one for a connection that cannot ask: the write

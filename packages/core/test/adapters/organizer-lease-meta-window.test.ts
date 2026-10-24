@@ -18,9 +18,12 @@ import {
   makeLeaseIo,
   makeLeasePeekIo,
   makeRequestOrganizerIo,
+  metaReadBudget,
   readLeasePeek,
   readMetaFolderWindow,
+  readMetaRecords,
   runLeaseGate,
+  type LeaseImapClient,
   type LeaseSelf,
 } from "../../src/adapters/organizer-lease.js";
 
@@ -198,6 +201,23 @@ describe("the shared bounded read of ohmail/_meta", () => {
     const read = await readMetaFolderWindow(server, META);
     expect(read).toEqual({ records: [], truncated: false, total: 0 });
     expect(fetchRanges(server)).toEqual([]);
+  });
+
+  /* A CONNECTION THAT DIED UNDER THE READ IS "COULD NOT LOOK": its STATUS fails, imapflow's FETCH
+     yields nothing once the mailbox is gone, and the answer read as an empty folder — the gate's
+     verify then said its own claim was missing, the peek that nobody held the mailbox. */
+  it("a read over a dead connection refuses list_claims rather than answer an empty folder", async () => {
+    const dropped = Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+    const client = {
+      mailbox: false, usable: false,
+      status: async () => { throw dropped; },
+      // eslint-disable-next-line require-yield
+      fetch: async function* () { return; },
+    } as unknown as LeaseImapClient;
+    const err = await readMetaRecords(client, META, metaReadBudget(), { keep: () => true, probe: null })
+      .then(() => null, (e: unknown) => e);
+    expect(err, "a dead connection read as an empty folder").toBeInstanceOf(LeaseUnavailableError);
+    expect((err as LeaseUnavailableError).op).toBe("list_claims");
   });
 
 });

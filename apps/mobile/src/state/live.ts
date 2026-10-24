@@ -855,7 +855,7 @@ const NO_OWN_ADDRESSES: readonly string[] = [];
  * an organizer that stopped renewing claims decisions are carried out when they are not.
  */
 export interface PhoneOrganizer {
-  /** The holder's own machine name — never empty, or this is not a `PhoneOrganizer`. */
+  /** The holder's own machine name — never empty, but on {@link NOBODY_ORGANIZES}. */
   name: string;
   /** `cloud` · `local` · `unknown`, as the wire gave it; `null` when it named only a name. */
   kind: string | null;
@@ -884,11 +884,18 @@ export function phoneOrganizer(
 }
 
 /**
+ * NOTHING ORGANIZES THE MAILBOX AND NOBODY IS NAMED — a standalone phone's free card
+ * (`world-projection.ts#organizerOfClaim`). `null` would say this phone organizes it.
+ */
+export const NOBODY_ORGANIZES: PhoneOrganizer = { name: "", kind: null, stopped: true };
+
+/**
  * THE BANNER'S TWO LINES. A holder that stopped organizes nothing, so the head says that rather
  * than "Organized by" a machine that stopped, and the line under it names the machine and what
- * waits meanwhile.
+ * waits meanwhile; with nobody to name, the line is the Screener's own for that state.
  */
 export function phoneBannerLines(o: PhoneOrganizer): { head: string; why: string } {
+  if (o.name.trim() === "") return { head: Copy.phoneStateNotOrganized, why: Copy.waitingNotYetHint };
   return o.stopped
     ? { head: Copy.phoneStateNotOrganized, why: Copy.phoneBannerStopped(o.name) }
     : { head: Copy.phoneBanner(o.name), why: Copy.phoneBannerWhy };

@@ -120,6 +120,8 @@ describe("send later, where an appointment can be kept and where it cannot", () 
     expect(lapsed).toBe(DECKS.en.scheduledReaderHereStopped("zorin-9950"));
     expect(lapsed).not.toContain("zorin-9950 organizes it");
     expect(DECKS.de.scheduledReaderHereStopped("zorin-9950")).toContain("nicht mehr");
+    // Nothing organizes it and nobody is named: this phone does not organize it either.
+    expect(scheduledNotHereSentence({ name: "", stopped: true })).toBe(DECKS.en.phoneStateNotOrganized);
   });
 
   it("THE COPY is in both decks, translated, and says nothing the platform lines make false", () => {

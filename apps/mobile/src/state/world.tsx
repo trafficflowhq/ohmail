@@ -44,9 +44,13 @@ import { organizesHere } from "../engine/standalone-door";
 /* THE DOOR ANSWERING FOR ITSELF, with no request — `organizer-session.ts` holds the one engine
    this process runs and `standaloneHereFor` is its read, SCOPED to the session being
    rendered — the module's door outlives a switch. The state module reaches into `engine/`
-   for exactly this and nothing else: the alternative is a second copy of the connection facts
-   kept in React, and a second copy is a second writer. */
-import { standaloneHereFor } from "../engine/organizer-session";
+   for the door's own reads and nothing else (this, and the organizer state the card reads): the
+   alternative is a second copy of those facts kept in React, and a second copy is a second writer. */
+import {
+  onOrganizerState, organizerHandedBack, organizerInstruction, organizerStateVersion, standaloneHereFor,
+} from "../engine/organizer-session";
+/* AND THE CARD'S OWN CLAIM, so a standalone world names the holder Settings names (`organizerOfClaim`). */
+import { claimHere } from "../ui/standalone-form";
 import { readFolderSummary } from "../net/folder-ops";
 import { imageRouteOf, type ImageRoute } from "../mail/remote-images";
 import * as Crypto from "expo-crypto";
@@ -1673,6 +1677,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
      rule, so a press whose rule is waiting out the window would move nothing on screen; the
      overlay carries the named rows until it closes (`@ohmail/client-engine#presentAt`). */
   const heldPlaces = useSyncExternalStore(subscribeRoutingPlaces, routingPlaces);
+  /* THE DOOR'S CLAIM MOVES WITH THE ENGINE'S ORGANIZER STATE, which is module state: its version is
+     what re-runs the projection when a stand-down, a hand-back or a resume changes the holder. */
+  const organizerBeat = useSyncExternalStore(onOrganizerState, organizerStateVersion, organizerStateVersion);
 
   /* ONE PROJECTOR PER ENGINE (`world-projection.ts`): it keeps the presented reader and every list
      across runs, each keyed on what it reads, so a run is cheap unless a list's own inputs moved. */
@@ -1691,7 +1698,15 @@ export function WorldProvider({ children }: { children: ReactNode }) {
        organizer's window for every mailbox, so the standalone door partitions by it too. */
     const posture: ScreeningPosture = !session.standalone || answersPerMailbox(screening)
       ? screening : SCREENING_UNSUPPLIED;
+    const here = standaloneHereFor(session);
     return projector.project({
+      /* A STANDALONE WORLD NAMES THE HOLDER THE CARD NAMES; a paired one reads its rows. */
+      ...(session.standalone
+        ? {
+          standaloneClaim: here === null ? null : claimHere(here, organizerInstruction(), organizerHandedBack()),
+          standaloneHolder: here === null ? null : here.heldBy,
+        }
+        : {}),
       engine, worldKey: session.ownerKey, standalone: session.standalone, bearer: session.bearer,
       /* Whose mail this is, in words a person reads: a paired door names its server's host and the
          mailbox the roster serves; the standalone door names the phone (a getter, so a language
@@ -1717,7 +1732,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
   }, [engine, projector, session, scopes, zone, locale, actions, derivedStamp, freshBeat, clockBeat, searchRev, walker, searchWalker,
     offMirrorRev, foldersOn, foldersPending, foldersStorable, setFoldersEnabled, signatures,
     resurfaceTime, rememberResurfaceTime, screening, screenerServer, relayed, leavingWaiting, heldDeletes,
-    heldPlaces, mailboxes]);
+    heldPlaces, mailboxes, organizerBeat]);
 
   /**
    * AND THE WORLD THE SCREENS READ — the projection above plus the facts that move with the

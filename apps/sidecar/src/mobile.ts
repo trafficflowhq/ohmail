@@ -1741,9 +1741,9 @@ async function composePhoneEngine(
       }
       if (press === null) return sidecar.handle(req);
       /* A PRESS WITHOUT A PERSON'S CONSENT is the claim watch's: answered `no_consent` with nothing
-         written over a row nobody consented on, and over a mailbox this install never organized,
-         whose consent came from a press the holder refused: the watch only RETURNS a
-         mailbox; a freed one waits for the person's press. */
+         written over a row nobody consented on, and `not_organized_here` over a mailbox this run
+         never organized, whose consent came from a press the holder refused or an earlier run: the
+         watch only RETURNS a mailbox; a freed one waits for the person's press. */
       if (!press.person) {
         const mailboxId = decodeURIComponent(ORGANIZE_ROUTE.exec(new URL(req.url).pathname)![1]!);
         let consented: boolean | null;
@@ -1758,8 +1758,10 @@ async function composePhoneEngine(
           return unreadableResponse();
         }
         if (consented === false || !sidecar.organizedHere(mailboxId)) {
+          /* TWO REFUSALS, EACH NAMED: nobody consented here, or the consent stands and this run has
+             not organized the mailbox (after a restart, say). Neither writes anything. */
           return new Response(
-            JSON.stringify({ outcome: "no_consent", previousReason: null }),
+            JSON.stringify({ outcome: consented === false ? "no_consent" : "not_organized_here", previousReason: null }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
         }
@@ -1896,6 +1898,16 @@ async function composePhoneEngine(
         status: res.status,
         reason: "no consent is recorded on this phone, so the watch takes nothing; the consent "
           + "sheet and the Start verb are the door",
+      });
+      return "refused";
+    }
+    if (body.outcome === "not_organized_here") {
+      log("organizer_claim_here_refused", {
+        mailboxId,
+        status: res.status,
+        reason: "consent is recorded on this phone, but this install has not organized the mailbox "
+          + "since it started, so the watch takes nothing; the gate takes back a lapsed claim of "
+          + "this install's own by itself, and the Start verb takes the mailbox now",
       });
       return "refused";
     }

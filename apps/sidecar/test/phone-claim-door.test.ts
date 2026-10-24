@@ -847,14 +847,39 @@ describe.runIf(ON_DEVICE_STORE)("the person's two verbs, on the engine's own doo
     expect(row!.c).toBeNull();
     expect(row!.t).toBeNull();
     /* CONSENT ALONE IS NO LICENCE: a consent a refused press recorded leaves the
-       machine's press unanswered, on a mailbox this phone never organized. */
+       machine's press unanswered, on a mailbox this phone never organized — under its own word. */
     exec.direct("update mailboxes set organize_consented_at = ? where id = ?", [Date.now(), id]);
-    expect(await outcomeOf(await pressLocal(live, id))).toBe("no_consent");
+    expect(await outcomeOf(await pressLocal(live, id))).toBe("not_organized_here");
     /* THE POSITIVE CONTROL: a mailbox this phone's gate read as its own is returned by the same press. */
     exec.direct("update mailboxes set organizer_role = 'organizer' where id = ?", [id]);
     await live.resume();
     exec.direct("update mailboxes set organizer_role = 'reader', organizer_state = 'stopped' where id = ?", [id]);
     expect(await outcomeOf(await pressLocal(live, id))).toBe("authorized");
+  });
+
+  /* AFTER A RESTART THE CONSENT STANDS and this run has organized nothing: the watch takes nothing,
+     and its line says so rather than that no consent is recorded. */
+  it("the WATCH over a consent this run never organized is refused, and its line says why truly", async () => {
+    const lines: string[] = [];
+    const exec = nodeExecutor();
+    const meta = new MemoryMeta();
+    live = await startPhoneEngine(deps(exec, {
+      adapterFactory: claimable(meta), logSink: (line: string) => { lines.push(line); },
+    }));
+    const id = soleMailbox(live);
+    seedCredential(exec, id);
+    exec.direct(
+      `update mailboxes set organizer_role = 'reader', organizer_state = 'stopped',
+         organized_by_kind = 'mobile', organized_by_name = 'ohmail on a phone', organize_consented_at = ?
+       where id = ?`,
+      [Date.now(), id],
+    );
+    await expect(live.claimHere({ by: "watch" })).resolves.toBe("refused");
+    const said = lines.filter((l) => l.includes('"organizer_claim_here_refused"'));
+    expect(said, "the refusal was not said").toHaveLength(1);
+    expect(said[0], "a consent on the row was reported as missing").not.toContain("no consent is recorded");
+    expect(said[0]).toContain("consent is recorded on this phone, but this install has not organized");
+    expect(meta.count, "the watch claimed a mailbox this run never organized").toBe(0);
   });
 
   /* ══ A PERSON'S CONSENT IS RECORDED EVEN WHEN THE PRESS IS REFUSED ═════════════════════════
