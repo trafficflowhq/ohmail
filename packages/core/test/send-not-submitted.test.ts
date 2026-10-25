@@ -82,7 +82,7 @@ describe("a submission that ends before its end-of-data mark is `data`", () => {
   const servers: Array<{ close(): void }> = [];
 
   async function smtp(mode: Mode, dropAt = 100_000) {
-    const seen = { dataBytes: 0, mark: false };
+    const seen = { dataBytes: 0, mark: false, onMark: undefined as (() => void) | undefined };
     const server = net.createServer((s) => {
       s.on("error", () => undefined);
       s.write("220 fake ESMTP\r\n");
@@ -95,6 +95,7 @@ describe("a submission that ends before its end-of-data mark is `data`", () => {
           if (mode === "drop-mid-upload" && seen.dataBytes > dropAt) { s.destroy(); return; }
           if (buf.endsWith("\r\n.\r\n")) {
             seen.mark = true;
+            seen.onMark?.();
             inData = false;
             if (mode === "close-after-mark") s.destroy();
             else if (mode === "ok") s.write("250 queued\r\n");
@@ -225,9 +226,10 @@ describe("a submission that ends before its end-of-data mark is `data`", () => {
   it("a stop after the release ends the session at once; the outcome stays ambiguous", async () => {
     const { port, seen } = await smtp("silent-after-mark");
     const stop = new AbortController();
-    const out = await (await adapterOn(port)).send(MSG, {
-      copy: "caller", signal: stop.signal, beforeRelease: async () => { setTimeout(() => stop.abort(), 20); },
-    }).then((r) => r, (e: unknown) => e);
+    // Stopped when the server reads the mark: Nagle may hold those 3 bytes for a delayed ACK (40 ms).
+    seen.onMark = () => stop.abort();
+    const out = await (await adapterOn(port)).send(MSG, { copy: "caller", signal: stop.signal })
+      .then((r) => r, (e: unknown) => e);
     expect(seen.mark).toBe(true);
     expect(out).toBeInstanceOf(Error);
     expect(out).not.toBeInstanceOf(SendNotSubmitted);
