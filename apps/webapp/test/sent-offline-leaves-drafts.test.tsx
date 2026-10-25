@@ -173,6 +173,30 @@ describe("a reply sent while offline", () => {
     expect(sends(s)).toHaveLength(1);
     expect(unsent(s)).toHaveLength(before);
   }, 30_000);
+
+  it("a forward sent offline goes once, with no replayable create left", async () => {
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    s.spendSentRow.on = true;
+    const before = unsent(s).length;
+    s.offline.on = true;
+    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
+    await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
+    await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");
+    await waitFor(() => s.el.querySelector(".read-col .reply[data-reply-for] .rcp-input") != null, "the forward dock");
+    await setInput(s.el.querySelector<HTMLInputElement>(".read-col .reply[data-reply-for] .rcp-input")!, "colleague@example.net, ");
+    await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".read-col .reply[data-reply-for] .rte-surface")!, "Sent while offline"); });
+    await waitFor(() => waitingSaves(s) === 1, "the pause's row waiting on the outbox", PAUSE_ROUNDS);
+    await act(async () => { replySend(s.el)!.click(); });
+    await rounds(8);
+    expect(replayableCreates(s), "a later boot would still write the forward's row").toHaveLength(0);
+    s.offline.on = false;
+    await online();
+    await waitFor(() => sends(s).length === 1, "the forward on the wire", PAUSE_ROUNDS);
+    await rounds(40);
+    expect([sends(s).length, unsent(s).length, waitingSaves(s)], "sends, drafts left, saves waiting").toEqual([1, before, 0]);
+  }, 40_000);
 });
 
 describe("a letter sent while offline", () => {

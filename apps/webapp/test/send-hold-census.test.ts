@@ -90,7 +90,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // press sends from it, whether that row is still free — a row since held is never sent from.
   // TEN: a promoted lane asks it of the row it would write its words into.
   // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
-  // TWELVE: Reply reads the row its lane last wrote: one sent from another device is ended there.
+  // TWELVE: a dock reads the row its lane last wrote, at its open and while open: one sent from another device ends the lane.
   ["shell-compose.ts", 12,
     "openDraft (above the reply arm, so a held reply takes the held view), writeTo, the mailto "
     + "seam, the Drafts list's Delete, replySendState (the reply editor's own lane, row "
@@ -98,8 +98,8 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
     + "composer's Discard (what it will do with its row), laneRowOf (the row a refused "
     + "reply left, before a press sends from it), accountReplyRow (the draft Reply opens), "
     + "heldLaneRow (the row a promoted lane writes into rather than beside), dropPriorRow (the "
-    + "older row a reply's send from its own create's row leaves), and openReply (the row its lane "
-    + "last wrote, sent from another device)"],
+    + "older row a reply's send from its own create's row leaves), and sentElsewhereOf (the row a lane "
+    + "last wrote, sent from another device: read when a dock opens and while one is open)"],
   ["AppShell.tsx", 1, "the render that feeds the compose's send state"],
 ];
 

@@ -27,6 +27,7 @@ import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
+import { typeInto } from "./fixtures/rich-editor-driver";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -288,6 +289,7 @@ function engineOver(
   replayDeadlineMs?: number,
   server?: DraftServer,
   refuseSave: Set<string> = new Set(),
+  parts = false,
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
@@ -468,9 +470,22 @@ function engineOver(
         text: `the text of ${id}`, html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
       }),
+      // Each message's three files, and a server that announces forward parts.
+      ...(parts ? {
+        listAttachments: async (id: string) => FORWARD_PARTS.map((p) => ({ ...p, messageId: id })),
+        fetchAttachment: async () => new Blob(["x"]),
+        forwardPartsAnnounced: async () => true,
+      } : {}),
     },
   } as never);
 }
+
+/** The files `mountShell(..., { parts: true })` lists on every message. */
+export const FORWARD_PARTS = [
+  { id: "a0000000-0000-4000-8000-000000000001", filename: "plan.pdf", contentType: "application/pdf", sizeBytes: 1000, inline: false },
+  { id: "b0000000-0000-4000-8000-000000000002", filename: "logo.png", contentType: "image/png", sizeBytes: 200, inline: true },
+  { id: "c0000000-0000-4000-8000-000000000003", filename: "budget.xlsx", contentType: "application/octet-stream", sizeBytes: 3000, inline: false },
+];
 
 /** The account's settings wire; `signatures` is each mailbox's stored signature, as the server echoes it. */
 const consentTransportWith = (signatures?: Record<string, string>) => ({
@@ -529,6 +544,8 @@ export async function mountShell(
     startOffline?: boolean;
     /** A send gate set before the engine starts, so a restored send's replay waits on it. */
     sendGate?: DraftShell["sendGate"];
+    /** Every message carries three files (`FORWARD_PARTS`), and the server takes a forward's kept list. */
+    parts?: boolean;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -554,7 +571,7 @@ export async function mountShell(
   const refuseSave = new Set<string>();
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
-    versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server, refuseSave,
+    versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server, refuseSave, options.parts === true,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -604,6 +621,40 @@ export async function press(target: Element | null, what: string): Promise<void>
     target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
   await settleEditor();
+}
+
+/** The inline forward's dock (the reply dock in forward mode), on the open message. */
+export const forwardDock = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".read-col .reply[data-reply-for]");
+
+/** Open message `id` (unless one is open) and press Forward in its menu. */
+export async function openForward(s: DraftShell, id = "m1"): Promise<void> {
+  if (s.el.querySelector(".read-col .msg") == null) {
+    await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
+    await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+  }
+  const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
+  await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
+  await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");
+}
+
+/** Type `value` into the forward dock's To row. */
+export async function typeForwardTo(s: DraftShell, value: string): Promise<void> {
+  const input = forwardDock(s.el)!.querySelector<HTMLInputElement>(".rcp-input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+/** Forward on `m1`, `to` in the To row, the third file removed, `note` typed. */
+export async function fillForward(s: DraftShell, to: string, note: string): Promise<void> {
+  await openForward(s);
+  await waitFor(() => forwardDock(s.el) != null, "the forward dock");
+  await typeForwardTo(s, `${to}, `);
+  await waitFor(() => forwardDock(s.el)!.querySelectorAll("[data-forward-part]").length === 3, "the three files listed");
+  const remove = forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("[data-forward-part] .compose-attach-remove");
+  await act(async () => { remove[2]!.click(); });
+  await act(async () => { typeInto(forwardDock(s.el)!.querySelector<HTMLElement>(".rte-surface")!, note); });
 }
 
 /** The inline reply's editing surface, wherever the message is read. */

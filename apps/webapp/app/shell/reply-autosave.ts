@@ -31,6 +31,10 @@ export interface ReplyDraftForm {
   to: EmailAddress[];
   cc: EmailAddress[];
   bcc: EmailAddress[];
+  /** A forward lane (`fwd:<id>`): the original it forwards. The row answers nothing. */
+  forwardOf?: string | null;
+  /** A forward's kept files once one was removed; `null`: every file. */
+  forwardParts?: readonly string[] | null;
 }
 
 export interface ReplyRowDoors {
@@ -49,7 +53,7 @@ export interface ReplyRowDoors {
 }
 
 /** What a row holds, in the fields the editor writes. */
-export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "body" | "html" | "to" | "cc" | "bcc">;
+export type ReplyRowFields = Pick<ReplyDraftForm, "mailboxId" | "subject" | "body" | "html" | "to" | "cc" | "bcc" | "forwardOf" | "forwardParts">;
 
 export interface ReplyAutosave {
   /**
@@ -98,18 +102,26 @@ export interface ReplyAutosave {
 
 function signatureOf(f: ReplyDraftForm): string {
   const who = (xs: EmailAddress[]) => xs.map((a) => a.address.toLowerCase()).join(",");
-  return JSON.stringify([f.mailboxId, f.subject, f.body, f.html, who(f.to), who(f.cc), who(f.bcc)]);
+  return JSON.stringify([
+    f.mailboxId, f.subject, f.body, f.html, who(f.to), who(f.cc), who(f.bcc),
+    ...(f.forwardOf ? [f.forwardOf, f.forwardParts ? [...f.forwardParts].sort() : null] : []),
+  ]);
 }
 
 /** What the server last confirmed a row holds, as the editor's signature; `null` when not known. */
 export function accountSigOf(engine: OhmailEngine, id: string): string | null {
   const d = engine.store?.get<EngineDraft>("draft", id);
   if (d === undefined || d === null || d.status !== "draft") return null;
-  return signatureOf({ ...d, body: d.body ?? "", html: d.html ?? "", lane: "", threadId: null, subjectEdited: false });
+  return signatureOf({
+    ...d, body: d.body ?? "", html: d.html ?? "", lane: "", threadId: null, subjectEdited: false,
+    forwardOf: d.forwardOfMessageId ?? null, forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
+  });
 }
 
 /** Something the person wrote: a reply's subject is derived, so a create needs text or a retitle. */
 export function replyWorthCreating(f: ReplyDraftForm): boolean {
+  // A forward's audience is never derived: a typed recipient is the person's own.
+  if (f.forwardOf) return f.body.trim() !== "" || f.to.length + f.cc.length + f.bcc.length > 0;
   return f.body.trim() !== "" || (f.subjectEdited && f.subject.trim() !== "");
 }
 
@@ -225,7 +237,11 @@ export function useReplyAutosave(
         // The version these words were written on: a row moved off it refuses them.
         ...(stated ? { ifContentRevision: stated } : {}),
         ...(f.mailboxId ? { mailboxId: f.mailboxId } : {}),
-        threadId: f.threadId, inReplyToMessageId: lane,
+        threadId: f.threadId,
+        // A forward's row names its original and answers nothing; its kept files only once one was removed.
+        ...(f.forwardOf
+          ? { forwardOfMessageId: f.forwardOf, ...(f.forwardParts ? { forwardParts: [...f.forwardParts] } : {}) }
+          : { inReplyToMessageId: lane }),
         subject: f.subject, body: f.body, html: f.html ? f.html : null,
         to: f.to, cc: f.cc, bcc: f.bcc,
       }, key !== undefined ? { key } : {});
@@ -265,9 +281,10 @@ export function useReplyAutosave(
          lane's send takes it back (`sending`). */
       // A door bound another row while it was in the air: the row made here is a draft of its own.
       if (row === null && !current) return false;
+      // A write of a row the lane let go of while it was in the air (the composer took it) binds it no more.
       if (row === null && result.status === "confirmed" && result.entityId) {
         doorsRef.current.took(lane, result.entityId, f.body, true, true, result.revision);
-      } else if (row !== null) doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false, result.revision);
+      } else if (row !== null && current) doorsRef.current.took(lane, row, f.body, result.status === "confirmed", false, result.revision);
       saved.current.set(lane, sig);
       if (result.status === "confirmed") {
         reached.current.set(lane, seq);
