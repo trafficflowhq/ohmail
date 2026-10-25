@@ -472,6 +472,10 @@ describe("worker dependency boundary", () => {
       // the re-read where it went is the door's, so a copy would miss it. The import boundary still holds.
       "part-cut-by-move.e2e.test.ts",
       "profile-fan-out-round-trip.pg.test.ts", "profile-fan-out-round-trip.test.ts",
+      // The press beside the import's tick is `TriageService.setState` itself: the subject is its lock
+      // order (the counter, then the account row) against the tick's fence, and a hand-written write
+      // would be a copy of that order. The import boundary still holds.
+      "profile-import-ask-worker.test.ts",
       "push-wake.e2e.pg.test.ts",
       "reader-decision-two-stores.test.ts",
       "reader-rule-rows-settle-on-the-ack.test.ts",

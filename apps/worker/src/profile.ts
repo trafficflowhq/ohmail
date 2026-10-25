@@ -4,7 +4,7 @@ import {
   profileImportWriteReleased, askStands, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
   mailboxProfileMirror, recordChanges, recordMailboxProfileChange,
-  type LedgerTx, type Tx, auditAction, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
+  type LedgerTx, type Tx, auditAction, fenceErased, fencedAccountWrite, lockAccountRuleKeys,} from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 /* NAMED AT A LEAF, NEVER AT THE PACKAGE ROOT — this module is bundled into the desktop engine.
    `@trafficflow/core`'s index carries `export *` lines that convey the whole AI runtime
@@ -1320,10 +1320,8 @@ export class OrganizerProfileSync {
       return;
     }
     const doc = read.doc;
-    /* The rule-key lock, then the merge, which takes the import's own lock and then this mailbox's
-       row FOR UPDATE: the order "Save this ohmail's settings" keeps too. The row taken here, ahead
-       of the import lock, would cross it. */
-    await fencedAccountWrite(deps.db, { accountId: deps.accountId, lock: "update" }, async (tx) => {
+    // Account row shared (exclusive deadlocks writers that read it after the counter); the mailbox row is the merge's.
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId }, async (tx) => {
       await lockAccountRuleKeys(tx as Tx, deps.accountId);
       await applyOrganizerProfile(tx as LedgerTx, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, doc, fingerprint, now,
@@ -1341,7 +1339,10 @@ export class OrganizerProfileSync {
     fingerprint: string, reason: ImportAskRefusal, log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
-    await fencedAccountWrite(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, lock: "update" }, async (tx) => {
+    // Rule keys before the mailbox row, as every rules writer: a Screener decision takes the counter, then that row.
+    await fencedAccountWrite(deps.db, { accountId: deps.accountId }, async (tx) => {
+      await lockAccountRuleKeys(tx as Tx, deps.accountId);
+      await fenceErased(tx as Tx, dialect(tx), { accountId: deps.accountId, mailboxId: deps.mailboxId, mailboxLock: "update" });
       if (!(await resolveImportAsk(tx, {
         accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint, outcome: "refused", reason,
       }))) return;
