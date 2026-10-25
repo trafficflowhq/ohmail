@@ -9,7 +9,7 @@
     "@tiptap/react": "3.31.3",
     "@tiptap/starter-kit": "3.31.3",
     "dompurify": "3.4.13",
-    "next": "15.5.26",
+    "next": "15.5.28",
     "next-intl": "3.26.5",
     "pdfjs-dist": "6.2.108",
     "react": "19.2.3",

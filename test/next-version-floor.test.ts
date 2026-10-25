@@ -10,15 +10,16 @@ import { presentRoots } from "./support/public-root.mjs";
  * thing between an anonymous visitor and the app route, and the admin cloak is middleware too. 15.5.24
  * is the first release that fixes GHSA-2xp9-vwfh-vxw4 (code execution in the image optimizer) and
  * GHSA-p293-qw3h-jr36 (code execution on a Windows-hosted server); it carries the 14.2.25 middleware
- * bypass fix as well. The lockfile arms keep one React major and every react-dom on its own react:
- * react-dom refuses a react of another version at load, and the desktop renders webapp modules.
+ * bypass fix as well. 15.5.28 adds the fixes for GHSA-4jqv-mc3x-m676 and GHSA-mcj8-r9mp-w47p (SSG/ISR
+ * cache poisoning on a self-hosted server), GHSA-2464-fhr4-w9xw and GHSA-p3m5-59mp-jv5r. The lockfile
+ * arms keep one React major and every react-dom on its own react: react-dom refuses a react of another version at load, and the desktop renders webapp modules.
  */
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const read = (p: string): string => readFileSync(`${HERE}${p}`, "utf8");
 
-/** The first release carrying both critical fixes named above. */
-const NEXT_FLOOR = [15, 5, 24] as const;
+/** The first release carrying every fix named above. */
+const NEXT_FLOOR = [15, 5, 28] as const;
 
 /** The Next apps this checkout holds (the operator console is not part of this repository). */
 const APPS = presentRoots(["apps/webapp", "apps/admin", "apps/api-vercel"]);
@@ -58,13 +59,12 @@ describe("the declared Next floor carries the critical fixes", () => {
     expect(DECLARING).toContain("apps/webapp");
   });
 
-  it.each(DECLARING)("%s declares a floor at or above 15.5.24", (app) => {
+  it.each(DECLARING)(`%s declares a floor at or above ${NEXT_FLOOR.join(".")}`, (app) => {
     const declared = declaredNext(app);
     expect(declared, `${app} does not depend on next`).toBeDefined();
     expect(
       atLeast(parse(declared!), NEXT_FLOOR),
-      `${app} declares "next": "${declared}" — that range resolves to versions carrying ` +
-        `GHSA-2xp9-vwfh-vxw4 and GHSA-p293-qw3h-jr36`,
+      `${app} declares "next": "${declared}" — that range resolves to versions below ${NEXT_FLOOR.join(".")}`,
     ).toBe(true);
   });
 
@@ -78,8 +78,8 @@ describe("the declared Next floor carries the critical fixes", () => {
     const lock = rootLock();
     expect(installed(lock, "next").length, "no node_modules/next in package-lock.json").toBeGreaterThan(0);
     expect(lockedBelow(lock), "package-lock.json installs a next below the floor").toEqual([]);
-    const planted: Lock = { packages: { ...lock.packages, "node_modules/x/node_modules/next": { version: "15.5.23" } } };
-    expect(lockedBelow(planted), "the control: a nested copy below the floor").toEqual(["node_modules/x/node_modules/next=15.5.23"]);
+    const planted: Lock = { packages: { ...lock.packages, "node_modules/x/node_modules/next": { version: "15.5.27" } } };
+    expect(lockedBelow(planted), "the control: a nested copy below the floor").toEqual(["node_modules/x/node_modules/next=15.5.27"]);
   });
 
   it("the apps agree — one framework version across the deployment", () => {
