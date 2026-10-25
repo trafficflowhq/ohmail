@@ -63,7 +63,9 @@ vi.mock("../app/api-client", async () => {
         confirmCalls += 1;
         return realRead ? actual.auth.confirmAuthorize(...a) : confirmAnswer();
       },
-      stepUpTotp: async () => ({ ok: true }),
+      stepUpTotp: (...a: Parameters<typeof actual.auth.stepUpTotp>) => (realRead
+        ? actual.auth.stepUpTotp(...a)
+        : Promise.resolve({ ok: true })),
       session: (...a: Parameters<typeof actual.auth.session>) => (realRead
         ? actual.auth.session(...a)
         : Promise.resolve(sessionOf(ACCT))),
@@ -96,6 +98,8 @@ function wire(route: (method: string, url: string) => Wire): void {
 const UNAUTHORIZED: Wire = { status: 401, body: { error: { code: "unauthorized", message: "authentication required" } } };
 const REFRESH_MISSING: Wire = { status: 401, body: { error: { code: "refresh_missing", message: "missing refresh token" } } };
 const reads = (): string[] => sent.filter((s) => s.includes("/oauth/authorize"));
+const CONFIRM = "/api/oauth/authorize";
+const confirms = (): string[] => sent.filter((s) => s === `POST ${CONFIRM}`);
 const LOST = /lost the name of the account|lost track of which account/;
 function clearClientState(): void {
   for (const name of ["tf_owner", "tf_csrf"]) document.cookie = `${name}=; path=/; max-age=0`;
@@ -301,6 +305,42 @@ describe("/authorize-desktop — the confirmation", () => {
     expect(reads()).toEqual([]);
     expect(apiOwnerBinding().kind).not.toBe("bound");
     expect(() => button(el, "Yes, sign it in")).toThrow();
+  });
+
+  /* The step-up prompt on this page, as on /link-desktop: a marker that goes before the factor is sent is handed to
+     the page's settle step, so neither reload sentence shows and the confirm it parked does not run by itself. */
+  it("a marker that goes before the factor is verified settles the page again, and nothing is signed in by itself", async () => {
+    realRead = true;
+    document.cookie = `tf_owner=${ACCT}; path=/`;
+    document.cookie = "tf_csrf=c1; path=/";
+    wire((m, url) => {
+      if (url === "/api/auth/session") return { status: 200, body: sessionOf(ACCT), cookie: `tf_owner=${ACCT}; path=/` };
+      if (url === `/api/oauth/authorize/request?request=${HANDLE}`) {
+        return { status: 200, body: { clientId: "tf-macos", redirectUri: "trafficflow://auth", scope: "full", address: MASKED, expiresIn: 300 } };
+      }
+      if (m === "POST" && url === CONFIRM) {
+        return { status: 403, body: { error: { code: "step_up_required", message: "recent 2FA re-assertion required" } } };
+      }
+      if (m === "POST" && url === "/api/auth/step-up/totp") return { status: 200, body: { ok: true } };
+      return UNAUTHORIZED;
+    });
+    const el = await mount();
+    await waitFor(el, () => (el.textContent ?? "").includes(MASKED), "the request");
+    await press(button(el, "Yes, sign it in"));
+    await waitFor(el, () => el.querySelector("#stepup-code") !== null, "the inline prompt's code field");
+    // Another tab signed out between the confirm's refusal and the factor.
+    document.cookie = "tf_owner=; path=/; max-age=0";
+    const code = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(code, "123456");
+      code.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { code.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await waitFor(el, () => el.querySelector("#stepup-code") === null
+      && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Yes, sign it in")), "the page settled again");
+    expect(el.textContent).not.toMatch(LOST);
+    expect(sent, "the factor went out with no account named").not.toContain("POST /api/auth/step-up/totp");
+    expect(confirms(), "a confirm ran by itself after the settle").toEqual([`POST ${CONFIRM}`]);
   });
 
   it("renders in German from the German catalogue — no raw keys on either screen", async () => {

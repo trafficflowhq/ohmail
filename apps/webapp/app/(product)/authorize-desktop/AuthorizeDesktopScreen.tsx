@@ -42,7 +42,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
   const ta = useTranslations("approve");
   const td = useTranslations("devices");
   const refusalSentence = useRefusalSentence();
-  const { settled } = useSettledOwner(Boolean(request) && apiConfigured());
+  const { settled, resettle } = useSettledOwner(Boolean(request) && apiConfigured());
 
   const [asked, setAsked] = useState<AuthorizeRequestDTO | null>(null);
   const [remaining, setRemaining] = useState(0);
@@ -189,10 +189,12 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
       </ul>
 
       {stepUp ? (
+        /* A lost marker settles the page again and drops the parked confirm, as on /link-desktop. */
         <StepUpPrompt
           onVerified={() => { setStepUp(false); confirm(true); }}
           onCancel={() => setStepUp(false)}
           onDiscarded={() => { setStepUp(false); setError(td("stepUpCancelledNothingRan")); }}
+          onOwnerAbsent={() => { setStepUp(false); resettle(); }}
         />
       ) : (
         <div className="join-actions">
