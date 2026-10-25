@@ -96,9 +96,9 @@ function bounded(value: unknown, max: number): number | null {
   return rounded >= 0 && rounded <= max ? rounded : null;
 }
 
-/** The value of one `hyprctl getoption -j` answer: `int` when present, else the first number
- *  of the `css`/`custom` string form (`"10 10 10 10"` — gaps are four-sided; ohmail's gap
- *  rhythm takes the first, which is Omarchy's own uniform default). */
+/** The value of one `hyprctl getoption -j` answer: `int` when present, else the narrowest side
+ *  of the `css`/`custom` form (`"10 10 10 10"`, CSS order, one to four sides). One malformed
+ *  side refuses the whole read. */
 function hyprValue(raw: string | null | undefined, max: number): number | null {
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 4096) return null;
   let parsed: unknown;
@@ -112,7 +112,10 @@ function hyprValue(raw: string | null | undefined, max: number): number | null {
   if (obj.int !== undefined) return bounded(obj.int, max);
   const s = typeof obj.css === "string" ? obj.css : typeof obj.custom === "string" ? obj.custom : null;
   if (s === null) return null;
-  return bounded(s.trim().split(/\s+/)[0], max);
+  const sides = s.trim().split(/\s+/);
+  if (sides.length > 4 || !sides.every((v) => /^[0-9]+$/.test(v))) return null;
+  const values = sides.map((v) => bounded(v, max));
+  return values.every((v): v is number => v !== null) ? Math.min(...values) : null;
 }
 
 /** `[font] base-size` out of shell.toml — the section header, then the key, comments skipped.
@@ -165,6 +168,12 @@ export function parseSystem(raw: OmarchySystemRaw | null | undefined): OmarchySe
   };
 }
 
+/** A `NNpx` token value as a number, or null. */
+function px(value: string | undefined): number | null {
+  const m = typeof value === "string" ? /^([0-9]+(?:\.[0-9]+)?)px$/.exec(value.trim()) : null;
+  return m ? Number(m[1]) : null;
+}
+
 /** The width `mapping.js` writes into the three tile rings, named so the rewrite below is a
  *  stated contract with that file rather than a magic string. */
 const MAPPED_RING = "0 0 0 2px ";
@@ -175,8 +184,8 @@ const MAPPED_RING_PX = 2;
  *
  *   --font-ui         the live fc-match families, then the same static tail
  *   --font-size-base  shell.toml base-size
- *   --gap-tile        gaps_in × 2   (5 between two tiles is 10 of rhythm)
- *   --gap-edge        gaps_out, never narrower than the tile ring
+ *   --gap-tile        gaps_in × 2   (5 between two tiles is 10 of rhythm), never under the design gap
+ *   --gap-edge        gaps_out, never narrower than the design edge, the tile gap nor the tile ring
  *   --focus-w         border_size   (the focus cursor is the active-window border)
  *   --lift-1/2/3      ring width rewritten to border_size (lift-0 stays 1px — that is
  *                     shell.toml's own control border, not the window border)
@@ -193,12 +202,13 @@ export function applySettings(
     out["--font-ui"] = settings.fontFamilies.map((f) => `'${f}'`).join(",") + "," + FONT_TAIL;
   }
   if (settings.fontSizePx !== null) out["--font-size-base"] = `${settings.fontSizePx}px`;
-  if (settings.gapsInPx !== null) out["--gap-tile"] = `${settings.gapsInPx * 2}px`;
-  if (settings.gapsOutPx !== null) {
-    /* The tile rings stand outside their boxes: an edge narrower than the ring draws the rail,
-       list and reader flush to the window with their outer borders off it. */
+  if (settings.gapsOutPx !== null || settings.gapsInPx !== null) {
+    /* The design gap is the floor: live gaps only widen it (Omarchy's no-gaps toggle reads 0).
+       The edge never sits under the ring, which stands outside each tile's box. */
+    const tile = Math.max(px(tokens["--gap-tile"]) ?? 0, (settings.gapsInPx ?? 0) * 2);
     const ring = settings.borderPx !== null && settings.borderPx >= 1 ? settings.borderPx : MAPPED_RING_PX;
-    out["--gap-edge"] = `${Math.max(settings.gapsOutPx, ring)}px`;
+    out["--gap-tile"] = `${tile}px`;
+    out["--gap-edge"] = `${Math.max(px(tokens["--gap-edge"]) ?? 0, settings.gapsOutPx ?? 0, tile, ring)}px`;
   }
   if (settings.borderPx !== null && settings.borderPx >= 1) {
     out["--focus-w"] = `${settings.borderPx}px`;

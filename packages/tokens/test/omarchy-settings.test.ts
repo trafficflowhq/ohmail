@@ -50,6 +50,20 @@ describe("parseSystem — the measured shapes", () => {
     });
   });
 
+  it("reads every gaps_out shape hyprctl answers, per side, and keeps the narrowest", () => {
+    const out = (raw: string) => parseSystem({ hyprGapsOut: raw }).gapsOutPx;
+    expect(out('{"option": "general:gaps_out", "int": 12, "set": true }')).toBe(12);
+    expect(out('{"option": "general:gaps_out", "css": "10 10 10 10", "set": true }\n')).toBe(10);
+    expect(out('{"option": "general:gaps_out", "custom": "10 10 10 10", "set": true }')).toBe(10);
+    expect(out('{"css": "8"}')).toBe(8);
+    expect(out('{"css": "6 10"}')).toBe(6);
+    expect(out('{"css": "10 7 12"}')).toBe(7);
+    expect(out('{"css": "10 10 10 4"}')).toBe(4); // the first side alone read 10
+    expect(out('{"css": "0 10 10 10"}')).toBe(0);
+    for (const bad of ['{"css": "10 x 10 10"}', '{"css": "1 2 3 4 5"}', '{"css": "-5 10 10 10"}', '{"css": ""}', "no such option"])
+      expect(out(bad), bad).toBeNull();
+  });
+
   it("shell.example.toml's [font] base-size is found under its comment lines", () => {
     // The real generated file has comment lines between the header and the key; a reader
     // that only looked at the first line under [font] would answer null and the UI size
@@ -149,14 +163,32 @@ describe("applySettings — settings→token-slots (§5's table)", () => {
     expect(live["--lift-0"].startsWith("0 0 0 1px ")).toBe(true);
   });
 
-  it("a zero outer gap leaves the edge one ring wide, so the tiles' outer borders stay in the window", () => {
-    // Owner report 2026-10-24: gaps_out read 0 drew the rail, list and reader flush to the
-    // window, their rings outside it.
+  it("the edge is never narrower than the tile gap, whatever gaps_out reads", () => {
+    // Owner reports 2026-10-24/25: gaps_out read 0 drew the columns flush to the window, then
+    // one ring off it; the design's frame is the even gap between the tiles.
+    const edge = (system: Parameters<typeof parseSystem>[0]) => mappedWith(system)["--gap-edge"];
     const zero = '{"option": "general:gaps_out", "css": "0 0 0 0", "set": true }';
-    expect(mappedWith({ hyprGapsIn: VM.gapsIn, hyprGapsOut: zero, hyprBorderSize: VM.border })["--gap-edge"]).toBe("2px");
-    expect(mappedWith({ hyprGapsOut: zero, hyprBorderSize: '{"int": 4}' })["--gap-edge"]).toBe("4px");
-    expect(mappedWith({ hyprGapsOut: zero })["--gap-edge"]).toBe("2px"); // the mapped ring
-    expect(mappedWith({ hyprGapsOut: '{"css": "1 1 1 1"}', hyprBorderSize: '{"int": 0}' })["--gap-edge"]).toBe("2px");
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: zero, hyprBorderSize: VM.border })).toBe("10px");
+    expect(edge({ hyprGapsOut: zero })).toBe("10px"); // the static tile gap
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "0 10 10 10"}' })).toBe("10px");
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "4 4 4 4"}' })).toBe("10px");
+    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}', hyprGapsOut: VM.gapsOut })).toBe("16px");
+    expect(edge({ hyprGapsIn: '{"css": "8 8 8 8"}' })).toBe("16px"); // gaps_out unread
+    expect(edge({ hyprGapsIn: VM.gapsIn, hyprGapsOut: '{"css": "20 20 20 20"}' })).toBe("20px");
+  });
+
+  it("Omarchy's no-gaps toggle keeps the design gap around and between the tiles", () => {
+    // omarchy-hyprland-window-gaps-toggle: gaps_in 0, gaps_out 0, border_size 0.
+    const zero = '{"css": "0 0 0 0"}';
+    const gaps = (system: Parameters<typeof parseSystem>[0]) => {
+      const t = mappedWith(system);
+      return [t["--gap-tile"], t["--gap-edge"]];
+    };
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 0}' })).toEqual(["10px", "10px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: VM.border })).toEqual(["10px", "10px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero })).toEqual(["10px", "10px"]);
+    expect(gaps({ hyprGapsIn: '{"css": "2 2 2 2"}', hyprGapsOut: '{"css": "1 1 1 1"}' })).toEqual(["10px", "10px"]);
+    expect(gaps({ hyprGapsIn: zero, hyprGapsOut: zero, hyprBorderSize: '{"int": 12}' })).toEqual(["10px", "12px"]);
   });
 
   it("with nothing known, the static theme rides unmodified", () => {

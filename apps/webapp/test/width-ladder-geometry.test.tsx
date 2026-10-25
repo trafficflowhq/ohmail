@@ -239,19 +239,19 @@ describe("the red control: the pre-ladder stylesheet re-applied is caught by the
   }, 60_000);
 });
 
-/* THE DESKTOP'S OUTER EDGE UNDER THE OMARCHY FEED (owner report 2026-10-24, a 1488px window): the
-   feed maps Hyprland's gaps_out to the deck's edge; a gaps_out read as 0 put the rail, list and
-   reader flush to the window, their rings outside it. Every tile's ring stays inside the window. */
+/* THE DESKTOP'S OUTER EDGE UNDER THE OMARCHY FEED (owner reports 2026-10-24/25, a 1488px window):
+   the feed maps Hyprland's gaps_out to the deck's edge; a gaps_out read as 0 put the rail, list and
+   reader flush to the window, then one ring off it. Every tile's ring stays inside the window, and
+   the frame is never narrower than the gap between two tiles. */
 const GRUVBOX = readFileSync(resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw/gruvbox.colors.toml"), "utf8");
 const hypr = (css: string): string => `{"option": "general:gaps_out", "css": "${css}", "set": true }`;
 
-async function tileEdges(gapsOut: string) {
-  const mapped = mapOmarchyThemePair({
-    colorsToml: GRUVBOX,
-    hyprGapsIn: '{"option": "general:gaps_in", "css": "5 5 5 5", "set": true }',
-    hyprGapsOut: hypr(gapsOut),
-    hyprBorderSize: '{"option": "general:border_size", "int": 2, "set": true }',
-  })!;
+async function tileEdges(
+  hyprGapsOut: string,
+  hyprGapsIn = '{"option": "general:gaps_in", "css": "5 5 5 5", "set": true }',
+  hyprBorderSize = '{"option": "general:border_size", "int": 2, "set": true }',
+) {
+  const mapped = mapOmarchyThemePair({ colorsToml: GRUVBOX, hyprGapsIn, hyprGapsOut, hyprBorderSize })!;
   const live = omarchyRuleText(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null);
   const html = PAGE(`${css("packages/tokens/src/ohmarchy.css")}\n${live}`)
     .replace("<html>", '<html data-face="ohmarchy" data-theme="dark">');
@@ -264,7 +264,7 @@ async function tileEdges(gapsOut: string) {
         const el = document.querySelector(sel)!;
         const r = el.getBoundingClientRect();
         const ring = Number(/0px 0px 0px ([\d.]+)px/.exec(getComputedStyle(el).boxShadow)?.[1] ?? 0);
-        return { sel, ring, left: r.left - ring, top: r.top - ring, right: innerWidth - r.right - ring, bottom: innerHeight - r.bottom - ring };
+        return { sel, ring, box: { left: r.left, top: r.top, right: innerWidth - r.right, bottom: innerHeight - r.bottom }, r: { left: r.left, right: r.right } };
       }),
     );
   } finally {
@@ -273,15 +273,20 @@ async function tileEdges(gapsOut: string) {
 }
 
 describe("the desktop's tiles keep their rings inside the window under the Omarchy feed", () => {
-  for (const gapsOut of ["0 0 0 0", "10 10 10 10"])
-    it(`gaps_out ${gapsOut}: no ring outside the window`, async () => {
-      const tiles = await tileEdges(gapsOut);
+  const noGapsToggle = ['{"option": "general:gaps_in", "css": "0 0 0 0", "set": true }', '{"option": "general:border_size", "int": 0, "set": true }'] as const;
+  const shapes: (readonly [string, ...string[]])[] = [[hypr("0 0 0 0")], [hypr("10 10 10 10")], [hypr("0 10 10 10")], [hypr("4 4 4 4")], [hypr("10")], ['{"option": "general:gaps_out", "int": 0, "set": true }'], [hypr("0 0 0 0"), ...noGapsToggle]];
+  for (const shape of shapes)
+    it(`${shape.join(" ")}: the window's frame is the gap between two tiles`, async () => {
+      const tiles = await tileEdges(...shape);
+      const [rail, list] = tiles;
+      const between = list!.r.left - rail!.r.right;
+      expect(between, "the tile gap").toBe(10);
       for (const t of tiles) {
         expect(t.ring, `${t.sel} draws no ring: this proves nothing`).toBeGreaterThan(0);
         for (const side of ["left", "top", "right", "bottom"] as const)
           if (!(t.sel === ".list-col" && (side === "left" || side === "right")))
-            expect(t[side], `${t.sel}'s ring runs out of the window at the ${side}`).toBeGreaterThanOrEqual(0);
+            if (!(t.sel === ".deck > .rail" && side === "right") && !(t.sel === ".read-col" && side === "left"))
+              expect(t.box[side], `${t.sel}'s edge at the ${side}`).toBe(between);
       }
-      if (gapsOut.startsWith("10")) expect(tiles[0]!.left, "the system's 10px edge").toBe(8);
     }, 60_000);
 });

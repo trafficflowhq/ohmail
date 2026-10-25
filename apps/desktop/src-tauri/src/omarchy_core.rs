@@ -29,7 +29,7 @@
 //! inotify is the obvious mechanism and it is not used, on the conservative-compile rule
 //! above: the `notify` crate would be a new dependency compiled first by the release tag, and
 //! raw inotify FFI is exactly the kind of code that must never meet its first compiler in a
-//! release workflow. A 500 ms re-read of three small files costs nothing measurable, needs no
+//! release workflow. A 500 ms re-read of a few small files costs nothing measurable, needs no
 //! platform branch, and — because it compares CONTENT, not mtimes — cannot be fooled by an
 //! in-place rewrite that keeps size and second. `omarchy theme set` restages over ~3 s
 //! (measured on a real install), so the debounce below waits for two identical consecutive
@@ -83,14 +83,18 @@ fn read_capped(path: &Path, cap: u64) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// What the poll compares: the active theme's identity and content, by VALUE. Everything the
-/// restage touches that the mapping reads is in here — a change to any of the three is a
-/// theme change, and nothing else is.
+/// Past this many staged Hyprland toggles the directory is not Omarchy's.
+const TOGGLES_MAX: usize = 64;
+
+/// What the poll compares: the active theme's identity and content, and the Hyprland toggles
+/// Omarchy stages beside it, by VALUE. A toggle (the window-gaps one) changes the gaps the
+/// payload reads without touching a theme file.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Sample {
     name: Option<String>,
     colors: Option<String>,
     shell: Option<String>,
+    hypr_toggles: Vec<(String, Option<String>)>,
 }
 
 /// Read the current sample. Never fails — an unreadable file is an absent ingredient.
@@ -99,12 +103,35 @@ pub fn sample(current: &Path) -> Sample {
         name: read_capped(&current.join("theme.name"), NAME_MAX),
         colors: read_capped(&current.join("theme").join("colors.toml"), FILE_MAX),
         shell: read_capped(&current.join("theme").join("shell.toml"), FILE_MAX),
+        hypr_toggles: hypr_toggles(current),
     }
+}
+
+/// `<state>/omarchy/toggles/hypr`, beside `current`: each staged toggle's name and content,
+/// sorted so the comparison never flaps on directory order.
+fn hypr_toggles(current: &Path) -> Vec<(String, Option<String>)> {
+    let Some(dir) = current.parent().map(|p| p.join("toggles").join("hypr")) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<std::ffi::OsString> =
+        entries.filter_map(|e| e.ok().map(|e| e.file_name())).collect();
+    names.sort();
+    names.truncate(TOGGLES_MAX);
+    names
+        .into_iter()
+        .map(|n| {
+            let content = read_capped(&dir.join(&n), FILE_MAX);
+            (n.to_string_lossy().into_owned(), content)
+        })
+        .collect()
 }
 
 /// One tool's stdout, verbatim, bounded — or `None` for a tool that is missing, failed, or
 /// answered something no real invocation answers. `fc-match` and `hyprctl` both exit fast;
-/// they are run only at gather time (a theme change), never on the poll.
+/// they are run only at gather time (a theme or toggle change), never on the poll.
 fn tool_stdout(cmd: &str, args: &[&str]) -> Option<String> {
     let out = std::process::Command::new(cmd).args(args).output().ok()?;
     if !out.status.success() {
