@@ -121,7 +121,7 @@ const { mount } = await import("./_rendered-dom");
 const { act } = await import("react");
 const { default: OhboxScreen } = await import("../app/(tabs)/index");
 const place = await import("../src/state/thread-place");
-const { ringRadius, squareRadius } = await import("../src/ui/MarkSquare");
+const { ringRadius, rowSquareRadius, squareRadius } = await import("../src/ui/MarkSquare");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const rowOf = (mail: { id: string; memberIds?: string[]; marks?: ("unread" | "read" | "mine")[] }) => ({
@@ -259,6 +259,15 @@ describe("a finger held on a strip square shows its sheet under the row", () => 
     const face = ring.querySelector<El>("[data-rn='Animated']")!;
     expect([face.__props!.style.borderRadius, ring.__props!.style.borderRadius]).toEqual([3, 7]);
     expect([squareRadius(0), ringRadius(0)], "ohmarchy's 0").toEqual([0, 0]);
+  });
+
+  it("a closed row's own 8dp squares round in proportion: 2.4 on paper's 8, the outlined own one too, square at 0", () => {
+    screen = mount(h(OhboxScreen));
+    const own = [...rowEl("b2").querySelector<El>("[data-test='row-marks']")!.children] as El[];
+    const mine = [...rowEl("a3").querySelector<El>("[data-test='row-marks']")!.children][1] as El;
+    expect(own.map((s) => s.__props!.style.borderRadius)).toEqual([2.4, 2.4]);
+    expect([mine.__props!.style.borderWidth, mine.__props!.style.borderRadius]).toEqual([1.5, 2.4]);
+    expect(rowSquareRadius(0), "ohmarchy's 0").toBe(0);
   });
 });
 

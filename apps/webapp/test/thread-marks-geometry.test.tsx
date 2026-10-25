@@ -400,6 +400,51 @@ describe("the open row's strip", () => {
       await page.close();
     }
   }, 60_000);
+
+  /* Reported on the desktop app in paper: every closed row's own 8px squares had sharp corners. */
+  const CORNERS: ReadonlyArray<[string, "light" | "dark", string, string]> = [
+    ["paper", "light", "2.4px", "5px"], ["paper", "dark", "2.4px", "5px"], ["ohmarchy", "dark", "0px", "0px"],
+  ];
+  for (const [face, theme, row, hover] of CORNERS)
+    it(`${face} ${theme}: a closed row's own squares take the reader's corner by their size, the sheet's hover box too`, async () => {
+      const markup = renderToStaticMarkup(
+        <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+          <div className="list-col" style={{ width: 400 }}>
+            <MessageRow id="c1" from="Lena" subject="Q3 plan" time="09:12" preview="the words"
+              marks={["unread", "read", "mine"]} marksLabel="3 messages" />
+          </div>
+          <div style={{ position: "relative", marginLeft: 500 }}>{/* the reader sheet's column: no split around it */}
+            <div className="thread-marks"><ThreadMarksBar messages={MEMBERS} here="p2" tabStop="p2" onJump={() => {}} /></div>
+          </div>
+        </NextIntlClientProvider>,
+      );
+      const page = await browser!.newPage({ viewport: { width: 900, height: 600 } });
+      try {
+        await page.setContent(`<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8"><style>${SHEETS}</style>
+          <style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${markup}</body></html>`);
+        await page.hover(".thread-marks .tm-mb");
+        const m = await page.evaluate(() => {
+          const r = (el: Element | null): string => getComputedStyle(el!).borderTopLeftRadius;
+          const sq = [...document.querySelectorAll(".row-marks .rm-sq")];
+          return {
+            size: sq.map((el) => el.getBoundingClientRect().width),
+            row: sq.map(r),
+            mineRing: getComputedStyle(sq[2]!).boxShadow,
+            reader: r(document.querySelector(".thread-marks .tm-sq")),
+            hover: r(document.querySelector(".thread-marks .tm-mb")),
+            hoverTint: getComputedStyle(document.querySelector(".thread-marks .tm-mb")!).backgroundColor,
+          };
+        });
+        expect(m.size, "the row's squares are 8px").toEqual([8, 8, 8]);
+        expect(m.row, "unread, read and the outlined own square: 8/10 of the reader's 10px square's corner").toEqual([row, row, row]);
+        expect(parseFloat(m.row[0]!) / 8).toBeCloseTo(parseFloat(m.reader) / 10, 5);
+        expect(m.mineRing, "the own square stays an outline").toContain("inset");
+        expect(m.hoverTint, "the hovered square's box is painted").not.toBe("rgba(0, 0, 0, 0)");
+        expect(m.hover, "the sheet's hover box: the rail's 5 in paper, square in ohmarchy").toBe(hover);
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
 });
 
 /**

@@ -6053,6 +6053,7 @@ input.set-tag-input {
   place-items: center;
   padding: 0;
   border: 0;
+  border-radius: calc(var(--r-ctl) * 5 / 8);
   background: none;
   cursor: pointer;
 }
@@ -6158,7 +6159,6 @@ input.set-tag-input {
   width: auto;
   height: 20px;
   min-height: 0;
-  border-radius: calc(var(--r-ctl) * 5 / 8);
 }
 /* A held finger shows the chip: no callout, no text selection over the squares. */
 .tm-mb {

@@ -81,7 +81,8 @@
    margin is 0 under negative free space, which hands the run to justify-content). */
 .row .row-marks{display:flex;justify-content:flex-end;overflow:hidden;min-height:12px;margin-top:6px;align-items:center}
 .row .row-marks-in{display:flex;flex:none;gap:3px;margin-right:auto;align-items:center}
-.row .rm-sq{display:block;flex:none;width:8px;height:8px;background:var(--accent)}
+/* The reader's 10px square's corner (3/8 of --r-ctl), scaled to 8px: soft in paper, square in ohmarchy. */
+.row .rm-sq{display:block;flex:none;width:8px;height:8px;border-radius:calc(var(--r-ctl) * 3 / 10);background:var(--accent)}
 .row .rm-sq.read{opacity:var(--mark-read)}
 .row .rm-sq.mine{background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent);opacity:var(--mark-mine)}
 /* Under the hover tint the muted ink falls under 4.5:1 in the dark faces; it takes the secondary one. */

@@ -21,6 +21,8 @@ export const MARK_RING = 18;
 /** The square's corner and the ring's, from the control radius (`radius.focus`, the ctl band). */
 export const squareRadius = (ctl: number): number => (ctl * 3) / 8;
 export const ringRadius = (ctl: number): number => (ctl * 7) / 8;
+/** The list row's own 8dp squares: the square's corner scaled to their size. */
+export const rowSquareRadius = (ctl: number): number => (ctl * 3) / 10;
 
 const EASE = Easing.bezier(0.22, 0.61, 0.36, 1);
 

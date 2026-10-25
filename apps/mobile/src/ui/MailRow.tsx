@@ -23,7 +23,7 @@ import {
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
 import { MARK_HOLD_MS, STRIP_END, STRIP_HIT_SLOP, STRIP_SLOT, STRIP_START, marksShown, stripOffsetFor, type RailItem } from "./reader-marks";
-import { MARK_RING, MarkSheet, MarkSquare, ringRadius, useMarkHold } from "./MarkSquare";
+import { MARK_RING, MarkSheet, MarkSquare, ringRadius, rowSquareRadius, useMarkHold } from "./MarkSquare";
 
 /** The open conversation's squares on its row: the reader's, its ring, and a press on one. */
 export interface RowStripFacts {
@@ -307,6 +307,7 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
             backgroundColor: k === "mine" ? "transparent" : t.c.accent,
             borderWidth: k === "mine" ? 1.5 : 0,
             borderColor: t.c.accent,
+            borderRadius: rowSquareRadius(t.radius.focus),
             opacity: k === "unread" ? 1 : k === "mine" ? t.c.markMine : t.c.markRead,
           }}
         />
