@@ -76,7 +76,8 @@ import {
 } from "./compose-from";
 import type { ConsentState } from "./consent-state";
 import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
-import { useReplyAutosave, type ReplyDraftForm } from "./reply-autosave";
+import { dropCopy, handleOf, twins } from "./draft-creates";
+import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
   clearReplyLane,
@@ -88,6 +89,7 @@ import {
   readReplyMeta,
   replyDockState,
   REPLY_DRAFT_PREFIX,
+  REPLY_META_PREFIX,
   SEND_IN_FLIGHT_PHASES,
   sendLockOwed,
   sendPendingInDurableOutbox,
@@ -481,6 +483,8 @@ export function useShellCompose({
       if (readColumnHidden()) setReaderFor(messageId);
     };
     const scratch = readReplyDraft(messageId);
+    // The creates this lane stored before a reload count again once this engine shows them.
+    replyAutosave.restore(messageId);
     // THE ACCOUNT'S ROW FOR THIS REPLY, written here or on another device, is what Reply opens.
     const row = laneRowOf(messageId) === null ? accountReplyRow(messageId) : null;
     const meta = readReplyMeta(messageId);
@@ -602,6 +606,8 @@ export function useShellCompose({
       }
       // A send withdrawn before the wire: the words it took from the outbox's create are a draft again.
       if (waitedToGo) {
+        // Withdrawn as an outcome would end it: a create the press held is the reply's again.
+        replyAutosave.notSent(lane);
         replyAutosave.cancelled(lane);
         handedPress.current.delete(lane);
       }
@@ -881,6 +887,7 @@ export function useShellCompose({
   const settleComposeRef = useRef<(fate: ComposeFate) => void>(() => {});
   const releaseDraftIdRef = useRef<string | null>(null);
   const releaseBindingRef = useRef<() => void>(() => {});
+  const composeNotSentRef = useRef<() => void>(() => {});
   /** Late-bound for the same reason as {@link settleComposeRef} — see below where it is assigned. */
   const openMessageRef = useRef<(m: EngineMessage, opts?: { reply?: boolean }) => void>(() => {});
   /**
@@ -1002,7 +1009,9 @@ export function useShellCompose({
       // A reply seeded from a draft row settled: the row's message has been delivered (the send
       // wrote its own row), so the seed is a phantom draft now — see `replySeedDrafts`.
       dropReplySeed(key, m.draftId);
+      replyAutosave.settled(key, m.draftId ?? null);
       replyAutosave.forget(key);
+      dropPriorRow(key, m.draftId ?? null);
     }
     // A reply settled. `key` is the answered message's id (`sendKeyOf`), which is exactly the row
     // that should move from "New for you" to "Earlier" — so hand it to the Ohbox for the gesture.
@@ -1048,17 +1057,37 @@ export function useShellCompose({
   const takeLaneRow = useStableCallback((lane: string, rowId: string) => {
     if (laneRowOf(lane) !== null) return;
     replyRows.current.set(lane, { row: rowId, seen: false });
+    replyAutosave.rebind(lane);
     dropReplySeed(lane, rowId);
   });
   /** The lane's row while the hold leaves it free to send from; forgotten once the mirror loses it. */
   const laneRowOf = useStableCallback((lane: string): string | null => {
     const held = replyRows.current.get(lane);
     if (held === undefined) return null;
+    // The listed drafts lag the mirror by a render: a row just taken is in the mirror first.
     if (drafts.some((x) => x.id === held.row)) held.seen = true;
-    else if (held.seen) { replyRows.current.delete(lane); return null; }
+    else if (held.seen && engine.read().get<EngineDraft>("draft", held.row) === undefined) {
+      replyRows.current.delete(lane);
+      return null;
+    }
     return holdOf(engine, { lane, draftId: held.row, session: null }).kind === "free" ? held.row : null;
   });
 
+  /**
+   * THE ROW A LANE STORED BEFORE A DOOR BOUND ITS OWN CREATE'S ROW: the same message's older copy. It goes
+   * once the send from the bound row is confirmed, and only while it holds what this tab last wrote.
+   */
+  const priorRows = useRef(new Map<string, { id: string; holds: string | undefined; from: string }>());
+  const dropPriorRow = useStableCallback((lane: string, sentRow: string | null) => {
+    const prior = priorRows.current.get(lane);
+    priorRows.current.delete(lane);
+    if (prior === undefined || sentRow !== prior.from) return;
+    const d = engine.store?.get<EngineDraft>("draft", prior.id);
+    if (typeof d?.body !== "string" || sigOf(d.body.trim()) !== prior.holds) return;
+    // `holdOf` parks every row past `draft`, so a free row is an ordinary draft.
+    if (holdOf(engine, { lane, draftId: prior.id, session: null }).kind !== "free") return;
+    dropCopy(engine, lane, prior.id, sentRow);
+  });
   /** Lanes whose account row could not be read at the open: nothing writes for them. */
   const unreadableRows = useRef(new Set<string>());
   /** The account's reply row for a message — the newest one still a draft and free to write. */
@@ -1068,6 +1097,8 @@ export function useShellCompose({
       // `holdOf` parks every row past `draft`, so a free row is an ordinary draft.
       if (d.inReplyToMessageId !== messageId) continue;
       if (holdOf(engine, { lane: messageId, draftId: d.id, session: null }).kind !== "free") continue;
+      // A row a create of this reply made, still to be judged beside the reply's row, is not that row.
+      if (replyAutosave.ownsRow(messageId, d.id)) continue;
       if (best === null || d.updatedAt > best.updatedAt) best = d;
     }
     return best;
@@ -1082,15 +1113,50 @@ export function useShellCompose({
     lane: string, d: EngineDraft, text: string, scratch: RichValue | null, all: boolean,
   ): RichValue => {
     const meta = readReplyMeta(lane);
-    const ours = meta.row?.id === d.id;
-    const moved = ours && meta.row!.at !== d.updatedAt;
-    const rowWins = scratch === null || isRichEmpty(scratch) || moved;
-    if (!rowWins && !ours && scratch!.text.trim() !== text.trim()) return scratch!;
-    replyRows.current.set(lane, { row: d.id, seen: true });
+    replyAutosave.restore(lane);
+    // A row still waiting on its create has a local id: the lane binds the create, never that id.
+    const handle = handleOf(engine, d);
+    const create = handle.kind === "create" ? handle.key : null;
+    const id = handle.kind === "row" ? handle.id : d.id;
+    const ours = create === null ? meta.row?.id === id || replyAutosave.ownsRow(lane, id) : replyAutosave.owns(lane, create);
+    const moved = create === null && meta.row?.id === id && meta.row.at !== d.updatedAt;
+    // A door into the reply the lane already holds keeps the lane's newest words, never the row's older ones.
+    const shown = scratch ?? (ours && !moved ? readReplyDraft(lane) : null);
+    const rowWins = shown === null || isRichEmpty(shown) || moved;
+    if (!rowWins && !ours && shown!.text.trim() !== text.trim()) return shown!;
+    // The row's own markup seeds the editor and the baseline: a reply opened plain from a formatted
+    // row could not be saved or sent.
+    const rowHtml = typeof d.html === "string" ? d.html : "";
+    const fields = { mailboxId: d.mailboxId, subject: d.subject, body: text, html: rowHtml, to: d.to, cc: d.cc, bcc: d.bcc };
+    const own = create === null && replyAutosave.ownsRow(lane, id);
+    if (own) {
+      // The row a create of this lane made is taken, never rebound past.
+      replyAutosave.takeOwn(lane, id);
+      const was = meta.row;
+      if (was !== undefined && was.id !== id && was.made === true) {
+        if (twins(accountSigOf(engine, was.id), accountSigOf(engine, id))) dropCopy(engine, lane, was.id, null);
+        else priorRows.current.set(lane, { id: was.id, holds: was.holds, from: id });
+      }
+    }
+    if (create === null) {
+      // The row the lane last stored is the same message: its creates still waiting stay its own.
+      if (!own && replyRows.current.get(lane)?.row !== id && meta.row?.id !== id) replyAutosave.rebind(lane);
+      replyRows.current.set(lane, { row: id, seen: true });
+    } else if (!ours) {
+      replyRows.current.delete(lane);
+      replyAutosave.awaits(lane, create, fields);
+    }
     const parent = reader.get<EngineMessage>("message", lane) ?? null;
     const derived = parent ? replySubject(parent.subject) : d.subject;
     const subject = rowWins || meta.subject === undefined ? (d.subject !== derived ? d.subject : undefined) : meta.subject;
-    writeReplyMeta(lane, { ...meta, subject, row: { id: d.id, at: d.updatedAt, holds: sigOf(text.trim()) } });
+    const at = engine.read().get<EngineDraft>("draft", id)?.updatedAt ?? d.updatedAt;
+    // Bound to a create, the lane holds no row yet: a row named before is another draft now.
+    writeReplyMeta(lane, {
+      ...readReplyMeta(lane), subject,
+      row: create === null
+        ? { id, at, holds: sigOf(text.trim()), ...(own || (meta.row?.id === id && meta.row.made) ? { made: true as const } : {}) }
+        : undefined,
+    });
     const plan = replyEnvelopePlan(parent, ownAddresses, all, null);
     const who = (xs: readonly EmailAddress[]): string => xs.map((a) => a.address.toLowerCase()).join(",");
     const edited = parent !== null && (who(d.to) !== who(plan.to ?? [parent.from])
@@ -1100,13 +1166,10 @@ export function useShellCompose({
       envelope: edited ? { to: formatRecipientChips(d.to), cc: formatRecipientChips(d.cc), bcc: formatRecipientChips(d.bcc) } : null,
       fromId: parent !== null && d.mailboxId !== parent.mailboxId ? d.mailboxId : null,
     };
-    // The row's own markup seeds the editor and the baseline: a reply opened plain from a formatted
-    // row could not be saved or sent.
-    const rowHtml = typeof d.html === "string" ? d.html : "";
-    const body = rowWins ? { text, html: rowHtml } : scratch!;
+    const body = rowWins ? { text, html: rowHtml } : shown!;
     if (rowWins) writeReplyDraft(lane, body);
-    if (rowWins || scratch!.text.trim() === text.trim()) {
-      replyAutosave.baseline(lane, { mailboxId: d.mailboxId, subject: d.subject, body: text, html: rowHtml, to: d.to, cc: d.cc, bcc: d.bcc });
+    if (rowWins || shown!.text.trim() === text.trim()) {
+      replyAutosave.baseline(lane, fields);
     }
     return body;
   });
@@ -1287,6 +1350,9 @@ export function useShellCompose({
     }
     // …and so does a reply or forward lane: its next press sends that row instead of making one.
     if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
+    // Nothing went: a create the press took back too late is the message's row again, or a copy.
+    if (!accepted && phase === "failed" && key === COMPOSE_SEND_KEY) composeNotSentRef.current();
+    if (!accepted && (phase === "failed" || phase === "idle") && key !== COMPOSE_SEND_KEY) replyAutosave.notSent(key);
     const intent = detail?.andDone;
     if (intent === undefined || !accepted) return false;
     /* The release read NOW, from the Ohbox as presented — and the row's own Done door
@@ -1370,21 +1436,37 @@ export function useShellCompose({
       || heldReplyRow(lane) !== null
       || (replyRows.current.has(lane) && laneRowOf(lane) === null)
       || (unreadableRows.current.has(lane) && accountReplyRow(lane) !== null),
-    took: (lane, row, text, confirmed) => {
+    took: (lane, row, text, confirmed, made) => {
       replyRows.current.set(lane, { row, seen: true });
       const at = engine.read().get<EngineDraft>("draft", row)?.updatedAt;
       const meta = readReplyMeta(lane);
+      const mine = made || (meta.row?.id === row && meta.row.made === true);
       // A queued write is not known to land: the row holds what it last confirmed, the write is pending.
       const holds = confirmed ? sigOf(text.trim()) : meta.row?.id === row ? meta.row.holds : undefined;
       const pending = confirmed ? undefined : sigOf(text.trim());
       if (pending !== undefined) pendingLanes.current.add(lane);
       if (at) {
         writeReplyMeta(lane, {
-          ...meta, row: { id: row, at, ...(holds !== undefined ? { holds } : {}), ...(pending !== undefined ? { pending } : {}) },
+          ...meta,
+          row: {
+            id: row, at, ...(holds !== undefined ? { holds } : {}), ...(pending !== undefined ? { pending } : {}),
+            ...(mine ? { made: true as const } : {}),
+          },
         });
       }
     },
   });
+  /* EVERY LANE'S STORED CREATES ARE JUDGED FROM THE MOUNT, shown or not: a reload's replayed create
+     is not left standing beside the reply's row until Reply is pressed. */
+  useEffect(() => whenComposerReady(() => {
+    let keys: string[] = [];
+    try { keys = Object.keys(window.localStorage); } catch { return; } // storage blocked
+    for (const k of keys) {
+      if (!k.startsWith(REPLY_META_PREFIX)) continue;
+      const lane = k.slice(REPLY_META_PREFIX.length);
+      if ((readReplyMeta(lane).creates ?? []).length > 0) replyAutosave.restore(lane);
+    }
+  }), []);
   /* A QUEUED WRITE HAS LANDED once the confirmed mirror's row holds its words (never the overlaid
      list, which shows a queued write at once): they are what the row holds. */
   useEffect(() => {
@@ -1394,7 +1476,9 @@ export function useShellCompose({
       const d = engine.store?.get?.<EngineDraft>("draft", row.id);
       if (d == null || d.body === null || sigOf(d.body.trim()) !== row.pending) continue;
       pendingLanes.current.delete(lane);
-      writeReplyMeta(lane, { ...readReplyMeta(lane), row: { id: row.id, at: d.updatedAt, holds: row.pending } });
+      writeReplyMeta(lane, {
+        ...readReplyMeta(lane), row: { id: row.id, at: d.updatedAt, holds: row.pending, ...(row.made ? { made: true as const } : {}) },
+      });
     }
   }, [drafts]);
 
@@ -1556,7 +1640,7 @@ export function useShellCompose({
     // A row still held for this message is the hold's to judge, never a row to send from.
     const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
     // The text this press sends is not saved again, and a create still in the air is undone.
-    replyAutosave.seal(messageId);
+    const unseal = replyAutosave.seal(messageId);
     // Healthy: the dock closes once the send is on disk, and the sidebar's foot finishes it.
     const replyHandOff = mayHandOffFor?.(from.mailboxId ?? parentMailbox) === true
       ? handOffDock(messageId, messageId, "reply") : undefined;
@@ -1604,6 +1688,9 @@ export function useShellCompose({
       replyAutosave.sending(messageId);
       handedPress.current.delete(messageId);
       pressRows.current.set(messageId, atPress);
+    } else {
+      // Refused at the door: nothing was sent, and the lane's waiting create is still its row.
+      unseal();
     }
   });
 
@@ -1721,6 +1808,7 @@ export function useShellCompose({
   restoredRef.current = autosave.restored;
   releaseDraftIdRef.current = autosave.draftId;
   releaseBindingRef.current = autosave.release;
+  composeNotSentRef.current = autosave.notSent;
   /**
    * THE BLOCK STATE FOLLOWS THE ROW. While autosave holds a row, the compose
    * form's signature state mirrors into the editor meta under `draft:<rowId>` — the handle a
@@ -1826,6 +1914,13 @@ export function useShellCompose({
         session: heldRow !== null && heldRow === d.id ? composeSessionId() : null,
       });
       const parked = hold.kind !== "free";
+      const handle = handleOf(engine, d);
+      // The composer's own letter, its first save still on its way: the newest words stay on screen.
+      if (!parent && handle.kind === "create" && autosave.holdsCreate(handle.key)) {
+        composeSeeded.current = true;
+        go("compose");
+        return;
+      }
       if (parent && !parked) {
         /* The lane's handed-off press comes back with its own refused row only: any other reply
            draft opened into the dock is another message, and keeps its own audience. */
@@ -1843,7 +1938,10 @@ export function useShellCompose({
         /* REMEMBER WHICH ROW SEEDED THIS EDITOR. The send goes from it; one that went without it
            would leave it in Drafts as a copy of a delivered message, reopenable with Send live:
            the double-send bait. `onSendSettled` discards it then, never the row it sent. */
-        replySeedDrafts.current.set(parent.id, d.id);
+        // A row still waiting on its create is the lane's to settle when it lands (`awaits`).
+        const seed = handleOf(engine, d);
+        if (seed.kind === "row") replySeedDrafts.current.set(parent.id, seed.id);
+        else replySeedDrafts.current.delete(parent.id);
         // The editor opens WITH the message, past the route transition that closes overlays.
         openMessageRef.current(parent, { reply: true });
         return;
@@ -1985,7 +2083,9 @@ export function useShellCompose({
            that was opened rather than creating a second one beside it. `holdOf` answers `free`
            only for a row the mirror positively calls `draft`, so there is no second arm here for
            a status this branch would have to decide about. */
-        autosave.adopt(d.id, seeded, d.contentRevision ?? null);
+        // A letter whose first save is still on its way is bound by that create, never its local id.
+        if (handle.kind === "create") autosave.awaitCreate(handle.key, seeded);
+        else autosave.adopt(handle.id, seeded, handle.revision);
       }
       composeSeeded.current = true;
       go("compose");
@@ -2138,10 +2238,16 @@ export function useShellCompose({
    * a value left standing can only be re-read by another press, which carries its own stamp.
    */
   const [discardRefusal, setDiscardRefusal] = useState<DiscardRefusal | null>(null);
-  /** Empty the composer and every reply lane bound to this row, with their stored copies. */
-  const emptyEditorsOf = useStableCallback((draftId: string, heldRow: string | null) => {
-    if (releaseDraftIdRef.current === draftId || heldRow === draftId) {
-      releaseBindingRef.current();
+  /**
+   * Empty the composer and every reply lane bound to this row, with their stored copies. `create`:
+   * the row's first save is still on its way, and the editors that claim it end with it.
+   */
+  const emptyEditorsOf = useStableCallback((draftId: string, heldRow: string | null, create: string | null = null) => {
+    const composer = create !== null ? autosave.holdsCreate(create) : releaseDraftIdRef.current === draftId || heldRow === draftId;
+    if (composer) {
+      // A create ends with its message: taken back, or dropped when it lands.
+      if (create !== null) void autosave.discard();
+      else releaseBindingRef.current();
       setCompose(EMPTY_COMPOSE);
       clearComposeDraft();
       setComposeCloseRefusal(null);
@@ -2152,6 +2258,7 @@ export function useShellCompose({
     for (const [lane, held] of replyRows.current) if (held.row === draftId) lanes.add(lane);
     for (const lane of [row?.inReplyToMessageId, row?.forwardOfMessageId ? inlineForwardKey(row.forwardOfMessageId) : null]) {
       if (lane && readReplyMeta(lane).row?.id === draftId) lanes.add(lane);
+      if (lane && create !== null && replyAutosave.owns(lane, create)) lanes.add(lane);
     }
     for (const lane of lanes) {
       replySeedDrafts.current.delete(lane);
@@ -2162,7 +2269,17 @@ export function useShellCompose({
     }
   });
   const discardDraft = useStableCallback(
-    (draftId: string) => {
+    (listed: string) => {
+      /* A ROW WHOSE FIRST SAVE IS STILL ON ITS WAY has a local id the server never held: the create
+         is taken back, and every editor claiming it ends with it. One that already landed is its row. */
+      const shown = engine.read().get<EngineDraft>("draft", listed);
+      const handle = shown !== undefined ? handleOf(engine, shown) : null;
+      if (handle?.kind === "create") {
+        emptyEditorsOf(listed, readComposeRow(), handle.key);
+        if (typeof engine.withdrawQueued === "function") void engine.withdrawQueued(handle.key).catch(() => undefined);
+        return;
+      }
+      const draftId = handle?.kind === "row" ? handle.id : listed;
       /**
        * THE LIST'S DELETE ASKS THE HOLD, AND THE SERVER DECIDES. `discardDecision` keeps two refusals
        * on this side — a row still `sending`, a jar this browser cannot read — each rendered in the

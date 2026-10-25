@@ -172,11 +172,13 @@ function engineOver(
   withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null },
   versions: Map<string, string> | null = null,
   loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false },
+  replayDeadlineMs?: number,
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
+    ...(replayDeadlineMs !== undefined ? { outboxReplayDeadlineMs: replayDeadlineMs } : {}),
     adapter: {
       sync: async () => {
         if (resync.armed) {
@@ -356,6 +358,10 @@ export async function mountShell(
     serverGone?: string[];
     /** Rows carry server versions (`contentRevision`), and the route's version check runs. */
     versions?: boolean;
+    /** The store a page before this one left: a reload over the same browser. */
+    store?: MirrorStore;
+    /** The outbox's replay deadline, short so a hung save arms the hold within a test. */
+    outboxReplayDeadlineMs?: number;
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -363,7 +369,8 @@ export async function mountShell(
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const versions = options.versions === true ? new Map<string, string>() : null;
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
-  const store = await storeWith(messagesIn, versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! })));
+  const store = options.store
+    ?? await storeWith(messagesIn, versions === null ? drafts : drafts.map((d) => ({ ...d, contentRevision: versions.get(d.id)! })));
   const sent: EngineMutation[] = [];
   const refuseSend: DraftShell["refuseSend"] = { on: false };
   const saveGate: DraftShell["saveGate"] = { wait: null };
@@ -378,7 +385,7 @@ export async function mountShell(
   const loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false };
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
-    versions, loseSendAnswer,
+    versions, loseSendAnswer, options.outboxReplayDeadlineMs,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);

@@ -19,8 +19,11 @@ import { COMPOSE_SEND_KEY, sendLockOwed, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow, sendRecordNames, type Hold } from "./send-lock";
 import {
   clearComposeDraft, composeSessionId, markComposeRowHolds, parseRecipients, readComposeDraft,
-  readComposeRow, readComposeRowHolds, whenComposerReady, writeComposeRow,
+  readComposeCreates, readComposeRow, readComposeRowHolds, whenComposerReady, writeComposeCreates, writeComposeRow,
 } from "./compose";
+import {
+  STORED_CREATES, copyGoes, createLive, dropCopy, landedOf, landingOf, type CreateClaim,
+} from "./draft-creates";
 
 /** How long the form must be still before it is written to the account. */
 export const AUTOSAVE_DELAY_MS = 2_000;
@@ -287,6 +290,18 @@ export interface ComposeAutosave {
    */
   sending: () => void;
   /**
+   * The message's send was refused or withdrawn: a create its press took back too late is the
+   * message's row again, or a second copy beside the row it now holds.
+   */
+  notSent: () => void;
+  /** `key` is a create this composer claims for the message on screen. */
+  holdsCreate: (key: string) => boolean;
+  /**
+   * A door opened a letter whose first save is still on its way (`key`): the composer binds that
+   * create as a new message, and takes its row when it lands. `fields` is what the create carries.
+   */
+  awaitCreate: (key: string, fields: ComposeFields) => void;
+  /**
    * The form was just restored from this browser's unit, which the account may not hold — a tab
    * closed inside the pause, or one that died. Written once at this open, wherever it landed, with
    * every refusal of the ordinary save; a door that replaces the form ends it.
@@ -457,7 +472,10 @@ export function useComposeAutosave(opts: {
     markComposeRowHolds({ ...holds, gone: true });
     setElsewhereAt({ why: "deleted", rowId, at, earlier: false });
   }, []);
+  /** Late-bound: the claims are declared below. */
+  const restoreClaimsRef = useRef<() => void>(() => {});
   const restored = useCallback(() => {
+    restoreClaimsRef.current();
     const buffer = readComposeDraft();
     const holds = readComposeRowHolds();
     if (holds?.gone === true && holds.pending === holdsSig(buffer)) {
@@ -470,30 +488,66 @@ export function useComposeAutosave(opts: {
   }, [keepUnsure]);
   const [saveRefused, setSaveRefused] = useState(false);
   /**
-   * THE CREATES THE OUTBOX HOLDS FOR THIS MESSAGE (answered `queued`, offline), by key, and the
-   * count of its sends: {@link ComposeAutosave.sending} takes them back, and a create answered after
-   * a send went is taken back at once. A door that lets the message go forgets them.
+   * THE CREATES THIS COMPOSER CLAIMS ({@link CreateClaim}), by key: registered before the save's
+   * await, kept while the outbox holds them, and decided by {@link landingOf} when they land. A Send
+   * takes them back ({@link ComposeAutosave.sending}); one already on the wire waits for that send.
    */
-  const waitingCreates = useRef(new Set<string>());
+  const claims = useRef(new Map<string, CreateClaim & { hash: string; mailbox: string | null }>());
   /** This composer's saves of its row the outbox holds (answered `queued`), by key: what each carried. */
   const waitingUpdates = useRef(new Map<string, { sig: string; hash: string; mailbox: string | null }>());
   /** One of them the engine kept as a new draft the server has not made yet: taken when it does. */
   const keptPending = useRef<{ key: string; sig: string; hash: string; mailbox: string | null } | null>(null);
   const sendsPressed = useRef(0);
-  const takeBack = useCallback((key: string) => {
-    if (typeof engine.withdrawQueued === "function") void engine.withdrawQueued(key).catch(() => undefined);
+  /** Bindings a discard or a confirmed send ended: their creates are dropped when they land. */
+  const ended = useRef(new Set<number>());
+  /** The row the last confirmed send went from — never a copy to delete. */
+  const sentRow = useRef<string | null>(null);
+  /** Writes counted; `reached` is the last one confirmed onto the row the composer holds. */
+  const writeSeq = useRef(0);
+  const reached = useRef<number | null>(null);
+  /** The create whose own save is still awaiting its answer: that save decides it. */
+  const inAirKey = useRef<string | null>(null);
+  /** Keys a reload found stored, until this engine shows them live or a drain says they are not. */
+  const storedKeys = useRef(new Set<string>());
+  const resolveRef = useRef<() => void>(() => {});
+  const createsOff = useRef<(() => void) | null>(null);
+  const watchCreates = useCallback(() => {
+    const waits = claims.current.size > 0 || storedKeys.current.size > 0;
+    if (createsOff.current === null && waits) createsOff.current = engine.subscribe(() => resolveRef.current());
+    else if (createsOff.current !== null && !waits) { createsOff.current(); createsOff.current = null; }
   }, [engine]);
+  /** The message's claims, by key, beside its row in storage: a reload claims them again. */
+  const storeClaims = useCallback(() => {
+    const keys = [...claims.current].filter(([, c]) => c.binding === epoch.current).map(([k]) => k);
+    writeComposeCreates(keys.slice(-STORED_CREATES));
+  }, []);
+  const unclaim = useCallback((key: string) => {
+    if (claims.current.delete(key)) storeClaims();
+  }, [storeClaims]);
+  /** Take a create back; `hold`: for a Send, whose ending decides one already on the wire. */
+  const takeBack = useCallback((key: string, hold: boolean) => {
+    const c = claims.current.get(key);
+    if (c === undefined) return;
+    if (hold) c.held = true;
+    if (typeof engine.withdrawQueued !== "function") { unclaim(key); return; }
+    void engine.withdrawQueued(key)
+      .then((said) => {
+        if (said === "withdrawn" || (said === "gone" && landedOf(engine, key) === null)) unclaim(key);
+        resolveRef.current();
+      })
+      .catch(() => undefined);
+  }, [engine, unclaim]);
   const sending = useCallback(() => {
     sendsPressed.current += 1;
-    const keys = [...waitingCreates.current];
-    waitingCreates.current.clear();
-    for (const key of keys) takeBack(key);
+    // This message's creates only: one a replaced message left is still that message's words.
+    for (const [key, c] of [...claims.current]) if (c.binding === epoch.current) takeBack(key, true);
   }, [takeBack]);
 
   const adopt = useCallback((id: string, f: ComposeFields, revision?: string | null) => {
     epoch.current += 1;
+    reached.current = null;
+    storeClaims();
     base.current = revision ?? null;
-    waitingCreates.current.clear();
     pendingLand.current = null;
     waitingUpdates.current.clear();
     keptPending.current = null;
@@ -523,7 +577,8 @@ export function useComposeAutosave(opts: {
 
   const release = useCallback(() => {
     epoch.current += 1;
-    waitingCreates.current.clear();
+    reached.current = null;
+    storeClaims();
     pendingLand.current = null;
     waitingUpdates.current.clear();
     keptPending.current = null;
@@ -752,6 +807,9 @@ export function useComposeAutosave(opts: {
 
   const discard = useCallback(async () => {
     const id = draftId;
+    // The message ends here: its creates are taken back, and one already on the wire is dropped when it lands.
+    ended.current.add(epoch.current);
+    for (const [key, c] of [...claims.current]) if (c.binding === epoch.current) { c.held = false; takeBack(key, false); }
     /**
      * A held row is released, never deleted — invariant S(2). The guard is here, in the primitive,
      * rather than at each door: `cancelCompose` calls this, so does {@link
@@ -777,7 +835,7 @@ export function useComposeAutosave(opts: {
     // phantom-copy branch — so the editor meta keyed to it (the signature block's state,
     // `mail-send.ts`) dies with it rather than accumulating in storage.
     writeReplyMeta(`draft:${id}`, {});
-  }, [draftId, engine, release]);
+  }, [draftId, engine, release, takeBack]);
 
   /**
    * ── INVARIANT T's ONE FUNCTION ──────────────────────────────────────────────────────────────
@@ -797,7 +855,11 @@ export function useComposeAutosave(opts: {
       adoptOff.current?.();
       adoptOff.current = null;
       adopted.current = true;
+      const carried = epoch.current;
       adopt(fate.rowId, fieldsRef.current, engine.read().get<EngineDraft>("draft", fate.rowId)?.contentRevision ?? null);
+      // Still this message: its creates are judged beside the row it holds now.
+      for (const c of claims.current.values()) if (c.binding === carried) c.binding = epoch.current;
+      storeClaims();
       return;
     }
     if (fate.kind === "changedElsewhere") {
@@ -837,14 +899,19 @@ export function useComposeAutosave(opts: {
     writeComposeRow(null);
     clearComposeDraft();
     onClearedRef.current?.(fate.toList ?? "ohbox");
-  }, [draftId, adopt, engine, letGo]);
+  }, [draftId, adopt, engine, letGo, storeClaims]);
 
   const settled = useCallback(
     (sentDraftId: string | null) => {
       // The send used this row (or there is no row): the ordinary release. A row the send did
       // NOT use is a phantom copy of the delivered message and is deleted — see the interface.
+      ended.current.add(epoch.current);
+      sentRow.current = sentDraftId;
+      // Confirmed: a create the press held is decided by the ended message, and dropped.
+      for (const c of claims.current.values()) if (c.binding === epoch.current) c.held = false;
       if (draftId === null || draftId === sentDraftId) release();
       else void discard();
+      resolveRef.current();
     },
     [draftId, release, discard],
   );
@@ -933,6 +1000,15 @@ export function useComposeAutosave(opts: {
     inFlight.current = true;
     const era = epoch.current;
     const sendsAt = sendsPressed.current;
+    const seq = ++writeSeq.current;
+    // A create's key is minted here and claimed before the await: a door asks for it while it waits.
+    const key = row === null ? crypto.randomUUID() : undefined;
+    if (key !== undefined) {
+      claims.current.set(key, { sig: signature, hash: holdsSig(f), mailbox, binding: era, sends: sendsAt, held: false, seq });
+      inAirKey.current = key;
+      storeClaims();
+      watchCreates();
+    }
     /* A 404 to a PUT is the server's word only when the mirror held the row: an absent row is
        refused locally with the same 404 (a resync between pages), and absence is not a delete. */
     const mirrored = row !== null && engine.read().get("draft", row) != null;
@@ -965,7 +1041,10 @@ export function useComposeAutosave(opts: {
           body: f.body,
           html: f.html ? f.html : null,
           to, cc, bcc,
-        });
+        }, key !== undefined ? { key } : {});
+        if (key !== undefined) inAirKey.current = null;
+        // Answered here: only a create the outbox holds stays claimed.
+        if (key !== undefined && result.status !== "queued") unclaim(key);
         /* A ROLLED-BACK WRITE IS THE ONE THE CLOSE MAY NOT LEAVE ON: the account does not hold
            this message and nothing here will try again. `queued` is not that — the verb is
            durable in the outbox before it reaches the wire, so it is on its way and the composer
@@ -986,9 +1065,9 @@ export function useComposeAutosave(opts: {
         if (result.status !== "confirmed") {
           /* A CREATE THE OUTBOX HOLDS (offline): no row until it lands, and this message's send
              takes it back (`sending`) — at once when the send went while this was answered. */
-          if (row === null && result.status === "queued" && era === epoch.current) {
-            if (sendsPressed.current !== sendsAt) takeBack(result.key);
-            else waitingCreates.current.add(result.key);
+          if (key !== undefined && result.status === "queued" && sendsPressed.current !== sendsAt
+            && claims.current.get(key)?.held !== true) {
+            takeBack(key, true);
           }
           // An update the outbox holds: if the row moves meanwhile, the engine keeps it as a new draft.
           if (row !== null && result.status === "queued" && era === epoch.current) {
@@ -1035,6 +1114,7 @@ export function useComposeAutosave(opts: {
         }
         saved.current = signature;
         savedHash.current = holdsSig(f);
+        reached.current = seq;
         pendingLand.current = null;
         if (result.revision) base.current = result.revision;
         const savedRow = row ?? result.entityId;
@@ -1052,6 +1132,7 @@ export function useComposeAutosave(opts: {
         outcome = { kind: "failed", reason: err instanceof Error ? err.message : null };
       } finally {
         inFlight.current = false;
+        if (key !== undefined && inAirKey.current === key) inAirKey.current = null;
       }
     })();
     inFlightP.current = run;
@@ -1070,8 +1151,9 @@ export function useComposeAutosave(opts: {
       onForkedRef.current?.(next.kind === "saved");
       return next.kind === "saved" ? { kind: "forked" } : next;
     }
+    resolveRef.current();
     return outcome;
-  }, [engine, letGo]);
+  }, [engine, letGo, watchCreates, storeClaims, unclaim, takeBack]);
   /** The new draft of a fork: after any save on the wire, past the send-in-flight guard. */
   const forkNow = useCallback(async (): Promise<ComposeFlush> => {
     const pending = inFlightP.current;
@@ -1199,7 +1281,8 @@ export function useComposeAutosave(opts: {
       adoptOff.current = null;
       adopted.current = true;
       epoch.current += 1;
-      waitingCreates.current.clear();
+      reached.current = null;
+      storeClaims();
       waitingUpdates.current.clear();
       keptPending.current = null;
       openWrite.current = false;
@@ -1215,7 +1298,7 @@ export function useComposeAutosave(opts: {
       setElsewhereAt({ why: "changed", rowId: k.from, at: null, earlier: true, kept: true });
       say(k.key, activeRef.current);
     }
-  }, [engine, letGo]);
+  }, [engine, letGo, storeClaims]);
 
   const elsewhere = elsewhereAt === null ? null : {
     why: elsewhereAt.why,
@@ -1232,6 +1315,92 @@ export function useComposeAutosave(opts: {
     return writeNow(false);
   }, [writeNow]);
 
+  const notSent = useCallback(() => {
+    // Refused or withdrawn: a create the press held is this message's again, as if no Send went.
+    for (const c of claims.current.values()) {
+      if (c.binding !== epoch.current || !c.held) continue;
+      c.held = false;
+      c.sends = sendsPressed.current;
+    }
+    resolveRef.current();
+  }, []);
+
+  const holdsCreate = useCallback((key: string): boolean => claims.current.get(key)?.binding === epoch.current, []);
+  const awaitCreate = useCallback((key: string, f: ComposeFields) => {
+    release();
+    abandonedAt.current = null;
+    claims.current.set(key, {
+      sig: signatureOf(f), hash: holdsSig(f), mailbox: f.fromMailboxId, binding: epoch.current,
+      sends: sendsPressed.current, held: false, seq: writeSeq.current,
+    });
+    saved.current = signatureOf(f);
+    savedHash.current = holdsSig(f);
+    storeClaims();
+    watchCreates();
+    resolveRef.current();
+  }, [release, storeClaims, watchCreates]);
+  /** Claims a reload found stored for the message in the buffer, once this engine shows them. */
+  restoreClaimsRef.current = () => {
+    for (const key of readComposeCreates()) if (!claims.current.has(key)) storedKeys.current.add(key);
+    watchCreates();
+    resolveRef.current();
+  };
+
+  /**
+   * A CLAIMED CREATE HAS LANDED — on the reconnect flush, a boot's replay or its own save — and is
+   * decided by {@link landingOf}. A create the engine no longer carries, and that made no row, ends.
+   */
+  resolveRef.current = () => {
+    for (const key of [...storedKeys.current]) {
+      if (createLive(engine, key)) {
+        storedKeys.current.delete(key);
+        claims.current.set(key, {
+          sig: "", hash: "", mailbox: null, binding: epoch.current, sends: sendsPressed.current, held: false, seq: -1,
+        });
+      } else if ((engine.drainsCompleted?.() ?? 0) > 0) storedKeys.current.delete(key);
+    }
+    for (const [key, c] of [...claims.current]) {
+      if (key === inAirKey.current) continue;
+      const made = landedOf(engine, key);
+      if (made === null) {
+        if (!createLive(engine, key)) unclaim(key);
+        continue;
+      }
+      const row = draftIdRef.current ?? readComposeRow();
+      const at = landingOf(c, { binding: epoch.current, ended: ended.current, sends: sendsPressed.current, row });
+      if (at === "wait") continue;
+      unclaim(key);
+      if (at === "keep") continue;
+      if (at === "drop") { dropCopy(engine, COMPOSE_SEND_KEY, made.id, sentRow.current); continue; }
+      if (at === "take") {
+        setDraftId(made.id);
+        draftIdRef.current = made.id;
+        writeComposeRow(made.id);
+        saved.current = c.sig === "" ? null : c.sig;
+        savedHash.current = c.hash === "" ? null : c.hash;
+        base.current = made.revision;
+        if (c.hash !== "") markComposeRowHolds({ row: made.id, sig: c.hash, ...(made.revision ? { rev: made.revision } : {}) });
+        if (c.mailbox) savedMailbox.current = c.mailbox;
+        openWrite.current = false;
+        reached.current = c.seq;
+        void writeNow();
+        continue;
+      }
+      void carry(c, made.id);
+    }
+    watchCreates();
+  };
+  /** The row the composer holds takes the newest words; the copy goes once a later write reached it. */
+  const carry = async (c: CreateClaim, copy: string): Promise<void> => {
+    const pending = inFlightP.current;
+    if (pending) await pending;
+    if (draftIdRef.current === null) return;
+    await writeNow();
+    if (copyGoes(c, reached.current, saved.current)) dropCopy(engine, COMPOSE_SEND_KEY, copy, sentRow.current);
+  };
+  /* Subscribed only while a create waits: a composer with none is woken by nothing. */
+  useEffect(() => () => { createsOff.current?.(); createsOff.current = null; }, [engine]);
+
   /* `settled` is defined below `settleCompose` and is called from inside it — through a ref, so
      the two are not forced into one declaration order by a dependency cycle. */
   settledRef.current = settled;
@@ -1240,7 +1409,7 @@ export function useComposeAutosave(opts: {
   const baseNow = useCallback((): string | null => base.current, []);
 
   return {
-    draftId, adopt, release, discard, flush, sending, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
+    draftId, adopt, release, discard, flush, sending, notSent, holdsCreate, awaitCreate, restored, settled, settleCompose, elsewhere, saveRefused, epochNow,
     baseNow, keptAsNew,
   };
 }

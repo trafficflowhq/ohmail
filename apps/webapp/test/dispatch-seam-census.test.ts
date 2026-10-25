@@ -62,6 +62,9 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
   ["shell/folder-verbs.ts", 1,
    "the folder-op notice's dismissal: it raises no sentence at all, and its three siblings in the "
    + "same object already speak only on `rolled_back`"],
+  ["shell/draft-creates.ts", 1,
+   "the copy a landed create left beside its editor's row, or of a message a Discard or confirmed send "
+   + "ended; no sentence rides it; a refused delete leaves one more draft, never a lost one"],
   ["views/ComposeView.tsx", 1,
    "`draft_accept` beside taking a draft into the form — the form filling IS the confirmation"],
 ];
@@ -69,11 +72,11 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
 /**
  * THE TOTAL, PINNED APART FROM THE ROWS. A shell module split hands a count from one row to
  * another, and both rows move together while the sum quietly grows — which is a new bare dispatch
- * arriving under cover of a refactor. Eighteen is the reading (the plain reply's pin spend went,
- * SEND-IS-NOT-DONE); a row that falls hands its share
+ * arriving under cover of a refactor. Nineteen is the reading (the plain reply's pin spend went,
+ * SEND-IS-NOT-DONE; a landed create's copy came); a row that falls hands its share
  * to a named row, never to nobody.
  */
-const REMAINDER_TOTAL = 18;
+const REMAINDER_TOTAL = 19;
 
 function tsFiles(dir: string): string[] {
   const out: string[] = [];

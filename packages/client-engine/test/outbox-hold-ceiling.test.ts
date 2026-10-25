@@ -15,14 +15,15 @@
  * hold → case 3 red; ending it at any age → cases 3 and 3b red; the ended change not sent ahead of
  * the press → case 3b red; a `queued` late answer recorded for a decide → case 1b red; dropped for
  * a draft's first save too → case 5 red; a send ended at its ceiling, or its barrier kept → case 6 red;
- * an ended write's request not stopped, or stopped after it is queued again → cases 3 and 7 red.
+ * an ended write's request not stopped, or stopped after it is queued again → cases 3 and 7 red;
+ * a create behind the hold left out of the take-back, or its row left unmarked → case 8 red.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_HOLD_CEILING_MS, OUTBOX_REPLAY_DEADLINE_MS,
-  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE, type EngineMutation,
+  OUTBOX_TRY_AGAIN_ENDS_HOLD_MS, OUTBOX_TYPE, type EngineDraft, type EngineMutation,
 } from "@ohmail/client-engine";
 
 const NOW = "2026-10-23T09:00:00.000Z";
@@ -279,5 +280,22 @@ describe("the hold behind a hung write ends at its ceiling", () => {
     await vi.advanceTimersByTimeAsync(2);
     expect(queuedAtStop, "the write went back on the queue with its request still free to be sent").toBe(false);
     expect(engine.pendingMutations().map((p) => p.key)).toEqual([a.key]);
+  });
+  it("8 — a create waiting out the hold is named by its row, and a take-back stops it for this session and the next", async () => {
+    const { engine, store, sent } = await scene((m) => (m.kind === "draft_save" && m.draftId === "d1" ? "hang" : "ok"), { autoReplay: false });
+    const edit = engine.mutate({ kind: "draft_save", draftId: "d1", mailboxId: "mb_1", subject: "Hi", body: "slow", to: [], cc: [], bcc: [] } as unknown as EngineMutation);
+    await vi.advanceTimersByTimeAsync(OUTBOX_REPLAY_DEADLINE_MS + 1);
+    expect((await edit).status, "the hung edit did not answer at its deadline").toBe("queued");
+    const key = "create-key-1";
+    const create = engine.mutate({ kind: "draft_save", draftId: null, mailboxId: "mb_1", subject: "Hi", body: "held", to: [], cc: [], bcc: [] } as unknown as EngineMutation, { key });
+    await vi.advanceTimersByTimeAsync(1);
+    const local = engine.read().list<EngineDraft>("draft").find((d) => d.body === "held")?.id ?? "no paint";
+    expect(engine.pendingCreateOf(local), "the painted row of a create behind the hold named no create").toBe(key);
+    expect(await engine.withdrawQueued(key), "the take-back of a create behind the hold did not say withdrawn").toBe("withdrawn");
+    const onDisk = store.list<{ key: string; withdrawn?: boolean }>(OUTBOX_TYPE).filter((e) => e.key === key);
+    expect(onDisk.every((e) => e.withdrawn === true), "the take-back left a row a reload replays").toBe(true);
+    await vi.advanceTimersByTimeAsync(OUTBOX_HOLD_CEILING_MS + 1);
+    expect((await create).status).toBe("rolled_back");
+    expect(keys(sent), "the create went out after its take-back").not.toContain(key);
   });
 });

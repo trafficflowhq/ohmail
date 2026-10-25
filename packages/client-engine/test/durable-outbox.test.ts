@@ -11,6 +11,7 @@ import {
   OUTBOX_TYPE,
   SqlMirrorStore,
   type EngineAdapter,
+  type EngineDraft,
   type EngineMessage,
   type EngineMutation,
   type MirrorStore,
@@ -371,6 +372,39 @@ describe("durable outbox — kill-restart (fake-indexeddb, the webapp store)", (
     expect(flushed[0]).toMatchObject({ key: res.key, status: "confirmed" });
     expect(outboxRows(store)).toHaveLength(0);
     store.close();
+  });
+
+  it("a create restored after a kill paints its row with its key; one taken back before the kill is not replayed", async () => {
+    // A door binds a waiting create by the key on its row: a restored row without it binds a local id.
+    const factory = new IDBFactory();
+    const create = (body: string): EngineMutation => ({
+      kind: "draft_save", draftId: null, mailboxId: "mb-milabrunner",
+      inReplyToMessageId: null, subject: "draft", body, to: [], cc: [], bcc: [],
+    });
+    const w1 = wire(new FixturesAdapter());
+    const store1 = new IndexedDbMirrorStore({ owner: "acct-create-key", factory });
+    const e1 = new OhmailEngine({ adapter: w1.adapter, store: store1, now: () => DEMO_NOW });
+    await e1.start();
+    w1.setFailMutate(() => RETRYABLE());
+    const kept = await e1.mutate(create("kept words"));
+    const taken = await e1.mutate(create("taken words"));
+    expect(await e1.withdrawQueued(taken.key)).toBe("withdrawn");
+    store1.close();
+
+    const w2 = wire(new FixturesAdapter());
+    w2.setFailMutate(() => RETRYABLE());
+    const store2 = new IndexedDbMirrorStore({ owner: "acct-create-key", factory });
+    const e2 = new OhmailEngine({ adapter: w2.adapter, store: store2, now: () => DEMO_NOW });
+    await e2.start();
+    const rows = e2.read().list<EngineDraft>("draft").filter((d) => d.body === "kept words" || d.body === "taken words");
+    expect(rows.map((d) => [d.body, d.pendingCreate]), "the restored create's row lost its key").toEqual([["kept words", kept.key]]);
+    expect(e2.pendingCreateOf(rows[0]!.id)).toBe(kept.key);
+    w2.setFailMutate(null);
+    await e2.flushPending();
+    await tick();
+    expect(w2.calls.filter((c) => c.op === "mutate").map((c) => c.key), "a create taken back before the kill was replayed")
+      .not.toContain(taken.key);
+    store2.close();
   });
 
   it("a SAME-SESSION unowned verb (mark_seen) IS retried by the next drive — nobody else would ever flush it", async () => {

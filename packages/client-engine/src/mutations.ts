@@ -192,6 +192,8 @@ export interface MutationEffect {
 export interface EffectContext {
   now: () => Date;
   uuid: () => string;
+  /** The verb's Idempotency-Key: a `draft_save` create writes it on the row it paints. */
+  key?: string;
 }
 
 const SEG_FOLDER: Record<string, Folder> = {
@@ -906,6 +908,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           bcc: m.bcc,
           rationale: null,
           status: "draft",
+          ...(ctx.key !== undefined ? { pendingCreate: ctx.key } : {}),
           createdAt: iso,
           updatedAt: iso,
         };

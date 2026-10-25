@@ -88,18 +88,20 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // NINE: a reply or forward lane that took the row its refused send left asks, before the next
   // press sends from it, whether that row is still free — a row since held is never sent from.
   // TEN: a promoted lane asks it of the row it would write its words into.
-  ["shell-compose.ts", 10,
+  // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
+  ["shell-compose.ts", 11,
     "openDraft (above the reply arm, so a held reply takes the held view), writeTo, the mailto "
     + "seam, the Drafts list's Delete, replySendState (the reply editor's own lane, row "
     + "included), the orphaned-lane promotion (a dead parent's reply becoming a row), the "
     + "composer's Discard (what it will do with its row), laneRowOf (the row a refused "
-    + "reply left, before a press sends from it), accountReplyRow (the draft Reply opens), and "
-    + "heldLaneRow (the row a promoted lane writes into rather than beside)"],
+    + "reply left, before a press sends from it), accountReplyRow (the draft Reply opens), "
+    + "heldLaneRow (the row a promoted lane writes into rather than beside), and dropPriorRow (the "
+    + "older row a reply's send from its own create's row leaves)"],
   ["AppShell.tsx", 1, "the render that feeds the compose's send state"],
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
-const CALL_SITES_TOTAL = 17;
+const CALL_SITES_TOTAL = 18;
 
 describe("the send hold is answered in one place, and every write site asks", () => {
   it("(a) the call-site count per file", () => {

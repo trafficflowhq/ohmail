@@ -20,6 +20,7 @@ import {
   OhmailEngine,
   OUTBOX_TYPE,
   type EngineAdapter,
+  type EngineDraft,
   type EngineLocks,
   type EngineMutation,
 } from "@ohmail/client-engine";
@@ -54,6 +55,10 @@ function wire(inner: FixturesAdapter, fail = false) {
 }
 
 const MARK: EngineMutation = { kind: "mark_seen", messageIds: ["giulia"], unread: false };
+const CREATE: EngineMutation = {
+  kind: "draft_save", draftId: null, mailboxId: "mb-milabrunner", inReplyToMessageId: null,
+  subject: "draft", body: "adopted words", to: [], cc: [], bcc: [],
+};
 
 async function tab(factory: IDBFactory, owner: string, l: EngineLocks | null, w: ReturnType<typeof wire>) {
   const store = new IndexedDbMirrorStore({ owner, factory });
@@ -189,5 +194,23 @@ describe("a verb queued by a closed tab is delivered by a live one, once", () =>
     await tick();
     expect(wB.sent.filter((s) => s.key === queued.key), "the wiping tab did not deliver the closed tab's verb").toHaveLength(1);
     Bstore.close();
+  });
+
+  it("an adopted create's row carries its key, so a door binds the create and never its local id", async () => {
+    const factory = new IDBFactory();
+    const reg = locks();
+    const A = await tab(factory, "acct-orphan-7", reg.api, wire(new FixturesAdapter(), true));
+    const queued = await A.engine.mutate(CREATE);
+    expect(queued.status).toBe("queued");
+    const aName = ownersOnDisk(A.store)[0]!;
+    A.store.close();
+    reg.close(aName);
+    const B = await tab(factory, "acct-orphan-7", reg.api, wire(new FixturesAdapter(), true));
+    await B.engine.syncOnce();
+    await tick();
+    const row = B.engine.read().list<EngineDraft>("draft").find((d) => d.body === "adopted words");
+    expect(row?.pendingCreate, "the adopted create's row carries no key").toBe(queued.key);
+    expect(B.engine.pendingCreateOf(row!.id)).toBe(queued.key);
+    B.store.close();
   });
 });

@@ -794,6 +794,11 @@ export interface EngineDraft {
   accepted?: boolean;
   /** The server's version of the row's words; absent from an older server or an overlay. */
   contentRevision?: string;
+  /**
+   * Client-local, never on a server row or the wire: the Idempotency-Key of the `draft_save` create
+   * that painted this row and has not settled. Its id is local until then; a door binds the key.
+   */
+  pendingCreate?: string;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
