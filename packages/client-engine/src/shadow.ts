@@ -20,7 +20,8 @@ export const SHADOWED_ROWS = {
   mark_seen: ["message", "message_state"],
   draft_accept: ["draft"],
   draft_schedule_cancel: ["draft"],
-  draft_save: ["draft"],
+  // A save never moves a status, so its shadow could only hold one the send since replaced.
+  draft_save: [],
   draft_discard: ["draft"],
   draft_resolve: ["draft"],
   mail_send: [],

@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { EmailAddress, EngineDraft, EngineMutation } from "@ohmail/client-engine";
+import { draftsList, type EmailAddress, type EngineDraft, type EngineMutation } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import {
-  act, message, mountShell, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 
 /**
@@ -70,10 +71,10 @@ const letter: EngineDraft = {
   createdAt: "2026-09-27T08:40:00.000Z", updatedAt: "2026-09-27T08:40:00.000Z",
 } as unknown as EngineDraft;
 
-async function composerWith(s: DraftShell): Promise<void> {
-  await waitFor(() => s.el.querySelector(".draft-row[data-id='d-letter'] .draft-open") != null, "the letter in Drafts");
-  await press(s.el.querySelector(".draft-row[data-id='d-letter'] .draft-open"), "open the letter");
-  await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === "Plans for Friday", "the composer");
+async function composerWith(s: DraftShell, id = "d-letter", subject = "Plans for Friday"): Promise<void> {
+  await waitFor(() => s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`) != null, `${id} in Drafts`);
+  await press(s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`), `open ${id}`);
+  await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === subject, `the composer on ${id}`);
 }
 
 describe("a healthy send leaves its editor and finishes in the sidebar's foot", () => {
@@ -285,4 +286,100 @@ describe("CONTROLS: an unhealthy send keeps its editor and says why", () => {
     expect(replySurface(s.el), "the dock closed while offline").not.toBeNull();
     expect(footLine(), "the foot spoke for a send its editor shows").toBe("");
   }, 40_000);
+});
+
+/**
+ * THE SENDING DEVICE SETTLES ITS ROW AT ONCE (a tester report: the sent letter stayed in Drafts with its
+ * words and Discard for 43 s to 1.5 min, one press from a second send). A save of the row landed after
+ * the send's 200 — the hand-off's close wrote it, or a send longer than the pause re-armed the timer —
+ * and its shadow kept the row listed as a draft for three drains.
+ */
+describe("a sent letter leaves Drafts on the sending device at once", () => {
+  const pause = async (ms: number): Promise<void> => { await act(async () => { await new Promise((r) => setTimeout(r, ms)); }); };
+  const listed = (s: DraftShell): boolean => draftsList(s.engine.read(), NOW).some((d) => d.id === "d-letter");
+  const savesAfterSend = (s: DraftShell): number => {
+    const at = s.sent.findIndex((m) => m.kind === "mail_send");
+    return s.sent.slice(at + 1).filter((m) => m.kind === "draft_save" && m.draftId === "d-letter").length;
+  };
+  async function finished(handOff: boolean): Promise<DraftShell> {
+    const s = await mountShell("#/drafts", [message("m1")], [], { handOff, server: new DraftServer([letter]) });
+    await composerWith(s);
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    const subject = s.el.querySelector<HTMLInputElement>("#compose-subject")!;
+    await act(async () => { setter.call(subject, "Plans for Friday, at noon"); subject.dispatchEvent(new Event("input", { bubbles: true })); });
+    return s;
+  }
+  async function afterDrains(s: DraftShell): Promise<boolean[]> {
+    const seen = [listed(s)];
+    await pause(AUTOSAVE_DELAY_MS + 600);
+    for (let i = 0; i < 3; i++) {
+      await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+      seen.push(listed(s));
+    }
+    return seen;
+  }
+
+  it("handed off: no save names the row after the send, and Drafts drops it at Sent and after three drains", async () => {
+    const s = await finished(true);
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => footLine().includes(en.sendingLine.sent), "the foot line Sent");
+    expect({ listed: await afterDrains(s), saves: savesAfterSend(s) }).toEqual({ listed: [false, false, false, false], saves: 0 });
+  }, 40_000);
+
+  it("held in its editor past the pause: no save names the row after the send, and Drafts drops it at once", async () => {
+    const s = await finished(false);
+    const release = gate(s);
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => sends(s).length === 1, "the send on the wire");
+    await pause(AUTOSAVE_DELAY_MS + 600);
+    await act(async () => { release(); });
+    await waitFor(() => s.el.querySelector(".view-compose") == null || !listed(s), "the send settled");
+    await pause(200);
+    expect({ listed: await afterDrains(s), saves: savesAfterSend(s) }).toEqual({ listed: [false, false, false, false], saves: 0 });
+  }, 40_000);
+
+  it("control: a refused send gives the letter back, and its next words are saved to its row", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter]);
+    await composerWith(s);
+    s.refuseSend.on = true;
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => (s.el.textContent ?? "").includes(en.compose.statusFailed), "the refusal said");
+    s.refuseSend.on = false;
+    const before = s.sent.length;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    const subject = s.el.querySelector<HTMLInputElement>("#compose-subject")!;
+    await act(async () => { setter.call(subject, "Plans for Friday, again"); subject.dispatchEvent(new Event("input", { bubbles: true })); });
+    await pause(AUTOSAVE_DELAY_MS + 600);
+    expect(s.sent.slice(before).filter((m) => m.kind === "draft_save").map((m) => (m as { draftId?: string | null }).draftId))
+      .toEqual(["d-letter"]);
+  }, 40_000);
+
+  it("control: after a restart with a letter's send waiting offline, another draft's edits reach its own row", async () => {
+    const server = new DraftServer([letter, { ...letter, id: "d-y", subject: "Letter Y" }, { ...letter, id: "d-z", subject: "Letter Z" }]);
+    const s1 = await mountShell("#/drafts", [message("m1")], [], { server });
+    await composerWith(s1);
+    setOnline(false);
+    await act(async () => { window.dispatchEvent(new Event("offline")); });
+    s1.offline.on = true;
+    await press(composeSend(s1.el)!, "Send");
+    await waitFor(() => s1.engine.pendingMutations().some((p) => p.mutation.kind === "mail_send"), "the send waiting");
+    await pause(300);
+    await unmountAll();
+    stubDom();
+    const s2 = await mountShell("#/drafts", [message("m1")], [], { server, store: s1.store, startOffline: true });
+    await composerWith(s2, "d-y", "Letter Y");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    const subject = s2.el.querySelector<HTMLInputElement>("#compose-subject")!;
+    await act(async () => { setter.call(subject, "Letter Y, edited"); subject.dispatchEvent(new Event("input", { bubbles: true })); });
+    await pause(AUTOSAVE_DELAY_MS + 600);
+    await navigate("#/drafts");
+    await composerWith(s2, "d-z", "Letter Z");
+    s2.offline.on = false;
+    setOnline(true);
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    await act(async () => { await s2.engine.flushPending(); });
+    await pause(500);
+    expect({ y: server.rows.get("d-y")?.subject, letter: server.rows.get("d-letter")?.status })
+      .toEqual({ y: "Letter Y, edited", letter: "sent" });
+  }, 60_000);
 });

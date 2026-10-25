@@ -489,10 +489,13 @@ export function useShellCompose({
     const row = laneRowOf(messageId) === null ? accountReplyRow(messageId) : null;
     const meta = readReplyMeta(messageId);
     const named = row === null && laneRowOf(messageId) === null ? meta.row : undefined;
-    if (row === null && named !== undefined && engine.read().get("draft", named.id) == null) {
+    // Sent from another device (no record of this browser's names it): ended as a delete ends it.
+    const hold = named === undefined ? null : holdOf(engine, { lane: messageId, draftId: named.id, session: null });
+    const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";
+    if (row === null && named !== undefined && (sentElsewhere || engine.read().get("draft", named.id) == null)) {
       /* THE ROW THIS LANE LAST WROTE IS NOT IN THE MIRROR: deleted elsewhere while ohmail was closed,
          its words are not saved again; words it never held are kept as a new draft, and said. */
-      void (engine.store?.isTombstoned?.("draft", named.id) === true
+      void (sentElsewhere || engine.store?.isTombstoned?.("draft", named.id) === true
         ? Promise.resolve("gone" as const)
         : engine.draftOnServer(named.id)
       ).then((answer) => {
@@ -508,12 +511,12 @@ export function useShellCompose({
           /* A SAVE OF THESE WORDS WAITED UNSEEN when the row went: they may be the row's, so they are
              shown and not saved again until they change. The meta stays, so a reload does the same. */
           replyAutosave.asSaved(messageId, scratch.text);
-          toast(t("reply.deletedElsewhere"));
+          if (!sentElsewhere) toast(t("reply.deletedElsewhere"));
           open(scratch);
           return;
         }
         writeReplyMeta(messageId, { ...meta, row: undefined });
-        toast(t("reply.deletedElsewhereKept"));
+        toast(t(sentElsewhere ? "reply.sentElsewhereKept" : "reply.deletedElsewhereKept"));
         open(scratch);
       });
       return;
@@ -1785,6 +1788,7 @@ export function useShellCompose({
       if (routeViewRef.current !== "compose") toast(t(kept ? "compose.changedElsewhere" : "compose.changedElsewhereUnsaved"));
     },
     onKeptAsNew: () => { toast(t("compose.keptAsNewElsewhere")); },
+    onKeptSent: () => { toast(t("compose.sentElsewhereMovedToDrafts")); },
     onCleared: (toList) => {
       setCompose(EMPTY_COMPOSE);
       // A send that finished after the person moved on (the hand-off) leaves them where they are.

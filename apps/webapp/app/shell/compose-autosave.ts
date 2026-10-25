@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type { EmailAddress, EngineDraft, KeptAsNewDraft, OhmailEngine } from "@ohmail/client-engine";
 import type { ComposeFields, ComposeRowHolds } from "./compose";
-import { COMPOSE_SEND_KEY, sendLockOwed, writeReplyMeta } from "./mail-send";
+import { COMPOSE_SEND_KEY, sendLockOwed, sendNamesRow, writeReplyMeta } from "./mail-send";
 import { holdOf, releaseSendLockForRow, sendRecordNames, type Hold } from "./send-lock";
 import {
   clearComposeDraft, composeSessionId, markComposeRowHolds, parseRecipients, readComposeDraft,
@@ -390,6 +390,8 @@ export function useComposeAutosave(opts: {
   onForked?: (kept: boolean) => void;
   /** An edit that waited on the outbox was kept as a new draft, and no composer on screen says so. */
   onKeptAsNew?: () => void;
+  /** Words written after a letter sent elsewhere were put away in Drafts, and the composer emptied. */
+  onKeptSent?: () => void;
 }): ComposeAutosave {
   const { engine, fields, mailboxId, active } = opts;
   const sendInFlight = opts.sendInFlight ?? false;
@@ -403,6 +405,8 @@ export function useComposeAutosave(opts: {
   onForkedRef.current = opts.onForked;
   const onKeptAsNewRef = useRef(opts.onKeptAsNew);
   onKeptAsNewRef.current = opts.onKeptAsNew;
+  const onKeptSentRef = useRef(opts.onKeptSent);
+  onKeptSentRef.current = opts.onKeptSent;
   const activeRef = useRef(active);
   activeRef.current = active;
   /** The row version the form's words are based on — updates state it, so a moved row refuses them. */
@@ -498,6 +502,8 @@ export function useComposeAutosave(opts: {
   /** One of them the engine kept as a new draft the server has not made yet: taken when it does. */
   const keptPending = useRef<{ key: string; sig: string; hash: string; mailbox: string | null } | null>(null);
   const sendsPressed = useRef(0);
+  /** The binding the last Send was pressed under, until it is refused or withdrawn. */
+  const pressedAt = useRef<number | null>(null);
   /** Bindings a discard or a confirmed send ended: their creates are dropped when they land. */
   const ended = useRef(new Set<number>());
   /** The row the last confirmed send went from — never a copy to delete. */
@@ -539,6 +545,7 @@ export function useComposeAutosave(opts: {
   }, [engine, unclaim]);
   const sending = useCallback(() => {
     sendsPressed.current += 1;
+    pressedAt.current = epoch.current;
     // This message's creates only: one a replaced message left is still that message's words.
     for (const [key, c] of [...claims.current]) if (c.binding === epoch.current) takeBack(key, true);
   }, [takeBack]);
@@ -632,8 +639,17 @@ export function useComposeAutosave(opts: {
     abandonedAt.current = at;
     // Nothing new on screen: the buffer is the row's letter, and a reload must not make it a draft.
     if (form === at && why !== "changed") clearComposeDraft();
+    // Off screen, a letter sent elsewhere is not left in the composer: Compose would open it.
+    if (why === "sent" && !activeRef.current) {
+      void putAwayRef.current(rowId, at, null);
+      return;
+    }
     setElsewhereAt({ why, rowId, at, earlier: at === null, ...(why === "changed" ? { kept: kept !== undefined } : {}) });
   }, [release, keepUnsure]);
+  /** Late-bound: the write it needs is declared below. */
+  const putAwayRef = useRef<(rowId: string, at: string | null, from: ComposeFields | null) => Promise<void>>(async () => {});
+  /** The mount found a letter sent elsewhere off screen: its words go once a sending mailbox is known. */
+  const owedAway = useRef<{ rowId: string; from: ComposeFields } | null>(null);
 
   /**
    * The row this surface was holding when the tab died, adopted on mount. A reload restored the TEXT and
@@ -710,6 +726,11 @@ export function useComposeAutosave(opts: {
           writeComposeRow(null);
           saved.current = null;
           abandonedAt.current = null;
+          // Off screen they go to Drafts from the buffer (the form may not hold them yet).
+          if (!activeRef.current) {
+            openWrite.current = false;
+            owedAway.current = { rowId: held, from: buffer };
+          }
           setElsewhereAt({ why: "sent", rowId: held, at: null, earlier: true });
           return true;
         }
@@ -927,6 +948,9 @@ export function useComposeAutosave(opts: {
   draftIdRef.current = draftId;
   const sendInFlightRef = useRef(sendInFlight);
   sendInFlightRef.current = sendInFlight;
+  /** Whether the lane's send carries this composer's message: a create always, a row it names, or a press under this binding. */
+  const carried = (row: string | null): boolean => row === null || pressedAt.current === epoch.current
+    || sendNamesRow(engine, COMPOSE_SEND_KEY, row);
   /** The save on the wire, so a flush arriving mid-round-trip waits it out instead of deduping. */
   const inFlightP = useRef<Promise<void> | null>(null);
 
@@ -938,8 +962,8 @@ export function useComposeAutosave(opts: {
    * stated on screen for as long as they stand, so a close over one of them loses nothing
    * silently.
    */
-  const writeNow = useCallback(async (asNew = false, fork = false): Promise<ComposeFlush> => {
-    const f = fieldsRef.current;
+  const writeNow = useCallback(async (asNew = false, fork = false, from?: ComposeFields): Promise<ComposeFlush> => {
+    const f = from ?? fieldsRef.current;
     const row = asNew ? null : draftIdRef.current;
     // A substitute sender is written on a create only — see `keepRowMailbox`.
     const mailbox = row !== null && keepRowMailboxRef.current ? null : mailboxRef.current;
@@ -989,14 +1013,13 @@ export function useComposeAutosave(opts: {
      * arm is untouched — a row that exists is still this message's row, whatever the mirror can say about it.
      */
     if (row === null && readComposeRow() !== null && hold.kind === "unknown") return { kind: "nothing" };
-    /* ── AND A PRESS THAT BEAT THE FIRST SAVE IS NOT A REASON TO MAKE A ROW ────────────────
-       The press-before-first-autosave race, from the write side. The composer's timer is armed,
-       Send is pressed inside the two seconds, and the mutation goes out carrying NO row — so the
-       ADAPTER creates one and sends that. A create here would be a SECOND row for the same
-       message, which lands in Drafts looking like an ordinary draft: measured on the release
-       candidate as one message leaving two rows behind. The send's own row reaches this hook
-       through the settled mutation's `entityId`; nothing needs to be created for it here. */
-    if (row === null && sendInFlightRef.current && !fork) return { kind: "nothing" };
+    /* ── AND NOTHING IS WRITTEN WHILE THIS MESSAGE'S SEND IS ON ITS WAY ───────────────────────
+       The send carries the words pressed. A create here would be a SECOND row for the message (the
+       press beat the first save, so the adapter makes one), and a save of the row lands after the
+       send's answer: the hand-off's close and a send longer than the pause both wrote it, and the
+       sent row stayed in Drafts. The send's own row reaches this hook through its `entityId`.
+       Another draft opened while an earlier letter's send waits is not that message: its row saves. */
+    if (sendInFlightRef.current && !fork && carried(row)) return { kind: "nothing" };
     inFlight.current = true;
     const era = epoch.current;
     const sendsAt = sendsPressed.current;
@@ -1014,6 +1037,7 @@ export function useComposeAutosave(opts: {
     const mirrored = row !== null && engine.read().get("draft", row) != null;
     let gone = false;
     let changed = false;
+    let sentAlready = false;
     let outcome: ComposeFlush = { kind: "failed", reason: null };
     const run = (async () => {
       try {
@@ -1053,6 +1077,9 @@ export function useComposeAutosave(opts: {
           gone = mirrored && era === epoch.current
             && (result.error?.status === 404 || result.error?.code === "not_found");
           changed = row !== null && era === epoch.current && result.error?.code === "draft_changed";
+          // The row was already sent: the send carried the message, so there is nothing to refuse.
+          sentAlready = row !== null && era === epoch.current && result.error?.code === "draft_sent";
+          if (sentAlready) { outcome = { kind: "nothing" }; return; }
           if (!gone && era === epoch.current) setSaveRefused(true);
           outcome = { kind: "failed", reason: result.error?.message ?? null };
           return;
@@ -1143,6 +1170,12 @@ export function useComposeAutosave(opts: {
       letGo("deleted", row);
       return writeNow(true);
     }
+    // SENT ELSEWHERE: let go of the row, as its `sent` arriving by `/sync` does; never a new row here.
+    if (sentAlready && row !== null && draftIdRef.current === row
+      && !sendRecordNames(COMPOSE_SEND_KEY, row, composeSessionId())) {
+      letGo("sent", row);
+      return { kind: "nothing" };
+    }
     /* THE ROW MOVED ELSEWHERE SINCE THESE WORDS' VERSION: never overwritten, never merged. The
        other version stays the row's; what was typed here becomes a new draft. */
     if (changed && row !== null && draftIdRef.current === row) {
@@ -1163,8 +1196,49 @@ export function useComposeAutosave(opts: {
   const forkNowRef = useRef(forkNow);
   forkNowRef.current = forkNow;
 
+  /** The write's late-bound handle, for {@link putAwayRef}. */
+  const writeNowRef = useRef(writeNow);
+  writeNowRef.current = writeNow;
+  /** The words a save holds for this message: its row's (bound before the render shows it), or a create on its way. */
+  const keptNow = (sig: string): boolean => (saved.current === sig && readComposeRow() !== null)
+    || [...claims.current.values()].some((c) => c.binding === epoch.current && c.sig === sig);
+  /**
+   * A LETTER SENT ELSEWHERE, OFF SCREEN: the composer ends holding nothing, so Compose opens a blank
+   * letter. Nothing typed since (`at`, what the row held) is simply let go; words typed since, or not
+   * known to be the row's, are saved once as a new draft and said. A save refused leaves them here.
+   */
+  putAwayRef.current = async (rowId, at, from) => {
+    const f = from ?? fieldsRef.current;
+    const sig = signatureOf(f);
+    const emptied = (): void => {
+      clearComposeDraft();
+      setElsewhereAt(null);
+      onEmptiedRef.current?.();
+    };
+    if (sig === at || !worthSaving(f)) { emptied(); return; }
+    const era = epoch.current;
+    // A save already on the wire decides first: it may have kept the words, or its answer may be late.
+    const pending = inFlightP.current;
+    if (pending) await pending;
+    // A door gave the composer another message meanwhile: that one is not this rule's.
+    if (epoch.current !== era) return;
+    const wrote = keptNow(sig) ? "saved" : (await writeNowRef.current(true, false, f)).kind;
+    if (epoch.current !== era) return;
+    // Left here only when no save holds the words: a refusal or a failure, never a dedupe.
+    if (wrote !== "saved" && !keptNow(sig)) {
+      if (from !== null) openWrite.current = true;
+      setElsewhereAt({ why: "sent", rowId, at, earlier: at === null });
+      return;
+    }
+    release();
+    emptied();
+    onKeptSentRef.current?.();
+  };
+
   useEffect(() => {
     if (!active && !openWrite.current) return;
+    // The send carries the words pressed: nothing is armed while it is on its way.
+    if (sendInFlight && carried(draftId)) return;
     if (!worthSaving(fields)) return;
     const signature = signatureOf(fields);
     const mailboxMoved =
@@ -1197,6 +1271,30 @@ export function useComposeAutosave(opts: {
     if (!active) return;
     return () => { void writeNow(); };
   }, [active, writeNow]);
+  useEffect(() => {
+    const o = owedAway.current;
+    // Opened on screen first: the note shows, and the close below puts the letter away.
+    if (o === null || active) { owedAway.current = null; return; }
+    if (mailboxId === null) return;
+    owedAway.current = null;
+    void putAwayRef.current(o.rowId, null, o.from);
+  }, [active, mailboxId, elsewhereAt]);
+  /* A COMPOSER THAT SHOWED A LETTER SENT ELSEWHERE, CLOSED BY ANY EXIT: after the close's save it
+     ends holding nothing, as off screen it would have from the start. */
+  const elsewhereRef = useRef(elsewhereAt);
+  elsewhereRef.current = elsewhereAt;
+  useEffect(() => {
+    const e = elsewhereRef.current;
+    if (active || e === null || e.why !== "sent") return;
+    // Closed by its own Send (a new letter, handed off): the send's settle ends the composer.
+    if (pressedAt.current === epoch.current) return;
+    void (async () => {
+      const pending = inFlightP.current;
+      if (pending) await pending;
+      if (activeRef.current || elsewhereRef.current !== e) return;
+      await putAwayRef.current(e.rowId, e.at, null);
+    })();
+  }, [active]);
 
   /**
    * ANOTHER DEVICE ENDING THE ROW ENDS THIS EDITOR'S HOLD ON IT. A `sent` read by status (no record
@@ -1213,7 +1311,10 @@ export function useComposeAutosave(opts: {
     let seenLive = false;
     let absentAsOf: string | null | undefined;
     let asked = false;
+    // Let go of once: a notification before the release renders would release the next message.
+    let ended = false;
     const check = (): void => {
+      if (ended) return;
       const land = pendingLand.current;
       if (land !== null && land.row === draftId) {
         const r = engine.store?.get?.<EngineDraft>("draft", draftId);
@@ -1229,11 +1330,13 @@ export function useComposeAutosave(opts: {
         lane: COMPOSE_SEND_KEY, draftId, session: composeSessionId(),
       });
       if (hold.kind === "parked" && hold.by === "status" && hold.status === "sent") {
+        ended = true;
         letGo("sent", draftId);
         return;
       }
       if (hold.kind === "parked" || ownDiscards.has(draftId)) return;
       if (tombstoned(engine, draftId)) {
+        ended = true;
         letGo("deleted", draftId);
         return;
       }
@@ -1317,6 +1420,7 @@ export function useComposeAutosave(opts: {
 
   const notSent = useCallback(() => {
     // Refused or withdrawn: a create the press held is this message's again, as if no Send went.
+    if (pressedAt.current === epoch.current) pressedAt.current = null;
     for (const c of claims.current.values()) {
       if (c.binding !== epoch.current || !c.held) continue;
       c.held = false;

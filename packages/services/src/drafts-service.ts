@@ -492,9 +492,11 @@ export class DraftsService {
         }
         /* A SENT ROW TAKES ONLY ITS OWN WORDS BACK. A client replaying a confirmed send after a
            kill restates exactly what went, and refusing that would turn a delivered message into
-           a "not sent" on every older build; any other content is refused and nothing is written. */
+           a "not sent" on every older build; any other content is refused and nothing is written.
+           A save that states its version is a current editor's, never that replay: refused too. */
         if (row && row.status === "sent") {
-          if (draftContentRevision({ ...row, ...set } as typeof row) === draftContentRevision(row)) return null;
+          if (opts.ifContentRevision === undefined
+            && draftContentRevision({ ...row, ...set } as typeof row) === draftContentRevision(row)) return null;
           throw new ServiceError(
             "draft_sent", 409,
             "this message has already been sent; its words cannot be changed",

@@ -9027,6 +9027,14 @@ export class OhmailEngine {
         this.notify();
         return { id: p.id, key: p.key, status: "superseded", seq: null };
       }
+      /* A SAVE OF A ROW ALREADY SENT: the send carried the message, so the save ends silent — no
+         refusal record, and never kept as a new draft (only `draft_changed` keeps one). */
+      if (rejection.code === "draft_sent" && p.mutation.kind === "draft_save") {
+        await this.dropOutbox(p.id);
+        this.overlayRev++;
+        this.notify();
+        return { id: p.id, key: p.key, status: "rolled_back", seq: null, error: rejection };
+      }
       /* A WAITING EDIT REFUSED BECAUSE THE ROW MOVED ELSEWHERE: its editor was answered `queued` (or
          died with its session) and reads nothing now, so its words become a new draft, never dropped. */
       if (rejection.code === "draft_changed" && p.mutation.kind === "draft_save" && p.mutation.draftId !== null

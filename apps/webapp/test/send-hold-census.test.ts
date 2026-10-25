@@ -89,19 +89,21 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // press sends from it, whether that row is still free — a row since held is never sent from.
   // TEN: a promoted lane asks it of the row it would write its words into.
   // ELEVEN: the row a reply stored before a door bound its own create's row goes only while free.
-  ["shell-compose.ts", 11,
+  // TWELVE: Reply reads the row its lane last wrote: one sent from another device is ended there.
+  ["shell-compose.ts", 12,
     "openDraft (above the reply arm, so a held reply takes the held view), writeTo, the mailto "
     + "seam, the Drafts list's Delete, replySendState (the reply editor's own lane, row "
     + "included), the orphaned-lane promotion (a dead parent's reply becoming a row), the "
     + "composer's Discard (what it will do with its row), laneRowOf (the row a refused "
     + "reply left, before a press sends from it), accountReplyRow (the draft Reply opens), "
-    + "heldLaneRow (the row a promoted lane writes into rather than beside), and dropPriorRow (the "
-    + "older row a reply's send from its own create's row leaves)"],
+    + "heldLaneRow (the row a promoted lane writes into rather than beside), dropPriorRow (the "
+    + "older row a reply's send from its own create's row leaves), and openReply (the row its lane "
+    + "last wrote, sent from another device)"],
   ["AppShell.tsx", 1, "the render that feeds the compose's send state"],
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
-const CALL_SITES_TOTAL = 18;
+const CALL_SITES_TOTAL = 19;
 
 describe("the send hold is answered in one place, and every write site asks", () => {
   it("(a) the call-site count per file", () => {
@@ -155,6 +157,9 @@ describe("the send hold is answered in one place, and every write site asks", ()
       // `shell-compose.ts` with the verbs that read them (ARCH-022); the empty entry below keeps
       // `AppShell.tsx` asked, so a comparison written back into the shell frame still refuses.
       "shell-compose.ts": [
+        // Reads the HOLD's own answer, as the composer's sent-elsewhere read does: a `sent` by status
+        // is another device's send, and Reply ends the lane's row as a delete ends it.
+        'const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";',
         // WHICH ROW TO ASK ABOUT, not whether it is held. A message can carry an ordinary reply
         // draft AND a row a send left unconfirmed; handing the press the ordinary one would ask
         // the predicate a question it answers `free` and send beside the held row. The verdict is

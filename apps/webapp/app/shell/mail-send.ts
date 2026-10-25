@@ -453,6 +453,16 @@ export function standingSendKey(engine: OhmailEngine, lane: string): string | nu
   return null;
 }
 
+/** Whether a send of this lane still on its way (queued, on the wire or on disk) goes from this row. */
+export function sendNamesRow(engine: OhmailEngine, lane: string, row: string): boolean {
+  const names = (m: { kind?: string } | undefined): boolean => m?.kind === "mail_send"
+    && sendKeyOf(m as unknown as MailSend) === lane && (m as unknown as MailSend).draftId === row;
+  const wire = typeof engine.inFlightMutations === "function" ? engine.inFlightMutations() : [];
+  if ([...engine.pendingMutations(), ...wire].some((p) => names(p.mutation))) return true;
+  const disk = typeof engine.read === "function" ? engine.read().list(OUTBOX_TYPE) : [];
+  return (disk as ReadonlyArray<OutboxRow>).some((r) => pendingSendRow(r) && names(r.mutation));
+}
+
 /**
  * IS A SEND OF THIS LANE STILL IN THE **DURABLE** OUTBOX — the question the QUEUE cannot answer. {@link
  * sendPendingInOutbox} reads `engine.pendingMutations()`, which is the in-memory queue, and for a lone RESTORED send
