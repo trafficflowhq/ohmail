@@ -56,6 +56,7 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
   canCheck: true,
   canInstall: false,
   notStartedAt: null,
+  pressedAt: null,
   lastCheckedAt: START,
   lastResult: "upToDate",
   closing: false,
@@ -446,37 +447,46 @@ describe("the cadence, running", () => {
     stop();
   });
 
-  it("THE SHELL'S OWN DIALOG IS THE FIRST ASK — the strip does not double it", async () => {
+  it("THE FIRST SIGHT OF A READY PAYLOAD IS ASKED IN THIS WINDOW — then once a day", async () => {
+    /* The shell raises no dialog of its own in this build: a native one has no parent on Linux
+       and opens on whatever workspace is in front, not over ohmail. The window is the ask. */
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
+    let now = report();
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(currentUpdateOffer()).toBeNull();
+    now = ready;
+    s.tell(ready);
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(currentUpdateOffer()?.version).toBe(NEXT);
+
+    // Put away, and quiet for the rest of the day however many transitions arrive.
+    resetUpdateStoreForTests();
+    s.tell(ready);
+    clock.at += 6 * HOUR;
+    await vi.advanceTimersByTimeAsync(6 * HOUR);
+    expect(currentUpdateOffer()).toBeNull();
+
+    // A day later the payload is still waiting: asked again, once.
+    clock.at += UPDATE_PERIOD_MS;
+    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
+    expect(currentUpdateOffer()?.version).toBe(NEXT);
+    stop();
+  });
+
+  it("A WINDOW THAT OPENS ON A PAYLOAD ALREADY WAITING ASKS AT ONCE, not a quarter hour on", async () => {
     vi.useFakeTimers();
     const clock = { at: START };
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
     const s = shell(() => ready);
     const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
-
-    // The native dialog is raised the moment the payload becomes ready, so a strip beside it
-    // would be the same question asked twice in one second.
     await vi.advanceTimersByTimeAsync(0);
-    s.tell(ready);
-    expect(currentUpdateOffer()).toBeNull();
-
-    // …and it stays quiet for the rest of the day, however many transitions arrive.
-    clock.at += 6 * HOUR;
-    await vi.advanceTimersByTimeAsync(6 * HOUR);
-    expect(currentUpdateOffer()).toBeNull();
-
-    // A day later the payload is still sitting there unmentioned, which is the gap "Later"
-    // leaves on a window nobody closes. This is where it is raised again — once.
-    clock.at += UPDATE_PERIOD_MS;
-    await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    const offer = currentUpdateOffer();
-    expect(offer?.kind).toBe("restart");
-    expect(offer?.version).toBe(NEXT);
-
-    // Put away, and not raised again today.
-    resetUpdateStoreForTests();
-    clock.at += 6 * HOUR;
-    await vi.advanceTimersByTimeAsync(6 * HOUR);
-    expect(currentUpdateOffer()).toBeNull();
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+    expect(s.polls, "reading the state is not a check").toEqual([]);
     stop();
   });
 
@@ -489,10 +499,9 @@ describe("the cadence, running", () => {
     const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
     await vi.advanceTimersByTimeAsync(0);
 
-    // The shell's dialog is the release's first ask, so the strip says nothing beside it.
     s.tell(ready);
-    expect(currentUpdateOffer()).toBeNull();
-    // The dialog's press, and an installer that did not start: the answer to it is due now.
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+    // The strip's press, and an installer that did not start: the answer to it is due now.
     clock.at += 5_000;
     now = { ...ready, notStartedAt: clock.at };
     s.tell(now);
@@ -513,12 +522,62 @@ describe("the cadence, running", () => {
     stop();
   });
 
+  it("A READY THAT ANSWERS A PRESS IS ASKED AT ONCE — after a refused install, and after Later", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, lastResult: "offered" });
+    let now = report();
+    const s = shell(() => now);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: true });
+    await vi.advanceTimersByTimeAsync(0);
+    s.tell(ready);
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+
+    // Restart is refused; the failure dialog's Try again checks, fetches and is ready again.
+    resetUpdateStoreForTests();
+    clock.at += 60_000;
+    s.tell(report({ state: "failed", lastResult: "offered" }));
+    const press = clock.at;
+    s.tell(report({ state: "checking", canCheck: false, pressedAt: press }));
+    s.tell(report({ state: "downloading", offered: NEXT, canCheck: false, pressedAt: press }));
+    now = { ...ready, pressedAt: press };
+    s.tell(now);
+    expect(currentUpdateOffer()?.kind, "the retry somebody pressed ended in silence").toBe("restart");
+    expect(currentUpdateOffer()?.version).toBe(NEXT);
+
+    // Later: that press's ready is not said again.
+    resetUpdateStoreForTests();
+    s.tell(now);
+    expect(currentUpdateOffer()).toBeNull();
+    stop();
+  });
+
+  it("…and a menu check the same day as a Later is asked, while a scheduled one stays quiet", async () => {
+    vi.useFakeTimers();
+    const clock = { at: START };
+    const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true, lastResult: "offered" });
+    const s = shell(() => null);
+    const stop = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
+    await vi.advanceTimersByTimeAsync(0);
+    s.tell(ready);
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+    resetUpdateStoreForTests();
+
+    // A cycle nobody pressed for, the same day: the daily rule holds.
+    clock.at += HOUR;
+    s.tell(ready);
+    expect(currentUpdateOffer()).toBeNull();
+
+    // A press of Check for Updates that ends ready: asked now.
+    clock.at += HOUR;
+    s.tell({ ...ready, pressedAt: clock.at });
+    expect(currentUpdateOffer()?.kind).toBe("restart");
+    stop();
+  });
+
   it("ONCE A DAY SURVIVES QUITTING THE APP — a relaunch is not a fresh licence to ask", async () => {
-    // The shell's own "Later" is spent for the RUN: quit and reopen, and the payload is found
-    // and the dialog is raised again. That is the shell's business and it is correct for a
-    // dialog somebody asked to see. What must not happen is the strip joining in — somebody who
-    // restarts the app four times in an afternoon would then meet the same sentence four times.
-    // The memory is on the device, so it outlives the process.
+    // Somebody who restarts the app four times in an afternoon must not meet the same sentence
+    // four times. The memory is on the device, so it outlives the process.
     vi.useFakeTimers();
     const clock = { at: START };
     const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
@@ -526,13 +585,14 @@ describe("the cadence, running", () => {
 
     const first = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    expect(currentUpdateOffer()).toBeNull();
+    expect(currentUpdateOffer()?.version, "the first run asks").toBe(NEXT);
     first();
+    resetUpdateStoreForTests();
 
     clock.at += 6 * HOUR;
     const second = startUpdateCadence({ ...s.options, now: () => clock.at, linux: false });
     await vi.advanceTimersByTimeAsync(POLL_EVERY_MS);
-    expect(currentUpdateOffer(), "same day, second run — still nothing to add").toBeNull();
+    expect(currentUpdateOffer(), "same day, second run — nothing to add").toBeNull();
     second();
 
     clock.at += 19 * HOUR;

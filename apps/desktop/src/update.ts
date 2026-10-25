@@ -135,6 +135,8 @@ export interface UpdateReport {
    * the next press fetches it again and retries. Null otherwise, and from a shell that does not say.
    */
   notStartedAt: number | null;
+  /** Unix milliseconds of the press that started this cycle; null for a scheduled one. */
+  pressedAt: number | null;
   /** Unix milliseconds, or null when no check has finished in this run. */
   lastCheckedAt: number | null;
   lastResult: UpdateResult;
@@ -196,6 +198,8 @@ export function reportOfPayload(payload: unknown): UpdateReport | null {
       typeof raw.notStartedAt === "number" && Number.isFinite(raw.notStartedAt)
         ? raw.notStartedAt
         : null,
+    pressedAt:
+      typeof raw.pressedAt === "number" && Number.isFinite(raw.pressedAt) ? raw.pressedAt : null,
     lastCheckedAt:
       typeof raw.lastCheckedAt === "number" && Number.isFinite(raw.lastCheckedAt)
         ? raw.lastCheckedAt

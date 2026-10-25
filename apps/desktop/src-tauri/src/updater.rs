@@ -46,10 +46,12 @@
 //!      hands back bytes. A check the user asked for also opens the small progress
 //!      window (`src/updater-window.ts`) so the wait is visible; a check nobody
 //!      asked for stays silent, and the menu item is the only sign of it.
-//!   3. When the payload is verified and waiting, ONE dialog asks whether to
-//!      restart and install it. "Later" is remembered for the rest of the run —
-//!      it is never asked twice — and the menu item becomes "Restart to Install",
-//!      which is the only thing that ever installs anything.
+//!   3. When the payload is verified and waiting, ONE ask: whether to restart and
+//!      install it. In the engine build ohmail's own window asks (the strip,
+//!      `src/update-cadence.ts`), because a native dialog has no parent on Linux
+//!      and opens on whatever workspace is in front; the preview asks natively.
+//!      "Later" leaves the payload ready, and the menu item becomes "Restart to
+//!      Install", which is the only thing that ever installs anything.
 //!
 //! The restart happens on that press and on nothing else. There is no second
 //! prompt, no dialog stacked on a dialog, and no path where the app relaunches
@@ -78,10 +80,9 @@
 //! a scheduled press would have shown a modal over somebody's mail every twenty-four
 //! hours on an install that was already current.
 //!
-//! The re-ask the window raises is a quiet strip, never a dialog, and it treats the
-//! FIRST sight of a ready payload as this file's dialog already asking. So the count
-//! above still holds: one dialog per release, from here, and the strip is what
-//! carries it a day later. A failing install is bounded on the window's side too —
+//! The window's ask is a quiet strip, never a dialog: at the first sight of a ready
+//! payload, then at most once a day, and at once for a ready a press produced
+//! (`pressedAt`). A failing install is bounded on the window's side too —
 //! one scheduled check after a refusal, then it stops — so an install that cannot
 //! succeed does not turn the one dialog into a daily one.
 //!
@@ -211,6 +212,8 @@ pub enum Signal {
     InstallerDidNotStart { at_unix_ms: u64 },
     /// That press's fetch began.
     Refetching,
+    /// The check that just started answers a person's press, not a schedule.
+    Pressed { at_unix_ms: u64 },
 }
 
 /// What picking the menu item does, in this stage.
@@ -650,6 +653,9 @@ pub struct Flow {
     /// When the last installer did not start, while that release is still on offer: what the
     /// window's sentence and its strip are keyed on.
     not_started_at: Option<u64>,
+    /// When the press that started this cycle was made; none for a cycle nobody pressed for. The
+    /// window asks about that cycle's ready at once, keyed by this instant.
+    pressed_at: Option<u64>,
 }
 
 impl Flow {
@@ -666,12 +672,24 @@ impl Flow {
         self.not_started_at
     }
 
+    /// When the press that started this cycle was made.
+    pub fn pressed_at(&self) -> Option<u64> {
+        self.pressed_at
+    }
+
     /// Fold one signal in. Signals that do not belong to the current stage are ignored rather than
     /// asserted on: they arrive from spawned work, and a task finishing after the flow has moved on
     /// must not be able to drag it backwards.
     pub fn apply(&mut self, signal: Signal) {
         self.stage = match (&self.stage, &signal) {
-            (Stage::Idle | Stage::Failed, Signal::CheckStarted) => Stage::Checking,
+            (Stage::Idle | Stage::Failed, Signal::CheckStarted) => {
+                self.pressed_at = None;
+                Stage::Checking
+            }
+            (Stage::Checking, Signal::Pressed { at_unix_ms }) => {
+                self.pressed_at = Some(*at_unix_ms);
+                Stage::Checking
+            }
             (Stage::Checking, Signal::NothingOffered) => Stage::Idle,
             (Stage::Checking, Signal::Offered(version)) => Stage::Downloading(version.clone()),
             (Stage::Downloading(version), Signal::Downloaded) => Stage::Ready(version.clone()),
@@ -931,6 +949,8 @@ pub fn report(
         "canInstall": flow.press() == Press::Restart && kind.self_applies(),
         // Unix milliseconds of an installer that did not start, while its release is on offer.
         "notStartedAt": flow.not_started_at(),
+        // Unix milliseconds of the press that started this cycle; null for a scheduled one.
+        "pressedAt": flow.pressed_at(),
         "lastCheckedAt": last.map(|c| c.at_unix_ms),
         "lastResult": last.map(|c| c.result.as_str()).unwrap_or("never"),
     })
@@ -1266,6 +1286,9 @@ fn check<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
             return;
         }
         flow.apply(Signal::CheckStarted);
+        if user_initiated {
+            flow.apply(Signal::Pressed { at_unix_ms: now_unix_ms() });
+        }
     }
     relabel(&app);
     log_check(&feed_endpoints(&app), env!("CARGO_PKG_VERSION"));
@@ -1376,12 +1399,22 @@ async fn run<R: Runtime>(app: AppHandle<R>, user_initiated: bool) {
     prompt_ready(&app, &version);
 }
 
+/// Is a ready payload asked about in a native dialog? Only in the preview, whose window holds no
+/// update command. The engine build's window asks in place (`src/update-cadence.ts`, the strip):
+/// a native dialog has no parent on Linux, so it opens on whatever workspace is in front.
+pub fn asks_natively() -> bool {
+    !cfg!(feature = "local-engine")
+}
+
 /// The ONE dialog in the whole flow, asked once, at the point it is worth asking.
 ///
 /// Non-blocking (`show`, not `blocking_show`): the app stays usable behind it, and the answer
 /// arrives on a callback rather than by parking a thread. "Later" spends the question and nothing
 /// else — the payload stays ready and the menu item says so — so the app can never ask twice.
 fn prompt_ready<R: Runtime>(app: &AppHandle<R>, version: &str) {
+    if !asks_natively() {
+        return;
+    }
     {
         let state = app.state::<Updater<R>>();
         if !lock(&state.flow).should_prompt() {

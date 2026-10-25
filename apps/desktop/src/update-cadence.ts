@@ -15,9 +15,10 @@
  * days. Nothing counts firings: a short interval wakes, asks the shell when its last check
  * finished (a wall-clock instant it already keeps) and compares two instants; the arithmetic
  * is `periodElapsed` in the shared `app-update.ts`, backwards-clock guard included. It ASKS
- * rather than installs: a found release is verified and asked about once, natively; "Later"
- * leaves the payload ready, and this re-raises it ONCE A DAY as the quiet strip
- * (`app/shell/UpdateNotice.tsx`) — never at first sight, when the shell's dialog is on screen.
+ * rather than installs: a found release is verified, then asked about HERE, in ohmail's own window,
+ * as the strip (`app/shell/UpdateNotice.tsx`) — a native dialog has no parent on Linux and opens on
+ * whatever workspace is in front. "Later" leaves the payload ready; the strip asks ONCE A DAY, and
+ * at once again when a press (Check for Updates, Try again) ends ready.
  */
 import {
   announceUpdate,
@@ -177,7 +178,7 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * feed and a download that died both write `failed` as the last check's result, so reading
    * it as recovery hands a package-managed copy on flaky wifi a fresh install dialog every
    * couple of days, for ever. The recovery is the one retry's own cycle: it ends in `ready`,
-   * the shell raises its dialog, and somebody who freed the disk presses Restart. Settings →
+   * the strip asks, and somebody who freed the disk presses Restart. Settings →
    * Check now still reaches the feed and still offers the install, unaffected by the latch —
    * and it does not clear it either, because its cycle ends in `ready` and not in `idle`.
    */
@@ -223,19 +224,13 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
       announceUpdate(null);
       return;
     }
-    /* A START THAT FAILED IS KEYED BY ITS INSTANT, so each one is said once, at once, and Later
-       puts that one away; the next failure is a new answer to a new press. */
-    const key = offer.kind === "retry" ? `${offerKey(offer)}@${report.notStartedAt}` : offerKey(offer);
+    /* A START THAT FAILED, AND A READY THAT ANSWERS A PRESS, ARE KEYED BY THEIR INSTANT, so each is
+       said once, at once, and Later puts that one away; the next press is a new question. A ready
+       nobody pressed for keeps the once-a-day key. */
+    const at = offer.kind === "retry" ? report.notStartedAt : offer.kind === "restart" ? report.pressedAt : null;
+    const key = typeof at === "number" ? `${offerKey(offer)}@${at}` : offerKey(offer);
     const memory = readAskMemory();
-    /* THE SHELL'S OWN DIALOG IS THIS RELEASE'S FIRST ASK. It is raised the moment a payload
-       becomes ready, so the first time this sees `ready` for a version, somebody is being asked
-       already — and a strip beside that dialog would be the same question twice. Recorded and
-       not spoken; a day later the entry has aged out and the strip is what asks. */
-    const first = offer.kind === "restart" && report.state === "ready" && memory[key] === undefined;
-    if (first || !askDue(memory, key, now())) {
-      if (first) writeAskMemory(rememberAsk(memory, key, now()));
-      return;
-    }
+    if (!askDue(memory, key, now())) return;
     writeAskMemory(rememberAsk(memory, key, now()));
     announceUpdate(offer);
   };
@@ -250,7 +245,7 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     /* ── ONE RETRY AFTER A REFUSED INSTALL, THEN THIS WINDOW STOPS ASKING ──────────────────
        A refused install leaves the flow where a check would start, and the release is still
        newer — unbounded, the day sends this window round the loop for ever: fetch, verify,
-       raise the shell's "ready to install" dialog, fail, repeat tomorrow; a modal over
+       ask "ready to install", fail, repeat tomorrow; a modal over
        somebody's mail once a day for the life of the install. ONE more attempt, and NOT
        platform-gated even though the strip's sentence is: the same state is reachable from a
        full disk or a read-only mount and can be repaired while the app is open. One retry
@@ -291,15 +286,18 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
      one interval away rather than immediate. What IS immediate is the listen: a payload that
      becomes ready while this window is open has to reach `say` when it happens, not at the next
      quarter-hour. */
+  const observe = (report: UpdateReport | null): void => {
+    if (stopped || report === null) return;
+    note(report);
+    say(report);
+  };
   void (async () => {
-    const off = await listen((report) => {
-      if (stopped) return;
-      note(report);
-      say(report);
-    });
+    const off = await listen(observe);
     if (stopped) off();
     else release = off;
   })();
+  // A payload already waiting when this window opens (a reload, a late window) is asked about now.
+  read().then(observe, () => {});
 
   return () => {
     stopped = true;

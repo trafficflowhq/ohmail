@@ -718,6 +718,10 @@ describe("what the window will accept from a shell that may be a version ahead",
     for (const junk of [null, "now", Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
       expect(reportOfPayload({ ...good, notStartedAt: junk })!.notStartedAt).toBeNull();
     }
+    expect(reportOfPayload({ ...good, pressedAt: CHECKED_AT })!.pressedAt).toBe(CHECKED_AT);
+    for (const junk of [null, "now", Number.NaN, undefined]) {
+      expect(reportOfPayload({ ...good, pressedAt: junk })!.pressedAt).toBeNull();
+    }
   });
 });
 

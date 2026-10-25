@@ -766,6 +766,13 @@ fn the_dialog_is_asked_once_and_later_is_remembered_for_the_run() {
 }
 
 #[test]
+fn the_ready_payload_is_asked_in_ohmails_window_where_the_window_can_ask() {
+    // The engine build's window carries the ask (`src/update-cadence.ts`): a native dialog has no
+    // parent on Linux and opens on whatever workspace is in front. The preview's window cannot ask.
+    assert_eq!(super::asks_natively(), !cfg!(feature = "local-engine"));
+}
+
+#[test]
 fn a_check_cannot_start_while_one_is_running_or_while_a_payload_waits() {
     // `check` refuses on `may_start_check`, so this is the guard against a second feed request and
     // against replacing a verified download with an identical one.
@@ -2657,6 +2664,27 @@ fn an_installer_that_did_not_start_leaves_the_release_on_offer_and_the_report_sa
     flow.apply(Signal::Failed);
     flow.apply(Signal::CheckStarted);
     assert_eq!(flow.not_started_at(), None, "a new cycle carried the last release's sentence");
+}
+
+/// A CYCLE A PERSON PRESSED FOR CARRIES THE PRESS: the window asks about its ready at once, keyed by
+/// that instant, while a cycle nobody pressed for keeps the once-a-day ask.
+#[test]
+fn a_pressed_check_carries_its_instant_through_ready_and_a_scheduled_one_does_not() {
+    let at = 1_700_000_000_000u64;
+    let kind = InstallKind::AppImage;
+    let mut flow = Flow::default();
+    flow.apply(Signal::Pressed { at_unix_ms: at });
+    assert_eq!(flow.pressed_at(), None, "a press outside a starting check was kept");
+
+    flow.apply(Signal::CheckStarted);
+    flow.apply(Signal::Pressed { at_unix_ms: at });
+    flow.apply(Signal::Offered("0.9.2".into()));
+    flow.apply(Signal::Downloaded);
+    assert_eq!(report(&flow, None, "0.9.1", kind)["pressedAt"], serde_json::json!(at));
+
+    flow.apply(Signal::Failed);
+    flow.apply(Signal::CheckStarted);
+    assert_eq!(report(&flow, None, "0.9.1", kind)["pressedAt"], serde_json::Value::Null, "a scheduled cycle carried the last press");
 }
 
 /// THE PLUGIN'S OWN SIGNED-VERSION CHECK SEES NO VERSION IN OUR SIGNATURES, AND STAYS OFF. 2.12.0
