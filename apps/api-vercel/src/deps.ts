@@ -818,6 +818,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
       ? { refundObligations: refundObligationsOn(db as unknown as Tx) }
       : {}),
     cronSecret: cfg.cronSecret,
+    connectReminder: cfg.connectReminder,
+    connectReminderSince: cfg.connectReminderSince,
     alerts: cfg.alerts
       ? {
         secret: cfg.alerts.secret,

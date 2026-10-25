@@ -5,7 +5,7 @@ import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
 import { isLoopbackHostname } from "../auth/origins.js";
 import { normalizeRecipient, type MailerPort, type MailSendResult } from "./port.js";
-import { mailLocaleOf, type MailLocale, type WaitlistTier } from "./templates.js";
+import { mailLocaleOf, providerClassOf, type MailLocale, type WaitlistTier } from "./templates.js";
 
 /**
  * The narrow context the mail path needs: a DB handle and a clock.
@@ -533,6 +533,26 @@ export class MailService {
         supportEmail: this.cfg.supportEmail,
       }, {
         idempotencyKey: `lifecycle:${hashToken(`${to}|${input.kind}|${input.anchor.toISOString()}`)}`,
+      }));
+  }
+
+  /**
+   * The connect reminder (cloud 0053), once per trial that connected no mailbox. The DEDUP is the
+   * caller's (`account_lifecycle_notices`, anchored on the trial's start); the key here is the backstop
+   * for a re-driven send, on the same fact. The advice follows the recipient's own domain, and the
+   * data carries its class, never the address. `transactional`: the recipient is the account's user.
+   */
+  async sendConnectReminder(
+    ctx: MailContext, input: { to: string; locale: MailLocale; anchor: Date },
+  ): Promise<MailSendResult> {
+    return this.guarded(ctx, input.to, "transactional", (to) =>
+      this.deps.mailer.send(to, "connect_reminder", {
+        locale: input.locale,
+        provider: providerClassOf(to),
+        setupUrl: `${trimSlash(this.cfg.appUrl)}/login?next=join`,
+        supportEmail: this.cfg.supportEmail,
+      }, {
+        idempotencyKey: `connect:${hashToken(`${to}|${input.anchor.toISOString()}`)}`,
       }));
   }
 

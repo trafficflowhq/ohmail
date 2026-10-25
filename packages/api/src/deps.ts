@@ -301,6 +301,11 @@ export interface ApiServices {
       ctx: { db: unknown; now: () => Date },
       input: { to: string; locale: "en" | "de"; anchor: Date },
     ): Promise<{ status: "sent" | "skipped" | "failed"; reason?: string }>;
+    /** The lifecycle pass's connect reminder (cloud 0053). Optional: without it the reminder is unmailable. */
+    sendConnectReminder?(
+      ctx: { db: unknown; now: () => Date },
+      input: { to: string; locale: "en" | "de"; anchor: Date },
+    ): Promise<{ status: "sent" | "skipped" | "failed" }>;
   };
   /**
    * This host's platform ceiling on total attachment bytes in one send — or `null` for a host
@@ -778,6 +783,16 @@ export interface ApiDeps {
    * whatever gate it has of its own, and answers 404 only when it has none at all.
    */
   cronSecret?: string | null;
+  /**
+   * The lifecycle pass's connect reminder switch (`TF_CONNECT_REMINDER` on the managed host): `send`
+   * claims and sends; absent or `log` names what would be sent and writes nothing.
+   */
+  connectReminder?: "log" | "send";
+  /**
+   * `TF_CONNECT_REMINDER_SINCE` as written: `send` reminds only trials begun at or after this instant,
+   * and nobody when it is absent or not an ISO instant (the pass judges it).
+   */
+  connectReminderSince?: string | null;
   /**
    * On a `credentialSubject` route, the account the presented CREDENTIAL resolved to — set through
    * `ServiceContext.noteCredentialAccount` by the seam that minted or rotated the session, and

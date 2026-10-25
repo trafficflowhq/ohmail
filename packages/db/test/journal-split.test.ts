@@ -3216,6 +3216,12 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "d8835ee70cd2f2b8",   // ALTER TABLE account_lifecycle_notices ADD COLUMN IF NOT EXISTS delivered_at timestamptz
     "152cde655fd14dda",   // UPDATE … SET delivered_at = sent_at WHERE delivered_at IS NULL AND kind IN (the pass's three)
   ],
+  // CLOUD 0053 — the connect reminder joins the notice kinds: 0050's drop-then-add NOT VALID shape with a
+  // sixth word. The DROP is 0050's statement verbatim, so its hash is the one listed there. No DML.
+  "0053_connect_reminder_notices": [
+    "fadf3cda18b3d0cd",   // ALTER TABLE account_lifecycle_notices DROP CONSTRAINT IF EXISTS …_kind_closed
+    "24a379adaeee4617",   // ADD CONSTRAINT account_lifecycle_notices_kind_closed … 'connect_reminder' … NOT VALID
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -4134,7 +4140,8 @@ describe("the two journals are well-formed", () => {
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
   // cloud 37 → 38 for `0052_lifecycle_notice_delivered`: its `when` (1792886819380) is strictly above 0051's.
-  it.each([["mail", MAIL_DIR, 167], ["cloud", CLOUD_DIR, 38]] as const)(
+  // cloud 38 → 39 for `0053_connect_reminder_notices`: its `when` (1792901976213) is strictly above 0052's.
+  it.each([["mail", MAIL_DIR, 167], ["cloud", CLOUD_DIR, 39]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);

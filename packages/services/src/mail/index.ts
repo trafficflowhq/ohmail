@@ -17,7 +17,7 @@ export {
   type RenderedEmail, type TemplateName, type TemplateDataMap, type WaitlistTier,
   type WaitlistConfirmationData, type InviteData,
   type NewDeviceSignInData, type SecurityNoticeData, type EmailVerificationData, type OperatorAlertData,
-  type OperatorDigestData,
+  type OperatorDigestData, providerClassOf, type ConnectProvider, type ConnectReminderData,
 } from "./templates.js";
 export { mailAlertSink, dbFreeMailAlertSink } from "./alert-sink.js";
 export {

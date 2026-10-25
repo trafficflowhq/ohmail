@@ -320,6 +320,54 @@ describe("access — the lifecycle block (wire contract v1 + the wall, 2026-09-2
   });
 });
 
+describe("access — the trial object (2026-10-25), read field by field and never a refusal", () => {
+  /* The connect reminder's two facts ride beside the block. A malformed one must never take the
+     body's fault path (last verdict, else allow): it is absent, and the verdict reads as without it. */
+  const trialing = (): Record<string, unknown> => wire("access-200-trialing") as Record<string, unknown>;
+  const withTrial = (trial: unknown): Record<string, unknown> => ({ ...trialing(), trial });
+  const withoutTrial = (): Record<string, unknown> => {
+    const { trial: _drop, ...body } = trialing();
+    return body;
+  };
+
+  it("a trialing answer carries when the trial began and whether it is set to cancel", async () => {
+    const c = client([{ status: 200, body: trialing() }]);
+    const v = await c.port.access(ACC);
+    expect(v.trial).toEqual({ startedAt: "2026-09-01T00:00:00.000Z", cancelScheduled: false });
+    expect(v.lifecycle?.state).toBe("trialing");
+    expect(c.faults).toEqual([]);
+  });
+
+  it("an absent, null or wrong-type object or field leaves the verdict byte-identical and names no drift", async () => {
+    const plain = client([{ status: 200, body: withoutTrial() }]);
+    const base = JSON.stringify(await plain.port.access(ACC));
+    expect("trial" in JSON.parse(base)).toBe(false);
+    for (const trial of [
+      null, "trialing", 7, true, [], {}, { startedAt: null, cancelScheduled: null },
+      { startedAt: 1790000000000, cancelScheduled: "no" }, { startedAt: "soon", cancelScheduled: 0 },
+    ]) {
+      const c = client([{ status: 200, body: withTrial(trial) }]);
+      expect(JSON.stringify(await c.port.access(ACC)), JSON.stringify(trial)).toBe(base);
+      expect(c.faults, JSON.stringify(trial)).toEqual([]);
+    }
+  });
+
+  it("a readable field is kept on its own, and the other one is absent rather than guessed", async () => {
+    const started = client([{ status: 200, body: withTrial({ startedAt: "2026-09-01T00:00:00.000Z", cancelScheduled: "no" }) }]);
+    expect((await started.port.access(ACC)).trial).toEqual({ startedAt: "2026-09-01T00:00:00.000Z" });
+    const cancelling = client([{ status: 200, body: withTrial({ startedAt: null, cancelScheduled: true }) }]);
+    expect((await cancelling.port.access(ACC)).trial).toEqual({ cancelScheduled: true });
+  });
+
+  it("a body the lifecycle refuses is refused as before, whatever the trial object says", async () => {
+    const body = trialing() as Record<string, unknown> & { lifecycle: Record<string, unknown> };
+    body.lifecycle.state = "parked";
+    const c = client([{ status: 200, body }]);
+    await expect(c.port.access(ACC)).resolves.toEqual(UNMETERED_ACCESS);
+    expect(c.faults.map((f) => f.field)).toEqual(["lifecycle.state"]);
+  });
+});
+
 describe("A 200 NOBODY CAN PARSE IS A FAULT, REPORTED BY NAME — never a silent allow", () => {
   /* The drift the two sides can grow: a renamed field, a proxy rewriting a body. Reading it as
    * "no verdict, therefore fine" is metering that has stopped applying with nothing in any log. */

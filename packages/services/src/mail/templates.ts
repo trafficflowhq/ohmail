@@ -868,6 +868,107 @@ function billingLink(d: BillingLinkData): RenderedEmail {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Template 9 — the connect reminder, once per trial that has connected no mailbox.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which connecting advice the reminder gives. */
+export type ConnectProvider = "gmail" | "microsoft" | "other";
+
+const GMAIL_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
+/** Microsoft's personal-account domains: outlook.*, hotmail.*, live.* and msn.com. */
+const MICROSOFT_DOMAIN_RE = /^(?:(?:outlook|hotmail|live)\.(?:[a-z]{2,3}|co\.[a-z]{2}|com\.[a-z]{2})|msn\.com)$/;
+
+/**
+ * The advice class of the address an account signed up with, from its domain alone: the address
+ * itself never reaches the template. A Microsoft 365 or Workspace mailbox on an own domain reads as
+ * `other`, which names the Microsoft 365 sign-in too.
+ */
+export function providerClassOf(address: string): ConnectProvider {
+  const at = address.trim().toLowerCase().lastIndexOf("@");
+  const domain = at < 0 ? "" : address.trim().toLowerCase().slice(at + 1);
+  if (GMAIL_DOMAINS.has(domain)) return "gmail";
+  return MICROSOFT_DOMAIN_RE.test(domain) ? "microsoft" : "other";
+}
+
+/**
+ * Sent by the lifecycle pass, once per trial (`account_lifecycle_notices`, kind `connect_reminder`),
+ * to a trial a day old with no mailbox. The data is a language, a closed advice class, the sign-in
+ * door to the signup wizard's mailbox step and the support address: no recipient, no mailbox address,
+ * host or server, and no tracking. A service mail like the lifecycle notices, so no List-Unsubscribe;
+ * replies reach a person.
+ */
+export interface ConnectReminderData {
+  /** The account's own (`account_settings.locale`), English when unset. */
+  locale: MailLocale;
+  provider: ConnectProvider;
+  /** `<app>/login?next=join` — built from config by `MailService`, never by a caller. */
+  setupUrl: string;
+  supportEmail: string;
+}
+
+/**
+ * Microsoft personal accounts (Outlook.com, Hotmail) are asked to reply until their sign-in is proven;
+ * Microsoft 365 work or school mail connects by signing in with Microsoft in Settings → Mailboxes.
+ */
+const CONNECT_COPY: Record<MailLocale, {
+  subject: string; action: string; intro: string; advice: Record<ConnectProvider, string>; how: string; once: string;
+}> = {
+  en: {
+    subject: "Connect your mailbox to ohmail",
+    action: "Connect your mailbox",
+    intro: "You started an ohmail trial, but no mailbox is connected yet, so ohmail has no mail to organize for you.",
+    advice: {
+      gmail: "Gmail signs in with an app password, not your Google password: turn on 2-Step Verification, " +
+        "then create an app password with any name and paste its 16 letters in the mailbox step.",
+      microsoft: "For an Outlook.com or Hotmail address, reply to this mail and a person helps you connect it. " +
+        "If your mail is in a Microsoft 365 work or school account, connect it in Settings → Mailboxes with " +
+        "Connect Outlook: you sign in with Microsoft and need no app password.",
+      other: "Most providers ask for an app password rather than your usual password, and the mailbox step " +
+        "says where to make one. If your mail is in a Microsoft 365 work or school account, connect it in " +
+        "Settings → Mailboxes with Connect Outlook instead: you sign in with Microsoft and need no app password.",
+    },
+    how: "The button below opens the mailbox step, through sign-in if needed. Connecting takes a few minutes.",
+    once: "We send this reminder once. Questions, or stuck? Reply to this mail and a person answers.",
+  },
+  de: {
+    subject: "Verbinde dein Postfach mit ohmail",
+    action: "Postfach verbinden",
+    intro: "Du hast eine ohmail-Testphase gestartet, aber noch kein Postfach verbunden. ohmail hat also noch keine Mail, die es für dich organisieren kann.",
+    advice: {
+      gmail: "Gmail meldet sich mit einem App-Passwort an, nicht mit deinem Google-Passwort: Schalte zuerst die " +
+        "Bestätigung in zwei Schritten ein, erstell dann ein App-Passwort mit einem beliebigen Namen und füg " +
+        "seine 16 Buchstaben im Postfach-Schritt ein.",
+      microsoft: "Für eine Outlook.com- oder Hotmail-Adresse antworte auf diese Mail, ein Mensch hilft dir beim " +
+        "Verbinden. Liegt deine Mail in einem Microsoft-365-Postfach deiner Arbeit oder Schule, verbinde sie " +
+        "unter Einstellungen → Postfächer mit „Outlook verbinden“: Du meldest dich bei Microsoft an und " +
+        "brauchst kein App-Passwort.",
+      other: "Die meisten Anbieter verlangen ein App-Passwort statt deines üblichen Passworts, und der " +
+        "Postfach-Schritt sagt dir, wo du es anlegst. Liegt deine Mail in einem Microsoft-365-Postfach deiner " +
+        "Arbeit oder Schule, verbinde sie stattdessen unter Einstellungen → Postfächer mit „Outlook verbinden“: " +
+        "Du meldest dich bei Microsoft an und brauchst kein App-Passwort.",
+    },
+    how: "Der Button unten öffnet den Postfach-Schritt, falls nötig über die Anmeldung. Das Verbinden dauert ein paar Minuten.",
+    once: "Wir schicken diese Erinnerung nur einmal. Fragen, oder hängst du fest? Antworte auf diese Mail, ein Mensch antwortet dir.",
+  },
+};
+
+function connectReminder(d: ConnectReminderData): RenderedEmail {
+  const url = safeUrl(d.setupUrl);
+  const locale = mailLocaleOf(d.locale) ?? "en";
+  const c = CONNECT_COPY[locale];
+  const advice = c.advice[d.provider] ?? c.advice.other;
+  const blocks = [c.intro, advice, c.how];
+  const footer = [c.once, "TrafficFlow GmbH, Zürich, Switzerland"];
+  return {
+    subject: c.subject,
+    // The text part carries the URL on its own line, the plain-text counterpart of the button.
+    text: textShell(c.subject, [...blocks, url], footer),
+    html: shell({ lang: locale, title: c.subject, blocks: blocks.map(esc), action: { label: c.action, url }, footer: footer.map(esc) }),
+    replyTo: d.supportEmail,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The registry — the single place the set is enumerated.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -891,6 +992,7 @@ export interface TemplateDataMap {
   account_exists: AccountExistsData;
   lifecycle_notice: LifecycleNoticeData;
   billing_link: BillingLinkData;
+  connect_reminder: ConnectReminderData;
 }
 
 export type TemplateName = keyof TemplateDataMap;
@@ -906,6 +1008,7 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   account_exists: accountExists,
   lifecycle_notice: lifecycleNotice,
   billing_link: billingLink,
+  connect_reminder: connectReminder,
 };
 
 export const TEMPLATE_NAMES = Object.keys(RENDERERS) as TemplateName[];

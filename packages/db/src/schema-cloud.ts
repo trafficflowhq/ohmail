@@ -975,11 +975,12 @@ export const accountLifecycleNotices = pgTable("account_lifecycle_notices", {
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
 }, (t) => ({
   pk: primaryKey({ name: "account_lifecycle_notices_pk", columns: [t.accountId, t.kind, t.anchor] }),
-  // The closed set, at rest — the four kinds the pass and the access route write, and the staff
-  // billing link (cloud 0050). Declared here to keep the TS schema honest; the migrations create it.
+  // The closed set, at rest — the four kinds the pass and the access route write, the staff billing
+  // link (cloud 0050) and the connect reminder (cloud 0053). Declared here to keep the TS schema
+  // honest; the migrations create it.
   ckKind: check(
     "account_lifecycle_notices_kind_closed",
-    sql`${t.kind} in ('trial_two_days', 'closed', 'erasure_week', 'reopened', 'billing_link')`,
+    sql`${t.kind} in ('trial_two_days', 'closed', 'erasure_week', 'reopened', 'billing_link', 'connect_reminder')`,
   ),
 }));
 

@@ -1061,7 +1061,9 @@ export const internalRoutes: Route[] = [
     /**
      * `GET /internal/account-lifecycle/run[?after=<uuid>]` — the wall's nightly sweep (cloud
      * 0040): the trial, closure and erasure-week notices, idempotent by the notices PK on the
-     * plane's own anchors. It names the accounts due for erasure (`erasureDue`) and erases none;
+     * plane's own anchors, and the connect reminder under `deps.connectReminder` (cloud 0053,
+     * log-only unless `send`, which reminds only trials begun at `deps.connectReminderSince` or
+     * after). It names the accounts due for erasure (`erasureDue`) and erases none;
      * it stops at its 45 s budget and answers `next`, which the caller passes back as `?after=`.
      * The reaper's shape: GET, either secret, 404 unarmed; unmetered hosts answer 200 `{skipped}`.
      */
@@ -1097,9 +1099,11 @@ export const internalRoutes: Route[] = [
           log,
           now: deps.now,
           after,
+          connectReminder: deps.connectReminder === "send" ? "send" : "log",
+          connectReminderSince: deps.connectReminderSince ?? null,
         });
         const { erasureDue, next, ...counts } = result;
-        const acted = erasureDue.length + result.faults
+        const acted = erasureDue.length + result.faults + result.connectReminder.owed
           + result.sent.trial_two_days + result.sent.closed + result.sent.erasure_week;
         if (acted > 0) log.info("account_lifecycle_pass", { ...counts, due: erasureDue.length, capped: next !== null });
         return json(200, { now: deps.now().toISOString(), ...result });

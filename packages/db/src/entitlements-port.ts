@@ -70,6 +70,18 @@ export interface AccessLifecycle {
 }
 
 /**
+ * The program's `trial` object (2026-10-25), BESIDE the lifecycle block: when the trial began and
+ * whether its cancellation is scheduled, the two facts the connect reminder reads. Each field is
+ * kept only when it reads as its type; a missing or unreadable one is absent, never a refusal.
+ */
+export interface AccessTrial {
+  /** ISO instant the trial began, as the program states it. */
+  startedAt?: string;
+  /** The trial ends without converting. */
+  cancelScheduled?: boolean;
+}
+
+/**
  * What one action of each call site costs, in credits — the card the program states on
  * `/v1/access`. Carried, never held: this tree has no price of its own.
  */
@@ -77,8 +89,8 @@ export type ActionPrices = Record<SpendAction, number>;
 
 /** May this account use the service, and within what limits. `prices` absent = unpriced. */
 export type AccessVerdict =
-  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices }
-  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle };
+  | { ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices; trial?: AccessTrial }
+  | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
 
 /**
  * `null` means UNBOUNDED, never unknown: a fault answers with the last known verdict and defaults

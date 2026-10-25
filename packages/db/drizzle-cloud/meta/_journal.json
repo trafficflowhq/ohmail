@@ -267,6 +267,13 @@
       "when": 1792886819380,
       "tag": "0052_lifecycle_notice_delivered",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792901976213,
+      "tag": "0053_connect_reminder_notices",
+      "breakpoints": true
     }
   ]
 }

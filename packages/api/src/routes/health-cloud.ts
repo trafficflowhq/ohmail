@@ -232,9 +232,10 @@ export const CLOUD_CHECK_DEFINITION_MARKERS: ReadonlyArray<CheckDefinitionMarker
      Against a 0043 database the poll's partial row is refused by the old CHECK and the window
      writes nothing, the silence 0044 exists to remove. */
   ["platform_signals_sample_cause_check", "upstream_refused"],
-  /* Cloud 0050_billing_link_notices — `billing_link` joins the notice kinds. Against a 0049
-     database every staff billing-link claim is refused by the old CHECK: 503, nothing sent. */
-  ["account_lifecycle_notices_kind_closed", "billing_link"],
+  /* Cloud 0053_connect_reminder_notices — `connect_reminder` joins the notice kinds, re-creating the
+     CHECK 0050 widened with `billing_link`, so this needle covers both. Against a 0052 database every
+     reminder claim is refused by the old CHECK inside the pass's catch: nothing sent, a fault counted. */
+  ["account_lifecycle_notices_kind_closed", "connect_reminder"],
 ] as const;
 
 /**

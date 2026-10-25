@@ -280,7 +280,9 @@ describe("the baseline cutoff is frozen", () => {
     // and a role-guarded grant on it, adopting nothing.
     // `- 31` → `- 32`: cloud 0052_lifecycle_notice_delivered — ONE entry above the cutoff, a column
     // on an existing table and a backfill of its earlier rows, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 32);
+    // `- 32` → `- 33`: cloud 0053_connect_reminder_notices — ONE entry above the cutoff, a CHECK
+    // redefined on an existing table, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 33);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -1005,6 +1007,9 @@ describe("the baseline cutoff is frozen", () => {
       // A notice's delivery time: a nullable column, IF NOT EXISTS, and the pass's earlier rows
       // stamped delivered (nothing can tell otherwise). Safe over any history that has not run it.
       "0052_lifecycle_notice_delivered",
+      // The connect reminder's notice kind: the kind CHECK dropped IF EXISTS and added again NOT VALID,
+      // a superset of 0050's. Safe over any history.
+      "0053_connect_reminder_notices",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

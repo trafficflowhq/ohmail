@@ -1,6 +1,6 @@
 import {
   AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
-  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type ActionPrices,
+  type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
@@ -248,6 +248,24 @@ function lifecycleOf(raw: unknown, syncEnabled: boolean): AccessLifecycle | null
 }
 
 /**
+ * The `trial` object, read FIELD BY FIELD and never a refusal: unlike the block above it carries no
+ * fact the wall decides on, so a field that is missing, null or of the wrong type is absent, and an
+ * object with neither field is no object. The verdict then reads as if the program sent none.
+ */
+function trialOf(raw: unknown): AccessTrial | null {
+  const t = obj(raw);
+  if (!t) return null;
+  const startedAt = typeof t.startedAt === "string" && Number.isFinite(Date.parse(t.startedAt))
+    ? t.startedAt : undefined;
+  const cancelScheduled = typeof t.cancelScheduled === "boolean" ? t.cancelScheduled : undefined;
+  if (startedAt === undefined && cancelScheduled === undefined) return null;
+  return {
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(cancelScheduled !== undefined ? { cancelScheduled } : {}),
+  };
+}
+
+/**
  * THE `access` ANSWER — the full entitlement, from which the open side derives what it needs.
  * The refusal is `syncEnabled === false`: the program deliberately does not send an ok/refused
  * pair, because `reason`, `syncEnabled` and `canAddMailbox` are three different questions.
@@ -268,6 +286,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
   // hand a locked screen no dates to render, silently.
   const lifecycle = lifecycleOf(b.lifecycle, e.syncEnabled);
   if (lifecycle !== null && "bad" in lifecycle) return lifecycle;
+  const trial = trialOf(b.trial);
 
   const url = typeof b.manageUrl === "string" && b.manageUrl.length > 0 ? b.manageUrl : undefined;
   if (!e.syncEnabled) {
@@ -275,6 +294,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
       ok: false, reason: refusalOf(e.reason),
       ...(url ? { manageUrl: url } : {}),
       ...(lifecycle ? { lifecycle } : {}),
+      ...(trial ? { trial } : {}),
     };
   }
   const num = (v: unknown, field: string): number | null | { bad: string } =>
@@ -289,6 +309,7 @@ function verdictOf(body: unknown): AccessVerdict | { bad: string } {
       mailboxes, storageBytes, canAddMailbox: e.canAddMailbox, aiEnabled: e.aiEnabled,
     },
     ...(lifecycle ? { lifecycle } : {}),
+    ...(trial ? { trial } : {}),
   };
 }
 

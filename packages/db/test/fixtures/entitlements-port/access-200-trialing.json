@@ -18,5 +18,6 @@
     "erasedAt": null,
     "formerlyPaid": false,
     "lifecycleEpoch": "2026-09-22T00:00:00.000Z"
-  }
+  },
+  "trial": { "startedAt": "2026-09-01T00:00:00.000Z", "cancelScheduled": false }
 }
