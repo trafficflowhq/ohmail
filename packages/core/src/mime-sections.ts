@@ -321,6 +321,16 @@ export function decodedSectionBytes(raw: Uint8Array, s: LocatedSection): Uint8Ar
   return base64DecodeChunks([body]);
 }
 
+/**
+ * Bytes a server handed back still in their transfer encoding, decoded by the encoding its tree
+ * declares; `null` for an encoding with nothing to decode.
+ */
+export function transferDecoded(body: Uint8Array, encoding: string | null): Uint8Array | null {
+  const enc = (encoding ?? "").toLowerCase().trim();
+  if (enc === "quoted-printable") return quotedPrintableDecode(asBuffer(body));
+  return enc === "base64" ? base64DecodeChunks([asBuffer(body)]) : null;
+}
+
 const sha256Hex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
 /** Why an attachment kept mailparser's id at ingest. Logged as `attachment_section_unmatched`. */

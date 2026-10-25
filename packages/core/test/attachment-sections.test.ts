@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { normalizeMime } from "../src/mime.js";
 import {
   attachmentSections, candidateSections, decodedSectionBytes, enumerateSections, legacyPrediction,
-  locateSections, sectionBytes, type LocatedSection,
+  locateSections, sectionBytes, transferDecoded, type LocatedSection,
 } from "../src/mime-sections.js";
 import { structureOf } from "../src/adapters/imap-structure.js";
 import type { MimeStructure } from "../src/types.js";
@@ -263,6 +263,13 @@ describe("the decoders are mailparser's own", () => {
     for (const s of ["Ren\x3dC3\x3dA9  \r\nsoft=\r\nbreak", "tail=", "=4=41 ==41 =zz", "a\t \r\nb ", "=\r\n=\n="]) {
       expect(insideSource("quoted-printable", Buffer.from(s, "latin1")).toString("hex"), s).toBe(libqp.decode(Buffer.from(s, "latin1")).toString("hex"));
     }
+  });
+
+  it("a served body still in its transfer encoding decodes by the declared one; nothing else is touched", async () => {
+    const b64 = Buffer.from("aGVs\r\nbG8=\r\n", "latin1");
+    expect(Buffer.from(transferDecoded(b64, "BASE64")!).toString("hex")).toBe((await throughDecoder([b64])).toString("hex"));
+    expect(Buffer.from(transferDecoded(Buffer.from("soft=\r\nbreak=20here"), "quoted-printable")!).toString()).toBe("softbreak here");
+    for (const enc of ["7bit", "binary", null]) expect(transferDecoded(b64, enc)).toBeNull();
   });
 });
 

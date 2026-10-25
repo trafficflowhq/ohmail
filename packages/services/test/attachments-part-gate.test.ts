@@ -419,7 +419,7 @@ describe("the door repairs an older row's section at first use", () => {
 /* ── A READ THAT FAILED IS READ AGAIN when the server's own tree vouches for the stored section ── */
 
 /** One flaky answer per read of a section, in order; the last one repeats. */
-function flakyServing(structure: MimeStructure, answers: Record<string, Uint8Array[]>) {
+function flakyServing(structure: MimeStructure, answers: Record<string, Uint8Array[]>, contentType = "application/pdf") {
   const state = { asked: [] as string[], structures: 0 };
   const served: Record<string, number> = {};
   const openAdapter: OpenAdapter = async (): Promise<AttachmentAdapter> => ({
@@ -429,7 +429,7 @@ function flakyServing(structure: MimeStructure, answers: Record<string, Uint8Arr
       const list = answers[section] ?? [new Uint8Array()];
       const at = Math.min(served[section] ?? 0, list.length - 1);
       served[section] = (served[section] ?? 0) + 1;
-      return { contentType: "application/pdf", filename: null, body: list[at]! };
+      return { contentType, filename: null, body: list[at]! };
     },
     fetchStructure: async () => { state.structures += 1; return structure; },
     close: async () => { /* nothing */ },
@@ -524,5 +524,39 @@ describe("a read the server's tree vouches for is read again before anything is 
 
     expect((err as ServiceError).code).toBe("attachment_part_mismatch");
     expect(state.asked).toEqual(["2"]);
+  });
+
+  /* GreenMail answers BODY[2.2.MIME] with part 2's headers, so the download learns no transfer
+     encoding and hands back the section's base64 text undecoded. */
+  const RELATED = multi("alternative", [text("plain"), multi("related", [text("html"), leafNode("application/pdf", "a.pdf")])]);
+  const undecoded = (b: Uint8Array): Uint8Array =>
+    new Uint8Array(Buffer.from((Buffer.from(b).toString("base64").match(/.{1,76}/g) ?? []).join("\r\n") + "\r\n"));
+
+  it("a nested section served undecoded is decoded by the tree's encoding and served at once, typed by the tree", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2.2", sha(RIGHT), "a.pdf");
+    const { openAdapter, state } = flakyServing(RELATED, { "2.2": [undecoded(RIGHT)] }, "multipart/related");
+    const cap = capturingLog();
+
+    const got = await svc.fetchBytes(ctx, id, { openAdapter, log: cap.log });
+
+    expect(sha(got.body)).toBe(sha(RIGHT));
+    expect(got.contentType).toBe("application/pdf");
+    expect([state.asked, state.structures]).toEqual([["2.2"], 1]);
+    expect(await partIdOf(db, id)).toBe("2.2");
+    expect(cap.lines().map((l) => [l.event, l.partId, l.kind, l.droppedFields])).toEqual([["attachment_part_decoded", "2.2", "base64", undefined]]);
+  });
+
+  it("control: bytes that do not decode to the row's sha are re-read and refused as before", async () => {
+    const { db, accountId, mailboxId, ctx } = await makeCtx();
+    const messageId = await seedMessage(db, accountId, mailboxId);
+    const id = await seedRow(db, accountId, messageId, "2.2", sha(RIGHT), "a.pdf");
+    const { openAdapter, state } = flakyServing(RELATED, { "2.2": [undecoded(WRONG)] }, "multipart/related");
+
+    const err = await svc.fetchBytes(ctx, id, { openAdapter, log: capturingLog().log }).catch((e: unknown) => e);
+
+    expect((err as ServiceError).code).toBe("attachment_part_mismatch");
+    expect(state.asked).toEqual(["2.2", "2.2", "2.2"]);
   });
 });

@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNull } from "drizzle-orm";
 import { attachments, messages } from "@trafficflow/db";
 import {
-  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, isCalendarMime, isMessageGone, sectionHoldsFile,
+  CALENDAR_FALLBACK_FILENAME, candidateSections, createLogger, enumerateSections, isCalendarMime, isMessageGone,
+  sectionHoldsFile, transferDecoded,
   type Logger, type MimeStructure, type NativeLocator, type EmailAddress,
 } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -223,13 +224,13 @@ export async function repairedPart(
     fetched = { contentType: "application/octet-stream", filename: null, body: new Uint8Array() };
   }
   if (row.contentSha256 === null || shaOf(fetched) === row.contentSha256) return verifiedPart(row, fetched, log);
-  return (await repairFrom(row, read, ctx, known, opts.budget, log)) ?? verifiedPart(row, fetched, log);
+  return (await repairFrom(row, read, ctx, known, opts.budget, log, fetched)) ?? verifiedPart(row, fetched, log);
 }
 
 /** The repair itself: the allowance, the tree, the re-reads, the candidates, the write. `null` is unrepairable. */
 async function repairFrom(
   row: RepairRow, read: PartReader, ctx: ServiceContext, known: MimeStructure | null,
-  budget: RepairBudget | undefined, log: Logger,
+  budget: RepairBudget | undefined, log: Logger, first?: FetchedBytes,
 ): Promise<FetchedBytes | null> {
   const refuse = (reason: string, tried: number): null => {
     log.warn("attachment_part_unrepairable", { partRowId: row.id, partId: row.partId, tried, reason });
@@ -243,6 +244,14 @@ async function repairFrom(
   // the connection lost, an answer the server had not settled. Read it again before anything else;
   // one line either way, `served` or still a `mismatch`, with the number of re-reads.
   if (sectionHoldsFile(structure, row)) {
+    // A server that answers a nested section's MIME header for its parent (GreenMail) leaves the
+    // download no transfer encoding, so the first read is still encoded: decode it by the tree's.
+    const node = enumerateSections(structure)?.find((s) => s.section === row.partId)?.node;
+    const decoded = node && first && first.body.byteLength > 0 ? transferDecoded(first.body, node.encoding) : null;
+    if (node && decoded && shaHex(decoded) === row.contentSha256) {
+      log.info("attachment_part_decoded", { partRowId: row.id, partId: row.partId, kind: node.encoding });
+      return { contentType: node.type, filename: first!.filename, body: decoded };
+    }
     let tries = 0;
     for (const wait of PART_REREAD_WAITS_MS) {
       await new Promise<void>((resolve) => setTimeout(resolve, wait));
