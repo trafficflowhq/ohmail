@@ -1229,6 +1229,27 @@ function lineIndexOf(all: readonly EngineMessage[], row: WaterlineMeta): number 
   return after < 0 ? all.length : after;
 }
 
+/** How far past the clock a held line's own instant may sit and still hold (`ohbox-where.ts`'s slack). */
+const LINE_FUTURE_SLACK_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Would a leave anchored on `anchor` move the view's line BACK (to an older place than the line
+ * this device holds)? Judged in the partition's own order (`lineIndexOf`): the held letter's place
+ * when the pile holds it, else the instant the visit recorded. A line dated past the clock never
+ * holds (a future-dated letter cannot freeze it); no line, or none placeable, never holds.
+ */
+export function lineHoldsAbove(reader: EntityReader, view: FeedView, anchor: EngineMessage, nowMs: number): boolean {
+  const row = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view));
+  if (!row || row.newestSeenId === anchor.id) return false;
+  const letter = reader.get<EngineMessage>("message", row.newestSeenId);
+  const t = letter && canonicalDestination(letter.folder) === canonicalDestination(FOLDER_OF_VIEW[view])
+    ? tsOf(letter)
+    : row.anchorAt ? Date.parse(row.anchorAt) : Number.NaN;
+  if (!Number.isFinite(t) || t > nowMs + LINE_FUTURE_SLACK_MS) return false;
+  const a = tsOf(anchor);
+  return a < t || (a === t && anchor.id < row.newestSeenId);
+}
+
 export function readsPartition(reader: EntityReader): FeedPartition {
   return feedPartition(reader, "reads");
 }

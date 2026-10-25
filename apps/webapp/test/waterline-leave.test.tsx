@@ -49,6 +49,10 @@ class MockIO {
 }
 
 const scrollTops = new WeakMap<Element, number>();
+/** How many cards the pile holds: the stream's scroll height, whatever the window mounts. */
+let pileSize = 10;
+/** Every card that was inside the viewport at some offset the stream rested on. */
+let displayed = new Set<string>();
 
 function streamCards(stream: Element): HTMLElement[] {
   return [...stream.querySelectorAll<HTMLElement>(".scast[data-sid]")];
@@ -63,8 +67,9 @@ function rectFor(el: Element): DOMRect {
   if ((el as HTMLElement).classList?.contains("scast")) {
     const stream = el.closest(".stream");
     if (!stream) return zero as DOMRect;
-    const i = streamCards(stream).indexOf(el as HTMLElement);
-    if (i < 0) return zero as DOMRect;
+    // Placed at its PILE index (the ids are r<index>), so the window may mount any run of it.
+    const i = Number((el as HTMLElement).dataset.sid?.slice(1));
+    if (!Number.isFinite(i)) return zero as DOMRect;
     const top = i * CARD_H - (scrollTops.get(stream) ?? 0);
     return { ...zero, top, bottom: top + CARD_H, height: CARD_H } as DOMRect;
   }
@@ -72,9 +77,47 @@ function rectFor(el: Element): DOMRect {
 }
 
 function setStreamScroll(stream: Element, next: number): void {
-  const max = Math.max(0, streamCards(stream).length * CARD_H - VIEW_H);
+  const max = Math.max(0, pileSize * CARD_H - VIEW_H);
   scrollTops.set(stream, Math.min(Math.max(0, next), max));
+  for (const c of streamCards(stream)) {
+    const r = rectFor(c);
+    if (r.bottom > 0 && r.top < VIEW_H) displayed.add(c.dataset.sid!);
+  }
   stream.dispatchEvent(new Event("scroll"));
+  for (const io of DeliveringIO.live) io.deliver(stream);
+}
+
+/** Reports what the browser would: every target when first observed, and after each move. */
+class DeliveringIO {
+  static live = new Set<DeliveringIO>();
+  private targets = new Set<Element>();
+  constructor(private cb: IntersectionObserverCallback, private opts: IntersectionObserverInit = {}) {
+    DeliveringIO.live.add(this);
+  }
+  observe(t: Element): void {
+    this.targets.add(t);
+    const root = this.opts.root as Element | undefined;
+    if (root) this.report(root, [t]);
+  }
+  unobserve(t: Element): void { this.targets.delete(t); }
+  disconnect(): void { this.targets.clear(); }
+  takeRecords(): IntersectionObserverEntry[] { return []; }
+  deliver(root: Element): void {
+    if (this.opts.root === root) this.report(root, [...this.targets]);
+  }
+  private report(root: Element, targets: Element[]): void {
+    const live = targets.filter((t) => t.isConnected);
+    if (live.length === 0) return;
+    // Only the bottom margin is ever a percentage here ("0px 0px -62% 0px", "100% 0px").
+    const m = (this.opts.rootMargin ?? "0px").trim().split(/\s+/);
+    const cut = (v: string | undefined) => (v?.endsWith("%") ? (parseFloat(v) / 100) * VIEW_H : parseFloat(v ?? "0") || 0);
+    const band = { top: -cut(m[0]), bottom: VIEW_H + cut(m[2] ?? m[0]) };
+    this.cb(live.map((target) => {
+      const b = rectFor(target);
+      const isIntersecting = b.height > 0 && b.bottom > band.top && b.top < band.bottom;
+      return { target, boundingClientRect: b, rootBounds: { ...b, top: band.top, bottom: band.bottom }, isIntersecting } as unknown as IntersectionObserverEntry;
+    }), this as unknown as IntersectionObserver);
+  }
 }
 
 /* ── the harness ───────────────────────────────────────────────────────────────────────── */
@@ -170,20 +213,63 @@ async function mountReceipts(
 
 const streamEl = (): Element => host!.querySelector(".stream")!;
 
-/** A real user scroll of the STREAM: the input a human produces, then the movement. */
+/** A real user scroll of the STREAM: the input a human produces, then the movement, a frame per half card. */
 async function wheelStream(to: number): Promise<void> {
   const el = streamEl();
-  await act(async () => {
-    el.dispatchEvent(new Event("wheel", { bubbles: true }));
-    setStreamScroll(el, to);
-  });
+  await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+  let at = scrollTops.get(el) ?? 0;
+  while (at !== to) {
+    at = to > at ? Math.min(to, at + CARD_H / 2) : Math.max(to, at - CARD_H / 2);
+    await act(async () => { setStreamScroll(el, at); });
+    await act(async () => { vi.advanceTimersByTime(20); });
+  }
   // The measure runs inside the scroll handler's rAF; let it land (but stay under the 2s dwell).
   await act(async () => { vi.advanceTimersByTime(40); });
+}
+
+/** A move with no input event of its own (a scrollbar-thumb drag, or End): one scroll per offset. */
+async function leapStream(...offsets: number[]): Promise<void> {
+  for (const top of offsets) {
+    await act(async () => { setStreamScroll(streamEl(), top); });
+    await act(async () => { vi.advanceTimersByTime(20); });
+  }
+}
+
+/**
+ * A view whose cursor and jump live in the shell, as AppShell holds them: `onCur` and
+ * `onJumped` re-render, so the stream re-renders around a jump the way it does in the app.
+ */
+async function mountReadsLive(rows: Row[], jump: string): Promise<void> {
+  await unmount();
+  const { ReadsView } = await import("../app/views/ReadsView.js");
+  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  pileSize = rows.length;
+  let cur: string | null = null;
+  let jumpTo: string | null = jump;
+  const fresh = rows.map((r) => msg(r, "ohmail/News"));
+  const tree = (): React.ReactNode => wrap(h(ReadsView as never, {
+    settled: true, owed: false,
+    partition: { waterline: null, fresh, seen: [], newCount: rows.length },
+    tags: [], now: NOW, cur, onCur: (id: string) => { cur = id; root?.render(tree()); },
+    aiChip: null, chipState: null, onChipState: () => {},
+    markSeen: (id: string) => { marked.push(id); },
+    onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.push(c); },
+    bodyOf: (m: { snippet: string }) => ({ text: m.snippet, state: "snippet" }),
+    hydrateBody: () => {}, onAction: () => {},
+    jumpTo, onJumped: () => { jumpTo = null; root?.render(tree()); },
+  } as never), KeymapProvider);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root!.render(tree()); });
+  // The far landing runs over frames; let it settle.
+  for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
 }
 
 let originalGetRect: unknown;
 let originalScrollTo: unknown;
 let originalScrollIntoView: unknown;
+let streamSize: Record<string, PropertyDescriptor | undefined> = {};
 
 /* The stream opens one screen of cards (`stream-window.ts`), sized by the window's height where
    nothing lays out; this emulator's port is 600px of 200px cards, so it is handed a screen tall
@@ -197,6 +283,27 @@ beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", MockIO);
   commits = [];
   marked = [];
+  pileSize = 10;
+  displayed = new Set();
+  DeliveringIO.live = new Set();
+  // The port's own size, which the stream's jump reads to tell a near landing from a far one.
+  const isStream = (el: Element) => (el as HTMLElement).classList?.contains("stream");
+  streamSize = {
+    clientHeight: Object.getOwnPropertyDescriptor(Element.prototype, "clientHeight"),
+    scrollHeight: Object.getOwnPropertyDescriptor(Element.prototype, "scrollHeight"),
+    scrollTop: Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop"),
+  };
+  Object.defineProperty(Element.prototype, "clientHeight", {
+    configurable: true, get(this: Element) { return isStream(this) ? VIEW_H : 0; },
+  });
+  Object.defineProperty(Element.prototype, "scrollHeight", {
+    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H : 0; },
+  });
+  Object.defineProperty(Element.prototype, "scrollTop", {
+    configurable: true,
+    get(this: Element) { return isStream(this) ? scrollTops.get(this) ?? 0 : 0; },
+    set(this: Element, v: number) { if (isStream(this)) setStreamScroll(this, v); },
+  });
   originalGetRect = Element.prototype.getBoundingClientRect;
   originalScrollTo = (Element.prototype as unknown as { scrollTo?: unknown }).scrollTo;
   originalScrollIntoView = (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView;
@@ -213,6 +320,10 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
+  for (const [k, d] of Object.entries(streamSize)) {
+    if (d) Object.defineProperty(Element.prototype, k, d);
+    else delete (Element.prototype as unknown as Record<string, unknown>)[k];
+  }
   if (innerHeight) Object.defineProperty(window, "innerHeight", innerHeight);
   else delete (window as unknown as { innerHeight?: number }).innerHeight;
   Element.prototype.getBoundingClientRect = originalGetRect as typeof Element.prototype.getBoundingClientRect;
@@ -289,6 +400,69 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r1", "r2", "r3", "r4"] },
     ]);
+  });
+});
+
+describe("a far jump ends the tracked run: nothing the visit never displayed is marked", () => {
+  /** The cards on screen at the offset the stream rests on now. */
+  const onScreen = (): Set<string> => new Set(streamCards(streamEl()).filter((c) => {
+    const r = rectFor(c);
+    return r.bottom > 0 && r.top < VIEW_H;
+  }).map((c) => c.dataset.sid!));
+  const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
+
+  it("leave after a far jump and one wheel commits only what was on screen after the landing", async () => {
+    await mountReadsLive(FORTY, "r30");
+    const landed = scrollTops.get(streamEl()) ?? 0;
+    expect(landed, "control: the jump went deep").toBeGreaterThan(5000);
+    displayed = onScreen();
+    await wheelStream(landed + 100);
+    await unmount();
+    expect(commits[0]!.messageIds.filter((id) => !displayed.has(id))).toEqual([]);
+    // The run starts at the landing (r29 straddles the top at rest) and ends with the wheel's screen.
+    expect(commits).toEqual([{ upToId: "r29", messageIds: ["r29", "r30", "r31", "r32", "r33"] }]);
+  });
+
+  it("after a far jump and a wheel, the seen observer marks no card mounted above the landing", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, "r30");
+    const landed = scrollTops.get(streamEl()) ?? 0;
+    displayed = onScreen();
+    await wheelStream(landed + 100);
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked.filter((id) => !displayed.has(id))).toEqual([]);
+    // What the wheel lifted past the line, from the landed screen: r29 and r30.
+    expect(marked).toEqual(["r29", "r30"]);
+  });
+
+  it("a scrollbar drag to the end after a wheel commits only the screen it rests on", async () => {
+    pileSize = 40;
+    await mountReads(FORTY);
+    await wheelStream(100);
+    await leapStream(2400, 4800, 7400);
+    await unmount();
+    expect(commits[0]!.messageIds.filter((id) => !displayed.has(id))).toEqual([]);
+    expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
+  });
+
+  it("End after a scroll key commits only the end screen, in Receipts too", async () => {
+    pileSize = 40;
+    await mountReceipts(FORTY);
+    await act(async () => { streamEl().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    await leapStream(7400);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
+  });
+
+  it("a drag back up past unseen cards starts the run where it rests", async () => {
+    pileSize = 40;
+    await mountReads(FORTY);
+    await wheelStream(100);
+    await leapStream(6000);
+    await wheelStream(6100);
+    await leapStream(1200);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r6", messageIds: ["r6", "r7", "r8"] }]);
   });
 });
 

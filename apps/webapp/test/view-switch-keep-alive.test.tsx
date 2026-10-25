@@ -212,13 +212,18 @@ async function wheelList(pile: Pile, to: number): Promise<void> {
   note(el);
 }
 
-/** A human scroll of a stream: the input, then the movement, then the rAF the measure runs in. */
+/** A human scroll of a stream: the input, then the movement a frame per half card, each with the rAF the measure runs in. */
 async function wheel(pile: Pile, to: number): Promise<void> {
   const el = stream(pile);
-  await act(async () => {
-    el.dispatchEvent(new Event("wheel", { bubbles: true }));
-    setScroll(el, to);
-  });
+  await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+  const max = Math.max(0, cardsOf(el).length * CARD_H - VIEW_H);
+  const end = Math.min(Math.max(0, to), max);
+  let at = scrollTops.get(el) ?? 0;
+  while (at !== end) {
+    at = end > at ? Math.min(end, at + CARD_H / 2) : Math.max(end, at - CARD_H / 2);
+    await act(async () => { setScroll(el, at); });
+    await act(async () => { vi.advanceTimersByTime(20); });
+  }
   await act(async () => { vi.advanceTimersByTime(40); });
 }
 

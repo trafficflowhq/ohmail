@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { useRef } from "react";
-import { useSeenOnScroll } from "@ohmail/ui";
+import { useSeenOnScroll, type SeenObserver } from "@ohmail/ui";
 
 type IOCallback = (entries: Partial<IntersectionObserverEntry>[]) => void;
 
@@ -48,9 +48,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ onSeen }: { onSeen: (id: string) => void }) {
+function Harness({ onSeen, onObserver }: { onSeen: (id: string) => void; onObserver?: (o: SeenObserver) => void }) {
   const root = useRef<HTMLDivElement>(null);
-  useSeenOnScroll({ root, onSeen });
+  const observer = useSeenOnScroll({ root, onSeen });
+  onObserver?.(observer);
   return (
     <div data-testid="scroller" ref={root}>
       <button data-id="f1" data-unseen="1">one</button>
@@ -60,9 +61,10 @@ function Harness({ onSeen }: { onSeen: (id: string) => void }) {
   );
 }
 
-function entryFor(el: Element, bottom: number, rootBottom = 400) {
+function entryFor(el: Element, bottom: number, rootBottom = 400, isIntersecting = true) {
   return {
     target: el,
+    isIntersecting,
     boundingClientRect: { bottom } as DOMRectReadOnly,
     rootBounds: { bottom: rootBottom } as DOMRectReadOnly,
   };
@@ -163,6 +165,29 @@ describe("useSeenOnScroll", () => {
 
     fireEvent.wheel(getByTestId("scroller"));
     io.callback([entryFor(io.observed[1], 500)]); // bottom below rootBounds.bottom + 2
+    expect(onSeen).not.toHaveBeenCalled();
+  });
+
+  it("never marks a row this observer did not see in its band (a row mounted above it)", () => {
+    const onSeen = vi.fn();
+    const { getByTestId } = render(<Harness onSeen={onSeen} />);
+    const io = MockIntersectionObserver.instances.at(-1)!;
+    fireEvent.wheel(getByTestId("scroller"));
+    io.callback([entryFor(io.observed[0], -50, 400, false)]);
+    expect(onSeen).not.toHaveBeenCalled();
+    io.callback([entryFor(io.observed[0], 100, 400, true)]);
+    expect(onSeen).toHaveBeenCalledWith("f1");
+  });
+
+  it("restart() forgets what was seen: a row shown before it is not marked after it", () => {
+    const onSeen = vi.fn();
+    let observer: SeenObserver | null = null;
+    const { getByTestId } = render(<Harness onSeen={onSeen} onObserver={(o) => { observer = o; }} />);
+    const io = MockIntersectionObserver.instances.at(-1)!;
+    io.callback([entryFor(io.observed[0], 100)]); // shown, before any input
+    observer!.restart();
+    fireEvent.wheel(getByTestId("scroller"));
+    io.callback([entryFor(io.observed[0], -50, 400, false)]); // now above the band
     expect(onSeen).not.toHaveBeenCalled();
   });
 });
