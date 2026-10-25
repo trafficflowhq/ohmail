@@ -38,6 +38,7 @@ import {
   notifyRules,
   organizerRequests,
   outboundSendFingerprints,
+  outboundSentCopies,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -282,6 +283,11 @@ export async function deleteAccount(
     // is going to grow a per-table list), and the explicit delete is what makes this service's
     // ruling on the table READABLE — the erasure census asks for a written ruling per table, and
     // "it happens to cascade from the row below" is not one somebody auditing this can see.
+    // The owed Sent copies (a delivered message's bytes) go the same way, and first.
+    await drop(
+      "outbound_sent_copies",
+      tx.delete(outboundSentCopies).where(eq(outboundSentCopies.accountId, accountId)),
+    );
     await drop(
       "outbound_send_fingerprints",
       tx.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.accountId, accountId)),

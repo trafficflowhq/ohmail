@@ -132,6 +132,7 @@ describe("mail 0160 on the device store, from 0159", () => {
       "0167_rules_refile.sql",
       "0168_drafts_forward_parts.sql",
       "0169_mailboxes_organized_through.sql",
+      "0170_outbound_sent_copies.sql",
     ]);
     // Replayed: every statement but the column's, which the ledger never runs twice.
     for (const e of SQLITE_JOURNAL.slice(at)) for (const s of e.statements) if (!/^ALTER TABLE/i.test(s)) db.exec(s);

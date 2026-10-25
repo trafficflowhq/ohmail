@@ -38,6 +38,7 @@ import {
   notifyRules,
   organizerRequests,
   outboundSends,
+  outboundSentCopies,
   pairingTokens,
   refreshTokens,
   routingDecisions,
@@ -1699,10 +1700,14 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     to: [{ address: `to-${tag}@example.com` }],
   }).returning();
   // Old enough that `listStuckSends` (10 minutes) picks it up.
-  await db.insert(outboundSends).values({
+  const [stuck] = await db.insert(outboundSends).values({
     accountId, idempotencyKey: `idem-${tag}`, draftId: draft!.id,
     mintedMessageId: `<minted-${tag}@ohmail.app>`, status: "pending",
     createdAt: new Date(FIXED_NOW.getTime() - 60 * 60 * 1000),
+  }).returning();
+  // A delivered message's owed Sent copy (mail 0170): its bytes are mail, seeded and swept as such.
+  await db.insert(outboundSentCopies).values({
+    sendId: stuck!.id, accountId, mailboxId, rawB64: Buffer.from(`owed copy ${tag}`).toString("base64"),
   });
 
   await db.insert(kbEntries).values({ accountId, title: `kb ${tag}`, content: `kb content ${tag}` });

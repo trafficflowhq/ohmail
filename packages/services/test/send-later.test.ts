@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints,
+  changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies,
 } from "@trafficflow/db";
-import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
+import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
 import {
   DraftsService, ScheduleService, SendService, ServiceError, runScheduledSendPass,
   SCHEDULE_MAX_AHEAD_MS,
@@ -220,6 +220,24 @@ describe("a scheduled draft is FROZEN", () => {
 });
 
 describe("runScheduledSendPass", () => {
+  it("on the local engine, a delivered appointment whose Sent copy cannot be filed keeps it owed", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT));
+    const refusing: OpenSendAdapter = async () => ({
+      async send(msg: OutboundMessage, o?: SendOptions) {
+        return { providerMessageId: msg.messageId!, ...(o?.copy === "caller" ? { unfiledCopy: Buffer.from("the words") } : {}) };
+      },
+      async fileSentCopy() { throw new Error("NO [OVERQUOTA] mailbox full"); },
+      async messageInSent() { return false; },
+      async close() { /* nothing to tear down */ },
+    });
+    const after = new Date(AT.getTime() + 30 * 1000);
+    expect(await runScheduledSendPass(db, { openSendAdapter: refusing, now: () => after, keepOwedCopy: true }))
+      .toMatchObject({ claimed: 1, sent: 1 });
+    const owed = await db.select().from(outboundSentCopies);
+    expect(owed.map((r) => Buffer.from(r.rawB64, "base64").toString())).toEqual(["the words"]);
+  });
+
   it("skips a not-yet-due row entirely — no claim, no dial, no reservation", async () => {
     const { db, ctx, draftId } = await setup();
     await schedules.schedule(ctx, draftId, iso(AT)); // due at 18:00

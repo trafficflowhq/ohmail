@@ -539,4 +539,71 @@ describe.skipIf(!greenmailUp)("a reply sent just before the quit while the mail 
   it("the same over a kept connection (100 ms an answer), quit 0.05 s after the press", async () => {
     expect(await pressThenQuit({ kept: true, stall: 100, quitAfterMs: 50 })).toMatchObject(SENT_AT_QUIT);
   }, 120_000);
+
+  async function bySubject(user: string, folder: string, subject: string): Promise<number> {
+    const c = new ImapFlow({ host: GREENMAIL.host, port: GREENMAIL.port, secure: false, auth: { user, pass: "test" }, logger: false });
+    await c.connect();
+    try {
+      const lock = await c.getMailboxLock(folder).catch(() => null);
+      if (lock === null) return 0;
+      try {
+        const uids = await c.search({ subject }, { uid: true });
+        return Array.isArray(uids) ? uids.length : 0;
+      } finally { lock.release(); }
+    } finally { await c.logout().catch(() => undefined); }
+  }
+
+  /**
+   * Delivered, then the engine gone before its Sent copy: the server's accept held 1.5 s, IMAP stops
+   * answering at 1 s (dialled, the APPEND not yet sent), and the engine quits or is killed at 2.5 s.
+   * Before: the copy was owed only in memory and never filed.
+   */
+  async function deliveredThenGone(how: "quit" | "kill"): Promise<void> {
+    const relay = await slowRelay(GREENMAIL.host, GREENMAIL.port, 0);
+    const smtp = await slowAcceptRelay(GREENMAIL.host, SMTP_PORT, 1_500);
+    const viaSmtp = { host: "127.0.0.1", port: smtp.port };
+    const dataDir = await freshDataDir("ohmail-quit-owed-copy-");
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const address = `dcc-${randomUUID()}@trafficflow.test`;
+    const to = `rcpt-${randomUUID()}@trafficflow.test`;
+    const subject = `Re: owed ${randomUUID()}`;
+    const first = await engine(dataDir, address, relay.port, viaSmtp);
+    await sleep(1_500);
+    const created = await first.call("/drafts", "POST", {
+      mailboxId: first.header.mailboxId, subject, body: "See you then.", to: [{ name: null, address: to }],
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const draftId = (await created.json() as { id: string }).id;
+    void first.call(`/drafts/${draftId}/send`, "POST", {}, `owed-${randomUUID()}`).catch(() => undefined);
+    await sleep(1_000);
+    relay.setHeld(true);
+    await sleep(1_500);
+    if (how === "quit") first.child.stdin.end();
+    else first.child.kill("SIGKILL");
+    await Promise.race([first.exited, sleep(10_000)]);
+    relay.setHeld(false);
+    expect(await bySubject(to, "INBOX", subject), "the premise: delivered once").toBe(1);
+
+    const next = await engine(dataDir, address, relay.port, viaSmtp);
+    const d = await next.call(`/drafts/${draftId}`, "GET");
+    expect((await d.json() as { status?: string }).status, `first engine: ${first.events().join(",")}`).toBe("sent");
+    let inSent = 0;
+    for (const t = performance.now(); performance.now() - t < 30_000 && inSent === 0; await sleep(500)) {
+      inSent = await bySubject(address, "Sent", subject);
+    }
+    expect(inSent, `no copy in Sent after the next start — events ${next.events().join(",")}`).toBe(1);
+    await sleep(1_000);
+    expect(await bySubject(address, "Sent", subject), "a second copy").toBe(1);
+    expect(await bySubject(to, "INBOX", subject), "sent again").toBe(1);
+    next.child.stdin.end();
+    await Promise.race([next.exited, sleep(10_000)]);
+  }
+
+  it("delivered, then quit before its Sent copy: the next start files the copy once", async () => {
+    await deliveredThenGone("quit");
+  }, 120_000);
+
+  it("delivered, then killed before its Sent copy: the next start files the copy once", async () => {
+    await deliveredThenGone("kill");
+  }, 120_000);
 });

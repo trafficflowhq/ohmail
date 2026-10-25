@@ -2306,6 +2306,26 @@ export const outboundSendFingerprints = pgTable("outbound_send_fingerprints", {
   ),
 }));
 
+// Mail 0170 — A DELIVERED SEND'S SENT COPY, OWED: the exact delivered bytes (base64), kept by the
+// local engine from the server's accept until the copy is in Sent, so a quit, a crash or a long IMAP
+// outage cannot lose it (`SendService.fileOwedCopies`). One row per piece of a send's bytes (`seq`
+// from 0; each piece is written once, never appended to), deleted once filed or given up; `attempts`
+// and `next_attempt_at` are read off piece 0. Its own table: a column would load the bytes on every
+// `select()` of a send, and `draft_id` goes NULL when a sent draft is deleted while the copy still
+// needs its mailbox. The composite key `(send_id, account_id)` is created by the migration; no key on
+// `mailbox_id`, for the fingerprints' reason (a KEY SHARE lock on the mailbox row per insert). Cloud
+// and self-host write none.
+export const outboundSentCopies = pgTable("outbound_sent_copies", {
+  sendId: uuid("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
+  seq: integer("seq").notNull().default(0),
+  accountId: uuid("account_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull(),
+  rawB64: text("raw_b64").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
+
 // Migration 0014 — workflow automation storage. Two additive, account-scoped, REST-only tables:
 // neither writes `change_log` nor grows `EntityType` — clients refetch; the workflow EFFECTS (a
 // `file_message` move, a `draft_reply` draft) still sync as their own changes. `workflows` is a

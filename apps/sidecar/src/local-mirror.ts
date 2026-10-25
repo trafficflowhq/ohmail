@@ -16,7 +16,7 @@ import {
   approvals, attachments, awayReplies, awayResponderSent,
   drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
   mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
-  messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSends,
+  messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends,
   recordChanges, recordMailboxRemoved, routingDecisions, threadNotes, threads, trackerEvents,
   unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
@@ -34,6 +34,7 @@ import type { LocalDb } from "./db.js";
  * only on the Cloud door; the standalone removal takes their `sent` rows and keeps the rest.
  */
 export const WIPED_TABLES: readonly string[] = [
+  "outbound_sent_copies",
   "outbound_send_fingerprints",
   "outbound_sends",
   "drafts",
@@ -171,6 +172,8 @@ export async function deleteMailboxRows(
      does not enforce the cascade). */
   const claimed = db.select({ id: outboundSendFingerprints.sendId }).from(outboundSendFingerprints)
     .where(eq(outboundSendFingerprints.mailboxId, mailboxId));
+  // The Sent copies this mailbox still owes: a removed mailbox has no Sent folder left to file them in.
+  await db.delete(outboundSentCopies).where(eq(outboundSentCopies.mailboxId, mailboxId));
   if (opts.unsentDrafts === "delete") {
     await db.delete(outboundSends).where(inArray(outboundSends.id, claimed));
     await db.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.mailboxId, mailboxId));
@@ -322,7 +325,11 @@ export async function mirrorRowsRemain(db: LocalDb, mailboxId: string): Promise<
   if (folder.length > 0) return true;
   const draft = await db.select({ id: drafts.id }).from(drafts)
     .where(and(eq(drafts.mailboxId, mailboxId), eq(drafts.status, "sent"))).limit(1);
-  return draft.length > 0;
+  if (draft.length > 0) return true;
+  // An owed copy recorded as the removal ran: the next open's unfinished-removal step takes it.
+  const owed = await db.select({ id: outboundSentCopies.sendId }).from(outboundSentCopies)
+    .where(eq(outboundSentCopies.mailboxId, mailboxId)).limit(1);
+  return owed.length > 0;
 }
 
 /**

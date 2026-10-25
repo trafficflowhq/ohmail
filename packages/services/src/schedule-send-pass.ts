@@ -89,6 +89,8 @@ export interface ScheduledSendPassDeps {
    * filterless desktop behaves like the hosted clock.
    */
   mailboxIds?: readonly string[];
+  /** The local engine: a delivered appointment's owed Sent copy is kept on disk (`SendDeps.keepOwedCopy`). */
+  keepOwedCopy?: boolean;
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -172,6 +174,7 @@ export async function runScheduledSendPass(
         // No request pipeline carries bytes at send time — the draft row stores none and the
         // adapter dials from this process — so the truthful surface is the local engine's.
         surfaceMaxTotalBytes: null,
+        ...(deps.keepOwedCopy === true ? { keepOwedCopy: true } : {}),
         log,
       });
       if (res.status === "sent") {

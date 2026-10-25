@@ -898,6 +898,8 @@ describe("the baseline cutoff is frozen", () => {
       // Where a hand-back's gap window starts, and how far back its clock allowance reaches: two
       // nullable ADD COLUMN IF NOT EXISTS on mailboxes. No data. Safe over any history.
       "0169_mailboxes_organized_through",
+      // A delivered send's owed Sent copy: one CREATE TABLE IF NOT EXISTS, no data. Safe over any history.
+      "0170_outbound_sent_copies",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

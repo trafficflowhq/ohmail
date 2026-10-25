@@ -5,7 +5,7 @@ import {
   approvals, attachments, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes,
   messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messageTags, messages,
-  organizerRequests, outboundSendFingerprints, outboundSends, routingDecisions, threadNotes,
+  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, threadNotes,
   threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
@@ -161,6 +161,9 @@ export async function sweepMailboxStep(
    * erasure's highest seq, and the finish stamp is in the same transaction as it. The counter is
    * recounted first (its lock before the receipt's seq): that repairs bytes an older erase left. */
   await recomputeAccountStorage(tx, d, accountId, now);
+  await drop("outbound_sent_copies", tx.delete(outboundSentCopies).where(and(
+    eq(outboundSentCopies.accountId, accountId), eq(outboundSentCopies.mailboxId, mailboxId),
+  )));
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints).where(and(
     eq(outboundSendFingerprints.accountId, accountId), eq(outboundSendFingerprints.mailboxId, mailboxId),
   )));
