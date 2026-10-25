@@ -27,6 +27,7 @@ import { useFocusFollows } from "./focus-follows";
 import { PROVIDERS, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel, type AuthHint, type ProviderPreset } from "./providers";
 import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "./local-server-host";
 import { ProviderHelpLinks, ProviderNote } from "./ProviderPicker";
+import { DiscoveredHostsOffer, useAddressFirst } from "./address-first";
 import { noPortProbeKey } from "./no-port-sentence";
 import { PlaintextConsent } from "./PlaintextConsent";
 import {
@@ -986,6 +987,16 @@ export function FirstRun({
     retireConsent();
   }, [imapHost, providerId, retireConsent, retireTest, smtpHost]);
 
+  /* THE ADDRESS FIRST: its domain chooses the preset until the person does (`address-first.tsx`). The
+     preselected Gmail is this form's default, not a choice, so a guess may move it. */
+  const addressFirst = useAddressFirst({
+    address,
+    ...(host.discover ? { lookup: host.discover } : {}),
+    chosen: providerId,
+    chosenByHand: false,
+    choose: (id) => { if (id !== null) chooseProvider(id); },
+  });
+
   const mailboxInput = useCallback((): FirstRunMailboxInput => {
     const port = Number(imapPort);
     const sPort = Number(smtpPort);
@@ -1446,12 +1457,20 @@ export function FirstRun({
                     : t("doorReaderWhyLegacy")}
                 />
               ) : null}
+              {/* THE ADDRESS FIRST: the choice below answers it. */}
+              <div className="set-fields">
+                <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
+                  <TextField id={`${ids}-address`} type="email" autoComplete="email" value={address}
+                    onChange={(e) => { setAddress(e.target.value); retireTest(); }}
+                    onBlur={addressFirst.lookUp} />
+                </SettingsField>
+              </div>
               {/* EVERY PRESET, not a shortened list. The picker is the only way to reach a
                   provider's hosts without typing them, and a truncated one silently tells
                   somebody their provider is unsupported when it is in the table. */}
               <SettingsChoice
                 name={`${ids}-provider`} ariaLabel={tp("label")} value={providerId}
-                onChange={chooseProvider} disabled={busy}
+                onChange={(id: string) => { addressFirst.pick(id); chooseProvider(id); }} disabled={busy}
                 options={PROVIDERS.map((p: ProviderPreset) => ({
                   id: p.id,
                   label: providerLabel(p, tp),
@@ -1460,12 +1479,10 @@ export function FirstRun({
               />
               {/* THE PRESET'S NOTE, before the password: Gmail is pre-selected here, and a person
                   who reads only "imap.gmail.com" types their Google password. The picker's own. */}
-              <ProviderNote key={preset.id} preset={preset} />
+              {addressFirst.guess?.proton ? (
+                <div className="pvp-note"><p>{tp("protonNote", { other: tp("otherLabel") })}</p></div>
+              ) : <ProviderNote key={preset.id} preset={preset} />}
               <div className="set-fields">
-                <SettingsField htmlFor={`${ids}-address`} label={t("address")}>
-                  <TextField id={`${ids}-address`} type="email" autoComplete="email" value={address}
-                    onChange={(e) => { setAddress(e.target.value); retireTest(); }} />
-                </SettingsField>
                 <SettingsField htmlFor={`${ids}-pass`} label={t("password")}
                   hint={host.door === "local" ? t("passwordHint") : t("passwordHintCloud")}>
                   <TextField id={`${ids}-pass`} type="password" autoComplete="off" value={pass}
@@ -1551,13 +1568,26 @@ export function FirstRun({
                     const noPort = preset.manual ? null : noPortProbeKey(verdict.reason, false);
                     if (noPort) return tm(noPort, { field: "none" });
                     return verdict.reason
-                      ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport, verdict.authHint) as "probe_auth")
+                      ? tm(probeCopyKey(verdict.reason, verdict.localServer, verdict.transport, verdict.authHint, preset.id) as "probe_auth")
                       : verdict.message ?? tm("probe_unknown");
                   })()}
                   hint={verdict.authHint && authHintWantsLinks(verdict.authHint)
                     ? <ProviderHelpLinks preset={authHintPreset()} /> : undefined}
                 />
               ) : null}
+              {/* An unreachable host on the manual entry: the hosts the lookup found, filled in by a press. */}
+              {!testing && verdict !== null && "reason" in verdict && preset.manual
+                && (verdict.reason === "connect" || verdict.reason === "timeout") ? (
+                  <DiscoveredHostsOffer
+                    guess={addressFirst.guess} imapHost={imapHost} smtpHost={smtpHost}
+                    onUse={({ imap, smtp }) => {
+                      if (imap) { setImapHost(imap.host); setImapPort(String(imap.port)); }
+                      if (smtp) { setSmtpHost(smtp.host); setSmtpPort(String(smtp.port)); }
+                      retireTest();
+                      retireConsent();
+                    }}
+                  />
+                ) : null}
               {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
               {foot({
                 back: true,

@@ -38,14 +38,14 @@ type Pane = keyof typeof PANES;
 const DYNAMIC: Record<string, { reaches: string[]; why: string }> = {
   "web: key": { reaches: ["oauth_", "probe_tls"], why: "the OAuth refusal and the TLS probe tables" },
   "web: statusKey(m)": { reaches: ["status_"], why: "the row's status line" },
-  "web: probeCopyKey(reason, false, refusalTransport(err), hint)": {
-    reaches: ["probe_"], why: "a refused probe by reason, Google's by its hint (`probe_auth_gmail_*`)",
+  "web: probeCopyKey(reason, false, refusalTransport(err), hint, ownRefusalOf(presetId))": {
+    reaches: ["probe_"], why: "a refused probe by reason, Google's by its hint, a named preset's by its id",
   },
   "web: probeCopyKey(\"auth\", false, \"imap\", authHelp)": {
     reaches: ["probe_auth_gmail_"], why: "Google's sentence, matched to place its App Password links",
   },
-  "web: probeCopyKey(probeBad.reason, false, probeBad.transport, probeBad.authHint)": {
-    reaches: ["probe_"], why: "the Test's refusal by reason, Google's by its hint",
+  "web: probeCopyKey(probeBad.reason, false, probeBad.transport, probeBad.authHint, ownRefusalOf(typed.provider?.id))": {
+    reaches: ["probe_"], why: "the Test's refusal by reason, Google's by its hint, a named preset's by its id",
   },
   "web: errSaid.key": {
     reaches: ["err_", "syncError"],

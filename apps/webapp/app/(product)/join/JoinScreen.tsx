@@ -825,6 +825,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
               {busy ? t("working") : t("createAccount")}
             </Button>
           </div>
+          {/* Somebody who already has an account, sent here by a trial button. */}
+          <div className="join-actions join-actions-tight">
+            <Link className="join-alt" href="/login">{t("accountSignIn")}</Link>
+          </div>
         </form>
       )}
 

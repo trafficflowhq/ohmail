@@ -17,6 +17,7 @@ import { shortPin } from "@ohmail/client-engine";
 
 import { ProviderHelpLinks, ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { PlaintextConsent } from "../../webapp/app/shell/PlaintextConsent";
+import { useAddressFirst } from "../../webapp/app/shell/address-first";
 import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint } from "../../webapp/app/shell/providers";
 import { refusalAuthHint } from "../../webapp/app/shell/local-server-host";
 import {
@@ -898,6 +899,32 @@ function LocalDoor({
     retireConsent();
   };
 
+  const chooseProvider = (id: string): void => {
+    const chosen = providerById(id);
+    retireConsent();
+    setFields((cur) => ({
+      ...cur,
+      providerId: id,
+      // The preset's own hosts, so the manual fields open pre-filled where there is
+      // something to pre-fill — and, for the generic entry, which has nothing to
+      // pre-fill with, whatever is already typed rather than two empty strings over it.
+      // The previous choice decides whether the hosts in the form are the person's own
+      // typing (keep) or a preset's (never carry into another provider's attempt).
+      ...hostsFor(chosen, cur, cur.providerId ? providerById(cur.providerId) : null),
+      imapPort: String(chosen.imap.port),
+      smtpPort: String(chosen.smtp.port),
+    }));
+  };
+  const addressFirst = useAddressFirst({
+    address: fields.address,
+    chosen: fields.providerId || null,
+    choose: (id) => {
+      if (id !== null) { chooseProvider(id); return; }
+      retireConsent();
+      setFields((cur) => ({ ...cur, providerId: "" }));
+    },
+  });
+
   const preset = useMemo(
     () => (fields.providerId ? providerById(fields.providerId) : null),
     [fields.providerId],
@@ -917,26 +944,8 @@ function LocalDoor({
       <h1>{DOOR_COPY.localTitle}</h1>
       <p>{DOOR_COPY.localLead(machineWord())}</p>
 
-      <ProviderPicker
-        value={fields.providerId || null}
-        onChange={(id) => {
-          const chosen = providerById(id);
-          retireConsent();
-          setFields((cur) => ({
-            ...cur,
-            providerId: id,
-            // The preset's own hosts, so the manual fields open pre-filled where there is
-            // something to pre-fill — and, for the generic entry, which has nothing to
-            // pre-fill with, whatever is already typed rather than two empty strings over it.
-            // The previous choice decides whether the hosts in the form are the person's own
-            // typing (keep) or a preset's (never carry into another provider's attempt).
-            ...hostsFor(chosen, cur, cur.providerId ? providerById(cur.providerId) : null),
-            imapPort: String(chosen.imap.port),
-            smtpPort: String(chosen.smtp.port),
-          }));
-        }}
-      />
-
+      {/* THE ADDRESS FIRST: an address at a preset's own domain chooses its tile. This door asks
+          no server, so the table is the whole guess. */}
       <label className="join-label" htmlFor="door-address">{DOOR_COPY.localAddress}</label>
       <input
         id="door-address"
@@ -946,6 +955,12 @@ function LocalDoor({
         spellCheck={false}
         value={fields.address}
         onChange={(e) => set("address", e.target.value)}
+      />
+
+      <ProviderPicker
+        value={fields.providerId || null}
+        onChange={(id) => { addressFirst.pick(id); chooseProvider(id); }}
+        proton={addressFirst.guess?.proton === true}
       />
 
       <label className="join-label" htmlFor="door-password">{DOOR_COPY.localPassword}</label>

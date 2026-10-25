@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 import { CLOUD_URL, hostDoorFor } from "../src/doors.js";
 import { selfHostBase, selfHostProblem } from "../src/self-host.js";
 /* THE ENGINE'S OWN RULE, imported rather than restated — `desktop-door-reconfigure.test.tsx` does
@@ -405,6 +406,25 @@ describe("the door chooser", () => {
       expect(config).not.toHaveProperty("cloudUrl");
       expect(JSON.stringify(config)).not.toContain(CLOUD_URL);
     }
+  });
+
+  it("the local door asks the address first, and the address's own domain chooses its tile", async () => {
+    const it = install();
+    const el = await render("local");
+    const order = [...el.querySelectorAll('#door-address, [role="radiogroup"]')].map((n) => n.id || "tiles");
+    expect(order).toEqual(["door-address", "tiles"]);
+    const checked = () => [...el.querySelectorAll('[role="radio"][aria-checked="true"] .pvp-name')].map((n) => n.textContent);
+    expect(checked()).toEqual([]);
+    await type(el, "door-address", personalAt("fixture.mila", "gmx.ch"));
+    expect(checked()).toEqual(["GMX"]);
+    await type(el, "door-address", personalAt("fixture.mila", "proton.me"));
+    expect(checked(), "a guess it no longer backs is withdrawn").toEqual([]);
+    expect(el.textContent).toContain(en.providerPicker.protonNote.replace("{other}", en.providerPicker.otherLabel));
+    await type(el, "door-address", ADDRESS);
+    await press(el, "Infomaniak");
+    await type(el, "door-address", personalAt("fixture.mila", "gmx.ch"));
+    expect(checked(), "a tile chosen by hand stays").toEqual(["Infomaniak"]);
+    expect(requestedUrls(it), "this door asks no server about the address").toEqual([]);
   });
 
   it("CLAIM: the travel sentence sits beneath all three, and says the mailbox is the master", async () => {

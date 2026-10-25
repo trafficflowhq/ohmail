@@ -134,10 +134,10 @@ describe("a password refused on the Microsoft tile", () => {
     expect(navigated).toBe(AUTHORIZE);
   });
 
-  it("where it does not: the refusal stays the app-password sentence, with no button", async () => {
+  it("where it does not: the refusal is Microsoft's app-password sentence, with no button", async () => {
     available = false;
     const ui = await refusedOn("Microsoft 365");
-    expect(ui.refusal()).toBe(en.mailboxes.probe_auth);
+    expect(ui.refusal()).toBe(en.mailboxes.probe_auth_microsoft);
     expect(ui.button(en.mailboxes.oauthContinue)).toBeNull();
   });
 

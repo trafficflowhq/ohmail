@@ -403,8 +403,8 @@ describe("the Microsoft PROVIDER TILE reaches the consent flow, not the app-pass
     // `microsoftOauth` branch and this button reads "Continue" and does nothing on the top level.
     const go = byText(el, copy.oauthContinue!);
     expect(go, "the primary action is Connect with Microsoft").toBeTruthy();
-    // No app-password form is present — the sign-in supplies the address, and there is no password.
-    expect(el.querySelector("#mb-address"), "the armed Microsoft path shows no address field").toBeNull();
+    // No app-password form is present — the address is asked first, but there is no password to type.
+    expect(el.querySelector("#mb-pass"), "the armed Microsoft path shows no password field").toBeNull();
 
     // The false claim is GONE, and the honest sign-in sentence is what shows instead.
     expect(el.textContent, "the stale app-password claim is absent when OAuth is available").not.toContain(APP_PW_CLAIM);
@@ -427,7 +427,7 @@ describe("the Microsoft PROVIDER TILE reaches the consent flow, not the app-pass
 
     // No armed registration ⇒ the app-password path is the only one that can work, so it is shown:
     // the fields render and the preset's app-password note (help link and all) is honest here.
-    expect(el.querySelector("#mb-address"), "the shut-door Microsoft path shows the address field").toBeTruthy();
+    expect(el.querySelector("#mb-pass"), "the shut-door Microsoft path shows the password field").toBeTruthy();
     expect(el.textContent).toContain(APP_PW_REQUIREMENT);
     // The primary action is the ordinary Continue, and nothing has navigated to Microsoft.
     expect(byText(el, copy.continue!), "the fallback keeps the ordinary Continue").toBeTruthy();
@@ -441,12 +441,12 @@ describe("the Microsoft PROVIDER TILE reaches the consent flow, not the app-pass
     const el = await mount([]);
     await openAndPickMicrosoft(el);
     // Armed: no fields yet, but the explicit escape hatch is offered…
-    expect(el.querySelector("#mb-address")).toBeNull();
+    expect(el.querySelector("#mb-pass")).toBeNull();
     const useAppPw = byText(el, copy.microsoftUseAppPassword!);
     expect(useAppPw, "an armed deployment still offers the app-password escape hatch").toBeTruthy();
     // …and taking it reveals the app-password form, for a tenant that blocks the sign-in.
     await click(useAppPw!);
-    expect(el.querySelector("#mb-address"), "the escape hatch reveals the address field").toBeTruthy();
+    expect(el.querySelector("#mb-pass"), "the escape hatch reveals the password field").toBeTruthy();
     expect(byText(el, copy.oauthContinue!), "the escape hatch drops the sign-in action").toBeNull();
   });
 });

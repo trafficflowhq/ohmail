@@ -21,6 +21,7 @@ import { codeOf, mailboxes, type MailboxDTO } from "../../api-client";
 import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint, type ProviderPreset } from "../../shell/providers";
 import { ProviderHelpLinks, ProviderPicker } from "../../shell/ProviderPicker";
 import { probeCopyKey, refusalAuthHint, refusalTransport } from "../../shell/local-server-host";
+import { DiscoveredHostsOffer, hostFieldOf, useAddressFirst } from "../../shell/address-first";
 import { noPortProbeSentence, plaintextOfferOf, probeReasonOf } from "../../shell/probe-refusal";
 import { splitHostPort } from "../host-port";
 import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
@@ -93,6 +94,7 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
   const t = useTranslations("join");
   const tm = useTranslations("mailboxes");
   const td = useTranslations("devices");
+  const tp = useTranslations("providerPicker");
   const {
     provider, setProvider, mbAddress, setMbAddress, mbUser, setMbUser, mbPass, setMbPass,
     imapHost, setImapHost, smtpHost, setSmtpHost, offer, setOffer, plain, setPlain,
@@ -121,8 +123,12 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
     return () => { mounted.current = false; };
   }, []);
 
+  /** The last refusal was an unreachable host on the manual tile: the lookup's hosts may be offered. */
+  const [hostRefused, setHostRefused] = useState(false);
+
   const pickProvider = (id: string) => {
     const p = providerById(id);
+    setHostRefused(false);
     setProvider(p);
     // The generic entry has no hosts to impose, and writing its emptiness over a typed one is how
     // this form used to lose it — but a NAMED preset's host must never survive into a manual
@@ -135,6 +141,20 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
     signInSeq.current += 1;
     setNotice(null);
   };
+
+  /* THE ADDRESS FIRST: its domain preselects a tile the person can change (`address-first.tsx`). */
+  const addressFirst = useAddressFirst({
+    address: mbAddress,
+    lookup: mailboxes.discover,
+    chosen: provider?.id ?? null,
+    choose: (id) => {
+      if (id !== null) { pickProvider(id); return; }
+      setProvider(null);
+      retireConsent();
+      setAppPassword(false);
+      setHostRefused(false);
+    },
+  });
 
   /**
    * CONNECT WITH MICROSOFT. Whose browser this is first, like every press on this wizard; the start then
@@ -203,6 +223,7 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
     const opens = plaintextOfferOf(err);
     if (opens) setOffer((o) => ({ ...o, [opens]: true }));
     setLastReason(reasonCode(probeReasonOf(err) ?? codeOf(err)));
+    setHostRefused(chosen.manual === true && ["connect", "timeout"].includes(probeReasonOf(err) ?? ""));
     // This form has no port field, so a refusal that would tell the person to check one says
     // what the form holds instead: the server name on the generic entry, nothing behind a preset.
     const said = noPortProbeSentence(err, chosen.manual === true);
@@ -214,10 +235,10 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
       setAuthHelp(null);
       return t("mailboxMicrosoftRefused");
     }
-    // Google's refused sign-in says why (`probe_auth_gmail_*`); every other auth, the pane's own line.
+    // Google's refused sign-in says why (`probe_auth_gmail_*`), a named preset its own line, the rest the pane's.
     const hint = reason === "auth" ? refusalAuthHint(err) : null;
     setAuthHelp(hint);
-    if (reason === "auth") return tm(probeCopyKey(reason, false, refusalTransport(err), hint) as "probe_auth");
+    if (reason === "auth") return tm(probeCopyKey(reason, false, refusalTransport(err), hint, chosen.id) as "probe_auth");
     if (reason === "storage" || reason === "sync" || reason === "unknown") return tm(`probe_${reason}`);
     return null;
   };
@@ -288,6 +309,18 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
       <p ref={mailboxRefusalAt} className="join-error at-press" role="alert" tabIndex={-1}>{error}</p>
       {authLinks}
       {signInInstead}
+      {hostRefused && provider?.manual ? (
+        <DiscoveredHostsOffer
+          guess={addressFirst.guess} imapHost={imapHost} smtpHost={smtpHost}
+          onUse={({ imap, smtp }) => {
+            if (imap) setImapHost(hostFieldOf(imap, "imap"));
+            if (smtp) setSmtpHost(hostFieldOf(smtp, "smtp"));
+            retireConsent();
+            setHostRefused(false);
+            setError(null);
+          }}
+        />
+      ) : null}
     </>
   ) : notice ? <p className="join-hint" role="status">{notice}</p> : null;
 
@@ -304,13 +337,25 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
             in place when it does, so this says what will happen rather than racing a clock. */}
         <p className="join-note">{t("appPasswordReady")}</p>
 
-        {/* The picker owns the choice, the provider's note and the help link; the
-            credential fields below only exist once a provider is chosen, so the step
-            opens on its one real question. On the sign-in path the app-password note would be
-            a false instruction, so the sign-in sentence stands in and the help link goes. */}
+        {/* THE ADDRESS FIRST: its domain preselects a tile, and a pause looks up one the
+            table does not know. The picker owns the choice, the note and the help link; the other
+            fields exist once a provider is chosen. On the sign-in path the app-password note would
+            be a false instruction, so the sign-in sentence stands in and the help link goes. */}
+        <label className="join-label" htmlFor="join-mb-address">{t("mailboxAddress")}</label>
+        <input
+          id="join-mb-address" className="join-input" type="email" autoComplete="off"
+          value={mbAddress} onChange={(e) => setMbAddress(e.target.value)} required={!signIn}
+          onBlur={addressFirst.lookUp}
+          onKeyDown={(e) => { if (e.key === "Enter") addressFirst.lookUp(); }}
+        />
+        {addressFirst.looking ? (
+          <p className="join-hint" role="status">{tp("lookingUp", { domain: mbAddress.trim().split("@").pop() ?? "" })}</p>
+        ) : null}
+
         <ProviderPicker
           value={provider?.id ?? null}
-          onChange={pickProvider}
+          onChange={(id) => { addressFirst.pick(id); pickProvider(id); }}
+          proton={addressFirst.guess?.proton === true}
           note={signIn ? tm("microsoftOauthNote") : afterSetup ? t("mailboxMicrosoftAfterSetup") : undefined}
           showHelp={!signIn}
         />
@@ -318,30 +363,24 @@ export function MailboxStep({ form, busy, error, setError, run, sameAccount, own
         {provider && (
           <>
             {signIn ? (
-              /* No fields: the sign-in supplies the address and there is no password. Secondary,
-                 for a tenant that blocks the sign-in. */
+              /* No password: the sign-in's own address is the one connected. Secondary, for a
+                 tenant that blocks the sign-in. */
               <Button variant="ghost" type="button" onClick={() => { setError(null); setAppPassword(true); }}>
                 {tm("microsoftUseAppPassword")}
               </Button>
             ) : (
               <>
-                <label className="join-label" htmlFor="join-mb-address">{t("mailboxAddress")}</label>
-                <input
-                  id="join-mb-address" className="join-input" type="email" autoComplete="off"
-                  value={mbAddress} onChange={(e) => setMbAddress(e.target.value)} required
-                />
-
                 {provider.manual && (
                   <>
                     <label className="join-label" htmlFor="join-imap">{t("imapHost")}</label>
                     <input
                       id="join-imap" className="join-input" autoComplete="off"
-                      value={imapHost} onChange={(e) => { setImapHost(e.target.value); retireConsent(); }} required
+                      value={imapHost} onChange={(e) => { setImapHost(e.target.value); retireConsent(); setHostRefused(false); }} required
                     />
                     <label className="join-label" htmlFor="join-smtp">{t("smtpHost")}</label>
                     <input
                       id="join-smtp" className="join-input" autoComplete="off"
-                      value={smtpHost} onChange={(e) => { setSmtpHost(e.target.value); retireConsent(); }} required
+                      value={smtpHost} onChange={(e) => { setSmtpHost(e.target.value); retireConsent(); setHostRefused(false); }} required
                     />
                   </>
                 )}

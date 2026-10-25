@@ -232,6 +232,7 @@ export function useCloudFirstRun(demo: boolean, pairNode?: ReactNode): FirstRunH
       probeReason: probeReasonOf,
       // Both modes are `POST /mailboxes`, which carries each protocol's consent.
       plaintextOffer: (err: unknown) => plaintextOfferOf(err),
+      discover: mailboxApi.discover,
       probeMessage: (err: unknown) => (err instanceof ApiError ? messageOf(err) : null),
       ...(SELF_HOST_BUILD && operatorAi !== undefined ? { selfhostAi: operatorAi } : {}),
       ...(pairNode ? { pairNode } : {}),
