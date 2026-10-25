@@ -896,3 +896,35 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(ring()).toBe("o1");
   }, 30_000);
 });
+
+describe("at phone width, Back from a letter keeps the cursor on its row", () => {
+  it("the row read wears the cursor, the focus and its strip after Back: a conversation, an unread letter, a read one", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true, writable: true,
+      value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
+    });
+    const host = await mountThread([
+      msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30),
+      msg("w1", 40, { threadId: "W" }), msg("u1", 50, { threadId: "U" }), msg("l1", 5, { threadId: "L", unread: false }),
+    ]);
+    const rowOn = (id: string): HTMLElement | null =>
+      host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"], [role="listbox"] .row[data-ids~="${id}"]`);
+    const order = (): string[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')].map((r) => r.dataset.ids ?? r.dataset.id ?? "");
+    expect(order()).toEqual(["u1", "w1", "p4 p3 p2 p1", "l1"]);
+    const cursor = (): string[] => [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row.sel')].map((r) => r.dataset.ids ?? r.dataset.id ?? "");
+    for (const [id, row] of [["p4", "p4 p3 p2 p1"], ["w1", "w1"], ["u1", "u1"], ["l1", "l1"]] as const) {
+      await click(rowOn(id), `${id}'s row`);
+      expect(document.querySelector(".reader"), `${id} opens in the sheet`).not.toBeNull();
+      await dwell();
+      await click(document.querySelector(".reader-close"), "the sheet's Back");
+      expect(cursor(), `after Back from ${id}`).toEqual([row]);
+      expect(rowOn(id)?.getAttribute("aria-selected"), `${id} is the selected option`).toBe("true");
+      expect(document.activeElement, `focus on ${id}'s row`).toBe(rowOn(id));
+    }
+    expect(order(), "w1 and u1 read and filed under Earlier, the last read first; T still has unread").toEqual(["p4 p3 p2 p1", "u1", "w1", "l1"]);
+    expect(rowOn("p4")?.closest(".row-slot")?.querySelector(".tm-strip"), "the conversation's strip left with the cursor").toBeNull();
+    await click(rowOn("p4"), "T's row again");
+    await click(document.querySelector(".reader-close"), "Back");
+    expect(rowOn("p4")?.closest(".row-slot")?.querySelector(".tm-strip"), "T keeps its walked strip after Back").not.toBeNull();
+  }, 60_000);
+});
