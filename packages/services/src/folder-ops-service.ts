@@ -3,8 +3,9 @@ import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
 import { bridgeTx, type ServiceContext } from "./context.js";
+import { lockAccountRow } from "./account-lock.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { fenceErasedMailboxOnly } from "./erasure-fence.js";
 import { folderInventoryProbe, refuseOverFolderInventory } from "./read-bounds.js";
@@ -88,6 +89,10 @@ export class FolderOpsService {
     this.validName(name);
 
     return asTx(ctx).transaction(async (tx) => {
+      /* THE ACCOUNT ROW FOR SHARE, every verb's first statement: the key's claim reads it, and read
+         after the mailbox row and the counter it deadlocked a PATCH or an erasure holding it. Not the
+         fence: the inventory row is fenced on its mailbox, which the body names and is not proven ours. */
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
       await this.requireCommandableMailbox(tx, ctx, mailboxId);
       /* THE ERASURE FENCE, on the row the line above already took `FOR UPDATE`, so it adds no
          lock. The inventory row this verb inserts hangs off `mailboxes` alone: that key refuses
@@ -138,6 +143,7 @@ export class FolderOpsService {
     }
 
     return asTx(ctx).transaction(async (tx) => {
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
       await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
       await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder, name]);
@@ -172,6 +178,7 @@ export class FolderOpsService {
     const subject = await this.requireSubject(ctx, id);
 
     return asTx(ctx).transaction(async (tx) => {
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
       const mb = await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
       if (mb.trashFolder === null) {
         throw new ServiceError(
@@ -214,6 +221,7 @@ export class FolderOpsService {
     const wasCreate = subject.op.kind === "create";
 
     return asTx(ctx).transaction(async (tx) => {
+      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
       await recheckIdempotency(tx, ctx, opts.idempotency);
       if (wasCreate) {
         // CASCADE takes the op row with the inventory row.

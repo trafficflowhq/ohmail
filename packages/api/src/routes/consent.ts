@@ -8,10 +8,10 @@ import {
   unmovedReport, readProfileChange, readMailboxProfileChanges, type ProfileChangeWire,
   DEFAULT_DORMANCY_DAYS, RESURFACE_TIME_RE, SEED_MAX_ADDRESSES, SUPPORTED_LOCALES,
   SUPPORTED_THEME_FACES,
-  ServiceError,
+  ServiceError, fenceErasedAccount, lockAccountSettingsRow, lockMailboxRows,
 } from "@trafficflow/services/mail";
-import { carryDialect } from "@trafficflow/db/dialect";
-import type { Tx } from "@trafficflow/db";
+import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import type { LedgerTx, Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -540,6 +540,13 @@ async function applyConsentSettings(
     // callback is handed a branded object, to any savepoint depth. This site used to stamp it by
     // hand, which worked and left every other site to remember.
     const txCtx = { ...ctx, db: tx as unknown as typeof ctx.db };
+    /* THE CHAIN AT THE HEAD: the account row, the settings row, then every mailbox row this save
+       writes, before a setter takes the change-log counter. Written one by one between change rows,
+       the second mailbox row was taken after the counter and deadlocked a press holding it. */
+    const named = [...(folderMailboxes ?? []), ...(signatures ?? []), ...(signaturesHtml ?? [])].map(([id]) => id);
+    await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
+    await lockAccountSettingsRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
+    await lockMailboxRows(tx as LedgerTx, dialect(ctx.db), ctx.accountId, named);
     if (hasAuto) {
       const res = await setAutoSuggest(txCtx, auto!);
       out.autoSuggestAt = res.autoSuggestAt;

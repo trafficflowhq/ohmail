@@ -25,6 +25,8 @@ export { withAccountTx } from "./context.js";
 /* The fence itself, for a writer that already holds its transaction — the local install's consent
    write is one, and it is on the mail leaf for the same reason the door above is. */
 export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasure-fence.js";
+// The head of the settings save's chain: its settings row, then the mailbox rows it writes.
+export { lockAccountSettingsRow, lockMailboxRows } from "./account-lock.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,

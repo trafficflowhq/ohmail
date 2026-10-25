@@ -901,7 +901,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       }, 60_000);
     }
 
-    it("the account row held FOR SHARE does not block a disabling PATCH, and does block a rename", async () => {
+    it("the account row held FOR SHARE blocks neither a disabling PATCH nor a rename, and does block a re-enable", async () => {
       const w = await leaveWorld("lo-sh");
       const gate = open(`lo-sh-gate-${w.tag}`);
       let held!: () => void;
@@ -918,13 +918,18 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       const timeout = new Promise<string>((r) => setTimeout(() => r("blocked"), 10_000));
       const disable = disabling(w, 1)(open(`lo-sh-off-${w.tag}`).db).then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
       expect(await Promise.race([disable, timeout]), "the disabling PATCH waited on the shared account row").toBe("ok");
-      const renameName = `lo-sh-rn-${w.tag}`;
-      const rename = mbxSvc.update(w.ctxOn(open(renameName).db, "rename"), w.held[0]!.id, { displayName: "Work" })
+      const rename = mbxSvc.update(w.ctxOn(open(`lo-sh-rn-${w.tag}`).db, "rename"), w.held[0]!.id, { displayName: "Work" })
         .then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
-      await untilWaiting(renameName);
+      const later = new Promise<string>((r) => setTimeout(() => r("blocked"), 10_000));
+      expect(await Promise.race([rename, later]), "the rename waited on the shared account row").toBe("ok");
+      // Only a PATCH that may re-enable reaches the allowance gate, and takes the row exclusively.
+      const enableName = `lo-sh-on-${w.tag}`;
+      const enable = mbxSvc.update(w.ctxOn(open(enableName).db, "enable"), w.held[1]!.id, { status: "connected" })
+        .then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
+      await untilWaiting(enableName);
       release();
       await gated;
-      expect(await rename).toBe("ok");
+      expect(await enable).toBe("ok");
     }, 60_000);
   });
 });

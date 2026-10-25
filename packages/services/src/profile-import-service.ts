@@ -279,12 +279,11 @@ export class ProfileImportService {
       /* THE READ DID NOT FIT THIS REQUEST — a slow provider, or a dial that failed here. The press
          is recorded and handed to the organizer, which reads the document on its own connection
          and applies it through the same merge; the doorbell brings its next cycle forward. */
-      // FOR UPDATE at the head: this transaction writes the mailbox row it fences, and two presses
-      // sharing it first and upgrading after would deadlock (`erasure-fence.ts#readAccountErasedAt`).
+      // Mailbox row FOR UPDATE, as it is written; account row shared (exclusive deadlocks counter-first writers).
       await withAccountTx(ctx, async (tx) => {
         await recordImportAsk(tx, { accountId: ctx.accountId, mailboxId, fingerprint, now });
         await ringFilingDoorbell(tx, mailboxId, now);
-      }, { mailboxId, lock: "update" });
+      }, { mailboxId, mailboxLock: "update" });
       return { state: "importing", fingerprint, reason: err.code === MAILBOX_READ_TIMEOUT ? "slow" : "unreachable" };
     }
     const refusal = importRefusalFor(fresh, fingerprint);

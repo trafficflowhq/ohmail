@@ -211,7 +211,8 @@ export interface TransactionFence<T> {
  * `fencedAccountWrite` — the db package's seam — with the HTTP error shape put on at the edge; it
  * is not a second fence, and there is no other. `mailboxId` fences the MAILBOX too, for a write
  * that belongs to one; `lock` raises the strength for a body that will take `accounts FOR UPDATE`
- * later; `db` names the handle for a caller that holds one directly. The census reddens a door
+ * later; `mailboxLock` raises the mailbox row's alone, for a body that writes it; `db` names the
+ * handle for a caller that holds one directly. The census reddens a door
  * that is neither fenced, fenced by construction, nor allow-listed.
  */
 export async function withAccountTx<T>(
@@ -220,13 +221,14 @@ export async function withAccountTx<T>(
     readonly lock?: LockMode;
     readonly db?: ServiceContext["db"];
     readonly mailboxId?: string;
+    readonly mailboxLock?: LockMode;
   } = {},
 ): Promise<T> {
   const db = opts.db ?? ctx.db;
   try {
     return await fencedAccountWrite(
       bridgeTx(db),
-      { accountId: ctx.accountId, mailboxId: opts.mailboxId, lock: opts.lock },
+      { accountId: ctx.accountId, mailboxId: opts.mailboxId, lock: opts.lock, mailboxLock: opts.mailboxLock },
       async (tx) => fn(tx as unknown as LedgerTx),
     );
   } catch (err) {

@@ -1880,6 +1880,11 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // wide whatever the account holds and whatever a caller sends: the predicate is about the
   // SCREEN's membership rule, and no request body reaches it.
   "message-service.ts :: NOT_NEW_FOR_YOU as string[]": { origin: "constant", count: 1 },
+  // The settings save's mailbox rows, locked at its head: the keys of its two mailbox maps.
+  "account-lock.ts :: [...new Set(mailboxIds)]": {
+    origin: { caller: "SETTINGS_MAX_MAILBOX_ENTRIES per map and uuid-checked, in applyConsentSettings before its transaction" },
+    count: 1,
+  },
 };
 
 describe("SECTION 3 — every SQL `IN` predicate says where its array came from", () => {

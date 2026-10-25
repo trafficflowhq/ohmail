@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { accounts, accountSettings, mailboxes, type LedgerTx } from "@trafficflow/db";
 import type { Dialect } from "@trafficflow/db/dialect";
 
@@ -7,9 +7,9 @@ import type { Dialect } from "@trafficflow/db/dialect";
  * they touch a `mailboxes` row: `delete` reads the same row first (the erasure fence, `FOR SHARE`)
  * and locks the mailbox second, so a door that took the mailbox first and reached the allowance
  * gate second closed the cycle and Postgres killed one side with `40P01`. EXCLUSIVE, not shared,
- * and through the dialect seam so a single-writer device store gets a no-op clause. `share` only
- * for the disabling PATCH, which reaches no allowance gate and takes the change-log counter: the
- * counter-first writers fence the account `FOR SHARE`, and an exclusive hold here would deadlock them.
+ * and through the dialect seam so a single-writer device store gets a no-op clause. `share` for a
+ * door that reaches no allowance gate (a PATCH that cannot re-enable, the folder verbs): every press
+ * holds the account `FOR SHARE` from its first statement, and an exclusive hold here makes it wait.
  * ITS OWN MODULE: `mailbox-service.ts` is mounted by the LOCAL API too, so an edge from it into
  * `mailbox-allowance.ts` would convey that file's Postgres-only statements into the device
  * engine's bundle. This module carries none, which the dialect census re-measures.
@@ -40,4 +40,14 @@ export async function lockAccountSettingsRow(tx: LedgerTx, d: Dialect, accountId
 export async function lockMailboxRow(tx: LedgerTx, d: Dialect, accountId: string, mailboxId: string): Promise<void> {
   await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes)
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1));
+}
+
+/**
+ * Several mailbox rows `FOR UPDATE` in id order, in ONE statement the rule-lock census reads: a door
+ * that writes them one at a time between change rows takes them all first, before the counter.
+ */
+export async function lockMailboxRows(tx: LedgerTx, d: Dialect, accountId: string, mailboxIds: readonly string[]): Promise<void> {
+  await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes)
+    .where(and(eq(mailboxes.accountId, accountId), inArray(mailboxes.id, [...new Set(mailboxIds)])))
+    .orderBy(asc(mailboxes.id)));
 }
