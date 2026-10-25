@@ -389,6 +389,8 @@ export {
  * the hosted session door, pruned by the worker. See `erased-bearers.ts`.
  */
 export { recordErasedBearers, erasedBearerAccount, pruneErasedBearers } from "./erased-bearers.js";
+/** The notice rows an erased account still has (cloud 0052), pruned by the worker ten years on. */
+export { pruneErasedNotices, ERASED_NOTICE_KEEP_YEARS } from "./erased-notices.js";
 export { pruneAuthThrottle, AUTH_THROTTLE_RETENTION_MS, KNOWN_CLIENT_RETENTION_MS } from "./auth-throttle-prune.js";
 // The server-side transport: `node:tls` and a raw `pg_stat_ssl` read, so never on the root entry
 // the desktop engine and the phone bundle load (`dialect-census.test.ts`).

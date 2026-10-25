@@ -46,7 +46,9 @@ const fault = vi.hoisted(() => {
 });
 
 vi.mock("@trafficflow/db", (load) => fault.mocked({ pruneIdempotencyKeys: "global_maintenance" })(load));
-vi.mock("@trafficflow/db/cloud", (load) => fault.mocked({ owedSuggestAccounts: "screener_suggest_owed" })(load));
+vi.mock("@trafficflow/db/cloud", (load) => fault.mocked({
+  owedSuggestAccounts: "screener_suggest_owed", pruneErasedNotices: "erased_notices",
+})(load));
 vi.mock("@trafficflow/core/mail", (load) => fault.mocked({ searchIndexOwedAccounts: "search_index_backfill" })(load));
 vi.mock("../src/bubble-up-cron.js", (load) => fault.mocked({ bubbleUpPass: "bubble_up" })(load));
 vi.mock("../src/workflow-cron.js", (load) => fault.mocked({ workflowTimeScanPass: "workflow" })(load));
@@ -103,6 +105,7 @@ const STAGES = [
   ["search_index_backfill", "search_index_owed_read_failed"],
   ["mailbox_erasure", "mailbox_erasure_failed"],
   ["global_maintenance", "idempotency_prune_failed"],
+  ["erased_notices", "erased_notices_prune_failed"],
 ] as const;
 
 /** The worker's lines in order, by event name. */

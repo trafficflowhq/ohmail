@@ -79,8 +79,10 @@ function fakePort(byAccount: Map<string, AccessLifecycle>): {
   };
 }
 
-function fakeMail(status: "sent" | "failed" = "sent") {
-  const sent: Array<{ to: string; kind: string; locale: string; anchor: string; noMailbox?: boolean }> = [];
+function fakeMail(status: "sent" | "failed" | "skipped" = "sent", delayMs = 0) {
+  const sent: Array<{
+    to: string; kind: string; locale: string; anchor: string; erasureAt: string | null; noMailbox?: boolean;
+  }> = [];
   return {
     sent,
     mail: {
@@ -88,12 +90,27 @@ function fakeMail(status: "sent" | "failed" = "sent") {
         _ctx: unknown,
         input: { to: string; kind: string; locale: string; anchor: Date; erasureAt: Date | null; noMailbox?: boolean },
       ) => {
-        sent.push({ to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString(), noMailbox: input.noMailbox });
+        if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+        sent.push({
+          to: input.to, kind: input.kind, locale: input.locale, anchor: input.anchor.toISOString(),
+          erasureAt: input.erasureAt?.toISOString() ?? null, noMailbox: input.noMailbox,
+        });
         return { status };
       },
     } as unknown as AccountLifecyclePassDeps["mail"],
   };
 }
+
+/** The erasure-week warning as the pass records a delivered one, a week before the plane's date. */
+async function warned(accountId: string, lc: AccessLifecycle): Promise<void> {
+  const anchor = new Date(lc.erasureAt!);
+  const at = new Date(anchor.getTime() - 7 * DAY);
+  await db.insert(accountLifecycleNotices).values({ accountId, kind: "erasure_week", anchor, sentAt: at, deliveredAt: at });
+}
+
+/** The account's notice rows, oldest anchor first. */
+const noticesOf = async (accountId: string) => (await db.select().from(accountLifecycleNotices)
+  .where(eq(accountLifecycleNotices.accountId, accountId))).sort((a, b) => a.anchor.getTime() - b.anchor.getTime());
 
 /**
  * What the driver does in one fire: the sweep, then the erase door once per account it named —
@@ -220,7 +237,8 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
       erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
     });
     const { port, released } = fakePort(new Map([[accountId, lc]]));
-    // No mailer: erasure is not gated on mail — the notices are reported owed and the act runs.
+    // The week's warning went out on time; without it the door holds (the cases below).
+    await warned(accountId, lc);
     const r1 = await sweepThenErase({ port, mail: null, now: () => NOW });
     expect(r1.erased).toBe(1);
     expect(released, "the money is stopped through the port, before the delete").toEqual([accountId]);
@@ -281,6 +299,7 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
         closedReason: "suspended", closedAt: closedLong, erasureAt: past })],
       [ended.accountId, closedLifecycle({ closedAt: closedLong, erasureAt: past })],
     ]));
+    await warned(ended.accountId, closedLifecycle({ erasureAt: past }));
     const { events, log } = fakeLog();
 
     const r = await sweepThenErase({ port, mail: null, log, now: () => NOW });
@@ -498,6 +517,7 @@ describe.skipIf(!PG_UP)("the erasure door, through the entitlements client", () 
     const { accountId } = await seedAccount();
     const t = 1_000;
     const plane = planeFor(accountId, [due()]);
+    await warned(accountId, due());
     const r = await sweepThenErase({
       port: clientOn(plane.impl, () => t), mail: null, now: () => NOW,
     });
@@ -596,6 +616,7 @@ describe.skipIf(!PG_UP)("the erase door on real Postgres", () => {
       erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
     });
     const { port, released } = fakePort(new Map([[accountId, lc]]));
+    await warned(accountId, lc);
     const sweep = await runAccountLifecyclePass(db, { port, mail: null, now: () => NOW });
     expect(sweep.erasureDue).toContain(accountId);
     expect(released, "the sweep stopped a subscription itself").toEqual([]);
@@ -607,5 +628,108 @@ describe.skipIf(!PG_UP)("the erase door on real Postgres", () => {
     expect(released, "a repeated poke stopped the money twice").toEqual([accountId]);
     expect(await eraseOneDueAccount(db, { port, now: () => NOW }, other.accountId)).toBe("not_due");
     expect(await db.select().from(users).where(eq(users.accountId, other.accountId))).toHaveLength(1);
+  });
+});
+
+/**
+ * NO ERASURE WITHOUT A DELIVERED WARNING, AND THE WARNING OUTLIVES THE ERASURE
+ * (ERASURE-WEEK-MAIL-LEAVES-NO-TRACE). The erasure deleted every notice row, so nothing could show
+ * afterwards whether the week's warning went out; and nothing waited for it.
+ */
+describe.skipIf(!PG_UP)("the erasure waits for a delivered warning, and keeps it", () => {
+  const due = () => closedLifecycle({
+    closedAt: new Date(NOW.getTime() - 32 * DAY).toISOString(),
+    erasureAt: new Date(NOW.getTime() - 2 * DAY).toISOString(),
+  });
+  const at = (ms: number) => () => new Date(NOW.getTime() + ms);
+  const HOUR = 60 * 60 * 1000;
+  const said = (events: ReturnType<typeof fakeLog>["events"], accountId: string) =>
+    events.filter((e) => e.accountId === accountId).map((e) => `${e.level} ${e.event}`);
+  const kept = async (accountId: string) =>
+    (await noticesOf(accountId)).map((n) => [n.kind, n.anchor.toISOString(), n.deliveredAt]);
+
+  it("never warned: the door holds at ERROR; the late warning names a week from now, and the erasure waits for it", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = due();
+    const { port, released } = fakePort(new Map([[accountId, lc]]));
+    const held = fakeLog();
+    expect((await runAccountLifecyclePass(db, { port, mail: null, now: () => NOW })).erasureDue).toContain(accountId);
+    expect(await eraseOneDueAccount(db, { port, log: held.log, now: () => NOW }, accountId)).toBe("unwarned");
+    expect(said(held.events, accountId)).toEqual(["error account_erasure_held_unwarned"]);
+    expect(released, "the subscription is not stopped for a held erasure").toEqual([]);
+    expect(await db.select().from(users).where(eq(users.accountId, accountId))).toHaveLength(1);
+    expect((await db.select().from(accounts).where(eq(accounts.id, accountId)))[0]!.erasedAt).toBeNull();
+
+    const m = fakeMail();
+    await runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => [s.kind, s.erasureAt])).toEqual([
+      ["closed", null], ["erasure_week", new Date(NOW.getTime() + 7 * DAY).toISOString()],
+    ]);
+    const late = fakeLog();
+    for (const later of [0, 8 * DAY - HOUR]) {
+      expect(await eraseOneDueAccount(db, { port, log: late.log, now: at(later) }, accountId), `+${later}`).toBe("unwarned");
+    }
+    expect(said(late.events, accountId)).toEqual(Array(2).fill("warn account_erasure_held_for_late_warning"));
+    expect(await eraseOneDueAccount(db, { port, now: at(8 * DAY + HOUR) }, accountId)).toBe("erased");
+    expect(released).toEqual([accountId]);
+    expect(await kept(accountId), "the delivered warning alone survives the erasure").toEqual([
+      ["erasure_week", lc.erasureAt, NOW],
+    ]);
+  });
+
+  it("warned in its week: the erasure runs on the plane's date, and only that warning survives it", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle({ erasureAt: new Date(NOW.getTime() + 5 * DAY).toISOString() });
+    const { port } = fakePort(new Map([[accountId, lc]]));
+    const m = fakeMail();
+    await runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => [s.kind, s.erasureAt]))
+      .toEqual([["closed", lc.erasureAt], ["erasure_week", lc.erasureAt]]);
+    expect(await eraseOneDueAccount(db, { port, now: at(6 * DAY) }, accountId)).toBe("erased");
+    expect(await kept(accountId)).toEqual([["erasure_week", lc.erasureAt, NOW]]);
+  });
+
+  it("a notice every recipient skipped is not delivered, and is sent again once its claim is an hour old", async () => {
+    const { accountId, email } = await seedAccount();
+    const { port } = fakePort(new Map([[accountId, closedLifecycle()]]));
+    const { events, log } = fakeLog();
+    const r = await runAccountLifecyclePass(db, { port, mail: fakeMail("skipped").mail, log, now: () => NOW });
+    expect([r.skipped, r.sent.closed]).toEqual([1, 0]);
+    expect(said(events, accountId)).toEqual(["warn account_lifecycle_notice_skipped"]);
+    expect((await noticesOf(accountId)).map((n) => n.deliveredAt)).toEqual([null]);
+    const perPass: number[] = [];
+    for (const later of [HOUR / 2, 2 * HOUR, 4 * HOUR]) {
+      const m = fakeMail();
+      await runAccountLifecyclePass(db, { port, mail: m.mail, now: at(later) });
+      perPass.push(m.sent.filter((s) => s.to === email).length);
+    }
+    expect(perPass, "held at 30 minutes, sent at two hours, and never again").toEqual([0, 1, 0]);
+    expect((await noticesOf(accountId)).map((n) => n.deliveredAt)).toEqual([at(2 * HOUR)()]);
+  });
+
+  /** A claim an hour stale with no delivery: a pass that died between its claim and its send. */
+  const stale = async (accountId: string, lc: AccessLifecycle) => db.insert(accountLifecycleNotices).values({
+    accountId, kind: "closed", anchor: new Date(lc.closedAt!), sentAt: new Date(NOW.getTime() - 2 * HOUR),
+  });
+
+  it("a stale claim without a delivery is sent again and stamped delivered", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle();
+    await stale(accountId, lc);
+    const m = fakeMail();
+    const r = await runAccountLifecyclePass(db, { port: fakePort(new Map([[accountId, lc]])).port, mail: m.mail, now: () => NOW });
+    expect(m.sent.filter((s) => s.to === email).map((s) => s.kind)).toEqual(["closed"]);
+    expect(r.sent.closed).toBe(1);
+    expect((await noticesOf(accountId)).map((n) => [n.sentAt, n.deliveredAt])).toEqual([[NOW, NOW]]);
+  });
+
+  it("two passes racing for one stale claim send it once", async () => {
+    const { accountId, email } = await seedAccount();
+    const lc = closedLifecycle();
+    await stale(accountId, lc);
+    const { port } = fakePort(new Map([[accountId, lc]]));
+    const m = fakeMail("sent", 50);
+    await Promise.all([1, 2].map(() => runAccountLifecyclePass(db, { port, mail: m.mail, now: () => NOW })));
+    expect(m.sent.filter((s) => s.to === email)).toHaveLength(1);
   });
 });

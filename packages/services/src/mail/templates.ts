@@ -636,7 +636,8 @@ interface LifecycleNoticeData {
   locale: "en" | "de";
   /** The anchor's own date (trial end / closure / erasure), formatted by the caller as UTC. */
   anchorDate: string;
-  /** The erasure forecast's date, or null while none exists (an operator hold, say). */
+  /** The erasure forecast's date, or null while none exists (an operator hold, say). A late erasure
+   *  warning's is a week after it was sent, its anchor's date having passed. */
   erasureDate: string | null;
   /** Deep link to the app's account page — informational, changes nothing by itself. */
   accountUrl: string;
@@ -700,7 +701,7 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
       subject: "Your ohmail account data is erased in a week",
       action: "Open your ohmail account",
       body: (d) => [
-        `On ${d.anchorDate} your ohmail account data is erased: rules, Screener decisions and settings. Your mailbox is untouched — the mail was never ours to hold.`,
+        `On ${d.erasureDate ?? d.anchorDate} your ohmail account data is erased: rules, Screener decisions and settings. Your mailbox is untouched — the mail was never ours to hold.`,
         "Sign in before then to keep the account, or export your settings first.",
       ],
     },
@@ -708,7 +709,7 @@ const LIFECYCLE_COPY: Record<LifecycleNoticeData["kind"], Record<"en" | "de", {
       subject: "Deine ohmail-Account-Daten werden in einer Woche gelöscht",
       action: "Dein ohmail-Account öffnen",
       body: (d) => [
-        `Am ${d.anchorDate} werden deine ohmail-Account-Daten gelöscht: Regeln, Screener-Entscheidungen und Einstellungen. Dein Postfach bleibt unangetastet, deine Mails waren nie bei uns.`,
+        `Am ${d.erasureDate ?? d.anchorDate} werden deine ohmail-Account-Daten gelöscht: Regeln, Screener-Entscheidungen und Einstellungen. Dein Postfach bleibt unangetastet, deine Mails waren nie bei uns.`,
         "Melde dich vorher an, um den Account zu behalten, oder exportiere zuerst deine Einstellungen.",
       ],
     },

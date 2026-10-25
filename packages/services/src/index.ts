@@ -320,7 +320,7 @@ export {
 // Blocking precondition for the "delete your account anytime"
 // sentence on the landing page.
 export {
-  deleteAccount, erasureOutcome, type DeleteAccountResult,
+  deleteAccount, erasureOutcome, ErasureUnwarnedError, type DeleteAccountResult,
 } from "./account-deletion-service.js";
 // The wall's nightly pass (cloud 0040): the reminder mails, idempotent by the notices PK, and
 // the erasure door, one account per call, through the same path DELETE /account runs.

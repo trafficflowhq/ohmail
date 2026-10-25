@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ThrottleKeys } from "./auth/throttle-keys.js";
-import { and, asc, eq, exists, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
@@ -14,9 +14,11 @@ import type { MailContext } from "./mail/index.js";
  * erasures. It iterates `accounts WHERE erased_at IS NULL` having at least one user, acts only on a
  * verdict the plane ANSWERED, and owes at most one mail per FACT: idempotency is the
  * `account_lifecycle_notices` PRIMARY KEY (account, kind, anchor), `anchor` the plane's own ISO
- * instant. A re-run inserts nothing, a NEW closure is a new anchor. Due erasures are NAMED
+ * instant. A re-run inserts nothing, a NEW closure is a new anchor. A row is a claim until
+ * `delivered_at` (cloud 0052) says the provider took the mail. Due erasures are NAMED
  * (`erasureDue`) and each is erased in its own call by {@link eraseOneDueAccount}, which with
- * `DELETE /account` is the only caller of `deleteAccount`. The sweep stops at its budget with `next`.
+ * `DELETE /account` is the only caller of `deleteAccount`, and only after the erasure-week warning
+ * for that date was delivered. The sweep stops at its budget with `next`.
  */
 
 /** How far ahead the trial reminder looks — "two days left", the flow's own words. */
@@ -25,6 +27,8 @@ export const TRIAL_REMINDER_AHEAD_MS = 2 * 24 * 60 * 60 * 1000;
 export const ERASURE_REMINDER_AHEAD_MS = 7 * 24 * 60 * 60 * 1000;
 /** The slack past `erasureAt` before anything is erased. */
 export const ERASURE_SLACK_MS = 24 * 60 * 60 * 1000;
+/** How old an undelivered claim is before a pass claims it again: a skipped send, or a pass that died. */
+export const NOTICE_CLAIM_STALE_MS = 60 * 60 * 1000;
 /** One sweep's wall clock, under the platform's 60 s ceiling; checked before every chunk. */
 export const ACCOUNT_LIFECYCLE_BUDGET_MS = 45_000;
 /** Due erasures one sweep names before it stops and answers `next` — bounds the answer's size. */
@@ -85,8 +89,10 @@ export interface AccountLifecyclePassResult {
   accounts: number;
   /** Verdicts that carried a lifecycle block. Old plane ⇒ 0, and nothing else happens. */
   withLifecycle: number;
-  /** Notices newly claimed AND sent, by kind. */
+  /** Notices newly claimed AND delivered, by kind. */
   sent: { trial_two_days: number; closed: number; erasure_week: number };
+  /** Notices claimed and not delivered: every recipient skipped, or none was left. Sent again once stale. */
+  skipped: number;
   /** Owed notices left unclaimed because no mailer is configured. */
   unmailable: number;
   /** Accounts whose erasure is due, for {@link eraseOneDueAccount} one at a time. Never erased here. */
@@ -122,17 +128,31 @@ export function noticesDue(lc: AccessLifecycle, now: Date): DueNotice[] {
   // contract), so the erasure notice below and the erasure itself cannot fire for one either.
   if (lc.state === "closed" && closedAt !== null && lc.closedReason !== "suspended") {
     // A NOTICE STATES ONLY A DATE THE ERASURE WILL KEEP. The epoch belt refuses a date it cannot
-    // floor, so the same reading gates the mail: no erasure week, and no date in the closure.
+    // floor, so the same reading gates the mail: no erasure week, and no date in the closure. Nor
+    // does a closure name a date already past.
     const stated = erasureAt !== null && erasureClearsEpoch(lc) ? erasureAt : null;
-    out.push({ kind: "closed", anchor: closedAt, erasureAt: stated });
-    if (stated !== null) {
-      const ahead = stated.getTime() - now.getTime();
-      if (ahead > 0 && ahead <= ERASURE_REMINDER_AHEAD_MS) {
-        out.push({ kind: "erasure_week", anchor: stated, erasureAt: stated });
-      }
+    const ahead = stated === null ? 0 : stated.getTime() - now.getTime();
+    out.push({ kind: "closed", anchor: closedAt, erasureAt: ahead > 0 ? stated : null });
+    // Owed past the date too: the erasure waits for it, and a late one names a date a week out.
+    if (stated !== null && ahead <= ERASURE_REMINDER_AHEAD_MS) {
+      out.push({
+        kind: "erasure_week", anchor: stated,
+        erasureAt: ahead > 0 ? stated : new Date(now.getTime() + ERASURE_REMINDER_AHEAD_MS),
+      });
     }
   }
   return out;
+}
+
+/**
+ * The instant a retention erasure may count from, given when its erasure-week warning was
+ * delivered: none without a delivery, the plane's date for a warning delivered by then, and a
+ * week after the delivery for a late one, which is the date that mail named.
+ */
+export function erasureWarnedFrom(anchor: Date, deliveredAt: Date | null): Date | null {
+  if (deliveredAt === null) return null;
+  return deliveredAt.getTime() <= anchor.getTime()
+    ? anchor : new Date(deliveredAt.getTime() + ERASURE_REMINDER_AHEAD_MS);
 }
 
 /** The program's stated lifecycle epoch as a positive instant, or why it is not one. */
@@ -188,7 +208,7 @@ export async function runAccountLifecyclePass(
   const result: AccountLifecyclePassResult = {
     accounts: 0, withLifecycle: 0,
     sent: { trial_two_days: 0, closed: 0, erasure_week: 0 },
-    unmailable: 0, erasureDue: [], faults: 0, next: null,
+    skipped: 0, unmailable: 0, erasureDue: [], faults: 0, next: null,
   };
 
   let epochAbsentSaid = false;
@@ -293,13 +313,15 @@ export async function runAccountLifecyclePass(
 
 /** What the erasure door did for one account — a closed set, answered on the route. */
 export type EraseOneOutcome =
-  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated";
+  | "erased" | "already_erased" | "not_due" | "unanswered" | "reactivated" | "unwarned";
 
 /**
  * THE ERASURE DOOR, one account per call: the program is asked AGAIN, past every cache, and only
  * its answer erases; the money is stopped first, exactly as `DELETE /account` does, and then
  * `deleteAccount` runs its ONE transaction. Idempotent by `accounts.erased_at`. A read the program
- * did not answer, or a verdict that no longer asks for erasure, changes nothing.
+ * did not answer, or a verdict that no longer asks for erasure, changes nothing. Neither does an
+ * erasure whose week's warning was never delivered, or was delivered late and its week has not
+ * passed: the door FAILS CLOSED on the warning as the epoch belt does on the date.
  */
 export async function eraseOneDueAccount(
   db: Db, deps: Pick<AccountLifecyclePassDeps, "port" | "now" | "log" | "throttleKeys">, accountId: string,
@@ -328,11 +350,37 @@ export async function eraseOneDueAccount(
     });
     return fresh && fresh.state === "closed" ? "reactivated" : "not_due";
   }
+  const anchor = new Date(fresh.erasureAt!);
+  const [warning] = await db.select({ deliveredAt: accountLifecycleNotices.deliveredAt })
+    .from(accountLifecycleNotices)
+    .where(and(
+      eq(accountLifecycleNotices.accountId, accountId),
+      eq(accountLifecycleNotices.kind, "erasure_week"),
+      eq(accountLifecycleNotices.anchor, anchor),
+    ))
+    .limit(1);
+  const warnedFrom = erasureWarnedFrom(anchor, warning?.deliveredAt ?? null);
+  if (warnedFrom === null) {
+    log.error("account_erasure_held_unwarned", {
+      accountId, kind: "erasure_week",
+      reason: "the erasure is due but its week's warning was never delivered; nothing was released " +
+        "or erased, and the pass sends the warning late, naming a date a week out",
+    });
+    return "unwarned";
+  }
+  if (warnedFrom.getTime() + ERASURE_SLACK_MS > now().getTime()) {
+    log.warn("account_erasure_held_for_late_warning", {
+      accountId, kind: "erasure_week",
+      reason: "the week's warning went out late; the erasure waits for the date that mail named, " +
+        "plus the day of slack",
+    });
+    return "unwarned";
+  }
   const outcome = await deps.port.releaseAccount(accountId);
   // This pass runs only against an entitlements program, so a refund drain runs beside it.
   await deleteAccount(
     { db, accountId, userId: null, now, requestId: randomUUID() },
-    { throttleKeys: deps.throttleKeys, drainsRefunds: true },
+    { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor },
   );
   log.info("account_lifecycle_erased", {
     accountId, subscription: outcome,
@@ -342,7 +390,10 @@ export async function eraseOneDueAccount(
   return "erased";
 }
 
-/** Claim one notice by its PK, send it, and un-claim on a FAILED send so the next run retries. */
+/**
+ * Claim one notice by its PK, send it, and stamp it delivered once the provider took it; un-claim
+ * on a FAILED send so the next run retries. A claim with no delivery is claimed again once stale.
+ */
 async function claimAndSend(
   db: Db, deps: AccountLifecyclePassDeps, accountId: string, due: DueNotice,
   result: AccountLifecyclePassResult, log: Logger,
@@ -351,11 +402,24 @@ async function claimAndSend(
     result.unmailable += 1;
     return;
   }
+  const now = deps.now();
+  const undelivered = and(
+    eq(accountLifecycleNotices.accountId, accountId),
+    eq(accountLifecycleNotices.kind, due.kind),
+    eq(accountLifecycleNotices.anchor, due.anchor),
+    isNull(accountLifecycleNotices.deliveredAt),
+  );
   const claimed = await bridgeTx(db).insert(accountLifecycleNotices)
-    .values({ accountId, kind: due.kind, anchor: due.anchor })
-    .onConflictDoNothing()
+    .values({ accountId, kind: due.kind, anchor: due.anchor, sentAt: now })
+    .onConflictDoUpdate({
+      target: [accountLifecycleNotices.accountId, accountLifecycleNotices.kind, accountLifecycleNotices.anchor],
+      set: { sentAt: now },
+      // A delivered row is never touched again: it is the record an erasure keeps.
+      setWhere: and(isNull(accountLifecycleNotices.deliveredAt),
+        lt(accountLifecycleNotices.sentAt, new Date(now.getTime() - NOTICE_CLAIM_STALE_MS))),
+    })
     .returning({ accountId: accountLifecycleNotices.accountId });
-  if (claimed.length === 0) return; // already sent for this fact — the PK is the idempotency
+  if (claimed.length === 0) return; // delivered, or claimed by a pass within the hour
 
   const recipients = await db.select({ email: users.email }).from(users)
     .where(eq(users.accountId, accountId));
@@ -367,21 +431,19 @@ async function claimAndSend(
     .where(eq(mailboxes.accountId, accountId)).limit(1)).length === 0;
 
   let anyFailed = false;
+  let anySent = false;
   for (const r of recipients) {
     const sent = await deps.mail.sendLifecycleNotice(
       { db, now: deps.now },
       { to: r.email, kind: due.kind, locale, anchor: due.anchor, erasureAt: due.erasureAt, noMailbox },
     );
     if (sent.status === "failed") anyFailed = true;
+    if (sent.status === "sent") anySent = true;
   }
   if (anyFailed) {
     // The claim is handed back so the next nightly run retries; the mailer's own idempotency
     // key (recipient, kind, anchor) keeps a half-delivered account from double-mailing.
-    await bridgeTx(db).delete(accountLifecycleNotices).where(and(
-      eq(accountLifecycleNotices.accountId, accountId),
-      eq(accountLifecycleNotices.kind, due.kind),
-      eq(accountLifecycleNotices.anchor, due.anchor),
-    ));
+    await bridgeTx(db).delete(accountLifecycleNotices).where(undelivered);
     result.faults += 1;
     log.error("account_lifecycle_notice_send_failed", {
       accountId, kind: due.kind,
@@ -389,5 +451,15 @@ async function claimAndSend(
     });
     return;
   }
+  if (!anySent) {
+    result.skipped += 1;
+    log.warn("account_lifecycle_notice_skipped", {
+      accountId, kind: due.kind,
+      reason: "no recipient was sent the notice (the mail limiter, an invalid address, or no user " +
+        "left); it is not delivered, and a pass an hour on or later sends it again",
+    });
+    return;
+  }
+  await bridgeTx(db).update(accountLifecycleNotices).set({ deliveredAt: deps.now() }).where(undelivered);
   result.sent[due.kind] += 1;
 }

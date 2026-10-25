@@ -278,7 +278,9 @@ describe("the baseline cutoff is frozen", () => {
     // redefined on an existing table, adopting nothing.
     // `- 30` → `- 31`: cloud 0051_alert_drills — ONE entry above the cutoff, a NEW table, its index
     // and a role-guarded grant on it, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 31);
+    // `- 31` → `- 32`: cloud 0052_lifecycle_notice_delivered — ONE entry above the cutoff, a column
+    // on an existing table and a backfill of its earlier rows, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 32);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -1000,6 +1002,9 @@ describe("the baseline cutoff is frozen", () => {
       // Alert drills: a new table and its index, IF NOT EXISTS, empty, and the staff role's grant
       // on it only where `ohmail_admin` exists. Safe over any history.
       "0051_alert_drills",
+      // A notice's delivery time: a nullable column, IF NOT EXISTS, and the pass's earlier rows
+      // stamped delivered (nothing can tell otherwise). Safe over any history that has not run it.
+      "0052_lifecycle_notice_delivered",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

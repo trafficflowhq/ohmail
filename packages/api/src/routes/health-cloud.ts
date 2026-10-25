@@ -194,6 +194,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // on `GET /account/access` is best-effort by contract (a banner must not fail the wall's read),
   // so its absence is silent twice over. `503 schema_incomplete` at the deploy gate names it.
   ["account_lifecycle_notices", "sent_at"],
+  // cloud 0052_lifecycle_notice_delivered — `delivered_at`, its one column. The SWALLOWED kind, as above:
+  // absent, every claim faults inside the pass's catch and every erasure door answers 503.
+  ["account_lifecycle_notices", "delivered_at"],
   // cloud 0041_attachment_staging_digest — the column the send's content check READS. Without it
   // the mint's insert 42703s, so every staged send fails at the upload step on a deployment whose
   // API has taken the change and whose database has not; the marker turns that into a 503 at the

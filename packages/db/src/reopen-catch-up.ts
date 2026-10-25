@@ -39,8 +39,9 @@ export async function reopenAnchorOf(db: Tx, accountId: string): Promise<Date | 
  */
 export async function plantReopenedCatchUp(db: Tx, accountId: string): Promise<Date | null> {
   return fencedAccountWrite(db, { accountId }, async (tx) => {
+    // One value per table column, in order: drizzle names them all. A `reopened` row is never delivered.
     const rows = await tx.insert(accountLifecycleNotices)
-      .select(sql`select ${accountId}::uuid, 'reopened', a.at, a.at
+      .select(sql`select ${accountId}::uuid, 'reopened', a.at, a.at, null::timestamptz
         from (select ${anchorOfRows()} as at from ${mailboxes} where ${mailboxes.accountId} = ${accountId}) a
         where a.at is not null`)
       .onConflictDoNothing()

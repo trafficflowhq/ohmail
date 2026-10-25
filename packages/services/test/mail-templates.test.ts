@@ -518,6 +518,18 @@ describe("the lifecycle notices — every kind, both locales, and no price anywh
       expect(out.replyTo).toBeUndefined();
     }
   });
+
+  it("the erasure week names the date the erasure keeps, not a plane's date already past", () => {
+    for (const locale of ["en", "de"] as const) {
+      const { text, html } = renderTemplate("lifecycle_notice", {
+        ...FIXTURES.lifecycle_notice, kind: "erasure_week", locale,
+      });
+      for (const part of [text, html]) {
+        expect(part, locale).toContain(FIXTURES.lifecycle_notice.erasureDate);
+        expect(part, locale).not.toContain(FIXTURES.lifecycle_notice.anchorDate);
+      }
+    }
+  });
 });
 
 describe("the billing link — the app's billing door, support's address, and nothing else", () => {

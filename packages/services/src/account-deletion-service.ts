@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, like, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings,
@@ -146,6 +146,14 @@ export async function erasureOutcome(ctx: ServiceContext): Promise<"erased" | "n
 /** Rows affected across the three drivers — see `rows-affected.ts` for why there is one copy. */
 const n = rowsAffected;
 
+/** A retention erasure was asked for a date with no delivered erasure-week warning; nothing was erased. */
+export class ErasureUnwarnedError extends Error {
+  constructor() {
+    super("no delivered erasure warning for this erasure date");
+    this.name = "ErasureUnwarnedError";
+  }
+}
+
 /**
  * Erase one account. Runs in ONE transaction: a half-deleted account is worse
  * than an undeleted one, because the user has been told their data is gone.
@@ -158,10 +166,11 @@ const n = rowsAffected;
  * production callers pass it (`account-deletion-callers.test.ts` parses for the call). Without it
  * those rows are left to the prune. `drainsRefunds` is true only where a refund drain runs (a host
  * with an entitlements program): pending refunds are then kept for it. Absent, nothing drains them,
- * so they are deleted with the rest.
+ * so they are deleted with the rest. `warnedFor` is a retention erasure's date (the lifecycle pass's
+ * door): the erasure-week warning delivered for it is kept, and without one nothing is erased.
  */
 export async function deleteAccount(
-  ctx: ServiceContext, opts: { throttleKeys?: ThrottleKeys; drainsRefunds?: boolean } = {},
+  ctx: ServiceContext, opts: { throttleKeys?: ThrottleKeys; drainsRefunds?: boolean; warnedFor?: Date } = {},
 ): Promise<DeleteAccountResult> {
   const accountId = ctx.accountId;
   const db = ctx.db as unknown as { transaction: <T>(fn: (tx: LedgerTx) => Promise<T>) => Promise<T> };
@@ -189,6 +198,21 @@ export async function deleteAccount(
     await tx.update(accounts)
       .set({ erasedAt: sql`coalesce(${accounts.erasedAt}, ${ctx.now().toISOString()}::timestamptz)` })
       .where(eq(accounts.id, accountId));
+
+    // A RETENTION ERASURE RUNS ONLY ON A DELIVERED WARNING. A delivered row is never changed again
+    // (the pass's writes all ask `delivered_at IS NULL`); the throw rolls the stamp back with the rest.
+    const warnedFor = opts.warnedFor;
+    if (warnedFor !== undefined) {
+      const [warning] = await tx.select({ kind: accountLifecycleNotices.kind }).from(accountLifecycleNotices)
+        .where(and(
+          eq(accountLifecycleNotices.accountId, accountId),
+          eq(accountLifecycleNotices.kind, "erasure_week"),
+          eq(accountLifecycleNotices.anchor, warnedFor),
+          isNotNull(accountLifecycleNotices.deliveredAt),
+        ))
+        .limit(1);
+      if (!warning) throw new ErasureUnwarnedError();
+    }
 
     /**
      * The global lock order: `account_settings` FIRST, the change-log sequence row second
@@ -463,10 +487,17 @@ export async function deleteAccount(
 
     // The wall's notice ledger (cloud 0040). Deleted, never left to the FK CASCADE: the account
     // row SURVIVES erasure as the pseudonymous billing subject, so the cascade never fires. A
-    // notice is a reminder about a person's lifecycle, not a financial record, so nothing keeps
-    // it. The nightly pass skips erased accounts by `erased_at`, so nothing re-inserts one.
-    await drop("account_lifecycle_notices",
-      tx.delete(accountLifecycleNotices).where(eq(accountLifecycleNotices.accountId, accountId)));
+    // notice is a reminder about a person's lifecycle, not a financial record. ONE row stays on a
+    // retention erasure: the delivered warning for its date, the account's random id, a CHECK-closed
+    // word and three instants, so ohmail can show afterwards that the warning went out; the worker
+    // deletes it ten years after the erasure (`pruneErasedNotices`). The nightly pass skips erased
+    // accounts by `erased_at`, so nothing re-inserts one.
+    await drop("account_lifecycle_notices", tx.delete(accountLifecycleNotices).where(and(
+      eq(accountLifecycleNotices.accountId, accountId),
+      ...(warnedFor !== undefined
+        ? [or(ne(accountLifecycleNotices.kind, "erasure_week"), ne(accountLifecycleNotices.anchor, warnedFor))]
+        : []),
+    )));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
     // THE SESSION ROWS, FOR UPDATE, in id order, before anything here reads or deletes a token: every

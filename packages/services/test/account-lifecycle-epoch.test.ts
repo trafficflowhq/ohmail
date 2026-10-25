@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { AccessLifecycle } from "@trafficflow/db";
 import {
-  erasureDue, erasureClearsEpoch, noticesDue, readLifecycleEpoch, ERASURE_SLACK_MS,
+  erasureDue, erasureClearsEpoch, erasureWarnedFrom, noticesDue, readLifecycleEpoch, ERASURE_SLACK_MS,
+  ERASURE_REMINDER_AHEAD_MS,
 } from "../src/account-lifecycle-pass.js";
 
 /**
@@ -152,5 +153,29 @@ describe("the notices read the epoch the way the erasure does (EPOCH-BELT-CLOSED
     const lc = closed({ erasureAt: early });
     expect(erasureClearsEpoch(lc)).toBe(false);
     expect(kinds(lc, new Date(Date.parse(early) - 3 * DAY))).toEqual([["closed", null]]);
+  });
+});
+
+describe("a warning that never went out is still owed, late, and names a new date (ERASURE-WEEK-MAIL-LEAVES-NO-TRACE)", () => {
+  const erasureAt = iso(epochMs + 30 * DAY);
+  const twoDaysLate = new Date(Date.parse(erasureAt) + 2 * DAY);
+
+  it("two days past the date: the closure names no date, the week's warning names a week from now", () => {
+    const due = noticesDue(closed({ erasureAt }), twoDaysLate);
+    expect(due.map((n) => [n.kind, n.erasureAt?.toISOString() ?? null])).toEqual([
+      ["closed", null],
+      ["erasure_week", iso(twoDaysLate.getTime() + ERASURE_REMINDER_AHEAD_MS)],
+    ]);
+    // Still keyed on the plane's date, so the delivered row is the one the erasure door reads.
+    expect(due[1]!.anchor.toISOString()).toBe(erasureAt);
+  });
+
+  it("the erasure counts from the date a delivered warning gave: none, the plane's, or a week after a late one", () => {
+    const anchor = new Date(erasureAt);
+    expect(erasureWarnedFrom(anchor, null)).toBeNull();
+    expect(erasureWarnedFrom(anchor, new Date(Date.parse(erasureAt) - 7 * DAY))).toEqual(anchor);
+    expect(erasureWarnedFrom(anchor, anchor)).toEqual(anchor);
+    expect(erasureWarnedFrom(anchor, twoDaysLate))
+      .toEqual(new Date(twoDaysLate.getTime() + ERASURE_REMINDER_AHEAD_MS));
   });
 });

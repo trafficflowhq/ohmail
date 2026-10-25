@@ -3208,6 +3208,14 @@ const POST_SPLIT_STATEMENTS: Readonly<Record<string, readonly string[]>> = {
     "d7b14e32c7b508fd",   // CREATE INDEX alert_drills_ack_idx ON alert_drills (ack_token_hash) WHERE … IS NOT NULL
     "d4a74f3bdce89ea2",   // DO … REVOKE ALL, then GRANT SELECT (ten) / INSERT (nine) / UPDATE (two) TO ohmail_admin
   ],
+  // CLOUD 0052 — when a lifecycle notice was delivered: one nullable column, and ONE guarded UPDATE.
+  // The DML is the argument: before this column a row was written as the claim and kept whatever the
+  // mailer said, so the pass's three kinds written before it count as delivered — nothing can tell
+  // otherwise now. It touches only rows with no delivery and never `reopened` or `billing_link`.
+  "0052_lifecycle_notice_delivered": [
+    "d8835ee70cd2f2b8",   // ALTER TABLE account_lifecycle_notices ADD COLUMN IF NOT EXISTS delivered_at timestamptz
+    "152cde655fd14dda",   // UPDATE … SET delivered_at = sent_at WHERE delivered_at IS NULL AND kind IN (the pass's three)
+  ],
 };
 
 /** Short, stable identity for one normalized statement. */
@@ -4125,7 +4133,8 @@ describe("the two journals are well-formed", () => {
   // above 0048's.
   // cloud 35 → 36 for `0050_billing_link_notices`: its `when` (1792287004502) is strictly above 0049's.
   // cloud 36 → 37 for `0051_alert_drills`: its `when` (1792587192601) is strictly above 0050's.
-  it.each([["mail", MAIL_DIR, 167], ["cloud", CLOUD_DIR, 37]] as const)(
+  // cloud 37 → 38 for `0052_lifecycle_notice_delivered`: its `when` (1792886819380) is strictly above 0051's.
+  it.each([["mail", MAIL_DIR, 167], ["cloud", CLOUD_DIR, 38]] as const)(
     "%s: idx is contiguous, every tag has a file, and no tag is duplicated",
     (_name, dir, expectedEntries) => {
       const entries = journal(dir);
