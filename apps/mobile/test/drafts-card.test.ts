@@ -15,7 +15,7 @@ import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { liveActions, liveDrafts, type LiveWorldActions, type WorldDraft } from "../src/state/live";
-import { backKeeps, discardDecision, draftCardPlan, sendAgainSentence } from "../src/ui/draft-card";
+import { backKeeps, discardDecision, draftCardPlan, sendAgainQuestion, sendAgainSentence } from "../src/ui/draft-card";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -84,9 +84,24 @@ describe("the card, one hold state at a time", () => {
   it("Send again asks in the acts' place, with Keep beside it", () => {
     const plan = draftCardPlan(rowOf({ status: "unverified" }), { ...IDLE, confirmingSendAgain: true });
     expect(plan.acts).toEqual({
-      kind: "confirm", what: Copy.draftsSendAgainWhat, keep: Copy.draftsDiscardCancel, sendAgain: Copy.draftsSendAgain,
+      kind: "confirm", what: sendAgainQuestion(), keep: Copy.draftsDiscardCancel, sendAgain: Copy.draftsSendAgain,
     });
     expect(plan.discard.kind).toBe("button");
+  });
+
+  it("the card's Send again question says it may arrive twice, as the sheet does", () => {
+    const what = draftCardPlan(rowOf({ status: "unverified" }), { ...IDLE, confirmingSendAgain: true }).acts;
+    expect(what?.kind === "confirm" ? what.what : null).toBe(`${Copy.draftsSendAgainWhat} ${Copy.replyUnverifiedSendAgain}`);
+    expect(sendAgainQuestion()).toMatch(/arrive twice/);
+  });
+
+  it("a Send again that can't be matched offers to make it a draft again, and blames no files", () => {
+    const row = rowOf({ status: "unverified" });
+    expect(draftCardPlan(row, { ...IDLE, sendRefusal: "changed" }).notArrived).toBe(Copy.draftsNotArrived);
+    expect(draftCardPlan(row, { ...IDLE, sendRefusal: "unchecked" }).notArrived).toBeNull();
+    expect(draftCardPlan(row, IDLE).notArrived).toBeNull();
+    expect(draftCardPlan(rowOf({}), { ...IDLE, sendRefusal: "changed" }).notArrived, "an ordinary draft has nothing to answer").toBeNull();
+    expect(Copy.draftsSendAgainChanged).not.toMatch(/files/);
   });
 
   it("a refused discard is a sentence in the row", () => {
@@ -97,20 +112,23 @@ describe("the card, one hold state at a time", () => {
   it("a Send again that did not send is a sentence in the row, one per ending", () => {
     const row = rowOf({ status: "unverified" });
     expect(draftCardPlan(row, IDLE).sendRefusal).toBeNull();
-    expect(draftCardPlan(row, { ...IDLE, sendRefusal: "stillRunning" }).sendRefusal).toBe(Copy.draftsResolveStillRunning);
+    expect(draftCardPlan(row, { ...IDLE, sendRefusal: "busy" }).sendRefusal).toBe(Copy.draftsSendAgainBusy);
     expect({
-      notReached: sendAgainSentence("notReached"),
-      bodyUnknown: sendAgainSentence("bodyUnknown"),
+      changed: sendAgainSentence("changed"),
+      unchecked: sendAgainSentence("unchecked"),
+      notHeld: sendAgainSentence("notHeld"),
       queued: sendAgainSentence("queued"),
       unverified: sendAgainSentence("unverified"),
       failed: sendAgainSentence("failed"),
     }).toEqual({
-      notReached: Copy.draftsResolveFailed,
-      bodyUnknown: Copy.draftsBodyUnavailable,
+      changed: Copy.draftsSendAgainChanged,
+      unchecked: Copy.draftsSendAgainUnchecked,
+      notHeld: Copy.draftsSendAgainNotHeld,
       queued: Copy.replyQueued,
       unverified: Copy.replyUnverified,
       failed: Copy.replyFailed,
     });
+    expect(Copy.draftsSendAgainUnchecked).toMatch(/^Not sent again\./);
   });
 
   it("a waiting send says so with Cancel send, no held acts, and Discard asks about the send too", () => {
@@ -204,39 +222,63 @@ describe("the held row on a real wire", () => {
     live.close();
   });
 
-  it("Send again frees the row, then sends it as it stands — the stored text, one key", async () => {
+  it("Send again is one request about the held row: no answer written first, nothing saved over it", async () => {
     const live = await scene({ html: "<p>the only copy</p>" });
     expect(await live.actions.draftSendAgain("d-held")).toBe("sent");
     const order = live.fake.seen
       .filter((r) => r.url.startsWith("/drafts/d-held"))
       .map((r) => `${r.method} ${r.url}`);
-    expect(order).toEqual(["POST /drafts/d-held/resolve", "PUT /drafts/d-held", "POST /drafts/d-held/send"]);
-    expect(JSON.parse(wire(live.fake, "POST", "/drafts/d-held/resolve")[0]!.body)).toEqual({ outcome: "not_arrived" });
-    // The PUT writes back what the server holds: formatted text stays formatted, nothing is added.
-    const put = JSON.parse(wire(live.fake, "PUT", "/drafts/d-held")[0]!.body) as Record<string, unknown>;
-    expect(put.html).toBe("<p>the only copy</p>");
-    expect(put.body).toBeUndefined();
-    expect(put.subject).toBe("Invoice 12");
-    expect((put.to as { address: string }[]).map((a) => a.address)).toEqual(["ada@fake.test"]);
+    expect(order).toEqual(["POST /drafts/d-held/send"]);
+    expect(JSON.parse(wire(live.fake, "POST", "/drafts/d-held/send")[0]!.body)).toEqual({ again: true });
     expect(live.fake.deliveries()).toHaveLength(1);
     expect(live.toasts).toContain(Copy.composeSent);
     live.close();
   });
 
-  it("Send again on a send still pending moves nothing past the refusal, and says it in the row", async () => {
+  it("Send again while an attempt runs is refused by name, said in the row and nowhere else", async () => {
     const live = await scene({}, (f) => f.pendSend("d-held"));
-    expect(await live.actions.draftSendAgain("d-held")).toBe("stillRunning");
+    expect(await live.actions.draftSendAgain("d-held")).toBe("busy");
     expect(wire(live.fake, "PUT", "/drafts/d-held")).toEqual([]);
-    expect(wire(live.fake, "POST", "/drafts/d-held/send")).toEqual([]);
+    expect(wire(live.fake, "POST", "/drafts/d-held/resolve")).toEqual([]);
+    expect(live.fake.deliveries()).toEqual([]);
     expect(live.toasts, "a send refusal is the row's, never a toast").toEqual([]);
     live.close();
   });
 
-  it("Send again over a body this phone never received sends nothing and writes nothing", async () => {
+  it("Send again over a body this phone never received sends the server's own words", async () => {
     const live = await scene({ body: null, bodyOmitted: "over_page_budget" });
-    expect(await live.actions.draftSendAgain("d-held")).toBe("bodyUnknown");
-    expect(live.fake.seen.filter((r) => r.url.startsWith("/drafts/d-held"))).toEqual([]);
-    expect(live.toasts).toEqual([]);
+    expect(await live.actions.draftSendAgain("d-held")).toBe("sent");
+    expect(wire(live.fake, "PUT", "/drafts/d-held"), "nothing is written over the only copy").toEqual([]);
+    expect(live.fake.deliveries()).toHaveLength(1);
+    live.close();
+  });
+
+  it("found in Sent, other files, a Sent that could not be looked in: each its own ending", async () => {
+    const went = await scene({}, (f) => f.answerNext("POST", "/drafts/d-held/send", 200, {
+      status: "sent", providerMessageId: "pm-x", firstSend: { status: "sent", at: new Date().toISOString() },
+    }));
+    expect(await went.actions.draftSendAgain("d-held")).toBe("alreadySent");
+    expect(went.toasts).toEqual([Copy.draftsSendAgainAlreadyWent]);
+    went.close();
+    for (const [code, ending] of [["send_again_changed", "changed"], ["send_again_unchecked", "unchecked"], ["send_again_not_held", "notHeld"]] as const) {
+      const live = await scene({}, (f) => f.answerNext("POST", "/drafts/d-held/send", code === "send_again_unchecked" ? 424 : 409, {
+        error: { code, message: "nothing was sent", retryable: false },
+      }));
+      expect(await live.actions.draftSendAgain("d-held")).toBe(ending);
+      expect(live.toasts).toEqual([]);
+      live.close();
+    }
+  });
+
+  it("after a Send again that can't be matched, Make it a draft again leaves an ordinary draft to edit", async () => {
+    const live = await scene({}, (f) => f.answerNext("POST", "/drafts/d-held/send", 409, {
+      error: { code: "send_again_changed", message: "nothing was sent", retryable: false },
+    }));
+    expect(await live.actions.draftSendAgain("d-held")).toBe("changed");
+    expect(await live.actions.draftResolve("d-held", "not_arrived")).toBe(true);
+    expect(JSON.parse(wire(live.fake, "POST", "/drafts/d-held/resolve")[0]!.body)).toEqual({ outcome: "not_arrived" });
+    expect(live.listed().map((r) => [r.id, r.heldSays, r.edit !== null])).toEqual([["d-held", null, true]]);
+    expect(live.fake.deliveries()).toEqual([]);
     live.close();
   });
 

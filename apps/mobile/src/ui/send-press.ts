@@ -18,3 +18,18 @@ export function sendPressAct(s: {
   if (s.phase === "unverified") return "again";
   return "none";
 }
+
+/**
+ * THE HELD SHEET'S FOOTER. Over a send the server could not confirm, with the row that holds it
+ * known, the sheet offers Send again on that row (the server looks in Sent first) and Close, which
+ * leaves the message in Drafts. Send again is locked while its press runs. Without a known row the
+ * sheet keeps Send, whose press says why nothing went again.
+ */
+export function heldSheetFooter(s: {
+  phase: "idle" | "sending" | "queued" | "unverified";
+  heldId: string | null;
+  busy: boolean;
+}): { close: "close" | "cancel"; sendAgain: { draftId: string; locked: boolean } | null } {
+  if (s.phase !== "unverified") return { close: "cancel", sendAgain: null };
+  return { close: "close", sendAgain: s.heldId === null ? null : { draftId: s.heldId, locked: s.busy } };
+}

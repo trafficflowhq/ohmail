@@ -15,7 +15,7 @@ import type { DraftHeldSays, DraftSendAgainOutcome, WorldDraft } from "../state/
 export type DraftDiscardRefusal = "stillSending" | "alreadySent" | "cancelUnknown";
 
 /** Why a Send again did not send, said in the row — never a toast. */
-export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent" | "superseded">;
+export type DraftSendAgainRefusal = Exclude<DraftSendAgainOutcome, "sent" | "alreadySent" | "superseded">;
 
 /** The held row's sentence — the state line and the two acts' group label alike. */
 export function heldSentence(says: DraftHeldSays): string {
@@ -47,13 +47,19 @@ export function refusalSentence(why: DraftDiscardRefusal): string {
 
 export function sendAgainSentence(why: DraftSendAgainRefusal): string {
   switch (why) {
-    case "stillRunning": return Copy.draftsResolveStillRunning;
-    case "notReached": return Copy.draftsResolveFailed;
-    case "bodyUnknown": return Copy.draftsBodyUnavailable;
+    case "changed": return Copy.draftsSendAgainChanged;
+    case "unchecked": return Copy.draftsSendAgainUnchecked;
+    case "notHeld": return Copy.draftsSendAgainNotHeld;
+    case "busy": return Copy.draftsSendAgainBusy;
     case "queued": return Copy.replyQueued;
     case "unverified": return Copy.replyUnverified;
     case "failed": return Copy.replyFailed;
   }
+}
+
+/** Send again's question on the card: what it does, and that it may arrive twice — the sheet's words. */
+export function sendAgainQuestion(): string {
+  return `${Copy.draftsSendAgainWhat} ${Copy.replyUnverifiedSendAgain}`;
 }
 
 /** The card's controls, as a plan: what stands where, in the catalogue's words. */
@@ -78,6 +84,8 @@ export interface DraftCardPlan {
   refusal: string | null;
   /** A Send again that did not send, said in the row where the acts are. */
   sendRefusal: string | null;
+  /** After a Send again that can't be matched to the held message: answer not arrived, then edit. */
+  notArrived: string | null;
 }
 
 export function draftCardPlan(
@@ -105,7 +113,7 @@ export function draftCardPlan(
     acts: held === null
       ? null
       : ui.confirmingSendAgain
-        ? { kind: "confirm", what: Copy.draftsSendAgainWhat, keep: Copy.draftsDiscardCancel, sendAgain: Copy.draftsSendAgain }
+        ? { kind: "confirm", what: sendAgainQuestion(), keep: Copy.draftsDiscardCancel, sendAgain: Copy.draftsSendAgain }
         : { kind: "buttons", sendAgain: Copy.draftsSendAgain, itWasSent: Copy.draftsItWasSent },
     discard: ui.confirming
       ? {
@@ -115,6 +123,7 @@ export function draftCardPlan(
       : { kind: "button", label: Copy.draftsDiscard },
     refusal: ui.refusal === null ? null : refusalSentence(ui.refusal),
     sendRefusal: ui.sendRefusal == null ? null : sendAgainSentence(ui.sendRefusal),
+    notArrived: held !== null && ui.sendRefusal === "changed" ? Copy.draftsNotArrived : null,
   };
 }
 

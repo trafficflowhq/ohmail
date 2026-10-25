@@ -6,6 +6,9 @@
  * key and the engine re-arms the one reservation: one delivery, one draft row. Cancel during the
  * wait withdraws the key in the engine's store and nothing is ever delivered. Before: the first
  * answer said not retryable, and the press ended "Not sent" for the person to press again.
+ *
+ * And a photo letter on a slow link whose answer never came back: Send again looks in Sent first,
+ * goes under the same Message-ID with the photo, and never twice for one press.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,8 +19,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
 import {
   Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SmtpSink,
-  bootPhone, cables, dirs, eventsSince, open, post, seedMailboxId, type Phone,
+  bootPhone, cables, dirs, eventsSince, open, post, relaunch, seedMailboxId, withServer, type Phone,
 } from "./_phone-offline-rig.js";
+import type { LetterDoor } from "../../mobile/src/compose/letter-store.js";
 import { serviceUp } from "@trafficflow/db/testing";
 import { bootEngine, LOCAL_ENGINE_ORIGIN } from "../../mobile/src/engine/boot.js";
 import { installNetworkReader, networkNow } from "../../mobile/src/net/network-door.js";
@@ -56,7 +60,7 @@ afterEach(async () => {
   while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
-async function appOver(phone: Phone) {
+async function appOver(phone: Phone, kept: Map<string, typeof PHOTO[]> = new Map()) {
   const uuid = (): string => randomUUID();
   const mirrors: Array<{ close(): void }> = [];
   const boot = await bootEngine(
@@ -66,7 +70,9 @@ async function appOver(phone: Phone) {
   if (boot.kind !== "ready") throw new Error("the app's client did not boot over the engine's door");
   await boot.engine.start();
   const toasts: string[] = [];
-  const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
+  /* The files this phone keeps with a draft: what Send again carries. */
+  const letters = { filesOf: (id: string) => kept.get(id) ?? [], letterOf: () => undefined, drop: () => undefined } as unknown as LetterDoor;
+  const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC", letters });
   const close = (): void => { boot.store.close(); for (const m of mirrors) m.close(); };
   return { boot, actions, toasts, close };
 }
@@ -143,6 +149,109 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send whose outgoing server
     await theServersWait();
     await flushQueued(app.boot.engine, app.actions.releaseConfirmed);
     expect(sink.messages).toBe(0);
+    app.close();
+  }, 120_000);
+});
+
+/** The photo letter: one 684 KB picture. */
+const PHOTO = { filename: "photo.jpg", contentType: "image/jpeg", contentBase64: Buffer.alloc(684 * 1024, 0x5a).toString("base64") };
+
+/**
+ * A phone on a slow link (SMTP at 1 MB/s through a cable) to an outgoing server that ends each
+ * message as scripted: `taken` answers 250, `lost` takes it and drops before the 250, `dropped`
+ * drops at DATA, so nothing is taken.
+ */
+async function slowPhone(ends: Array<"taken" | "lost" | "dropped">) {
+  let at = 0;
+  const sink = new SmtpSink({
+    auth: () => ({ ok: true, afterMs: 0 }),
+    dropInData: () => (ends[at] === "dropped" ? (at += 1, true) : false),
+    dataEnd: () => (ends[at++] === "lost" ? "drop" : "answer"),
+  });
+  await sink.open();
+  sinks.push(sink);
+  const smtp = new Cable("reset", { host: "127.0.0.1", port: sink.port }, 1_000_000);
+  await smtp.open();
+  cables.push(smtp);
+  const user = `photo-${randomUUID()}@trafficflow.test`;
+  const imap = new Cable("reset");
+  await imap.open();
+  cables.push(imap);
+  const dir = mkdtempSync(join(tmpdir(), "ohmail-phone-again-"));
+  dirs.push(dir);
+  const phone = await bootPhone({ user, file: join(dir, "engine.db"), cable: imap, smtp: { port: smtp.port } });
+  expect(await post(phone, `/local/mailboxes/${seedMailboxId(phone)}/organize`)).toBe(200);
+  return { phone, sink, user };
+}
+
+const R = [{ name: "R", address: "r@trafficflow.test" }];
+const idOf = (data: string): string | undefined => /^Message-ID:\s*(\S+)/im.exec(data)?.[1];
+
+/** A press of the photo letter whose answer was lost: held, with its row named. */
+async function heldPhoto(p: { phone: Phone }, app: Awaited<ReturnType<typeof appOver>>, subject: string): Promise<string> {
+  const res = await app.actions.sendNew(seedMailboxId(p.phone), R, subject, "The photo.", null, null, [PHOTO]);
+  expect(res.outcome, `the lost answer did not hold it — events ${eventsSince(p.phone, 0)}`).toBe("unverified");
+  await app.boot.engine.syncOnce();
+  return res.draftId!;
+}
+
+describe.runIf(ON_DEVICE_STORE && SERVER_UP)("Send again of a photo letter whose answer was lost", () => {
+  it("found in Sent, as a provider files it: Send again takes nothing more", async () => {
+    const slow = await slowPhone(["lost"]);
+    const kept = new Map<string, typeof PHOTO[]>();
+    const app = await appOver(slow.phone, kept);
+    const subject = `filed ${randomUUID()}`;
+    const draftId = await heldPhoto(slow, app, subject);
+    expect(slow.sink.messages).toBe(1);
+    const raw = [`Message-ID: ${idOf(slow.sink.bodies[0]!)}`, `Subject: ${subject}`, "From: me@trafficflow.test", "", "The photo.", ""].join("\r\n");
+    await withServer(slow.user, async (c) => { await c.mailboxCreate("Sent").catch(() => undefined); await c.append("Sent", Buffer.from(raw)); });
+    kept.set(draftId, [PHOTO]);
+    expect(await app.actions.draftSendAgain(draftId)).toBe("alreadySent");
+    expect(slow.sink.messages, "a second copy went").toBe(1);
+    app.close();
+  }, 120_000);
+
+  it("not in Sent: two taken, one Message-ID, the second with the photo; a relaunch sends nothing more", async () => {
+    const slow = await slowPhone(["lost", "taken"]);
+    const kept = new Map<string, typeof PHOTO[]>();
+    const app = await appOver(slow.phone, kept);
+    const draftId = await heldPhoto(slow, app, `again ${randomUUID()}`);
+    kept.set(draftId, [PHOTO]);
+    expect(await app.actions.draftSendAgain(draftId), `events ${eventsSince(slow.phone, 0)}`).toBe("sent");
+    expect(slow.sink.messages).toBe(2);
+    expect(idOf(slow.sink.bodies[1]!)).toBe(idOf(slow.sink.bodies[0]!));
+    expect(slow.sink.bodies[1]!).toContain("photo.jpg");
+    expect((await sendsIn(slow.phone)).sort()).toEqual(["sent", "unverified"]);
+    app.close();
+    await slow.phone.engine.stop();
+    const again = await relaunch(slow.phone);
+    const next = await appOver(again, kept);
+    await flushQueued(next.boot.engine, next.actions.releaseConfirmed);
+    await next.boot.engine.syncOnce();
+    expect(slow.sink.messages, "the relaunch sent it again").toBe(2);
+    next.close();
+  }, 120_000);
+
+  it("never taken: the press is a known not-sent, and its press again takes exactly one, with the photo", async () => {
+    const slow = await slowPhone(["dropped", "taken"]);
+    const app = await appOver(slow.phone);
+    const subject = `dropped ${randomUUID()}`;
+    const first = await app.actions.sendNew(seedMailboxId(slow.phone), R, subject, "The photo.", null, null, [PHOTO]);
+    expect(first.outcome, `events ${eventsSince(slow.phone, 0)}`).toBe("failed");
+    expect(slow.sink.messages).toBe(0);
+    const second = await app.actions.sendNew(seedMailboxId(slow.phone), R, subject, "The photo.", null, null, [PHOTO], first.draftId ?? null);
+    expect(second.outcome).toBe("sent");
+    expect(slow.sink.messages).toBe(1);
+    expect(slow.sink.bodies[0]!).toContain("photo.jpg");
+    app.close();
+  }, 120_000);
+
+  it("its kept files gone: Send again is refused and takes nothing", async () => {
+    const slow = await slowPhone(["lost", "taken"]);
+    const app = await appOver(slow.phone);
+    const draftId = await heldPhoto(slow, app, `no files ${randomUUID()}`);
+    expect(await app.actions.draftSendAgain(draftId)).toBe("changed");
+    expect(slow.sink.messages).toBe(1);
     app.close();
   }, 120_000);
 });

@@ -814,6 +814,12 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
     }
 
     case "mail_send": {
+      // ── SEND AGAIN: the held row itself goes to `sending`, never a second overlay row ─────
+      if (m.again === true) {
+        const held = m.draftId ? reader.get<EngineDraft>("draft", m.draftId) : undefined;
+        if (!held) return [];
+        return [{ type: "draft", id: held.id, entity: { ...held, status: "sending" as const, updatedAt: iso } }];
+      }
       // ── A REPLY: the parent IS the mutation ───────────────────────────────────────────
       //
       // It supplies the recipient, the mailbox and the thread. An id the mirror does not know

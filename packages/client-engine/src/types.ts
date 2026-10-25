@@ -1444,6 +1444,13 @@ export type EngineMutation =
        * bytes and no forward reference, so the adapter refuses the combination.
        */
       sendAt?: string;
+      /**
+       * SEND THE HELD MESSAGE AGAIN — the server sends the row {@link draftId} names under its held
+       * attempt's Message-ID, after looking in Sent, with {@link attachments} as the files that went
+       * the first time. No save and no staging: the held row's frozen words are what goes. Needs
+       * `draftId`; never with `sendAt`, `forwardOf` or `forwardParts` (a held forward names its original).
+       */
+      again?: true;
     }
   | { kind: "draft_accept"; draftId: string }
   /**

@@ -206,6 +206,8 @@ export interface MutationResult {
   firstSend?: { status: string; at: string };
   /** The press's newer words were kept back — see {@link MutationOutcome.earlierWordsKept}. */
   earlierWordsKept?: true;
+  /** Where a delivered send's Sent copy stands — see {@link MutationOutcome.sentCopy}. */
+  sentCopy?: "filed" | "pending" | "missing";
   /**
    * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
    * mutation reached the wire and the wire took it; what has NOT happened is the act. The
@@ -8885,6 +8887,7 @@ export class OhmailEngine {
         // is the only thing that can say the answer was about an earlier press.
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
         ...(outcome.earlierWordsKept === true ? { earlierWordsKept: true as const } : {}),
+        ...(outcome.sentCopy ? { sentCopy: outcome.sentCopy } : {}),
         ...(intent !== undefined ? { andDone: intent } : {}),
       };
     } catch (err) {

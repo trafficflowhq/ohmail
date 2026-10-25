@@ -41,6 +41,11 @@ interface SendRequestBody {
    * always did.
    */
   ifContentRevision?: unknown;
+  /**
+   * SEND THE HELD MESSAGE AGAIN under its own Message-ID, Sent checked first. Only `true` counts;
+   * with staged files or a forward field it is refused, since the held row names its own original.
+   */
+  again?: unknown;
 }
 
 /** A parsed value, or `undefined` where the parser refused it. */
@@ -390,12 +395,18 @@ export const draftsRoutes: Route[] = [
       const attachments = decodeSendAttachments(body.attachments);
       const stagedAttachmentIds = readStagedIds(body.stagedAttachmentIds);
       const forwardOf = typeof body.forwardOf === "string" && body.forwardOf.length > 0 ? body.forwardOf : undefined;
-      const forwardConfirmed = forwardOf !== undefined && body.forwardConfirmed === true;
+      const again = body.again === true;
+      if (again && (stagedAttachmentIds !== undefined || forwardOf !== undefined || body.forwardParts !== undefined)) {
+        throw new ServiceError("validation_failed", 400, "again carries no staged files and no forward fields");
+      }
+      // A held forward names its original on the row: its confirmation and clock ride without `forwardOf`.
+      const forwarding = forwardOf !== undefined || again;
+      const forwardConfirmed = forwarding && body.forwardConfirmed === true;
       const forwardParts = readForwardParts(body.forwardParts, forwardOf);
       // The sender's clock for the quoted date. A malformed one never refuses a send: the date
       // then reads in UTC and English, as for a client that states none.
-      const forwardZone = forwardOf ? unlessMalformed(() => parseReaderZone(body.forwardZone, "forwardZone")) : undefined;
-      const forwardLocale = forwardOf ? unlessMalformed(() => parseReaderLocale(body.forwardLocale, "forwardLocale")) : undefined;
+      const forwardZone = forwarding ? unlessMalformed(() => parseReaderZone(body.forwardZone, "forwardZone")) : undefined;
+      const forwardLocale = forwarding ? unlessMalformed(() => parseReaderLocale(body.forwardLocale, "forwardLocale")) : undefined;
       // THE ROW THIS PRESS SAW. Threaded to `SendService.reserve`, which compares it against the
       // row it locks — see `SendInput.ifContentRevision`.
       const ifContentRevision = readContentRevision(body.ifContentRevision);
@@ -444,7 +455,8 @@ export const draftsRoutes: Route[] = [
           ...(forwardParts ? { forwardParts } : {}),
           ...(forwardZone ? { forwardZone } : {}),
           ...(forwardLocale ? { forwardLocale } : {}),
-          ...(ifContentRevision ? { ifContentRevision } : {}) },
+          ...(ifContentRevision ? { ifContentRevision } : {}),
+          ...(again ? { again: true } : {}) },
       );
       switch (result.status) {
         case "sent":

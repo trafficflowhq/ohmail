@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, mailboxes, outboundSends, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
@@ -6,7 +6,8 @@ import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS } from "./schedule-send-pass.js";
 import {
-  sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_RECHECK_MS, inUnverifiedProbeWindow,
+  sendService, SEND_STALE_AFTER_MS, SEND_UNVERIFIED_MIRROR_MS, SEND_UNVERIFIED_RECHECK_MS,
+  inUnverifiedProbeWindow,
   type SendService,
 } from "./send-service.js";
 
@@ -217,7 +218,7 @@ export interface SendReconcilePassResult {
   resolvedElsewhere: number;
   /** Of `unverified`, how many were closed by the age give-up rather than by evidence. */
   gaveUp: number;
-  /** `unverified` reservations inside {@link SEND_UNVERIFIED_RECHECK_MS} this invocation looked at again. */
+  /** `unverified` reservations inside {@link SEND_UNVERIFIED_MIRROR_MS} this invocation looked at again. */
   rechecked: number;
   /** Of those, how many the mirror or the Sent folder answered `sent` — the person is never asked. */
   recheckedSent: number;
@@ -230,6 +231,8 @@ interface StaleRow {
   send: typeof outboundSends.$inferSelect;
   /** `pending` — a stranded attempt to decide; `unverified` — a closed one to look for again. */
   kind: "pending" | "unverified";
+  /** `unverified` only: when the row was held (`drafts.updated_at`, written by the close). */
+  heldAt: Date | null;
   mailboxId: string;
   /** `connected` | `error` | `disabled` — `schema-mail.ts`, NOT `active`. */
   mailboxStatus: string;
@@ -402,7 +405,9 @@ export async function runSendReconcilePass(
        */
       if (row.kind === "unverified") {
         result.rechecked += 1;
-        const probe = mayDial && (shared.has(row.mailboxId) || (inUnverifiedProbeWindow(ageMs) && !outOfBudget));
+        // Aged from the moment it was held: an attempt can run minutes before its close.
+        const heldAgeMs = now().getTime() - (row.heldAt ?? row.send.createdAt).getTime();
+        const probe = mayDial && (shared.has(row.mailboxId) || (inUnverifiedProbeWindow(heldAgeMs) && !outOfBudget));
         try {
           const out = await sends.recheckUnverified(ctx, row.send, row.mailboxId, probe ? openOnce : null);
           if (out.status === "sent") {
@@ -647,8 +652,10 @@ async function claimStale(
     // SKIP LOCKED through the seam, restricted to the send rows: on the server it is what lets
     // several runners share one window instead of queueing, and on the device store it is the
     // identity for the same reason the lock is — one serialized writer, nothing to skip.
-    const recheckAfter = new Date(now.getTime() - SEND_UNVERIFIED_RECHECK_MS);
-    const page = (which: "dialable" | "waiting" | "recheck", limit: number) => d.skipLocked(tx.select({
+    // The mirror is read for a day after the hold; the IMAP probes stay inside the 20-minute window.
+    const mirrorAfter = new Date(now.getTime() - SEND_UNVERIFIED_MIRROR_MS);
+    const checkingAfter = new Date(now.getTime() - SEND_UNVERIFIED_RECHECK_MS);
+    const page = (which: "dialable" | "waiting" | "checking" | "mirror", limit: number) => d.skipLocked(tx.select({
       id: outboundSends.id,
       accountId: outboundSends.accountId,
       idempotencyKey: outboundSends.idempotencyKey,
@@ -669,22 +676,28 @@ async function claimStale(
       retryRefusal: outboundSends.retryRefusal,
       // Mail 0162: an `unoffered` row is forgotten without a dial.
       offerState: outboundSends.offerState,
+      heldAt: drafts.updatedAt,
       mailboxId: drafts.mailboxId,
       mailboxStatus: mailboxes.status,
     })
       .from(outboundSends)
       .innerJoin(drafts, eq(drafts.id, outboundSends.draftId))
       .innerJoin(mailboxes, eq(mailboxes.id, drafts.mailboxId))
-      .where(which === "recheck"
+      .where(which === "checking" || which === "mirror"
         /**
-         * THE RECHECK WINDOW: closed `unverified`, nobody has answered for it, younger than the
-         * window, and its draft still says `unverified` — a discarded draft's row (`draft_id`
-         * NULL, `resolved_by = 'discard'`) never joins, and a person's answer ends the looking.
+         * THE RECHECK WINDOWS: closed `unverified`, nobody has answered for it, and its draft
+         * still says `unverified` — a discarded draft's row (`draft_id` NULL, `resolved_by =
+         * 'discard'`) never joins, and a person's answer ends the looking. Split by when it was
+         * held (the draft's `updated_at`, the close's own stamp): `checking` inside
+         * `SEND_UNVERIFIED_RECHECK_MS`, where the IMAP probes run; `mirror` for the rest of the
+         * day, mirror reads only.
          */
         ? and(
           eq(outboundSends.status, "unverified"),
           isNull(outboundSends.resolvedBy),
-          gt(outboundSends.createdAt, recheckAfter),
+          which === "checking"
+            ? gt(drafts.updatedAt, checkingAfter)
+            : and(lte(drafts.updatedAt, checkingAfter), gt(drafts.updatedAt, mirrorAfter)),
           eq(drafts.status, "unverified"),
         )
         : and(
@@ -692,7 +705,8 @@ async function claimStale(
           stale,
           which === "dialable" ? ne(mailboxes.status, "error") : eq(mailboxes.status, "error"),
         ))
-      .orderBy(outboundSends.createdAt)
+      // A held row by when it was held, oldest first: the one nearest its last probe goes first.
+      .orderBy(which === "checking" ? drafts.updatedAt : outboundSends.createdAt)
       .limit(limit), { of: outboundSends });
 
     /**
@@ -708,8 +722,13 @@ async function claimStale(
     const found = [
       ...(await page("dialable", dialWindow)).map((r) => ({ ...r, kind: "pending" as const })),
       ...(await page("waiting", waitWindow)).map((r) => ({ ...r, kind: "pending" as const })),
-      // ITS OWN WINDOW, after the pending ones: a second look never delays a first decision.
-      ...(await page("recheck", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
+      // THEIR OWN WINDOWS, after the pending ones: a second look never delays a first decision.
+      // The rows still inside their checking window get a page of their own, ahead of the day's
+      // mirror-only rows: one pass serves every account on Cloud, and a page shared oldest-first
+      // let a dozen held sends from earlier in the day, in any account, keep a newly held one from
+      // ever being probed — the client then says it is not in Sent without anyone having looked.
+      ...(await page("checking", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
+      ...(await page("mirror", waitWindow)).map((r) => ({ ...r, kind: "unverified" as const })),
     ];
 
     // One eligibility read per DISTINCT account, memoised, and run on THIS transaction's handle
@@ -741,6 +760,7 @@ async function claimStale(
           offerState: r.offerState,
         },
         kind: r.kind,
+        heldAt: r.kind === "unverified" ? r.heldAt : null,
         mailboxId: r.mailboxId,
         mailboxStatus: r.mailboxStatus,
         eligible: await eligible(r.accountId),

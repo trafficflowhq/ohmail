@@ -323,7 +323,10 @@ interface SendWire {
   message?: string;
   /** See {@link MutationOutcome.firstSend} — shape-checked here, never trusted by its presence. */
   firstSend?: { status?: unknown; at?: unknown };
+  sentCopy?: unknown;
 }
+
+const SENT_COPY_STATES: ReadonlySet<string> = new Set(["filed", "pending", "missing"]);
 
 /**
  * A 2xx whose body will not parse is ambiguity, not a refusal: the server
@@ -2284,12 +2287,18 @@ export class HttpAdapter implements EngineAdapter {
      * `draft` took them, a row a reservation holds (409, or an older server's echo naming another
      * status) keeps the earlier words, which went or are going under this key.
      */
+    /* SEND AGAIN names its held row and changes nothing on it: no save, no create, no staging. */
+    const again = m.again === true;
+    if (again && (!m.draftId || m.sendAt || m.forwardOf || m.forwardParts !== undefined)) {
+      this.forgetSendKey(idempotencyKey);
+      throw new MutationRejectedError("This message can't be sent again from here.", { code: "send_again_invalid", retryable: false });
+    }
     const pressed = sendFingerprint(m);
     const resumed = this.draftForKey.has(idempotencyKey);
     const rewrite = resumed && this.fingerprintForKey.get(idempotencyKey) !== pressed;
     let earlierWordsKept = false;
-    let draftId = this.draftForKey.get(idempotencyKey) ?? m.draftId;
-    if (draftId && (!resumed || rewrite)) {
+    let draftId = again ? m.draftId : this.draftForKey.get(idempotencyKey) ?? m.draftId;
+    if (!again && draftId && (!resumed || rewrite)) {
       this.draftForKey.set(idempotencyKey, draftId);
       const wantsBcc = (m.bcc?.length ?? 0) > 0;
       // `draftId` is a `let` and a closure does not keep its narrowing; the row is fixed here.
@@ -2683,18 +2692,19 @@ export class HttpAdapter implements EngineAdapter {
       forwardZone?: string;
       forwardLocale?: string;
       ifContentRevision?: string;
-    } = {};
+      again?: true;
+    } = again ? { again: true } : {};
     // WHICH VERSION OF THE ROW THIS PRESS SAW — see `revisionForKey`. Absent only where the server
     // never named one; the server reads absence as unstated and sends, which is what keeps this
     // client working against an API that predates the field.
-    const vouched = this.revisionForKey.get(idempotencyKey);
+    const vouched = again ? undefined : this.revisionForKey.get(idempotencyKey);
     if (vouched) sendBody.ifContentRevision = vouched;
     /* THE KEY GOES FIRST ON A STAGED SEND. A reservation under it means this press has already
        been answered once, so nothing is re-uploaded: the request below carries no files and the
        server answers from the reservation it already holds. See {@link keyWasPresented} for why
        every uncertain answer stages instead. */
-    const alreadyPresented = this.willStage(m) && await this.keyWasPresented(draftId, idempotencyKey);
-    const staged = alreadyPresented ? null : await this.stagedIdsFor(m, idempotencyKey).catch((err: unknown) => {
+    const alreadyPresented = !again && this.willStage(m) && await this.keyWasPresented(draftId, idempotencyKey);
+    const staged = alreadyPresented || again ? null : await this.stagedIdsFor(m, idempotencyKey).catch((err: unknown) => {
       /* A STAGING REFUSAL NAMES THE ROW, as the send's own refusals do: a waiting send stays bound to
          it across a reload, and a terminal one hands it back to the composer instead of a second draft. */
       if (!(err instanceof MutationRejectedError)) throw err;
@@ -2706,9 +2716,10 @@ export class HttpAdapter implements EngineAdapter {
     if (staged) sendBody.stagedAttachmentIds = staged;
     else if (!alreadyPresented && m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
-    if (m.forwardOf && m.forwardConfirmed === true) sendBody.forwardConfirmed = true;
+    // A held forward names its original on the row; its confirmation and clock ride Send again too.
+    if ((m.forwardOf || again) && m.forwardConfirmed === true) sendBody.forwardConfirmed = true;
     if (m.forwardOf && m.forwardParts !== undefined) sendBody.forwardParts = m.forwardParts;
-    if (m.forwardOf && m.forwardClock) {
+    if ((m.forwardOf || again) && m.forwardClock) {
       sendBody.forwardZone = m.forwardClock.zone;
       sendBody.forwardLocale = m.forwardClock.locale;
     }
@@ -2755,9 +2766,12 @@ export class HttpAdapter implements EngineAdapter {
       const firstSend = typeof first?.status === "string" && typeof first.at === "string"
         ? { status: first.status, at: first.at }
         : null;
+      const sentCopy = typeof wire.sentCopy === "string" && SENT_COPY_STATES.has(wire.sentCopy)
+        ? wire.sentCopy as NonNullable<MutationOutcome["sentCopy"]> : null;
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
         ...(firstSend ? { firstSend } : {}),
+        ...(sentCopy ? { sentCopy } : {}),
         ...(earlierWordsKept ? { earlierWordsKept: true } : {}),
       };
     }

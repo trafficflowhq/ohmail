@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   attachments, CERT_CODES, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
@@ -308,6 +308,12 @@ export interface SendInput {
    * the refusal exists to stop a wrong delivery, not to stop an older client sending its own mail.
    */
   ifContentRevision?: string;
+  /**
+   * SEND THE HELD MESSAGE AGAIN: the draft's open `unverified` attempt goes again under its own
+   * Message-ID and content claim, Sent checked first (`SendService.prepareAgain`). The press's own key
+   * answers its replays. Never with staged files or forward fields: the held row names its original.
+   */
+  again?: boolean;
 }
 
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
@@ -605,18 +611,25 @@ export const SEND_REARM_WAIT_S: readonly number[] = [2, 5];
  * asked a question the engine could have answered. For this window the reconciling pass re-reads
  * the account's mirror every cycle and searches Sent over IMAP inside {@link
  * SEND_UNVERIFIED_PROBE_AT_MS}; a hit resolves the row `sent` with `resolved_by = 'sent_folder'`.
- * Past it the row says plainly that the message is not in Sent and offers the two acts.
+ * Past it the row says plainly that the message is not in Sent and offers the two acts; the
+ * mirror is still read for {@link SEND_UNVERIFIED_MIRROR_MS}, without a login.
  */
-export const SEND_UNVERIFIED_RECHECK_MS = 24 * 60 * 60 * 1000;
+export const SEND_UNVERIFIED_RECHECK_MS = 20 * 60 * 1000;
 
 /**
- * WHEN THE IMAP PROBE RUNS, as ages after the attempt — a LOGIN each, so bounded to two: one
- * early enough to catch a provider that files sent mail itself (a copy appears within minutes),
- * one late enough to be the last word before the window closes. Each window is
+ * HOW LONG THE MIRROR IS STILL READ FOR A HELD SEND — an indexed read, no login. A copy the mirror
+ * syncs after the checking window is the send delivered, and settles the row before anyone answers.
+ */
+export const SEND_UNVERIFIED_MIRROR_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * WHEN THE IMAP PROBE RUNS, as ages after the row was held (`drafts.updated_at`, written by the
+ * close) — a LOGIN each, so bounded to two: one a minute in, when a provider that files sent mail
+ * itself has done so, one as the last word before the window closes. Each window is
  * {@link SEND_UNVERIFIED_PROBE_WINDOW_MS} wide so a pass every minute meets it; a pass that
  * skips a window (a pre-empted invocation) skips that probe — the mirror arm still runs.
  */
-export const SEND_UNVERIFIED_PROBE_AT_MS: readonly number[] = [15 * 60 * 1000, 23 * 60 * 60 * 1000];
+export const SEND_UNVERIFIED_PROBE_AT_MS: readonly number[] = [60_000, 15 * 60_000];
 export const SEND_UNVERIFIED_PROBE_WINDOW_MS = 5 * 60 * 1000;
 
 /** Is an `unverified` attempt of this age inside one of the IMAP probe windows? */
@@ -875,8 +888,10 @@ export interface SendWithdrawResult {
  * nothing: another resolver already wrote a terminal state, and `status` is THEIRS, re-read.
  * `deferred` — nothing was written and nothing is claimed; try again next cycle. `not_offered` — the
  * attempt committed no offer before it died (mail 0162), so nothing reached SMTP: the row was forgotten.
+ * `earlier_unverified` — a Send again that offered nothing: held `unverified` again, as its earlier attempt was.
  */
-export type ResolveStaleBy = "mirror" | "probe" | "undialable" | "elsewhere" | "deferred" | "not_offered";
+export type ResolveStaleBy =
+  | "mirror" | "probe" | "undialable" | "elsewhere" | "deferred" | "not_offered" | "earlier_unverified";
 
 /**
  * What became of one stale reservation. `status` is `pending` only alongside `by: "deferred"`,
@@ -1089,6 +1104,44 @@ export class SendRefusedByServer extends ServiceError {
   }
 }
 
+/** Send again on a draft with no held send: nothing to send again. */
+export const SEND_AGAIN_NOT_HELD_SENTENCE = "Nothing was sent. This message isn't waiting to be sent again.";
+/** Send again whose words or files are not the held message's: refused, never sent without them. */
+export const SEND_AGAIN_CHANGED_SENTENCE =
+  "Nothing was sent. This can't be matched to the message that was held — its words or files may differ — so it wasn't sent again.";
+/** Send again whose Sent check could not run: nothing goes on a guess. */
+export const SEND_AGAIN_UNCHECKED_SENTENCE =
+  "Nothing was sent. Your Sent folder couldn't be checked, so the message wasn't sent again. Try again in a moment.";
+/** Send again while an attempt of the message is running. */
+export const SEND_AGAIN_IN_FLIGHT_SENTENCE = "This message is being sent right now. Nothing was sent again.";
+
+function sendAgainNotHeld(): ServiceError {
+  return new ServiceError("send_again_not_held", 409, SEND_AGAIN_NOT_HELD_SENTENCE, undefined, false);
+}
+function sendAgainChanged(): ServiceError {
+  return new ServiceError("send_again_changed", 409, SEND_AGAIN_CHANGED_SENTENCE, undefined, false);
+}
+function sendAgainInFlight(): ServiceError {
+  return new ServiceError("send_again_in_flight", 409, SEND_AGAIN_IN_FLIGHT_SENTENCE, undefined, false);
+}
+/** The Sent check before a resend failed or ran out of time: 424, final; the message stays held. */
+export class SendAgainUnchecked extends ServiceError {
+  constructor(cause?: unknown) {
+    super("send_again_unchecked", SEND_REFUSED_STATUS, SEND_AGAIN_UNCHECKED_SENTENCE, undefined, false);
+    this.name = "SendAgainUnchecked";
+    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+  }
+}
+
+/** Inside `reserve`: the held attempt moved under the press; the press looks again. */
+class HeldMoved extends Error {}
+
+/**
+ * Mark of a reservation that sends a held message again (`retry_refusal`): an earlier attempt of
+ * its Message-ID may have gone, so it never ends `failed` and is never forgotten.
+ */
+const EARLIER_UNVERIFIED = "send_unverified";
+
 /** The final refusals a replay of the key is told by name; their code is kept on the row. */
 const NAMED_FINAL_CODES: ReadonlySet<string> = new Set(["send_upload_dropped", "send_refused_by_server"]);
 
@@ -1270,8 +1323,13 @@ type Reservation =
       reservedAt: Date;
       /** The send holds the account's content claim (it carries no staged files): only then may it re-arm. */
       claimed: boolean;
+      /** A Send again of the held attempt reserved at `heldAt`: Sent is checked first, and it never fails. */
+      again?: { heldAt: Date };
     }
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
+
+/** The held attempt a Send again resends: its row, kept for its Message-ID and its claim. */
+type HeldAttempt = typeof outboundSends.$inferSelect;
 
 /**
  * SendService (POST /drafts/:id/send) — the gated idempotent send; the route 400s without
@@ -1428,7 +1486,14 @@ export class SendService {
     };
 
     // ── 1. RESERVE (short tx, NO network) ────────────────────────────────────
-    let reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
+    let reservation: Reservation;
+    if (input.again === true) {
+      const prepared = await this.prepareAgain(ctx, draftId, idempotencyKey, deps, input);
+      if (prepared.kind === "answered") return prepared.result;
+      reservation = prepared;
+    } else {
+      reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
+    }
     phases.reserveMs = Date.now() - started;
 
     // A same-key request that hit the UNIQUE reservation: branch on stored status.
@@ -1441,6 +1506,7 @@ export class SendService {
     if (reservation.kind === "existing") {
       const resumed = await this.resumeExisting(ctx, reservation.row, reservation.mailboxId, deps);
       if (resumed !== FORGOTTEN) return resumed;
+      if (input.again === true) return { status: "in_flight", providerMessageId: null, draftId, seq: null };
       // The key's earlier attempt offered nothing and was forgotten: this press reserves afresh,
       // once (new clock, new Message-ID, fresh claim). A second hit answers as a live attempt.
       reservation = await this.reserve(ctx, draftId, idempotencyKey, deps, input);
@@ -1518,6 +1584,36 @@ export class SendService {
         throw await this.endInWindow(ctx, deps, reservation, draftId, timedOut, phases, started);
       }
       adapter = opened.value;
+
+      // SEND AGAIN LOOKS IN SENT FIRST, on this dial and this clock: a hit is the earlier attempt
+      // delivered, and nothing is submitted. A look that cannot answer sends nothing.
+      if (reservation.again !== undefined) {
+        const probing = adapter.messageInSent(mintedMessageId);
+        let looked: { timedOut: true } | { timedOut: false; value: boolean };
+        try {
+          looked = await raceCeiling(probing, ceiling);
+        } catch (err) {
+          await adapter.close().catch(() => { /* the connection is already broken */ });
+          const typed = asMailServerRefusal(err);
+          throw await this.endInWindow(ctx, deps, reservation, draftId,
+            typed instanceof ServiceError ? typed : new SendAgainUnchecked(err), phases, started);
+        }
+        if (looked.timedOut) {
+          const leased = adapter;
+          void probing.then(() => leased.close(), () => leased.close()).catch(() => { /* already broken */ });
+          throw await this.endInWindow(ctx, deps, reservation, draftId, new SendAgainUnchecked(), phases, started);
+        }
+        if (looked.value) {
+          await adapter.close().catch(() => { /* the connection is already broken */ });
+          const seq = await this.finalizeSent(ctx, sendId, mintedMessageId, draftId, mailboxId, "sent_folder");
+          this.logPhases(deps, ctx, draftId, seq === null ? "in_flight" : "sent", phases, started);
+          if (seq === null) return { status: "in_flight", providerMessageId: null, draftId, seq: null };
+          return {
+            status: "sent", providerMessageId: mintedMessageId, draftId, seq,
+            firstSend: firstSendFacts("sent", reservation.again.heldAt),
+          };
+        }
+      }
 
       // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` or
       // `uploading` after its attempt died provably delivered nothing and may be forgotten
@@ -1767,6 +1863,14 @@ export class SendService {
     // the window, is recorded re-armable (`retry_until`) and answered retryable with its wait
     // (`details.retryAfter`). A `finalizeFailed` that throws propagates: the row stays `pending`.
     const refusal = windowRefusal(err);
+    // A SEND AGAIN NEVER ENDS `failed`: an earlier attempt of its Message-ID may have gone. The
+    // message is held again, as it was before the press, and the answer is final.
+    if (reservation.again !== undefined) {
+      await this.finalizeUnverified(ctx, reservation.sendId, draftId);
+      logMailServerRefusal(deps, ctx, draftId, refusal);
+      this.logPhases(deps, ctx, draftId, "unverified", phases, started);
+      return stated(refusal, false, null);
+    }
     // A refusal says by its own `transient` flag whether a wait may cure it, and our own full cap by
     // its code and flag (`capWait`), whose wait the attempt's own is raised to; any other is final.
     const cap = capWait(refusal);
@@ -1919,6 +2023,79 @@ export class SendService {
   }
 
   /**
+   * SEND AGAIN, BEFORE ANY DIAL: the press's own key answers first; then the draft says what is
+   * left to do — sent (answered from the earlier send), sending (refused, final), or held, whose
+   * attempt the mirror is asked about and then reserved again under this key. Nothing here sends.
+   */
+  private async prepareAgain(
+    ctx: ServiceContext, draftId: string, idempotencyKey: string, deps: SendDeps, input: SendInput,
+  ): Promise<Reservation | { kind: "answered"; result: SendResult }> {
+    if ((input.stagedAttachmentIds?.length ?? 0) > 0 || input.forwardOf || input.forwardParts !== undefined) {
+      throw new ServiceError("validation_failed", 400, "a send again carries no staged files and no forward fields");
+    }
+    for (let look = 0; look < 2; look += 1) {
+      const db = asTx(ctx);
+      const [own] = await db.select().from(outboundSends)
+        .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, idempotencyKey)))
+        .limit(1);
+      const [d] = await db.select({ status: drafts.status, mailboxId: drafts.mailboxId }).from(drafts)
+        .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
+      if (own) return { kind: "existing", row: own, mailboxId: d?.mailboxId ?? "" };
+      if (!d) throw new ServiceError("not_found", 404, "draft not found");
+      if (d.status === "sent") return { kind: "answered", result: await this.answerSentDraft(ctx, draftId) };
+      if (d.status === "sending") throw sendAgainInFlight();
+      const held = d.status === "unverified" ? await this.heldAttemptOf(ctx, draftId) : null;
+      if (!held) throw sendAgainNotHeld();
+      // The mirror, no dial: a copy the account already holds was the earlier attempt delivered.
+      const mirrored = await this.recheckUnverified(ctx, held, d.mailboxId, null);
+      if (mirrored.status === "sent") {
+        return {
+          kind: "answered",
+          result: {
+            status: "sent", providerMessageId: held.mintedMessageId, draftId, seq: mirrored.seq,
+            firstSend: firstSendFacts("sent", held.createdAt),
+          },
+        };
+      }
+      if (mirrored.by === "elsewhere") continue;
+      try {
+        return await this.reserve(ctx, draftId, idempotencyKey, deps, input, held);
+      } catch (err) {
+        if (!(err instanceof HeldMoved)) throw err;
+      }
+    }
+    throw sendAgainNotHeld();
+  }
+
+  /** The draft's one open `unverified` attempt, or `null`. Account-scoped. */
+  private async heldAttemptOf(ctx: ServiceContext, draftId: string): Promise<HeldAttempt | null> {
+    const [held] = await asTx(ctx).select().from(outboundSends)
+      .where(and(
+        eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.draftId, draftId),
+        eq(outboundSends.status, "unverified"), isNull(outboundSends.resolvedBy),
+      ))
+      .orderBy(desc(outboundSends.createdAt))
+      .limit(1);
+    return held ?? null;
+  }
+
+  /** A press about a draft already sent is answered from its delivery, as a settled key's replay is. */
+  private async answerSentDraft(ctx: ServiceContext, draftId: string): Promise<SendResult> {
+    const [s] = await asTx(ctx).select({
+      providerMessageId: outboundSends.providerMessageId, sentAt: outboundSends.sentAt, createdAt: outboundSends.createdAt,
+    }).from(outboundSends)
+      .where(and(
+        eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.draftId, draftId), eq(outboundSends.status, "sent"),
+      ))
+      .orderBy(desc(outboundSends.createdAt))
+      .limit(1);
+    return {
+      status: "sent", providerMessageId: s?.providerMessageId ?? null, draftId, seq: null,
+      firstSend: firstSendFacts("sent", s?.sentAt ?? s?.createdAt ?? ctx.now()),
+    };
+  }
+
+  /**
    * The RESERVE tx (short, NO network). Loads the account-scoped draft (404), mints
    * the Message-ID from the mailbox identity, and reserves `(accountId,
    * idempotencyKey)`. A DO-NOTHING conflict means the key already exists → return
@@ -1929,6 +2106,8 @@ export class SendService {
    */
   private async reserve(
     ctx: ServiceContext, draftId: string, idempotencyKey: string, deps: SendDeps, input: SendInput,
+    /** Send again: the held attempt whose Message-ID and claim this reservation takes over. */
+    held?: HeldAttempt,
   ): Promise<Reservation> {
     const inlineTotal = (input.attachments ?? []).reduce((n, a) => n + a.content.byteLength, 0);
     // STAGED REFERENCES: WHAT THEY WEIGH, BEFORE ANYTHING IS TRANSFERRED. Outside the
@@ -2042,7 +2221,7 @@ export class SendService {
         );
       }
 
-      let mintedMessageId = mintMessageId(domainOf(mb?.address));
+      let mintedMessageId = held ? held.mintedMessageId : mintMessageId(domainOf(mb?.address));
       let reservedAt = ctx.now();
 
       const inserted = await tx.insert(outboundSends).values({
@@ -2053,6 +2232,7 @@ export class SendService {
         status: "pending",
         // Mail 0162: nothing offered yet; `markOffered` commits `offered` before the first SMTP traffic.
         offerState: "unoffered",
+        ...(held ? { retryRefusal: EARLIER_UNVERIFIED } : {}),
         createdAt: reservedAt,
       })
         .onConflictDoNothing({ target: [outboundSends.accountId, outboundSends.idempotencyKey] })
@@ -2068,7 +2248,7 @@ export class SendService {
           .where(and(eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.idempotencyKey, idempotencyKey)))
           .limit(1));
         if (!existing) throw new ServiceError("internal", 500, "reservation vanished");
-        const rearmed = await this.rearm(tx, ctx, existing, d, draftId, input, stagedIds);
+        const rearmed = held ? null : await this.rearm(tx, ctx, existing, d, draftId, input, stagedIds);
         if (rearmed === null) return { kind: "existing", row: existing, mailboxId: d.mailboxId };
         sendId = existing.id;
         mintedMessageId = existing.mintedMessageId;
@@ -2149,7 +2329,8 @@ export class SendService {
 
       // NEW reservation. Only a fresh `draft` with recipients may be sent; a draft
       // already `sending`/`sent`/`unverified` cannot be re-sent under a NEW key.
-      if (d.status !== "draft") {
+      if (held && d.status !== "unverified") throw new HeldMoved();
+      if (!held && d.status !== "draft") {
         throw new ServiceError("conflict", 409, `draft cannot be sent from status '${d.status}'`);
       }
       const to = (d.to as EmailAddress[]) ?? [];
@@ -2365,6 +2546,31 @@ export class SendService {
           seq: Number(seq), ...(forward ? { forward } : {}), attempt, reservedAt, claimed,
         };
       };
+      if (held) {
+        // SEND AGAIN: the held attempt's claim on these words, inline file digests included, or
+        // nothing. Locked draft, then claim, then the held row (`DraftsService.resolve`'s order);
+        // the claim moves to this press and the held row is closed as resent, both or neither.
+        const [claim] = await dialect(ctx.db).forUpdate(tx.select({
+          id: outboundSendFingerprints.id, sendId: outboundSendFingerprints.sendId,
+        }).from(outboundSendFingerprints)
+          .where(and(
+            eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.mailboxId, d.mailboxId),
+            eq(outboundSendFingerprints.fingerprint, contentFingerprintOf(d, input)),
+          ))
+          .limit(1));
+        if (claim?.sendId !== held.id) throw sendAgainChanged();
+        await tx.update(outboundSendFingerprints).set({ sendId, createdAt: reservedAt })
+          .where(and(eq(outboundSendFingerprints.id, claim.id), eq(outboundSendFingerprints.accountId, ctx.accountId)));
+        const closed = await tx.update(outboundSends).set({ resolvedBy: "resent", resolvedAt: reservedAt })
+          .where(and(
+            eq(outboundSends.id, held.id), eq(outboundSends.accountId, ctx.accountId),
+            eq(outboundSends.status, "unverified"), isNull(outboundSends.resolvedBy),
+          ))
+          .returning({ id: outboundSends.id });
+        if (closed.length === 0) throw new HeldMoved();
+        const r = await flip(true);
+        return r.kind === "new" ? { ...r, again: { heldAt: held.createdAt } } : r;
+      }
       if (stagedIds.length > 0) return flip(false);
       // A RE-ARMED SEND ALREADY HOLDS ITS CLAIM — `rearm` proved the claim on these words names this
       // row — so only a fresh reservation takes one.
@@ -2690,13 +2896,22 @@ export class SendService {
        * they did not. The instant is the delivery's where the row has one; the reservation's
        * own stamp is the fallback, on the same reasoning the duplicate refusal states at length.
        */
+      // A Send again whose own submission may have delivered it: this key sent it, not an earlier one.
+      const ownAgain = row.retryRefusal === EARLIER_UNVERIFIED && !SENT_NOTHING.has(row.offerState);
       return {
         status: "sent", providerMessageId: row.providerMessageId,
         draftId: draftOfTerminalAttempt(row), seq: null,
-        firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt),
+        ...(ownAgain ? {} : { firstSend: firstSendFacts("sent", row.sentAt ?? row.createdAt) }),
       };
     }
     if (row.status === "unverified") {
+      // Its message was sent again: a stale replay of this key is answered from the draft.
+      if (row.resolvedBy === "resent") {
+        const [d] = await asTx(ctx).select({ status: drafts.status }).from(drafts)
+          .where(and(eq(drafts.id, draftOfOpenAttempt(row)), eq(drafts.accountId, ctx.accountId))).limit(1);
+        if (d?.status === "sent") return this.answerSentDraft(ctx, draftOfOpenAttempt(row));
+        if (d?.status === "sending") return { status: "in_flight", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
+      }
       return { status: "unverified", providerMessageId: null, draftId: draftOfOpenAttempt(row), seq: null };
     }
     if (row.status === "failed") {
@@ -2784,6 +2999,13 @@ export class SendService {
     const draftId = draftOfOpenAttempt(row);
     // `uploading` sent nothing either: its end-of-data mark was never released (`markComplete`).
     const read = row.offerState;
+    // A SEND AGAIN THAT OFFERED NOTHING is held again, never forgotten: its earlier attempt may have gone.
+    if (row.retryRefusal === EARLIER_UNVERIFIED) {
+      const seq = await this.finalizeUnverified(ctx, row.id, draftId, read);
+      if (seq === null) return this.answerWinner(ctx, row);
+      defaultLog.info("send_again_held_again", { sendId: row.id, accountId: ctx.accountId, draftId });
+      return { status: "unverified", providerMessageId: null, draftId, seq, by: "earlier_unverified" };
+    }
     const done = await asTx(ctx).transaction(async (tx): Promise<"forgotten" | "lost" | "kept" | "drop"> => {
       const [d] = await tx.select({ sendAt: drafts.sendAt }).from(drafts)
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
@@ -2843,12 +3065,15 @@ export class SendService {
     const rows = await asTx(ctx).select().from(outboundSends)
       .where(and(eq(outboundSends.accountId, ctx.accountId), inArray(outboundSends.id, [...ids])));
     const gone = new Set<string>();
+    const held = new Set<string>();
     for (const row of rows) {
       if (row.status !== "pending" || !SENT_NOTHING.has(row.offerState) || row.draftId === null) continue;
       const out = await this.forgetUnoffered(ctx, row);
       if (out?.status === "forgotten" || (out?.status === "failed" && out.by === "not_offered")) gone.add(row.id);
+      // A Send again held again is decided, not forgotten.
+      else if (out?.by === "earlier_unverified") held.add(row.id);
     }
-    return { forgotten: gone.size, remaining: ids.filter((id) => !gone.has(id)) };
+    return { forgotten: gone.size, remaining: ids.filter((id) => !gone.has(id) && !held.has(id)) };
   }
 
   /**
@@ -3096,6 +3321,8 @@ export class SendService {
    */
   private async finalizeSent(
     ctx: ServiceContext, sendId: string, providerMessageId: string, draftId: string, mailboxId: string,
+    /** Who found it delivered, when this attempt did not deliver it itself. */
+    resolvedBy: "sent_folder" | null = null,
   ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
@@ -3105,7 +3332,7 @@ export class SendService {
       const erasedAt = await readAccountErasedAt(tx, dialect(ctx.db), ctx.accountId);
       // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends)
-        .set({ status: "sent", providerMessageId, sentAt: now })
+        .set({ status: "sent", providerMessageId, sentAt: now, ...(resolvedBy ? { resolvedBy, resolvedAt: now } : {}) })
         .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
         .returning({ id: outboundSends.id });
       // THE CAS LOST — see {@link SendService.resolveStale}. Nothing else in this transaction may
@@ -3225,24 +3452,53 @@ export class SendService {
   }
 
   /**
+   * A HELD SEND LATER KEEPS A CLAIM SEND AGAIN CAN PROVE: the hold clears the appointment, so the
+   * claim the scheduled send took (its digest includes `send_at`, and it carried no files) is
+   * re-keyed to the digest without it. Left alone when another claim already holds that digest.
+   */
+  private async rekeyScheduledClaim(tx: LedgerTx, ctx: ServiceContext, sendId: string, draftId: string): Promise<void> {
+    const [d] = await tx.select().from(drafts)
+      .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"))).limit(1);
+    if (!d || d.sendAt === null) return;
+    const held = contentFingerprintOf(d, {});
+    const unscheduled = contentFingerprintOf({ ...d, sendAt: null }, {});
+    const [taken] = await tx.select({ id: outboundSendFingerprints.id }).from(outboundSendFingerprints)
+      .where(and(
+        eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.mailboxId, d.mailboxId),
+        eq(outboundSendFingerprints.fingerprint, unscheduled),
+      )).limit(1);
+    if (taken) return;
+    await tx.update(outboundSendFingerprints).set({ fingerprint: unscheduled })
+      .where(and(
+        eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.sendId, sendId),
+        eq(outboundSendFingerprints.fingerprint, held),
+      ));
+  }
+
+  /**
    * FINALIZE-unverified tx: the ambiguous terminal state; the draft surfaces `unverified`.
    * Compare-and-swap on the reservation, and on the draft, for {@link SendService.finalizeSent}'s
    * reasons — `null` when the CAS matched nothing, which means somebody else resolved this row.
    */
   private async finalizeUnverified(
     ctx: ServiceContext, sendId: string, draftId: string,
+    /** Only while the row is still in this offer state. */
+    onlyFrom: string | null = null,
   ): Promise<number | null> {
     const now = ctx.now();
     const seq = await asTx(ctx).transaction(async (tx) => {
-      // scoped-by: sendId names the reservation this request minted; the status predicate makes the CAS single-winner
       const won = await tx.update(outboundSends).set({ status: "unverified" })
-        .where(and(eq(outboundSends.id, sendId), eq(outboundSends.status, "pending")))
+        .where(and(
+          eq(outboundSends.id, sendId), eq(outboundSends.accountId, ctx.accountId), eq(outboundSends.status, "pending"),
+          ...(onlyFrom === null ? [] : [eq(outboundSends.offerState, onlyFrom)]),
+        ))
         .returning({ id: outboundSends.id });
       // THE SHARPEST OF THE THREE. Without this predicate a reconciling pass that probed while a
       // late `finalizeSent` committed would overwrite `sent` with `unverified` — turning a
       // message the user demonstrably sent into "we couldn't confirm this", and sending them to
       // look for it in a folder it is already in.
       if (won.length === 0) return null;
+      await this.rekeyScheduledClaim(tx, ctx, sendId, draftId);
       // The appointment bookkeeping ends with the terminal outcome — `finalizeSent`'s rule.
       await tx.update(drafts).set({ status: "unverified", sendAt: null, sendKey: null, updatedAt: now })
         .where(and(

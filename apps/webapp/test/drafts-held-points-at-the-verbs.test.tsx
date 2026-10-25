@@ -151,7 +151,8 @@ describe("what a held row says, and the two acts it offers", () => {
     qa(`.draft-row[data-id="${id}"] .draft-resolve button`).map((b) => (b.textContent ?? "").trim());
 
   it("offers the two acts for a row held by a durable RECORD, whatever the mirror says", async () => {
-    await mountDrafts([draft({ id: "d1" }), draft({ id: "d2", subject: "Other" })], { heldHere: new Set(["d1"]) });
+    const held = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
+    await mountDrafts([draft({ id: "d1", updatedAt: held }), draft({ id: "d2", subject: "Other" })], { heldHere: new Set(["d1"]) });
     expect(acts("d1")).toEqual([messages.drafts.sendAgain, messages.drafts.itWasSent]);
     expect(acts("d2"), "an ordinary row offers the held row's acts").toEqual([]);
     const group = q<HTMLElement>('.draft-row[data-id="d1"] .draft-resolve')!;
@@ -164,8 +165,9 @@ describe("what a held row says, and the two acts it offers", () => {
    * acts do not change. Mutation: invert `heldStillChecking` → both sentences swap.
    */
   it("says the Sent folder is being checked while the engine still looks, and that the message is not there once it has stopped", async () => {
-    const recent = new Date(NOW.getTime() - 60 * 60 * 1000).toISOString();
-    const old = new Date(NOW.getTime() - 25 * 60 * 60 * 1000).toISOString();
+    // The engine looks for twenty minutes after the hold.
+    const recent = new Date(NOW.getTime() - 19 * 60 * 1000).toISOString();
+    const old = new Date(NOW.getTime() - 21 * 60 * 1000).toISOString();
     await mountDrafts([
       draft({ id: "u1", status: "unverified", updatedAt: recent }),
       draft({ id: "u2", status: "unverified", updatedAt: old, subject: "Old" }),

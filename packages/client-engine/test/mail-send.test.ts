@@ -9,6 +9,7 @@ import {
   isForwardedByUs,
   MemoryMirrorStore,
   MutationRejectedError,
+  mutationEffects,
   OhmailEngine,
   replySubject,
   threadOf,
@@ -1338,5 +1339,58 @@ describe("mail_send — the wire shapes `rejectionOf` cannot read", () => {
 
     expect(res).toBeTruthy();
     expect(calls.some((c) => c.endsWith("/drafts/draft-1/send"))).toBe(true);
+  });
+});
+
+describe("mail_send again — one request about the held row", () => {
+  const PHOTO = { filename: "photo.jpg", contentType: "image/jpeg", contentBase64: Buffer.from("jpeg").toString("base64") };
+  const again = {
+    kind: "mail_send" as const, inReplyTo: null, again: true as const, draftId: "held-1", body: "", attachments: [PHOTO],
+  };
+  function wire(answer: Record<string, unknown>) {
+    const calls: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      calls.push({ method: init?.method ?? "GET", path: new URL(url, "http://x").pathname, body: init?.body ? JSON.parse(String(init.body)) : null });
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    return { adapter: new HttpAdapter({ baseUrl: "", fetch: fetchImpl }), calls };
+  }
+
+  it("is one POST /drafts/:id/send carrying again and the files: no save, no create, no vouched revision", async () => {
+    const { adapter, calls } = wire({ status: "sent", providerMessageId: "<held@x>", firstSend: { status: "sent", at: FIXED_NOW.toISOString() } });
+    const out = await adapter.mutate(again, { idempotencyKey: "k-again" });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /drafts/held-1/send"]);
+    expect(calls[0]!.body).toEqual({ again: true, attachments: [PHOTO] });
+    expect(out.firstSend).toEqual({ status: "sent", at: FIXED_NOW.toISOString() });
+  });
+
+  it("without a held row, or with a schedule or a forward, nothing goes on the wire", async () => {
+    for (const bad of [{ draftId: undefined }, { sendAt: FIXED_NOW.toISOString() }, { forwardOf: "m1" }]) {
+      const { adapter, calls } = wire({ status: "sent" });
+      const err = await adapter.mutate({ ...again, ...bad }, { idempotencyKey: "k-bad" }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "send_again_invalid", retryable: false });
+      expect(calls).toEqual([]);
+    }
+  });
+
+  it("paints the held row itself as sending, never a second row", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const held = {
+      id: "held-1", mailboxId: "mb1", threadId: null, inReplyToMessageId: null, forwardOfMessageId: null,
+      subject: "Fotos", body: "Anbei.", to: [{ name: null, address: "a@example.com" }], cc: [], bcc: [],
+      rationale: null, status: "unverified", createdAt: FIXED_NOW.toISOString(), updatedAt: FIXED_NOW.toISOString(),
+    } as EngineDraft;
+    await store.applyChanges([{ type: "draft", op: "create", id: held.id, seq: 1, updatedAt: held.updatedAt, entity: held as never }]);
+    const effects = mutationEffects(store, again, { now: () => FIXED_NOW, uuid: () => "fresh" });
+    expect(effects.map((e) => [e.type, e.id, (e.entity as EngineDraft).status])).toEqual([["draft", "held-1", "sending"]]);
+    expect(mutationEffects(store, { ...again, draftId: "gone" }, { now: () => FIXED_NOW, uuid: () => "fresh" })).toEqual([]);
+  });
+
+  it("the Sent copy's state rides the confirmed result, shape-checked", async () => {
+    const said = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "missing" }).adapter.mutate(again, { idempotencyKey: "k1" });
+    expect(said.sentCopy).toBe("missing");
+    const odd = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "lost" }).adapter.mutate(again, { idempotencyKey: "k2" });
+    expect(odd.sentCopy).toBeUndefined();
   });
 });

@@ -11,7 +11,7 @@ import {
   SEND_RECONCILE_NET_TIMEOUTS,
   SEND_RECONCILE_GIVE_UP_MS,
   SEND_RECONCILE_SCAN_FACTOR, SEND_STALE_AFTER_MS,
-  SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS,
+  SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_MIRROR_MS, SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS,
   inUnverifiedProbeWindow,
 } from "../src/index.js";
 
@@ -117,14 +117,16 @@ async function stranded(
  * `unverified`, its draft `unverified`, nobody has answered for it; `ageMs` places the attempt.
  */
 async function closedUnverified(
-  w: World, opts: { ageMs: number; resolvedBy?: string; draftStatus?: string } = { ageMs: 20 * MIN },
+  w: World, opts: { ageMs: number; resolvedBy?: string; draftStatus?: string; heldAgoMs?: number } = { ageMs: 20 * MIN },
 ): Promise<{ sendId: string; draftId: string; minted: string }> {
   const minted = mintMessageId("rec.test");
   const at = new Date(NOW.getTime() - opts.ageMs);
+  // When the close held it (`drafts.updated_at`); the attempt itself may be minutes older.
+  const heldAt = new Date(NOW.getTime() - (opts.heldAgoMs ?? opts.ageMs));
   const [d] = await w.db.insert(drafts).values({
     accountId: w.accountId, mailboxId: w.mailboxId, subject: "the ambiguous one", body: "words",
     to: [{ name: null, address: "you@example.com" }],
-    status: opts.draftStatus ?? "unverified", createdAt: at, updatedAt: at,
+    status: opts.draftStatus ?? "unverified", createdAt: at, updatedAt: heldAt,
   }).returning();
   const [s] = await w.db.insert(outboundSends).values({
     accountId: w.accountId, idempotencyKey: randomUUID(), draftId: d!.id,
@@ -1494,10 +1496,28 @@ describe("runSendReconcilePass — the second look at an unverified send", () =>
     expect((await sendRow(w, sendId)).status).toBe("sent");
   });
 
-  /** THE WINDOW IS BOUNDED AND NAMED: past it the row is left to the person, and the sentence changes. */
-  it("a row older than the recheck window is not looked at again", async () => {
+  /** Past the checking window the mirror still settles it: a copy synced later is the send delivered. */
+  it("held 25 minutes ago with the id in the mirror: settled sent, and a fresh-key send is refused", async () => {
     const w = await world();
-    const { sendId, minted } = await closedUnverified(w, { ageMs: SEND_UNVERIFIED_RECHECK_MS + MIN });
+    const { sendId, draftId, minted } = await closedUnverified(w, { ageMs: 25 * MIN });
+    await mirror(w, minted);
+    const spy = spyAdapter(false);
+
+    const r = await run(w, { openSendAdapter: spy.factory });
+
+    expect(r.recheckedSent).toBe(1);
+    expect(spy.opened, "the mirror answers without a login").toEqual([]);
+    expect(await sendRow(w, sendId)).toMatchObject({ status: "sent", resolvedBy: "sent_folder" });
+    const { sendService } = await import("../src/index.js");
+    const ctx = { db: w.db, accountId: w.accountId, userId: null, now: () => NOW, requestId: "r" };
+    expect(await sendService.send(ctx, draftId, randomUUID(), { openSendAdapter: spy.factory }).then((x) => x, (e: unknown) => e))
+      .toMatchObject({ httpStatus: 409 });
+    expect(spy.delivered).toEqual([]);
+  });
+
+  it("a row held longer than the mirror's day is not looked at again", async () => {
+    const w = await world();
+    const { sendId, minted } = await closedUnverified(w, { ageMs: SEND_UNVERIFIED_MIRROR_MS + MIN });
     await mirror(w, minted);
 
     const r = await run(w, { openSendAdapter: spyAdapter(true).factory });
@@ -1535,6 +1555,59 @@ describe("runSendReconcilePass — the second look at an unverified send", () =>
     expect(SEND_UNVERIFIED_PROBE_AT_MS.length, "two logins per row is the bound this file states").toBe(2);
     expect(Math.max(...SEND_UNVERIFIED_PROBE_AT_MS) + SEND_UNVERIFIED_PROBE_WINDOW_MS)
       .toBeLessThanOrEqual(SEND_UNVERIFIED_RECHECK_MS);
+  });
+
+  it("ages from the moment the row was held: probed at held+1 and held+15 minutes, never dialled past held+20", async () => {
+    const w = await world();
+    // An attempt reserved nine minutes before its close (a slow upload), held at NOW.
+    const { sendId, minted } = await closedUnverified(w, { ageMs: 9 * MIN, heldAgoMs: 0 });
+    const spy = spyAdapter(false);
+    const at = (ms: number) => run(w, { openSendAdapter: spy.factory, now: () => new Date(NOW.getTime() + ms) });
+
+    expect((await at(1.5 * MIN)).rechecked).toBe(1);
+    expect(spy.probed, "the first look is a minute after the close").toEqual([minted]);
+    await at(10 * MIN);
+    expect(spy.probed, "between the windows only the mirror is read").toHaveLength(1);
+    await at(15.5 * MIN);
+    expect(spy.probed, "the last look is at fifteen minutes").toEqual([minted, minted]);
+    expect((await at(21 * MIN)).rechecked, "past twenty minutes only the mirror is read").toBe(1);
+    expect(spy.probed, "no login past twenty minutes").toHaveLength(2);
+    expect((await sendRow(w, sendId)).status).toBe("unverified");
+  });
+
+  /**
+   * Mutation: read the held-in-the-last-20-minutes rows through the day-long page again (one
+   * page, `created_at` first) → the twelve older rows fill it and the new one is never probed.
+   */
+  it("a page of day-old held rows in another account never crowds a newly held one out of its probes", async () => {
+    const w = await world();
+    // Another account on the same Cloud pass: a full page of held rows from earlier in the day,
+    // nobody has answered them, the mirror has none of them. Their attempts are OLDER than the new
+    // one, so a single oldest-first page would be theirs alone.
+    const otherAccount = randomUUID();
+    const [omb] = await w.db.insert(mailboxes).values({
+      accountId: otherAccount, provider: "imap", address: `other-${randomUUID().slice(0, 8)}@rec.test`,
+      status: "connected",
+    }).returning();
+    const elsewhere: World = { db: w.db, accountId: otherAccount, mailboxId: omb!.id };
+    const page = SEND_RECONCILE_BATCH * SEND_RECONCILE_SCAN_FACTOR;
+    for (let i = 0; i < page; i += 1) {
+      await closedUnverified(elsewhere, { ageMs: 3 * 60 * MIN + i * 1000, heldAgoMs: 2 * 60 * MIN });
+    }
+    // Held now; its attempt began two minutes before the close.
+    const { sendId, minted } = await closedUnverified(w, { ageMs: 2 * MIN, heldAgoMs: 0 });
+    let asked = 0;
+    const spy = spyAdapter(() => { asked += 1; return asked >= 2; });
+    const at = (ms: number) => run(w, { openSendAdapter: spy.factory, now: () => new Date(NOW.getTime() + ms) });
+
+    await at(1.5 * MIN);
+    expect(spy.probed, "the new held send was not asked about a minute in").toEqual([minted]);
+    await at(15.5 * MIN);
+    expect(spy.probed, "nor at fifteen minutes").toEqual([minted, minted]);
+    expect(await sendRow(w, sendId)).toMatchObject({ status: "sent", resolvedBy: "sent_folder" });
+    expect(spy.opened, "an older row's mailbox was dialled outside its windows").not.toContain(omb!.id);
+    // The older rows still get their mirror read, every cycle.
+    expect((await at(16 * MIN)).rechecked).toBe(page);
   });
 
   it("a stranded pending row is decided BEFORE any second look, whatever the ages", async () => {

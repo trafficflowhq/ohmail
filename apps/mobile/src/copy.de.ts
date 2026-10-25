@@ -1488,6 +1488,9 @@ export const DE: Deck = {
   composeDeletedElsewhere: "Dieser Entwurf wurde auf einem anderen Gerät gelöscht. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
   composeNotSentOffline: "Nicht gesendet. Dieses Handy erreicht deinen Mailserver nicht. Die Nachricht liegt in den Entwürfen — sende sie erneut, sobald du wieder online bist.",
   replyUnverifiedAgain: "Nicht nochmal gesendet. Der erste Versand ist vielleicht schon raus, schau also zuerst in deinen Gesendet-Ordner.",
+  replyUnverifiedSendAgain:
+    "„Noch einmal senden“ schaut zuerst in deinem Gesendet-Ordner nach und sendet nur, wenn sie dort nicht ist. Legt dein Mailserver keine gesendeten Mails ab, kann sie doppelt ankommen.",
+  replyUnverifiedClose: "Schließen",
   /* Die Anhänge des Editors — `apps/webapp/messages/de.json` (`compose.attach*`) byte für Byte,
      wo der Satz dort existiert. */
   attachFile: "Dateien anhängen",
@@ -1530,6 +1533,7 @@ export const DE: Deck = {
   composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",
   composeSent: "Gesendet.",
   composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
+  sentCopyMissing: (said: string) => `${said} Die Kopie konnte nicht in deinen Gesendet-Ordner gelegt werden.`,
   composeKept: "In den Entwürfen behalten.",
   composeKeptWithoutFiles: "In den Entwürfen behalten. Die Anhänge wurden nicht behalten.",
   composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",
@@ -1672,6 +1676,13 @@ export const DE: Deck = {
   draftsResolveFailed: "Das hat den Server nicht erreicht. Die Nachricht wird hier weiterhin festgehalten.",
   draftsResolveStillRunning: "Dieser Versand läuft möglicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
   draftsBodyUnavailable: "Der Text dieses Entwurfs hat dieses Gerät noch nicht erreicht. Versuch es gleich noch einmal.",
+  draftsSendAgainAlreadyWent: "Sie war schon raus — sie liegt in deinem Gesendet-Ordner. Nichts wurde nochmal gesendet.",
+  draftsSendAgainChanged:
+    "Nicht nochmal gesendet. Sie lässt sich der festgehaltenen Nachricht nicht zuordnen, deshalb kann sie nicht als dieselbe rausgehen. Ist sie nicht angekommen, mach sie wieder zum Entwurf und sende sie als neue Nachricht.",
+  draftsNotArrived: "Wieder zum Entwurf machen",
+  draftsSendAgainUnchecked: "Nicht nochmal gesendet. Dein Gesendet-Ordner konnte vorher nicht geprüft werden. Versuch es gleich nochmal.",
+  draftsSendAgainNotHeld: "Diese Nachricht wartet nicht mehr darauf, nochmal gesendet zu werden.",
+  draftsSendAgainBusy: "Diese Nachricht wird gerade gesendet.",
   draftsDiscard: "Verwerfen",
   draftsDiscardWhat: "Das löscht die einzige Kopie.",
   draftsWaiting: "Wartet auf den Versand",

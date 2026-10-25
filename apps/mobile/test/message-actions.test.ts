@@ -44,6 +44,7 @@ import {
   type WorldMail,
 } from "../src/state/live";
 import { Copy } from "../src/copy";
+import { heldSheetFooter } from "../src/ui/send-press";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -788,5 +789,66 @@ describe("applying the rule to past mail, from the phone", () => {
       expect(s, "no sentence may promise that the backlog simply moves").not.toContain("is already here moves");
     }
     expect(Copy.screeningRetroToggle).toBeTruthy();
+  });
+});
+
+describe("the held sheet: Send again and Close", () => {
+  it("offers Send again on the held row beside Close, locked while it runs; elsewhere Send and Cancel", () => {
+    expect(heldSheetFooter({ phase: "unverified", heldId: "d-1", busy: false }))
+      .toEqual({ close: "close", sendAgain: { draftId: "d-1", locked: false } });
+    expect(heldSheetFooter({ phase: "unverified", heldId: "d-1", busy: true }).sendAgain?.locked).toBe(true);
+    expect(heldSheetFooter({ phase: "unverified", heldId: null, busy: false }), "no row named: Send says why")
+      .toEqual({ close: "close", sendAgain: null });
+    expect(heldSheetFooter({ phase: "idle", heldId: "d-1", busy: false })).toEqual({ close: "cancel", sendAgain: null });
+    expect(Copy.replyUnverifiedSendAgain, "the residual is said").toMatch(/arrive twice/);
+  });
+
+  it("Send again on the row an unverified reply named sends that row again, as one request", async () => {
+    const { fake, live } = await scene();
+    fake.unverifiedNextSend();
+    const result = await live.actions.sendReply("m1", "Did this leave?", false);
+    expect(result).toMatchObject({ outcome: "unverified", draftId: "d-1" });
+    // The server holds the row as the real route does.
+    fake.addDraft({ ...(fake.draft("d-1") as Record<string, unknown> & { id: string }), status: "unverified" });
+    await live.engine.syncOnce();
+    expect(await live.actions.draftSendAgain("d-1")).toBe("sent");
+    const sends = wire(fake, "POST", "/drafts/d-1/send");
+    expect(sends).toHaveLength(2);
+    expect(JSON.parse(sends[1]!.body)).toEqual({ again: true });
+    expect(fake.deliveries()).toHaveLength(1);
+    live.store.close();
+    fake.server.close();
+  });
+
+  it("a Send again whose answer was lost after it went says Sent., never that nothing was sent again", async () => {
+    const { fake, live } = await scene();
+    fake.unverifiedNextSend();
+    expect(await live.actions.sendReply("m1", "Did this leave?", false)).toMatchObject({ outcome: "unverified", draftId: "d-1" });
+    fake.addDraft({ ...(fake.draft("d-1") as Record<string, unknown> & { id: string }), status: "unverified" });
+    await live.engine.syncOnce();
+    fake.loseNextAgainAnswer();
+    live.toasts.length = 0;
+    expect(await live.actions.draftSendAgain("d-1")).toBe("sent");
+    expect(live.toasts).toEqual([Copy.composeSent]);
+    expect(fake.deliveries()).toHaveLength(1);
+    live.store.close();
+    fake.server.close();
+  });
+
+  it("a delivered letter whose Sent copy could not be written says so in one more line", async () => {
+    const { fake, live } = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
+      status: "sent", providerMessageId: "pm-d-1", sentCopy: "missing",
+    }));
+    expect((await live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
+    expect(live.toasts).toEqual([Copy.sentCopyMissing(Copy.replySent)]);
+    live.store.close();
+    fake.server.close();
+    const filed = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
+      status: "sent", providerMessageId: "pm-d-1", sentCopy: "filed",
+    }));
+    expect((await filed.live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
+    expect(filed.live.toasts, "a filed copy adds nothing").toEqual([Copy.replySent]);
+    filed.live.store.close();
+    filed.fake.server.close();
   });
 });

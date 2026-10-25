@@ -191,6 +191,10 @@ export function mailServer() {
    * a client that mints a fresh key per press, which is the defect this shape exists to measure.
    */
   const sentByKey = new Map<string, unknown>();
+  /** Keys a Send again itself delivered under: their replay is this press's own send, no `firstSend`. */
+  const againSentKeys = new Set<string>();
+  /** The next N Send agains are taken and their answer lost: 202 queued after they went. */
+  let againAnswersLost = 0;
   /** Draft ids the scheduled-send pass has CLAIMED — a cancel on one answers 409. */
   const claimed = new Set<string>();
   let draftSeq = 0;
@@ -799,8 +803,35 @@ export function mailServer() {
           return;
         }
         const held = idem === null ? undefined : sentByKey.get(idem);
+        if (held !== undefined && againSentKeys.has(idem!)) { json(200, held, seq); return; }
         if (held !== undefined) {
           json(200, { ...(held as Record<string, unknown>), firstSend: { status: "sent", at: new Date().toISOString() } }, seq);
+          return;
+        }
+        // SEND AGAIN of a held row (`SendService.prepareAgain`): it goes again, under its own message.
+        if (body !== "" && (JSON.parse(body) as { again?: unknown }).again === true) {
+          if (row.status === "sending" || pendingSends.has(row.id as string)) {
+            json(409, { error: { code: "send_again_in_flight", message: "This message is being sent right now.", retryable: false } });
+            return;
+          }
+          if (row.status !== "unverified") {
+            json(409, { error: { code: "send_again_not_held", message: "This message isn't waiting to be sent again.", retryable: false } });
+            return;
+          }
+          if (unverifiedSends > 0) {
+            unverifiedSends -= 1;
+            json(200, { status: "unverified", message: "the transport did not confirm" }, seq);
+            return;
+          }
+          const answer = { status: "sent", providerMessageId: `pm-${draftSend[1]!}` };
+          if (idem !== null) { sentByKey.set(idem, answer); againSentKeys.add(idem); }
+          drafts.set(row.id as string, { ...row, status: "sent" });
+          if (againAnswersLost > 0) {
+            againAnswersLost -= 1;
+            json(202, { status: "queued", message: "This send was accepted and is still being handed to your mail server." });
+            return;
+          }
+          json(200, answer, seq);
           return;
         }
         // A NEW key over a row past `draft` is refused, as `SendService.reserve` refuses it.
@@ -1012,6 +1043,8 @@ export function mailServer() {
     unbeltedSentRows: (on = true) => { unbelted = on; },
     /** The next N sends answer 200 `{status:"unverified"}` — SMTP's unknowable outcome. */
     unverifiedNextSend: () => { unverifiedSends += 1; },
+    /** The next Send again is taken, and its answer lost: 202 queued; its key's replay is the delivery. */
+    loseNextAgainAnswer: () => { againAnswersLost += 1; },
     /** A draft row the account already holds, arriving on the next drain like any entity. */
     addDraft: (row: Record<string, unknown> & { id: string }) => { drafts.set(row.id, row); push("draft", "create", row.id, row); },
     /** Another device sent this draft: the row turns `sent` and rides the next drain with its text

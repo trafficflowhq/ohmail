@@ -114,7 +114,8 @@ export function dialectSeam(exec: PhoneSqlExecutor): PhoneSqlExecutor {
  * going away. In `reset` mode every open connection ends and a new one is refused at once, as a
  * phone refuses a connect in airplane mode; in `stall` mode open connections go silent and keep
  * their bytes, and heal on `mend()`, as a NAT that outlives the radio does. The verdict clients
- * dial the server directly, so they are never on this cable.
+ * dial the server directly, so they are never on this cable. With a `rate` (bytes a second) it is a
+ * slow link: each chunk waits its share of time, and the sender is held back meanwhile.
  */
 export class Cable {
   private server: Server | null = null;
@@ -125,6 +126,7 @@ export class Cable {
   constructor(
     private readonly mode: "reset" | "stall" = "reset",
     private readonly target: { host: string; port: number } = { host: HOST, port: PORT },
+    private readonly rate: number | null = null,
   ) {}
   async open(): Promise<void> {
     this.server = createServer((inbound) => {
@@ -141,9 +143,14 @@ export class Cable {
       inbound.on("error", end).on("close", end);
       outbound.on("error", end).on("close", end);
       const carry = (from: Socket, to: Socket): void => {
-        from.on("data", (b: Buffer) => {
+        const pass = (b: Buffer): void => {
           if (this.up) { to.write(b); return; }
           this.held.push(() => to.write(b));
+        };
+        from.on("data", (b: Buffer) => {
+          if (this.rate === null) { pass(b); return; }
+          from.pause();
+          setTimeout(() => { if (!to.destroyed) pass(b); from.resume(); }, (b.length / this.rate) * 1000);
         });
       };
       carry(inbound, outbound);
@@ -325,8 +332,17 @@ export class SmtpSink {
   private answered: () => void = () => undefined;
   /** Settles when the sink has answered the end of a DATA — the event a wait reads, not a clock. */
   readonly dataAnswered = new Promise<void>((r) => { this.answered = r; });
-  /** `line` is a refusal's own reply (a 454 "not now"); absent, a refused AUTH answers 535. */
-  constructor(private readonly script: { auth: () => { ok: boolean; afterMs: number; line?: string }; dataAfterMs?: () => number }) {}
+  /**
+   * `line` is a refusal's own reply (a 454 "not now"); absent, a refused AUTH answers 535. `dataEnd`
+   * `"drop"` takes the message and drops the connection before its 250; `dropInData` true drops it
+   * at DATA, so nothing of the message is taken.
+   */
+  constructor(private readonly script: {
+    auth: () => { ok: boolean; afterMs: number; line?: string };
+    dataAfterMs?: () => number;
+    dataEnd?: () => "answer" | "drop";
+    dropInData?: () => boolean;
+  }) {}
   async open(): Promise<void> {
     this.server = createServer((sock) => {
       this.live.add(sock);
@@ -353,6 +369,7 @@ export class SmtpSink {
               this.messages += 1;
               this.bodies.push(data.join("\n"));
               data = [];
+              if (this.script.dataEnd?.() === "drop") { sock.destroy(); return; }
               setTimeout(() => { say("250 2.0.0 queued"); this.answered(); }, this.script.dataAfterMs?.() ?? 0);
             } else data.push(line);
             continue;
@@ -371,7 +388,11 @@ export class SmtpSink {
             else if (/^AUTH PLAIN\s*$/i.test(line)) { loginStep = 2; say("334 "); }
             else authAnswer();
           } else if (verb === "MAIL" || verb === "RCPT" || verb === "RSET" || verb === "NOOP") say("250 2.0.0 ok");
-          else if (verb === "DATA") { inData = true; say("354 go ahead"); }
+          else if (verb === "DATA") {
+            if (this.script.dropInData?.() === true) { sock.destroy(); return; }
+            inData = true;
+            say("354 go ahead");
+          }
           else if (verb === "QUIT") { say("221 2.0.0 bye"); sock.end(); }
           else say("502 5.5.2 not here");
         }

@@ -24,7 +24,7 @@ describe("the held-send recheck window", () => {
   it("is the same number on the server and in the client", () => {
     expect(HELD_SEND_RECHECK_MS).toBe(serverWindowMs());
   });
-  it("is a day — the sentence changes when the engine has stopped looking", () => {
-    expect(HELD_SEND_RECHECK_MS).toBe(24 * 60 * 60 * 1000);
+  it("is twenty minutes — the sentence changes when the engine has stopped looking", () => {
+    expect(HELD_SEND_RECHECK_MS).toBe(20 * 60 * 1000);
   });
 });

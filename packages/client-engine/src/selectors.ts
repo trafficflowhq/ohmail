@@ -2277,7 +2277,7 @@ export const SENDING_STALE_AFTER_MS = 10 * 60 * 1000;
  * `SEND_UNVERIFIED_RECHECK_MS`: inside it a held row says the Sent folder is being checked; past
  * it, that the message is not there. `test/held-send-recheck-window.test.ts` pins the two equal.
  */
-export const HELD_SEND_RECHECK_MS = 24 * 60 * 60 * 1000;
+export const HELD_SEND_RECHECK_MS = 20 * 60 * 1000;
 
 /**
  * Every draft the user can still act on, newest first — the Drafts list. `drafts` rows do not disappear when sent:

@@ -112,7 +112,8 @@ import { showKeyboardWhenFocused } from "./keyboard-native";
 import { sheetRoom } from "./sheet-bounds";
 import { composeBodyMin, notesPinned, pinnedNotesMax } from "./compose-fit";
 import { SurfaceBoundary } from "./ErrorBoundary";
-import { sendPressAct } from "./send-press";
+import { heldSheetFooter, sendPressAct } from "./send-press";
+import { sendAgainSentence, type DraftSendAgainRefusal } from "./draft-card";
 import { holdReader, holdWhileOpen } from "./reader-held";
 import { ATTACH_ROW_GAP, attachHintFits, attachHintStyle } from "./attach-hint";
 import { failedSendLine } from "./send-failed";
@@ -1223,6 +1224,12 @@ export function ComposeSheet({
   const [cancelUnreachable, setCancelUnreachable] = useState(false);
   /** TRUE after Send was pressed over an unconfirmed send — the press says why nothing went. */
   const [againNote, setAgainNote] = useState(false);
+  /** The row the server holds an unconfirmed send in: Send again is pressed on it. */
+  const [heldId, setHeldId] = useState<string | null>(null);
+  /** A Send again press is running: locked until it answers. */
+  const [againBusy, setAgainBusy] = useState(false);
+  /** Why a Send again did not send, said in place. */
+  const [againSaid, setAgainSaid] = useState<DraftSendAgainRefusal | null>(null);
   /**
    * THE SIGNATURE BLOCK'S STATE (`signature.ts`, shared with the webapp composer): `following`
    * until the user speaks, then their edit or their strike stands for THIS message. The sheet
@@ -1475,6 +1482,7 @@ export function ComposeSheet({
     }
     else if (settled === "unverified") {
       keeper?.sendAnswered({ outcome: "unverified", ...(said.draftId !== null ? { draftId: said.draftId } : {}) });
+      if (said.draftId !== null) setHeldId(said.draftId);
       setPhase("unverified");
     }
     // Still queued: the server holds the send (sending, not waiting), or offered it again.
@@ -1504,6 +1512,21 @@ export function ComposeSheet({
      (sending, queued, unverified) keeps the dead press. */
   const contentOnlyMissing = phase === "idle" && needsContent;
   const pressAct = sendPressAct({ canSend, contentOnlyMissing, phase });
+  const held = heldSheetFooter({ phase, heldId, busy: againBusy });
+  /* SEND AGAIN, on the held row: the message goes only once it went, and the sheet closes then. */
+  const sendAgain = async (row: string) => {
+    if (againBusy) return;
+    setAgainBusy(true);
+    setAgainSaid(null);
+    const outcome = await w.actions.draftSendAgain(row);
+    setAgainBusy(false);
+    if (outcome === "sent" || outcome === "alreadySent" || outcome === "superseded") {
+      keeper?.drop();
+      leave();
+      return;
+    }
+    setAgainSaid(outcome);
+  };
   const press = (act: typeof pressAct, andDone = false) => {
     if (act === "send") void send(null, andDone);
     else if (act === "needContent") setNeedNote(true);
@@ -1729,6 +1752,7 @@ export function ComposeSheet({
     // server could not say whether the message left, so a fresh-key re-send is the
     // duplicate-delivery door. Only a plain failure re-arms Send.
     setPhase(result.outcome === "unverified" ? "unverified" : "idle");
+    if (result.outcome === "unverified" && result.draftId) setHeldId(result.draftId);
     // A refused send binds the row it left and says why, here: nothing outside this sheet shows.
     if (result.outcome === "failed" && result.draftId) setDraftId(result.draftId);
     if (result.outcome === "failed" && result.failure) setFailNote(result.failure);
@@ -1749,6 +1773,16 @@ export function ComposeSheet({
     phase === "queued" || phase === "unverified" ? (
       <Txt key="queued" variant="caption" tone="ink3">
         {phase === "queued" ? Copy[queuedCaptionKey(network, accepted, rearmed)] : Copy.replyUnverified}
+      </Txt>
+    ) : null,
+    held.sendAgain !== null ? (
+      <Txt key="sendAgain" variant="caption" tone="ink3">
+        {Copy.replyUnverifiedSendAgain}
+      </Txt>
+    ) : null,
+    phase === "unverified" && againSaid !== null && againSaid !== "unverified" ? (
+      <Txt key="againSaid" variant="caption" tone="ink2" accessibilityRole="alert">
+        {sendAgainSentence(againSaid)}
       </Txt>
     ) : null,
     phase === "unverified" && againNote ? (
@@ -2248,6 +2282,9 @@ export function ComposeSheet({
           <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", columnGap: 8, rowGap: 8 }}>
             {cancelSendOffered({ phase, key: queuedKey, alreadySent }) ? (
               <Button label={Copy.cancelSend} variant="quiet" onPress={cancelSend} style={{ marginRight: "auto" }} />
+            ) : held.close === "close" ? (
+              /* Over a held send the close leaves the message in Drafts: Close, not Cancel. */
+              <Button label={Copy.replyUnverifiedClose} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
             ) : (
               <Button label={Copy.replyCancel} variant="quiet" onPress={closeComposer} style={{ marginRight: "auto" }} />
             )}
@@ -2284,12 +2321,22 @@ export function ComposeSheet({
                 Swapping the variant made the unavailable state look like a different,
                 perfectly pressable verb, and dropping the handler took the button role off
                 it entirely (measured in the accessibility tree on the Duo). */}
-            <Button
-              label={phase === "sending" ? Copy.replySending : Copy.replySend}
-              variant="solid"
-              disabled={pressAct === "none"}
-              onPress={() => press(pressAct)}
-            />
+            {/* Over a held send whose row is known, Send again stands where Send stood. */}
+            {held.sendAgain !== null ? (
+              <Button
+                label={Copy.draftsSendAgain}
+                variant="solid"
+                disabled={held.sendAgain.locked}
+                onPress={() => { void sendAgain(held.sendAgain!.draftId); }}
+              />
+            ) : (
+              <Button
+                label={phase === "sending" ? Copy.replySending : Copy.replySend}
+                variant="solid"
+                disabled={pressAct === "none"}
+                onPress={() => press(pressAct)}
+              />
+            )}
           </View>
         </View>
       </KeyboardAvoidingView>

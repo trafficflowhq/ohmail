@@ -17,7 +17,7 @@ import { Button, Panel, Rule, Screen, Scroller, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
 import { DetailBar } from "./chrome";
 import {
-  backKeeps, discardDecision, draftCardPlan, refusalSentence, sendAgainSentence,
+  backKeeps, discardDecision, draftCardPlan, refusalSentence, sendAgainQuestion, sendAgainSentence,
   type DraftDiscardRefusal, type DraftSendAgainRefusal,
 } from "./draft-card";
 import { cancelSendPress } from "./send-cancel";
@@ -68,7 +68,7 @@ export function DraftReader({
     if (asking === "discard") {
       AccessibilityInfo.announceForAccessibility(row?.waiting ? Copy.draftsDiscardWaitingWhat : Copy.draftsDiscardWhat);
     }
-    if (asking === "sendAgain") AccessibilityInfo.announceForAccessibility(Copy.draftsSendAgainWhat);
+    if (asking === "sendAgain") AccessibilityInfo.announceForAccessibility(sendAgainQuestion());
   }, [asking]);
   useEffect(() => {
     if (Platform.OS !== "ios" || refusal === null) return;
@@ -175,13 +175,21 @@ export function DraftReader({
     setBusy(false);
   };
 
+  /* MAKE IT A DRAFT AGAIN — answered not arrived, the row an ordinary draft to edit and send as new. */
+  const notArrived = async () => {
+    if (busy) return;
+    setBusy(true);
+    if (await w.actions.draftResolve(row.id, "not_arrived")) setSendRefusal(null);
+    setBusy(false);
+  };
+
   const sendAgain = async () => {
     if (busy) return;
     setAsking(null);
     setBusy(true);
     const outcome = await w.actions.draftSendAgain(row.id);
     // `superseded`: a newer press of this row carries it and says its sentence.
-    if (outcome === "sent" || outcome === "superseded") { leave(); return; }
+    if (outcome === "sent" || outcome === "alreadySent" || outcome === "superseded") { leave(); return; }
     setSendRefusal({ why: outcome, at: Date.now() });
     setBusy(false);
   };
@@ -306,6 +314,11 @@ export function DraftReader({
             >
               {plan.sendRefusal}
             </Txt>
+          ) : null}
+          {plan.notArrived !== null ? (
+            <View style={{ paddingHorizontal: 18, paddingVertical: 8 }}>
+              <Button label={plan.notArrived} variant="quiet" disabled={busy} onPress={() => void notArrived()} />
+            </View>
           ) : null}
 
           {/* EDIT — the composer bound to this row: what is typed is saved into it, and Send sends it. */}

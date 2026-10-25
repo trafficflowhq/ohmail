@@ -2202,11 +2202,13 @@ export const outboundSends = pgTable("outbound_sends", {
   providerMessageId: text("provider_message_id"),            // the delivered Message-ID (null until sent)
   status: text("status").notNull().default("pending"),       // pending|sent|failed|unverified
   sentAt: timestamp("sent_at", { withTimezone: true }),
-  // ── Mail 0095 — WHO settled an ambiguous attempt, and WHEN. Three values are written:
+  // ── Mail 0095 — WHO settled an ambiguous attempt, and WHEN. Four values are written:
   // `'person'` (a reader looked in their Sent folder and said what they found), `'sent_folder'`
-  // (the reconciler's second look found the minted id in the mirror or in Sent — the row is
-  // `sent` and nobody was asked), and `'discard'` (the person discarded the held draft; the row
-  // stays `unverified`, `draft_id` goes NULL, and a same-key replay is refused as discarded).
+  // (the reconciler's second look, or a Send again's own look, found the minted id in the mirror or
+  // in Sent — the row is `sent` and nobody was asked), `'discard'` (the person discarded the held
+  // draft; the row stays `unverified`, `draft_id` goes NULL, and a same-key replay is refused as
+  // discarded), and `'resent'` (the person pressed Send again; the row stays `unverified` and a
+  // new row under the press's key carries the same Message-ID and the content claim).
   // Free text rather than CHECK-closed so a further resolver is not an unwritable row on the day
   // it ships; tainted in the content census for that reason, and deliberately outside the
   // column-scoped `ohmail_admin` grant (no staff surface reads it).
@@ -2218,7 +2220,10 @@ export const outboundSends = pgTable("outbound_sends", {
   // its window, `SEND_REARM_WINDOW_MS` after `created_at`); NULL is final. `retry_refusal` is the code
   // of the passing refusal it was offered again after, set and cleared with it: a replay after the
   // window is told that refusal. With `retry_until` NULL it names a final refusal a replay is told
-  // by name (`send_upload_dropped`, `send_refused_by_server`). Written by `SendService` alone, and
+  // by name (`send_upload_dropped`, `send_refused_by_server`). On a row a Send again reserved,
+  // `send_unverified` from the start: an earlier attempt of its Message-ID may have gone, so no
+  // resolver ends the row `failed` or forgets it; inert everywhere else, which reads it only on
+  // `failed` rows. Written by `SendService` alone, and
   // outside the column-scoped `ohmail_admin` grant.
   attempts: integer("attempts").notNull().default(1),
   retryUntil: timestamp("retry_until", { withTimezone: true }),

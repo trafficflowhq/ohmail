@@ -70,7 +70,8 @@ describe("liveDrafts — the rows the Drafts screen renders", () => {
     // person to answer a question nobody has asked yet. `sent` and `scheduled` are elsewhere.
     expect(rows.map((r) => r.id)).toEqual(["stale", "held", "open"]);
     expect(rows.map((r) => r.state)).toEqual(["interrupted", "held", "open"]);
-    expect(rows.map((r) => r.heldSays)).toEqual(["interrupted", "checking", null]);
+    // The held row was left three hours ago: the looking ended at twenty minutes.
+    expect(rows.map((r) => r.heldSays)).toEqual(["interrupted", "notInSent", null]);
   });
 
   it("says what is known about a held send: checking Sent inside the window, not in Sent past it", () => {
@@ -85,6 +86,15 @@ describe("liveDrafts — the rows the Drafts screen renders", () => {
     // The server looks in Sent for exactly this long; at the edge it has stopped looking. An
     // unreadable stamp claims less: "it isn't in your Sent folder" never promises a search.
     expect(says).toEqual({ fresh: "checking", edge: "notInSent", old: "notInSent", garbled: "notInSent" });
+  });
+
+  it("checks for twenty minutes after the hold, then says it isn't in Sent", () => {
+    const at = (min: number) => new Date(NOW.getTime() - min * 60_000).toISOString();
+    const rows = liveDrafts(readerOf([
+      draftRow({ id: "19", status: "unverified", updatedAt: at(19) }),
+      draftRow({ id: "21", status: "unverified", updatedAt: at(21) }),
+    ]), v);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.heldSays]))).toEqual({ 19: "checking", 21: "notInSent" });
   });
 
   it("keeps a body this mirror never received apart from a body with nothing in it", () => {

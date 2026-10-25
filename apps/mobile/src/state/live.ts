@@ -2827,6 +2827,10 @@ export interface SendResult {
   accepted?: true;
   /** `queued` only: the server offered it again ({@link sendRearmed}), so nothing promises the network's return. */
   rearmed?: true;
+  /** `sent` only: the server answered from an earlier send of this message; nothing new went. */
+  firstSend?: true;
+  /** `failed` only: the refusal's own code, for a caller that words it itself. */
+  code?: string;
 }
 
 /**
@@ -2838,6 +2842,8 @@ export interface SendResult {
  */
 export function sendIntentOf(m: EngineMutation): string | null {
   if (m.kind !== "mail_send") return null;
+  // Send again is about its held row: a double press resumes the first press's key.
+  if (m.again === true && m.draftId) return `again:${m.draftId}`;
   if (m.forwardOf) return `fwd:${m.forwardOf}`;
   if (m.inReplyTo) return `reply:${m.inReplyTo}`;
   // A bound row is its own intent: a second Send again resumes the first key, never a second one.
@@ -3115,12 +3121,24 @@ export type DraftDiscardOutcome = "discarded" | "stillSending" | "queued" | "ref
 export interface WaitingCancel { said: WithdrawOutcome; kept: "kept" | "notKept" | null }
 
 /**
- * HOW A SEND AGAIN ENDED — `sent`, or why not. Every ending but `sent` and `superseded` (a newer
- * press of the row says it) is said by the card IN THE ROW and by nothing else: `stillRunning` / `notReached` are the resolve's two refusals,
- * `bodyUnknown` is a text this mirror never received, and the last three are the send's own.
+ * HOW A SEND AGAIN ENDED — `sent`, `alreadySent` (the press found the earlier send in Sent and sent
+ * nothing), or why not. Every ending but those and `superseded` (a newer press of the row says it)
+ * is said where it was pressed: `unverified` held again, `changed` (its files are not the ones that
+ * went), `unchecked` (Sent could not be looked in, so nothing went), `notHeld`, `busy` (an attempt
+ * is running), `queued`, `failed`.
  */
 export type DraftSendAgainOutcome =
-  | "sent" | "superseded" | "stillRunning" | "notReached" | "bodyUnknown" | "queued" | "unverified" | "failed";
+  | "sent" | "alreadySent" | "superseded" | "queued" | "unverified"
+  | "changed" | "unchecked" | "notHeld" | "busy" | "failed";
+
+/** A Send again's refusal by the server's own code. */
+function sendAgainRefusalOf(code: string | undefined): DraftSendAgainOutcome {
+  return code === "send_again_changed" ? "changed"
+    : code === "send_again_unchecked" ? "unchecked"
+      : code === "send_again_not_held" ? "notHeld"
+        : code === "send_again_in_flight" ? "busy"
+          : "failed";
+}
 
 /**
  * WHAT A CLOSING COMPOSER HANDS OVER TO BE KEPT — the text on screen and whose message it answers.
@@ -5059,6 +5077,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     earlierWentToast: RefusalArg,
     /** `false` for a caller that says a refused send in its own place (the Drafts card). */
     sayRefusals = true,
+    /** What a confirmation answered from an earlier send of the same message says (Send again). */
+    alreadyWentToast: RefusalArg = sentToast,
   ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
@@ -5090,13 +5110,17 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      * were kept back the words that left are the earlier ones: the server's answer says so.
      */
     const earlierWent = outcome !== "queued" && earlierVersionWent(settled);
+    const alreadyWent = outcome === "sent" && !earlierWent && settled?.firstSend !== undefined;
+    /* A delivered letter whose Sent copy could not be written says so, in one more line. */
+    const confirmed = earlierWent ? earlierWentToast : alreadyWent ? alreadyWentToast : sentToast;
+    const sentSay = settled?.sentCopy === "missing" ? refuse("sentCopyMissing", confirmed) : confirmed;
     const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
     // A waiting send that will not carry these words says so, never "goes when it is back".
     else if (outcome === "queued" && earlierVersionGoing(settled)) toast(refuse("earlierGoing"));
     else if (outcome === "sent" || sayRefusals) {
       toast(
-        outcome === "sent" ? (earlierWent ? earlierWentToast : sentToast)
+        outcome === "sent" ? sentSay
           : outcome === "queued"
             ? refuse(accepted ? "replySendingLong" : !rearmed && networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
@@ -5108,8 +5132,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       ...(outcome === "queued" && first ? { key: first.key } : {}),
       ...((outcome === "failed" || outcome === "unverified") && settled?.entityId ? { draftId: settled.entityId } : {}),
       ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
+      ...(outcome === "failed" && settled?.error?.code ? { code: settled.error.code } : {}),
       ...(accepted ? { accepted: true as const } : {}),
       ...(rearmed ? { rearmed: true as const } : {}),
+      ...(alreadyWent ? { firstSend: true as const } : {}),
     };
   };
 
@@ -5375,28 +5401,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   };
 
   /**
-   * SEND AGAIN — the resend door. The row's OWN stored fields ride the bound send, so the PUT the
-   * adapter makes before `POST /drafts/:id/send` writes back what the server holds (html included:
-   * a plain PUT over formatted text is refused) and the message that leaves is the one on the card.
-   * A body this mirror never received is refused before anything moves: sending it would write an
-   * empty message over the only copy. No refusal is toasted — the card says it in the row.
+   * SEND AGAIN — the held message, as the server holds it, under its own Message-ID: the server
+   * looks in Sent first and sends nothing when it is there. No answer for the held send is written
+   * first and nothing is saved over the row; the files kept with it on this phone ride the press,
+   * as they rode the first. The letter and its files go only once the message went.
    */
   const draftSendAgain = async (draftId: string): Promise<DraftSendAgainOutcome> => {
     const d = engine.read().get<EngineDraft & { html?: string | null }>("draft", draftId);
-    if (!d || !draftBodyKnown(d)) return "bodyUnknown";
-    const freed = await engine
-      .mutate({ kind: "draft_resolve", draftId, outcome: "not_arrived" })
-      .then((res) => res, () => null);
-    if (freed?.status === "superseded") return "superseded";
-    if (freed?.status !== "confirmed") {
-      return freed?.error?.code === "send_still_running" ? "stillRunning" : "notReached";
-    }
+    if (!d) return "notHeld";
     const html = typeof d.html === "string" && d.html !== "" ? d.html : null;
-    /* THE FILES KEPT WITH IT ON THIS PHONE go with it, as they went with the first press. */
     const files = (deps.letters?.filesOf(draftId) ?? []).map(({ filename, contentType, contentBase64 }) => ({ filename, contentType, contentBase64 }));
     const r = await sent(
       dispatchSend({
         kind: "mail_send" as const,
+        again: true as const,
         inReplyTo: null,
         draftId,
         mailboxId: d.mailboxId,
@@ -5412,12 +5430,14 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       Copy.composeSent,
       Copy.composeEarlierWent,
       false,
+      Copy.draftsSendAgainAlreadyWent,
     );
     if (r.outcome === "sent") {
       const letter = deps.letters?.letterOf(draftId);
       if (letter) deps.letters!.drop(letter.id);
+      return r.firstSend === true ? "alreadySent" : "sent";
     }
-    return r.outcome;
+    return r.outcome === "failed" ? sendAgainRefusalOf(r.code) : r.outcome;
   };
 
   /**
