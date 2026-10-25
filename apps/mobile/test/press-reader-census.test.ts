@@ -20,6 +20,7 @@ const SITES: Record<string, ReadonlyArray<"refusal-only" | "says-done" | "via-pr
     "says-done",        // deleteMessage — toastDeleted
     "says-done",        // cancelSchedule — scheduleCancelled / liveSaveFailed
     "says-done",        // draftResolve — draftsResolveFailed
+    "refusal-only",     // keepChangedWords — the words a changed row refused, kept as a new row; `null` on a refusal
     "says-done",        // compose keep — composeKept
   ],
   "src/state/sender-stayed.ts": [

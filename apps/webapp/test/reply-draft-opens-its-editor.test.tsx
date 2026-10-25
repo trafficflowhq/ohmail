@@ -256,3 +256,129 @@ describe("a reply whose last save went through the offline queue, then deleted o
       .toEqual({ dock: true, made: 0, kept: false, deleted: true });
   }, 90_000);
 });
+
+describe("a reply draft open here while another device changes it", () => {
+  const OTHER = "Written on the other device.";
+  const rounds = async (n: number): Promise<void> => {
+    for (let i = 0; i < n; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
+  };
+  const replies = (s: DraftShell): EngineDraft[] =>
+    s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft" && d.inReplyToMessageId === "m1");
+  const saves = (s: DraftShell) => s.sent.filter((m) => m.kind === "draft_save") as Array<Extract<EngineMutation, { kind: "draft_save" }>>;
+  const sends = (s: DraftShell) => s.sent.filter((m) => m.kind === "mail_send") as Array<Extract<EngineMutation, { kind: "mail_send" }>>;
+  const said = (): string => document.body.textContent ?? "";
+  const sendButton = (s: DraftShell): HTMLButtonElement | null => Array.from(s.el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button"))
+    .find((b) => (b.textContent ?? "").startsWith("Send")) ?? null;
+  async function openD1(drafts = [replyDraft("d1", "m1", DRAFT_TEXT)]): Promise<DraftShell> {
+    const s = await mountShell("#/drafts", [message("m1")], drafts, { versions: true });
+    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "the draft row");
+    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "open it");
+    await waitFor(() => replySurface(s.el) != null, "the reply editor");
+    return s;
+  }
+  async function changedThere(s: DraftShell): Promise<void> {
+    await s.editElsewhere("d1", { body: OTHER });
+    await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+    await waitFor(() => s.store.get<EngineDraft>("draft", "d1")?.body === OTHER, "their write here");
+  }
+
+  it("typing over their version keeps both drafts and says so", async () => {
+    const s = await openD1();
+    await changedThere(s);
+    await act(async () => { typeInto(replySurface(s.el)!, " and typed here"); });
+    await waitFor(() => replies(s).length === 2, "the words kept as a new draft", 200);
+    const mine = replies(s).find((d) => d.id !== "d1")!;
+    expect({
+      stated: saves(s)[0]?.ifContentRevision, theirs: s.store.get<EngineDraft>("draft", "d1")?.body,
+      mine: mine.body?.includes("typed here"), says: said().includes(messages.reply.changedElsewhere),
+    }).toEqual({ stated: "rev-d1", theirs: OTHER, mine: true, says: true });
+  }, 60_000);
+
+  it("Send over their version sends nothing, keeps the words as a new draft, and the next Send goes once", async () => {
+    const s = await openD1();
+    await changedThere(s);
+    await act(async () => { typeInto(replySurface(s.el)!, " and typed here"); });
+    await press(sendButton(s), "Send");
+    await waitFor(() => replies(s).length === 2, "the words kept as a new draft", 200);
+    const mine = replies(s).find((d) => d.id !== "d1")!;
+    expect({ refused: sends(s).map((m) => [m.draftId, m.ifContentRevision]), theirs: s.store.get<EngineDraft>("draft", "d1")?.body })
+      .toEqual({ refused: [["d1", "rev-d1"]], theirs: OTHER });
+    await rounds(10);
+    await press(sendButton(s), "Send again");
+    await rounds(40);
+    expect(sends(s).slice(1).map((m) => [m.draftId, m.ifContentRevision === s.versions.get(mine.id) || m.ifContentRevision === undefined]))
+      .toEqual([[mine.id, true]]);
+    expect(s.store.get<EngineDraft>("draft", "d1")?.body).toBe(OTHER);
+  }, 60_000);
+
+  it("a save queued offline and refused on reconnect, then more typing: two drafts, never three", async () => {
+    const s = await openD1();
+    s.offline.on = true;
+    await act(async () => { typeInto(replySurface(s.el)!, " typed offline"); });
+    await rounds(120);
+    await s.editElsewhere("d1", { body: OTHER });
+    s.offline.on = false;
+    await act(async () => { window.dispatchEvent(new Event("online")); });
+    await act(async () => { await s.engine.flushPending().catch(() => undefined); });
+    await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+    await rounds(40);
+    await act(async () => { typeInto(replySurface(s.el)!, " and more"); });
+    await rounds(160);
+    const rows = replies(s);
+    expect({ count: rows.length, theirs: s.store.get<EngineDraft>("draft", "d1")?.body, mine: rows.some((d) => d.id !== "d1" && d.body?.includes("and more")) })
+      .toEqual({ count: 2, theirs: OTHER, mine: true });
+  }, 90_000);
+
+  it("a second conflict after the draft was opened again never writes over the words the first one kept", async () => {
+    const s = await openD1();
+    s.offline.on = true;
+    await act(async () => { typeInto(replySurface(s.el)!, " typed first"); });
+    await rounds(120);
+    await s.editElsewhere("d1", { body: "Theirs, first" });
+    s.offline.on = false;
+    await act(async () => { window.dispatchEvent(new Event("online")); await s.engine.flushPending().catch(() => undefined); });
+    await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+    await waitFor(() => replies(s).some((d) => d.id !== "d1" && d.body?.includes("typed first")), "the first conflict's words kept", 200);
+    const first = replies(s).find((d) => d.id !== "d1")!.body;
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await waitFor(() => s.el.querySelector(".draft-row[data-id='d1'] .draft-open") != null, "d1 in Drafts");
+    await press(s.el.querySelector(".draft-row[data-id='d1'] .draft-open"), "open d1 again");
+    await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("Theirs, first"), "their words in the editor", 120);
+    await act(async () => { typeInto(replySurface(s.el)!, " and mine"); });
+    await rounds(160);
+    await s.editElsewhere("d1", { body: "Theirs, again" });
+    await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+    await rounds(20);
+    await act(async () => { typeInto(replySurface(s.el)!, " and more"); });
+    await rounds(200);
+    expect({ first: replies(s).some((d) => d.body === first), count: replies(s).length }).toEqual({ first: true, count: 3 });
+  }, 90_000);
+
+  it("its own saves never fork (the control)", async () => {
+    const s = await openD1();
+    await act(async () => { typeInto(replySurface(s.el)!, " first"); });
+    await waitFor(() => saves(s).length === 1, "the first save", 200);
+    await rounds(10);
+    await act(async () => { typeInto(replySurface(s.el)!, " second"); });
+    await waitFor(() => saves(s).length === 2, "the second save", 200);
+    await rounds(20);
+    expect({ rows: replies(s).map((d) => d.id), stated: saves(s).every((m) => m.draftId === "d1" && m.ifContentRevision !== undefined), says: said().includes(messages.reply.changedElsewhere) })
+      .toEqual({ rows: ["d1"], stated: true, says: false });
+  }, 60_000);
+
+  it("a reload over a row changed while the tab was closed opens their words, and its next save goes through", async () => {
+    const first = await openD1();
+    await act(async () => { typeInto(replySurface(first.el)!, " from yesterday"); });
+    await waitFor(() => saves(first).length === 1, "the save", 200);
+    await unmountAll();
+    stubDom();
+    const moved = { ...replyDraft("d1", "m1", OTHER), contentRevision: "rev-theirs", updatedAt: "2026-09-27T08:55:00.000Z" } as EngineDraft;
+    const s = await openD1([moved]);
+    expect(replySurface(s.el)!.textContent).toContain(OTHER);
+    await act(async () => { typeInto(replySurface(s.el)!, " and today"); });
+    await waitFor(() => saves(s).length === 1, "the save", 200);
+    await rounds(20);
+    expect({ stated: saves(s)[0]!.ifContentRevision, rows: replies(s).map((d) => d.id), says: said().includes(messages.reply.changedElsewhere) })
+      .toEqual({ stated: "rev-theirs", rows: ["d1"], says: false });
+  }, 60_000);
+});

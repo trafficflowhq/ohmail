@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EngineDraft } from "@ohmail/client-engine";
 import { sayArg } from "../src/refusal";
+import { Copy } from "../src/copy";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { draftEditOf, keptRecipients, liveActions, parseRecipients, type LiveWorldActions } from "../src/state/live";
+import { baseAfter, baseFor, waitedFor, type DraftBase } from "../src/ui/compose-keep";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 /* @reads: apps/mobile/src/ui/MessageActions.tsx, apps/mobile/src/ui/DraftReader.tsx, apps/mobile/app/compose.tsx */
@@ -37,7 +39,10 @@ describe("which drafts the phone edits", () => {
       subject: "",
       to: [{ name: "Ada", address: "ada@fake.test" }, { name: "Doe, Bob", address: "bob@fake.test" }, { name: null, address: "cy@fake.test" }],
     }));
-    expect(edit).toEqual({ mailboxId: "mb-1", to: 'Ada <ada@fake.test>, "Doe, Bob" <bob@fake.test>, cy@fake.test', cc: "", bcc: "", subject: "", forwardOf: null, forwardParts: null });
+    expect(edit).toEqual({
+      mailboxId: "mb-1", to: 'Ada <ada@fake.test>, "Doe, Bob" <bob@fake.test>, cy@fake.test', cc: "", bcc: "", subject: "", forwardOf: null, forwardParts: null,
+      revision: null,
+    });
     expect(parseRecipients(edit!.to), "the typed To does not parse back to the row's recipients").toEqual([
       { name: "Ada", address: "ada@fake.test" }, { name: "Doe, Bob", address: "bob@fake.test" }, { name: null, address: "cy@fake.test" },
     ]);
@@ -76,7 +81,7 @@ async function scene() {
   const origin = await listen(fake.server);
   fake.addRule(ruleDto("r-allow", "sender", "sender@fake.test", "INBOX"));
   fake.addMessage(dto("m1", { subject: "Welcome" }));
-  fake.addDraft({ ...draftRow(), id: "d-9" } as unknown as Record<string, unknown> & { id: string });
+  fake.addDraft({ ...draftRow(), id: "d-9", contentRevision: "rev-0" } as unknown as Record<string, unknown> & { id: string });
   const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
   if (boot.kind !== "ready") throw new Error("boot refused");
   await boot.verifyIdentity();
@@ -85,7 +90,7 @@ async function scene() {
   open.push({ close: () => { boot.store.close(); fake.server.close(); } });
   const toasts: string[] = [];
   const actions: LiveWorldActions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
-  return { fake, ...boot, actions, toasts };
+  return { fake, origin, ...boot, actions, toasts };
 }
 
 const calls = (fake: ReturnType<typeof mailServer>, method: string, path: string) =>
@@ -170,5 +175,120 @@ describe("a forward kept as a draft is still a forward", () => {
     expect(send, "the reopened forward was not sent from its own row").toBeDefined();
     expect((JSON.parse(send!.body) as { forwardOf?: string }).forwardOf, "the reopened forward left as a plain mail").toBe("m1");
     expect(calls(live.fake, "POST", "/drafts"), "the send made a second row for one forward").toHaveLength(1);
+  }, 30_000);
+});
+
+describe("a draft the phone edits while another device changes it", () => {
+  const DESKTOP = "Written on the desktop.";
+  /** Another device saves the row, stating no version: the server's version moves on. */
+  const elsewhere = (origin: string, id: string, extra: Record<string, unknown> = {}) => fetch(`${origin}/drafts/${id}`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subject: "Invoice 12", body: DESKTOP, to: [{ name: "Ada", address: "ada@fake.test" }], cc: [], bcc: [], ...extra }),
+  });
+  const stated = (fake: ReturnType<typeof mailServer>, id: string) => calls(fake, "PUT", `/drafts/${id}`)
+    .map((r) => (JSON.parse(r.body) as { ifContentRevision?: string }).ifContentRevision ?? null);
+  const keep = (live: Awaited<ReturnType<typeof scene>>, body: string, revision: string | null, more: Record<string, unknown> = {}) =>
+    live.actions.draftKeep({
+      mode: "new", messageId: null, mailboxId: "mb-1", to: keptRecipients("Ada <ada@fake.test>"),
+      subject: "Invoice 12", body, files: 0, draftId: "d-9", revision, quiet: true, ...more,
+    });
+
+  it("the quiet keep states the version it opened, keeps their words, and forks the phone's into a new row, said once", async () => {
+    const live = await scene();
+    const edit = draftEditOf(live.engine.read().get<EngineDraft>("draft", "d-9")!);
+    await elsewhere(live.origin, "d-9");
+    let forks = 0;
+    const bound: string[] = [];
+    expect(await keep(live, "typed on the phone", edit!.revision, { forked: () => { forks += 1; }, rebind: (id: string) => bound.push(id) })).toBe("kept");
+    const mine = live.fake.draftRows().find((d) => d.id !== "d-9");
+    expect({ stated: stated(live.fake, "d-9").slice(1), theirs: live.fake.draft("d-9")?.body, mine: mine?.body, bound, forks, toasts: live.toasts })
+      .toEqual({ stated: ["rev-0"], theirs: DESKTOP, mine: "typed on the phone", bound: [mine?.id], forks: 1, toasts: [] });
+  }, 30_000);
+
+  it("a keep with the sheet closed says it by toast", async () => {
+    const live = await scene();
+    await elsewhere(live.origin, "d-9");
+    expect(await keep(live, "typed on the phone", "rev-0")).toBe("kept");
+    expect(live.toasts).toEqual([Copy.composeKeptChangedElsewhere]);
+  }, 30_000);
+
+  it("the phone's own saves, one after another, never fork (the control)", async () => {
+    const live = await scene();
+    let rev: string | null = "rev-0";
+    let forks = 0;
+    for (const body of ["first", "second"]) {
+      expect(await keep(live, body, rev, { forked: () => { forks += 1; }, row: (r: { revision?: string }) => { rev = r.revision ?? rev; } })).toBe("kept");
+    }
+    expect({ rows: live.fake.draftRows().map((d) => d.id), body: live.fake.draft("d-9")?.body, forks }).toEqual({ rows: ["d-9"], body: "second", forks: 0 });
+  }, 30_000);
+
+  it("Send over newer words sends nothing, keeps the words unsigned as a new row, and names it", async () => {
+    const live = await scene();
+    await elsewhere(live.origin, "d-9");
+    const res = await live.actions.sendNew("mb-1", parseRecipients("Ada <ada@fake.test>")!, "Invoice 12", "typed on the phone", "Sig", null, [], "d-9", { cc: [], bcc: [] }, "rev-0");
+    const mine = live.fake.draftRows().find((d) => d.id !== "d-9");
+    expect({ outcome: res.outcome, failure: res.failure, draftId: res.draftId, sent: live.fake.deliveries().length, theirs: live.fake.draft("d-9")?.body, mine: mine?.body })
+      .toEqual({ outcome: "failed", failure: "replyChangedElsewhere", draftId: mine?.id, sent: 0, theirs: DESKTOP, mine: "typed on the phone" });
+  }, 30_000);
+
+  it("a forward sent over newer words does the same, and its new row still forwards", async () => {
+    const live = await scene();
+    live.fake.addDraft({ ...draftRow({ subject: "Fwd: Welcome", forwardOfMessageId: "m1" }), id: "d-f", contentRevision: "rev-0" } as unknown as Record<string, unknown> & { id: string });
+    await live.engine.syncOnce();
+    await elsewhere(live.origin, "d-f", { subject: "Fwd: Welcome", forwardOfMessageId: "m1" });
+    const res = await live.actions.sendForward("m1", [{ name: null, address: "peer@fake.test" }], "FYI", null, [], false, false, "d-f", {}, "rev-0");
+    const mine = live.fake.draftRows().find((d) => d.id !== "d-9" && d.id !== "d-f");
+    expect({ failure: res.failure, draftId: res.draftId, sent: live.fake.deliveries().length, mine: [mine?.body, mine?.forwardOfMessageId] })
+      .toEqual({ failure: "replyChangedElsewhere", draftId: mine?.id, sent: 0, mine: ["FYI", "m1"] });
+  }, 30_000);
+
+  it("a forward with a file removed, sent over newer words, keeps only the files it kept on its new row", async () => {
+    const live = await scene();
+    live.fake.setHello({ forwardParts: true });
+    live.fake.addDraft({ ...draftRow({ subject: "Fwd: Welcome", forwardOfMessageId: "m1" }), id: "d-f", contentRevision: "rev-0", forwardParts: ["att-1"] } as unknown as Record<string, unknown> & { id: string });
+    await live.engine.syncOnce();
+    await elsewhere(live.origin, "d-f", { subject: "Fwd: Welcome", forwardOfMessageId: "m1" });
+    const res = await live.actions.sendForward("m1", [{ name: null, address: "peer@fake.test" }], "FYI", null, [], false, false, "d-f", { forwardParts: ["att-1"] }, "rev-0");
+    const mine = live.fake.draftRows().find((d) => d.id !== "d-9" && d.id !== "d-f") as { forwardOfMessageId?: string; forwardParts?: string[] } | undefined;
+    expect({ failure: res.failure, sent: live.fake.deliveries().length, mine: [mine?.forwardOfMessageId, mine?.forwardParts ?? null] })
+      .toEqual({ failure: "replyChangedElsewhere", sent: 0, mine: ["m1", ["att-1"]] });
+  }, 30_000);
+
+  /** The sheet's own bookkeeping of the row it holds: the version it states and its own saves' keys. */
+  const sheet = (rev: string | null) => {
+    let b: DraftBase = { row: "d-9", rev };
+    return () => ({ revision: baseFor(b, "d-9"), waited: waitedFor(b, "d-9"), row: (r: { draftId: string | null; key: string | null; revision?: string }) => { b = baseAfter(b, r); } });
+  };
+  /** Another device saves on the row's current version. */
+  const current = (live: Awaited<ReturnType<typeof scene>>, body: string) =>
+    elsewhere(live.origin, "d-9", { body, ifContentRevision: (live.fake.draft("d-9") as { contentRevision?: string }).contentRevision });
+
+  it("a keep queued, refused when it lands, then typed on: two rows, never three", async () => {
+    const live = await scene();
+    live.fake.failNextStatus("PUT", "/drafts/d-9", 503);
+    const track = sheet("rev-0");
+    expect(await keep(live, "typed offline", null, track())).toBe("kept");
+    await elsewhere(live.origin, "d-9");
+    await live.engine.flushPending().catch(() => undefined);
+    await live.engine.syncOnce();
+    expect(await keep(live, "typed offline, and more", null, track())).toBe("kept");
+    const rows = live.fake.draftRows();
+    expect({ count: rows.length, theirs: live.fake.draft("d-9")?.body, mine: rows.find((d) => d.id !== "d-9")?.body })
+      .toEqual({ count: 2, theirs: DESKTOP, mine: "typed offline, and more" });
+  }, 30_000);
+
+  it("a second conflict in a later sheet never writes over the words the first one kept", async () => {
+    const live = await scene();
+    live.fake.failNextStatus("PUT", "/drafts/d-9", 503);
+    const first = sheet("rev-0");
+    expect(await keep(live, "mine, typed first", null, first())).toBe("kept");
+    expect((await current(live, "theirs")).status).toBe(200);
+    await live.engine.flushPending().catch(() => undefined);
+    await live.engine.syncOnce();
+    const later = sheet(draftEditOf(live.engine.read().get<EngineDraft>("draft", "d-9")!)!.revision);
+    expect(await keep(live, "theirs, and mine", null, later())).toBe("kept");
+    expect((await current(live, "theirs again")).status).toBe(200);
+    expect(await keep(live, "theirs, mine, and more", null, later())).toBe("kept");
+    expect(live.fake.draftRows().map((d) => d.body).sort()).toEqual(["mine, typed first", "theirs again", "theirs, mine, and more"]);
   }, 30_000);
 });

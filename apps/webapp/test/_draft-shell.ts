@@ -22,6 +22,7 @@ import {
   type MirrorStore,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
@@ -44,9 +45,10 @@ export interface DraftShell {
   /**
    * While on, a `mail_send` is refused and names the row it used or made — for good, or unverified.
    * `code`/`status` name the refusal (default `send_failed`, 409); `retryableFirst` answers that
-   * many presses retryably first, as the route does while it re-arms a pre-SMTP failure.
+   * many presses retryably first, as the route does while it re-arms a pre-SMTP failure; `saveFirst`:
+   * the send's own save answers before each of those (its row takes the words, and the engine is told).
    */
-  refuseSend: { on: boolean; unverified?: boolean; code?: string; status?: number; retryableFirst?: number };
+  refuseSend: { on: boolean; unverified?: boolean; code?: string; status?: number; retryableFirst?: number; saveFirst?: boolean };
   /** While set, a `draft_save` waits on it before the server answers — a save still in the air. */
   saveGate: { wait: Promise<void> | null };
   /** Another device's acts, server-side: the next `/sync` drain carries and empties this. */
@@ -83,6 +85,8 @@ export interface DraftShell {
   editElsewhere: (id: string, patch: Partial<EngineDraft>) => Promise<void>;
   /** While on, a `mail_send` is delivered and its answer lost; a later press under that key is answered from the reservation. */
   loseSendAnswer: { on: boolean };
+  /** Rows whose saves the server refuses for good (400 `validation_failed`), as it refuses an edit it cannot take. */
+  refuseSave: Set<string>;
 }
 
 let roots: Root[] = [];
@@ -283,6 +287,7 @@ function engineOver(
   loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false },
   replayDeadlineMs?: number,
   server?: DraftServer,
+  refuseSave: Set<string> = new Set(),
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
@@ -333,7 +338,9 @@ function engineOver(
           cursor: changes.length > 0 ? `remote-${seq}` : s.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
         };
       },
-      mutate: async (m: EngineMutation, o?: { idempotencyKey?: string }) => {
+      mutate: async (m: EngineMutation, o?: {
+        idempotencyKey?: string; onDraftRow?: (row: { id: string; revision: string | null; fingerprint: string }) => Promise<void>;
+      }) => {
         if (offline.on) throw new MutationRejectedError("no signal", { code: "network", retryable: true });
         sent.push(m);
         const sendKey = m.kind === "mail_send" ? o?.idempotencyKey ?? null : null;
@@ -343,6 +350,9 @@ function engineOver(
         const named = m.kind === "draft_save" || m.kind === "mail_send" ? m.draftId ?? null : null;
         if (named !== null && serverGone.has(named)) {
           throw new MutationRejectedError("draft not found", { status: 404, code: "not_found", retryable: false });
+        }
+        if (m.kind === "draft_save" && named !== null && refuseSave.has(named)) {
+          throw new MutationRejectedError("this draft cannot take that edit", { status: 400, code: "validation_failed", retryable: false });
         }
         if (m.kind === "draft_discard" && refuseDiscard.on) {
           throw new MutationRejectedError("this message has a send on record", { status: 409, code: "send_recorded", retryable: false });
@@ -380,6 +390,20 @@ function engineOver(
         if (m.kind === "mail_send" && sendGate.wait) await sendGate.wait;
         if (m.kind === "mail_send" && refuseSend.on && (refuseSend.retryableFirst ?? 0) > 0) {
           refuseSend.retryableFirst! -= 1;
+          const row = refuseSend.saveFirst === true && m.draftId ? s.get<EngineDraft>("draft", m.draftId) : undefined;
+          if (row !== undefined) {
+            // The route's save before the send: the row holds the press's words, and the adapter reports it.
+            const revision = versions !== null ? `rev-${++seq}` : null;
+            if (revision !== null) versions!.set(row.id, revision);
+            await s.applyChanges([{
+              type: "draft", op: "update", id: row.id, seq: ++seq, updatedAt: NOW.toISOString(),
+              entity: {
+                ...row, subject: m.subject ?? "", body: m.body, html: m.html ?? null, to: m.to ?? [], cc: m.cc ?? [], bcc: m.bcc ?? [],
+                ...(revision !== null ? { contentRevision: revision } : {}),
+              },
+            } as unknown as SyncChange]);
+            await o?.onDraftRow?.({ id: row.id, revision, fingerprint: sendFingerprint(m) });
+          }
           throw new MutationRejectedError("not sent yet", {
             status: refuseSend.status ?? 409, code: refuseSend.code ?? "send_failed", retryable: true,
           });
@@ -527,9 +551,10 @@ export async function mountShell(
   const spendSentRow: DraftShell["spendSentRow"] = { on: false };
   const withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null };
   const loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false };
+  const refuseSave = new Set<string>();
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
-    versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server,
+    versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server, refuseSave,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -566,7 +591,7 @@ export async function mountShell(
   };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave,
   };
 }
 

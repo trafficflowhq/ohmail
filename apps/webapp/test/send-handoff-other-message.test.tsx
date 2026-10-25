@@ -5,11 +5,12 @@ import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
+import { resetComposerForTest } from "../app/shell/compose";
 import {
   act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 import {
-  composeLine, composeSend, composeSubject, composerOn, footLine, holdTheWire, letter, navigate, rounds,
+  composeLine, composeSend, composeSubject, composerOn, footButton, footLine, holdTheWire, letter, navigate, rounds,
   sends, toasts,
 } from "./_handoff-steps.js";
 
@@ -200,4 +201,79 @@ describe("a compose send handed off, then another message opened in the composer
     await rounds(6);
     expect(sendPendingInDurableOutbox(s.engine, "compose"), "B's Cancel withdrew A's send").toBe(true);
   }, 60_000);
+});
+
+describe("Compose while a letter's send waits shows that letter", () => {
+  const TYPED = "Plans for Friday, typed here";
+  const field = (s: DraftShell): HTMLInputElement | null => s.el.querySelector<HTMLInputElement>("#compose-subject");
+  const shown = (s: DraftShell): { subject: string | null; frozen: boolean | null } =>
+    ({ subject: field(s)?.value ?? null, frozen: field(s)?.readOnly ?? null });
+  const keydown = (init: KeyboardEventInit): Promise<void> => act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+  });
+  const doors: Record<string, () => Promise<void>> = {
+    "the rail's Compose": () => press(document.querySelector(".compose-cta"), "Compose"),
+    "the c key": () => keydown({ key: "c" }),
+    "the palette's New message": async () => {
+      await keydown({ key: "k", ctrlKey: true });
+      const row = [...document.querySelectorAll<HTMLElement>(".palette li[role=option]")]
+        .find((li) => (li.textContent ?? "").trim().startsWith(en.palette.newMessage));
+      await act(async () => { row?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    },
+  };
+  /** The mail server answers "try again", saving the press's words into its row first when `saveFirst`. */
+  const keepWaiting = (s: DraftShell, saveFirst = false): void => {
+    Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424, retryableFirst: 500, saveFirst });
+  };
+  async function composeBy(s: DraftShell, door: string): Promise<void> {
+    await navigate("#/ohbox");
+    await rounds(6);
+    await doors[door]!();
+    await waitFor(() => window.location.hash === "#/compose", "the composer");
+    await rounds(10);
+  }
+
+  for (const door of Object.keys(doors)) {
+    it(`${door}: A's send waits over its saved row, and Compose shows A`, async () => {
+      const s = await mountShell("#/drafts", [message("m1")], [A, B], { handOff: true });
+      await composerOn(s, "d-a", "Plans for Friday");
+      keepWaiting(s);
+      await press(composeSend(s.el)!, "Send A");
+      await waitFor(() => s.engine.waitingSends().length === 1, "A waits");
+      await composeBy(s, door);
+      expect(shown(s)).toEqual({ subject: "Plans for Friday", frozen: true });
+      expect(s.sent.filter((m) => m.kind === "draft_save" && m.draftId === null), "a new letter's create").toEqual([]);
+    }, 60_000);
+  }
+
+  it("A's send saved its words: Compose and Open on its foot line show A, and after a reload Compose still does", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [A, B], { handOff: true });
+    await composerOn(s, "d-a", "Plans for Friday");
+    keepWaiting(s, true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(field(s), TYPED);
+      field(s)!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await press(composeSend(s.el)!, "Send A");
+    await waitFor(() => s.store.get<EngineDraft>("draft", "d-a")?.subject === TYPED, "A's send saved its words");
+    await composeBy(s, "the rail's Compose");
+    expect(shown(s), "Compose let go of A").toEqual({ subject: TYPED, frozen: true });
+    await navigate("#/ohbox");
+    await rounds(6);
+    await waitFor(() => footButton("Open") !== null, "A waiting on the foot line");
+    await press(footButton("Open"), "Open on A");
+    await waitFor(() => window.location.hash === "#/compose", "the composer");
+    await rounds(10);
+    expect(shown(s).subject, "Open on A's foot line").toBe(TYPED);
+    const drafts = s.store.list<EngineDraft>("draft");
+    await unmountAll();
+    resetComposerForTest();
+    stubDom();
+    const now = await mountShell("#/ohbox", [message("m1")], drafts, { store: s.store, handOff: true });
+    keepWaiting(now, true);
+    await rounds(30);
+    await composeBy(now, "the rail's Compose");
+    expect({ ...shown(now), send: composeSend(now.el)?.disabled }, "Compose after the reload").toEqual({ subject: TYPED, frozen: true, send: true });
+    expect(now.engine.waitingSends().map((w) => w.draftId), "a waiting send whose words no row holds").toEqual(["d-a"]);
+  }, 90_000);
 });

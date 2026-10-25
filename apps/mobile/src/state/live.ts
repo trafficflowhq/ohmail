@@ -1268,6 +1268,8 @@ export interface WorldDraftEdit {
   forwardOf: string | null;
   /** The original's files the row keeps, beside a forward (another device's choice included); `null`: every file. */
   forwardParts: string[] | null;
+  /** The row's version as opened (`contentRevision`): the composer's saves and sends state it. */
+  revision: string | null;
 }
 
 /**
@@ -1291,6 +1293,7 @@ export function draftEditOf(d: EngineDraft): WorldDraftEdit | null {
     mailboxId: d.mailboxId, to: typed(d.to), cc: typed(d.cc), bcc: typed(d.bcc), subject: d.subject,
     forwardOf: d.forwardOfMessageId ?? null,
     forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
+    revision: d.contentRevision ?? null,
   };
 }
 
@@ -2760,7 +2763,9 @@ export function sendOutcomeOfResult(r: MutationResult | null): SendOutcome {
  */
 export type FailedSendCopy = "replyNotSecured" | "replyLoginRefused" | "replyUnreachable" | "replyBusy" | "replyNotSignedIn"
   | "replyForwardOriginalUnavailable" | "replyForwardPartsChanged" | "replyForwardPartsUnsupported" | "replyFailed" | "replySentElsewhere"
-  | "replyDeletedElsewhere" | "replyTooLong" | "replyTooLarge";
+  | "replyDeletedElsewhere"
+  | "replyChangedElsewhere" | "replyChangedElsewhereUnsaved"
+  | "replyTooLong" | "replyTooLarge";
 
 /** The draft limit as the phone names it — `replyTooLong`, `composeTooLong` and the keep notes. */
 export const draftLimitLabel = (): string => sizeLabel(DRAFT_BODY_MAX_BYTES);
@@ -2775,6 +2780,8 @@ export function failedSendCopy(r: MutationResult | null): FailedSendCopy {
             : code === "forward_original_unavailable" ? "replyForwardOriginalUnavailable"
               : code === "forward_parts_changed" ? "replyForwardPartsChanged"
                 : code === "forward_parts_unsupported" ? "replyForwardPartsUnsupported"
+            /* Nothing kept the words yet: the composer that holds them keeps them and says so. */
+            : code === "draft_changed" ? "replyChangedElsewhereUnsaved"
               : code === "draft_too_large" ? "replyTooLong"
                 : code === "payload_too_large" ? "replyTooLarge"
                   : "replyFailed";
@@ -2790,6 +2797,8 @@ export function refusedSendSay(kind: FailedSendCopy | null | undefined): Refusal
             : kind === "replyForwardOriginalUnavailable" ? refuse("replyForwardOriginalUnavailable")
               : kind === "replyForwardPartsChanged" ? refuse("replyForwardPartsChanged")
                 : kind === "replyForwardPartsUnsupported" ? refuse("replyForwardPartsUnsupported")
+            : kind === "replyChangedElsewhere" ? refuse("replyChangedElsewhere")
+            : kind === "replyChangedElsewhereUnsaved" ? refuse("replyChangedElsewhereUnsaved")
               : kind === "replyTooLong" ? refuse("replyTooLong", draftLimitLabel())
                 : kind === "replyTooLarge" ? refuse("replyTooLarge")
                   : refuse("replyFailed");
@@ -2844,6 +2853,8 @@ export interface SendResult {
   firstSend?: true;
   /** `failed` only: the refusal's own code, for a caller that words it itself. */
   code?: string;
+  /** `failed` over a row changed elsewhere: the version of the new row ({@link draftId}) the words were kept in. */
+  revision?: string;
 }
 
 /**
@@ -2937,6 +2948,8 @@ export interface FlushedOutcome {
   createdDraftId?: string;
   /** A refused mail_send: the sentence the refusal earned ({@link failedSendCopy}). */
   failure?: FailedSendCopy;
+  /** A mail_send refused because its row was changed elsewhere: that row holds the other version. */
+  changed?: true;
   /**
    * mail_send only: the Send + Done release this confirmation ran, as the sentence it earned
    * ({@link ReleaseConfirmed}) — said INSTEAD of the ordinary one, one sentence per press.
@@ -3104,7 +3117,10 @@ export async function flushQueued(
     outcomes.set(r.key, {
       status, kind: meta.kind, forward: meta.forward, fresh: meta.fresh, sendAt: meta.sendAt, earlierWent,
       ...(refusedSend ? { failure: failedSendCopy(r) } : {}),
-      ...((refusedSend || (status === "unverified" && meta.kind === "mail_send")) && r.entityId ? { draftId: r.entityId } : {}),
+      ...(refusedSend && r.error?.code === "draft_changed" ? { changed: true as const } : {}),
+      // A row changed elsewhere holds the other version: never the composer's to bind.
+      ...((refusedSend || (status === "unverified" && meta.kind === "mail_send")) && r.entityId && r.error?.code !== "draft_changed"
+        ? { draftId: r.entityId } : {}),
       ...(status === "confirmed" && meta.kind === "draft_save" && r.entityId ? { createdDraftId: r.entityId } : {}),
       done: done.get(r.key) ?? null,
     });
@@ -3175,6 +3191,12 @@ export interface DraftKeep {
   dropped?: number;
   /** The row this composer is bound to ({@link SendResult.draftId}): the keep updates it in place. */
   draftId?: string | null;
+  /** The bound row's version these words are based on: a row moved off it is never written over. */
+  revision?: string | null;
+  /** The bound row was changed elsewhere, so the words went to a new row: the open composer says so. */
+  forked?: () => void;
+  /** The keys of this composer's own saves of the bound row: only the engine's kept copy of one of them is its row. */
+  waited?: readonly string[];
   /** A composer's own save as it goes: the row is written and nothing is said. */
   quiet?: boolean;
   /** A forward's kept files once one was removed: the row holds them, so another device sends only those. */
@@ -3182,7 +3204,7 @@ export interface DraftKeep {
   /** The bound row was sent from another device, so the keep wrote a NEW row: bind to it. */
   rebind?: (draftId: string) => void;
   /** The row the keep made or updated, or the key its queued save waits under. */
-  row?: (r: { draftId: string | null; key: string | null }) => void;
+  row?: (r: { draftId: string | null; key: string | null; revision?: string }) => void;
 }
 
 /**
@@ -3573,7 +3595,14 @@ export interface LiveWorldActions {
    * `attachments` on either verb ride the same mutation the webapp composer sends —
    * base64 on `POST /drafts/:id/send`, nothing stored (`ComposeAttachment`'s own contract).
    */
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts): Promise<SendResult>;
+  sendForward(
+    messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean,
+    confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts,
+    /** The bound row's version the words are based on ({@link WorldDraftEdit.revision}). */
+    base?: string | null,
+    /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
+    waited?: readonly string[],
+  ): Promise<SendResult>;
   /**
    * A MAIL THAT ANSWERS NOTHING — the same `mail_send` with no parent: `inReplyTo` null,
    * no `forwardOf`, the sending mailbox named explicitly because there is no parent to derive
@@ -3591,6 +3620,10 @@ export interface LiveWorldActions {
     draftId?: string | null,
     /** Cc and Bcc, as the composer parsed them; absent is none. */
     copies?: { cc: EmailAddress[]; bcc: EmailAddress[] },
+    /** The bound row's version the words are based on ({@link WorldDraftEdit.revision}). */
+    base?: string | null,
+    /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
+    waited?: readonly string[],
   ): Promise<SendResult>;
   /**
    * WITHDRAW A QUEUED SEND — Cancel, on the intent. `withdrawn` is the cancellation;
@@ -5139,6 +5172,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     sayRefusals = true,
     /** What a confirmation answered from an earlier send of the same message says (Send again). */
     alreadyWentToast: RefusalArg = sentToast,
+    /** A bound row changed elsewhere: keeps the words as a new row, or answers `null` when it could not. */
+    keepChanged?: () => Promise<{ draftId: string | null; revision?: string } | null>,
   ): Promise<SendResult> => {
     const first = await p.then((r) => r, () => null);
     let settled: MutationResult | null = first;
@@ -5169,6 +5204,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
      * from the first reservation when there is one — never two copies — and when its changed words
      * were kept back the words that left are the earlier ones: the server's answer says so.
      */
+    /* THE ROW MOVED ELSEWHERE: it holds the other version, and the words on screen become a new row. */
+    const changed = outcome === "failed" && settled?.error?.code === "draft_changed";
+    const kept = changed && keepChanged ? await keepChanged() : null;
+    const failure: FailedSendCopy | undefined = outcome !== "failed" ? undefined
+      : changed ? (kept !== null ? "replyChangedElsewhere" : "replyChangedElsewhereUnsaved") : failedSendCopy(settled);
     const earlierWent = outcome !== "queued" && earlierVersionWent(settled);
     const alreadyWent = outcome === "sent" && !earlierWent && settled?.firstSend !== undefined;
     /* A delivered letter whose Sent copy could not be written says so, in one more line. */
@@ -5184,14 +5224,15 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
           : outcome === "queued"
             ? refuse(accepted ? "replySendingLong" : !rearmed && networkNow() === "offline" ? "replyQueuedOffline" : "replyQueued")
             : outcome === "unverified" ? refuse("replyUnverified")
-              : refusedSendSay(failedSendCopy(settled)),
+              : refusedSendSay(failure),
       );
     }
     return {
       outcome,
       ...(outcome === "queued" && first ? { key: first.key } : {}),
-      ...((outcome === "failed" || outcome === "unverified") && settled?.entityId ? { draftId: settled.entityId } : {}),
-      ...(outcome === "failed" ? { failure: failedSendCopy(settled) } : {}),
+      ...((outcome === "failed" || outcome === "unverified") && settled?.entityId && !changed ? { draftId: settled.entityId } : {}),
+      ...(kept?.draftId ? { draftId: kept.draftId, ...(kept.revision ? { revision: kept.revision } : {}) } : {}),
+      ...(failure !== undefined ? { failure } : {}),
       ...(outcome === "failed" && settled?.error?.code ? { code: settled.error.code } : {}),
       ...(accepted ? { accepted: true as const } : {}),
       ...(rearmed ? { rearmed: true as const } : {}),
@@ -5544,6 +5585,28 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return { to: env ? env.to : [parent.from], cc: env ? env.cc : [], subject: replySubject(parent.subject) };
   };
 
+  /** The newest row the engine kept a refused waiting edit of `from` in, as a new draft: one of this composer's own (`waited`). */
+  const keptRowOf = (from: string, waited: readonly string[]): { row: string; revision: string | null } | null => {
+    const kept = (typeof engine.keptAsNewDrafts === "function" ? engine.keptAsNewDrafts() : [])
+      .filter((e) => e.from === from && e.row !== null && waited.includes(e.key)).at(-1);
+    return kept?.row ? { row: kept.row, revision: kept.revision ?? null } : null;
+  };
+
+  /** A send refused over a row changed elsewhere: the words on screen, unsigned, kept as a new row. */
+  const keepChangedWords = (
+    from: string, words: Omit<Extract<EngineMutation, { kind: "draft_save" }>, "kind" | "draftId">, waited: readonly string[],
+  ) =>
+    async (): Promise<{ draftId: string | null; revision?: string } | null> => {
+      const kept = keptRowOf(from, waited);
+      const r = await engine.mutate({
+        kind: "draft_save", draftId: kept?.row ?? null, ...words,
+        ...(kept?.revision ? { ifContentRevision: kept.revision } : {}),
+      }).then((res) => res, () => null);
+      if (r === null || r.status === "rolled_back") return null;
+      const draftId = r.status === "confirmed" ? r.entityId ?? kept?.row ?? null : kept?.row ?? null;
+      return { draftId, ...(r.revision ? { revision: r.revision } : {}) };
+    };
+
   const draftKeep = async (k: DraftKeep): Promise<DraftKeepOutcome> => {
     const parent = k.messageId === null ? undefined : messageOf(k.messageId);
     const mailboxId = k.mailboxId ?? parent?.mailboxId ?? null;
@@ -5563,9 +5626,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        update names a target the engine must already hold. */
     const bound = k.draftId ?? null;
     if (bound !== null && !engine.read().get("draft", bound)) await engine.syncOnce().catch(() => undefined);
-    const save = (target: string | null) => engine
+    const save = (target: string | null, base: string | null = null) => engine
       .mutate({
         kind: "draft_save", draftId: target, mailboxId,
+        // The version these words were written on: a row moved off it refuses them.
+        ...(target !== null && base ? { ifContentRevision: base } : {}),
         ...(reply && parent ? { inReplyToMessageId: parent.id, threadId: parent.threadId ?? null } : {}),
         ...(k.mode === "forward" && parent ? { forwardOfMessageId: parent.id } : {}),
         ...(k.mode === "forward" && parent && k.forwardParts ? { forwardParts: [...k.forwardParts] } : {}),
@@ -5578,16 +5643,29 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
        only for a row the mirror held: a local `not_found` is an absence, which says nothing. */
     let target = bound !== null && draftLeft(bound) !== null ? null : bound;
     const held = target !== null && engine.read().get("draft", target) !== undefined;
-    let r = await save(target);
+    let r = await save(target, target === bound ? k.revision ?? null : null);
+    /* CHANGED ELSEWHERE: the row holds the other version, never overwritten; these words become a new
+       row — the one the engine already kept a waiting edit of this row in, when there is one. */
+    const changed = target !== null && r?.status === "rolled_back" && r.error?.code === "draft_changed";
     if (target !== null && r?.status === "rolled_back"
-      && (r.error?.code === "draft_sent" || (held && r.error?.code === "not_found"))) {
-      target = null;
-      r = await save(null);
+      && (r.error?.code === "draft_sent" || changed || (held && r.error?.code === "not_found"))) {
+      const kept = changed ? keptRowOf(target, k.waited ?? []) : null;
+      target = kept?.row ?? null;
+      r = await save(target, kept?.revision ?? null);
     }
     if (r?.status === "rolled_back" && r.error?.code === "draft_too_large") return "tooLong";
     if (r === null || r.status === "rolled_back") return "refused";
-    if (target !== bound && r.entityId) k.rebind?.(r.entityId);
-    k.row?.({ draftId: r.status === "confirmed" ? r.entityId ?? target : target, key: r.key ?? null });
+    const made = r.entityId ?? target;
+    if (target !== bound && made) k.rebind?.(made);
+    k.row?.({
+      draftId: r.status === "confirmed" ? r.entityId ?? target : target, key: r.key ?? null, ...(r.revision ? { revision: r.revision } : {}),
+    });
+    // Said once, open or closed: in the sheet's notes (toasts render under it), else by toast.
+    if (changed) {
+      if (k.forked) k.forked();
+      else toast(refuse("composeKeptChangedElsewhere"));
+      return "kept";
+    }
     // A newer save of this row replaced this one: it owns the sentence.
     if (k.quiet === true || r.status === "superseded") return "kept";
     /* A draft row holds no bytes: files kept are kept on this phone only, and said so. */
@@ -5604,7 +5682,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return "kept";
   };
 
-  const sendForward = async (messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [], andDone = false, confirmed = false, draftId: string | null = null, opts: ForwardOpts = {}): Promise<SendResult> => {
+  const sendForward = async (
+    messageId: string, to: EmailAddress[], body: string, sig: string | null = null, attachments: ComposeAttachment[] = [],
+    andDone = false, confirmed = false, draftId: string | null = null, opts: ForwardOpts = {},
+    base: string | null = null, waited: readonly string[] = [],
+  ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
     const m = messageOf(messageId);
@@ -5635,12 +5717,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         to,
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
+        // The version the words are based on: a row moved elsewhere refuses the send.
+        ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
     if (draftOverCeiling(signed.body)) return tooLongSend();
     const r = await sent(
       dispatchSend(signed, plan),
       Copy.forwarded,
       Copy.forwardEarlierWent,
+      true,
+      Copy.forwarded,
+      draftId === null ? undefined : keepChangedWords(draftId, {
+        mailboxId: m.mailboxId, forwardOfMessageId: messageId, subject: forwardSubject(m.subject), body, to, cc: [], bcc: [],
+        ...(opts.forwardParts !== undefined ? { forwardParts: [...opts.forwardParts] } : {}),
+      }, waited),
     );
     // The server said it cannot leave parts out: this session's rows go back to read-only.
     if (r.failure === "replyForwardPartsUnsupported") forwardPartsRefused = true;
@@ -5657,6 +5747,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     attachments: ComposeAttachment[] = [],
     draftId: string | null = null,
     copies: { cc: EmailAddress[]; bcc: EmailAddress[] } = { cc: [], bcc: [] },
+    base: string | null = null,
+    waited: readonly string[] = [],
   ): Promise<SendResult> => {
     const elsewhere = sentElsewhere(draftId);
     if (elsewhere) return elsewhere;
@@ -5689,12 +5781,20 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
         ...(sendAt ? { sendAt } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
         ...(draftId ? { draftId } : {}),
+        // The version the words are based on: a row moved elsewhere refuses the send.
+        ...(draftId && base ? { ifContentRevision: base } : {}),
       }, sig);
     if (draftOverCeiling(signed.body)) return tooLongSend();
+    const sentSay = sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent;
     return sent(
       dispatchSend(signed),
-      sendAt ? Copy.scheduledFor(scheduleLabel(sendAt, now(), zone)) : Copy.composeSent,
+      sentSay,
       Copy.composeEarlierWent,
+      true,
+      sentSay,
+      draftId === null ? undefined : keepChangedWords(draftId, {
+        mailboxId, subject: subject.trim(), body: text, to, cc: copies.cc, bcc: copies.bcc,
+      }, waited),
     );
   };
 
@@ -6219,7 +6319,14 @@ export interface WorldActions {
   ): Promise<SendResult>;
   /** Is Send + Done offered for this source? See {@link LiveWorldActions.sendAndDoneOffered}. */
   sendAndDoneOffered(messageId: string): boolean;
-  sendForward(messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean, confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts): Promise<SendResult>;
+  sendForward(
+    messageId: string, to: EmailAddress[], body: string, sig?: string | null, attachments?: ComposeAttachment[], andDone?: boolean,
+    confirmed?: boolean, draftId?: string | null, opts?: ForwardOpts,
+    /** The bound row's version the words are based on ({@link WorldDraftEdit.revision}). */
+    base?: string | null,
+    /** The keys of the composer's own saves of that row ({@link DraftKeep.waited}). */
+    waited?: readonly string[],
+  ): Promise<SendResult>;
   /** A mail with no parent — see {@link LiveWorldActions.sendNew}. */
   sendNew(
     mailboxId: string | null,
@@ -6231,6 +6338,8 @@ export interface WorldActions {
     attachments?: ComposeAttachment[],
     draftId?: string | null,
     copies?: { cc: EmailAddress[]; bcc: EmailAddress[] },
+    base?: string | null,
+    waited?: readonly string[],
   ): Promise<SendResult>;
   /** Withdraw a queued send — Cancel. See {@link LiveWorldActions.withdrawSend}. */
   withdrawSend(key: string): Promise<WithdrawOutcome>;
@@ -6326,10 +6435,10 @@ export function stableActions(current: () => WorldActions): WorldActions {
     trashRestore: (id) => current().trashRestore(id),
     sendReply: (id, body, all, sig, sendAt, attachments, andDone, draftId) =>
       current().sendReply(id, body, all, sig, sendAt, attachments, andDone, draftId),
-    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId, opts) =>
-      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId, opts),
-    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies) =>
-      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies),
+    sendForward: (id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited) =>
+      current().sendForward(id, to, body, sig, attachments, andDone, confirmed, draftId, opts, base, waited),
+    sendNew: (mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies, base, waited) =>
+      current().sendNew(mailboxId, to, subject, body, sig, sendAt, attachments, draftId, copies, base, waited),
     sendAndDoneOffered: (id) => current().sendAndDoneOffered(id),
     withdrawSend: (key) => current().withdrawSend(key),
     leaveSend: (key) => current().leaveSend(key),

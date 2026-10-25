@@ -1437,25 +1437,26 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       : null),
     [engine, showToast, zone, letters],
   );
+  /** What a letter restore reads and writes this session: the launch's, and a flush's ({@link settleLetters}). */
+  const restoreDeps = useMemo(() => (engine && acts && letters ? {
+    door: letters,
+    outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+    keep: (k: Parameters<typeof acts.draftKeep>[0]) => acts.draftKeep(k),
+    hasMessage: (id: string) => engine.read().get("message", id) !== undefined,
+    drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+    firstSync: () => engine.syncOnce().then(() => undefined),
+    parse: keptRecipients,
+  } : null), [engine, acts, letters]);
   /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
   useEffect(() => {
-    if (!engine || !acts || !letters) return;
+    if (!restoreDeps) return;
     let live = true;
-    void restoreLetters({
-      door: letters,
-      owned: ownedLetters(),
-      outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
-      keep: (k) => acts.draftKeep(k),
-      hasMessage: (id) => engine.read().get("message", id) !== undefined,
-      drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
-      firstSync: () => engine.syncOnce().then(() => undefined),
-      parse: keptRecipients,
-    }).then((restored) => {
+    void restoreLetters({ ...restoreDeps, owned: ownedLetters() }).then((restored) => {
       const say = sayLetterRestore(restored);
       if (live && say !== null) showToast(say);
     }).catch(() => undefined);
     return () => { live = false; };
-  }, [engine, acts, letters, showToast]);
+  }, [restoreDeps, showToast]);
   // The held file lists heal after a drop, for as long as this facade serves (`watchLists`).
   useEffect(() => acts?.watchLists(), [acts]);
 
@@ -1534,7 +1535,14 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // A flush that outlived its session says nothing: the ledger and the toasts belong
         // to the session on screen, and this one's is gone.
         if (backendEngineRef.current !== flushed) return;
-        if (letters) settleLetters(letters, ownedLetters(), settled);
+        const loose = letters ? settleLetters(letters, ownedLetters(), settled) : [];
+        /* A LETTER LET GO OF OVER A ROW CHANGED ELSEWHERE: no composer holds its words, so they are
+           kept as a new draft now, and said once that is known. */
+        if (restoreDeps && loose.length > 0) {
+          void restoreLetters({ ...restoreDeps, owned: ownedLetters(), only: new Set(loose.map((x) => x.letter)) })
+            .then((r) => { if (backendEngineRef.current === flushed) showToast(refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater")); })
+            .catch(() => undefined);
+        }
         for (const [key, o] of settled) {
           outcomes.current.set(key, o.status);
           settlements.current.set(key, { accepted: false, rearmed: false, draftId: o.draftId ?? null, failure: o.failure ?? null });
@@ -1557,7 +1565,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
               showToast(confirmedSendSay(o, new Date(), zone));
             }
             else if (o.status === "unverified") showToast(refuse("replyUnverified"));
-            else showToast(refusedSendSay(o.failure));
+            else if (!loose.some((x) => x.key === key)) showToast(refusedSendSay(o.failure));
           } else if (o.status === "rolled_back") {
             showToast(refuse("liveSaveFailed"));
           }
@@ -1576,7 +1584,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       });
     // `conn.syncing` falling is the drain-completed signal; `outcomeSeq` re-checks after a flush.
     // `zone` is the reader's zone, read again on resume; it is named because the appointment sentence reads it.
-  }, [conn.syncing, engine, acts, showToast, outcomeSeq, zone]);
+  }, [conn.syncing, engine, acts, restoreDeps, showToast, outcomeSeq, zone]);
   // The outgoing session's ledger must not answer for the next session's keys.
   useEffect(() => {
     outcomes.current = new Map();

@@ -330,7 +330,7 @@ describe("the signature block — the webapp composer's strings and rules", () =
     // `effectiveSignature` is called exactly once; the block renders `sigText` and the send
     // arms pass the same value. A second derivation is the torn-mix defect.
     expect(actions.match(/effectiveSignature\(/g)).toHaveLength(1);
-    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan/);
+    expect(actions).toMatch(/sendForward\(m!\.id, recipients \?\? \[\], body, sigText, files, andDone, forwardConfirmed, draftId,\s*forwardPlan[^\n]*, baseFor\(base\.current, draftId\), waitedFor\(base\.current, draftId\)\)/);
     // The Send-later arm rides the SAME call — one send machine, one signature (mail 0077).
     expect(actions).toMatch(/sendReply\(m!\.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId\)/);
   });

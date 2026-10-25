@@ -738,8 +738,17 @@ export function mailServer() {
           json(409, { error: { code: "draft_sent", message: "this message has already been sent; its words cannot be changed" } });
           return;
         }
+        /* THE VERSION CHECK, as `DraftsService.update` answers it: a stated version the row has moved off
+           refuses the edit; one restating the row's words answers as written. */
+        const { ifContentRevision: stated, ...words } = patch as Record<string, unknown> & { ifContentRevision?: string };
+        if (stated !== undefined && stated !== row.contentRevision) {
+          const same = Object.entries(words).every(([k, v]) => JSON.stringify((row as Record<string, unknown>)[k] ?? null) === JSON.stringify(v ?? null));
+          if (same) { json(200, row, seq); return; }
+          json(409, { error: { code: "draft_changed", message: "this draft was changed in another window or on another device; nothing was saved" } });
+          return;
+        }
         revision += 1;
-        const next = { ...row, ...patch, contentRevision: `rev-${revision}`, updatedAt: new Date().toISOString() };
+        const next = { ...row, ...words, contentRevision: `rev-${revision}`, updatedAt: new Date().toISOString() };
         drafts.set(id, next);
         push("draft", "update", id, next);
         json(200, next, seq);

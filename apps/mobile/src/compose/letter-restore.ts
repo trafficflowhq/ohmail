@@ -45,6 +45,8 @@ export interface RestoreDeps {
   drafts: () => readonly MirrorDraft[];
   /** The first completed sync of this launch. */
   firstSync: () => Promise<void>;
+  /** Only these letters, by id: the ones a flush let go of ({@link settleLetters}). */
+  only?: ReadonlySet<string>;
   /** The typed recipients that parse. */
   parse: (typed: string) => LetterAddress[];
   now?: () => Date;
@@ -165,7 +167,7 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
   };
 
   for (const l of d.door.letters()) {
-    if (d.owned.has(l.id)) continue;
+    if (d.owned.has(l.id) || (d.only !== undefined && !d.only.has(l.id))) continue;
     if (l.send !== null) {
       const send = l.send;
       const row = heldBy(l, "send", d.outbox(), d.parse);
@@ -220,15 +222,18 @@ export function sayLetterRestore(r: LetterRestore): Refusal | null {
 }
 
 /** A flushed outcome, as `flushQueued` reports it. */
-export interface LetterOutcome { status: string; kind: string; draftId?: string; createdDraftId?: string }
+export interface LetterOutcome { status: string; kind: string; draftId?: string; createdDraftId?: string; changed?: boolean }
 
 /**
  * THE FLUSH SETTLES THE LETTERS WAITING ON ITS KEYS: a queued keep binds to the row it made, a
  * confirmed send drops its letter and files, a refused or unverified send leaves them with its row.
+ * A send refused over a row changed elsewhere lets go of that row, which holds the other version:
+ * the letters let go of are returned, by the send's key, to be kept as new drafts.
  */
 export function settleLetters(
   door: LetterDoor, owned: ReadonlySet<string>, settled: Iterable<[string, LetterOutcome]>, now: () => Date = () => new Date(),
-): void {
+): { key: string; letter: string }[] {
+  const loose: { key: string; letter: string }[] = [];
   // An open composer settles its own letter.
   const letters = door.letters().filter((l) => !owned.has(l.id));
   for (const [key, o] of settled) {
@@ -248,6 +253,10 @@ export function settleLetters(
           if (rowHoldsLetter(next)) door.drop(l.id);
           else door.put({ ...next, updatedAt: now().toISOString() });
         }
+        else if (o.status === "rolled_back" && o.changed === true) {
+          door.put({ ...l, draftId: null, savedAs: null, send: null, updatedAt: now().toISOString() });
+          loose.push({ key, letter: l.id });
+        }
         else if (o.status === "rolled_back") {
           const next = o.draftId ? { ...l, draftId: o.draftId, savedAs: wordsOf(l), send: null } : { ...l, send: null };
           door.put({ ...next, updatedAt: now().toISOString() });
@@ -255,6 +264,7 @@ export function settleLetters(
       }
     }
   }
+  return loose;
 }
 
 /** A kept draft sent or deleted on another device takes its files with it. */

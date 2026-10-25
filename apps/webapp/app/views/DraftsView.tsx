@@ -41,7 +41,7 @@ function heldStillChecking(d: EngineDraft, now: Date): boolean {
 /** The refusal a Discard came back with, rendered in its row — never a toast alone. */
 export interface DiscardRefusal {
   draftId: string;
-  why: "still-sending" | "unknown-jar";
+  why: "still-sending" | "unknown-jar" | "cancel-unknown";
   at: number;
 }
 
@@ -74,6 +74,7 @@ export function DraftsView({
    * nothing.
    */
   repliesHere,
+  waiting,
 }: {
   drafts: readonly EngineDraft[];
   /** `MailState.settled` / `owed`: "nothing half-written" is said only over a read mirror. */
@@ -117,6 +118,8 @@ export function DraftsView({
   onCancelSchedule: (draftId: string) => void;
   onEditScheduled: (draft: EngineDraft) => void;
   repliesHere: (draft: EngineDraft) => boolean;
+  /** Rows a send waiting to go names: said in the row, and Discard cancels that send first. */
+  waiting?: ReadonlySet<string>;
 }) {
   const t = useTranslations("drafts");
 
@@ -276,6 +279,7 @@ export function DraftsView({
             {drafts.slice(draftsFrom, draftsTo).map((d, k) => {
               const to = recipientLine(d);
               const at = draftsFrom + k;
+              const waits = waiting?.has(d.id) === true;
               return (
                 <div
                   key={d.id}
@@ -285,7 +289,7 @@ export function DraftsView({
                   className={[
                     "draft-row",
                     confirming === d.id ? "draft-row-confirming" : "",
-                    d.status !== "draft" || heldHere?.has(d.id) === true ? "draft-row-held" : "",
+                    !waits && (d.status !== "draft" || heldHere?.has(d.id) === true) ? "draft-row-held" : "",
                     at === draftCount - 1 ? "draft-row-last" : "",
                   ].filter(Boolean).join(" ")}
                   data-id={d.id}
@@ -315,7 +319,9 @@ export function DraftsView({
                           of band, possibly days ago, and this line is the first anyone hears of
                           it. The wording never claims the mail failed: `unverified` means
                           exactly "we could not tell", and a claim either way would be a guess. */}
-                      {d.status !== "draft" ? (
+                      {waits ? (
+                        <span className="draft-state" role="status">{t("waitingToSend")}</span>
+                      ) : d.status !== "draft" ? (
                         <span className="draft-state" role="status">
                           {t(heldSentence(d, now))}
                         </span>
@@ -352,7 +358,7 @@ export function DraftsView({
                         }}
                       >
                         <p className="set-note-inline" id={`draft-discard-what-${d.id}`}>
-                          {t("discardWhat")}
+                          {t(waits ? "discardWhatWaiting" : "discardWhat")}
                         </p>
                         <div className="gate-actions">
                           <Button variant="ghost" onClick={() => closeConfirm(d.id)}>
@@ -368,7 +374,7 @@ export function DraftsView({
                       </div>
                     ) : (
                       <div className="draft-actions">
-                        {d.status !== "draft" || heldHere?.has(d.id) === true ? (
+                        {!waits && (d.status !== "draft" || heldHere?.has(d.id) === true) ? (
                           <HeldSendResolve
                             draftId={d.id}
                             label={t(heldSentence(d, now))}
@@ -389,7 +395,8 @@ export function DraftsView({
                   </div>
                   {refusedFor === d.id ? (
                     <p className="draft-refusal" role="alert" tabIndex={-1}>
-                      {t(refusal!.why === "still-sending" ? "discardStillSending" : "discardUnknownJar")}
+                      {t(refusal!.why === "still-sending" ? "discardStillSending"
+                        : refusal!.why === "cancel-unknown" ? "discardCancelUnknown" : "discardUnknownJar")}
                     </p>
                   ) : null}
                 </div>

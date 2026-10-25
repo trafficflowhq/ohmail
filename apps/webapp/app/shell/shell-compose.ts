@@ -915,7 +915,7 @@ export function useShellCompose({
    * THAT row, so one message stays one draft. `seen` is whether the mirror has listed it: a row
    * taken before the drain is still the row, and one the mirror listed and then lost is gone.
    */
-  const replyRows = useRef(new Map<string, { row: string; seen: boolean }>());
+  const replyRows = useRef(new Map<string, { row: string; seen: boolean; rev?: string }>());
   /**
    * WHICH DRAFT A LANE'S PRESS WENT WITH — its row and the row that seeded its editor, as they stood
    * at the press. A settlement arriving after another reply draft was opened into the same dock (from
@@ -1134,6 +1134,7 @@ export function useShellCompose({
     const shown = scratch ?? (ours && !moved ? readReplyDraft(lane) : null);
     const rowWins = shown === null || isRichEmpty(shown) || moved;
     if (!rowWins && !ours && shown!.text.trim() !== text.trim()) return shown!;
+    if (rowWins) replyAutosave.opened(lane);
     // The row's own markup seeds the editor and the baseline: a reply opened plain from a formatted
     // row could not be saved or sent.
     const rowHtml = typeof d.html === "string" ? d.html : "";
@@ -1148,10 +1149,12 @@ export function useShellCompose({
         else priorRows.current.set(lane, { id: was.id, holds: was.holds, from: id });
       }
     }
+    // The version the lane's words are based on: the row's as this door reads it.
+    const rev = (handle.kind === "row" ? handle.revision : null) ?? d.contentRevision ?? undefined;
     if (create === null) {
       // The row the lane last stored is the same message: its creates still waiting stay its own.
       if (!own && replyRows.current.get(lane)?.row !== id && meta.row?.id !== id) replyAutosave.rebind(lane);
-      replyRows.current.set(lane, { row: id, seen: true });
+      replyRows.current.set(lane, { row: id, seen: true, ...(rev ? { rev } : {}) });
     } else if (!ours) {
       replyRows.current.delete(lane);
       replyAutosave.awaits(lane, create, fields);
@@ -1164,7 +1167,10 @@ export function useShellCompose({
     writeReplyMeta(lane, {
       ...readReplyMeta(lane), subject,
       row: create === null
-        ? { id, at, holds: sigOf(text.trim()), ...(own || (meta.row?.id === id && meta.row.made) ? { made: true as const } : {}) }
+        ? {
+          id, at, holds: sigOf(text.trim()), ...(own || (meta.row?.id === id && meta.row.made) ? { made: true as const } : {}),
+          ...(rev ? { rev } : {}),
+        }
         : undefined,
     });
     const plan = replyEnvelopePlan(parent, ownAddresses, all, null);
@@ -1332,8 +1338,9 @@ export function useShellCompose({
   ): boolean => {
     /* A COMPOSE SAVE REFUSED BECAUSE THE ROW MOVED ELSEWHERE: that row is the other version's, so it
        is neither marked not sent nor taken; the composer forks and says so once. */
-    const changed = !accepted && key === COMPOSE_SEND_KEY && detail?.ended?.code === "draft_changed";
-    const leftRow = changed ? undefined : detail?.left;
+    const changedRow = !accepted && detail?.ended?.code === "draft_changed" && !key.startsWith("fwd:");
+    const changed = changedRow && key === COMPOSE_SEND_KEY;
+    const leftRow = changedRow ? undefined : detail?.left;
     if (!accepted && detail?.ended !== undefined && detail.shown === false) {
       // The foot line says it, with Open: only the Drafts row is marked, no toast says it again.
       if (detail.line === true) markNotSentRow(key, detail.ended, leftRow);
@@ -1359,7 +1366,11 @@ export function useShellCompose({
       settleComposeRef.current({ kind: changed ? "changedElsewhere" : "refusedWithRow", ...left });
     }
     // …and so does a reply or forward lane: its next press sends that row instead of making one.
-    if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
+    // A reply's row changed elsewhere is the other version's: the lane lets go, and its words fork once the phase settles.
+    if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY && changedRow) {
+      replyChanged(key, left.rowId);
+      setTimeout(() => replyAutosave.fork(key), 0);
+    } else if (!accepted && left !== undefined && key !== COMPOSE_SEND_KEY) takeLaneRow(key, left.rowId);
     // Nothing went: a create the press took back too late is the message's row again, or a copy.
     if (!accepted && phase === "failed" && key === COMPOSE_SEND_KEY) composeNotSentRef.current();
     if (!accepted && (phase === "failed" || phase === "idle") && key !== COMPOSE_SEND_KEY) replyAutosave.notSent(key);
@@ -1437,6 +1448,35 @@ export function useShellCompose({
   }
   /** Lanes whose last write the outbox took, until the mirror's row holds it. */
   const pendingLanes = useRef(new Set<string>());
+  /** The row version a lane's words are based on: held in memory, or stored beside the lane (a reload). */
+  const replyBaseOf = (lane: string, row: string): string | null => {
+    const held = replyRows.current.get(lane);
+    if (held?.row === row && held.rev) return held.rev;
+    const r = readReplyMeta(lane).row;
+    return r?.id === row ? r.rev ?? null : null;
+  };
+  /**
+   * THE LANE'S ROW MOVED ELSEWHERE: it holds the other version now, so the lane lets go of it, and it is
+   * never a seed or prior row to discard. A waiting edit of the lane's own the engine already kept as a
+   * new draft is the lane's row next, so one message stays two rows, never three.
+   */
+  const replyChanged = useStableCallback((lane: string, row: string) => {
+    replyRows.current.delete(lane);
+    if (replySeedDrafts.current.get(lane) === row) replySeedDrafts.current.delete(lane);
+    const prior = priorRows.current.get(lane);
+    if (prior !== undefined && (prior.id === row || prior.from === row)) priorRows.current.delete(lane);
+    const meta = readReplyMeta(lane);
+    const own = replyAutosave.waitedOf(lane);
+    const kept = (typeof engine.keptAsNewDrafts === "function" ? engine.keptAsNewDrafts() : [])
+      .filter((k) => k.from === row && k.row !== null && own.has(k.key)).at(-1);
+    if (kept?.row) {
+      const rev = kept.revision ?? engine.read().get<EngineDraft>("draft", kept.row)?.contentRevision ?? undefined;
+      replyRows.current.set(lane, { row: kept.row, seen: false, ...(rev ? { rev } : {}) });
+      const at = engine.read().get<EngineDraft>("draft", kept.row)?.updatedAt ?? "";
+      writeReplyMeta(lane, { ...meta, row: { id: kept.row, at, ...(rev ? { rev } : {}) } });
+    } else if (meta.row?.id === row) writeReplyMeta(lane, { ...meta, row: undefined });
+    replyAutosave.rebind(lane);
+  });
   const replyAutosave = useReplyAutosave(engine, replyForm, {
     rowOf: (lane) => laneRowOf(lane),
     // A send of this reply on its way, a row held for it, or a row it holds and may not write now.
@@ -1446,10 +1486,16 @@ export function useShellCompose({
       || heldReplyRow(lane) !== null
       || (replyRows.current.has(lane) && laneRowOf(lane) === null)
       || (unreadableRows.current.has(lane) && accountReplyRow(lane) !== null),
-    took: (lane, row, text, confirmed, made) => {
-      replyRows.current.set(lane, { row, seen: true });
-      const at = engine.read().get<EngineDraft>("draft", row)?.updatedAt;
+    baseOf: (lane, row) => replyBaseOf(lane, row),
+    changed: (lane, row) => replyChanged(lane, row),
+    forked: (_lane, kept) => { toast(t(kept ? "reply.changedElsewhere" : "reply.changedElsewhereUnsaved")); },
+    took: (lane, row, text, confirmed, made, revision) => {
+      const was = replyRows.current.get(lane);
       const meta = readReplyMeta(lane);
+      // A queued write keeps its base: the adapter moves it along this client's own saves when it lands.
+      const rev = confirmed ? revision : was?.row === row ? was.rev : meta.row?.id === row ? meta.row.rev : undefined;
+      replyRows.current.set(lane, { row, seen: true, ...(rev ? { rev } : {}) });
+      const at = engine.read().get<EngineDraft>("draft", row)?.updatedAt;
       const mine = made || (meta.row?.id === row && meta.row.made === true);
       // A queued write is not known to land: the row holds what it last confirmed, the write is pending.
       const holds = confirmed ? sigOf(text.trim()) : meta.row?.id === row ? meta.row.holds : undefined;
@@ -1460,7 +1506,7 @@ export function useShellCompose({
           ...meta,
           row: {
             id: row, at, ...(holds !== undefined ? { holds } : {}), ...(pending !== undefined ? { pending } : {}),
-            ...(mine ? { made: true as const } : {}),
+            ...(mine ? { made: true as const } : {}), ...(rev ? { rev } : {}),
           },
         });
       }
@@ -1486,8 +1532,14 @@ export function useShellCompose({
       const d = engine.store?.get?.<EngineDraft>("draft", row.id);
       if (d == null || d.body === null || sigOf(d.body.trim()) !== row.pending) continue;
       pendingLanes.current.delete(lane);
+      // The row holds the lane's words now: its version is their base.
+      const rev = d.contentRevision ?? row.rev;
+      const held = replyRows.current.get(lane);
+      if (held?.row === row.id && rev) held.rev = rev;
       writeReplyMeta(lane, {
-        ...readReplyMeta(lane), row: { id: row.id, at: d.updatedAt, holds: row.pending, ...(row.made ? { made: true as const } : {}) },
+        ...readReplyMeta(lane), row: {
+          id: row.id, at: d.updatedAt, holds: row.pending, ...(row.made ? { made: true as const } : {}), ...(rev ? { rev } : {}),
+        },
       });
     }
   }, [drafts]);
@@ -1675,6 +1727,8 @@ export function useShellCompose({
     const plan = replyEnvelopePlan(parent, ownAddresses, replyAll, replyEnvelope);
     // A row still held for this message is the hold's to judge, never a row to send from.
     const laneRow = heldReplyRow(messageId) === null ? laneRowOf(messageId) : null;
+    // The version the lane's words are based on: a row moved elsewhere refuses the send.
+    const laneBase = laneRow !== null ? replyBaseOf(messageId, laneRow) : null;
     // The text this press sends is not saved again, and a create still in the air is undone.
     const unseal = replyAutosave.seal(messageId);
     // Healthy: the dock closes once the send is on disk, and the sidebar's foot finishes it.
@@ -1686,6 +1740,7 @@ export function useShellCompose({
       inReplyTo: messageId,
       // THE ROW A REFUSED SEND LEFT, when this lane took one: sent again rather than made again.
       ...(laneRow !== null ? { draftId: laneRow } : {}),
+      ...(laneBase !== null ? { ifContentRevision: laneBase } : {}),
       // The PLAIN half in `body`, always — it is what `canSend` judges and what the
       // optimistic row shows. The markup, when there is any, goes in `html` and the adapter
       // sends it INSTEAD of `body`, so the recipient's plaintext part is the server's own
@@ -2064,70 +2119,83 @@ export function useShellCompose({
         toast(t("drafts.heldReopenBlocked"));
         return;
       }
-      setCompose(seeded);
-      /**
-       * A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved send (`compose.ts`),
-       * and leaving it in place made one session span every draft this surface opened: a send of the FIRST one that
-       * came back unverified then parked whichever draft replaced it, with the warning above a refused Send button.
-       * Cleared before the new buffer is written, so the next read of `composeSessionId` mints a fresh id. NOT for a
-       * parked row, and that exception is the whole of the defect above. Re-minting is what makes the reopened
-       * message a NEW one, and a new message is exactly what the record must not be told: both names it carries — the
-       * row and the session — would be off the message at once, the park could not recognise it, Send would light up,
-       * and one press would deliver a second copy under a fresh key. Measured end to end, recipient total 2.
-       */
-
-      /**
-       * `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot read its own record,
-       * so it cannot say the message is new either.
-       */
-      if (!parked) clearComposeDraft();
-      writeComposeDraft(seeded);
-      if (parked) {
+      const openSeeded = (): void => {
+        setCompose(seeded);
         /**
-         * The held message, reopened as itself. No new row, no re-minted session, nothing released and nothing
-         * deleted: the record still names this message, so `canSend` refuses the press and the surface shows the
-         * sentence that is true about it. Not adopted either, whatever the row's status: a row past `draft` refuses
-         * every PUT (`SendService` reserves only from `status='draft'`), and a row still at `draft` is deliberately
-         * not adopted, so this branch has ONE behaviour rather than two that differ by a status nobody on this path
-         * acts on.
+         * A DIFFERENT MESSAGE, SO A DIFFERENT COMPOSE SESSION. The id is what parks an unresolved send (`compose.ts`),
+         * and leaving it in place made one session span every draft this surface opened: a send of the FIRST one that
+         * came back unverified then parked whichever draft replaced it, with the warning above a refused Send button.
+         * Cleared before the new buffer is written, so the next read of `composeSessionId` mints a fresh id. NOT for a
+         * parked row, and that exception is the whole of the defect above. Re-minting is what makes the reopened
+         * message a NEW one, and a new message is exactly what the record must not be told: both names it carries — the
+         * row and the session — would be off the message at once, the park could not recognise it, Send would light up,
+         * and one press would deliver a second copy under a fresh key. Measured end to end, recipient total 2.
          */
 
         /**
-         * This is also where the recovery door used to be: a stranded `sending` row took a third branch that seeded
-         * the text into a FRESH row and sent that — invariant S(2) forbids it (the row whose send is most likely in
-         * flight is the last one to send again), and `holdOf` calls every non-`draft` status parked, so the branch is
-         * unreachable and gone rather than left as a dead arm.
+         * `unknown` keeps the session for the same reason, on weaker evidence: this browser cannot read its own record,
+         * so it cannot say the message is new either.
          */
+        if (!parked) clearComposeDraft();
+        writeComposeDraft(seeded);
+        if (parked) {
+          /**
+           * The held message, reopened as itself. No new row, no re-minted session, nothing released and nothing
+           * deleted: the record still names this message, so `canSend` refuses the press and the surface shows the
+           * sentence that is true about it. Not adopted either, whatever the row's status: a row past `draft` refuses
+           * every PUT (`SendService` reserves only from `status='draft'`), and a row still at `draft` is deliberately
+           * not adopted, so this branch has ONE behaviour rather than two that differ by a status nobody on this path
+           * acts on.
+           */
 
-        /**
-         * The identity is RESTORED, not merely left alone. "Left alone" was true only for the door the user came
-         * through immediately: any door in between (writing to a contact, a mail link) legitimately mints a new
-         * session, so the browser arrives back holding NEITHER of the record's names — the park was recognised but
-         * presented under a session the record never heard of: no warning, Send live, one press, a second copy. So
-         * both names go back: the record's own session (what `canSend` compares against), and the row, HELD
-         * (`writeComposeRow`) and not adopted — the composer takes no row, so nothing PUTs to it and a Discard cannot
-         * delete it, while the save effect's create block reads the held id and mints nothing beside it.
-         */
+          /**
+           * This is also where the recovery door used to be: a stranded `sending` row took a third branch that seeded
+           * the text into a FRESH row and sent that — invariant S(2) forbids it (the row whose send is most likely in
+           * flight is the last one to send again), and `holdOf` calls every non-`draft` status parked, so the branch is
+           * unreachable and gone rather than left as a dead arm.
+           */
 
-        /**
-         * `autosave.release()` first, because it clears the held row on its way past and would otherwise erase what
-         * is written next; a hold with no session of its own leaves the current session standing — it is named by its
-         * row, which is the id being held.
-         */
-        autosave.release();
-        writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id);
-        if (hold.kind === "parked" && hold.session != null) writeComposeSession(hold.session);
-      } else {
-        /* FREE, so it is an ordinary draft and it is adopted: the next autosave PATCHes the row
-           that was opened rather than creating a second one beside it. `holdOf` answers `free`
-           only for a row the mirror positively calls `draft`, so there is no second arm here for
-           a status this branch would have to decide about. */
-        // A letter whose first save is still on its way is bound by that create, never its local id.
-        if (handle.kind === "create") autosave.awaitCreate(handle.key, seeded);
-        else autosave.adopt(handle.id, seeded, handle.revision);
+          /**
+           * The identity is RESTORED, not merely left alone. "Left alone" was true only for the door the user came
+           * through immediately: any door in between (writing to a contact, a mail link) legitimately mints a new
+           * session, so the browser arrives back holding NEITHER of the record's names — the park was recognised but
+           * presented under a session the record never heard of: no warning, Send live, one press, a second copy. So
+           * both names go back: the record's own session (what `canSend` compares against), and the row, HELD
+           * (`writeComposeRow`) and not adopted — the composer takes no row, so nothing PUTs to it and a Discard cannot
+           * delete it, while the save effect's create block reads the held id and mints nothing beside it.
+           */
+
+          /**
+           * `autosave.release()` first, because it clears the held row on its way past and would otherwise erase what
+           * is written next; a hold with no session of its own leaves the current session standing — it is named by its
+           * row, which is the id being held.
+           */
+          autosave.release();
+          writeComposeRow(hold.kind === "parked" ? hold.draftId ?? d.id : d.id);
+          if (hold.kind === "parked" && hold.session != null) writeComposeSession(hold.session);
+        } else {
+          /* FREE, so it is an ordinary draft and it is adopted: the next autosave PATCHes the row
+             that was opened rather than creating a second one beside it. `holdOf` answers `free`
+             only for a row the mirror positively calls `draft`, so there is no second arm here for
+             a status this branch would have to decide about. */
+          // A letter whose first save is still on its way is bound by that create, never its local id.
+          if (handle.kind === "create") autosave.awaitCreate(handle.key, seeded);
+          else autosave.adopt(handle.id, seeded, handle.revision);
+        }
+        composeSeeded.current = true;
+        go("compose");
+      };
+      /* WORDS ON SCREEN NO SAVE HOLDS (a refused save): the composer's own save goes first. Still unheld,
+         the row they are bound to opens with them on screen, and another row is not opened over them. */
+      if (!parked && reopenWouldOverwrite(composeRef.current, seeded)) {
+        void autosave.flush().then(() => {
+          if (autosave.holdsOnScreen()) openSeeded();
+          else if (readComposeRow() === d.id) { composeSeeded.current = true; go("compose"); }
+          else toast(t("drafts.reopenBlockedUnsaved"));
+        });
+        return;
       }
-      composeSeeded.current = true;
-      go("compose");
+      openSeeded();
     },
   );
   /**
@@ -2319,95 +2387,113 @@ export function useShellCompose({
         return;
       }
       const draftId = handle?.kind === "row" ? handle.id : listed;
-      /**
-       * THE LIST'S DELETE ASKS THE HOLD, AND THE SERVER DECIDES. `discardDecision` keeps two refusals
-       * on this side — a row still `sending`, a jar this browser cannot read — each rendered in the
-       * row. Every other hold goes to the wire: the server admits the discard of an `unverified` row
-       * and refuses a running send by name (409 `send_recorded`), which comes back as the same
-       * rendered sentence. THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING —
-       * `openDraft`'s rule: passing it unconditionally would park every draft behind one send.
-       */
-      const heldRow = readComposeRow();
-      const hold = holdOf(engine, {
-        lane: COMPOSE_SEND_KEY,
-        draftId,
-        session: heldRow !== null && heldRow === draftId ? composeSessionId() : null,
-      });
-      const decision = discardDecision(hold);
-      if (decision.kind === "refuse") {
-        setDiscardRefusal({ draftId, why: decision.why, at: Date.now() });
-        return;
-      }
-      /* DISCARD DISCARDS: every editor holding this row is emptied before the request goes, its
-         stored copy too, or the words come back on the next Compose, Reply or reload. A refusal
-         below leaves the row in Drafts, where it can be opened again. */
-      // Read before the emptying spends the session, for the release once the server answers.
-      const session = heldRow !== null && heldRow === draftId ? composeSessionId() : null;
-      emptyEditorsOf(draftId, heldRow);
-      // THIS PAGE'S OWN DELETE: its tombstone may land before the answer lets go of the editor.
-      ownDraftDiscard(draftId, true);
-      let queued = false;
-      void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
-        queued = res.status === "queued";
-        if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
-          // A send still running, said by the server under its row lock: the row stays, and says why.
-          setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() });
+      const discardRow = (withdrew: boolean): void => {
+        /**
+         * THE LIST'S DELETE ASKS THE HOLD, AND THE SERVER DECIDES. `discardDecision` keeps two refusals
+         * on this side — a row still `sending`, a jar this browser cannot read — each rendered in the
+         * row. Every other hold goes to the wire: the server admits the discard of an `unverified` row
+         * and refuses a running send by name (409 `send_recorded`), which comes back as the same
+         * rendered sentence. THE SESSION IS ASKED ABOUT ONLY FOR THE ROW THIS COMPOSE IS HOLDING —
+         * `openDraft`'s rule: passing it unconditionally would park every draft behind one send.
+         */
+        const heldRow = readComposeRow();
+        const hold = holdOf(engine, {
+          lane: COMPOSE_SEND_KEY,
+          draftId,
+          session: heldRow !== null && heldRow === draftId ? composeSessionId() : null,
+        });
+        const decision = discardDecision(hold);
+        if (decision.kind === "refuse") {
+          setDiscardRefusal({ draftId, why: decision.why, at: Date.now() });
           return;
         }
-        /**
-         * EVERY OTHER ENDING SAYS WHY, AND THE SWITCH IS TOTAL. `if (res.status !== "confirmed") return;`
-         * stood here and swallowed three of the four endings while the engine had already put the row
-         * back with the rejection's own sentence on the result for this surface to say. The `never` arm
-         * is the point: a fourth answer cannot be added without this site being made to answer for it.
-         * It switches on the VERDICT, because `pressVerdict` is the one place the statuses are read.
-         */
-        const v = pressVerdict(res);
-        switch (v.kind) {
-          case "refused": {
-            /* The engine dropped the overlay and the row is back (`engine.ts` — "the local effect rolls
-               back VISIBLY, once"). The server's sentence is quoted, `scheduleFailedNote`'s treatment:
-               `conflict` names cancelling the schedule, and a 403/500 names itself. */
-            const reason = v.refusal?.message?.trim();
-            toast(reason
-              ? t("drafts.discardRefused", { reason })
-              : t("drafts.discardRefusedUnnamed"));
+        /* DISCARD DISCARDS: every editor holding this row is emptied before the request goes, its
+           stored copy too, or the words come back on the next Compose, Reply or reload. A refusal
+           below leaves the row in Drafts, where it can be opened again. */
+        // Read before the emptying spends the session, for the release once the server answers.
+        const session = heldRow !== null && heldRow === draftId ? composeSessionId() : null;
+        emptyEditorsOf(draftId, heldRow);
+        // THIS PAGE'S OWN DELETE: its tombstone may land before the answer lets go of the editor.
+        ownDraftDiscard(draftId, true);
+        let queued = false;
+        void engine.mutate({ kind: "draft_discard", draftId }).then((res) => {
+          queued = res.status === "queued";
+          if (res.status === "rolled_back" && res.error?.code === "send_recorded") {
+            // A send still running, said by the server under its row lock: the row stays, and says why.
+            setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() });
             return;
           }
-          case "queued":
-            /* `retry`: the overlay is KEPT and the verb replays under the same key, so the row is gone
-               here and not there. `organizer`: the optimistic paint went back, so the row is on screen
-               and the request is recorded for whichever install organizes this mailbox. Told as
-               "not yet" either way, never as done. */
-            toast(v.wait === "organizer" ? t("drafts.discardAwaitingOrganizer") : t("drafts.discardQueued"));
-            return;
-          case "applied":
-            break;
-          case "silent":
-            // A newer press about this draft owns the sentence.
-            return;
-          default: {
-            /* The gate is the BINDING, evaluated by `tsc`: a fourth `PressVerdict` makes this line
-               a type error at this site. The toast is only the belt for a build that got past it,
-               and it is the most conservative of the sentences rather than one nobody can reach —
-               a state the product cannot enter is a state no guard can be watched fail in. */
-            const unhandled: never = v;
-            void unhandled;
-            toast(t("drafts.discardRefusedUnnamed"));
-            return;
+          /**
+           * EVERY OTHER ENDING SAYS WHY, AND THE SWITCH IS TOTAL. `if (res.status !== "confirmed") return;`
+           * stood here and swallowed three of the four endings while the engine had already put the row
+           * back with the rejection's own sentence on the result for this surface to say. The `never` arm
+           * is the point: a fourth answer cannot be added without this site being made to answer for it.
+           * It switches on the VERDICT, because `pressVerdict` is the one place the statuses are read.
+           */
+          const v = pressVerdict(res);
+          switch (v.kind) {
+            case "refused": {
+              /* The engine dropped the overlay and the row is back (`engine.ts` — "the local effect rolls
+                 back VISIBLY, once"). The server's sentence is quoted, `scheduleFailedNote`'s treatment:
+                 `conflict` names cancelling the schedule, and a 403/500 names itself. */
+              const reason = v.refusal?.message?.trim();
+              toast(reason
+                ? t("drafts.discardRefused", { reason })
+                : t("drafts.discardRefusedUnnamed"));
+              return;
+            }
+            case "queued":
+              /* `retry`: the overlay is KEPT and the verb replays under the same key, so the row is gone
+                 here and not there. `organizer`: the optimistic paint went back, so the row is on screen
+                 and the request is recorded for whichever install organizes this mailbox. Told as
+                 "not yet" either way, never as done. */
+              toast(v.wait === "organizer" ? t("drafts.discardAwaitingOrganizer") : t("drafts.discardQueued"));
+              return;
+            case "applied":
+              if (withdrew) toast(t("drafts.discardedNotSent"));
+              break;
+            case "silent":
+              // A newer press about this draft owns the sentence.
+              return;
+            default: {
+              /* The gate is the BINDING, evaluated by `tsc`: a fourth `PressVerdict` makes this line
+                 a type error at this site. The toast is only the belt for a build that got past it,
+                 and it is the most conservative of the sentences rather than one nobody can reach —
+                 a state the product cannot enter is a state no guard can be watched fail in. */
+              const unhandled: never = v;
+              void unhandled;
+              toast(t("drafts.discardRefusedUnnamed"));
+              return;
+            }
           }
+          // The row's life ends; the block state keyed to it goes with it — and so does the durable
+          // record this browser held for it: the server has answered for the row, so the jar entry
+          // leaves by the one door, once (`resolveHeldSend`'s latch, for its reason).
+          if (!resolvedRows.current.has(draftId)) {
+            resolvedRows.current.add(draftId);
+            releaseSendLockForRow(COMPOSE_SEND_KEY, draftId, session, sendLockOwed(engine));
+          }
+          writeReplyMeta(`draft:${draftId}`, {});
+        }).then(() => {
+          // Forgotten once the answer above has been handled; a queued delete is still this page's.
+          if (!queued) ownDraftDiscard(draftId, false);
+        });
+      };
+      /* A SEND WAITING ON THIS ROW IS CANCELLED FIRST: a row deleted under it left the send to fail on its
+         next try. On its way, or a Cancel nobody could confirm, nothing is deleted. */
+      const waiting = (typeof engine.waitingSends === "function" ? engine.waitingSends() : [])
+        .filter((w) => w.draftId === draftId || (w.draftId === null && w.paintId === listed));
+      if (waiting.length === 0) { discardRow(false); return; }
+      void (async () => {
+        for (const w of waiting) {
+          const said = await mailSend.withdrawKey(w.key);
+          if (said === "already_sent") { setDiscardRefusal({ draftId, why: "still-sending", at: Date.now() }); return; }
+          if (said !== "close") { setDiscardRefusal({ draftId, why: "cancel-unknown", at: Date.now() }); return; }
         }
-        // The row's life ends; the block state keyed to it goes with it — and so does the durable
-        // record this browser held for it: the server has answered for the row, so the jar entry
-        // leaves by the one door, once (`resolveHeldSend`'s latch, for its reason).
-        if (!resolvedRows.current.has(draftId)) {
-          resolvedRows.current.add(draftId);
-          releaseSendLockForRow(COMPOSE_SEND_KEY, draftId, session, sendLockOwed(engine));
-        }
-        writeReplyMeta(`draft:${draftId}`, {});
-      }).then(() => {
-        // Forgotten once the answer above has been handled; a queued delete is still this page's.
-        if (!queued) ownDraftDiscard(draftId, false);
-      });
+        // A send with no row of its own: nothing is left to delete.
+        if (waiting.every((w) => w.draftId === null)) { toast(t("drafts.discardedNotSent")); return; }
+        discardRow(true);
+      })();
     },
   );
   /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
@@ -2664,26 +2750,37 @@ export function useShellCompose({
          browser can find, the row sits in Drafts looking ordinary, and reopening it takes the
          ordinary door with Send live. Binding the row the surface is holding onto the record
          first leaves the park reachable by ROW, which is the name that survives every door. */
-      const outgoing = readComposeRow();
-      const held = holdOf(engine, {
-        lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
-      });
-      if (held.kind === "parked" && held.session !== null) {
-        attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
+      const openNew = (): void => {
+        const outgoing = readComposeRow();
+        const held = holdOf(engine, {
+          lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(),
+        });
+        if (held.kind === "parked" && held.session !== null) {
+          attachSendLockDraft(COMPOSE_SEND_KEY, [`compose:${held.session}`], outgoing);
+        }
+        autosave.release();
+        setCompose(seeded);
+        // A NEW message, so a new compose session — see `openDraft` and `compose.ts`. Without it
+        // this message inherited the identity of whatever the form last held, and an unresolved
+        // send of THAT message parked this one: the unconfirmed warning, and Send refused, over a
+        // message nobody had ever pressed Send on.
+        clearComposeDraft();
+        writeComposeDraft(seeded);
+        // An open inline reply would otherwise sit under the compose the route change opens —
+        // one editor at a time.
+        setReplyTo(null);
+        composeSeeded.current = true;
+        go("compose");
+      };
+      // Words on screen no save holds are not replaced: `openDraft`'s rule.
+      if (reopenWouldOverwrite(composeRef.current, seeded)) {
+        void autosave.flush().then(() => {
+          if (!autosave.holdsOnScreen()) { toast(t("drafts.reopenBlockedUnsaved")); return; }
+          openNew();
+        });
+        return;
       }
-      autosave.release();
-      setCompose(seeded);
-      // A NEW message, so a new compose session — see `openDraft` and `compose.ts`. Without it
-      // this message inherited the identity of whatever the form last held, and an unresolved
-      // send of THAT message parked this one: the unconfirmed warning, and Send refused, over a
-      // message nobody had ever pressed Send on.
-      clearComposeDraft();
-      writeComposeDraft(seeded);
-      // An open inline reply would otherwise sit under the compose the route change opens —
-      // one editor at a time.
-      setReplyTo(null);
-      composeSeeded.current = true;
-      go("compose");
+      openNew();
     },
   );
 

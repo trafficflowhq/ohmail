@@ -65,10 +65,11 @@ const SHELL = (f: string): string =>
  */
 const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
   // FIVE: the open editor reads the hold of its own row — a `sent` with no record of this
-  // browser's is another device's send, and the editor lets go of the row and says so.
-  ["compose-autosave.ts", 5,
-    "the adopt-on-mount, the save at SCHEDULE time, the save at FIRE time, Discard, and the open "
-    + "editor's sent-elsewhere read"],
+  // browser's is another device's send, and the editor lets go of the row and says so. SIX: a door
+  // asks whether a held send keeps the words on screen before it opens another draft over them.
+  ["compose-autosave.ts", 6,
+    "the adopt-on-mount, the save at SCHEDULE time, the save at FIRE time, Discard, the open "
+    + "editor's sent-elsewhere read, and the words-on-screen read a door asks before replacing them"],
   ["mail-send.ts", 1, "the Send press"],
   // FIVE, THEN SIX, THEN SEVEN — each step is a DOOR, never a second answer to one question.
   // `openDraft`'s hold was HOISTED above the reply arm rather than duplicated, so the Drafts-list
@@ -103,7 +104,7 @@ const CALL_SITES: Array<[file: string, count: number, sites: string]> = [
 ];
 
 /** The SUM, apart from the rows: a split that loses part of a count cannot pass on the rows alone. */
-const CALL_SITES_TOTAL = 19;
+const CALL_SITES_TOTAL = 20;
 
 describe("the send hold is answered in one place, and every write site asks", () => {
   it("(a) the call-site count per file", () => {

@@ -1436,7 +1436,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
     notifications, allOhbox, participantsOf, threadCountOf, threadMarksOf, threadSubjectOf, fallbackMailboxId,
-    drafts, scheduled,
+    drafts, scheduled, waitingRows,
   } = useShellDerivations({
     engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
     deleting, restoring, routing,
@@ -3195,6 +3195,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onCancelSchedule={cancelSchedule}
                 onEditScheduled={editScheduled}
                 repliesHere={draftRepliesHere}
+                waiting={waitingRows}
               />
             ) : null}
 

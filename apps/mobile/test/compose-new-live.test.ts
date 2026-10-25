@@ -187,7 +187,7 @@ describe("the composer and the three navigation entries, in the structure idiom"
     // And the writing area asks for a message, not a reply, when there is nothing to answer.
     expect(sheet).toMatch(/const bodyPlaceholder = fresh\s*\?\s*Copy\.composeBodyPlaceholder/);
     expect(sheet).toContain("Copy.composeSubject");
-    expect(sheet).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)");
+    expect(sheet).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId))");
   });
 
   it("every navigation entry opens the one route — dock, rail, the iOS pane foot", () => {

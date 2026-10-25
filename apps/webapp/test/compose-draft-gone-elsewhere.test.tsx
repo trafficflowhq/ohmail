@@ -12,7 +12,7 @@ import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { composeSessionId, handOffComposer, readComposeDraft, readComposeRow, resetComposerForTest } from "../app/shell/compose";
 import { COMPOSE_SEND_KEY } from "../app/shell/mail-send";
 import { claimSendLock, SEND_LOCK_FORMAT, type SendLock } from "../app/shell/send-lock";
-import { act, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
+import { act, message, mountShell, NOW, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
 
 const compose = messages.compose as unknown as Record<string, string>;
 const drafts = messages.drafts as unknown as Record<string, string>;
@@ -662,4 +662,145 @@ describe("a draft changed on another device while it is open here", () => {
     expect({ rows: rows(saves()), says: text().includes(compose.changedElsewhere ?? "\u0000") })
       .toEqual({ rows: [{ row: D, subject: "Plans for Friday, once" }, { row: D, subject: "Plans for Friday, twice" }], says: false });
   }, 30_000);
+});
+
+describe("a save refused, then a draft opened from Drafts", () => {
+  const B = "d-other";
+  const other = letter({ id: B, subject: "Invoice" });
+  const TYPED = "Plans for Friday, typed here";
+  const field = (): string | null => q<HTMLInputElement>("#compose-subject")?.value ?? null;
+  async function openRow(id: string): Promise<void> {
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await waitFor(() => q(`.draft-row[data-id="${id}"] .draft-open`) !== null, `${id} in Drafts`);
+    await press(q(`.draft-row[data-id="${id}"] .draft-open`), `open ${id}`);
+    await pause(300);
+  }
+  /** The letter open here, and a save of these words the account refused for good. */
+  async function refused(opts: { versions?: boolean } = {}): Promise<void> {
+    shell = await mountShell("#/drafts", [], [letter(), other], opts);
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    shell.refuseSave.add(D);
+    await typeSubject(TYPED);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => text().includes(compose.draftNotSaved!), "the refusal said", 60);
+  }
+
+  it("the same row: the words on screen stay, in the field and in the buffer", async () => {
+    await refused();
+    await openRow(D);
+    expect({ field: field(), buffer: readComposeDraft().subject }).toEqual({ field: TYPED, buffer: TYPED });
+  }, 60_000);
+
+  it("another row: not opened over them, and it says why", async () => {
+    await refused();
+    await openRow(B);
+    const toast = [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+    expect({ buffer: readComposeDraft().subject, said: toast.includes(drafts.reopenBlockedUnsaved!) }).toEqual({ buffer: TYPED, said: true });
+  }, 60_000);
+
+  for (const target of [D, B]) {
+    it(`a save queued offline and refused when it lands, then ${target === D ? "the same row" : "another row"} opened: the words stay`, async () => {
+      shell = await mountShell("#/drafts", [], [letter(), other]);
+      await openRow(D);
+      await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+      shell.offline.on = true;
+      await typeSubject(TYPED);
+      await pause(AUTOSAVE_DELAY_MS + 400);
+      shell.refuseSave.add(D);
+      shell.offline.on = false;
+      await act(async () => { window.dispatchEvent(new Event("online")); await shell.engine.flushPending().catch(() => undefined); });
+      await pause(300);
+      await openRow(target);
+      const toast = [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+      expect({ buffer: readComposeDraft().subject, said: toast.includes(drafts.reopenBlockedUnsaved!) })
+        .toEqual({ buffer: TYPED, said: target === B });
+      if (target === D) expect(field()).toBe(TYPED);
+    }, 60_000);
+  }
+
+  it("a save still on its way: the reopen shows the newest words (the control)", async () => {
+    shell = await mountShell("#/drafts", [], [letter(), other]);
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    let land!: () => void;
+    shell.saveGate.wait = new Promise<void>((r) => { land = r; });
+    await typeSubject(TYPED);
+    await pause(AUTOSAVE_DELAY_MS + 200);
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await waitFor(() => q(`.draft-row[data-id="${D}"] .draft-open`) !== null, "the letter in Drafts");
+    await press(q(`.draft-row[data-id="${D}"] .draft-open`), "open it again");
+    await act(async () => { shell.saveGate.wait = null; land(); });
+    await pause(300);
+    expect({ field: field(), buffer: readComposeDraft().subject }).toEqual({ field: TYPED, buffer: TYPED });
+  }, 60_000);
+
+  it("the row changed elsewhere: the words become a new draft, and the row opens with the other version (the control)", async () => {
+    shell = await mountShell("#/drafts", [], [letter(), other], { versions: true });
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    await shell.editElsewhere(D, { subject: "Their plans" });
+    await sync();
+    await typeSubject(TYPED);
+    await openRow(D);
+    await waitFor(() => field() === "Their plans", "the other version on screen", 60);
+    expect(rows(saves()).filter((m) => m.row === null)).toEqual([{ row: null, subject: TYPED }]);
+  }, 60_000);
+
+  it("saved words, the row changed elsewhere since: reopening it shows the other version (the control)", async () => {
+    shell = await mountShell("#/drafts", [], [letter(), other], { versions: true });
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    await typeSubject(TYPED);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await shell.editElsewhere(D, { subject: "Their plans" });
+    await sync();
+    await openRow(D);
+    await waitFor(() => field() === "Their plans", "the other version on screen", 60);
+  }, 60_000);
+
+  it("saved words open another row as before (the control)", async () => {
+    shell = await mountShell("#/drafts", [], [letter(), other]);
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    await typeSubject(TYPED);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await openRow(B);
+    await waitFor(() => field() === "Invoice", "the other row opened", 60);
+  }, 60_000);
+
+  it("a held letter does not keep another draft from opening (the control)", async () => {
+    shell = await mountShell("#/drafts", [], [letter(), other]);
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    Object.assign(shell.refuseSend, { on: true, unverified: true });
+    await press(button("Send"), "Send");
+    await waitFor(() => text().includes(compose.statusUnverified!), "the send held", 60);
+    await openRow(B);
+    await waitFor(() => field() === "Invoice", "the other row opened", 60);
+  }, 60_000);
+
+  it("Write to a contact over refused words is refused too", async () => {
+    const m1 = message("m1", { to: [{ address: "me@example.invalid", name: "Me" }, { address: "kim@example.invalid", name: "Kim Lee" }] } as never);
+    shell = await mountShell("#/drafts", [m1], [letter(), other]);
+    await openRow(D);
+    await waitFor(() => field() === "Plans for Friday", "the editor on the letter");
+    shell.refuseSave.add(D);
+    await typeSubject(TYPED);
+    await pause(AUTOSAVE_DELAY_MS + 400);
+    await waitFor(() => text().includes(compose.draftNotSaved!), "the refusal said", 60);
+    await act(async () => { window.location.hash = "#/ohbox"; });
+    await waitFor(() => q(".view-ohbox .row[data-id='m1']") != null, "the row m1");
+    await press(q(".view-ohbox .row[data-id='m1']"), "the row m1");
+    const click = async (node: Element | undefined): Promise<void> => {
+      await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    };
+    const kim = (): Element | undefined => [...shell.el.querySelectorAll(".rcpt-chip")].find((c) => (c.textContent ?? "").includes("Kim"));
+    await waitFor(() => kim() !== undefined, "Kim's chip");
+    await click(kim());
+    await waitFor(() => q(".cpop") != null, "the contact popover");
+    await click([...shell.el.querySelectorAll('.cpop [role="menuitem"]')].find((i) => (i.textContent ?? "").includes("Write")));
+    await pause(300);
+    expect({ buffer: readComposeDraft().subject, to: readComposeDraft().to.includes("kim@") }).toEqual({ buffer: TYPED, to: false });
+  }, 60_000);
 });

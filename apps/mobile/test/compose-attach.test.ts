@@ -236,8 +236,9 @@ describe("the sheet's wiring (source, not render — this workspace has no RN re
        `files` from one arm is still the red it always was. `sendNew` has no source to finish,
        so it carries no flag. */
     expect(COMPOSER).toContain("w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,");
+    expect(COMPOSER).toContain("forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {}, baseFor(base.current, draftId), waitedFor(base.current, draftId))");
     expect(COMPOSER).toContain('w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId)');
-    expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)");
+    expect(COMPOSER).toContain("w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined, baseFor(base.current, draftId), waitedFor(base.current, draftId))");
   });
 
   it("a Send that lacks only content stays pressable and the press earns the sentence", () => {
