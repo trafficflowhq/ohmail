@@ -1276,6 +1276,49 @@ describe("access — the price card", () => {
   });
 });
 
+/** THE TRIAL'S STORAGE FLOOR (2026-10-24): the plan's own limit and when it applies again ride the verdict. */
+describe("access — the trialStorage block", () => {
+  const withCarry = (trialStorage: unknown): Record<string, unknown> => {
+    const body = wire("access-200-trialing") as Record<string, unknown> & { entitlements: Record<string, unknown> };
+    return { ...body, entitlements: { ...body.entitlements, storageBytesLimit: 4_000_000_000 }, trialStorage };
+  };
+
+  it("is carried beside the limits: the plan's own limit, and the instant it applies again or null", async () => {
+    for (const until of ["2026-11-08T12:00:00.000Z", null]) {
+      const c = client([{ status: 200, body: withCarry({ planBytesLimit: 2_000_000_000, until }) }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok && v.limits.storageBytes).toBe(4_000_000_000);
+      expect(v.ok && v.trialStorage).toEqual({ planBytesLimit: 2_000_000_000, until });
+      expect(c.faults).toEqual([]);
+    }
+  });
+
+  it("absent or null is no carry, and no drift", async () => {
+    for (const body of [wire("access-200-trialing"), withCarry(null)]) {
+      const c = client([{ status: 200, body }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok).toBe(true);
+      expect("trialStorage" in v).toBe(false);
+      expect(c.faults).toEqual([]);
+    }
+  });
+
+  for (const [what, block, field] of [
+    ["a string limit", { planBytesLimit: "2000000000", until: null }, "trialStorage.planBytesLimit"],
+    ["a negative limit", { planBytesLimit: -1, until: null }, "trialStorage.planBytesLimit"],
+    ["an unreadable instant", { planBytesLimit: 2_000_000_000, until: "soon" }, "trialStorage.until"],
+    ["a block that is not an object", [2_000_000_000], "trialStorage"],
+  ] as const) {
+    it(`${what} is a drift, named, read as no carry — and the access verdict stands`, async () => {
+      const c = client([{ status: 200, body: withCarry(block) }]);
+      const v = await c.port.access(ACC);
+      expect(v.ok && v.limits.storageBytes).toBe(4_000_000_000);
+      expect("trialStorage" in v).toBe(false);
+      expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field }]);
+    });
+  }
+});
+
 describe("`aiPricing` — /health's reading of where a quote's price comes from", () => {
   it("probes ONCE, for the nil account, and latches `plane` when the answer carries the card", async () => {
     const c = client([{ status: 200, body: wire("access-200-active") }]);

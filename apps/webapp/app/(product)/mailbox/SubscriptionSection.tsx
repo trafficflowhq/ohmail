@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
 import { account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
-import { formatStorageBytes, storageKeptLine, storageState } from "../../shell/storage-state";
+import { formatStorageBytes, storageKeptLine, storageState, storageTrimRecorded } from "../../shell/storage-state";
 import { SELF_HOST_BUILD } from "../../hello";
 import { readOwner } from "../../shell/owner-cookie";
 
@@ -32,7 +32,10 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
      that arrived while the storage was full; those alone say that the letters stay on the server. */
   const kept = storage !== null && said?.kind === "emptied" ? storageKeptLine(storage, lang) : null;
   const emptiedLine = said?.kind === "emptied" ? [
-    said.count > 0 ? t(said.current ? "webStorageEmptied" : "webStorageEmptiedBefore", { count: said.count }) : null,
+    // A count with no recorded trim is said plainly: not which letters, not under which cap.
+    said.count === 0 ? null : !storageTrimRecorded(storage!)
+      ? t("webStorageNotStored", { count: said.count })
+      : t(said.current ? "webStorageEmptied" : "webStorageEmptiedBefore", { count: said.count }),
     kept === null ? null : t(kept.key, kept.values),
     said.count > 0 ? null : t("storageNoticeSafe"),
   ].filter((line) => line !== null).join(" ") : null;

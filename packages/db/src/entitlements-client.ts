@@ -1,6 +1,7 @@
 import {
   AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
+  type TrialStorageCarry,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
@@ -332,6 +333,23 @@ function pricesOf(raw: unknown): ActionPrices | null | { bad: string } {
   return card;
 }
 
+/**
+ * The `trialStorage` block: absent or null is no carry. One that cannot be read is a drift, named,
+ * and reads as no carry; the limit beside it already holds the floor, so the verdict stands.
+ */
+function trialStorageOf(raw: unknown): TrialStorageCarry | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const t = obj(raw);
+  if (!t) return { bad: "trialStorage" };
+  const limit = t.planBytesLimit;
+  if (typeof limit !== "number" || !Number.isFinite(limit) || limit < 0) return { bad: "trialStorage.planBytesLimit" };
+  const until = t.until ?? null;
+  if (until !== null && (typeof until !== "string" || !Number.isFinite(Date.parse(until)))) {
+    return { bad: "trialStorage.until" };
+  }
+  return { planBytesLimit: limit, until };
+}
+
 /** The program's five spend verdicts. `fault` is never one of them — see {@link SpendOutcome}. */
 function spendOf(body: unknown): SpendOutcome | { bad: string } {
   const b = obj(body);
@@ -526,7 +544,12 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         if (card !== null && "bad" in card) named("/v1/access", res.status, card.bad);
         const priced = card !== null && !("bad" in card);
         if (priced) pricesStated = true;
-        const verdict: AccessVerdict = read.ok && priced ? { ...read, prices: card } : read;
+        const carry = read.ok ? trialStorageOf(obj(res.body)?.trialStorage) : null;
+        if (carry !== null && "bad" in carry) named("/v1/access", res.status, carry.bad);
+        const carried = carry !== null && !("bad" in carry);
+        const verdict: AccessVerdict = read.ok
+          ? { ...read, ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}) }
+          : read;
         const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
         // A call that began earlier and answered later never replaces a newer verdict.
         const prev = cache.get(accountId);

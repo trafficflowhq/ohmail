@@ -419,7 +419,7 @@ describe("the offer after a failed read", () => {
 describe("the emptied-text notice on the Cloud door", () => {
   const EMPTIED = {
     usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
-    firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04",
+    firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", emptyingNow: true,
   };
   const withStorage = (storage: unknown, state = "trialing"): { status: number; body: string } => ({
     status: 200,
@@ -444,7 +444,7 @@ describe("the emptied-text notice on the Cloud door", () => {
   it("the cap is crossed while the window is open: a return after the quiet floor draws it", async () => {
     globalThis.localStorage.clear();
     localStorage.setItem("ohmail.access.mbx-1", "open");
-    access = withStorage({ ...EMPTIED, usedBytes: 1_990_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null });
+    access = withStorage({ ...EMPTIED, usedBytes: 1_700_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null });
     await open(CLOUD_SERVING);
     expect(notice()).toBeNull();
     const before = enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length;
@@ -476,14 +476,14 @@ describe("the emptied-text notice on the Cloud door", () => {
     globalThis.localStorage.clear();
   });
 
-  it("a standalone install and an answer with nothing emptied draw nothing", async () => {
+  it("a standalone install and an answer below ninety percent with nothing emptied draw nothing", async () => {
     globalThis.localStorage.clear();
     access = withStorage(EMPTIED);
     await open(LOCAL_SERVING);
     expect(notice()).toBeNull();
     await act(async () => { root!.unmount(); });
     mountPoint!.remove();
-    access = withStorage({ ...EMPTIED, emptiedForSpace: 0 });
+    access = withStorage({ ...EMPTIED, usedBytes: 1_700_000_000, emptiedForSpace: 0 });
     await open(CLOUD_SERVING);
     expect(notice()).toBeNull();
   });

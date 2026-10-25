@@ -3006,6 +3006,9 @@ const TABLE = {
     `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
   storageNoticeEmptiedBefore: (count: number) =>
     `To stay within your plan's storage at the time, ohmail stopped storing the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
+  /** A count with no recorded trim: not which letters, not under which cap. */
+  storageNoticeNotStored: (count: number) =>
+    `The text of ${count === 1 ? "one letter is" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters is`} not stored here.`,
   storageNoticeKeptFrom: (month: string) => `Text is kept for letters from ${month} on.`,
   /** The month's sentence with the letters that arrived while the storage was full excepted. */
   storageNoticeKeptFromExcept: (month: string, count: number) =>
@@ -3016,9 +3019,22 @@ const TABLE = {
       ? "One letter that arrived while your storage was full is stored without its text."
       : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that arrived while your storage was full are stored without their text.`,
   storageNoticeSafe: "Those letters stay complete in your mailbox on your mail server, and stay listed and findable here.",
-  storageNoticeTrial: "A bigger plan keeps more text from now on. It does not bring back text that was already emptied.",
-  storageNoticeActive:
-    "A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.",
+  /** Near the cap and at it before any text is emptied: the web's Settings sentences. */
+  storageNoticeNear:
+    "Storage is nearly full. When it is full, ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
+  storageNoticeFull:
+    "Storage is full. ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
+  /** Inside the trial's 4 GB floor: when the plan's own limit applies, dated or not yet. */
+  storageNoticeCarry: (date: string, limit: string, cap: string) =>
+    `Until ${date}, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
+  storageNoticeCarryUnpaid: (limit: string, cap: string) =>
+    `Until 14 days after your first payment, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
+  /** What keeps more text: by subscription, and on the largest plan the add-on alone. */
+  storageOfferTrial: "A bigger plan keeps more text from now on.",
+  storageOfferTrialTop: "Once your subscription is paid, the storage add-on keeps more text from now on.",
+  storageOfferActive: "A bigger plan or the storage add-on keeps more text from now on.",
+  storageOfferActiveTop: "The storage add-on keeps more text from now on.",
+  storageNoticeNoRestore: "It does not bring back text that was already emptied.",
   storageNoticeManage: "Manage subscription",
   storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one

@@ -2076,6 +2076,8 @@ export const DE: Deck = {
     `Damit die ${cap} GB deines Tarifs reichen, speichert ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr.`,
   storageNoticeEmptiedBefore: (count: number) =>
     `Damit der Speicher deines Tarifs damals reichte, hat ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr gespeichert.`,
+  storageNoticeNotStored: (count: number) =>
+    `Der Text ${count === 1 ? "einer Nachricht" : `von ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten`} ist hier nicht gespeichert.`,
   storageNoticeKeptFrom: (month: string) => `Für Nachrichten ab ${month} bleibt der Text gespeichert.`,
   storageNoticeKeptFromExcept: (month: string, count: number) =>
     `Für Nachrichten ab ${month} bleibt der Text gespeichert, außer bei ${count === 1 ? "einer Nachricht, die ankam" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen`}, als dein Speicher voll war.`,
@@ -2084,9 +2086,19 @@ export const DE: Deck = {
       ? "Eine Nachricht, die ankam, als dein Speicher voll war, ist ohne ihren Text gespeichert."
       : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen, als dein Speicher voll war, sind ohne ihren Text gespeichert.`,
   storageNoticeSafe: "Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver und bleiben hier gelistet und auffindbar.",
-  storageNoticeTrial: "Ein größerer Tarif speichert ab jetzt mehr Text. Bereits entfernten Text bringt er nicht zurück.",
-  storageNoticeActive:
-    "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text. Bereits entfernten Text bringt das nicht zurück.",
+  storageNoticeNear:
+    "Der Speicher ist fast voll. Ist er voll, speichert ohmail den Text deiner ältesten Nachrichten nicht mehr, um Platz für neue Mails zu machen. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.",
+  storageNoticeFull:
+    "Der Speicher ist voll. ohmail speichert den Text deiner ältesten Nachrichten nicht mehr, um Platz für neue Mails zu machen. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.",
+  storageNoticeCarry: (date: string, limit: string, cap: string) =>
+    `Bis zum ${date} speichert ohmail bis zu ${limit} GB Nachrichtentext. Danach umfasst dein Tarif ${cap} GB, und ohmail speichert den Text deiner ältesten Nachrichten darüber hinaus nicht mehr. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.`,
+  storageNoticeCarryUnpaid: (limit: string, cap: string) =>
+    `Bis 14 Tage nach deiner ersten Zahlung speichert ohmail bis zu ${limit} GB Nachrichtentext. Danach umfasst dein Tarif ${cap} GB, und ohmail speichert den Text deiner ältesten Nachrichten darüber hinaus nicht mehr. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.`,
+  storageOfferTrial: "Ein größerer Tarif speichert ab jetzt mehr Text.",
+  storageOfferTrialTop: "Sobald dein Abo bezahlt ist, speichert das Speicher-Add-on ab jetzt mehr Text.",
+  storageOfferActive: "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text.",
+  storageOfferActiveTop: "Das Speicher-Add-on speichert ab jetzt mehr Text.",
+  storageNoticeNoRestore: "Bereits entfernten Text bringt das nicht zurück.",
   storageNoticeManage: "Abo verwalten",
   storageNoticeDismiss: "Schließen",
 

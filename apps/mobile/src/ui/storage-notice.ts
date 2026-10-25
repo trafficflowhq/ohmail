@@ -1,68 +1,146 @@
 /**
- * THE NOTICE THAT OHMAIL EMPTIED LETTER TEXT FOR SPACE — the browser's notice, decided as pure
- * functions; `StorageNotice.tsx` renders it. Due while the access answer reports emptied letters and
- * this phone has not put it away for the account. While the current cap is still emptying text (the
- * trim band), a trial is offered a bigger plan and an active subscription the plan or the storage
- * add-on; past due or grace is offered neither (the operator refuses an add-on then). Below the band
- * the notice says what happened then, without the cap and without an offer. The store face names no
- * plan and offers no press (App Review 3.1.1), and no face promises emptied text back.
+ * THE STORAGE NOTICE — the browser's notice, decided as pure functions; `StorageNotice.tsx` renders
+ * it. Near the cap it says what will happen, at it what happened; both say what keeps more text. A
+ * trial is offered a bigger plan (on the largest plan the add-on once paid), an active subscription
+ * the plan or the add-on (on the largest plan the add-on alone); past due or grace is offered neither
+ * (the operator refuses an add-on then). Inside the trial's floor it says when the plan's own limit
+ * applies and what that empties (`carry`). Text emptied under an earlier cap (`past`) is said without
+ * the cap; below the near threshold (of the cap and of the trial's plan limit) nothing is offered and
+ * no press is drawn. A count with no recorded trim is said plainly, never "oldest" or "at the time". The store face names no plan and offers no press (App Review 3.1.1),
+ * and no face promises emptied text back. Put away at a level, it comes back at a worse one or under
+ * a new cap.
  */
 import type { AccessFeed, StorageFacts } from "../net/account";
 import type { Deck } from "../copy.en";
 import { linksOutToBilling, type Distribution } from "../distribution";
-import { monthStamp } from "./day-stamp";
+import { longDayStamp, monthStamp } from "./day-stamp";
 
 export type StoragePlan = "trial" | "active";
 
-/** The trim brings the counter to nine tenths of the cap: at or past this share the cap empties text now. */
-export const STORAGE_TRIM_BAND_RATIO = 0.85;
+/** At or past nine tenths of the cap, the storage is nearly full. */
+export const STORAGE_NEAR_CAP_RATIO = 0.9;
+
+/**
+ * Least first: emptied under an earlier cap, near the cap, inside the trial's floor near or past the
+ * plan's own limit, at the cap or emptying text now.
+ */
+export const STORAGE_LEVELS = ["past", "near", "carry", "full"] as const;
+export type StorageLevel = (typeof STORAGE_LEVELS)[number];
 
 export interface StorageNoticeFacts {
   facts: StorageFacts;
+  level: StorageLevel;
   /** Is the current cap what empties text now? */
   current: boolean;
-  /** The plan sentence, or `null`: the store face, a subscription that cannot buy one, or below the band. */
+  /** The offer, or `null`: the store face, a subscription that cannot buy one, or below the near threshold. */
   plan: StoragePlan | null;
-  /** The Manage subscription press: everywhere but the store face. */
+  /** The Manage subscription press: near the cap or past it, everywhere but the store face. */
   manage: boolean;
 }
 
-/** The keystore key of the dismissal: per account, once. */
-export function storageNoticeKey(owner: string | null): string {
-  return `${owner ?? "local"}.emptied`;
-}
-
-export function storageNoticeOf(
-  entry: AccessFeed | null, putAway: boolean, distribution?: Distribution,
-): StorageNoticeFacts | null {
-  if (entry === null || !entry.answer.metered || putAway) return null;
-  const facts = entry.answer.storage;
-  if (facts === undefined || facts.emptiedForSpace <= 0) return null;
-  const mayLinkOut = distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution);
-  const current = facts.usedBytes >= facts.limitBytes * STORAGE_TRIM_BAND_RATIO;
-  const state = entry.answer.lifecycle?.state;
-  const plan = !mayLinkOut || !current ? null : state === "trialing" ? "trial" : state === "active" ? "active" : null;
-  return { facts, current, plan, manage: mayLinkOut };
+/** The keystore key of a dismissal: per account, level and cap. */
+export function storageNoticeKey(owner: string | null, level: StorageLevel, cap: number | string): string {
+  return `${owner ?? "local"}.storage.${level}.${cap}`;
 }
 
 /**
- * The notice's sentences in one deck, as the main screen draws them: the oldest letters emptied, then
- * the month text is kept from with the letters that arrived while the storage was full excepted (or
- * those letters alone when no month is recorded).
+ * The earlier release's one dismissal per account, of the notice it drew for emptied text alone: read
+ * as put away at `past` under any cap, so only a worse level brings it back.
+ */
+export function storageNoticeKeyBefore(owner: string | null): string {
+  return `${owner ?? "local"}.emptied`;
+}
+
+/** Did this phone put the notice away at `level` under `cap`, by this release's key or the earlier one? */
+export function storageNoticeHeld(
+  owner: string | null, level: StorageLevel, cap: string, has: (key: string) => boolean,
+): boolean {
+  return has(storageNoticeKey(owner, level, cap)) || (level === "past" && has(storageNoticeKeyBefore(owner)));
+}
+
+/**
+ * Does the notice offer more room (the offer and the Manage subscription press)? Only near the cap or
+ * the trial's plan limit, or past either: below both, whatever the level, it offers nothing.
+ */
+export function storageNoticeOffers(facts: StorageFacts, level: StorageLevel): boolean {
+  if (level === "past") return false;
+  const near = (limit: number) => facts.usedBytes >= limit * STORAGE_NEAR_CAP_RATIO;
+  return near(facts.limitBytes) || (facts.planLimitBytes !== null && near(facts.planLimitBytes));
+}
+
+/**
+ * The cap a dismissal is kept under: the cap, or inside the trial's floor the plan's own limit and
+ * when it applies, so the notice comes back once a payment dates it and again once it applies.
+ */
+export function storageNoticeCap(facts: StorageFacts): string {
+  return facts.planLimitBytes === null ? String(facts.limitBytes) : `${facts.planLimitBytes}-${facts.limitDropsAt ?? "unpaid"}`;
+}
+
+export function storageLevelOf(facts: StorageFacts): StorageLevel | null {
+  if (facts.usedBytes >= facts.limitBytes || (facts.emptiedForSpace > 0 && facts.emptyingNow)) return "full";
+  if (facts.planLimitBytes !== null && facts.usedBytes >= facts.planLimitBytes * STORAGE_NEAR_CAP_RATIO) return "carry";
+  if (facts.usedBytes >= facts.limitBytes * STORAGE_NEAR_CAP_RATIO) return "near";
+  return facts.emptiedForSpace > 0 ? "past" : null;
+}
+
+/** `putAway(level, cap)`: did this phone put the notice away at that level under that cap? */
+export function storageNoticeOf(
+  entry: AccessFeed | null, putAway: (level: StorageLevel, cap: string) => boolean, distribution?: Distribution,
+): StorageNoticeFacts | null {
+  if (entry === null || !entry.answer.metered) return null;
+  const facts = entry.answer.storage;
+  if (facts === undefined) return null;
+  const level = storageLevelOf(facts);
+  if (level === null) return null;
+  const cap = storageNoticeCap(facts);
+  if (STORAGE_LEVELS.slice(STORAGE_LEVELS.indexOf(level)).some((l) => putAway(l, cap))) return null;
+  const mayLinkOut = distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution);
+  const offers = mayLinkOut && storageNoticeOffers(facts, level);
+  const current = facts.emptyingNow;
+  const state = entry.answer.lifecycle?.state;
+  const plan = !offers ? null : state === "trialing" ? "trial" : state === "active" ? "active" : null;
+  return { facts, level, current, plan, manage: offers };
+}
+
+/**
+ * The notice's sentences in one deck, as the main screen draws them. Emptied letters: the oldest
+ * letters emptied, then the month text is kept from with the letters that arrived while the storage
+ * was full excepted (or those letters alone when no month is recorded). Then near or full (at the cap
+ * only when nothing is emptied: the emptied letters say it), inside the trial's floor when the plan's
+ * own limit applies, then the offer.
  */
 export function storageNoticeText(n: StorageNoticeFacts, deck: Deck, locale: string): string {
   const arrived = n.facts.withheldOnArrival;
+  const emptied = n.facts.emptiedForSpace > 0;
+  // A back-filled count (no trim recorded) is said plainly: not which letters, not under which cap.
+  const trimmed = emptied && n.facts.firstEmptiedAt !== null;
   const oldest = Math.max(0, n.facts.emptiedForSpace - arrived);
   const month = n.facts.keptFrom === null ? null : monthStamp(n.facts.keptFrom, locale);
+  const top = n.facts.upgrade === "addon";
+  const offer = n.plan === null ? null : n.plan === "trial"
+    ? (top ? deck.storageOfferTrialTop : deck.storageOfferTrial)
+    : (top ? deck.storageOfferActiveTop : deck.storageOfferActive);
   return [
-    oldest === 0 ? null : n.current
-      ? deck.storageNoticeEmptied(capGigabytes(n.facts.limitBytes, locale), oldest)
-      : deck.storageNoticeEmptiedBefore(oldest),
-    month !== null
-      ? (arrived > 0 ? deck.storageNoticeKeptFromExcept(month, arrived) : deck.storageNoticeKeptFrom(month))
-      : (arrived > 0 ? deck.storageNoticeOnArrival(arrived) : null),
-    deck.storageNoticeSafe,
-    n.plan === null ? null : n.plan === "trial" ? deck.storageNoticeTrial : deck.storageNoticeActive,
+    ...(emptied ? [
+      oldest === 0 ? null : !trimmed
+        ? deck.storageNoticeNotStored(oldest)
+        : n.level === "full"
+          ? deck.storageNoticeEmptied(capGigabytes(n.facts.limitBytes, locale), oldest)
+          : deck.storageNoticeEmptiedBefore(oldest),
+      month !== null
+        ? (arrived > 0 ? deck.storageNoticeKeptFromExcept(month, arrived) : deck.storageNoticeKeptFrom(month))
+        : (arrived > 0 ? deck.storageNoticeOnArrival(arrived) : null),
+      deck.storageNoticeSafe,
+    ] : []),
+    n.level === "near" ? deck.storageNoticeNear : n.level === "full" && !trimmed ? deck.storageNoticeFull : null,
+    n.facts.planLimitBytes === null || n.level === "past" ? null : n.facts.limitDropsAt === null
+      ? deck.storageNoticeCarryUnpaid(capGigabytes(n.facts.limitBytes, locale), capGigabytes(n.facts.planLimitBytes, locale))
+      : deck.storageNoticeCarry(
+        longDayStamp(n.facts.limitDropsAt, locale), capGigabytes(n.facts.limitBytes, locale),
+        capGigabytes(n.facts.planLimitBytes, locale),
+      ),
+    offer,
+    offer !== null && trimmed ? deck.storageNoticeNoRestore : null,
   ].filter((line): line is string => line !== null).join(" ");
 }
 

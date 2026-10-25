@@ -19,7 +19,17 @@ export interface StorageFacts {
   firstEmptiedAt: string | null;
   keptFrom: string | null;
   withheldOnArrival: number;
+  /** What adds room: a bigger plan, or (on the largest plan) the storage add-on alone. */
+  upgrade: StorageUpgrade;
+  /** The server's word: is the current cap what empties text now? */
+  emptyingNow: boolean;
+  /** Inside the trial's storage floor: the plan's own, lower limit, else `null`. */
+  planLimitBytes: number | null;
+  /** When the plan's limit applies again (ISO); `null` until a first payment dates it. */
+  limitDropsAt: string | null;
 }
+
+export type StorageUpgrade = "plan" | "addon";
 
 const count = (v: unknown): number | null =>
   (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
@@ -32,12 +42,21 @@ export function storageFactsOf(raw: unknown): StorageFacts | null {
   const limitBytes = count(r.limitBytes);
   const emptiedForSpace = count(r.emptiedForSpace);
   if (usedBytes === null || limitBytes === null || limitBytes <= 0 || emptiedForSpace === null) return null;
+  const plan = count(r.planLimitBytes);
+  const planLimitBytes = plan !== null && plan > 0 && plan < limitBytes ? plan : null;
+  const drops = planLimitBytes !== null && typeof r.limitDropsAt === "string" && Number.isFinite(Date.parse(r.limitDropsAt))
+    ? r.limitDropsAt : null;
   return {
     usedBytes, limitBytes, emptiedForSpace,
     firstEmptiedAt: typeof r.firstEmptiedAt === "string" && r.firstEmptiedAt.length > 0 ? r.firstEmptiedAt : null,
     keptFrom: typeof r.keptFrom === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(r.keptFrom) ? r.keptFrom : null,
     // An older server sends none; never more than the letters emptied.
     withheldOnArrival: Math.min(count(r.withheldOnArrival) ?? 0, emptiedForSpace),
+    // An older server names none: a bigger plan, as it said before.
+    upgrade: r.upgrade === "addon" ? "addon" : "plan",
+    // An older server does not say: only at the cap.
+    emptyingNow: typeof r.emptyingNow === "boolean" ? r.emptyingNow : usedBytes >= limitBytes,
+    planLimitBytes, limitDropsAt: drops,
   };
 }
 
@@ -70,15 +89,11 @@ export function storageKeptLine(facts: StorageFacts, locale: string): StorageKep
 export const STORAGE_NEAR_CAP_RATIO = 0.9;
 
 /**
- * The trim band: the trim brings the counter down to nine tenths of the cap, so at or past this share
- * the current cap is what empties text. Below it (a bigger plan since, a mailbox erased) the emptied
- * letters were emptied under an earlier state, and nothing is being emptied now.
+ * Is the current cap what empties text now? The server says (at the cap, or a trim this week); text
+ * emptied under an earlier cap (a bigger plan since, a mailbox erased) is not.
  */
-export const STORAGE_TRIM_BAND_RATIO = 0.85;
-
-/** Is the current cap what empties text now? */
 export function storageEmptyingNow(facts: StorageFacts): boolean {
-  return facts.usedBytes >= facts.limitBytes * STORAGE_TRIM_BAND_RATIO;
+  return facts.emptyingNow;
 }
 
 /**
@@ -99,8 +114,9 @@ export function storageState(facts: StorageFacts | null): StorageState {
 }
 
 /**
- * What more room would come from: a trial is offered a bigger plan (no add-on while trialing), an
- * active subscription the plan or the add-on. Past due, grace or anything else: nothing is offered,
+ * What more room would come from: a trial is offered a bigger plan (no add-on while trialing; on the
+ * largest plan, the add-on once paid), an active subscription the plan or the add-on (on the largest
+ * plan the add-on alone). Past due, grace or anything else: nothing is offered,
  * because the operator refuses an add-on unless the subscription is active.
  */
 export type StoragePlan = "trial" | "active";
@@ -109,14 +125,82 @@ export function storagePlanOf(lifecycleState: string | null | undefined): Storag
   return lifecycleState === "trialing" ? "trial" : lifecycleState === "active" ? "active" : null;
 }
 
-/** The device's dismissal of the emptied-text notice, per account: shown once, put away for good. */
-export function storageNoticeKey(owner: string | null): string {
+/**
+ * How far the storage has come, least first: text emptied under an earlier cap (`past`), near the cap,
+ * inside the trial's floor near or past the plan's own limit (`carry`: text is emptied when the floor
+ * ends), at the cap or emptying text now (`full`). The notice says the level it is drawn at.
+ */
+export const STORAGE_LEVELS = ["past", "near", "carry", "full"] as const;
+export type StorageLevel = (typeof STORAGE_LEVELS)[number];
+
+export function storageLevelOf(facts: StorageFacts): StorageLevel | null {
+  if (facts.usedBytes >= facts.limitBytes || (facts.emptiedForSpace > 0 && facts.emptyingNow)) return "full";
+  if (facts.planLimitBytes !== null && facts.usedBytes >= facts.planLimitBytes * STORAGE_NEAR_CAP_RATIO) return "carry";
+  if (facts.usedBytes >= facts.limitBytes * STORAGE_NEAR_CAP_RATIO) return "near";
+  return facts.emptiedForSpace > 0 ? "past" : null;
+}
+
+/**
+ * The cap a dismissal is kept under: the cap, or inside the trial's floor the plan's own limit and
+ * when it applies, so the notice comes back once a payment dates it and again once it applies.
+ */
+export function storageNoticeCap(facts: StorageFacts): string {
+  return facts.planLimitBytes === null ? String(facts.limitBytes) : `${facts.planLimitBytes}-${facts.limitDropsAt ?? "unpaid"}`;
+}
+
+/** The device's dismissal of the storage notice, per account, level and cap. */
+export function storageNoticeKey(owner: string | null, level: StorageLevel, cap: number | string): string {
+  return `ohmail.storage.${owner ?? "local"}.notice.${level}.${cap}`;
+}
+
+/**
+ * The earlier release's one dismissal per account, of the notice it drew for emptied text alone: read
+ * as put away at `past` under any cap (what that notice said holds for every cap), so only a worse
+ * level brings it back.
+ */
+export function storageNoticeKeyBefore(owner: string | null): string {
   return `ohmail.storage.${owner ?? "local"}.emptiedNotice`;
 }
 
-/** The notice is due while letters are emptied for space and this device has not put it away. */
-export function storageNoticeDue(facts: StorageFacts | null, dismissed: boolean): facts is StorageFacts {
-  return facts !== null && facts.emptiedForSpace > 0 && !dismissed;
+/**
+ * Does the notice offer more room (the offer sentence and the Manage subscription press)? Only near
+ * the cap or the trial's plan limit, or past either: below both, whatever the level, it offers nothing.
+ */
+export function storageNoticeOffers(facts: StorageFacts, level: StorageLevel): boolean {
+  if (level === "past") return false;
+  const near = (limit: number) => facts.usedBytes >= limit * STORAGE_NEAR_CAP_RATIO;
+  return near(facts.limitBytes) || (facts.planLimitBytes !== null && near(facts.planLimitBytes));
+}
+
+/**
+ * Was a trim recorded (`firstEmptiedAt`)? A count with no date was back-filled: which letters it
+ * covers and under which cap is not known, so it is said plainly, never "oldest" or "at the time".
+ */
+export function storageTrimRecorded(facts: StorageFacts): boolean {
+  return facts.firstEmptiedAt !== null;
+}
+
+/**
+ * The level the notice is due at, or `null`. Put away at a level, it stays away at that level and below
+ * under the same cap; a worse level, or nearing a new cap (a bigger plan since), brings it back.
+ */
+export function storageNoticeDue(
+  facts: StorageFacts | null, owner: string | null, putAway: (key: string) => boolean,
+): StorageLevel | null {
+  if (facts === null) return null;
+  const level = storageLevelOf(facts);
+  if (level === null) return null;
+  const worse = STORAGE_LEVELS.slice(STORAGE_LEVELS.indexOf(level));
+  const cap = storageNoticeCap(facts);
+  if (level === "past" && putAway(storageNoticeKeyBefore(owner))) return null;
+  return worse.some((l) => putAway(storageNoticeKey(owner, l, cap))) ? null : level;
+}
+
+/** The sentence that says what keeps more text, as a catalogue key. */
+export function storageOfferKey(plan: StoragePlan, upgrade: StorageUpgrade):
+  "storageOfferTrial" | "storageOfferTrialTop" | "storageOfferActive" | "storageOfferActiveTop" {
+  if (plan === "trial") return upgrade === "addon" ? "storageOfferTrialTop" : "storageOfferTrial";
+  return upgrade === "addon" ? "storageOfferActiveTop" : "storageOfferActive";
 }
 
 /**
@@ -126,6 +210,11 @@ export function storageNoticeDue(facts: StorageFacts | null, dismissed: boolean)
 export function storageMonthName(keptFrom: string, locale: string): string {
   const [y, m] = keptFrom.split("-").map(Number);
   return new Date(Date.UTC(y!, m! - 1, 15, 12)).toLocaleDateString(locale, { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** The day the plan's limit applies again, in the reader's language and zone: "November 8, 2026". */
+export function storageDayName(iso: string, locale: string): string {
+  return new Date(iso).toLocaleDateString(locale, { day: "numeric", month: "long", year: "numeric" });
 }
 
 /**
