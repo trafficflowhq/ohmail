@@ -307,7 +307,7 @@ export {
   effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf,
   type SendDeps, type SendResult, type SendAttachment, type SendInput, type MailServerRefusalKind,
   type StagedAttachmentSource, type ResolveStaleBy, type ResolveStaleOutcome,
-  SEND_WITHDRAWN_SENTENCE, type SendWithdrawOutcome, type SendWithdrawResult,
+  SEND_WITHDRAWN_SENTENCE, SEND_HELD_SENTENCE, SEND_AGAIN_HELD_SENTENCE, type SendWithdrawOutcome, type SendWithdrawResult,
 } from "./send-service.js";
 export {
   WorkflowsService, workflowsService,

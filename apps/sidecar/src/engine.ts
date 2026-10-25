@@ -629,6 +629,14 @@ export interface QuitPlan {
   requests?: Promise<unknown>;
 }
 
+/**
+ * THE END OF A QUIT'S REQUEST WINDOW KEPT FOR A PRESS'S SUBMISSION AND ITS FINALIZE: a press whose
+ * transport opens inside it is held for the next start (`SendDeps.holdOffer`), since the server's
+ * accept could land after the store closed and lose its Sent copy. One second of the desktop's two:
+ * a press offered earlier on a server answering in time is sent and recorded before the store closes.
+ */
+export const QUIT_OFFER_RESERVE_MS = 1_000;
+
 /** What a planned stop spent, each in ms from its start except the store's two. */
 export interface QuitReport {
   requestsMs: number;
@@ -1062,6 +1070,8 @@ function localServices(
    */
   installId: string,
   openSendAdapter: OpenSendAdapter,
+  /** True once this engine is leaving and a press can no longer be sent before its store closes. */
+  holdOffer: () => boolean,
   unsubscribe: UnsubscribeService,
   /**
    * THE IMAGE PROXY'S FETCH — passed in rather than imported here for the reason `unsubscribe`
@@ -1117,6 +1127,8 @@ function localServices(
     // slow link may run up to the ceiling, which ends it before a resolver may decide its row.
     sendCopyOutlivesAnswer: true,
     sendSubmissionCeilingMs: SEND_SUBMISSION_CEILING_MS,
+    // A press offered after it could not end before the store closes is held for the next start.
+    sendHoldOffer: holdOffer,
     // UNMETERED STORAGE, typed on the same declaration-not-inference terms as the mailbox
     // allowance below: the desktop tier is free and its limit is the user's own disk. A value
     // somebody wrote, never an absent-config default — the send route REFUSES the sent-copy
@@ -2480,10 +2492,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       return config.adapterFactory
         /* The sync dial's deadlines: an upload on a slow link outlasts the serverless 25 s, and the
            phone's socket timer only moves when a write completes. Passed positionally so the
-           factory lands in the fourth slot. */
-        ? makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS },
+           factory lands in the fourth slot. `proveKept`: nothing reaches SMTP over a kept
+           connection whose server has stopped answering; a quit then hands the press to the
+           next start, which sends it with its Sent copy. */
+        ? makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true },
             (cfg: ImapConfig) => config.adapterFactory!(cfg, ONE_SHOT_DIAL) as unknown as ImapAdapter)
-        : makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS });
+        : makeSendAdapter(depsFor(), mailboxId, { timeouts: SIDECAR_NET_TIMEOUTS, proveKept: true });
     };
 
     const depsFor = (): ApiDeps => ({
@@ -2513,7 +2527,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // `localServices`. `openLocalSend` (below) is the send transport, resolving the sealed
       // credential fresh per send.
       services: localServices(
-        authConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
+        authConfig, keyProvider, world.accountId, openLocalSend, holdOffer, unsubscribe,
         config.imageFetch ?? nodeRemoteFetch, organizerKind, signatureCheck !== null, ai,
       ),
       // BEARER ONLY. There is no browser here, so there is no ambient cookie to abuse — and with
@@ -2612,6 +2626,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * flag, and only `stop()` sets it.
      */
     let stopping = false;
+    /**
+     * THE LAST INSTANT OF A QUIT A PRESS IS STILL OFFERED: its request window less
+     * {@link QUIT_OFFER_RESERVE_MS} (`quit`). Null for a stop without a plan, which waits for no request.
+     */
+    let offerBy: number | null = null;
+    /** A press whose transport opens later, or during a stop without a plan, is held (`SendDeps.holdOffer`). */
+    const holdOffer = (): boolean => stopping && (offerBy === null || monotonic() > offerBy);
     /**
      * THE SHELL MARKED THIS STOP AS A RESTART ({@link Sidecar.leaving}). Set only by the exact word
      * `"restart"` and never cleared: one frame arrives, just before the input ends. Read by
@@ -3151,7 +3172,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       authConfig: hostAuthConfig,
       services: {
         ...localServices(
-          hostAuthConfig, keyProvider, world.accountId, openLocalSend, unsubscribe,
+          hostAuthConfig, keyProvider, world.accountId, openLocalSend, holdOffer, unsubscribe,
           config.imageFetch ?? nodeRemoteFetch, organizerKind, signatureCheck !== null, ai,
         ),
         sendSurfaceMaxTotalBytes: HOST_SEND_MAX_TOTAL_BYTES,
@@ -9190,6 +9211,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const began = monotonic();
       const passBy = began + plan.passMs;
       const requestsBy = began + Math.max(plan.passMs, plan.requestsMs);
+      offerBy = requestsBy - QUIT_OFFER_RESERVE_MS;
       const since = (): number => Math.round(monotonic() - began);
       searchWarmup?.stop();
       const leaving = leavingForRestart ? "restart" : "quit";

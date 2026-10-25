@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ImapFlow } from "imapflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter, type ImapConfig, type MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { SEND_HELD_SENTENCE } from "@trafficflow/services/mail";
 import { connectOverStdio, type StdioClient } from "../src/client.js";
 import { createSidecar, settledWithin, type AdapterDialContext, type QuitPlan, type Sidecar } from "../src/engine.js";
 import { LOCK_FILE, STORE_GENERATION_FILE } from "../src/db.js";
@@ -47,17 +48,62 @@ afterEach(async () => {
   resetFirstPageGate();
 });
 
-/** A TCP relay that holds each chunk the server sends for `delayMs`, in order; switchable live. */
-async function slowRelay(host: string, port: number, delayMs = 0): Promise<{ port: number; setDelay(ms: number): void }> {
+/**
+ * A TCP relay that holds each chunk the server sends for `delayMs`, in order; switchable live.
+ * `setHeld(true)` is a paused server: nothing moves either way, and what a client sent before
+ * leaving is never read.
+ */
+async function slowRelay(host: string, port: number, delayMs = 0): Promise<{
+  port: number; setDelay(ms: number): void; setHeld(on: boolean): void;
+}> {
   let delay = delayMs;
+  let held = false;
+  let waiting: Array<() => void> = [];
+  const gate = (): Promise<void> => (held ? new Promise((r) => { waiting.push(r); }) : Promise.resolve());
   const sockets: Socket[] = [];
   const server: Server = createServer((client) => {
     const up = netConnect({ host, port });
     sockets.push(client, up);
-    client.on("data", (b: Buffer) => up.write(b));
+    let upChain = Promise.resolve();
+    client.on("data", (b: Buffer) => {
+      upChain = upChain.then(gate).then(() => { if (!client.destroyed && !up.destroyed) up.write(b); });
+    });
     let chain = Promise.resolve();
     up.on("data", (b: Buffer) => {
       const d = delay;
+      chain = chain.then(() => sleep(d)).then(gate).then(() => { if (!client.destroyed) client.write(b); });
+    });
+    up.on("end", () => { chain = chain.then(() => { client.end(); }); });
+    up.on("error", () => client.destroy());
+    client.on("error", () => up.destroy());
+    client.on("close", () => up.destroy());
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  cleanups.push(() => { for (const s of sockets) s.destroy(); server.close(); });
+  return {
+    port: (server.address() as { port: number }).port,
+    setDelay: (ms) => { delay = ms; },
+    setHeld: (on) => { held = on; if (!on) { const w = waiting; waiting = []; for (const r of w) r(); } },
+  };
+}
+
+/** An SMTP relay that passes everything at once but holds the answer to the end-of-data mark `dotMs`. */
+async function slowAcceptRelay(host: string, port: number, dotMs: number): Promise<{ port: number }> {
+  const sockets: Socket[] = [];
+  const server: Server = createServer((client) => {
+    const up = netConnect({ host, port });
+    sockets.push(client, up);
+    let tail = "";
+    let afterDot = false;
+    client.on("data", (b: Buffer) => {
+      tail = (tail + b.toString("latin1")).slice(-8);
+      if (tail.includes("\r\n.\r\n")) { afterDot = true; tail = ""; }
+      up.write(b);
+    });
+    let chain = Promise.resolve();
+    up.on("data", (b: Buffer) => {
+      const d = afterDot ? dotMs : 0;
+      afterDot = false;
       chain = chain.then(() => sleep(d)).then(() => { if (!client.destroyed) client.write(b); });
     });
     up.on("end", () => { chain = chain.then(() => { client.end(); }); });
@@ -67,7 +113,7 @@ async function slowRelay(host: string, port: number, delayMs = 0): Promise<{ por
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   cleanups.push(() => { for (const s of sockets) s.destroy(); server.close(); });
-  return { port: (server.address() as { port: number }).port, setDelay: (ms) => { delay = ms; } };
+  return { port: (server.address() as { port: number }).port };
 }
 
 const storeOpen = (dataDir: string): boolean | null => {
@@ -309,7 +355,9 @@ describe.skipIf(!greenmailUp)("the engine, its input closed while a slow drain r
  * A REPLY SENT HALF A SECOND BEFORE CLOSING, WHILE THE MAIL SERVER IS SLOW TO ANSWER.
  * The send's own IMAP login (before any SMTP) runs past the quit, so nothing was offered. At main the
  * next start probed Sent, found nothing and wrote `unverified` for good, and the reply never went. Now
- * the start forgets the reservation that offered nothing and the key's replay sends it once.
+ * the start forgets the reservation that offered nothing and the key's replay sends it once. Over a
+ * connection kept from an earlier send, the press reached SMTP on a server that had stopped answering
+ * and the quit lost its Sent copy; now a kept connection answers a NOOP before a press uses it.
  */
 describe.skipIf(!greenmailUp)("a reply sent just before the quit while the mail server is slow to log in", () => {
   const kids: ChildProcessWithoutNullStreams[] = [];
@@ -320,13 +368,13 @@ describe.skipIf(!greenmailUp)("a reply sent just before the quit while the mail 
   });
 
   const SMTP_PORT = Number(process.env.SMTP_PORT ?? 3025);
-  async function engine(dataDir: string, address: string, imapPort: number) {
+  async function engine(dataDir: string, address: string, imapPort: number, smtp = { host: GREENMAIL.host, port: SMTP_PORT }) {
     const env: NodeJS.ProcessEnv = { ...process.env };
     for (const k of Object.keys(env)) if (k.startsWith("OHMAIL_")) delete env[k];
     Object.assign(env, {
       OHMAIL_DATA_DIR: dataDir, OHMAIL_IMAP_HOST: "127.0.0.1", OHMAIL_IMAP_PORT: String(imapPort),
       OHMAIL_IMAP_SECURE: "0", OHMAIL_IMAP_USER: address, OHMAIL_IMAP_PASS: "test",
-      OHMAIL_SMTP_HOST: GREENMAIL.host, OHMAIL_SMTP_PORT: String(SMTP_PORT), OHMAIL_SMTP_SECURE: "0",
+      OHMAIL_SMTP_HOST: smtp.host, OHMAIL_SMTP_PORT: String(smtp.port), OHMAIL_SMTP_SECURE: "0",
       OHMAIL_MAILBOX_ADDRESS: address, OHMAIL_KEK: "cd".repeat(32), OHMAIL_POLL_MS: "15000",
     });
     const child = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx", "src/main.ts"], {
@@ -398,5 +446,97 @@ describe.skipIf(!greenmailUp)("a reply sent just before the quit while the mail 
     expect((await d.json() as { status?: string }).status).toBe("sent");
     next.child.stdin.end();
     await Promise.race([next.exited, sleep(10_000)]);
+  }, 120_000);
+
+  /**
+   * Quit `quitAfterMs` (0.5 s) after the press, start again on a server that answers, replay the
+   * press's key; answers what the press itself was answered, or null. `stall`: the server at the
+   * press answers nothing (absent), every command SLOW_MS late ("slow"), or that many ms late.
+   */
+  async function quitThenReplay(o: {
+    relay: { port: number; setHeld(on: boolean): void; setDelay(ms: number): void }; dataDir: string; address: string;
+    to: string; first: Awaited<ReturnType<typeof engine>>; draftId: string; stall?: "slow" | number; quitAfterMs?: number;
+    smtp?: { host: string; port: number };
+  }): Promise<{ http: number; body: unknown } | null> {
+    const stall = (on: boolean): void => {
+      if (o.stall === undefined) o.relay.setHeld(on);
+      else o.relay.setDelay(on ? (o.stall === "slow" ? SLOW_MS : o.stall) : 0);
+    };
+    const key = `quit-${randomUUID()}`;
+    stall(true);
+    const pressed = o.first.call(`/drafts/${o.draftId}/send`, "POST", {}, key)
+      .then(async (r) => ({ http: r.status, body: await r.json().catch(() => null) as unknown }), () => null);
+    await sleep(o.quitAfterMs ?? 500);
+    o.first.child.stdin.end();
+    const code = await Promise.race([o.first.exited, sleep(10_000).then(() => "still running" as const)]);
+    expect(code, `the first engine left with ${String(code)}`).toBe(0);
+    const answered = await Promise.race([pressed, sleep(5_000).then(() => null)]);
+    stall(false);
+    const next = await engine(o.dataDir, o.address, o.relay.port, o.smtp);
+    const replay = await next.call(`/drafts/${o.draftId}/send`, "POST", {}, key);
+    const sent = await replay.json() as { status?: string; providerMessageId?: string };
+    expect({ http: replay.status, status: sent.status }).toEqual({ http: 200, status: "sent" });
+    expect(await copies(o.address, "Sent", sent.providerMessageId!), "not exactly one copy in Sent").toBe(1);
+    expect(await copies(o.to, "INBOX", sent.providerMessageId!), "not exactly one delivery").toBe(1);
+    const d = await next.call(`/drafts/${o.draftId}`, "GET");
+    expect((await d.json() as { status?: string }).status).toBe("sent");
+    next.child.stdin.end();
+    await Promise.race([next.exited, sleep(10_000)]);
+    return answered;
+  }
+
+  /** A reply pressed and the quit after it; with `kept`, reply one went first and keeps its connection. */
+  async function pressThenQuit(o: {
+    kept?: boolean; stall?: "slow" | number; quitAfterMs?: number; smtp?: { host: string; port: number };
+  } = {}): Promise<{ http: number; body: unknown } | null> {
+    const relay = await slowRelay(GREENMAIL.host, GREENMAIL.port, 0);
+    const dataDir = await freshDataDir("ohmail-quit-press-");
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const address = `dcc-${randomUUID()}@trafficflow.test`;
+    const to = `rcpt-${randomUUID()}@trafficflow.test`;
+    const first = await engine(dataDir, address, relay.port, o.smtp);
+    await sleep(1_500);
+    const draft = async (subject: string): Promise<string> => {
+      const r = await first.call("/drafts", "POST", {
+        mailboxId: first.header.mailboxId, subject, body: "Fine.", to: [{ name: null, address: to }],
+      });
+      expect(r.status, await r.clone().text()).toBe(201);
+      return (await r.json() as { id: string }).id;
+    };
+    if (o.kept === true) {
+      const one = await first.call(`/drafts/${await draft("Re: one")}/send`, "POST", {}, `k-${randomUUID()}`);
+      expect(one.status, "the premise: the first reply went and keeps its connection").toBe(200);
+    }
+    const draftId = await draft("Re: two");
+    return quitThenReplay({ relay, dataDir, address, to, first, draftId, ...o });
+  }
+
+  it("a server answering nothing at the press: the next start sends it once with its Sent copy", async () => {
+    await pressThenQuit();
+  }, 120_000);
+
+  it("a reply pressed over a kept connection after the server stopped answering goes at the next start with its copy", async () => {
+    await pressThenQuit({ kept: true });
+  }, 120_000);
+
+  /* The NOOP check moves SMTP one slow round trip later, so the server's accept lands after the store
+     closed: delivered, its copy dropped, and the replay read `unverified`. Held instead, and told so. */
+  it("a reply over a kept connection to a slow server, its accept held 0.5 s, quit 0.5 s after the press: once, with its copy", async () => {
+    const smtp = await slowAcceptRelay(GREENMAIL.host, SMTP_PORT, 500);
+    const answer = await pressThenQuit({ kept: true, stall: "slow", smtp: { host: "127.0.0.1", port: smtp.port } });
+    expect(answer, "the press was not told it goes at the next start").toMatchObject({
+      http: 503, body: { error: { code: "upstream_unavailable", message: SEND_HELD_SENTENCE, retryable: true } },
+    });
+  }, 120_000);
+
+  /* A server that answers in time: the press still goes before the engine leaves, as it did before the
+     NOOP check. The check's first fix held every press whose open ended after the quit began. */
+  const SENT_AT_QUIT = { http: 200, body: { status: "sent", sentCopy: "filed" } };
+  it("a healthy server (50 ms an answer), quit 0.1 s after the press: sent with its copy before the engine leaves", async () => {
+    expect(await pressThenQuit({ stall: 50, quitAfterMs: 100 })).toMatchObject(SENT_AT_QUIT);
+  }, 120_000);
+
+  it("the same over a kept connection (100 ms an answer), quit 0.05 s after the press", async () => {
+    expect(await pressThenQuit({ kept: true, stall: 100, quitAfterMs: 50 })).toMatchObject(SENT_AT_QUIT);
   }, 120_000);
 });

@@ -193,6 +193,14 @@ export interface SendDeps {
    * end-of-data mark and the send fails. Absent: no ceiling beyond the socket deadlines.
    */
   submissionCeilingMs?: number;
+  /**
+   * THE HOST IS LEAVING (the local engine's quit), asked once the press's transport has opened,
+   * right before the offer. True holds the press: nothing is offered and nothing recorded, so its
+   * reservation stays unoffered for the next start to forget (a Send again is held again), and the
+   * answer is retryable, so the window keeps the press and sends it under its key then. The Sent
+   * copy's re-dial never asks. Absent: never held.
+   */
+  holdOffer?: () => boolean;
   /** The copy's clock, {@link SEND_COPY_TIMING} by default. A test seam, never a host knob. */
   copyTiming?: Partial<SendCopyTiming>;
 }
@@ -863,6 +871,11 @@ export function firstSendFacts(status: string, at: Date): FirstSendFacts {
 
 /** What a replay of a key a Cancel tombstoned is told (409 `send_withdrawn`). */
 export const SEND_WITHDRAWN_SENTENCE = "This send was cancelled before it left; nothing was sent.";
+
+/** What a press the leaving host held is told (`SendDeps.holdOffer`): 503, retryable. */
+export const SEND_HELD_SENTENCE = "ohmail closed before this message was sent; it is sent when ohmail starts again";
+/** …and a Send again, which the next start holds again (`earlier_unverified`) rather than sends. */
+export const SEND_AGAIN_HELD_SENTENCE = "ohmail closed before this message was sent again; it stays held, and Send again sends it";
 
 /**
  * WHAT THE SERVER SAYS ABOUT A CANCEL — `POST /sends/withdraw`. `withdrawn`: nothing under this key
@@ -1613,6 +1626,14 @@ export class SendService {
             firstSend: firstSendFacts("sent", reservation.again.heldAt),
           };
         }
+      }
+
+      // HELD BY A LEAVING HOST (`SendDeps.holdOffer`): offered nothing, recorded nothing, told so.
+      if (deps.holdOffer?.() === true) {
+        await adapter.close().catch(() => { /* the connection is already broken */ });
+        (deps.log ?? defaultLog).info("send_held_for_next_start", { draftId, accountId: ctx.accountId, sendId });
+        const said = reservation.again === undefined ? SEND_HELD_SENTENCE : SEND_AGAIN_HELD_SENTENCE;
+        throw new ServiceError("upstream_unavailable", 503, said, undefined, true);
       }
 
       // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` or

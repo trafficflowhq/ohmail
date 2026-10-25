@@ -5,8 +5,10 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { changeLog, drafts, mailboxes, outboundSendFingerprints, outboundSends } from "@trafficflow/db";
 import { mintMessageId, SendNotSubmitted } from "@trafficflow/core";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
-import { SendService, SEND_STALE_AFTER_MS, SEND_SUBMISSION_CEILING_MS } from "../src/index.js";
-import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
+import {
+  SendService, SEND_AGAIN_HELD_SENTENCE, SEND_HELD_SENTENCE, SEND_STALE_AFTER_MS, SEND_SUBMISSION_CEILING_MS,
+} from "../src/index.js";
+import type { ServiceContext, ServiceError, StagedAttachmentSource } from "../src/index.js";
 
 /**
  * A RESERVATION THAT OFFERED NOTHING IS FORGOTTEN, NEVER LEFT `unverified` (mail 0162).
@@ -112,6 +114,12 @@ const staging: StagedAttachmentSource = {
   },
 };
 
+/** What a press a leaving host held (`holdOffer`) threw, as the window reads it. */
+const heldAnswer = (e: unknown) => {
+  const s = e as ServiceError;
+  return { code: s.code, status: s.httpStatus, retryable: s.retryable, message: s.message };
+};
+
 /** The state a quit during the slow login leaves: a `pending` reservation whose dial never answered. */
 async function quitDuringLogin(w: World, key: string) {
   const slow = transport({ holdDial: true });
@@ -183,6 +191,21 @@ describe("a stale reservation that offered nothing", () => {
     expect(await w.row("k3")).toBeUndefined();
     slow.release();
     await first;
+  });
+
+  it("a press a leaving host holds offers and records nothing, is told so, and the next start forgets it", async () => {
+    const w = await world();
+    const leaving = transport();
+    expect(heldAnswer(await outcome(press(w, "held", leaving.factory, { holdOffer: () => true }))))
+      .toEqual({ code: "upstream_unavailable", status: 503, retryable: true, message: SEND_HELD_SENTENCE });
+    expect(leaving.state.submits, "nothing offered").toBe(0);
+    const left = (await w.row("held"))!;
+    expect({ status: left.status, offerState: left.offerState, draft: (await w.draft()).status })
+      .toEqual({ status: "pending", offerState: "unoffered", draft: "sending" });
+    expect(await elsewhere.forgetInherited(w.ctx, [left.id])).toEqual({ forgotten: 1, remaining: [] });
+    const replay = transport();
+    expect(await press(w, "held", replay.factory)).toMatchObject({ status: "sent" });
+    expect(replay.state.delivered, "one press, one message").toHaveLength(1);
   });
 
   it("CONTROL: a resolver in another account's context leaves the row as it is", async () => {
@@ -351,6 +374,19 @@ describe("a Send again that offered nothing is held again, never forgotten", () 
     slow.release();
     await again;
     expect((await w.row("again"))?.status).toBe("unverified");
+  });
+
+  it("one a leaving host holds after its Sent look is told it stays held, and the start holds it again", async () => {
+    const w = await world();
+    await held(w);
+    const leaving = transport();
+    expect(heldAnswer(await outcome(press(w, "again", leaving.factory, { holdOffer: () => true }, { again: true }))))
+      .toEqual({ code: "upstream_unavailable", status: 503, retryable: true, message: SEND_AGAIN_HELD_SENTENCE });
+    expect([leaving.state.probes, leaving.state.submits], "Sent looked at, nothing offered").toEqual([1, 0]);
+    const left = (await w.row("again"))!;
+    expect(await elsewhere.forgetInherited(w.ctx, [left.id])).toEqual({ forgotten: 0, remaining: [] });
+    expect((await w.row("again"))?.status).toBe("unverified");
+    expect(await press(w, "again", transport().factory, {}, { again: true })).toMatchObject({ status: "unverified" });
   });
 });
 

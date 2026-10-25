@@ -443,6 +443,7 @@ export const draftsRoutes: Route[] = [
           ...(deps.services?.sendCopyOutlivesAnswer === true ? { copyOutlivesAnswer: true } : {}),
           ...(deps.services?.sendSubmissionCeilingMs !== undefined
             ? { submissionCeilingMs: deps.services.sendSubmissionCeilingMs } : {}),
+          ...(deps.services?.sendHoldOffer ? { holdOffer: deps.services.sendHoldOffer } : {}),
           // WHERE STAGED BYTES COME FROM. Absent on a host with no object storage — a local
           // install — and then a request naming staged references is REFUSED rather than sent
           // without its files.
