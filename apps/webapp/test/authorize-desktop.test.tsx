@@ -63,6 +63,7 @@ vi.mock("../app/api-client", async () => {
         confirmCalls += 1;
         return realRead ? actual.auth.confirmAuthorize(...a) : confirmAnswer();
       },
+      stepUpTotp: async () => ({ ok: true }),
       session: (...a: Parameters<typeof actual.auth.session>) => (realRead
         ? actual.auth.session(...a)
         : Promise.resolve(sessionOf(ACCT))),
@@ -221,6 +222,26 @@ describe("/authorize-desktop — the confirmation", () => {
     await press(button(el, "Yes, sign it in"));
     expect(confirmCalls).toBe(1);
     expect(el.textContent ?? "").toContain("Done");
+  });
+
+  it("a closed step-up window asks for the factor in place and confirms once more", async () => {
+    let refusals = 1;
+    confirmAnswer = () => (refusals-- > 0
+      ? Promise.reject(new ApiError(403, "step_up_required", "recent two-factor authentication required"))
+      : Promise.resolve({ redirect: "trafficflow://auth?code=xyz&state=s" }));
+    const el = await mount();
+    await press(button(el, "Yes, sign it in"));
+    await waitFor(el, () => el.querySelector("#stepup-code") != null, "the step-up prompt");
+    expect(el.textContent ?? "", "the ask left the screen").toContain(MASKED);
+
+    const code = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(code, "123456");
+      code.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { code.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await waitFor(el, () => (el.textContent ?? "").includes("Done"), "the retried confirm");
+    expect(confirmCalls).toBe(2);
   });
 
   it("a dead handle is ONE sentence, whatever killed it", async () => {

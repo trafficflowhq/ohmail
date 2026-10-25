@@ -24,6 +24,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mb = en.mailboxes as unknown as Record<string, string>;
+const sec = en.security as unknown as Record<string, string>;
+const inv = en.invites as unknown as Record<string, string>;
 const link = en.linkDesktop as unknown as Record<string, string>;
 const dev = en.devices as unknown as Record<string, string>;
 const acct = en.account as unknown as Record<string, string>;
@@ -93,6 +95,11 @@ vi.mock("../app/api-client", async () => {
       stepUpWebauthnOptions: door("auth.stepUpWebauthnOptions", { options: {} }),
       stepUpWebauthnVerify: door("auth.stepUpWebauthnVerify", { ok: true }),
       desktopLink: door("auth.desktopLink", { code: "ABCD-EFGH", expiresIn: 300 }),
+      recoveryCodes: door("auth.recoveryCodes", { codes: ["aaaa-bbbb"] }),
+    },
+    pair: {
+      list: async () => ({ items: [] }),
+      mint: door("pair.mint", { id: "p1", token: "tok", grant: "invite", label: "", expiresAt: "2026-10-04T09:00:00.000Z" }),
     },
     billing: { subscription: async () => ({ status: "active", plan: "pro", credits: 100 }) },
     account: {
@@ -290,6 +297,26 @@ const PANES: Pane[] = [
       await waitFor(() => el.querySelector("#acct-typed") != null, "the facts step");
       await typeInto(el.querySelector("#acct-typed"), EMAIL);
       await submit(el.querySelector("form.acct-confirm"));
+      return el;
+    },
+  },
+  {
+    name: "SecuritySection: recovery codes", verb: "auth.recoveryCodes", signIn: sec.stepUpExpired!,
+    walk: async () => {
+      const { SecuritySection } = await import("../app/(product)/mailbox/SecuritySection.js");
+      const el = await render(h(SecuritySection));
+      await waitFor(() => (el.textContent ?? "").includes(sec.codesGenerate!), "the codes row");
+      await click(press(el, sec.codesGenerate!));
+      await click(press(el, sec.codesConfirm!));
+      return el;
+    },
+  },
+  {
+    name: "InvitesSection: mint", verb: "pair.mint", signIn: inv.stepUpExpired!,
+    walk: async () => {
+      const { InvitesSection } = await import("../app/(product)/mailbox/InvitesSection.js");
+      const el = await render(h(InvitesSection));
+      await click(press(el, inv.mintAction!));
       return el;
     },
   },

@@ -519,10 +519,15 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   /**
    * THE WRITE A CLOSED STEP-UP WINDOW REFUSED, parked while {@link StepUpPrompt} runs: `run` is
    * the same write with the same body, re-run once by the verified factor; `back` is where Cancel
-   * returns, with everything typed still held. `stepUpDiscarded`: a factor landed after Cancel and
-   * the write did not run — said by the pane, because Cancel took the prompt off the screen.
+   * returns, with everything typed still held; `takeover` is the mailbox when the parked write is
+   * that mailbox's take-over, and `null` for any other write — the prompt's card and its line are
+   * read from it, never from what an earlier press left behind. `stepUpDiscarded`: a factor landed
+   * after Cancel and the write did not run — said by the pane, because Cancel took the prompt off
+   * the screen.
    */
-  const [parked, setParked] = useState<{ run: () => Promise<void>; back: Stage } | null>(null);
+  const [parked, setParked] = useState<
+    { run: () => Promise<void>; back: Stage; takeover: string | null } | null
+  >(null);
   const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Why Google refused the last connect or edit, when it said: its links ride that sentence. */
@@ -884,6 +889,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
 
   const confirmTakeover = useCallback(async (id: string, afterFactor = false): Promise<TakeoverVerdict> => {
     setError(null);
+    setStepUpDiscarded(false);
     setTakingOver((q) => new Set(q).add(id));
     setPressing(id);
     const wins = listWins();
@@ -911,10 +917,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
          or a patch: the verdict tells the caller to park the press behind the prompt, since the
          stage that sets is not readable from here. After a verified factor it is a sentence. */
       const why = gatedRefusal(err, afterFactor);
-      if (why === "factor") {
-        setTakeoverFor(id);
-        return "step_up";
-      }
+      if (why === "factor") return "step_up";
       setError(why === "sign-in" ? td("stepUpExpired") : messageOf(err));
       return "refused";
     } finally {
@@ -1460,14 +1463,26 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   /**
    * A WRITE A CLOSED WINDOW REFUSED, parked: the prompt opens, and the verified factor runs `run` —
    * the same write with the same body — once. `back` is where Cancel returns; nothing typed is lost.
+   * `takeover` names the mailbox when the write is its take-over; parking any other write drops a
+   * take-over asked for before it, so a later prompt never reads as that take-over.
    */
-  const park = (run: () => Promise<void>, back: Stage): void => {
+  const park = (run: () => Promise<void>, back: Stage, takeover: string | null = null): void => {
     if (!alive.current) return;
     setError(null);
     setStepUpDiscarded(false);
-    setParked({ run, back });
+    setParked({ run, back, takeover });
+    setTakeoverFor(takeover);
     setStage("stepup");
   };
+
+  /* LEAVING THE PROMPT FOR ANOTHER SCREEN — a Remove, an edit or a connect pressed while it was open — drops the
+     parked write and the take-over it may have been: the press the person moved on from is not made later, and the
+     saving line names the write that is running. Saving is the parked write's own re-run, so it keeps both. */
+  useEffect(() => {
+    if (stage === "stepup" || stage === "saving") return;
+    setParked(null);
+    setTakeoverFor(null);
+  }, [stage]);
 
   /**
    * Any other refused write, said. Signing in is the remedy after a verified factor, on a dead
@@ -1710,7 +1725,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
   /** A take-over press from a row: tried at once, and a closed window parks it behind the prompt. */
   const pressTakeover = (id: string): void => {
     void (async () => {
-      if ((await confirmTakeover(id)) === "step_up") park(() => finishTakeover(id), "list");
+      if ((await confirmTakeover(id)) === "step_up") park(() => finishTakeover(id), "list", id);
     })();
   };
 
@@ -1992,6 +2007,44 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
     }
   }, [typed, td]);
 
+  /* THE PARKED WRITE'S PROMPT: the line naming which write the factor authorises, and the prompt. The verified
+     factor re-runs the write once; Cancel returns to where it was pressed. */
+  const parkedPrompt = (): React.JSX.Element | null => parked === null ? null : (
+    <>
+      <p className="acct-fine">
+        {parked.takeover !== null ? t("factorBodyTakeover")
+          : removing ? t(eraseChosen ? "factorBodyErase" : "factorBodyRemove")
+            : editing ? t("factorBodyEdit") : t("factorBody")}
+      </p>
+      <StepUpPrompt
+        onVerified={() => {
+          const run = parked.run;
+          setParked(null);
+          void run();
+        }}
+        onCancel={() => {
+          const back = parked.back;
+          setParked(null);
+          // The take-over's row reads exactly as before the press, so the pane says so.
+          if (parked.takeover !== null) setStepUpDiscarded(true);
+          setTakeoverFor(null);
+          setStage(back);
+        }}
+        onDiscarded={() => setStepUpDiscarded(true)}
+      />
+    </>
+  );
+  /* A REFUSED TAKE-OVER ASKS IN THE CARD THAT WAS PRESSED. Under the list, with the card reset to
+     the press that had just been refused, the prompt read as nothing happening. Only while that card still draws a
+     take-over press; otherwise the pane's own place below keeps the prompt reachable. */
+  const drawsTakeover = (m: MailboxDTO): boolean => {
+    const sd = readerStandDown(m);
+    return sd === "released" || (sd !== null && sd !== "parked" && !claimLeftBehind(m));
+  };
+  const parkedTakeover = parked?.takeover ?? null;
+  const takeoverAsksInCard = stage === "stepup" && parkedTakeover !== null && !behind
+    && groupByAddress(connected).some(({ shown }) => shown.id === parkedTakeover && drawsTakeover(shown));
+
   return (
     <SettingsSection>
       {/*
@@ -2046,6 +2099,7 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
            laptop that stopped while new mail waited in the Inbox. */
         const lapsed = standDown !== null && standDown !== "released" && standDown !== "parked"
           && readerHolderLapsed(m);
+        const asksHere = takeoverAsksInCard && parkedTakeover === m.id;
         return (
           <div className="mbx-row" key={m.id}>
             <div className="mbx-main">
@@ -2116,18 +2170,20 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
                   <span className="mbx-sub">
                     {t("stateReleased", { when: dayStamp(m.organizerReleasedAt) })}
                   </span>
-                  <Button
-                    className="mbx-btn"
-                    disabled={takingOver.has(m.id)}
-                    onClick={() => pressTakeover(m.id)}
-                  >
-                    {t("organizeHere")}
-                  </Button>
+                  {asksHere ? parkedPrompt() : (
+                    <Button
+                      className="mbx-btn"
+                      disabled={takingOver.has(m.id)}
+                      onClick={() => pressTakeover(m.id)}
+                    >
+                      {t("organizeHere")}
+                    </Button>
+                  )}
                 </>
               ) : standDown && !stranded ? (
                 <>
                   <span className="mbx-bad">{lapsed ? t("standDownLapsed") : t(standDownKey(standDown, filer))}</span>
-                  {organizer?.id === m.id ? (
+                  {asksHere ? parkedPrompt() : organizer?.id === m.id ? (
                     <OrganizerPanel
                       state={organizer}
                       t={t}
@@ -2982,33 +3038,9 @@ export function MailboxSection({ subscriptionPane = false }: { subscriptionPane?
         </div>
       ) : null}
 
-      {stage === "stepup" && parked ? (
-        /* THE PARKED WRITE'S PROMPT. The typed form, the edit and the removal's choice are held
-           behind it; the verified factor re-runs the write once, and Cancel returns to it. The
-           line above it names WHICH write the factor authorises: a removal is not a save. */
-        <>
-          {takeoverFor ? null : (
-            <p className="acct-fine">
-              {removing ? t(eraseChosen ? "factorBodyErase" : "factorBodyRemove")
-                : editing ? t("factorBodyEdit") : t("factorBody")}
-            </p>
-          )}
-          <StepUpPrompt
-            onVerified={() => {
-              const run = parked.run;
-              setParked(null);
-              void run();
-            }}
-            onCancel={() => {
-              const back = parked.back;
-              setParked(null);
-              setTakeoverFor(null);
-              setStage(back);
-            }}
-            onDiscarded={() => setStepUpDiscarded(true)}
-          />
-        </>
-      ) : null}
+      {/* THE PARKED WRITE'S PROMPT. The typed form, the edit and the removal's choice are held
+          behind it; a take-over asks in its own card instead (`takeoverAsksInCard`). */}
+      {stage === "stepup" && parked && !takeoverAsksInCard ? parkedPrompt() : null}
 
       {stage === "saving" && !behind ? (
         <p className="acct-lead">

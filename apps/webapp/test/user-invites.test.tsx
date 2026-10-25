@@ -18,7 +18,7 @@
  *  3. **The raw token is never SHOWN.** The design rule is scan-or-copy over print; the pane's
  *     textContent must not contain the token. The copy button carries it to the clipboard.
  *  4. **Revoke hits the row's own id and the list refreshes.**
- *  5. **A closed step-up window is said, not swallowed** — `SecuritySection`'s discipline.
+ *  5. **A closed step-up window asks for the factor in place** — `DevicesSection`'s discipline.
  *
  * The real `InvitesSection`, the real `api-client`, only `fetch` (and the clipboard) stubbed —
  * the settings-parity suite's mount, the setup suite's wire recording.
@@ -259,16 +259,20 @@ describe("mint → one link, shown as a QR and a copy button — never as printe
     expect(c.textContent).toContain("scan the code");
   });
 
-  it("a closed step-up window is said in this pane's own sentence, not swallowed", async () => {
+  it("a closed step-up window asks for the factor in place, and is not swallowed", async () => {
     answers["POST /api/pair"] = {
       status: 403,
       body: { error: { code: "step_up_required", message: "step-up verification required" } },
     };
+    answers["GET /api/auth/session"] = {
+      status: 200,
+      body: { user: { email: "o@example.test", twofaEnrolled: { webauthn: false, totp: true } }, scope: "full" },
+    };
     const c = await mountSection();
     await click(buttonByText(c, "Make an invite link"));
-    const alert = c.querySelector('[role="alert"]');
-    expect(alert).toBeTruthy();
-    expect(alert!.textContent).toContain("Sign in again");
+    expect(c.querySelector('[data-testid="step-up-prompt"]'), "the refusal was a dead end").toBeTruthy();
+    expect(calls.filter((x) => x.method === "POST" && x.url.endsWith("/api/pair"))).toHaveLength(1);
+    expect(c.querySelector('[role="alert"]'), "the prompt was answered with an error").toBeNull();
   });
 });
 

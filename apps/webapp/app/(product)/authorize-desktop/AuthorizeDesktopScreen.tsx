@@ -22,6 +22,7 @@ import {
 } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
 import { useSettledOwner } from "../approve/settle-owner";
+import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 
 /** The names this deployment has words for. Anything else is shown as the client said it. */
 const KNOWN_CLIENTS = new Set(["tf-macos"]);
@@ -39,6 +40,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
   const tl = useTranslations("login");
   const tk = useTranslations("linkDesktop");
   const ta = useTranslations("approve");
+  const td = useTranslations("devices");
   const refusalSentence = useRefusalSentence();
   const { settled } = useSettledOwner(Boolean(request) && apiConfigured());
 
@@ -48,6 +50,8 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  /** The confirm met a closed step-up window: the factor is asked in place, and the confirm runs once more. */
+  const [stepUp, setStepUp] = useState(false);
 
   /** The page can be navigated away from mid-flight; nothing may set state after that. */
   const alive = useRef(true);
@@ -94,7 +98,7 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
     return () => clearInterval(id);
   }, [asked, done, t]);
 
-  const confirm = (): void => {
+  const confirm = (verified = false): void => {
     setBusy(true);
     setError(null);
     void (async () => {
@@ -108,6 +112,11 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
         window.location.href = redirect;
       } catch (err) {
         if (!alive.current) return;
+        if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required") {
+          if (verified) setError(td("stepUpExpired"));
+          else setStepUp(true);
+          return;
+        }
         setError(err instanceof ApiError && err.status === 400 ? t("expired") : refusalSentence(err));
         setAsked(null);
       } finally {
@@ -179,11 +188,19 @@ export function AuthorizeDesktopScreen({ request = "" }: { request?: string }) {
         <li>{t("grantsRevoke")}</li>
       </ul>
 
-      <div className="join-actions">
-        <Button variant="primary" onClick={confirm} disabled={busy}>
-          {busy ? t("working") : t("confirm")}
-        </Button>
-      </div>
+      {stepUp ? (
+        <StepUpPrompt
+          onVerified={() => { setStepUp(false); confirm(true); }}
+          onCancel={() => setStepUp(false)}
+          onDiscarded={() => { setStepUp(false); setError(td("stepUpCancelledNothingRan")); }}
+        />
+      ) : (
+        <div className="join-actions">
+          <Button variant="primary" onClick={() => confirm()} disabled={busy}>
+            {busy ? t("working") : t("confirm")}
+          </Button>
+        </div>
+      )}
 
       <p className="join-hint">{t("expiresIn", { seconds: remaining })}</p>
       <p className="join-hint">{t("safety")}</p>

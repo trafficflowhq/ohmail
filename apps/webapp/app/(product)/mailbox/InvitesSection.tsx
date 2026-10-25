@@ -29,6 +29,7 @@ import { ApiError, pair, type PairingTokenDTO } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { QrCode } from "../../shell/QrCode";
+import { StepUpPrompt } from "./StepUpPrompt";
 
 /**
  * Should this client offer the Invites pane at all? Two gates, one per kind of truth:
@@ -62,6 +63,7 @@ type Busy = null | "mint" | `revoke:${string}`;
 
 export function InvitesSection() {
   const t = useTranslations("invites");
+  const td = useTranslations("devices");
   const sentence = useRefusalSentence();
   const format = useFormatter();
   const toast = useToast();
@@ -73,6 +75,9 @@ export function InvitesSection() {
   /** The one appearance of a raw token, dressed as the link it is sent as. */
   const [minted, setMinted] = useState<{ link: string; label: string } | null>(null);
   const [labelDraft, setLabelDraft] = useState("");
+  /** A verb `step_up_required` refused, parked behind {@link StepUpPrompt} and re-run once by the factor. */
+  const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void> } | null>(null);
+  const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
 
   /** The pane can be navigated away from mid-ceremony; nothing may set state after that.
    *  ARMED IN THE SETUP, not only at declaration: Strict Mode runs cleanup and then setup
@@ -105,19 +110,24 @@ export function InvitesSection() {
   }, [refresh]);
 
   /**
-   * A step-up-gated call, reported honestly — `SecuritySection.run`'s exact shape: 401/403 is
-   * "your confirmation window closed, sign in again", said instead of swallowed, because
-   * swallowing it is how "invites don't work" becomes the report instead of the truth.
+   * A step-up-gated call — `SecuritySection.run`'s exact shape: the first `step_up_required`
+   * parks it behind the inline factor prompt, which re-runs it once; any other 401/403, or a
+   * second refusal after a verified factor, says sign in again rather than being swallowed.
    */
   const run = useCallback(
-    (kind: Exclude<Busy, null>, fn: () => Promise<void>) => {
+    (kind: Exclude<Busy, null>, fn: () => Promise<void>, verified = false) => {
       void (async () => {
         setBusy(kind);
         setError(null);
+        setStepUpDiscarded(false);
         try {
           await fn();
         } catch (err) {
           if (!alive.current) return;
+          if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required" && !verified) {
+            setStepUp({ kind, fn });
+            return;
+          }
           setError(
             err instanceof ApiError && (err.status === 401 || err.status === 403)
               ? t("stepUpExpired")
@@ -187,6 +197,18 @@ export function InvitesSection() {
         <p className="acct-warn" role="alert">
           {error}
         </p>
+      ) : null}
+      {stepUpDiscarded ? <p className="acct-warn" role="status">{td("stepUpCancelledNothingRan")}</p> : null}
+      {stepUp ? (
+        <StepUpPrompt
+          onVerified={() => {
+            const parked = stepUp;
+            setStepUp(null);
+            run(parked.kind, parked.fn, true);
+          }}
+          onCancel={() => setStepUp(null)}
+          onDiscarded={() => setStepUpDiscarded(true)}
+        />
       ) : null}
 
       {minted ? (

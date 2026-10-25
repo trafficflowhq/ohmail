@@ -65,6 +65,13 @@ function stepEntry(root: HTMLElement): HTMLElement {
   return entry !== null && !(entry as HTMLButtonElement).disabled ? entry : root;
 }
 
+/** The presses a door's second-factor check can refuse, and the step each one's prompt opens on. */
+type StepUpPress = "test" | "connect" | "takeover" | "agree" | "forget";
+/* Forget is pressed from Start over's confirm, on whichever step it stood: its prompt opens there. */
+const STEP_UP_STEP: Record<Exclude<StepUpPress, "forget">, OnboardingStep> = {
+  test: "mailbox", connect: "mailbox", takeover: "elsewhere", agree: "window",
+};
+
 /**
  * THE RAIL — seven groups over eleven screens, because the rail names PHASES and several
  * screens are two halves of one phase (welcome/mailbox/elsewhere are all "get the mailbox in";
@@ -617,8 +624,10 @@ export function FirstRun({
   const [reasked, setReasked] = useState<string | null>(null);
   /** The mailbox whose first look outlasted {@link HOLDER_CHECK_MS}; Agree is offered for it. */
   const [checkExpiredFor, setCheckExpiredFor] = useState<string | null>(null);
-  /** Agree met the door's second-factor check: the prompt is open for this mailbox. */
-  const [stepUpFor, setStepUpFor] = useState<string | null>(null);
+  /** A press the door's second-factor check refused: the prompt is open, and a verified code presses it once more. */
+  const [stepUp, setStepUp] = useState<{ press: StepUpPress; mailboxId: string | null; on: OnboardingStep | null } | null>(null);
+  /** The sentence on screen is a refused Forget's: Start over's confirm carries it, not the step. */
+  const [forgetRefused, setForgetRefused] = useState(false);
 
   /**
    * The read that put a holder on the claim question, as a floor for every
@@ -713,7 +722,7 @@ export function FirstRun({
     write: () => Promise<void>, keepCursor?: OnboardingStep,
     /** A refusal stays on this screen with its sentence, never a silent step back. */
     opts: { stayOnFailure?: boolean } = {},
-  ) => {
+  ): Promise<boolean> => {
     /* THE FORM'S GENERATION AT THE MOMENT THIS STARTED. `retireTest` advances it on every edit, so
        this is exactly "has the form moved since I was sent". A WRITE needs it for the same reason
        the test does, and it was missed because a write looks like it cannot be overtaken: press
@@ -748,6 +757,7 @@ export function FirstRun({
       await write();
       await settle();
       setAt(keepCursor ?? null);
+      return true;
     } catch (err) {
       // The CURSOR still moves on a first run — the derivation is entitled to answer over the
       // newest facts whatever happened here — but the SENTENCE belongs to a form that is gone.
@@ -756,10 +766,32 @@ export function FirstRun({
       }
       await settle();
       setAt(rerun === true || opts.stayOnFailure === true ? here : null);
+      return false;
     } finally {
       setBusy(false);
     }
   }, [host, onRefresh, rerun, step]);
+
+  /** A refusal the door's second-factor check made opens its prompt (not after a retry) and is said; others rethrow. */
+  const askStepUp = (press: StepUpPress, retried: boolean, said: string) => (err: unknown): never => {
+    if (!host.stepUp?.required(err)) throw err;
+    setStepUp(retried ? null : { press, mailboxId, on: press === "forget" ? step : STEP_UP_STEP[press] });
+    throw new Error(said);
+  };
+
+  /**
+   * THE RE-ENTRY TAKE-OVER ("Organize here instead" on a consented mailbox): a step-up refusal asks
+   * for the code and presses once more, as {@link agree} does.
+   */
+  const takeOverHere = (retried: boolean) => {
+    if (!mailboxId) return;
+    void run(async () => {
+      await host.organize(mailboxId, { intent: "takeover" })
+        .catch(askStepUp("takeover", retried, t("elsewhereStepUp")));
+      setClaimed(true);
+      setTakeoverAsk({ mailboxId, floor: null });
+    }, "elsewhere", { stayOnFailure: true });
+  };
 
   /**
    * AGREE AND START ORGANIZING — one press, and a step-up refusal asks for the code and runs the same
@@ -784,7 +816,7 @@ export function FirstRun({
         });
       } catch (err) {
         if (host.stepUp?.required(err)) {
-          setStepUpFor(retried ? null : mailboxId);
+          setStepUp(retried ? null : { press: "agree", mailboxId, on: "window" });
           throw new Error(t("windowStepUp"));
         }
         throw err;
@@ -818,12 +850,40 @@ export function FirstRun({
     }, rerun === true ? "ai" : undefined, { stayOnFailure: true });
   };
 
-  /** Move inside the run — the Back and Continue verbs, and nothing else. */
+  /**
+   * Move inside the run — the Back and Continue verbs, and nothing else. A code prompt left open is
+   * closed with the step's sentence: armed, it would come back on its step and press again what the
+   * person walked away from (a refused Forget, then "Keep the mailbox", forgot the kept mailbox).
+   */
   const goTo = useCallback((next: OnboardingStep) => {
     setConfirm(null);
     setProblem(null);
+    setStepUp(null);
     setAt(next);
   }, []);
+
+  /* A REFUSED FORGET'S CODE PROMPT LIVES ONLY WITH START OVER'S CONFIRM. However the confirm closes —
+     Keep, its Back, Escape turning it into Close setup's — the press was withdrawn, and the prompt
+     goes with it, so no later code can forget a mailbox the person kept. It watches the prompt too:
+     a Forget still in flight when the confirm closed arms its refusal after, with no confirm change. */
+  useEffect(() => {
+    if (confirm !== "restart" && stepUp?.press === "forget") setStepUp(null);
+  }, [confirm, stepUp]);
+
+  /**
+   * START OVER, FORGETTING THE MAILBOX: this run's first screen only once the forget succeeded. A
+   * refusal stays, said in the confirm; a step-up refusal asks for the code and presses once more.
+   */
+  const forget = (retried: boolean) => {
+    if (!host.forgetMailbox || !mailboxId) return;
+    const first = path[0] ?? "mailbox";
+    void run(async () => {
+      await host.forgetMailbox!(mailboxId).catch((err: unknown) => {
+        setForgetRefused(true);
+        return askStepUp("forget", retried, t("forgetStepUp"))(err);
+      });
+    }, undefined, { stayOnFailure: true }).then((ok) => { if (ok) goTo(first); });
+  };
   const forward = useCallback(() => {
     if (step === null) return;
     const next = nextStep(path, step);
@@ -837,7 +897,7 @@ export function FirstRun({
    * would re-open this stage at the next boot on whatever screen it was abandoned at.
    */
   const leave = useCallback(() => {
-    void run(async () => { await host.complete(); }).then(onLeave);
+    void run(async () => { await host.complete(); }).then(() => onLeave());
   }, [host, onLeave, run]);
 
   /**
@@ -864,7 +924,9 @@ export function FirstRun({
   /** The step's form, and the second-factor prompt while it stands. */
   const formRef = useRef<HTMLFormElement | null>(null);
   const stepUpRef = useRef<HTMLDivElement | null>(null);
-  const stepUpOpen = step === "window" && stepUpFor !== null && stepUpFor === mailboxId && host.stepUp !== undefined;
+  const stepProblem = confirm === "restart" && forgetRefused ? null : problem;
+  const stepUpOpen = stepUp !== null && stepUp.on === step && stepUp.mailboxId === mailboxId
+    && host.stepUp !== undefined;
   /* FOCUS STANDS WHERE ↵ BELONGS, after every commit: on open, on a step change, as the code prompt
      opens and closes and as a shut ↵ control opens. Left on the card, ↵ reached no form. A place the
      person chose inside the step stays theirs. The decision (its verbs are letters) holds the card. */
@@ -939,6 +1001,7 @@ export function FirstRun({
        about a mailbox nobody is trying any more — and a fresh green test did not remove it either,
        because the two were written by different code paths and only one of them was retired. */
     setProblem(null);
+    setStepUp((u) => (u !== null && (u.press === "test" || u.press === "connect") ? null : u));
   }, []);
   const preset = providerById(providerId);
 
@@ -1022,7 +1085,7 @@ export function FirstRun({
     };
   }, [address, imapHost, imapPort, offer, pass, plain, preset, smtpHost, smtpPort]);
 
-  const test = useCallback(async () => {
+  const test = useCallback(async (retried = false) => {
     const mine = ++testSeq.current;
     const input = mailboxInput();
     const holds = host.localServerWait === true && isLocalServerHost(input.imap.host);
@@ -1036,8 +1099,11 @@ export function FirstRun({
     } catch (err) {
       if (testSeq.current !== mine) return;
       openOffer(err);
+      const stepUpAsked = host.stepUp?.required(err) === true;
+      if (stepUpAsked) setStepUp(retried ? null : { press: "test", mailboxId, on: "mailbox" });
       setVerdict({
-        reason: host.probeReason(err), message: host.probeMessage(err),
+        reason: stepUpAsked ? null : host.probeReason(err),
+        message: stepUpAsked ? t("mailboxStepUp") : host.probeMessage(err),
         localServer: host.probeLocalServer?.(err) === true, transport: refusalTransport(err),
         authHint: refusalAuthHint(err),
       });
@@ -1045,7 +1111,45 @@ export function FirstRun({
       if (testSeq.current === mine) setTesting(false);
       if (holds) heldLocalTestEnded();
     }
-  }, [host, mailboxInput, openOffer]);
+  }, [host, mailboxId, mailboxInput, openOffer, t]);
+
+  /** Connect the tested form. A step-up refusal asks for the code and connects once more, as {@link agree} does. */
+  const connectTyped = (retried: boolean) => {
+    void run(async () => {
+      /* ── THE MODE IS STATED, NEVER DEFAULTED ────────────────────────────────────────
+       * `seed` reconfigures the INSTALL — on the standalone door it writes the shell's
+       * settings file and replaces the engine — and `add` posts to the door's own add
+       * route, which writes a further row beside the ones already running. They are not
+       * variants of one call: a `seed` connect pressed from "Add mailbox" would replace
+       * the engine and then seal the typed password onto the mailbox this install was
+       * already opening, because the id it seals onto is the one the replaced engine
+       * settles on. That is why the parameter is required at the seam and why the word
+       * comes off the route rather than out of a fallback here. */
+      const orStepUp = askStepUp("connect", retried, t("mailboxStepUp"));
+      /* A connect refused for a protocol with no TLS on a private network opens its line. */
+      const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed").catch(offerAndRethrow).catch(orStepUp);
+      /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
+       * since been stored; leaving it standing would arm this screen's primary again the
+       * moment somebody walked back onto it. */
+      retireTest();
+      /**
+       * WHICH ROW THE REST OF THIS RUN IS ABOUT — ON AN ADD RUN, AND ONLY THERE: The caller resolves the
+       * run's subject from the route, and an ADD run's route names no mailbox until this moment because there
+       * was no row to name. `add === true` IS LOAD-BEARING AND WAS MISSING. Called unconditionally, this
+       * re-pointed the hash at `#/first-run/add` after every connect — including a FIRST run's, on the door
+       * where the flow's form IS the connect (cloud) and on the standalone path through "Start over → forget
+       * this mailbox". From the next render `route.firstRunAdd` was true, so `onboardingPath` dropped `ai`,
+       * `provider` and `pair`: the AI question was never asked, the standalone door's provider form was never
+       * shown, and the phone was never offered — on the one run that exists to offer them.
+       */
+
+      /**
+       * A first run needs no id in its hash anyway: its new row is the only row, so `facts[0]` is already the
+       * right answer.
+       */
+      if (add === true) onConnected?.(id);
+    }, undefined, { stayOnFailure: true });
+  };
 
   /**
    * "Connect and continue" IS DISABLED UNTIL A TEST HAS PASSED, and the gate reads the VERDICT
@@ -1270,7 +1374,7 @@ export function FirstRun({
           welcome, so naming it parked the cursor off the walk with a forward verb that could not
           move. See {@link forward}. */}
       <button type="button" className="join-alt" disabled={busy}
-        onClick={() => (mailboxId ? setConfirm("restart") : goTo(path[0] ?? "mailbox"))}>
+        onClick={() => { setForgetRefused(false); if (mailboxId) setConfirm("restart"); else goTo(path[0] ?? "mailbox"); }}>
         {t("restart")}
       </button>
       <span className="ob-spacer" />
@@ -1382,39 +1486,7 @@ export function FirstRun({
              */
             if (facts.mailbox !== null) { forward(); return; }
             if (!tested) return;
-            void run(async () => {
-              /* ── THE MODE IS STATED, NEVER DEFAULTED ────────────────────────────────────────
-               * `seed` reconfigures the INSTALL — on the standalone door it writes the shell's
-               * settings file and replaces the engine — and `add` posts to the door's own add
-               * route, which writes a further row beside the ones already running. They are not
-               * variants of one call: a `seed` connect pressed from "Add mailbox" would replace
-               * the engine and then seal the typed password onto the mailbox this install was
-               * already opening, because the id it seals onto is the one the replaced engine
-               * settles on. That is why the parameter is required at the seam and why the word
-               * comes off the route rather than out of a fallback here. */
-              /* A connect refused for a protocol with no TLS on a private network opens its line. */
-              const { id } = await host.connect(mailboxInput(), add === true ? "add" : "seed").catch(offerAndRethrow);
-              /* AND THE VERDICT IS RETIRED WITH THE FORM IT DESCRIBED. It proved a login that has
-               * since been stored; leaving it standing would arm this screen's primary again the
-               * moment somebody walked back onto it. */
-              retireTest();
-              /**
-               * WHICH ROW THE REST OF THIS RUN IS ABOUT — ON AN ADD RUN, AND ONLY THERE: The caller resolves the
-               * run's subject from the route, and an ADD run's route names no mailbox until this moment because there
-               * was no row to name. `add === true` IS LOAD-BEARING AND WAS MISSING. Called unconditionally, this
-               * re-pointed the hash at `#/first-run/add` after every connect — including a FIRST run's, on the door
-               * where the flow's form IS the connect (cloud) and on the standalone path through "Start over → forget
-               * this mailbox". From the next render `route.firstRunAdd` was true, so `onboardingPath` dropped `ai`,
-               * `provider` and `pair`: the AI question was never asked, the standalone door's provider form was never
-               * shown, and the phone was never offered — on the one run that exists to offer them.
-               */
-
-              /**
-               * A first run needs no id in its hash anyway: its new row is the only row, so `facts[0]` is already the
-               * right answer.
-               */
-              if (add === true) onConnected?.(id);
-            });
+            connectTyped(false);
           },
           (
             <>
@@ -1588,7 +1660,7 @@ export function FirstRun({
                     }}
                   />
                 ) : null}
-              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
               {foot({
                 back: true,
                 primary: next(busy ? t("connecting") : t("connect"), { disabled: !tested }),
@@ -1645,12 +1717,7 @@ export function FirstRun({
              * worker on its next pass. Never "done": this authorizes ONE attempt and does not win anything.
              */
             if (!facts.mailbox?.organizeConsentedAt) { forward(); return; }
-            if (!mailboxId) return;
-            void run(async () => {
-              await host.organize(mailboxId, { intent: "takeover" });
-              setClaimed(true);
-              setTakeoverAsk({ mailboxId, floor: null });
-            }, "elsewhere");
+            takeOverHere(false);
           },
           (
             <>
@@ -1739,7 +1806,7 @@ export function FirstRun({
                   the press is stated on the choice above instead, which is where a person reads
                   before choosing rather than after. */}
               {claimed ? <SettingsVerdict state="wait" headline={t("elsewhereQueued")} /> : null}
-              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
             </>
           ),
@@ -1786,19 +1853,27 @@ export function FirstRun({
               ) : null}
               <p className="ob-consent ob-window-recap">{firstSentence(t("consentBody"))}</p>
               {checking ? <SettingsVerdict state="wait" headline={t("windowCheckingHolder")} /> : null}
-              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
               {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree"), { disabled: checking }) })}
             </>
           ),
         ) : null}
         {/* THE DOOR'S SECOND-FACTOR PROMPT, outside the step's form (it carries its own). A verified
             factor runs the same press once more; Cancel leaves the sentence above standing. */}
-        {step === "window" && stepUpFor !== null && stepUpFor === mailboxId && host.stepUp ? (
+        {stepUpOpen && host.stepUp ? (
           <div className="ob-stepup" ref={stepUpRef}>
             {host.stepUp.prompt({
-              onVerified: () => { setStepUpFor(null); agree(true); },
-              onCancel: () => setStepUpFor(null),
-              onDiscarded: () => setStepUpFor(null),
+              onVerified: () => {
+                const press = stepUp!.press;
+                setStepUp(null);
+                if (press === "agree") agree(true);
+                else if (press === "takeover") takeOverHere(true);
+                else if (press === "test") void test(true);
+                else if (press === "forget") forget(true);
+                else connectTyped(true);
+              },
+              onCancel: () => setStepUp(null),
+              onDiscarded: () => setStepUp(null),
             })}
           </div>
         ) : null}
@@ -1858,7 +1933,7 @@ export function FirstRun({
               />
               {/* A self-hosted server with no model: "yes" would switch on something that cannot run. */}
               {aiOffered ? null : <p className="ob-consent">{t("providerSelfhostOff")}</p>}
-              {problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
+              {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
               {foot({ back: true, primary: next(t("continue")) })}
             </>
           ),
@@ -2143,6 +2218,7 @@ export function FirstRun({
         {confirm === "restart" ? (
           <div className="ob-confirm">
             <p>{t("restartWhat")}</p>
+            {forgetRefused && problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
             <SettingsActions>
               <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy}>
                 {t("restartKeep")}
@@ -2151,9 +2227,7 @@ export function FirstRun({
                   first screen, which on an ADD run is the connect form and not a welcome the
                   walk does not contain. */}
               {host.forgetMailbox && mailboxId ? (
-                <Button variant="ghost" disabled={busy}
-                  onClick={() => void run(async () => { await host.forgetMailbox!(mailboxId); })
-                    .then(() => goTo(path[0] ?? "mailbox"))}>
+                <Button variant="ghost" disabled={busy} onClick={() => forget(false)}>
                   {t("restartForget")}
                 </Button>
               ) : null}

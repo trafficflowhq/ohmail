@@ -22,6 +22,7 @@ import { useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
 import { ApiError, apiConfigured, auth } from "../../api-client";
 import { useRefusalSentence } from "../refusal-sentence";
+import { StepUpPrompt } from "./StepUpPrompt";
 
 type Busy = null | "codes" | "totp-enroll" | "totp-activate" | "totp-remove";
 
@@ -33,6 +34,7 @@ interface Enrolled {
 
 export function SecuritySection() {
   const t = useTranslations("security");
+  const td = useTranslations("devices");
   const sentence = useRefusalSentence();
 
   const [enrolled, setEnrolled] = useState<Enrolled | null>(null);
@@ -41,6 +43,9 @@ export function SecuritySection() {
   const [readFailed, setReadFailed] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
+  /** A verb `step_up_required` refused, parked behind {@link StepUpPrompt} and re-run once by the factor. */
+  const [stepUp, setStepUp] = useState<{ kind: Exclude<Busy, null>; fn: () => Promise<void> } | null>(null);
+  const [stepUpDiscarded, setStepUpDiscarded] = useState(false);
 
   const [codes, setCodes] = useState<string[] | null>(null);
   const [confirmCodes, setConfirmCodes] = useState(false);
@@ -88,18 +93,22 @@ export function SecuritySection() {
   }, [refresh]);
 
   /**
-   * A step-up-gated call, reported honestly. `withStepUp` answers 401/403 when the window has
-   * closed, and the ONLY correct response is to tell the user to sign in again — silently
-   * swallowing it is how "2FA does not work" becomes the report instead of "your step-up
-   * expired".
+   * A step-up-gated call. The first `step_up_required` parks it behind the inline factor prompt,
+   * which re-runs it once (`DevicesSection.run`'s shape); any other 401/403, or a second refusal
+   * after a verified factor, says sign in again rather than being swallowed.
    */
-  const run = useCallback(async (kind: Exclude<Busy, null>, fn: () => Promise<void>) => {
+  const run = useCallback(async (kind: Exclude<Busy, null>, fn: () => Promise<void>, verified = false) => {
     setBusy(kind);
     setError(null);
+    setStepUpDiscarded(false);
     try {
       await fn();
     } catch (err) {
       if (!alive.current) return;
+      if (err instanceof ApiError && err.status === 403 && err.code === "step_up_required" && !verified) {
+        setStepUp({ kind, fn });
+        return;
+      }
       setError(err instanceof ApiError && (err.status === 401 || err.status === 403)
         ? t("stepUpExpired")
         : sentence(err));
@@ -142,6 +151,18 @@ export function SecuritySection() {
       <p className="acct-lead">{t("intro")}</p>
 
       {error ? <p className="acct-warn" role="alert">{error}</p> : null}
+      {stepUpDiscarded ? <p className="acct-warn" role="status">{td("stepUpCancelledNothingRan")}</p> : null}
+      {stepUp ? (
+        <StepUpPrompt
+          onVerified={() => {
+            const parked = stepUp;
+            setStepUp(null);
+            void run(parked.kind, parked.fn, true);
+          }}
+          onCancel={() => setStepUp(null)}
+          onDiscarded={() => setStepUpDiscarded(true)}
+        />
+      ) : null}
 
       {/* ── A FAILED READ IS NOT AN EMPTY RESULT — NOTHING BELOW THIS LINE IS KNOWN, SO NOTHING BELOW IT IS SHOWN ──
           Every block that follows is an assertion about `enrolled`, and the destructive one

@@ -782,7 +782,7 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     const body = STAGE.slice(at, STAGE.indexOf('{step === "elsewhere"'));
     expect(body).toContain("if (facts.mailbox !== null) { forward(); return; }");
     // …and the guard runs BEFORE the create, not after it.
-    expect(body.indexOf("facts.mailbox !== null")).toBeLessThan(body.indexOf("host.connect("));
+    expect(body.indexOf("facts.mailbox !== null")).toBeLessThan(body.indexOf("connectTyped("));
   });
 
   /**
@@ -926,10 +926,11 @@ describe("a verdict may not arrive after the form it describes has moved", () =>
     // no derivation to answer — a finished account derives to "nothing to do" — so `null` means
     // the consent statement, and a failure that cleared the cursor walked back to a screen that
     // does not render the sentence explaining it. `first-run-rerun-loop.test.tsx` drives it.
-    // AND THE ONE WRITE THAT ASKS TO STAY — Agree, whose refusal (a step-up 403) must stay on How
-    // far back with its sentence; `first-run-agree-step-up.test.tsx` drives it.
+    // AND THE FOUR WRITES THAT ASK TO STAY — Agree, the take-over, Connect and Forget, whose step-up 403
+    // must stay on their screen with its sentence and the code prompt;
+    // `first-run-agree-step-up.test.tsx` drives them.
     expect(run).toContain("setAt(rerun === true || opts.stayOnFailure === true ? here : null);");
-    expect(STAGE.match(/stayOnFailure: true/g) ?? [], "only Agree stays on a refusal").toHaveLength(1);
+    expect(STAGE.match(/stayOnFailure: true/g) ?? [], "only the step-up writes stay on a refusal").toHaveLength(4);
   });
 
   it("the pane retires a failed create's sentence on EVERY field edit, not only a host change", () => {
