@@ -706,7 +706,7 @@ export class SearchService {
       pd as (select w.id as id, w.date as date from (select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
           where ${where} order by m.date desc nulls last, m.id desc limit ${far - bound} offset ${bound}) w
         where ${short} and ${full} and ${walkOn} and ${kept} order by w.date desc nulls last, w.id desc
-        limit greatest(${page} - (select count(*) from pw), 0))${sql.join(deep, sql``)}
+        limit (case when ${page} - (select count(*) from pw) > 0 then ${page} - (select count(*) from pw) else 0 end))${sql.join(deep, sql``)}
       select id, date, 0 as rank, 0 as x from pw where (select count(*) from pw) >= ${k}
       union all
       select id, date, 0 as rank, 0 as x
