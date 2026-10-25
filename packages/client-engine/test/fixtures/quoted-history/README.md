@@ -1,6 +1,6 @@
 # Quoted-history corpus
 
-124 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
+130 synthetic `.eml` fixtures, one per real-world shape of quoted reply/forward history, each with an
 `<file>.expected.json` sidecar that says where the new message ends and the history begins. Built for the
 0.30.x thread reader, where thread members show their whole quoted history unfolded (report,
 2026-10-23: an Outlook-style `Von:/Datum:/An:/Cc:/Betreff: WG:` block in the body's own colour, never folded).
@@ -29,10 +29,14 @@ Fixtures 106-116 are the shapes of its third review: a coloured line inside a qu
 brand-coloured company name over a nested Outlook hop, a red 'URGENT' line), GMX, WEB.DE and mail.com replies (a
 date-first header block), a markerless Samsung history under a nested-table signature, and leads that name no
 answers.
-A forward whose history opens with the forward's own introducer ('Forwarded message', 'Weitergeleitete
-Nachricht', 'Begin forwarded message:') shows the forwarded message whole: it is the content the forward
-delivers (19, 26, 32, 86). An Outlook forward reads like an Outlook reply in its body and still folds (02, 11,
-104). Fixture 123 is tester A's round-43 reply that quotes such a forward: it folds at its attribution.
+A forward keeps the message it forwards open: it is the content the forward delivers. Its history opens with
+the forward's own introducer ('Forwarded message', 'Weitergeleitete Nachricht', 'Begin forwarded message:';
+19, 26, 32, 86), or its subject opens with a forward's prefix (Fwd, FW, WG, TR, I, RV, Doorst): an Outlook,
+OWA or Samsung forward reads like a reply in its body (02, 11, 104, 125-127). Only the hops below the
+forwarded message fold, so a forward of one message folds nothing (104). A forwarded message that is itself
+a forward (its own header's subject, or a nested introducer) delivers the message below it too (128-130). The readers hand the detector each
+`.eml`'s Subject, as the tests do. Fixture 123 is tester A's round-43 reply that quotes such a forward: it folds
+at its attribution.
 Fixture 124 is an Outlook reply whose answers sit inside the history in the body's own black ink, marked only
 by the writer's initials ('[AE] '); a mark two lines of one hop repeat ('[Ana Example] ') counts the same, a single
 '[EXTERNAL]' banner does not.
@@ -91,7 +95,7 @@ which belong to the new message and stay visible.
 | # | File | Client | UI | Kind | Levels | Fold | Shape |
 |---|---|---|---|---|---|---|---|
 | 01 | `01-outlook-win-de-reply.eml` | outlook_win | de | reply | 1 | trailing | Outlook for Windows, German: MsoNormal paragraphs, border-top div with Von/Gesendet/An/Cc/Betreff, earlier message flat below (no blockquote, no '>') |
-| 02 | `02-outlook-win-de-chain-5-wg.eml` | outlook_win | de | forward | 5 | trailing | Outlook for Windows, German: a WG: forward on top of a 5-level flat AW: chain; five border-top Von: blocks one after another, all at the same depth |
+| 02 | `02-outlook-win-de-chain-5-wg.eml` | outlook_win | de | forward | 5 | trailing (from level 2) | Outlook for Windows, German: a WG: forward on top of a 5-level flat AW: chain; five border-top Von: blocks one after another, all at the same depth; the first stays open |
 | 03 | `03-outlook-mac-de-datum-wg.eml` | outlook_mac_new | de | reply | 2 | trailing | Outlook for Mac (new), German: body-colour header block (Von:/Datum: '... um HH:MM'/An:/Betreff: WG: ...) with no border and no quote bar, the forwarded message below it, and a further Outlook Von: block below that |
 | 04 | `04-outlook-mac-classic-en-reply.eml` | outlook_mac | en | reply | 1 | trailing | Outlook for Mac (classic), English: border-top #B5C4DF div with From/Date/To/Subject, the Gmail original (with its own gmail_quote-free body) below |
 | 05 | `05-outlook-win-en-mailto-chain.eml` | outlook_win | en | reply | 2 | trailing | Outlook 2010-2013 style, English: 'From: Name [mailto:address]', Sent: '... 9:14 AM', two levels, windows-1252 |
@@ -100,7 +104,7 @@ which belong to the new message and stay visible.
 | 08 | `08-outlook-win-es-reply.eml` | outlook_win | es | reply | 1 | trailing | Outlook for Windows, Spanish: De:/Enviado el:/Para:/Asunto:, 'jueves, 22 de octubre de 2026 9:14', HTML base64 |
 | 09 | `09-outlook-win-nl-reply.eml` | outlook_win | nl | reply | 1 | trailing | Outlook for Windows, Dutch: Van:/Verzonden:/Aan:/Onderwerp:, iso-8859-1 |
 | 10 | `10-owa-en-reply-to-gmail.eml` | owa | en | reply | 2 | trailing | Outlook on the web, English: div#appendonsend + hr + div#divRplyFwdMsg header; the quoted Gmail thread has every class/id rewritten with an x_ prefix (x_gmail_quote, x_gmail_attr) |
-| 11 | `11-owa-de-forward-wg-note.eml` | owa | de | forward | 2 | trailing | Outlook on the web, German: WG: forward with a two-line note; underscore rule in text/plain, divRplyFwdMsg in HTML, an older Outlook Von: block inside |
+| 11 | `11-owa-de-forward-wg-note.eml` | owa | de | forward | 2 | trailing (from level 2) | Outlook on the web, German: WG: forward with a two-line note; underscore rule in text/plain, divRplyFwdMsg in HTML, an older Outlook Von: block inside; the first stays open |
 | 12 | `12-outlook-ios-de-reply.eml` | outlook_ios | de | reply | 1 | trailing | Outlook for iOS, German: 'Outlook für iOS beziehen' line, #mail-editor-reference-message-container with a border-top reference header, underscore rule in text/plain |
 | 13 | `13-gmail-en-reply-nested.eml` | gmail | en | reply | 2 | trailing | Gmail web, English: div.gmail_quote > div.gmail_attr 'On ... wrote:' + blockquote.gmail_quote, nested twice; text/plain '> ' and '> > ' |
 | 14 | `14-gmail-de-reply-to-apple.eml` | gmail | de | reply | 1 | trailing | Gmail web, German: 'Am Do., 22. Okt. 2026 um 09:14 Uhr schrieb Name <address>:' over an Apple Mail original |
@@ -183,7 +187,7 @@ which belong to the new message and stay visible.
 | 101 | `101-negative-gmail-quoted-passage-over-signature.eml` | gmail | en | inline | 0 | none (MUST NOT FOLD) | Gmail, English: the writer quotes a contract paragraph with the quote button, a signature below; no attribution |
 | 102 | `102-inline-interleaved-plain-registered-signature.eml` | mutt | en | inline | 1 | none (MUST NOT FOLD) | Fixture 53 (mutt, answers between quoted lines) with a company registration line in the signature |
 | 103 | `103-negative-newsletter-pull-quote.eml` | synthetic | en | inline | 0 | none (MUST NOT FOLD) | A max-width 600px newsletter whose post ends on a pull quote above a grey footer |
-| 104 | `104-outlook-win-de-forward-colon-note.eml` | outlook_win | de | forward | 1 | trailing | Outlook for Windows, German: a forward whose note ends with ':' over a border-top Von block; the text part alone reads as a paste |
+| 104 | `104-outlook-win-de-forward-colon-note.eml` | outlook_win | de | forward | 1 | none (forward: shown whole) | Outlook for Windows, German: a WG: forward whose note ends with ':' over a border-top Von block; without its subject it folds, and the text part alone reads as a paste |
 | 105 | `105-inline-interleaved-outlook-bold-announced.eml` | synthetic | de | inline | 1 | none (MUST NOT FOLD) | Fixture 73 with the answers bold in the body's ink, the lead 'meine Antworten sind fett gedruckt.' |
 | 106 | `106-gmail-reply-to-owa-chain-brand-signature.eml` | gmail | en | reply | 3 | trailing | Fixture 61 with the quoted hop's company name in bold brand blue; the next hop is an Outlook header block inside the quote |
 | 107 | `107-gmail-fr-reply-red-urgent-line.eml` | gmail | fr | reply | 1 | trailing | Fixture 15 with a red 'URGENT' line between the quoted greeting and its prose |
@@ -204,3 +208,9 @@ which belong to the new message and stay visible.
 | 122 | `122-gmail-en-split-lead-caps-answers.eml` | gmail | en | inline | 1 | none (MUST NOT FOLD) | Gmail, English: lead 'My answers are, as usual, in red.', the answers YES, CHF 5'000, 14:00 in red inside the quote |
 | 123 | `123-r43-gmail-en-reply-quoting-forward.eml` | gmail | en | reply | 2 | trailing | Gmail, English: a reply whose quote holds a forward with a note; folds at 'On ... wrote:' |
 | 124 | `124-outlook-en-black-initials-answers.eml` | outlook_win | en | inline | 1 | none (MUST NOT FOLD) | Outlook for Windows, English: lead 'thanks, done.', black answers inside the history marked '[AE] ' in bold italic |
+| 125 | `125-outlook-win-en-forward-thread.eml` | outlook_win | en | forward | 2 | trailing (from level 2) | Outlook for Windows, English: FW: of a two-message thread with a note; border-top From/Sent blocks, no forward wording in the body |
+| 126 | `126-owa-fr-forward-thread.eml` | owa | fr | forward | 2 | trailing (from level 2) | Outlook on the web, French: TR: of a two-message thread with a note; 'De :' blocks under underscore rules and divRplyFwdMsg |
+| 127 | `127-samsung-email-en-forward-thread.eml` | samsung | en | forward | 2 | trailing (from level 2) | Samsung Email, English: Fwd: of a Gmail reply with a note; '-------- Original message --------' over the forwarded reply, its 'On ... wrote:' quote below |
+| 128 | `128-apple-mail-de-forward-of-forward.eml` | apple | de | forward | 2 | none (forward: shown whole) | Apple Mail, German: Fwd: Fwd: with a note; the inner forward's 'zur Info', then a nested 'Anfang der weitergeleiteten Nachricht:' over the offer it delivers |
+| 129 | `129-gmail-en-forward-of-forward-thread.eml` | gmail | en | forward | 3 | trailing (from level 3) | Gmail, English: Fwd: Fwd: with a note; two nested 'Forwarded message' blocks, the inner one a reply whose 'On ... wrote:' quote folds |
+| 130 | `130-outlook-win-de-forward-of-forward-chain.eml` | outlook_win | de | forward | 3 | trailing (from level 3) | Outlook for Windows, German: WG: WG: with a note; the middle Von block's Betreff is WG: over 'z.K.', the supplier's AW: with the invoice stays open, the request it answers folds |

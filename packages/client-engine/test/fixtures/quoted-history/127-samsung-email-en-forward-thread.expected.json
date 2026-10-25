@@ -1,0 +1,44 @@
+{
+  "id": "127",
+  "file": "127-samsung-email-en-forward-thread.eml",
+  "shape": "samsung-email-en-forward-thread",
+  "description": "Samsung Email, English: Fwd: of a Gmail reply with a note; Samsung writes '-------- Original message --------' for forwards and replies alike",
+  "client": "samsung",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 2,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "trailing",
+    "text": {
+      "visibleFirstLine": "Clara, Ben confirms Tuesday. Can you book the parking?",
+      "visibleLastLine": "Tuesday at 9:00 works for us. We come with two technicians.",
+      "historyStartLine": "On Fri, 23 Oct 2026 at 14:10, Ana Example <ana.example@example.com> wrote:",
+      "historyStartLineNormalized": "On Fri, 23 Oct 2026 at 14:10, Ana Example <ana.example@example.com> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Fri, 23 Oct 2026 at 14:10, Ana Example <ana.example@example.com> wrote:",
+      "visibleFirstText": "Clara, Ben confirms Tuesday. Can you book the parking?",
+      "visibleLastText": "Tuesday at 9:00 works for us. We come with two technicians."
+    }
+  },
+  "notes": "The subject's forward prefix says the first quoted message is what the forward delivers: it stays open, and the history folds from the hop below it."
+}

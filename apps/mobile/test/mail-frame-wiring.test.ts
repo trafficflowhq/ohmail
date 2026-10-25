@@ -128,7 +128,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
     expect(FRAME).toContain("(pictured && !tooLong ? sanitizeMailHtmlPhone(html, pictures) : bare)");
     // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`).
-    expect(FRAME).toContain("const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true }), [html]);");
+    expect(FRAME).toContain("const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true, subject: m.subject }), [html, m.subject]);");
     expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(3);
     expect(code(FRAME).split("drawnLength(").length - 1).toBe(1);
   });

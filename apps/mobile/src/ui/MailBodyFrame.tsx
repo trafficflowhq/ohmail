@@ -108,7 +108,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // THE QUOTED HISTORY FOLDS OUT OF THE DOCUMENT (the shared detector, `sanitize.ts`'s `fold`): folded,
   // every document below is the cut one, and the frame's height, its remembered height and its drawn
   // document are keyed on the fold state, so a folded state never draws the whole document.
-  const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true }), [html]);
+  const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true, subject: m.subject }), [html, m.subject]);
   const history = folded.history ?? null;
   const folding = history !== null && !historyOpen;
   const frameId = folding ? `${m.id}#folded` : m.id;
@@ -139,8 +139,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const ceiling = useMemo(() => phoneFrameCeiling(), []);
   const bare = useMemo(() => (folding ? folded : sanitizeMailHtmlPhone(html, {})), [folding, folded, html]);
   const pictures = useMemo(
-    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding }),
-    [m.inlineImages, resolvedRemote, folding],
+    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject }),
+    [m.inlineImages, resolvedRemote, folding, m.subject],
   );
   const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
   const drawnChars = useMemo(
@@ -239,7 +239,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
         <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
           {Copy.mailOversize}
         </Txt>
-        <HistoryFold foldKey={m.id} html={html}>
+        <HistoryFold foldKey={m.id} html={html} subject={m.subject}>
           <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
         </HistoryFold>
       </View>

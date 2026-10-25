@@ -426,7 +426,7 @@ export function MessageReader({
       {/* Where its body starts and ends: its first lines, with the header, are the read rule's top. */}
       <View style={{ height: 0, marginTop: 10 }} onLayout={(e) => seen.panelBody(h.id, e.nativeEvent.layout.y)} />
       {/* Its quoted history folds; its end is where its own words end, above the row. */}
-      <HistoryFold foldKey={h.id} html={h.html} end={<View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />}>
+      <HistoryFold foldKey={h.id} html={h.html} subject={h.subject} end={<View style={{ height: 0 }} onLayout={(e) => seen.panelEnd(h.id, e.nativeEvent.layout.y)} />}>
         <BodyPages variant="streamBody" tone="ink2" text={h.body} />
       </HistoryFold>
       {/* Each member's own files: the reader's open asked for its list. */}
@@ -634,7 +634,7 @@ export function MessageReader({
                       (`AppShell.tsx`: below 900 it is hidden) — opening a message opens the READER
                       sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
                       at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
-                  <HistoryFold foldKey={m.id} html={m.html} end={<View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />}>
+                  <HistoryFold foldKey={m.id} html={m.html} subject={m.subject} end={<View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />}>
                     <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
                   </HistoryFold>
                 </>

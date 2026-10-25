@@ -1,0 +1,45 @@
+{
+  "id": "129",
+  "file": "129-gmail-en-forward-of-forward-thread.eml",
+  "shape": "gmail-en-forward-of-forward-thread",
+  "description": "Gmail, English: Fwd: Fwd: with a note; two nested 'Forwarded message' blocks, the inner one a reply that quotes its question under 'On ... wrote:'",
+  "client": "gmail",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 3,
+  "authorsInHistory": [
+    "Ben Sample",
+    "Ana Example",
+    "Ben Sample"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "trailing",
+    "text": {
+      "visibleFirstLine": "Clara, for the Thursday planning.",
+      "visibleLastLine": "Ana Example",
+      "historyStartLine": "On Fri, 23 Oct 2026 at 11:05, Ben Sample <ben.sample@example.org> wrote:",
+      "historyStartLineNormalized": "On Fri, 23 Oct 2026 at 11:05, Ben Sample <ben.sample@example.org> wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.gmail_quote div.gmail_quote div.gmail_quote",
+      "attributionBefore": null,
+      "historyStartText": "On Fri, 23 Oct 2026 at 11:05, Ben Sample <ben.sample@example.org> wrote:",
+      "visibleFirstText": "Clara, for the Thursday planning.",
+      "visibleLastText": "we can load the second truck on Thursday, 12 November, from 7:00."
+    }
+  },
+  "notes": "A forward of a forward: both forwards stay open down to the reply they deliver, and the history folds at that reply's own quote."
+}

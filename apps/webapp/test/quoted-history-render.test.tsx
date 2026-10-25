@@ -28,7 +28,7 @@ async function unmount(): Promise<void> {
 }
 afterEach(unmount);
 
-async function renderBody(cls: string, props: { text: string; html: string | null }): Promise<HTMLDivElement> {
+async function renderBody(cls: string, props: { text: string; html: string | null; subject?: string }): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await import("../app/components/MessageBody.js");
   host = document.createElement("div");
@@ -135,18 +135,18 @@ for (const cls of ["pm-body", "msg-body"]) {
       const text = expectOf(fx, "text");
       if (fx.html !== null && html !== null) {
         it(`${fx.name} — its html`, async () => {
-          const el = await renderBody(cls, { text: fx.text, html: fx.html });
+          const el = await renderBody(cls, { text: fx.text, html: fx.html, subject: fx.subject });
           if (el.querySelector("iframe")) await checkFramed(el, fx, html);
           else await checkProse(el, fx, html);
         });
         it(`${fx.name} — framed (no text part)`, async () => {
-          const el = await renderBody(cls, { text: "", html: fx.html });
+          const el = await renderBody(cls, { text: "", html: fx.html, subject: fx.subject });
           await checkFramed(el, fx, html);
         });
       }
       if (text !== null) {
         it(`${fx.name} — its text part`, async () => {
-          const el = await renderBody(cls, { text: fx.text, html: null });
+          const el = await renderBody(cls, { text: fx.text, html: null, subject: fx.subject });
           await checkProse(el, fx, text);
         });
       }
@@ -225,5 +225,39 @@ describe("an html part the reader does not render keeps its reading", () => {
     const { unrenderedHtmlVerdict } = await import("../app/components/MessageBody.js");
     expect(unrenderedHtmlVerdict(`<html><head><style>.wrap{max-width:600px}</style></head><body>${card}</body></html>`)).toBe("unread");
     expect(unrenderedHtmlVerdict(`<html><body>${card}</body></html>`)).toBe("trailing");
+  });
+});
+
+describe("a Reads or Receipts stream card reads the message's subject too", () => {
+  it("an Outlook FW: shows the letter it forwards; the hop below it folds", async () => {
+    await unmount();
+    const fx = FIXTURES.find((f) => f.id === "125")!;
+    const { NextIntlClientProvider } = await import("next-intl");
+    const { StreamCardMemo } = await import("../app/shell/StreamCardMemo.js");
+    const en = (await import("../messages/en.json")).default;
+    const now = new Date("2026-10-25T09:00:00.000Z");
+    const m = {
+      id: "m1", accountId: "a", mailboxId: "mb1", threadId: null, messageIdHeader: null, subject: fx.subject,
+      from: { name: "Ben Sample", address: "ben.sample@example.org" }, to: [], cc: [], date: "2026-10-24T07:12:00.000Z",
+      folder: "INBOX", snippet: "s", unread: false, labels: [],
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC", now,
+        children: h(StreamCardMemo, {
+          m: m as never, now, current: false, expanded: true, viewer: true, unread: false,
+          bodyText: fx.text, bodyState: "full", bodyHtml: fx.html, bodyLoadedRemote: false,
+          loadingLabel: "…", failedLabel: "!", withheldKey: "withheld" as never, onReask: () => {}, onSelect: () => {}, onToggle: () => {},
+        }),
+      }));
+    });
+    const shown = (): string => textOf(host!) + srcdocText(host!);
+    expect(shown(), "the forwarded letter is on screen").toContain("we can load the second truck on Thursday");
+    expect(shown()).not.toContain("can you take a second truck in the week of 9 November?");
+    await press(toggleIn(host)!);
+    expect(shown()).toContain("can you take a second truck in the week of 9 November?");
   });
 });

@@ -73,6 +73,8 @@ export interface PhoneSanitizeOptions {
    * parts and its links are then the folded document's own. Off, the output is unchanged.
    */
   fold?: boolean;
+  /** The message's subject, read with {@link fold}: a forward's prefix keeps the forwarded message in. */
+  subject?: string | null;
 }
 
 /** The scheme the document's links carry instead of their targets. */
@@ -345,7 +347,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const root: AnyNode = body ?? doc;
   // The folded document: the history's nodes are never walked, so nothing in them is emitted,
   // counted, fetched or linked.
-  const range = opts.fold === true ? quotedHistoryOfHtml(root, phoneQuotedTree, { sheets: headStyles.map(sheetText) }) : null;
+  const range = opts.fold === true ? quotedHistoryOfHtml(root, phoneQuotedTree, { sheets: headStyles.map(sheetText), subject: opts.subject }) : null;
   const skip = new Set<AnyNode>(range === null ? [] : quotedHistoryCut(root, phoneQuotedTree, range).history);
   walk(body ? body.children : doc.children, skip);
 

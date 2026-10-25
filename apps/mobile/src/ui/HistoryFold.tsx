@@ -18,14 +18,16 @@ export interface FoldScope {
   end?: ReactNode;
   /** The html part's own reading: the text folds only where it folds. Absent with no html part. */
   verdict?: QuotedVerdict;
+  /** The message's subject: a forward's prefix keeps the forwarded message open. */
+  subject?: string | null;
 }
 
 export const FoldContext = createContext<FoldScope | null>(null);
 
 /** `html`: the message's html part, whose reading of its history the text part's fold follows. */
-export function HistoryFold({ foldKey, end, html, children }: Omit<FoldScope, "verdict"> & { html?: string | null; children: ReactNode }) {
-  const verdict = useMemo(() => (html ? htmlHistoryVerdict(html) : undefined), [html]);
-  const scope = useMemo(() => ({ foldKey, end, verdict }), [foldKey, end, verdict]);
+export function HistoryFold({ foldKey, end, html, subject, children }: Omit<FoldScope, "verdict"> & { html?: string | null; children: ReactNode }) {
+  const verdict = useMemo(() => (html ? htmlHistoryVerdict(html, subject) : undefined), [html, subject]);
+  const scope = useMemo(() => ({ foldKey, end, verdict, subject }), [foldKey, end, verdict, subject]);
   return <FoldContext.Provider value={scope}>{children}</FoldContext.Provider>;
 }
 

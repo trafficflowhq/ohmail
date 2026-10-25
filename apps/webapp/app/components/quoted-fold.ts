@@ -40,9 +40,11 @@ export function foldSanitized<B extends Blocked>(root: HTMLElement, o: {
   links: readonly string[];
   met: MetAt;
   walk: (holder: Element) => BodyNode[] | null;
+  /** The message's subject: a forward's prefix keeps the forwarded message open. */
+  subject?: string | null;
 }): { historyAt: QuotedVerdict; fold: SanitizedFold<B> | null } {
   const tree = root as unknown as QuotedDomNode;
-  const { range, verdict: historyAt } = quotedHistoryReadingOfHtml(tree, quotedDomTree);
+  const { range, verdict: historyAt } = quotedHistoryReadingOfHtml(tree, quotedDomTree, { subject: o.subject });
   if (range === null) return { historyAt, fold: null };
   const cut = quotedHistoryCut(tree, quotedDomTree, range);
   if (cut.history.length === 0) return { historyAt, fold: null };

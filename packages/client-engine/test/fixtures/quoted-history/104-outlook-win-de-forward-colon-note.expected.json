@@ -19,18 +19,18 @@
   "authorsInHistory": [
     "Ana Example"
   ],
-  "notes": "text null on purpose: the text part folds only under its html's verdict (a colon above a bare block alone is a paste); synthetic.",
+  "notes": "text null on purpose: the text part folds only under its html's verdict (a colon above a bare block alone is a paste). Its WG: subject says the Von: block is what it forwards, and nothing is below it to fold; synthetic.",
   "expect": {
-    "fold": "trailing",
+    "fold": "none",
     "mustNotFold": false,
     "onlyHistory": false,
     "text": null,
     "html": {
-      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "historyStartSelector": null,
       "attributionBefore": null,
-      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "historyStartText": null,
       "visibleFirstText": "Hallo Team,",
-      "visibleLastText": "zur Info, siehe unten:"
+      "visibleLastText": "Ana Example"
     },
     "inlineAnswers": [],
     "trailingTail": null

@@ -1,0 +1,45 @@
+{
+  "id": "130",
+  "file": "130-outlook-win-de-forward-of-forward-chain.eml",
+  "shape": "outlook-win-de-forward-of-forward-chain",
+  "description": "Outlook for Windows, German: WG: WG: with a note; the middle Von block's Betreff is WG:, its note 'z.K.', then the supplier's AW: with the invoice, then the request it answers",
+  "client": "outlook_win",
+  "ui_language": "de",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "forward",
+  "levels": 3,
+  "authorsInHistory": [
+    "Bea Example",
+    "Ana Example",
+    "Ben Sample"
+  ],
+  "expect": {
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "inlineAnswers": [],
+    "trailingTail": null,
+    "fold": "trailing",
+    "text": {
+      "visibleFirstLine": "Hallo Clara,",
+      "visibleLastLine": "Ana Example",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
+    },
+    "html": {
+      "historyStartSelector": "#prior",
+      "attributionBefore": null,
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "visibleFirstText": "Hallo Clara,",
+      "visibleLastText": "anbei die Rechnung 4711 über CHF 12'400, fällig am 30.10.2026."
+    }
+  },
+  "notes": "A forward of a forward: the middle Von block's own Betreff is a WG:, so the invoice below it is what both forwards deliver; the history folds at the request the invoice answers."
+}

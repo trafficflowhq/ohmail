@@ -2365,6 +2365,7 @@ export function HeldMail({
         <MessageBody
           text={body}
           html={html}
+          subject={subject}
           remoteLoaded={(drawn?.loadedRemoteContent ?? false) || (remoteLoaded ?? false)}
           imageProxy={imageProxy}
           onLoadRemote={onLoadRemote}

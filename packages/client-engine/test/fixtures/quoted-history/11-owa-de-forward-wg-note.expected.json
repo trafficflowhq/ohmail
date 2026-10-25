@@ -27,18 +27,18 @@
     "text": {
       "visibleFirstLine": "Hallo Clara,",
       "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
-      "historyStartLine": "________________________________",
-      "historyStartLineNormalized": "________________________________"
+      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
+      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
     },
     "html": {
-      "historyStartSelector": "#appendonsend",
+      "historyStartSelector": "#x_appendonsend",
       "attributionBefore": null,
-      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartText": "Von: Ana Example <ana.example@example.com>",
       "visibleFirstText": "Hallo Clara,",
       "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
     },
     "inlineAnswers": [],
     "trailingTail": null
   },
-  "notes": "A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+  "notes": "A WG: forward with a note: its subject says the first Von: block is what it forwards, so that message stays open and the history folds from the older Von: block inside it."
 }

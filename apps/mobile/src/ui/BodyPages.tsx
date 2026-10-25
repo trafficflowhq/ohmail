@@ -44,8 +44,8 @@ function FoldedPages({ scope, text, ...rest }: BodyPagesProps & { scope: FoldSco
   const [openFor, setOpenFor] = useState<string | null>(null);
   const lines = useMemo(() => text.replace(/\r\n?/g, "\n").split("\n"), [text]);
   const range = useMemo(
-    () => (text.length > QUOTED_HISTORY_LIMITS.chars ? null : quotedHistoryOfText(lines, { html: scope.verdict })),
-    [text, lines, scope.verdict],
+    () => (text.length > QUOTED_HISTORY_LIMITS.chars ? null : quotedHistoryOfText(lines, { html: scope.verdict, subject: scope.subject })),
+    [text, lines, scope.verdict, scope.subject],
   );
   const end = scope.end ?? null;
   if (range === null) return <><Pages {...rest} text={text} />{end}</>;

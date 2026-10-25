@@ -1,0 +1,32 @@
+Hallo Clara,
+
+kannst du das bitte übernehmen?
+
+Dana
+
+> Anfang der weitergeleiteten Nachricht:
+>
+> Von: Ben Sample <ben.sample@example.org>
+> Betreff: Fwd: Wartung Lüftungsanlage 2. OG
+> Datum: 19. Oktober 2026 um 08:10:00 MESZ
+> An: Dana Example <dana.example@example.org>
+>
+> zur Info
+>
+> Ben
+>
+> > Anfang der weitergeleiteten Nachricht:
+> >
+> > Von: Ana Example <ana.example@example.com>
+> > Betreff: Wartung Lüftungsanlage 2. OG
+> > Datum: 17. Oktober 2026 um 11:45:00 MESZ
+> > An: Ben Sample <ben.sample@example.org>
+> >
+> > Hallo Herr Sample,
+> >
+> > anbei wie besprochen unser Angebot für die Wartung der Lüftungsanlage im zweiten Obergeschoss.
+> >
+> > Die Preise gelten bis zum 30. November 2026.
+> >
+> > Freundliche Grüße
+> > Ana Example

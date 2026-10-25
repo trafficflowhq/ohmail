@@ -29,19 +29,19 @@
     "onlyHistory": false,
     "text": {
       "visibleFirstLine": "Hallo zusammen,",
-      "visibleLastLine": "Lindenhof Beispiel AG | Facility Management",
-      "historyStartLine": "Von: Ana Example <ana.example@example.com>",
-      "historyStartLineNormalized": "Von: Ana Example <ana.example@example.com>"
+      "visibleLastLine": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin",
+      "historyStartLine": "Von: Ben Sample <ben.sample@example.org>",
+      "historyStartLineNormalized": "Von: Ben Sample <ben.sample@example.org>"
     },
     "html": {
-      "historyStartSelector": "div[style*=\"border-top:solid #E1E1E1\"]",
+      "historyStartSelector": "div.WordSection1 > div:nth-of-type(2) > div[style*=\"border-top:solid #E1E1E1\"]",
       "attributionBefore": null,
-      "historyStartText": "Von: Ana Example <ana.example@example.com>",
+      "historyStartText": "Von: Ben Sample <ben.sample@example.org>",
       "visibleFirstText": "Hallo zusammen,",
-      "visibleLastText": "Lindenhof Beispiel AG | Facility Management"
+      "visibleLastText": "Northwind Example GmbH · Musterstraße 12 · 10115 Berlin"
     },
     "inlineAnswers": [],
     "trailingTail": null
   },
-  "notes": "History starts at the FIRST Von: block; every later Von: block is deeper history inside it. A forward with a note: the forwarded block is history and may fold under a chip that says it is a forward; the note above it stays visible."
+  "notes": "A WG: forward of a five-message Outlook chain: its subject says the first Von: block is what it forwards, so that message stays open and the history folds from the second Von: block."
 }

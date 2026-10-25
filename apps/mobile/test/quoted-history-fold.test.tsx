@@ -33,12 +33,13 @@ const strip = (s: string): string => qhNorm(s.replace(/^[\s>]+/gm, ""));
 let mounted: { el: HTMLElement; unmount(): void } | null = null;
 afterEach(() => { mounted?.unmount(); mounted = null; });
 
-function body(text: string, variant: "streamBody" | "readerBody", ends: string[] = [], html: string | null = null) {
+function body(text: string, variant: "streamBody" | "readerBody", ends: string[] = [], html: string | null = null, subject?: string) {
   mounted = mount(
     h("div", { "data-panel": "" },
       h(HistoryFold, {
         foldKey: "m1",
         html,
+        subject,
         end: h(rnDom.View, { style: { height: 0 }, onLayout: () => ends.push("end") }),
         children: h(BodyPages, { variant, tone: "ink2", text }),
       })),
@@ -56,7 +57,7 @@ describe("a member and the opened message fold the text part, over the corpus", 
       if (t === null) continue;
       it(`${variant}: ${fx.name}`, () => {
         const ends: string[] = [];
-        const el = body(fx.text, variant, ends);
+        const el = body(fx.text, variant, ends, null, fx.subject);
         const r = row(el);
         for (const s of [t.visibleFirstLine, t.visibleLastLine, ...fx.expect.inlineAnswers, ...(t.signatureAfterHistory ?? [])]) {
           if (s) expect(shown(el), "a visible line is lost").toContain(strip(s));
@@ -87,8 +88,8 @@ describe("a body with an html part folds its text only where that html folds", (
     for (const fx of FIXTURES) {
       if (fx.html === null) continue;
       it(`${variant}: ${fx.name}`, () => {
-        const el = body(fx.text, variant, [], fx.html);
-        const folded = sanitizeMailHtmlPhone(fx.html!, { fold: true }).history ?? null;
+        const el = body(fx.text, variant, [], fx.html, fx.subject);
+        const folded = sanitizeMailHtmlPhone(fx.html!, { fold: true, subject: fx.subject }).history ?? null;
         for (const a of fx.expect.inlineAnswers) expect(shown(el), "an inline answer is hidden").toContain(strip(a.replace(/^\[AE\] /, "")));
         if (folded === null || !qhFolds(fx.expect)) expect(row(el), "the html says there is no history").toBeNull();
         else if (fx.expect.text !== null) expect(row(el), "the html folds, so does the member").not.toBeNull();
@@ -182,7 +183,7 @@ describe("the html part: the frame's document is cut before it is drawn", () => 
     it(fx.name, () => {
       const whole = sanitizeMailHtmlPhone(fx.html!, {});
       expect(whole.history, "unasked, nothing changes").toBeUndefined();
-      const folded = sanitizeMailHtmlPhone(fx.html!, { fold: true });
+      const folded = sanitizeMailHtmlPhone(fx.html!, { fold: true, subject: fx.subject });
       for (const s of [x.visibleFirstText, x.visibleLastText, ...fx.expect.inlineAnswers]) {
         if (s) expect(textOf(folded.html)).toContain(qhNorm(s));
       }

@@ -12,7 +12,7 @@ import { qhFixtures, qhNorm } from "../../../packages/client-engine/test/quoted-
  * toggle, so its top is its header and its own first lines; a folded member reads after the dwell,
  * and pressing a toggle reads or unreads nothing by itself.
  */
-const FX = Object.fromEntries(qhFixtures().filter((f) => ["01", "13", "37"].includes(f.id)).map((f) => [f.id, f]));
+const FX = Object.fromEntries(qhFixtures().filter((f) => ["01", "11", "13", "37"].includes(f.id)).map((f) => [f.id, f]));
 const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
 const panel = (id: string): HTMLElement => col().querySelector<HTMLElement>(`[data-conv-id="${id}"]`)!;
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
@@ -60,6 +60,21 @@ describe("a conversation of replies, each carrying its history", () => {
       expect(ends, `${id}: one end marker`).toHaveLength(1);
       expect(follows(ends[0]!, toggle!), `${id}: the end stands above the toggle`).toBe(true);
     }
+  }, 60_000);
+
+  it("a forward shows the letter it forwards, one already in the conversation too; the hop below it folds", async () => {
+    // p1 is the letter p2 forwards: Outlook's WG: carries no forward wording in its body, only its subject says so.
+    const letter = FX["11"]!.text.split("\n").slice(14, 23).join("\n");
+    const host = await mountThread([msg("p1", 0, { subject: "AW: Wartung Lüftungsanlage 2. OG" }), msg("p2", 10, { subject: FX["11"]!.subject })], {
+      bodies: { p1: letter, p2: { text: FX["11"]!.text, html: FX["11"]!.html } },
+    });
+    await openTheRow(host);
+    await settle();
+    const p2 = qhNorm(panel("p2").textContent ?? "");
+    expect(p2, "the forwarded letter is on screen").toContain("vielen Dank für das Angebot.");
+    expect(p2).not.toContain("anbei wie besprochen unser Angebot");
+    await click(panel("p2").querySelector("button.msg-history-toggle"), "p2's toggle");
+    expect(qhNorm(panel("p2").textContent ?? "")).toContain("anbei wie besprochen unser Angebot");
   }, 60_000);
 
   it("a folded member reads after its dwell; a toggle press reads nothing by itself", async () => {
