@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
-import { SSE_DISABLED_REFUSAL } from "@trafficflow/services";
+import { SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
 /**

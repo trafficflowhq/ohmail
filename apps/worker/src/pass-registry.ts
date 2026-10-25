@@ -468,10 +468,22 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "api_cron",
     module: `${W}/api-cron.ts`, entry: "startApiCron",
     triggers: ["interval"],
-    cadence: "per API_CRON_TARGETS: sessions_reap and smtp_size 24 h, unsubscribe_drain 1 h, scheduled_send / send_reconcile / away_responder ~1 min (+jitter), platform_signals 5 min",
+    cadence: "per API_CRON_TARGETS: sessions_reap and smtp_size 24 h, unsubscribe_drain 1 h, scheduled_send / send_reconcile / away_responder ~1 min (+jitter)",
     budget: "one authenticated HTTP poke per target per period, timeoutMs each",
-    owns: "the API-side internal passes (session reap, SMTP size probe, scheduled sends, send reconcile, away replies, platform signals, the screened-out unsubscribe drain) get their heartbeat — unsubscribe_drain's cadence is read here by UNSUB_DRAIN_WINDOW_MS, which derives its look-back from it",
+    owns: "the API-side internal passes (session reap, SMTP size probe, scheduled sends, send reconcile, away replies, the screened-out unsubscribe drain) get their heartbeat — unsubscribe_drain's cadence is read here by UNSUB_DRAIN_WINDOW_MS, which derives its look-back from it",
     fence: "leader lock (one poker); the API routes hold their own idempotency",
+  },
+  {
+    name: "platform_signals",
+    module: `${W}/platform-signal-poll.ts`, entry: "startPlatformSignalPoll",
+    triggers: ["interval"],
+    cadence: "first run SIGNAL_POLL_FIRST_DELAY_MS (3 min) after leadership, then every SIGNAL_POLL_EVERY_MS (5 min) + up to "
+      + "SIGNAL_POLL_JITTER_MS; shard 0's leader only, armed by TF_SIGNAL_VERCEL_TOKEN + TF_SIGNAL_VERCEL_TEAM_ID",
+    budget: "runPlatformSignalPass: at most SIGNAL_BACKFILL_BUCKETS windows under one SIGNAL_WALL_CLOCK_MS deadline, "
+      + "SIGNAL_PAGE_BUDGET pages per project; one run at a time",
+    owns: "platform_signals holds what the hosting platform served, the rows api_5xx_rate and signal_source_dark read, "
+      + "read with the worker's own platform credential and none on the API host",
+    fence: "leader lock (one poller); upserts fenced by fetched_at, and a complete row never regresses to a sample",
   },
   {
     name: "push_wake",

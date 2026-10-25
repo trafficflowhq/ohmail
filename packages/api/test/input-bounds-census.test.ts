@@ -251,18 +251,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The sign-in throttle's security notices, the same bucket: a scheduler's shared secret and no
   // body, query or path parameter. One run claims at most fifty owed rows (`drainSecurityNotices`).
   "GET /internal/security-notices/run",
-  // The vendor-cost pull reads nothing from the request: which providers to ask is decided by
-  // which keys the deployment holds, never by the caller.
-  // The PLATFORM SIGNAL poll (cloud 0030), its neighbour's bucket exactly: no body, no query, no
-  // path parameter — the shared secret is the entire request. WHICH projects are polled comes
-  // from the deployment's own env (`VERCEL_SIGNAL_PROJECTS`), never from the caller, and the
-  // WINDOW is computed from the clock and aligned to the cadence rather than passed in.
-  //
-  // The one bound worth naming, because this route walks a PAGED endpoint and its siblings do
-  // not: the walk stops at `SIGNAL_PAGE_BUDGET` pages per project, a constant in the port. The
-  // length of that walk is a property of the platform's traffic and not of anything a caller
-  // supplies — and a caller could not lengthen it if they wanted to, because there is no channel.
-  "GET /internal/platform-signals/run",
   "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",

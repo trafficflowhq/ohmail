@@ -10,7 +10,7 @@ import { silentLogger, type Logger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
-  reapStaleWebSessions, runPlatformSignalPass,
+  reapStaleWebSessions,
   runAccountLifecyclePass, eraseOneDueAccount, throttleKeysFor,
   runScheduledSendPass, runSendReconcilePass, SEND_RECONCILE_NET_TIMEOUTS,
   startDrainBudget,
@@ -92,18 +92,6 @@ export const SESSIONS_REAP_CRON_PATH = "/internal/sessions/reap";
  * egress works — only the clock moved.
  */
 export const SMTP_SIZE_CRON_PATH = "/internal/mailboxes/smtp-size";
-
-/**
- * The path the platform-signal poll is scheduled at — what the hosting platform actually served,
- * asked every five minutes. A route on this host, not a worker pass: the subject is this host's
- * error rate, and the token that can read it is an env var on this deployment — polling from the
- * worker would provision the platform credential onto a second host to measure the first. Five
- * minutes because the rule reads a fifteen-minute window and needs independent samples: three
- * five-minute rows leave two windows of evidence after a missed poll. A deployment with no
- * platform token writes no row, deliberately — the board renders "5xx: not measured", a different
- * state from zero. Driven by the worker's `api-cron.ts`; a census text-matches this literal.
- */
-export const PLATFORM_SIGNALS_CRON_PATH = "/internal/platform-signals/run";
 
 /**
  * The path the scheduled-send pass is scheduled at (Send later, mail 0077) — exported because the
@@ -537,65 +525,6 @@ async function alertPass(
 export const runApiAlertPass: (
   cfg: AlertsConfig, log: Logger, now: () => Date, handle: () => Promise<Tx>,
 ) => Promise<Response> = alertPass;
-
-/**
- * One platform-signal poll, `platformCostPass`'s shape — 404 unarmed, either secret in constant
- * time, no "unconfigured" skip. The part worth reading twice: an unconfigured deployment is
- * settled by an absence — the port answers `unconfigured`, the pass writes no row, the rule
- * cannot fire, the board says "not measured". At no point does a `0` exist to render: a pass
- * writing zeros would satisfy every test and put a measured-looking zero on screen for a figure
- * nobody asked the platform for. Runs on `deps.db`: it writes `platform_signals`, and the blind
- * handle holds SELECT and must not gain more.
- */
-async function platformSignalPass(req: Request, deps: ApiDeps): Promise<Response> {
-  const log = (deps.logger ?? silentLogger).child({ route: PLATFORM_SIGNALS_CRON_PATH });
-  const cfg = deps.alerts;
-  if (!cfg || cfg.secret.trim().length === 0) {
-    return json(404, { error: { code: "not_found" } });
-  }
-  const cron = cfg.cronSecret?.trim();
-  const authorized = presentsSecret(req, cfg.secret)
-    || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
-  if (!authorized) {
-    log.warn("platform_signals_unauthorized", {});
-    return json(401, { error: { code: "unauthorized" } });
-  }
-  const port = deps.services?.platformSignals;
-  if (!port) {
-    // A host that composed no port at all — the desktop engine's shape. DISTINCT from a port that
-    // answers `unconfigured`: that one asked and found no token. Both write nothing; only this
-    // one means nobody wired the question.
-    return json(200, { skipped: "signal_port_unconfigured" });
-  }
-  try {
-    const report = await runPlatformSignalPass(deps.db, { port, now: deps.now });
-    // INFO on every pass rather than only on a change, `platformCostPass`'s reason verbatim: this
-    // is a surface where "nothing was written" is the expected answer for as long as no token
-    // exists, and a log line that appeared only on success would make the healthy unconfigured
-    // state look exactly like a dead clock.
-    log.info("platform_signal_pass", {
-      outcome: report.outcome, rows: report.rows, pruned: report.pruned,
-      ...(report.code ? { code: report.code } : {}),
-    });
-    // A semantic failure must not be a 200, because the caller reads only the status: the
-    // worker's cron driver discards the body and looks at `res.ok`. A poll that could not
-    // authenticate or resolve its project returns `outcome: "failed"` and wrote nothing —
-    // answering 200 for that made the worker record the target healthy and reset its failure
-    // streak, a perfectly running schedule over no signal data: the broken state rendering as the
-    // healthy one. `unconfigured` stays 200 and must — a deployment with no token has nothing to
-    // report and is not failing; that distinction is why this branches on `outcome`, not on
-    // whether a row was written.
-    if (report.outcome === "failed") {
-      return json(502, { now: deps.now().toISOString(), ...report });
-    }
-    return json(200, { now: deps.now().toISOString(), ...report });
-  } catch (err) {
-    // `raw` means no error envelope above this handler; it must never throw. The pass absorbs
-    // fetch faults itself, so this catches only a database refusal.
-    log.error("platform_signal_pass_failed", { err });
-    return json(503, { error: { code: "platform_signal_pass_failed" } });
-  }
-}
 
 /**
  * `POST /internal/fault` — make this deployment answer one 5xx, on purpose.
@@ -1189,22 +1118,6 @@ export const internalRoutes: Route[] = [
         return json(503, { error: { code: "security_notices_failed" } });
       }
     },
-  },
-  {
-    /**
-     * `GET /internal/platform-signals/run` — what the platform SERVED, every five minutes.
-     *
-     * The cost pass's shape verbatim, each borrowed property load-bearing for the reasons stated
-     * there: GET because a cron issues GET and only GET; either shared secret in constant time;
-     * 404 on a deployment that armed no internal surface — which does mean the 5xx rate is NOT
-     * measured there, and that is the honest state of a host nobody armed a clock on.
-     */
-    method: "GET",
-    pattern: PLATFORM_SIGNALS_CRON_PATH,
-    relay: false,  /* the hosted service's shared-secret intake */
-    cost: "unauthenticated",
-    options: { public: true, anonymous: true, raw: true },
-    handler: async (req, deps) => platformSignalPass(req, deps),
   },
   // The alert drills and their acknowledgement (`alert-drill.ts`), behind this file's own gate.
   ...alertDrillRoutesWith(alertsArmed),

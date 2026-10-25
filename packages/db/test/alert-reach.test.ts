@@ -176,6 +176,19 @@ describe("api_cron_stale — a clocked API pass that stopped answering 2xx", () 
     expect(a?.severity).toBe("warning");
   });
 
+  it("the worker's in-process 5xx poll pages critical in its own words, never the API secrets'", async () => {
+    const db = await makeTestDb();
+    const [a] = await stale(db, { since: ago(HOUR), targets: [{
+      target: "platform_signals", everySeconds: 300, lastOkAt: ago(20 * MIN).toISOString(),
+      outcome: "failed", consecutiveFailures: 4, inProcess: true,
+    }] });
+    expect(a?.key).toBe("api_cron_stale:platform_signals");
+    expect(a?.severity).toBe("critical");
+    expect(a?.detail).toContain("platform_signal_pass");
+    expect(a?.detail).toContain("TF_SIGNAL_VERCEL_TOKEN");
+    expect(a?.detail).not.toMatch(/TF_API_CRON_SECRET|TF_ALERT_SECRET/);
+  });
+
   it("apiCron null is unread with no_reader; the api driver never evaluates it", async () => {
     const db = await makeTestDb();
     const { scope } = await evaluateAlertsWithScope(db, { now: NOW, driver: "worker", shards: [], apiCron: null });

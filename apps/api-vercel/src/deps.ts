@@ -40,7 +40,6 @@ import {
   workflowsService, proposalsService,
   MailService, ResendMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter, makeWaitlistService,
   type ServiceContext,
-  makePlatformSignalPort, SSE_DISABLED_REFUSAL,
 } from "@trafficflow/services";
 import {
   makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf, nodeMailDns,
@@ -395,23 +394,6 @@ function buildServices(cfg: HostConfig): ApiServices {
     return composed;
   };
   lazily(bag, "entitlementsPort", () => entitlementsComposition());
-
-  // What the platform served — the 5xx poller's read port (cloud 0030). Composed
-  // unconditionally: the port itself decides whether it is configured and answers
-  // `unconfigured` without a token. Gating composition on the token would collapse the two
-  // states this seam separates — no port answers `skipped` ("nobody wired the question"),
-  // a port with no token answers "we asked" — and only the second renders honestly as
-  // "5xx: not measured". It reads `process.env` directly and narrowly: the platform token is
-  // not a value `config.ts` validates, and adding one would make an absent token a boot-time
-  // concern for a host that must boot fine without it. Lazy, like every constructed service.
-  lazily(bag, "platformSignals", () => makePlatformSignalPort({
-    VERCEL_TOKEN: process.env.VERCEL_TOKEN,
-    VERCEL_TEAM_ID: process.env.VERCEL_TEAM_ID,
-    VERCEL_SIGNAL_PROJECTS: process.env.VERCEL_SIGNAL_PROJECTS,
-  }, {
-    // The stream refused while it is off is an answer, not an outage: the same flag `GET /events` reads.
-    deliberate: cfg.sse.enabled === false ? [SSE_DISABLED_REFUSAL] : [],
-  }));
 
   // The live drafter. `POST /messages/:id/draft` calls this; absent, the route 500s cleanly.
   // Lazy: `makeAnthropicClient` builds a closure and retry policy no health probe needs.

@@ -475,9 +475,10 @@ export interface EvaluateOptions {
    */
   sinkStreaks?: SinkStreakReading;
   /**
-   * The worker's API-cron schedule (`api-cron.ts`), as its handle reports it — `api_cron_stale`'s
-   * input. `null` or absent ⇒ unread: a shard > 0, a standby, the self-host organizer and the API
-   * driver hold no schedule, and none of them may clear shard 0's rows.
+   * The worker's API-cron schedule (`api-cron.ts`) and its 5xx poll, as their handles report
+   * them — `api_cron_stale`'s input. `null` or absent ⇒ unread: a shard > 0, a standby, the
+   * self-host organizer and the API driver hold no schedule, and none of them may clear shard 0's
+   * rows.
    */
   apiCron?: ApiCronReading | null;
   /**
@@ -523,6 +524,8 @@ export interface ApiCronReading {
     lastOkAt: string | null;
     outcome?: string | null;
     consecutiveFailures?: number;
+    /** A pass the worker runs itself (the 5xx poll), not an API route it pokes. */
+    inProcess?: true;
   }>;
 }
 
@@ -2102,10 +2105,11 @@ export async function evaluateAlertsWithScope(
     markUnread("alert_sink_degraded", "no_reader");
   }
 
-  // 18. A route the worker drives on a clock (`api-cron.ts`) has not answered 2xx within twice
-  // its cadence, floored. `lastOkAt`-based on purpose: a stopped timer, a wedged poke and every
-  // failure outcome look the same from here, and a 401 that "attempted" never clears it. Only the
-  // worker holds the schedule; every other pass is unread and clears nothing.
+  // 18. A route the worker drives on a clock (`api-cron.ts`), or its in-process 5xx poll, has not
+  // succeeded within twice its cadence, floored. `lastOkAt`-based on purpose: a stopped timer, a
+  // wedged poke and every failure outcome look the same from here, and a 401 that "attempted"
+  // never clears it. Only the worker holds the schedule; every other pass is unread and clears
+  // nothing.
   //
   // One failed poke is a blip: the scheduler only ADDS jitter, so its retry lands just past twice
   // the cadence. Twice the cadence therefore needs the retry to have failed too; three times is a
@@ -2147,16 +2151,23 @@ export async function evaluateAlertsWithScope(
           ? `The ${target.target} pass has not answered since the schedule started ${age} ago`
           : `The ${target.target} pass last ran ${age} ago`,
         detail:
-          `The worker pokes the API host's ${target.target} pass every ` +
-          `${humanAge(target.everySeconds)}, and its last 2xx answer was ` +
+          (target.inProcess
+            ? `The worker runs its ${target.target} pass itself every ${humanAge(target.everySeconds)}, ` +
+              `and its last good run was `
+            : `The worker pokes the API host's ${target.target} pass every ` +
+              `${humanAge(target.everySeconds)}, and its last 2xx answer was `) +
           `${restarted ? `not seen in the ${age} since the schedule restarted, and it was stale before`
             : target.lastOkAt === null ? `never, in the ${age} since the schedule started` : `${age} ago`} ` +
           `(limit ${humanAge(Math.round(limitMs / 1000))}).` +
           (target.outcome ? ` Its last attempt ended '${target.outcome}'` +
             `${target.consecutiveFailures ? `, ${target.consecutiveFailures} failure(s) in a row` : ""}.` : "") +
-          ` http_401 is a TF_API_CRON_SECRET the API host does not accept; http_404 an API host ` +
-          `with no TF_ALERT_SECRET; no outcome at all is a schedule that stopped. The worker's ` +
-          `api_cron_failed log lines and /health apiCron name it.`,
+          (target.inProcess
+            ? ` failed is the platform refusing the read (TF_SIGNAL_VERCEL_TOKEN and TF_SIGNAL_VERCEL_TEAM_ID ` +
+              `on the worker); error is the database refusing the pass; no outcome at all is a poll that ` +
+              `stopped. The worker's platform_signal_pass log lines name it.`
+            : ` http_401 is a TF_API_CRON_SECRET the API host does not accept; http_404 an API host ` +
+              `with no TF_ALERT_SECRET; no outcome at all is a schedule that stopped. The worker's ` +
+              `api_cron_failed log lines and /health apiCron name it.`),
         count: 1,
         oldestSeconds: Math.round(ageMs / 1000),
         cls: "incident",
@@ -2192,9 +2203,9 @@ export async function evaluateAlertsWithScope(
         detail:
           `The newest ${s.provider} reading for ${s.project} was fetched ${humanAge(darkSeconds)} ago ` +
           `(threshold ${humanAge(Math.round(t.signalSourceDarkMs / 1000))}), so api_5xx_rate is ` +
-          `measuring nothing. If api_cron_stale:platform_signals is also firing, the poke is ` +
-          `failing; otherwise the poll runs and writes nothing (its token was removed, or the ` +
-          `vendor refuses it).`,
+          `measuring nothing. If api_cron_stale:platform_signals is also firing, the worker's poll ` +
+          `is failing; otherwise no poll runs with a credential (TF_SIGNAL_VERCEL_TOKEN and ` +
+          `TF_SIGNAL_VERCEL_TEAM_ID on the worker, read by shard 0).`,
         count: 1,
         oldestSeconds: darkSeconds,
         cls: "incident",
@@ -2414,13 +2425,11 @@ export interface PlatformSignalWindow {
  */
 
 /**
- * The width of ONE row in `platform_signals`, and it must equal `SIGNAL_WINDOW_MS` in
- * `packages/services/src/platform-signals.ts`, which is what actually writes the rows.
- *
- * Duplicated rather than imported because `packages/db` does not depend on `packages/services`
- * and must not start. `platform-signals.test.ts` asserts the two are equal, so the copy cannot
- * drift: a reader that assumed a different bucket width would align its cut to a boundary the
- * writer never uses, which is the same off-by-one-bucket this constant was added to remove.
+ * The width of ONE row in `platform_signals`. The writer's `SIGNAL_WINDOW_MS`
+ * (`platform-signals.ts`, beside this file) is defined as this constant, so the reader and the
+ * writer share one number: a reader that assumed a different bucket width would align its cut to
+ * a boundary the writer never uses, which is the same off-by-one-bucket this constant was added
+ * to remove.
  */
 export const SIGNAL_BUCKET_MS = 5 * 60 * 1000;
 

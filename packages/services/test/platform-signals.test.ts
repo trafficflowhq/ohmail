@@ -10,7 +10,7 @@ import {
   makePlatformSignalPort, runPlatformSignalPass, SAMPLE_CAUSES,
   VERCEL_REQUEST_LOGS_URL, SIGNAL_WINDOW_MS, SSE_DISABLED_REFUSAL,
   type PlatformSignalPort,
-} from "../src/platform-signals.js";
+} from "@trafficflow/db/cloud";
 
 
 /**
