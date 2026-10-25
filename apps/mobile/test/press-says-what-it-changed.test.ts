@@ -97,16 +97,16 @@ describe("Later on a conversation faced by my own reply", () => {
     } finally { s.close(); }
   });
 
-  it("with some of theirs queued, queues the rest and leaves the queued ones alone", async () => {
+  it("with some of theirs queued, queues the rest of the row, my reply too, and leaves the queued ones alone", async () => {
     const third = { ...dto("m3", { subject: "Re: Weekly", from: SENDER, date: "2026-08-19T10:00:00Z" }), threadId: "t1" };
     const s = await scene([], answered("reply_later", null, [third]));
     try {
       const before = writes(s).length; const said = s.said.length;
       await s.actions.pileToggle("m2", "replyLater", ["m2", "m1", "m3"]);
-      await until("the triage on the wire", () => triaged(s, before).length > 0);
+      await until("both on the wire", () => triaged(s, before).length >= 2);
       await tick(100);
       expect(s.said.slice(said).map((x) => x.say)).toEqual([QUEUED]);
-      expect(triaged(s, before)).toEqual(["m3:reply_later"]);
+      expect(triaged(s, before).sort()).toEqual(["m2:reply_later", "m3:reply_later"]);
     } finally { s.close(); }
   });
 
@@ -126,8 +126,9 @@ describe("Later on a conversation faced by my own reply", () => {
       void s.actions.markSeen("m1", false);
       await tick(50);
       paint();
-      await until("both handed to the engine", () => handed.length >= 2);
-      expect(handed, "a later press on the letter overtook the toggle that writes it").toEqual(["triage_set", "mark_seen"]);
+      await until("all handed to the engine", () => handed.length >= 3);
+      // The toggle files the row whole, the letter and my reply, before the read on the letter.
+      expect(handed, "a later press on the letter overtook the toggle that writes it").toEqual(["triage_set", "triage_set", "mark_seen"]);
     } finally { s.close(); }
   });
 

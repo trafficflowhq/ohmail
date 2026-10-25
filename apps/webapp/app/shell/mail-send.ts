@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pileRowIdsOf, pressVerdict } from "@ohmail/client-engine";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
@@ -1687,20 +1687,24 @@ export function useMailSend(
       const shown = shownNow(key) && aboutThisCompose;
       clearLaneScratch(key, m, owner.current, aboutThisCompose);
       /* SEND + DONE IS ASKED FIRST, before the debt below moves anything: its release is read from
-         the mirror NOW. `true` is a release made — it clears the bookings and reads the row, so the
-         discharge stands down, and its sentence replaces "Reply sent.". A plain Send releases no
+         the mirror NOW. `true` is a release made — it clears the bookings and reads the row, and
+         its sentence replaces "Reply sent.". A plain Send releases no
          pin and no booking: only Answer Later is discharged below. */
       const released = outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true;
-      if (m.inReplyTo !== null && !released) {
+      if (m.inReplyTo !== null) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
         // Read at CONFIRM time, not at press time: the state may have moved while the request
         // was out, and a send that failed must never clear a debt. A compose answers nothing,
-        // so it discharges nothing — the branch is the whole difference between the two.
-        const msg = engine.read().get<EngineMessage>("message", m.inReplyTo);
-        const state = msg?.triage?.state as string | undefined;
-        if (clearsTriage(state)) {
-          void engine.mutate({ kind: "triage_set", messageId: m.inReplyTo, state: "none" });
+        // so it discharges nothing — the branch is the whole difference between the two. The
+        // debt is the Answer Later row's: every message of the conversation queued there goes.
+        // Those are never in the Ohbox row Send + Done releases, so the two never write one id.
+        const reader = engine.read();
+        const msg = reader.get<EngineMessage>("message", m.inReplyTo);
+        if (clearsTriage(msg?.triage?.state as string | undefined)) {
+          for (const messageId of new Set([m.inReplyTo, ...pileRowIdsOf(reader, m.inReplyTo, "replyLater")])) {
+            void engine.mutate({ kind: "triage_set", messageId, state: "none" });
+          }
         }
       }
 

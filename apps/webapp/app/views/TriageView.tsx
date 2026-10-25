@@ -166,14 +166,26 @@ export function TriageView({
   const openable = entries
     .map((e) => (e.messageId ? messageOf(e.messageId) : null))
     .filter((m): m is EngineMessage => m !== null);
-  const list = useListView({ rows: openable, settled, pending: owed, picked: selectedId });
+  /** A row covers its conversation's members and faces its newest one, so any member names the row's target. */
+  const rowTarget = (id: string | null | undefined): string | null => {
+    if (id == null) return null;
+    const e = entries.find((x) => x.messageId === id || x.memberIds?.includes(id));
+    return e?.messageId ?? null;
+  };
+  const picked = rowTarget(selectedId) ?? selectedId;
+  const list = useListView({ rows: openable, settled, pending: owed, picked });
   const shown = list.shown;
 
   /** The cursor is per-pile. Switching horizons must not leave the reader on the last pile's mail. */
   useEffect(() => setSelectedId(null), [pile]);
+  // A newer member joined the open row: the cursor follows the row to its new target.
+  useEffect(() => {
+    if (picked !== selectedId) setSelectedId(picked);
+  }, [picked, selectedId]);
+  const locatedId = rowTarget(locateId);
   useColumnPick({
-    picked: selectedId, shown: list.standsFor, locateId,
-    located: locateId != null && openable.some((m) => m.id === locateId),
+    picked, shown: list.standsFor, locateId: locatedId ?? locateId,
+    located: locatedId !== null && openable.some((m) => m.id === locatedId),
     select: setSelectedId, onPick,
   });
 

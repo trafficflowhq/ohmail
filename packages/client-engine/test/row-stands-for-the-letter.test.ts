@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FOLDER_OF_VIEW, parkSubjectIds, ohboxRows, ownFaceOfRow, resurfacedFocus, rowOpenTarget, triageSubjectIds,
+  FOLDER_OF_VIEW, pileSubjectIds, ohboxRows, ownFaceOfRow, resurfacedFocus, rowOpenTarget, triageSubjectIds,
   type EngineMessage, type EntityReader, type MessageStateDTO, type OhboxRow,
 } from "@ohmail/client-engine";
 
@@ -179,7 +179,7 @@ describe("ownFaceOfRow: our reply facing the row a message stands for", () => {
   });
 });
 
-describe("parkSubjectIds: what a Park on a row's message files", () => {
+describe("pileSubjectIds: what a pile press on a row's message files", () => {
   const kai = msg({ id: "b2", at: "2026-09-20T08:30:00.000Z", from: KAI });
   const parked = msg({
     id: "c0", at: "2026-09-20T07:00:00.000Z",
@@ -188,13 +188,13 @@ describe("parkSubjectIds: what a Park on a row's message files", () => {
 
   it("a conversation with two members in the Ohbox and one parked: both Ohbox members, from either", () => {
     const reader = readerOf([parked, letter, kai]);
-    expect(parkSubjectIds(reader, "b2").sort()).toEqual(["a1", "b2"]);
-    expect(parkSubjectIds(reader, "a1").sort()).toEqual(["a1", "b2"]);
+    expect(pileSubjectIds(reader, "b2").sort()).toEqual(["a1", "b2"]);
+    expect(pileSubjectIds(reader, "a1").sort()).toEqual(["a1", "b2"]);
   });
   it("an answered row: every member, our reply too, so the row leaves", () => {
-    expect(parkSubjectIds(readerOf([letter, reply]), "a1").sort()).toEqual(["a1", "r2"]);
+    expect(pileSubjectIds(readerOf([letter, reply]), "a1").sort()).toEqual(["a1", "r2"]);
     const kai3 = msg({ id: "b3", at: "2026-09-20T10:00:00.000Z", from: KAI });
-    expect(parkSubjectIds(readerOf([letter, reply, kai3]), "b3").sort()).toEqual(["a1", "b3", "r2"]);
+    expect(pileSubjectIds(readerOf([letter, reply, kai3]), "b3").sort()).toEqual(["a1", "b3", "r2"]);
   });
   it("a Resurfaced row: never a member filed in a pile or another folder", () => {
     const archived = msg({ id: "o1", at: "2026-09-20T06:00:00.000Z", folder: "Archive" as EngineMessage["folder"] });
@@ -205,18 +205,51 @@ describe("parkSubjectIds: what a Park on a row's message files", () => {
     const p3 = pinned(msg({ id: "p3", at: "2026-09-20T09:30:00.000Z", from: KAI }));
     const reader = readerOf([archived, later, p3]);
     expect(rowFor(reader, "T").members.map((m) => m.id).sort(), "the premise").toEqual(["l2", "o1", "p3"]);
-    expect(parkSubjectIds(reader, "p3")).toEqual(["p3"]);
-    expect(parkSubjectIds(reader, "o1"), "pressed on the archived member: itself").toEqual(["o1"]);
+    expect(pileSubjectIds(reader, "p3")).toEqual(["p3"]);
+    expect(pileSubjectIds(reader, "o1"), "pressed on the archived member: itself").toEqual(["o1"]);
   });
   it("a parked message: every parked member of its conversation, nothing standing beside it", () => {
     const p3 = pinned(msg({ id: "p3", at: "2026-09-20T09:30:00.000Z", from: KAI }));
-    expect(parkSubjectIds(readerOf([parked, p3]), "c0")).toEqual(["c0"]);
+    expect(pileSubjectIds(readerOf([parked, p3]), "c0")).toEqual(["c0"]);
     const parked2 = { ...kai, triage: { messageId: "b2", state: "set_aside" as const, bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT } };
-    expect(parkSubjectIds(readerOf([parked, letter, parked2]), "b2").sort()).toEqual(["b2", "c0"]);
+    expect(pileSubjectIds(readerOf([parked, letter, parked2]), "b2").sort()).toEqual(["b2", "c0"]);
   });
   it("a message no Ohbox row holds, a lone message, an unknown id: itself", () => {
-    expect(parkSubjectIds(readerOf([parked, letter, kai]), "c0")).toEqual(["c0"]);
-    expect(parkSubjectIds(readerOf([msg({ id: "s1", at: SET_AT, threadId: null })]), "s1")).toEqual(["s1"]);
-    expect(parkSubjectIds(readerOf([letter]), "gone")).toEqual(["gone"]);
+    expect(pileSubjectIds(readerOf([parked, letter, kai]), "c0")).toEqual(["c0"]);
+    expect(pileSubjectIds(readerOf([msg({ id: "s1", at: SET_AT, threadId: null })]), "s1")).toEqual(["s1"]);
+    expect(pileSubjectIds(readerOf([letter]), "gone")).toEqual(["gone"]);
+  });
+  const filed = (m: EngineMessage, state: MessageStateDTO["state"]): EngineMessage =>
+    ({ ...m, triage: { messageId: m.id, state, bubbleUpAt: null, setAt: SET_AT, updatedAt: SET_AT } });
+  it("in Answer later or Parked: the pile's row from any member, the pressed id first, our reply included", () => {
+    for (const state of ["reply_later", "set_aside"] as const) {
+      const reader = readerOf([filed(letter, state), filed(reply, state), filed(kai, state)]);
+      for (const id of ["a1", "b2", "r2"]) {
+        const set = pileSubjectIds(reader, id, null, false);
+        expect(set[0]).toBe(id);
+        expect([...set].sort()).toEqual(["a1", "b2", "r2"]);
+      }
+    }
+  });
+  it("a member in the other pile, or booked in Resurface, is not on the row", () => {
+    const reader = readerOf([filed(letter, "set_aside"), filed(reply, "reply_later"), filed(kai, "bubbled_up")]);
+    expect(pileSubjectIds(reader, "a1")).toEqual(["a1"]);
+    expect(pileSubjectIds(reader, "r2")).toEqual(["r2"]);
+    expect(pileSubjectIds(reader, "b2"), "Resurface stays per message").toEqual(["b2"]);
+  });
+  it("off the Ohbox, a message standing in an Ohbox row is itself", () => {
+    const reader = readerOf([letter, reply]);
+    expect(pileSubjectIds(reader, "a1", null, false)).toEqual(["a1"]);
+    expect(pileSubjectIds(reader, "a1").sort()).toEqual(["a1", "r2"]);
+  });
+  it("a held member stays a row of its own", () => {
+    const held = filed(msg({ id: "h3", at: "2026-09-20T10:00:00.000Z", folder: "ohmail/Screener" as EngineMessage["folder"] }), "set_aside");
+    const reader = readerOf([filed(letter, "set_aside"), held]);
+    expect(pileSubjectIds(reader, "h3")).toEqual(["h3"]);
+    expect(pileSubjectIds(reader, "a1")).toEqual(["a1"]);
+  });
+  it("our reply still on its way (a local copy) is left out of the Ohbox row's set", () => {
+    const local = own("l3", "2026-09-20T10:00:00.000Z", { local: true });
+    expect(pileSubjectIds(readerOf([letter, reply, local]), "a1").sort()).toEqual(["a1", "r2"]);
   });
 });

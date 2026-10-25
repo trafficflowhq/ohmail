@@ -180,8 +180,8 @@ export interface ShellVerbsInput {
   offOhbox?: boolean;
   /** Our own reply facing the Ohbox row a message was selected on, decided at the press: Move seeds from it. */
   ownFaceFor?: ShellOpenState["ownFaceFor"];
-  /** What a Park files: the row the message stands in (`parkSubjectIds`), read in the Ohbox only (`offOhbox`). */
-  parkSetFor?: ShellOpenState["parkSetFor"];
+  /** What a pile press acts on: the message's pile row, or in the Ohbox (`!offOhbox`) its Ohbox row (`pileSubjectIds`). */
+  pileSetFor?: ShellOpenState["pileSetFor"];
   /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
   readerFor: ShellOpenState["readerFor"];
   setReaderFor: ShellOpenState["setReaderFor"];
@@ -211,7 +211,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, parkSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -1037,6 +1037,18 @@ export function useShellVerbs({
   /** Every id a verb here acted on this session: a tombstone one of them left is this tab's own, not "gone". */
   const actedIds = useRef<Set<string>>(new Set());
 
+  /** Resurface on a message; on a pile row (Answer later, Parked) every message of the row, as one press. */
+  const resurfaceRow = (
+    messageId: string, state: "bubbled_up" | "resurfaced", when: string | null, said: string,
+  ): void => {
+    const set = pileSetFor?.(messageId, false) ?? [messageId];
+    const ms = (set.length > 1 ? set : [messageId]).map((id) => ({
+      kind: "triage_set" as const, messageId: id, state, ...(when ? { bubbleUpAt: when } : {}),
+    }));
+    if (ms.length > 1) void mutateSetAndReport(ms, () => said);
+    else void mutateAndReport(ms[0]!, said);
+  };
+
   const onMessageAction = useStableCallback(
     (action: MessageAction, m: EngineMessage) => {
       /* THE ACTED MARKER: every message verb — key, bar, palette, sheet — funnels through
@@ -1096,33 +1108,30 @@ export function useShellVerbs({
          * actually took.
          */
         case "later":
-          if (m.triage?.state === "reply_later") {
-            void mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, t("ohbox.toastUnqueued"));
-          } else {
-            void mutateAndReport(
-              { kind: "triage_set", messageId: m.id, state: "reply_later" },
-              t("ohbox.toastQueued"),
-            );
-          }
-          break;
         case "aside": {
-          /* Park takes the Ohbox row, our reply too, so the row leaves; its un-press, every parked member. */
-          const set = (offOhbox ? undefined : parkSetFor?.(m.id)) ?? [];
+          /* ONE PILE PRESS: a pile row, or an Ohbox row (our reply too, so the row leaves), as one set. */
+          const state = action === "later" ? "reply_later" as const : "set_aside" as const;
+          const set = pileSetFor?.(m.id, !offOhbox) ?? [];
           if (set.length > 1) {
-            const parked = (id: string) => rowOf(id)?.triage?.state === "set_aside";
-            const off = set.every(parked);
+            const holds = (id: string) => rowOf(id)?.triage?.state === state;
+            const off = set.every(holds);
             void mutateSetAndReport(
-              set.filter((id) => off || !parked(id)).map((messageId) => ({
-                kind: "triage_set" as const, messageId, state: off ? "none" as const : "set_aside" as const,
+              set.filter((id) => off || !holds(id)).map((messageId) => ({
+                kind: "triage_set" as const, messageId, state: off ? "none" as const : state,
               })),
-              (applied) => (off ? t("ohbox.toastUnparked") : t("ohbox.toastBulkAside", { count: applied })),
+              (applied) => (off
+                ? t(state === "reply_later" ? "ohbox.toastUnqueued" : "ohbox.toastUnparked")
+                : t(state === "reply_later" ? "ohbox.toastBulkLater" : "ohbox.toastBulkAside", { count: applied })),
             );
-          } else if (m.triage?.state === "set_aside") {
-            void mutateAndReport({ kind: "triage_set", messageId: m.id, state: "none" }, t("ohbox.toastUnparked"));
+          } else if (m.triage?.state === state) {
+            void mutateAndReport(
+              { kind: "triage_set", messageId: m.id, state: "none" },
+              t(state === "reply_later" ? "ohbox.toastUnqueued" : "ohbox.toastUnparked"),
+            );
           } else {
             void mutateAndReport(
-              { kind: "triage_set", messageId: m.id, state: "set_aside" },
-              t("ohbox.toastAside"),
+              { kind: "triage_set", messageId: m.id, state },
+              t(state === "reply_later" ? "ohbox.toastQueued" : "ohbox.toastAside"),
             );
           }
           break;
@@ -1172,10 +1181,7 @@ export function useShellVerbs({
           // somebody set 14:30 would be the one resurface in the product that ignored the
           // default, and nothing on screen would say so.
           const when = tomorrowAt(nowAt(), consent.resurfaceTime).iso;
-          void mutateAndReport(
-            { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
-            t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }),
-          );
+          resurfaceRow(m.id, "bubbled_up", when, t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }));
           break;
         }
         case "delete": {
@@ -1238,10 +1244,7 @@ export function useShellVerbs({
            * the server writes it in one transaction, and `ohboxView.resurfaced` has the row on the next drain. No
            * `bubbleUpAt`: there is no schedule to spend.
            */
-          void mutateAndReport(
-            { kind: "triage_set", messageId: m.id, state: "resurfaced" },
-            t("ohbox.toastResurfaceNow"),
-          );
+          resurfaceRow(m.id, "resurfaced", null, t("ohbox.toastResurfaceNow"));
           break;
         case "resurface_done": {
           /**
@@ -1293,10 +1296,7 @@ export function useShellVerbs({
           // it is.
           if (action.startsWith("resurface:")) {
             const when = action.slice("resurface:".length);
-            void mutateAndReport(
-              { kind: "triage_set", messageId: m.id, state: "bubbled_up", bubbleUpAt: when },
-              t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }),
-            );
+            resurfaceRow(m.id, "bubbled_up", when, t("ohbox.toastResurface", { when: resurfaceLabel(when, nowAt()) }));
             break;
           }
           // `move:<view>` — the destination travels with the action. Before
@@ -1462,9 +1462,13 @@ export function useShellVerbs({
         // The same default the single-message verb uses — the picker's first dated preset, at
         // the account's own hour (mail 0110).
         const when = action === "resurface" ? tomorrowAt(nowAt(), consent.resurfaceTime).iso : null;
-        // A folded row hands in every member: the letter is filed, our reply stays.
+        // A folded row hands in every member. Park and Answer later in the Ohbox file what the key
+        // files, each row whole (our reply too); otherwise the letter is filed and our reply stays.
+        const subjects = action !== "resurface" && !offOhbox && pileSetFor
+          ? [...new Set(ids.flatMap((id) => pileSetFor(id, true)))]
+          : triageSubjectIds(setRead(), ids);
         void mutateSetAndReport(
-          triageSubjectIds(setRead(), ids).map((messageId) => ({
+          subjects.map((messageId) => ({
             kind: "triage_set" as const,
             messageId,
             state,

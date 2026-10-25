@@ -118,7 +118,7 @@ import {
   threadMarksIndex,
   resurfacedThreads,
   ohboxRows,
-  parkSubjectIds,
+  pileSubjectIds,
   ohboxUnreadIds,
   rowOpenTarget,
   threadSubject,
@@ -1913,6 +1913,7 @@ export function livePiles(pres: EntityReader, v: WorldView): WorldPile[] {
   const toItem = (e: (typeof piles)["replyLater"][number]): PileItem => ({
     id: e.messageId ?? e.title,
     ...(e.messageId ? { messageId: e.messageId } : {}),
+    ...(e.memberIds ? { memberIds: e.memberIds } : {}),
     title: e.title,
     ...(e.subtitle ? { subtitle: e.subtitle } : {}),
     ...(e.preview ? { preview: e.preview } : {}),
@@ -4569,9 +4570,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   ): Promise<boolean> => {
     const state = kind === "replyLater" ? "reply_later" : "set_aside";
     const reader = engine.read();
-    // A Park takes the Ohbox row, my reply too, and its un-press every parked member (`parkSubjectIds`).
-    const row = kind === "setAside" && members === undefined
-      ? parkSubjectIds(presentedReader(), messageId, engine.openRowHeld()) : [];
+    // A pile press takes the message's pile row, or the Ohbox row it stands in, my reply too (`pileSubjectIds`).
+    const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld());
     const own = row.length > 1;
     const targets = membersOf(messageId, own ? row : members, { own }).filter((id) => messageOf(id) !== undefined);
     if (targets.length === 0) return false;
@@ -4579,11 +4579,21 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const off = targets.every(holds);
     const changed = off ? targets : targets.filter((id) => !holds(id));
     const say = refuse(kind === "replyLater" ? (off ? "toastUnqueued" : "toastQueued") : (off ? "toastUnparked" : "toastAside"));
-    return triage(changed[0]!, off ? "none" : state, say, undefined, changed, own);
+    // The press holds the slot of the first letter it writes, never my reply's.
+    const lead = changed.find((id) => !isOwn(id)) ?? changed[0]!;
+    return triage(lead, off ? "none" : state, say, undefined, changed, own);
   };
 
-  const resurfaceAt = (messageId: string, iso: string): Promise<boolean> =>
-    triage(messageId, "bubbled_up", refuse("toastResurface", setTimeLabel(iso, now(), zone)), iso);
+  /** A message in Answer later or Parked resurfaces with its pile row, as one press. */
+  const pileRowOf = (messageId: string): string[] | undefined => {
+    const row = pileSubjectIds(presentedReader(), messageId, engine.openRowHeld(), false);
+    return row.length > 1 ? row : undefined;
+  };
+
+  const resurfaceAt = (messageId: string, iso: string): Promise<boolean> => {
+    const row = pileRowOf(messageId);
+    return triage(messageId, "bubbled_up", refuse("toastResurface", setTimeLabel(iso, now(), zone)), iso, row, row !== undefined);
+  };
 
   const resurfaceToggle = async (messageId: string): Promise<boolean> => {
     const m = messageOf(messageId);
@@ -4594,8 +4604,10 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     return resurfaceAt(messageId, tomorrowAt(now(), resurfaceAtClock(), zone).at.toISOString());
   };
 
-  const resurfaceNow = (messageId: string): Promise<boolean> =>
-    triage(messageId, "resurfaced", refuse("toastResurfaceNow"));
+  const resurfaceNow = (messageId: string): Promise<boolean> => {
+    const row = pileRowOf(messageId);
+    return triage(messageId, "resurfaced", refuse("toastResurfaceNow"), undefined, row, row !== undefined);
+  };
 
   const markSeenAs = async (
     messageId: string, unread: boolean, members: readonly string[] | undefined, openRow: string | undefined, readRow: string | undefined,
