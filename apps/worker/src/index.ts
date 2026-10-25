@@ -43,7 +43,7 @@ import {
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
   type ClassifierPort,
 } from "@trafficflow/core";
-import { agreeSweepPass, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf } from "@trafficflow/core/adapters/drizzle-repo";
+import { agreeSweepRun, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeSignatureCheck } from "@trafficflow/core/adapters/dkim";
 import { makeDnsDkimKeys } from "@trafficflow/core/adapters/dkim-keys";
 import {
@@ -418,11 +418,16 @@ interface MailboxRuntime {
    */
   leasePermit: OrganizerWriteAuthority;
   /**
-   * The stamp the last promotion spent, until the visit's sweep asks whether it was written with a
-   * person's first agree (`agreeSweepPass`). Memory only, read once: a crash before that visit
-   * leaves the letters to the Screener's offer.
+   * The stamp the last promotion spent, read once by the visit that promoted (`mayOrganize`
+   * writes it); that visit starts {@link agreeSweep} from it.
    */
   agreeStamp?: Date | null;
+  /**
+   * The agree's sweep in progress: each organizing visit runs it (`agreeSweepRun`) until its cursor
+   * is null; any other verdict, a throw or a demotion clears it. Memory only: a crash mid-sweep
+   * leaves the rest to the Screener's offer.
+   */
+  agreeSweep?: { stamp: Date; cursor: AgreeSweepCursor | null } | null;
   /**
    * The lease-relevant columns of this mailbox's row, as the last roster pass read them.
    *
@@ -1628,26 +1633,33 @@ export async function startWorkerWithLock(
     }
 
     /**
-     * THE AGREE'S SWEEP, after a promotion and its hold preflight: `agreeSweepPass` decides whether
-     * the spent stamp was a person's first agree and moves exactly the counted set as intents (the
-     * reconciler moves them this cycle). Never throws: a failure leaves the letters to the Screener's
+     * THE AGREE'S SWEEP, after a promotion and its hold preflight and on each organizing visit after
+     * it while slices remain: `agreeSweepRun` decides whether the spent stamp was a person's first
+     * agree and moves the counted set as intents (the reconciler moves them this cycle). One
+     * settings-folder read per visit. Never throws: a failure leaves the letters to the Screener's
      * offer, said here.
      */
-    async function agreeSweepAfterPromotion(rt: MailboxRuntime, stamp: Date): Promise<void> {
+    async function agreeSweepVisit(rt: MailboxRuntime): Promise<void> {
+      const sweep = rt.agreeSweep;
+      if (!sweep) return;
       try {
         const clearance = await rt.profile.sweepClearance();
-        const out = await agreeSweepPass(db as unknown as Parameters<typeof agreeSweepPass>[0], {
-          accountId: rt.accountId, mailboxId: rt.mailboxId, stamp, held: sweepHeld(clearance), now: new Date(),
+        const out = await agreeSweepRun(db as unknown as Parameters<typeof agreeSweepRun>[0], {
+          accountId: rt.accountId, mailboxId: rt.mailboxId, stamp: sweep.stamp, held: sweepHeld(clearance), now: new Date(),
           knowledgeFor: (tx) => makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]),
           ledgerOf: (tx) => tx as unknown as LedgerTx,
+          cursor: sweep.cursor,
+          ...(config.agreeSweepSlice !== undefined ? { slice: config.agreeSweepSlice } : {}),
         });
+        rt.agreeSweep = out.next === null ? null : { stamp: sweep.stamp, cursor: out.next };
         log.info("organizer_agree_sweep", {
           // `moved` letters given to the Screener, `count` their senders — both on the logger's allowlist.
-          mailboxId: rt.mailboxId, accountId: rt.accountId, outcome: out.kind,
-          moved: out.kind === "swept" ? out.total : 0, count: out.kind === "swept" ? out.senders : 0,
+          mailboxId: rt.mailboxId, accountId: rt.accountId, outcome: out.verdict,
+          moved: out.total, count: out.senders, slices: out.slices, done: out.next === null,
           why: clearance.kind === "unread" ? clearance.why : null,
         });
       } catch (err) {
+        rt.agreeSweep = null;
         log.warn("organizer_agree_sweep_failed", {
           mailboxId: rt.mailboxId, accountId: rt.accountId, err,
           reason: "the agree's in-window letters were not given to the Screener; the Screener's offer still names them",
@@ -2815,6 +2827,7 @@ export async function startWorkerWithLock(
           // it, so this value's real job is that the field cannot be forgotten: it is required,
           // and this composition is the metered one.
           storageCap: await storageCapFor(mb.accountId),
+          storagePlanLimit: await storageCapFor.planLimit(mb.accountId),
           log,
           // `OHMAIL_BLANK_REPAIR`, as the config read it: unset is apply (`blank-repair.ts`).
           ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
@@ -2990,7 +3003,10 @@ export async function startWorkerWithLock(
          * become this mailbox's organizer. */
         if (role === "organizer") await rt.profile.armHoldFromFolder();
         // A promotion at attach (the press landed while this process was down) owes the same sweep.
-        if (role === "organizer" && leaseState.agreeStamp) await agreeSweepAfterPromotion(rt, leaseState.agreeStamp);
+        if (role === "organizer" && leaseState.agreeStamp) {
+          rt.agreeSweep = { stamp: leaseState.agreeStamp, cursor: null };
+          await agreeSweepVisit(rt);
+        }
         leaseState.agreeStamp = null;
         ticket.checkpoint();
 
@@ -4090,10 +4106,13 @@ export async function startWorkerWithLock(
               reason: "a human asked this install to organize this mailbox and the lease agreed; "
                 + "the folder tree is ensured and this cycle organizes — no relaunch",
             });
-            if (rt.agreeStamp) await agreeSweepAfterPromotion(rt, rt.agreeStamp);
+            if (rt.agreeStamp) rt.agreeSweep = { stamp: rt.agreeStamp, cursor: null };
           }
           // Read once: a stamp spent without a flip (already organizing) owes nothing.
           rt.agreeStamp = null;
+          // The sweep this promotion started, or the slices an earlier visit left; a demotion ends it.
+          if (organize) await agreeSweepVisit(rt);
+          else rt.agreeSweep = null;
           if (!organize && wasOrganizer) {
             // The profile module's memory of ORGANIZING this mailbox goes with the role. See
             // `forgetOrganizerLife` for what it holds and why keeping it across a handover makes
@@ -4188,6 +4207,8 @@ export async function startWorkerWithLock(
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
+            // Inside a trial's floor the plan's own limit, the refill's ceiling; the same cached read.
+            storagePlanLimit: await storageCapFor.planLimit(rt.accountId),
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED
             // from the current facts at every cycle edge — never cached: the defects
             // measured that any arm/release choreography over a folder, a store and a

@@ -6,12 +6,11 @@ import {
 import en from "../messages/en.json";
 
 /**
- * LATER AND PARK ON AN ANSWERED CONVERSATION FILE THE LETTER, through the shipped
- * shell and the real engine. `a1` is Lena's letter, read; `x2` is our own newer reply, so the row
- * wears the reply. Every triage verb on the row (the keys, the bar, the sheet, the palette, a pick,
- * a drag) sends one `POST /messages/a1/triage` and nothing for `x2`. Standing for its face, the row
- * filed our reply and left the letter in the Ohbox. Park is the exception: it takes the whole row, our
- * reply too, so the row leaves the Ohbox.
+ * TRIAGE VERBS ON AN ANSWERED CONVERSATION ACT AT THE LETTER, through the shipped shell and the
+ * real engine. `a1` is Lena's letter, read; `x2` is our own newer reply, so the row wears the reply.
+ * Resurface on the row sends one `POST /messages/a1/triage` and nothing for `x2`. Park and Answer
+ * later take the whole row, our reply too, so the row leaves the Ohbox; the pile shows it as one row
+ * facing the letter.
  */
 
 const ME = "walker@example.invalid";
@@ -138,11 +137,11 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(row.dataset.id).toBe("a1");
   }, 60_000);
 
-  it("`a` files the letter alone, and the Reply Run pile lists the letter", async () => {
+  it("`a` files the letter and our reply, and the Reply Run pile lists the letter", async () => {
     const host = await mount(answered());
     await click(theRow(host));
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
     await act(async () => {
       window.location.hash = "#/triage";
       window.dispatchEvent(new Event("hashchange"));
@@ -161,12 +160,12 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(rows(host)).toEqual([]);
   }, 60_000);
 
-  it("opened, the bar's Later acts on the letter, which is the focused panel", async () => {
+  it("opened, the bar's Later takes the row, the letter being the focused panel", async () => {
     const host = await mount(answered());
     await openRow(host);
     expect(focusedPanel(host)).toBe("a1");
     await click(bar(host, "abar-later"));
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
   it("opened, the bar's Park parks the letter and our reply", async () => {
@@ -187,7 +186,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(triagePosts()).toEqual([["a1", "bubbled_up"]]);
   }, 60_000);
 
-  it("at phone width, the sheet's Later acts on the letter", async () => {
+  it("at phone width, the sheet's Later takes the row", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       writable: true,
@@ -205,7 +204,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     const later = document.querySelector<HTMLElement>(".reader .abar-later");
     expect(later, "the sheet's Later").toBeTruthy();
     await click(later!);
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
   it("the palette's Resurface selection acts on the letter", async () => {
@@ -219,15 +218,15 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(triagePosts()).toEqual([["a1", "bubbled_up"]]);
   }, 60_000);
 
-  it("a pick of the row (x), then `a`, files the letter alone", async () => {
+  it("a pick of the row (x), then `a`, files the row", async () => {
     const host = await mount(answered());
     await click(theRow(host));
     await key("x");
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
-  it("the row dragged to the Reply Run files the letter alone", async () => {
+  it("the row dragged to the Reply Run files the row", async () => {
     const host = await mount(answered());
     const row = theRow(host);
     await pointer("pointerdown", row, 10, 10);
@@ -238,7 +237,7 @@ describe("an answered conversation's row in the shipped shell", () => {
     expect(document.body.querySelector(".drag-ghost"), "the row became a drag").toBeTruthy();
     await pointer("pointerup", window, 60, 60);
     await settle();
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 });
 
@@ -275,7 +274,7 @@ describe("an answered conversation marked unread still stands for the letter", (
     return host;
   };
 
-  it("a pick (x), then `u`, marks the letter unread and leaves our reply read; then `a` files the letter", async () => {
+  it("a pick (x), then `u`, marks the letter unread and leaves our reply read; then `a` files the row", async () => {
     const host = await mountKeeping(answered());
     await click(theRow(host));
     await key("x");
@@ -286,23 +285,23 @@ describe("an answered conversation marked unread still stands for the letter", (
     await key("Escape");
     await click(theRow(host));
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
-  it("the letter and our reply both unread (a phone's row swipe synced over): `a` files the letter", async () => {
+  it("the letter and our reply both unread (a phone's row swipe synced over): `a` files the row", async () => {
     const host = await mount([consent(LENA.address), message("a1", OLDER, { unread: true }), message("x2", NEWER, { ...OURS, unread: true }), thread("T", ["a1", "x2"])]);
     expect(theRow(host).dataset.id).toBe("a1");
     await click(theRow(host));
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 
-  it("our reply alone unread (an earlier `u` on the row left it): `a` files the letter", async () => {
+  it("our reply alone unread (an earlier `u` on the row left it): `a` files the row", async () => {
     const host = await mount([consent(LENA.address), message("a1", OLDER), message("x2", NEWER, { ...OURS, unread: true }), thread("T", ["a1", "x2"])]);
     expect(theRow(host).dataset.id).toBe("a1");
     await click(theRow(host));
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 });
 
@@ -337,7 +336,7 @@ describe("an answered conversation's row draws the tags of what its verbs act on
 });
 
 describe("the cursor lands on a row's target, never on a member it does not stand for", () => {
-  it("⌫ on the first answered conversation, then `a`, files the next one's letter", async () => {
+  it("⌫ on the first answered conversation, then `a`, files the next one's row", async () => {
     const host = await mount(twoAnswered());
     expect(rows(host).map((r) => r.dataset.id)).toEqual(["a1", "b1"]);
     await click(rows(host)[0]!);
@@ -345,7 +344,7 @@ describe("the cursor lands on a row's target, never on a member it does not stan
     expect(selRow(host), "the advance lands on the next row").toBe("b1");
     expect(focusedPanel(host)).toBe("b1");
     await key("a");
-    expect(triagePosts()).toEqual([["b1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["b1", "reply_later"], ["y2", "reply_later"]]);
   }, 60_000);
 
   it("the first press with no cursor places it on the answered conversation's row", async () => {
@@ -354,7 +353,7 @@ describe("the cursor lands on a row's target, never on a member it does not stan
     expect(triagePosts(), "the press that places performs nothing").toEqual([]);
     expect(selRow(host)).toBe("a1");
     await key("a");
-    expect(triagePosts()).toEqual([["a1", "reply_later"]]);
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
   }, 60_000);
 });
 
@@ -485,5 +484,199 @@ describe("CONTROLS", () => {
     for (const r of rows(host)) { await click(r); await key("x"); }
     await key("a");
     expect(triagePosts().map(([id]) => id).sort()).toEqual(["b1", "c1", "n1"]);
+  }, 60_000);
+});
+
+describe("Answer later and Parked hold a conversation as one row", () => {
+  /** T: six letters from Lena and Kai, then our reply x7; z9 a lone letter below. */
+  const FILED = { setAt: ISO, updatedAt: ISO, bubbleUpAt: null };
+  const IDS = ["m1", "m2", "m3", "m4", "m5", "m6", "x7"];
+  const seven = (stateOf: (id: string) => string | null = () => null) => {
+    const filed = (id: string) => (stateOf(id) ? { triage: { messageId: id, state: stateOf(id), ...FILED } } : {});
+    return [
+      consent(LENA.address), consent(KAI.address),
+      ...IDS.slice(0, 6).map((id, i) => message(id, `2026-08-03T0${i + 1}:00:00.000Z`, { ...(i % 2 ? { from: KAI } : {}), ...filed(id) })),
+      message("x7", "2026-08-03T07:00:00.000Z", { ...OURS, ...filed("x7") }),
+      thread("T", IDS),
+      message("z9", "2026-08-02T08:00:00.000Z", { threadId: "Z", subject: "Garden" }),
+    ];
+  };
+  const all = (state: string): Array<[string, string]> => IDS.map((id) => [id, state]);
+  const posted = (state: string) => sortedPosts().filter(([, s]) => s === state);
+  const goTo = async (hash: string): Promise<void> => {
+    await act(async () => { window.location.hash = hash; window.dispatchEvent(new Event("hashchange")); });
+    await settle();
+  };
+  const railCount = (host: HTMLElement, id: string): string =>
+    (host.querySelector<HTMLElement>(`[data-rail-id="${id}"]`)?.textContent ?? "").replace(/\D+/g, " ").trim();
+  const ids = (host: HTMLElement) => rows(host).map((r) => r.dataset.id);
+  /** What the server holds; a test may add to it, and the next sync serves it. */
+  let held = new Map<string, ReturnType<typeof create>>();
+  /** A server that keeps what `POST /messages/:id/triage` wrote: every later sync serves the rows as they now stand. */
+  const mount = async (creates: Array<ReturnType<typeof create>>): Promise<HTMLElement> => {
+    held = new Map(creates.map((c) => [`${c.type}:${c.id}`, c]));
+    answerSyncWith(() => new Response(
+      JSON.stringify({ changes: { creates: [...held.values()].map((c) => ({ ...c, seq: ++seq })), updates: [], moves: [], deletes: [] }, cursor: `c${seq}`, hasMore: false, serverTime: ISO }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const inner = globalThis.fetch;
+    globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const hit = /\/messages\/([^/?]+)\/triage/.exec(String(input));
+      if (hit && (init?.method ?? "GET").toUpperCase() === "POST") {
+        const id = decodeURIComponent(hit[1]!);
+        const b = JSON.parse(String(init!.body)) as { state: string; bubbleUpAt?: string };
+        const c = held.get(`message:${id}`);
+        const at = new Date().toISOString();
+        if (c) held.set(`message:${id}`, { ...c, entity: { ...c.entity, triage: { messageId: id, state: b.state, bubbleUpAt: b.bubbleUpAt ?? null, setAt: at, updatedAt: at } } });
+      }
+      return (inner as unknown as (i: unknown, n?: RequestInit) => Promise<Response>)(input, init);
+    }) as unknown as typeof globalThis.fetch;
+    const host = await mountShell([mailbox({ id: "mb_1", address: ME, lastSyncAt: ISO })]);
+    await settle();
+    return host;
+  };
+
+  it("Park on the row files all seven; Parked lists one row, and the rail and the segment say 1", async () => {
+    const host = await mount(seven());
+    expect(ids(host)).toEqual(["m6", "z9"]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(sortedPosts()).toEqual(all("set_aside"));
+    await goTo("#/triage/aside");
+    expect(ids(host), "one row, facing the newest letter").toEqual(["m6"]);
+    expect(railCount(host, "triage-aside")).toBe("1");
+    expect(host.querySelector(".triage-seg")?.textContent).toContain(`${en.triage.setAside} 1`);
+  }, 60_000);
+
+  it("in Parked, `e` takes all seven out in one press and the Ohbox has the row back; `z` parks all seven again", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount(seven(() => "set_aside"));
+    expect(ids(host)).toEqual(["m6"]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(sortedPosts()).toEqual(all("none"));
+    expect(ids(host)).toEqual([]);
+    await goTo("#/ohbox");
+    expect(ids(host), "the conversation is one Ohbox row again").toEqual(["m6", "z9"]);
+    await goTo("#/triage/aside");
+    await key("z");
+    expect(posted("set_aside")).toEqual(all("set_aside"));
+    expect(ids(host)).toEqual(["m6"]);
+  }, 60_000);
+
+  it("in Parked, `a` moves all seven to Answer later, and `z` puts them back", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount(seven(() => "set_aside"));
+    await click(rows(host)[0]!);
+    await key("a");
+    expect(sortedPosts()).toEqual(all("reply_later"));
+    expect(ids(host)).toEqual([]);
+    await key("z");
+    expect(posted("set_aside")).toEqual(all("set_aside"));
+    expect(ids(host)).toEqual(["m6"]);
+  }, 60_000);
+
+  it("in Parked, `b` books all seven, and `z` parks them again", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount(seven(() => "set_aside"));
+    await click(rows(host)[0]!);
+    await key("b");
+    expect(sortedPosts()).toEqual(all("bubbled_up"));
+    await key("z");
+    expect(posted("set_aside")).toEqual(all("set_aside"));
+  }, 60_000);
+
+  it("`a` on an answered row queues the letter and our reply, the row leaves; Answer later faces the letter; `z` restores both", async () => {
+    const host = await mount(answered());
+    await click(theRow(host));
+    await key("a");
+    expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
+    expect(rows(host)).toEqual([]);
+    await key("z");
+    expect(posted("none")).toEqual([["a1", "none"], ["x2", "none"]]);
+    expect(ids(host)).toEqual(["a1"]);
+    await key("a");
+    await goTo("#/triage");
+    expect(ids(host)).toEqual(["a1"]);
+  }, 60_000);
+
+  it("a pick (x) then `e` or `a` files the same set as the key", async () => {
+    for (const [k, state] of [["e", "set_aside"], ["a", "reply_later"]] as const) {
+      const host = await mount(seven());
+      await click(rows(host)[0]!);
+      await key("x");
+      await key(k);
+      expect(sortedPosts()).toEqual(all(state));
+      await teardownShellEnv();
+      installShellEnv(); seq = 0; window.location.hash = "#/ohbox";
+    }
+  }, 120_000);
+
+  it("Answer later and Parked each list one row after a reload over a conversation split between them; Reply Run is one step", async () => {
+    window.location.hash = "#/triage";
+    const host = await mount(seven((id) => (id === "m1" || id === "m2" ? "reply_later" : "set_aside")));
+    expect(ids(host)).toEqual(["m2"]);
+    expect(railCount(host, "triage")).toBe("1");
+    expect(railCount(host, "triage-aside")).toBe("1");
+    await key("f");
+    expect(document.body.textContent).toContain(en.triage.runProgress.replace("{step}", "1").replace("{total}", "1"));
+  }, 60_000);
+
+  /** All of T parked, and a lone parked letter z9 NEWER than T, so z9 is Parked's first row. */
+  const parkedAboveT = (extra: Array<ReturnType<typeof create>> = []) => [
+    ...seven(() => "set_aside").filter((c) => c.id !== "z9"),
+    message("z9", "2026-08-03T10:00:00.000Z", { threadId: "Z", subject: "Garden", triage: { messageId: "z9", state: "set_aside", ...FILED } }),
+    ...extra,
+  ];
+  const eight = (state: string) => [...all(state), ["m8", state] as [string, string]].sort((x, y) => (x.join() < y.join() ? -1 : 1));
+  const newPosts = (from: number) => triagePosts().slice(from).sort((x, y) => (x.join() < y.join() ? -1 : 1));
+
+  it("a link to a member that is not the row's target opens that row in the column; `e` takes that conversation out", async () => {
+    window.location.hash = "#/triage/aside/m/m3";
+    const host = await mount(parkedAboveT());
+    expect(ids(host)).toEqual(["z9", "m6"]);
+    expect(selRow(host), "the cursor is on T's row").toBe("m6");
+    expect(document.querySelector(".reader"), "no sheet over the column").toBeNull();
+    await key("e");
+    expect(sortedPosts()).toEqual(all("none"));
+  }, 60_000);
+
+  it("Back to the row's old target after a newer letter joined it: `e` takes the whole conversation out", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount(parkedAboveT([message("m8", "2026-08-03T08:00:00.000Z", { from: KAI }), thread("T", [...IDS, "m8"])]));
+    await click(rows(host).find((r) => r.dataset.id === "m6")!);
+    await goTo("#/ohbox");
+    await click(rows(host).find((r) => r.dataset.id === "m8")!);
+    await key("e");
+    expect(sortedPosts()).toEqual([["m8", "set_aside"]]);
+    await goTo("#/triage/aside/m/m6");
+    expect(selRow(host), "the cursor is on T's row, now facing m8").toBe("m8");
+    expect(document.querySelector(".reader")).toBeNull();
+    const before = triagePosts().length;
+    await key("e");
+    expect(newPosts(before)).toEqual(eight("none"));
+  }, 60_000);
+
+  it("a newer letter joining the open row from another device keeps the cursor on that row", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount(parkedAboveT());
+    await click(rows(host).find((r) => r.dataset.id === "m6")!);
+    expect(selRow(host)).toBe("m6");
+    held.set("message:m8", message("m8", "2026-08-03T08:00:00.000Z", { from: KAI, triage: { messageId: "m8", state: "set_aside", ...FILED } }));
+    held.set("thread:T", thread("T", [...IDS, "m8"]));
+    for (let i = 0; i < 8; i++) await tick(15_000);
+    await settle();
+    expect(ids(host)).toEqual(["z9", "m8"]);
+    expect(selRow(host), "the cursor follows the row to its new target").toBe("m8");
+    await key("e");
+    expect(sortedPosts()).toEqual(eight("none"));
+  }, 120_000);
+
+  it("CONTROL: a lone letter in Parked comes out alone", async () => {
+    window.location.hash = "#/triage/aside";
+    const host = await mount([consent(LENA.address), message("s1", OLDER, { threadId: null, triage: { messageId: "s1", state: "set_aside", ...FILED } })]);
+    await click(rows(host)[0]!);
+    await key("e");
+    expect(triagePosts()).toEqual([["s1", "none"]]);
   }, 60_000);
 });

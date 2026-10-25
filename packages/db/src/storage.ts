@@ -17,7 +17,9 @@ import type { Tx } from "./change-log.js";
  * for space on arrival and the erase move the count of letters emptied for space. Only the trim
  * moves the month text is kept from; a letter withheld on arrival past it is counted apart. The
  * recount rewrites the counts from the bodies, never moves the month later (it may pull it back to
- * the newest emptied letter before it), and says how far the counter had drifted.
+ * the newest emptied letter before it), and says how far the counter had drifted. The storage
+ * refill (`core/husk-restore.ts#refillStorageCapBody`) takes the counter row after the mailbox row
+ * and before the body row it fills, then the message and the change sequence.
  */
 
 /**
@@ -105,6 +107,35 @@ export async function recordWithheldForSpace(tx: Tx, d: Dialect, accountId: stri
     .set({
       huskedForSpace: sql`${accountStorage.huskedForSpace} + 1`,
       ...(past ? { withheldOnArrival: sql`${accountStorage.withheldOnArrival} + 1` } : {}),
+    })
+    .where(eq(accountStorage.accountId, accountId));
+}
+
+/**
+ * A letter the refill gave its text back, under the counter lock the caller already holds: the
+ * bytes it grew by, one letter fewer emptied for space and, dated on or after `kept_from`, one
+ * fewer withheld on arrival, clamped to the letters left. The month, the latest trim's time and the
+ * recount's stamp stay: the recount after the refill pulls the month back. The first trim's time
+ * goes only with the last emptied letter, so the next trim dates its own.
+ */
+export async function recordRefilledForSpace(
+  tx: Tx, d: Dialect, accountId: string, grow: number, letterAt: Date | null,
+): Promise<void> {
+  const [counter] = await tx.select({ keptFrom: accountStorage.keptFrom }).from(accountStorage)
+    .where(eq(accountStorage.accountId, accountId));
+  const keptFrom = counter?.keptFrom ?? null;
+  const arrival = keptFrom !== null && onOrAfterKeptFrom(keptFrom, letterAt);
+  const left = d.greatest(sql`0`, sql`${accountStorage.huskedForSpace} - 1`);
+  const arrivals = arrival
+    ? d.greatest(sql`0`, sql`${accountStorage.withheldOnArrival} - 1`)
+    : sql`${accountStorage.withheldOnArrival}`;
+  await tx.update(accountStorage)
+    .set({
+      bytes: d.greatest(sql`0`, sql`${accountStorage.bytes} + ${grow}`),
+      huskedForSpace: left,
+      withheldOnArrival: sql`case when ${arrivals} < ${left} then ${arrivals} else ${left} end`,
+      firstHuskedAt: sql`case when ${left} = 0 then null else ${accountStorage.firstHuskedAt} end`,
+      updatedAt: d.now(),
     })
     .where(eq(accountStorage.accountId, accountId));
 }
@@ -349,8 +380,7 @@ export async function evictOldestBodies(
   // `recomputeAccountStorage`. It also drops the driver split this used to carry: the builder
   // returns rows, so there is no longer an array-or-`{rows}` shape to decide between.
   const locked = await d.forUpdate(tx.select({
-    bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace,
-    first: accountStorage.firstHuskedAt, keptFrom: accountStorage.keptFrom,
+    bytes: accountStorage.bytes, first: accountStorage.firstHuskedAt, keptFrom: accountStorage.keptFrom,
   }).from(accountStorage).where(eq(accountStorage.accountId, accountId)));
   const bytes = Number(locked[0]?.bytes ?? 0);
   if (bytes <= opts.targetBytes) {
@@ -389,16 +419,16 @@ export async function evictOldestBodies(
     .set({ text: "", html: null, withheldReason: "storage_cap" })
     .where(inArray(messageBodies.id, chosen));
   // The counter and its facts in one update, on the lock taken above: the bytes freed (clamped
-  // like every release), the letters emptied, the latest time, the first only when nothing was
-  // counted before (a count the release filled has no first time to make up), and kept_from past
-  // the newest letter chosen (the page is oldest first).
+  // like every release), the letters emptied, the latest time, the first whenever none is recorded
+  // (a count 0166 back-filled has none, and this trim is then the first one dated), and kept_from
+  // past the newest letter chosen (the page is oldest first).
   const prior = locked[0];
   const newest = victims[chosen.length - 1]!;
   await tx.update(accountStorage)
     .set({
       bytes: d.greatest(sql`0`, sql`${accountStorage.bytes} - ${freed}`),
       huskedForSpace: sql`${accountStorage.huskedForSpace} + ${chosen.length}`,
-      ...(prior?.first == null && Number(prior?.husked ?? 0) === 0 ? { firstHuskedAt: d.now() } : {}),
+      ...(prior?.first == null ? { firstHuskedAt: d.now() } : {}),
       lastHuskedAt: d.now(),
       // Decoded by the column's own mapper: an ISO text on the server, epoch milliseconds on a device.
       keptFrom: keptFromPast(prior?.keptFrom ?? null, messages.createdAt.mapFromDriverValue(newest.at as never) as Date),

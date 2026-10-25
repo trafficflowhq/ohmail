@@ -892,6 +892,9 @@ describe("the baseline cutoff is frozen", () => {
       // A Rules-page Change's re-filing: two nullable ADD COLUMN IF NOT EXISTS on rules, no data.
       // Safe over any history.
       "0167_rules_refile",
+      // A forward's kept files: one nullable ADD COLUMN IF NOT EXISTS on drafts, no default, no data.
+      // Safe over any history.
+      "0168_drafts_forward_parts",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting

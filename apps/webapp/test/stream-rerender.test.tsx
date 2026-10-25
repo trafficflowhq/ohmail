@@ -167,6 +167,24 @@ describe("the reading stream skips cards whose inputs did not change", () => {
     expect(counter.streamCards).toBe(0);
   });
 
+  it("a version bump that changes no mounted card re-scans nothing for the seen observer", async () => {
+    // A re-observe makes the browser re-report every card; it belongs to a change of mounted cards.
+    const seenObserves = { n: 0 };
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(_cb: unknown, private o?: IntersectionObserverInit) {}
+      observe(): void { if (this.o?.rootMargin === "0px 0px -62% 0px") seenObserves.n++; }
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    const msgs = Array.from({ length: N }, (_, i) => ({ ...message(i), unread: true }));
+    await mount(<Harness msgs={msgs} />);
+    expect(seenObserves.n, "control: the stream's seen observer observes its cards").toBeGreaterThan(0);
+    seenObserves.n = 0;
+    await act(() => bump());
+    expect(seenObserves.n).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
   it("a card whose TRIAGE changed re-renders, though its id did not", async () => {
     /**
      * THE PARK PRESS, and the reason this case exists.

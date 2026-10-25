@@ -5,7 +5,7 @@
  * them. The offer is the store's `GET /screener/unscreened`; the press is the web's `POST`, and
  * it holds both senders at the gate. The real engine and wire, the phone's own derivations.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { sayArg } from "../src/refusal";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import {
@@ -100,6 +100,34 @@ describe("the Ohbox offers to screen senders already in the Inbox", () => {
       expect(liveUnscreened(s.engine.read())?.total).toBe(2);
       expect(s.ohboxIds()).toEqual(expect.arrayContaining(["first", "plain"]));
     } finally { s.close(); }
+  });
+});
+
+/* ── THE OFFER FOLLOWS THE IMPORT ────────────────────────────────────────────────────────────────
+ * A new person's first import fills the open Ohbox; the offer read when it mounted said nothing.
+ * The pull that brings the mail re-asks, so the offer appears without leaving the tab. */
+describe("the offer follows the import while the Ohbox is open", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("mail arriving after the Ohbox mounted brings 'Screen N' at the next pull", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], shouldAdvanceTime: true });
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    const boot = await bootEngine(deps, { origin, token: "tok-1", accountId: "acct-1" });
+    if (boot.kind !== "ready") throw new Error("boot refused");
+    try {
+      await boot.verifyIdentity();
+      await boot.engine.start();
+      await boot.engine.syncOnce();
+      await boot.engine.refreshUnscreened();
+      expect(liveUnscreened(boot.engine.read()), "an empty Ohbox offered something").toBeNull();
+      vi.setSystemTime(Date.now() + 31_000);
+      fake.addMessage(dto("first", { subject: "First contact", from: STRANGER, date: "2026-08-19T07:15:00Z" }));
+      await boot.engine.syncOnce();
+      await vi.waitFor(() => {
+        expect(liveUnscreened(boot.engine.read())).toEqual({ total: 1, senders: [STRANGER.address] });
+      }, { timeout: 5_000 });
+    } finally { boot.store.close(); fake.server.close(); }
   });
 });
 

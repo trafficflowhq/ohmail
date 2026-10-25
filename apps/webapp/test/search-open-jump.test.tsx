@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, FeedPartition, MessageBody, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { openTargetFor, readerMessageFor } from "../app/shell/AppShell";
-import { StreamShell, type StreamHandle } from "../app/shell/StreamShell";
+import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
 import { ReadsView } from "../app/views/ReadsView";
 import { KeymapProvider } from "../app/shell/keymap";
 
@@ -302,6 +302,97 @@ describe("a deep landing re-measures until the card is at the reading line", () 
     expect(scrolls.length).toBeGreaterThan(1);
     // …and the landing is reported exactly once, however many corrections it took.
     expect(landed).toHaveBeenCalledTimes(1);
+  });
+
+  it("after the reader drove, a far landing that corrects itself marks and tracks nothing it only flew past", async () => {
+    // The reader reads the top, then a search jump lands short on its guesses and corrects. Only
+    // what is on screen at rest, and after the next wheel, may be marked or anchor the leave.
+    const N = 40, TARGET = 30, VIEWPORT = 600, GUESS = 200, REAL = 300;
+    const ios: Array<{ cb: IntersectionObserverCallback; opts: IntersectionObserverInit; observed: Set<Element> }> = [];
+    (globalThis as Record<string, unknown>).IntersectionObserver = class {
+      rec: { cb: IntersectionObserverCallback; opts: IntersectionObserverInit; observed: Set<Element> };
+      constructor(cb: IntersectionObserverCallback, opts: IntersectionObserverInit = {}) {
+        this.rec = { cb, opts, observed: new Set() };
+        ios.push(this.rec);
+      }
+      observe(t: Element): void { this.rec.observed.add(t); }
+      unobserve(t: Element): void { this.rec.observed.delete(t); }
+      disconnect(): void { this.rec.observed.clear(); }
+      takeRecords(): [] { return []; }
+    };
+    const seen: string[] = [];
+    const leaves: StreamLeaveState[] = [];
+    const ref = React.createRef<StreamHandle>();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(h(StreamShell, {
+        ref, ariaLabel: "stream", onCurrentChange: () => {}, onSeen: (id: string) => { seen.push(id); },
+        onLeave: (l: StreamLeaveState) => { leaves.push(l); }, contentKey: 1,
+        children: Array.from({ length: N }, (_, i) =>
+          h("div", { className: "scast", "data-sid": `c${i}`, "data-unseen": "1", key: `c${i}` })),
+      }));
+    });
+    const el = container.querySelector<HTMLElement>(".stream")!;
+    const laidOut = new Set<number>();
+    const heightOf = (i: number) => (laidOut.has(i) ? REAL : GUESS);
+    const topOf = (i: number) => { let t = 0; for (let k = 0; k < i; k++) t += heightOf(k); return t; };
+    const total = () => topOf(N);
+    let scrollTop = 0;
+    const renderAround = () => {
+      for (let i = 0; i < N; i++) {
+        const top = topOf(i) - scrollTop;
+        if (top + heightOf(i) > -VIEWPORT && top < VIEWPORT * 2) laidOut.add(i);
+      }
+    };
+    renderAround();
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => VIEWPORT });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => total() });
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v: number) => { scrollTop = Math.min(Math.max(0, v), Math.max(0, total() - VIEWPORT)); renderAround(); },
+    });
+    el.getBoundingClientRect = () => rect(0, VIEWPORT);
+    const cards = [...container.querySelectorAll<HTMLElement>(".scast")];
+    for (const [i, c] of cards.entries()) c.getBoundingClientRect = () => rect(topOf(i) - scrollTop, heightOf(i));
+    const onScreen = () => cards.filter((_, i) => {
+      const t = topOf(i) - scrollTop;
+      return t + heightOf(i) > 0 && t < VIEWPORT;
+    }).map((c) => c.dataset.sid!);
+    /** The browser's report after each move: every observed card against the seen band. */
+    const deliver = () => {
+      for (const io of ios) {
+        if (!io.opts.rootMargin?.includes("-62%")) continue;
+        const band = VIEWPORT * 0.38;
+        const entries = [...io.observed].filter((t) => t.isConnected).map((target) => {
+          const b = target.getBoundingClientRect();
+          return { target, boundingClientRect: b, rootBounds: rect(0, band), isIntersecting: b.bottom > 0 && b.top < band } as unknown as IntersectionObserverEntry;
+        });
+        if (entries.length) io.cb(entries, {} as IntersectionObserver);
+      }
+    };
+    el.scrollTo = ((opts: ScrollToOptions) => {
+      el.scrollTop = opts.top ?? 0;
+      el.dispatchEvent(new Event("scroll"));
+      deliver();
+    }) as typeof el.scrollTo;
+    deliver();
+    await act(async () => { el.dispatchEvent(new Event("wheel")); el.scrollTo({ top: 120 }); });
+    await settle(100);
+    const seenBefore = seen.length;
+    await act(async () => { ref.current!.scrollTo(`c${TARGET}`); });
+    await settle();
+    const atRest = onScreen();
+    await act(async () => { el.dispatchEvent(new Event("wheel")); el.scrollTo({ top: scrollTop + 60 }); });
+    await settle(100);
+    const shown = new Set([...atRest, ...onScreen()]);
+    await act(async () => { root.unmount(); });
+    expect(atRest, "control: the jump went deep").toContain(`c${TARGET}`);
+    expect(seen.slice(seenBefore).filter((id) => !shown.has(id))).toEqual([]);
+    expect(leaves).toHaveLength(1);
+    expect(atRest).toContain(leaves[0]!.newestSeenId);
   });
 
   it("a card pushed off the line AFTER it arrives is followed, not abandoned", async () => {

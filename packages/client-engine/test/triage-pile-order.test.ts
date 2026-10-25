@@ -123,3 +123,56 @@ describe("bubbled_up: soonest return first, arrival breaking a tie", () => {
     expect(shown, "the rows' own stamps read out of sequence").toEqual([...shown].sort());
   });
 });
+
+/**
+ * A CONVERSATION IS ONE ROW in Answer later and Parked: a parked seven-message conversation drew seven
+ * rows, each "7 messages in this conversation". The row faces and is ordered by the newest letter
+ * somebody else wrote, and lists every member the pile holds. Both delivery paths fold alike.
+ */
+describe("Answer later and Parked: one row per conversation", () => {
+  const ME = { name: "Me", address: "me@example.invalid" };
+  const at = (h: string) => `2026-08-26T${h}:00.000Z`;
+  const conv = (id: string, when: string, over: Partial<EngineMessage> = {}): EngineMessage => ({
+    ...msg({ id, at: at(when) }, null), threadId: "T", subject: "Q3", ...over,
+  } as EngineMessage);
+  const SEVEN = [
+    ...["01:00", "02:00", "03:00", "04:00", "05:00", "06:00"].map((h, i) => conv(`m${i + 1}`, h)),
+    conv("r7", "07:00", { from: ME, folder: "Sent" as EngineMessage["folder"] }),
+  ];
+  const lone = conv("z9", "06:30", { threadId: null });
+  const NEWEST_FIRST_IDS = ["r7", "m6", "m5", "m4", "m3", "m2", "m1"];
+  const st = (id: string, state: PileState, i = 0): MessageStateDTO => ({
+    messageId: id, state, bubbleUpAt: null, setAt: `2026-08-28T09:0${i % 10}:00.000Z`, updatedAt: `2026-08-28T09:0${i % 10}:00.000Z`,
+  });
+  async function fold(ms: EngineMessage[], stateOf: (id: string) => PileState, carried: boolean): Promise<EntityReader> {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([
+      ...ms.map((m, i) => change("message", m.id, carried ? { ...m, triage: st(m.id, stateOf(m.id), i) } : m)),
+      ...(carried ? [] : ms.map((m, i) => change("message_state", `row-${m.id}`, st(m.id, stateOf(m.id), i)))),
+    ]);
+    return oneSourceReader(store);
+  }
+
+  it.each(["reply_later", "set_aside"] as const)("%s: seven members and a lone letter are two rows, on both paths", async (state) => {
+    const web = triagePiles(await fold([...SEVEN, lone], () => state, false))[PILE[state]];
+    const desk = triagePiles(await fold([...SEVEN, lone], () => state, true))[PILE[state]];
+    expect(web, "the web log and the carried state fold alike").toEqual(desk);
+    expect(web.map((e) => e.messageId), "ordered by the letter each row faces").toEqual(["z9", "m6"]);
+    expect(web[1]!.memberIds).toEqual(NEWEST_FIRST_IDS);
+    expect(web[0]!.memberIds).toEqual(["z9"]);
+  });
+
+  it("a conversation split across the two piles is one row in each", async () => {
+    const piles = triagePiles(await fold(SEVEN, (id) => (id === "m1" || id === "m2" ? "reply_later" : "set_aside"), false));
+    expect(piles.replyLater.map((e) => e.memberIds)).toEqual([["m2", "m1"]]);
+    expect(piles.setAside.map((e) => [e.messageId, e.memberIds])).toEqual([["m6", ["r7", "m6", "m5", "m4", "m3"]]]);
+  });
+
+  it("a held member stays a row of its own; Resurface stays per message", async () => {
+    const held = conv("h8", "08:00", { folder: "ohmail/Screener" as EngineMessage["folder"] });
+    const piles = triagePiles(await fold([...SEVEN, held], (id) => (id === "m1" ? "bubbled_up" : "set_aside"), false));
+    expect(piles.setAside.map((e) => e.memberIds)).toEqual([["h8"], ["r7", "m6", "m5", "m4", "m3", "m2"]]);
+    expect(piles.resurface.map((e) => [e.messageId, e.memberIds])).toEqual([["m1", ["m1"]]]);
+  });
+});

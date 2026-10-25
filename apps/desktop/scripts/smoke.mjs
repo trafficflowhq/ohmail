@@ -630,6 +630,12 @@ function installShellStub(window) {
         if (url === "/account/access" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { metered: false }));
         }
+        /* `GET /auth/session` — asked once on the account door by `useHostedAccountId`, for Help &
+           contact's diagnostics. The real route's shape (`user.accountId`) with a fixture id; added
+           after the check named it red. GET only and exact. */
+        if (url === "/auth/session" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { scope: "full", user: { accountId: "acct-smoke-fixture" } }));
+        }
         /* THE WINDOW'S OUTBOX — `GET /local/window/outbox?scope=…`, read at boot so changes queued
            while Cloud was unreachable are sent at this launch (`window-outbox-store.ts`). A fresh
            profile has none: the door's own empty page, `{ rows: [], next: null }`

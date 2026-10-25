@@ -33,13 +33,17 @@ const knowledgeOf = (t: Tx): UnscreenedKnowledge =>
   makeDrizzleRepo(t as unknown as Parameters<typeof makeDrizzleRepo>[0]);
 
 /**
- * The whole offer in one read. `total` is the SHOWN groups' messages and nothing else — every
- * message has one sender, so a list cut at the bound must not report mail behind the cut.
+ * The whole offer in one read, inside the account's window. `total` is the SHOWN groups' messages
+ * and nothing else — every message has one sender, so a list cut at the bound must not report mail
+ * behind the cut.
  */
 export async function unscreenedSummary(
-  db: Tx, accountId: string,
+  db: Tx, accountId: string, now: Date,
 ): Promise<UnscreenedSummary> {
-  const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, { lock: false, scope: { kind: "offer" } });
+  const cutoff = await agreeWindowCutoff(db, accountId, now);
+  const walk = await unscreenedWalk(db, knowledgeOf(db), accountId, {
+    lock: false, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: { kind: "offer", cutoff },
+  });
   const groups = unscreenedGroups(walk.rows);
   return { groups, total: groups.reduce((n, g) => n + g.count, 0) };
 }
@@ -68,25 +72,30 @@ export async function screenUnscreened(
   // Through the fence: a request valid when it started must not commit rows after an erasure.
   return withAccountTx(ctx, async (t) => {
     const tx = bridgeTx(t);
-    const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, { lock: true, scope: { kind: "offer" } });
+    const now = ctx.now();
+    const cutoff = await agreeWindowCutoff(tx, ctx.accountId, now);
+    const walk = await unscreenedWalk(tx, knowledgeOf(tx), ctx.accountId, {
+      lock: true, stopAt: OHBOX_UNSCREENED_MESSAGES_MAX, scope: { kind: "offer", cutoff },
+    });
     const rows = walk.rows.filter((r) => named === null || named.has(r.fromAddress.toLowerCase()));
     if (rows.length === 0) return { screened: [], total: 0 };
     return writeScreenerIntents(tx, t as unknown as LedgerTx, {
-      accountId: ctx.accountId, rows, now: ctx.now(), via: "offer",
+      accountId: ctx.accountId, rows, now, via: "offer", groups: "shown",
     });
   });
 }
 
-/** What agreeing will move, read before the press: the same walk the organizer runs after it. */
+/** What agreeing will move, read before the press: the same walk the organizer's slices run after it. */
 export interface OrganizeDecisionCount {
-  /** Letters the agree moves — at most {@link OHBOX_UNSCREENED_MESSAGES_MAX}. */
+  /** Letters the agree moves: the whole set, a floor when `complete` is false. */
   letters: number;
+  /** Distinct senders among them. */
   senders: number;
-  /** Members of the whole set; above `letters` when the move bound cuts it. */
+  /** The same as `letters`, kept on the wire for older clients. */
   total: number;
   /** False when the walk's page bound stopped it, so `total` is a floor. */
   complete: boolean;
-  /** The move bound, read rather than carried as a client constant. */
+  /** One slice's move bound, read rather than carried as a client constant. */
   max: number;
   /** False while the mailbox's first import is still reading it: the count is what the store holds so far. */
   mirrored: boolean;
@@ -115,10 +124,8 @@ export async function organizeDecisionCount(
   const walk = await unscreenedWalk(db, knowledgeOf(db), ctx.accountId, {
     lock: false, scope: { kind: "agree", mailboxId, cutoff },
   });
-  const groups = unscreenedGroups(walk.rows);
-  const letters = groups.reduce((n, g) => n + g.count, 0);
   return {
-    letters, senders: groups.length, total: Math.max(walk.matched, letters), complete: walk.complete,
+    letters: walk.matched, senders: walk.senders, total: walk.matched, complete: walk.complete,
     max: OHBOX_UNSCREENED_MESSAGES_MAX, mirrored: mb.importedAt !== null,
   };
 }

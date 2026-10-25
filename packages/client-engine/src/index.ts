@@ -454,6 +454,8 @@ export {
   senderKey,
   sendingMailboxId,
   triagePiles,
+  pileRowIdsOf,
+  FOLDED_PILES,
   tagsCrossView,
   threadOf,
   isForwardedByUs,
@@ -486,7 +488,7 @@ export {
 // The Ohbox as ROWS, one per conversation across its sections — the fold every surface draws.
 export {
   foldOhboxRows,
-  parkSubjectIds,
+  pileSubjectIds,
   ohboxRows,
   ohboxUnreadIds,
   ownFaceOfRow,
@@ -632,6 +634,7 @@ export {
   SEND_INLINE_MAX_TOTAL_BYTES,
   // The save refusals a resumed send treats as the edit's own (`drafts-sent-words-frozen.test.ts` proves each).
   EDIT_OWN_REFUSALS,
+  FORWARD_PARTS_HELLO_MS,
   type FetchLike,
   type HttpAdapterOptions,
   type ServerMessageView,

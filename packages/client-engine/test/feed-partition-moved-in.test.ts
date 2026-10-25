@@ -54,11 +54,12 @@ async function moveInto(store: MemoryMirrorStore, id: string, folder: string): P
 }
 
 /** A real visit's leave-commit, through the engine's own `feed_mark_seen` writer. */
-async function leave(store: MemoryMirrorStore, view: "reads" | "receipts", upToId: string): Promise<void> {
-  const effects = mutationEffects(store, { kind: "feed_mark_seen", view, upToId, messageIds: [] } as never, {
+async function leave(store: MemoryMirrorStore, view: "reads" | "receipts", upToId: string, messageIds: string[] = []): Promise<number> {
+  const effects = mutationEffects(store, { kind: "feed_mark_seen", view, upToId, messageIds } as never, {
     now: () => new Date("2026-10-09T12:00:00.000Z"), uuid: () => "u",
   });
   for (const e of effects) if (e.type === "view_meta") await store.putLocal("view_meta", e.id, e.entity);
+  return effects.length;
 }
 
 const at = (hh: number, mm = 0): string => `2026-10-09T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00.000Z`;
@@ -240,6 +241,31 @@ describe("a committed line: the visit decides, the move does not", () => {
     expect(part.waterline).toBeNull();
     expect(part.fresh.map((m) => m.id)).toEqual(["w", "n"]);
     expect(part.newCount).toBe(1);
+  });
+});
+
+describe("the line never moves back", () => {
+  it("a leave anchored below the held line keeps the line; its flips still apply", async () => {
+    const store = await mirrorOf([1, 2, 3, 4, 5, 6].map((i) => msg({ id: `n${i}`, date: at(9, i), unread: true, folder: "ohmail/News" })));
+    await firstSync(store, at(8));
+    await leave(store, "reads", "n6");
+    expect(feedPartition(store, "reads").waterline?.newestSeenId).toBe("n6");
+    const n = await leave(store, "reads", "n2", ["n2", "n3"]);
+    expect(feedPartition(store, "reads").waterline?.newestSeenId).toBe("n6");
+    expect(feedPartition(store, "reads").fresh.map((m) => m.id)).toEqual([]);
+    // Two flips and the held line restated: the verb is never refused as empty.
+    expect(n).toBe(3);
+  });
+
+  it("a held line dated past the clock does not freeze the line", async () => {
+    const store = await mirrorOf([
+      msg({ id: "future", date: "2027-01-01T00:00:00.000Z", unread: true, folder: "ohmail/News" }),
+      ...[1, 2].map((i) => msg({ id: `n${i}`, date: at(9, i), unread: true, folder: "ohmail/News" })),
+    ]);
+    await firstSync(store, at(8));
+    await leave(store, "reads", "future");
+    await leave(store, "reads", "n2");
+    expect(feedPartition(store, "reads").waterline?.newestSeenId).toBe("n2");
   });
 });
 

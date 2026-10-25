@@ -23,6 +23,7 @@ import { useStoreTimeline } from "../shell/store-timeline";
 import { avatarOf, rowStamp, rowAddress, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
+import { useKeyBindings } from "../shell/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useLoadingGrace } from "../shell/loading-grace";
@@ -190,13 +191,17 @@ export function HistoryView({
     select: selectId, onPick,
   });
 
+  /** A rail press's pick, owed until its page lands (below `jumpTo`); any other pick replaces it. */
+  const jumpPick = useRef<{ slot: number; focus: boolean; id?: string } | null>(null);
   const openRow = (m: EngineMessage, at: number) => {
+    jumpPick.current = null;
     setPicked({ row: m, at });
     if (list.columnHidden()) onOpen(m);
   };
 
   /** Move the cursor to slot `i`: select the row there, or scroll to it so its page is fetched. */
   const selectAt = (i: number): void => {
+    jumpPick.current = null;
     const r = tl.rowAt(i);
     if (r !== null && r !== "gone") setPicked({ row: r, at: i });
     const el = scrollerRef.current;
@@ -225,12 +230,15 @@ export function HistoryView({
     },
   });
 
+  const stepUp = { disabled: shownAt <= 0, run: () => selectAt(shownAt - 1), label: to("keyPrev") };
+  const stepDown = { disabled: shownAt < 0 || shownAt >= tl.length - 1, run: () => selectAt(shownAt + 1), label: to("keyNext") };
+  // j/k walk History as ↓/↑ do, as they do every other list.
+  useKeyBindings([
+    { chord: "j", group: "navigate", ...stepDown },
+    { chord: "k", group: "navigate", ...stepUp },
+  ]);
   useZoneNav({
-    list: {
-      followId: shown?.id ?? null,
-      up: { disabled: shownAt <= 0, run: () => selectAt(shownAt - 1), label: to("keyPrev") },
-      down: { disabled: shownAt < 0 || shownAt >= tl.length - 1, run: () => selectAt(shownAt + 1), label: to("keyNext") },
-    },
+    list: { followId: shown?.id ?? null, up: stepUp, down: stepDown },
     reader: {
       selector: ".view-history .read-col",
       disabled: shown == null,
@@ -298,10 +306,31 @@ export function HistoryView({
     tl.jump(start);
     pin.current = { slot: start, count: tl.length };
     setRailAt(start);
+    const at = document.activeElement;
+    jumpPick.current = { slot: start, focus: at instanceof HTMLElement && at.closest(".history-rail") !== null };
     const el = scrollerRef.current;
     if (el) el.scrollTop = win.offsetOf(start);
     el?.dispatchEvent(new Event("scroll"));
   };
+
+  /* THE PERIOD'S FIRST ROW TAKES THE CURSOR once its page lands, and the focus where the press
+     came from the rail, so j and Tab walk the month rather than the top of History. */
+  useEffect(() => {
+    const want = jumpPick.current;
+    if (want === null) return;
+    if (want.id === undefined) {
+      const r = tl.rowAt(want.slot);
+      if (r === null) return;
+      if (r === "gone" || !want.focus) jumpPick.current = null;
+      else want.id = r.id;
+      if (r !== "gone") setPicked({ row: r, at: want.slot });
+      return;
+    }
+    const row = scrollerRef.current?.querySelector<HTMLElement>(`.row[data-index="${want.slot}"]`);
+    if (row?.dataset.id !== want.id) return;
+    jumpPick.current = null;
+    row.focus({ preventScroll: true });
+  });
 
   const meta = tl.state === "ready"
     ? t("metaCount", { count: tl.total ?? tl.length })

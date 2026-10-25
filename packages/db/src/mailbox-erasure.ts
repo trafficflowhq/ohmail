@@ -89,7 +89,7 @@ export async function stampMailboxErasure(
       ))),
     ))) + n(await tx.update(drafts)
     // …and a forward drafted there of a message here: its note stays, its original goes.
-    .set({ forwardOfMessageId: null })
+    .set({ forwardOfMessageId: null, forwardParts: null })
     .where(and(
       eq(drafts.accountId, accountId),
       ne(drafts.mailboxId, mailboxId),
@@ -215,7 +215,7 @@ async function eraseMessages(
     .where(and(
       eq(drafts.accountId, accountId), ne(drafts.mailboxId, mailboxId),
       inArray(drafts.inReplyToMessageId, ids),
-    ))) + n(await tx.update(drafts).set({ forwardOfMessageId: null })
+    ))) + n(await tx.update(drafts).set({ forwardOfMessageId: null, forwardParts: null })
     .where(and(
       eq(drafts.accountId, accountId), ne(drafts.mailboxId, mailboxId),
       inArray(drafts.forwardOfMessageId, ids),

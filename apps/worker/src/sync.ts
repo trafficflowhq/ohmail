@@ -39,6 +39,7 @@ import {
 } from "./junk-filing.js";
 import { junkRestorePass } from "./junk-restore.js";
 import { junkGonePass } from "./junk-gone.js";
+import { storageRefillPass } from "./storage-refill.js";
 import { blankRepairPass } from "./blank-repair.js";
 import { folderOpsPass } from "./folder-ops.js";
 import { junkRescuePass } from "./junk-rescue.js";
@@ -188,6 +189,12 @@ export interface SyncDeps {
    * message, on `screeningCutoff`'s resolved-once-per-cycle discipline.
    */
   storageCap: StorageCap;
+  /**
+   * Inside a trial's storage floor, the plan's own limit (`storage-cap.ts#planLimit`): the storage
+   * refill fills only up to it, never past `storageCap`. Absent or null: the cap. Read only by the
+   * refill; the trim and ingest meter against `storageCap`.
+   */
+  storagePlanLimit?: number | null;
   /**
    * The account's Ohbox posture, resolved from `account_settings.ohbox_policy` and threaded into
    * `planChange`. ABSENT ⇒ `planChange` resolves it to the lenient `DEFAULT_OHBOX_POLICY`, so a
@@ -1736,6 +1743,28 @@ async function syncCycleWithin(
       }
       rethrowRefusal(err);
       log?.warn("junk_gone_pass_failed", { mailboxId, accountId, err });
+    }
+  }
+
+  // THE STORAGE REFILL: letters whose text the trim emptied for space get it back from the mail
+  // server once the account has room (`storage-refill.ts`). Same placement and error handling.
+  if (deferred.size === 0) {
+    try {
+      await storageRefillPass({
+        repo, adapter, accountId, mailboxId, storageCap, planLimitBytes: deps.storagePlanLimit ?? null,
+        ...(log !== undefined ? { log } : {}),
+        write: (fn) => fencedLiveGroup(deps, fn),
+      });
+    } catch (err) {
+      if (refusalIsRemoval(err)) {
+        log?.info("storage_refill_mailbox_removed", {
+          mailboxId, accountId,
+          reason: "the mailbox was removed while this pass was reading it, so no text was written back",
+        });
+        throw err;
+      }
+      rethrowRefusal(err);
+      log?.warn("storage_refill_pass_failed", { mailboxId, accountId, err });
     }
   }
 

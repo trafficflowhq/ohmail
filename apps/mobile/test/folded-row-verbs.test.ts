@@ -12,7 +12,7 @@ import { sayArg } from "../src/refusal";
 import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { closeRoutingSession, flushRouting, openRoutingSession } from "../src/state/held-routing";
-import { liveActions, liveMessage, liveOhbox, planHeldRouting, routingReversal, type ToastOpts, type WorldView } from "../src/state/live";
+import { liveActions, liveMessage, liveOhbox, livePiles, planHeldRouting, routingReversal, type ToastOpts, type WorldView } from "../src/state/live";
 import { dto, listen, mailServer, ruleDto } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -45,7 +45,7 @@ async function scene(rules: RuleDTO[], messages = [dto("m1", { subject: "Weekly"
     toast: (m, o) => { said.push({ say: sayArg(m), ...(o ? { opts: o } : {}) }); },
   });
   const close = () => { boot.store.close(); fake.server.close(); };
-  return { fake, ...boot, actions, said, close };
+  return { fake, origin, ...boot, actions, said, close };
 }
 
 type Scene = Awaited<ReturnType<typeof scene>>;
@@ -141,9 +141,9 @@ describe("a folded row's verbs", () => {
 });
 
 /* REVIEW-026-PHONE-SAYS-EVERY-PRESS-2 HIGH-1: a conversation answered from here holds the person's
-   OWN reply (the Ohbox carries own Sent mail). Junk, Later, Done and Mark unread never touch it (an
-   unread reply would make the row stand for it); the read slot's Mark read marks every member, as
-   the web's pick of a row does. */
+   OWN reply (the Ohbox carries own Sent mail). Junk, Done and Mark unread never touch it (an unread
+   reply would make the row stand for it); the read slot's Mark read marks every member, as the web's
+   pick of a row does. Later, like Park, takes the row whole, the reply too, so the row leaves. */
 describe("a folded row that holds the person's own reply", () => {
   const ME = { name: "Me", address: "owner@fake.test" };
   const answered = (faceIsMine: boolean) => [
@@ -166,15 +166,21 @@ describe("a folded row that holds the person's own reply", () => {
       } finally { s.close(); }
     });
   }
-  it("Later, Done and Mark unread leave my reply alone; the read slot's Mark read marks it with the rest", async () => {
+  it("Later takes my reply with the letter, so the row leaves", async () => {
+    const s = await scene([], answered(false));
+    try {
+      const before = writes(s).length;
+      await s.actions.pileToggle("m1", "replyLater", ["m1", "m2"]);
+      await until("both on the wire", () => writes(s).length - before >= 2);
+      expect(writes(s).slice(before).map((r) => r.url).sort()).toEqual(["/messages/m1/triage", "/messages/m2/triage"]);
+      const box = liveOhbox(s.engine.read(), view);
+      expect([...box.resurfaced, ...box.fresh, ...box.seen], "the row left the Ohbox").toEqual([]);
+    } finally { s.close(); }
+  });
+  it("Done and Mark unread leave my reply alone; the read slot's Mark read marks it with the rest", async () => {
     const s = await scene([], answered(false));
     try {
       let before = writes(s).length;
-      await s.actions.pileToggle("m1", "replyLater", ["m1", "m2"]);
-      await until("the triage on the wire", () => writes(s).length > before);
-      await tick(100);
-      expect(writes(s).slice(before).some((r) => r.url.includes("/m2/")), "my reply went to Later").toBe(false);
-      before = writes(s).length;
       await s.actions.resurfaceDone("m1", ["m1", "m2"]);
       await until("the done on the wire", () => writes(s).length > before);
       await tick(100);
@@ -267,6 +273,60 @@ describe("Park on a message of a folded Ohbox row", () => {
       const box = liveOhbox(s.engine.read(), view);
       const back = [...box.fresh, ...box.seen].find((r) => r.id !== "m9");
       expect([...(back?.memberIds ?? [])].sort(), "the row is back whole").toEqual(["m1", "m2"]);
+    } finally { s.close(); }
+  });
+
+  it("in Parked the conversation is one row, and a press on any member takes it out whole with one pill; Undo parks it again", async () => {
+    const s = await scenePark();
+    try {
+      const before = writes(s).length;
+      await s.actions.pileToggle("m2", "setAside");
+      await until("both parks on the wire", () => triaged(s, before).length >= 2);
+      const parked = livePiles(s.engine.read(), view).find((p) => p.kind === "setAside")!.items;
+      expect(parked.map((i) => [i.messageId, i.memberIds])).toEqual([["m2", ["m2", "m1"]]]);
+      const mid = writes(s).length; const said = s.said.length;
+      expect(await s.actions.pileToggle("m1", "setAside")).toBe(true);
+      await until("both unparks on the wire", () => triaged(s, mid).length >= 2);
+      expect(triaged(s, mid)).toEqual(["m1 none", "m2 none"]);
+      expect(pills(s, said)).toEqual(["Out of Parked"]);
+      offer(s).opts!.undo!();
+      await until("both parked again", () => triaged(s, mid).length >= 4);
+      expect(triaged(s, mid).filter((x) => x.endsWith(" set_aside"))).toEqual(["m1 set_aside", "m2 set_aside"]);
+    } finally { s.close(); }
+  });
+
+  it("Later on a parked member moves the row whole; Resurface books it whole", async () => {
+    const s = await scenePark();
+    try {
+      let before = writes(s).length;
+      await s.actions.pileToggle("m2", "setAside");
+      await until("both parks on the wire", () => triaged(s, before).length >= 2);
+      before = writes(s).length;
+      await s.actions.pileToggle("m1", "replyLater");
+      await until("both queued", () => triaged(s, before).length >= 2);
+      expect(triaged(s, before)).toEqual(["m1 reply_later", "m2 reply_later"]);
+      before = writes(s).length;
+      await s.actions.resurfaceAt("m2", "2026-08-21T07:00:00.000Z");
+      await until("both booked", () => triaged(s, before).length >= 2);
+      expect(triaged(s, before)).toEqual(["m1 bubbled_up", "m2 bubbled_up"]);
+    } finally { s.close(); }
+  });
+
+  it("a fresh boot over the same server state lists the parked conversation once", async () => {
+    const s = await scenePark();
+    try {
+      const before = writes(s).length;
+      await s.actions.pileToggle("m2", "setAside");
+      await until("both parks on the wire", () => triaged(s, before).length >= 2);
+      const fresh = sqlWorld();
+      const boot = await bootEngine({ ...deps, openExecutor: fresh.open, deleteDatabase: fresh.drop }, { origin: s.origin, token: "tok-1", accountId: "acct-1" });
+      if (boot.kind !== "ready") throw new Error("boot refused");
+      try {
+        await boot.verifyIdentity();
+        await boot.engine.start();
+        const piles = livePiles(boot.engine.read(), view);
+        expect(piles.find((p) => p.kind === "setAside")!.items.map((i) => i.memberIds)).toEqual([["m2", "m1"]]);
+      } finally { boot.store.close(); }
     } finally { s.close(); }
   });
 

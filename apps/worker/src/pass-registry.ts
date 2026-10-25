@@ -110,6 +110,19 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter, read-only; writes through the fenced group",
   },
   {
+    name: "storage_refill",
+    module: `${W}/storage-refill.ts`, entry: "storageRefillPass",
+    triggers: ["visit"],
+    cadence: "at the visit's tail after junk_gone, only when the cycle deferred nothing; a mailbox at most every REFILL_EVERY_MS, "
+      + "on a numeric cap with room under the trim's mark, while no mailbox of the account is erasing or on its first import",
+    budget: "REFILL_FETCHES_PER_RUN letters, REFILL_RUN_BUDGET_MS and REFILL_MAX_PAGES pages per run; REFILL_BYTES_PER_DAY raw bytes "
+      + "per mailbox per rolling day; REFILL_MAX_BYTES per letter",
+    owns: "letters whose text the trim emptied for space get it back from the mail server, newest first, while the counter stays "
+      + "at or under nine tenths of the cap",
+    fence: "the visit's leased adapter, read-only (BODY.PEEK); each rewrite and the recount through the fenced group, the counter "
+      + "row locked before the room is read",
+  },
+  {
     name: "blank_repair",
     module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
     // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the
@@ -216,11 +229,11 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "agree_sweep",
-    module: `${CORE}/unscreened-set.ts`, entry: "agreeSweepPass",
-    // The desktop and phone engine call the same function at the head of their first organizing drain.
+    module: `${CORE}/unscreened-set.ts`, entry: "agreeSweepRun",
+    // The desktop and phone engine call the same function at the head of each organizing drain while it runs.
     triggers: ["visit", "attach"],
-    cadence: "once, after the promotion that spends the stamp written with a person's first agree from the window step",
-    budget: "OHBOX_UNSCREENED_MESSAGES_MAX letters, the walk's 25 pages",
+    cadence: "after the promotion that spends the stamp written with a person's first agree from the window step, then every organizing visit until its cursor is done",
+    budget: "AGREE_SWEEP_SLICES_PER_DRAIN slices a visit, each OHBOX_UNSCREENED_MESSAGES_MAX letters and the walk's 25 pages in its own transaction",
     owns: "agreeing screens the in-window mail of never-decided senders, the set the agree screen counted",
     fence: "the mailbox row FOR UPDATE, then FOR UPDATE OF folder_state; desired-state writes only (the reconciler moves)",
   },

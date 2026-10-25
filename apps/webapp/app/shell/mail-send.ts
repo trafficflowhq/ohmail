@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pressVerdict } from "@ohmail/client-engine";
+import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pileRowIdsOf, pressVerdict } from "@ohmail/client-engine";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
@@ -805,6 +805,8 @@ export interface ReplyEditorMeta {
   envelope?: LaneEnvelope;
   /** The keys of the creates the lane claims (`draft-creates.ts`), at most eight: keys only, never words. */
   creates?: string[];
+  /** A forward lane's kept files once one was removed (`forward-files.ts`); absent: every file. */
+  forwardParts?: string[];
 }
 
 /**
@@ -856,9 +858,12 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     const sig = parsed.sig;
     const row = parsed.row;
     const envelope = envelopeOf(parsed.envelope);
+    const parts = parsed.forwardParts;
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
+      ...(Array.isArray(parts) && parts.length <= 100 && parts.every((id) => typeof id === "string")
+        ? { forwardParts: [...parts] } : {}),
       ...(typeof row?.id === "string" && typeof row.at === "string"
         ? { row: {
           id: row.id, at: row.at,
@@ -882,7 +887,7 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
   if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined
-    && (meta.creates === undefined || meta.creates.length === 0)) {
+    && (meta.creates === undefined || meta.creates.length === 0) && meta.forwardParts === undefined) {
     durableRemove(replyMetaKey(lane), "reply.meta");
     return;
   }
@@ -973,7 +978,7 @@ export async function promoteOrphanedReplyLane(
   plan: LanePromotionPlan | null,
   save: (m: {
     kind: "draft_save"; draftId: string | null; mailboxId: string;
-    inReplyToMessageId?: string; forwardOfMessageId?: string;
+    inReplyToMessageId?: string; forwardOfMessageId?: string; forwardParts?: string[];
     subject: string; body: string; html?: string | null;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
@@ -984,10 +989,13 @@ export async function promoteOrphanedReplyLane(
   // A FORWARD LANE SAVES A FORWARD: its note names the original it forwards, never as
   // the message it answers — that would thread a forward onto its original as a reply.
   const forward = lane !== parentId;
+  // A forward lane's kept files ride its promoted row, so it still sends only those.
+  const kept = forward ? readReplyMeta(lane).forwardParts : undefined;
   const result = await save({
     kind: "draft_save", draftId: plan.rowId,
     mailboxId: plan.mailboxId,
     ...(forward ? { forwardOfMessageId: parentId } : { inReplyToMessageId: parentId }),
+    ...(kept ? { forwardParts: kept } : {}),
     subject: plan.subject, body: body.text,
     html: body.html ? body.html : null,
     to: plan.to.map((a) => ({ ...a })), cc: plan.cc.map((a) => ({ ...a })), bcc: plan.bcc.map((a) => ({ ...a })),
@@ -1704,20 +1712,24 @@ export function useMailSend(
       const shown = shownNow(key) && aboutThisCompose;
       clearLaneScratch(key, m, owner.current, aboutThisCompose);
       /* SEND + DONE IS ASKED FIRST, before the debt below moves anything: its release is read from
-         the mirror NOW. `true` is a release made — it clears the bookings and reads the row, so the
-         discharge stands down, and its sentence replaces "Reply sent.". A plain Send releases no
+         the mirror NOW. `true` is a release made — it clears the bookings and reads the row, and
+         its sentence replaces "Reply sent.". A plain Send releases no
          pin and no booking: only Answer Later is discharged below. */
       const released = outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true;
-      if (m.inReplyTo !== null && !released) {
+      if (m.inReplyTo !== null) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
         // Read at CONFIRM time, not at press time: the state may have moved while the request
         // was out, and a send that failed must never clear a debt. A compose answers nothing,
-        // so it discharges nothing — the branch is the whole difference between the two.
-        const msg = engine.read().get<EngineMessage>("message", m.inReplyTo);
-        const state = msg?.triage?.state as string | undefined;
-        if (clearsTriage(state)) {
-          void engine.mutate({ kind: "triage_set", messageId: m.inReplyTo, state: "none" });
+        // so it discharges nothing — the branch is the whole difference between the two. The
+        // debt is the Answer Later row's: every message of the conversation queued there goes.
+        // Those are never in the Ohbox row Send + Done releases, so the two never write one id.
+        const reader = engine.read();
+        const msg = reader.get<EngineMessage>("message", m.inReplyTo);
+        if (clearsTriage(msg?.triage?.state as string | undefined)) {
+          for (const messageId of new Set([m.inReplyTo, ...pileRowIdsOf(reader, m.inReplyTo, "replyLater")])) {
+            void engine.mutate({ kind: "triage_set", messageId, state: "none" });
+          }
         }
       }
 

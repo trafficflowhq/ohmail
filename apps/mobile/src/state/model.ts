@@ -156,6 +156,8 @@ export interface MailTag {
 export interface PileItem {
   id: string;
   messageId?: string;
+  /** Every message the row covers, newest first: a conversation in Answer later or Parked. */
+  memberIds?: readonly string[];
   title: string;
   subtitle?: string;
   preview?: string;

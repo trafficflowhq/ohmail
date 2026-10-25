@@ -503,6 +503,8 @@ export async function mountShell(
     server?: DraftServer;
     /** No signal from the first moment: a boot's replay cannot reach the routes. */
     startOffline?: boolean;
+    /** A send gate set before the engine starts, so a restored send's replay waits on it. */
+    sendGate?: DraftShell["sendGate"];
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
@@ -518,7 +520,7 @@ export async function mountShell(
   const saveGate: DraftShell["saveGate"] = { wait: null };
   const remote: SyncChange[] = [];
   const offline: DraftShell["offline"] = { on: options.startOffline === true };
-  const sendGate: DraftShell["sendGate"] = { wait: null };
+  const sendGate: DraftShell["sendGate"] = options.sendGate ?? { wait: null };
   const serverGone = new Set<string>(options.serverGone ?? []);
   const resync: DraftShell["resync"] = { armed: false, gate: null, phase: 0 };
   const refuseDiscard: DraftShell["refuseDiscard"] = { on: false };

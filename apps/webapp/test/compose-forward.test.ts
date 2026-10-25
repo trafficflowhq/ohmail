@@ -116,6 +116,28 @@ describe("composePlan carries forwardOf onto the mutation", () => {
   });
 });
 
+describe("a forward's kept files ride the plan and the scratch buffer", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("a list goes on the send beside its forward; none, or no forward, sends no key", () => {
+    expect(composePlan(forwarding({ forwardParts: ["p-1", "p-2"] }), "mb-1").mutation.forwardParts).toEqual(["p-1", "p-2"]);
+    expect("forwardParts" in composePlan(forwarding({ forwardParts: null }), "mb-1").mutation).toBe(false);
+    expect("forwardParts" in composePlan(forwarding({ forwardOf: null, forwardParts: ["p-1"] }), "mb-1").mutation).toBe(false);
+    expect(composePlan(forwarding({ forwardParts: [] }), "mb-1").mutation.forwardParts).toEqual([]);
+  });
+
+  it("the buffer keeps the list across a reload; a malformed one reads as nothing removed", () => {
+    writeComposeDraft(forwarding({ forwardParts: ["p-1"] }));
+    expect(readComposeDraft().forwardParts).toEqual(["p-1"]);
+    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: [7] }));
+    expect(readComposeDraft().forwardParts).toBeNull();
+    window.localStorage.setItem(composeDraftKey(), JSON.stringify({ ...forwarding(), forwardParts: Array.from({ length: 101 }, (_, i) => `p-${i}`) }));
+    expect(readComposeDraft().forwardParts).toBeNull();
+  });
+});
+
 describe("the scratch buffer keeps the forward and drops the bytes", () => {
   beforeEach(() => {
     window.localStorage.clear();

@@ -61,6 +61,7 @@ export function ReadsView({
   tags,
   threadParticipants,
   mailboxLabelOf,
+  mailboxStatusOf,
   absoluteTime,
   onToggleTime,
   now,
@@ -107,6 +108,8 @@ export function ReadsView({
    * answered null here and neither surface draws anything. Optional: absent, nothing is named.
    */
   mailboxLabelOf?: (mailboxId: string) => string | null;
+  /** A mailbox's status off the same facts, for a card's withheld sentence (`withheldCopyKey`); absent is null. */
+  mailboxStatusOf?: (mailboxId: string) => string | null;
   /**
    * THE DATE STAMPS — which form they are in, and the press that flips them.
    *
@@ -720,7 +723,7 @@ export function ReadsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldKey={withheldCopyKey(body.withheld, m.folder)}
+        withheldKey={withheldCopyKey(body.withheld, m.folder, mailboxStatusOf?.(m.mailboxId))}
         onReask={reaskBody}
         /* The same fact the row above carries, resolved to a STRING here so the memo's comparator
            keeps comparing primitives. */

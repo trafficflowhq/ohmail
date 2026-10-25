@@ -693,7 +693,8 @@ describe("HISTORY is filtered like every other view", () => {
     await waitFor(() => rowIds(container).includes("h1"), "History to list its rows");
 
     await key("j");
-    const cursor = rowIds(container)[0]!;
+    // j walks History now: the row under the cursor is the one the delete takes.
+    const cursor = container.querySelector<HTMLElement>(".view .row.sel")!.dataset.id!;
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(cursor), "the row to leave History");
     expect(deletes(), "and still nothing on the wire").toEqual([]);

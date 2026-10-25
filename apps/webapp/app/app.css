@@ -2031,6 +2031,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 400;
   color: var(--ink2);
 }
+/* Mark all spam's question: the held block's sentences, its two answers side by side. */
+.scn-ask-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 /* "Filed automatically" under the auto-apply switch: one row per message, its Put back beside it. */
 .scn-autofiled {
   display: flex;
@@ -2968,6 +2974,28 @@ textarea.c-input:read-only {
   margin: 10px 0 0;
   font-size:calc(11.5px + var(--type-up));
   color: var(--ink2);
+}
+/* THE ORIGINAL'S FILES under the forwarding note: the attach list's rows, a muted head and line. */
+.forward-files {
+  margin: 6px 0 0;
+}
+.forward-files-head,
+.forward-files-line,
+.forward-files-refusal {
+  margin: 6px 0 0;
+  font-size:calc(11.5px + var(--type-up));
+  color: var(--ink2);
+}
+.forward-files-refusal {
+  color: var(--ink);
+}
+.forward-files-tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius:var(--r-ctl);
+  background: var(--tint2);
+  color: var(--ink2);
+  font-size:calc(11px + var(--type-up));
 }
 
 /* ── attachments in the compose foot ──────────────────────────────────────────────────────

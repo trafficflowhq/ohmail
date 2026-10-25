@@ -176,6 +176,31 @@ describe("the verb toast carries Undo, and Undo drives the engine's inverse", ()
     expect(kinds("triage_set")).toEqual([{ kind: "triage_set", messageId: id, state: "none" }]);
   });
 
+  it("z pressed before the Park's answer is back undoes it once the answer lands", async () => {
+    await mountShell();
+    const id = selectedId();
+    let answer: () => void = () => {};
+    // The Park's answer is held back; the spy it then calls through records it.
+    const spy = FixturesAdapter.prototype.mutate;
+    vi.mocked(FixturesAdapter.prototype.mutate).mockImplementationOnce(async function (
+      this: FixturesAdapter, ...args: Parameters<FixturesAdapter["mutate"]>
+    ) {
+      await new Promise<void>((r) => { answer = r; });
+      return spy.apply(this, args);
+    } as never);
+
+    await key("e");
+    await key("z");
+    expect(undoButton(), "no offer stands yet").toBeNull();
+    await act(async () => { answer(); });
+    await flush();
+    expect(kinds("triage_set")).toEqual([
+      { kind: "triage_set", messageId: id, state: "set_aside" },
+      { kind: "triage_set", messageId: id, state: "none" },
+    ]);
+    expect(toastText()).toBe("Undone.");
+  });
+
   it("the offer dies with its window: a late z takes nothing back and dispatches nothing", async () => {
     await mountShell();
 

@@ -79,6 +79,7 @@ import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-r
 import { dropCopy, handleOf, twins } from "./draft-creates";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-autosave";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
+import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files";
 import {
   clearReplyLane,
   COMPOSE_SEND_KEY,
@@ -360,6 +361,9 @@ export function useShellCompose({
    */
   const [replySig, setReplySig] = useState<SignatureState>(SIG_FOLLOWING);
   const [replySubjectEdit, setReplySubjectEdit] = useState<string | null>(null);
+  /** The inline forward's kept files once one was removed — the lane meta's, else the lane row's. */
+  const [replyForwardParts, setReplyForwardParts] = useState<string[] | null>(null);
+  const [replyForwardSaid, setReplyForwardSaid] = useState(false);
   /**
    * RETARGETING HYDRATES RATHER THAN BLIND-RESETS: closing a half-written
    * reply nulls `replyTo`, and a reset that forgot the per-message meta made Escape drop the
@@ -379,10 +383,13 @@ export function useShellCompose({
       setReplySig(meta.sig ?? SIG_FOLLOWING);
       // The subject edit is the REPLY's; a forward carries its own `Fwd:` subject.
       setReplySubjectEdit(replyMode === "reply" ? meta.subject ?? null : null);
+      setReplyForwardParts(replyMode === "forward" ? meta.forwardParts ?? null : null);
     } else {
       setReplySig(SIG_FOLLOWING);
       setReplySubjectEdit(null);
+      setReplyForwardParts(null);
     }
+    setReplyForwardSaid(false);
   }, [replyTo, replyMode]);
   /** The two persisting setters — state and scratch move together, or a reopen lies. */
   const onReplySig = useStableCallback((next: SignatureState) => {
@@ -1509,6 +1516,25 @@ export function useShellCompose({
         },
       }
       : null;
+  /* THE INLINE FORWARD'S FILES — the lane meta's list, else the lane row's (`forward-files.ts`). */
+  const fwdLaneRow = forwardParent !== null ? laneRowOf(inlineForwardKey(forwardParent.id)) : null;
+  const replyForward = useForwardFiles(engine, forwardParent?.id ?? null, {
+    kept: replyForwardParts ?? (fwdLaneRow !== null ? drafts.find((x) => x.id === fwdLaneRow)?.forwardParts ?? null : null),
+    addedBytes: attachmentBytes(replyAttachments),
+    maxMessageBytes: forwardParent !== null
+      ? resolveReplyFrom(fromOptions, forwardParent.mailboxId, replyFromId).maxMessageBytes : null,
+    refusedCode: forwardParent !== null ? mailSend.stateOf(inlineForwardKey(forwardParent.id)).code ?? null : null,
+  });
+  const removeReplyPart = useStableCallback((id: string) => {
+    if (forwardParent === null || replyForward === null) return;
+    const next = replyForward.kept.filter((k) => k !== id);
+    setReplyForwardParts(next);
+    setReplyForwardSaid(false);
+    const lane = inlineForwardKey(forwardParent.id);
+    writeReplyMeta(lane, { ...readReplyMeta(lane), forwardParts: next });
+  });
+  const replyForwardFiles: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null =
+    replyForward === null ? null : { plan: replyForward, onRemove: removeReplyPart, said: replyForwardSaid };
   const laneEnvelopeKey = laneEnvelope === null || isRichEmpty(replyBody) ? null : JSON.stringify(laneEnvelope);
   useEffect(() => {
     if (laneEnvelopeKey === null) return;
@@ -1596,6 +1622,11 @@ export function useShellCompose({
       if (!parent) return;
       // An unanswered ask sends nothing: the dock shows the ask, not an editor, until confirmed.
       if (fwdGate !== null && !fwdGate.confirmed) return;
+      // Files still being read, or too large: said in place of sending.
+      if (replyForward?.refusal) {
+        setReplyForwardSaid(true);
+        return;
+      }
       const fwdLane = inlineForwardKey(messageId);
       const fwdRow = laneRowOf(fwdLane);
       const fwdHandOff = mayHandOffFor?.(from.mailboxId ?? parent.mailboxId) === true
@@ -1615,6 +1646,8 @@ export function useShellCompose({
           ...(replyAttachments.length > 0 ? { attachments: replyAttachments } : {}),
           plan: forwardEnvelopePlan(replyEnvelope, fromOptions.map((o) => o.address)),
           confirmed: fwdGate?.confirmed === true && parent.sensitivity?.no_forward === true,
+          // The kept files, only once one was removed — the plan the dock's rows were drawn from.
+          ...(replyForward?.wire !== undefined ? { forwardParts: replyForward.wire } : {}),
         }), sigText, sigHtml)),
         withDone({ surface: "inline" as const, ...(fwdHandOff ? { handOff: fwdHandOff } : {}) }),
       );
@@ -1974,6 +2007,8 @@ export function useShellCompose({
         // send carries the original — an id, never a copy of the original's words, which the
         // server quotes itself.
         forwardOf: d.forwardOfMessageId ?? null,
+        // The files it keeps, as the row holds them (another device's choice included).
+        forwardParts: d.forwardOfMessageId ? d.forwardParts ?? null : null,
 
         // The signature block's state survives exactly as far as this device knows it (review
         // rounds 1–3). The `drafts` row stores prose and no block state, so a draft reopened
@@ -2377,10 +2412,33 @@ export function useShellCompose({
   );
   /* `autosave.draftId` goes on the mutation, so Send uses the row autosave already wrote instead
      of creating a second one — the whole point of one draft from first keystroke to delivery. */
+  /* THE ORIGINAL'S FILES ON A COMPOSED FORWARD — the form's own list, else the bound row's, so another
+     device's choice is honoured live until something is removed here (`forward-files.ts`). */
+  const composeRowParts = autosave.draftId !== null
+    ? drafts.find((x) => x.id === autosave.draftId)?.forwardParts ?? null
+    : null;
+  const composeForward = useForwardFiles(engine, compose.forwardOf ?? null, {
+    kept: compose.forwardParts ?? composeRowParts,
+    addedBytes: attachmentBytes(compose.attachments ?? []),
+    maxMessageBytes: composeFrom.maxMessageBytes,
+    refusedCode: mailSend.stateOf(COMPOSE_SEND_KEY).code ?? null,
+  });
+  const composeWire = composeForward?.wire;
+  const composeWireKey = composeWire === undefined ? "" : composeWire.join(",");
   const plan = useMemo(
-    () => composePlan(compose, composeMailbox, autosave.draftId),
-    [compose, composeMailbox, autosave.draftId],
+    () => composePlan({ ...compose, forwardParts: composeWire ?? null }, composeMailbox, autosave.draftId),
+    // `composeWireKey` stands for the list, which is a fresh array each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compose, composeMailbox, autosave.draftId, composeWireKey],
   );
+  /** A press refused for the forward's files: said in place of sending, until something changes. */
+  const [composeForwardSaid, setComposeForwardSaid] = useState(false);
+  const removeComposePart = useStableCallback((id: string) => {
+    if (composeForward === null) return;
+    const next = (compose.forwardParts ?? composeRowParts ?? composeForward.kept).filter((k) => k !== id);
+    setComposeForwardSaid(false);
+    onComposeFields({ ...compose, forwardParts: next });
+  });
   const onComposeFields = useStableCallback((next: ComposeFields) => {
     setCompose(next);
     writeComposeDraft(next);
@@ -2421,6 +2479,11 @@ export function useShellCompose({
      * below applies identically (a recovered unverified message may be scheduled as legitimately as it may be
      * resent).
      */
+    // A forward whose files are still being read, or too large, answers in words and sends nothing.
+    if (composeForward?.refusal) {
+      setComposeForwardSaid(true);
+      return;
+    }
     const sigText = effectiveSignature(
       compose.sig ?? SIG_FOLLOWING,
       consent.signaturesKnown ? consent.signatures : {},
@@ -2734,6 +2797,9 @@ export function useShellCompose({
     openNotSent,
     composeElsewhere: autosave.elsewhere,
     composeSaveRefused: autosave.saveRefused,
+    composeForwardFiles: composeForward === null ? null
+      : { plan: composeForward, onRemove: removeComposePart, said: composeForwardSaid },
+    replyForwardFiles,
     sendReply,
     setReplyAttachments,
     setReplyEnvelope,

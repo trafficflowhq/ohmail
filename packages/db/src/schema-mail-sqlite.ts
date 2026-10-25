@@ -1894,6 +1894,8 @@ export const drafts = sqliteTable("drafts", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   // The message this draft forwards, last because a device's ADD COLUMN appends it.
   forwardOfMessageId: text("forward_of_message_id").references(() => messages.id),
+  // Mail 0168, the pg column's twin — see `schema-mail.ts`.
+  forwardParts: text("forward_parts", { mode: "json" }).$type<string[]>(),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),

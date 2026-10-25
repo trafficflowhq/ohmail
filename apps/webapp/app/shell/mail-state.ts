@@ -1025,6 +1025,14 @@ export interface MailboxFacts {
 }
 
 /**
+ * THIS INSTALL CANNOT REACH THE MAILBOX'S SERVER: its own outage clock, or a settled connect error.
+ * One reading for Pull's watch and the setup screen's reconnect line.
+ */
+export function serverUnreachable(m: Pick<MailboxFacts, "status" | "errorCode" | "unreachableSince">): boolean {
+  return typeof m.unreachableSince === "string" || (m.status === "error" && m.errorCode === "connect");
+}
+
+/**
  * Whether the forwarding-detection notice shows on a mailbox row (mail
  * 0078). Exported pure so the suite can bite each clause; in the shared
  * shell because two panes render it — one rule, or two surfaces tell one

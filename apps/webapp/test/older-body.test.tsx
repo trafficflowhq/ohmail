@@ -52,11 +52,13 @@ const folderEntity = (seq: number) => ({
  * because the door's session cache would otherwise answer a repeat open from memory.
  */
 let listId = PAST_ID;
+/** The mailbox the reach-past row was delivered to. */
+let listMailbox = "mb_1";
 const FOREIGN_TEXT = "the other account's mail, which must never reach this pane";
 
 /** The reach-past row as the LIST route answers it — a wire DTO, never a mirror row. */
 const pastRow = () => ({
-  id: listId, accountId: "acct_live_1", mailboxId: "mb_1", threadId: null, messageIdHeader: null,
+  id: listId, accountId: "acct_live_1", mailboxId: listMailbox, threadId: null, messageIdHeader: null,
   subject: "an old receipt", from: { name: "Old Sender", address: "old@example.invalid" },
   to: [], cc: [], date: OLD, folder: "Receipts", snippet: "snippet of the old receipt",
   unread: false, hasAttachments: false, attachmentCount: 0, sensitivity: {},
@@ -106,12 +108,12 @@ const goHash = async (hash: string): Promise<void> => {
 };
 
 /** Mount folders-on over an empty-in-mirror folder and open it — every walk's first move. */
-async function openFolder(): Promise<HTMLElement> {
+async function openFolder(facts = [mailbox()]): Promise<HTMLElement> {
   answerConsentWith({ foldersEnabledAt: ISO });
   answerSyncWith(world);
   // The store holds the row its list route answers, so its timeline says the mirror lacks mail.
   answerStoreWith([{ id: listId, date: OLD }]);
-  const el = await mountShell([mailbox()]);
+  const el = await mountShell(facts);
   await tick(30_000);
   await goHash(`#/folder/${FOLDER_ID}`);
   await tick(1_000);
@@ -123,6 +125,7 @@ beforeEach(() => {
   window.localStorage.clear();
   asked = [];
   listId = PAST_ID;
+  listMailbox = "mb_1";
   bodyAnswer = () => json({ messageId: PAST_ID, text: BODY_TEXT, html: null, loadedRemoteContent: false });
   interposeReachPast();
 });
@@ -323,14 +326,27 @@ describe("the reach-past body door, through the shipped shell", () => {
 
     // The storage-cap sentence, verbatim from the catalogue — a terminal state.
     expect(textOf(el)).toContain(en.body.withheld);
-    // It says why and where the letter is, and never that a bigger plan brings this text back.
+    // It says why and where the letter is, and that its text comes back once there is room.
     expect(textOf(el)).toContain("to stay within your plan's storage space");
     expect(textOf(el)).toContain("complete in your mailbox on your mail server");
-    expect(textOf(el)).toContain("it does not bring this text back");
+    expect(textOf(el)).toContain("When there is room again, ohmail fetches this text back from your mail server.");
     // And no body-retry control anywhere in the reading column: a retry cannot change a policy.
     const pane = el.querySelector(".view-folder") as HTMLElement;
     const retries = [...pane.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry");
     expect(retries).toHaveLength(0);
+  });
+
+  it("a letter of a removed mailbox says its text does not come back, from the shell's mailbox facts", async () => {
+    listMailbox = "mb_gone";
+    bodyAnswer = () =>
+      json({ messageId: PAST_ID, text: "", html: null, loadedRemoteContent: false, withheld: "storage_cap" });
+    const el = await openFolder([
+      mailbox({ id: "mb_1" }), mailbox({ id: "mb_gone", address: "gone@example.invalid", status: "disabled" }),
+    ]);
+    await tick(2_000);
+    expect(textOf(el)).toContain("ohmail no longer reads this mailbox, so this text does not come back here.");
+    expect(textOf(el)).toContain("complete in your mailbox on your mail server");
+    expect(textOf(el)).not.toContain("room again");
   });
 
   it("a row the account no longer holds renders the expunged sentence, with no Retry", async () => {

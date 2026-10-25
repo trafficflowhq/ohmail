@@ -1796,13 +1796,17 @@ const TABLE = {
   liveBodyFailed: "Only the preview could be loaded. Reopen to try again.",
   /**
    * THE STORAGE CAP'S TERMINAL STATE — an ANSWER, not a failure, so it must not borrow
-   * {@link liveBodyFailed}'s "reopen to try again": reopening cannot change it. The server holds
+   * {@link liveBodyFailed}'s "reopen to try again": reopening does not change it, the storage refill
+   * does once there is room. The server holds
    * no content for this message because the account's storage space was full when it arrived;
    * the mail itself is untouched on the user's own mail server, which is the half the reader
    * needs, and the preview above the note is real.
    */
   liveBodyWithheld:
-    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. A bigger plan keeps more text from now on; it does not bring this text back.",
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. When there is room again, ohmail fetches this text back from your mail server.",
+  /** The same letter in a mailbox ohmail no longer reads (removed): the refill never visits it. */
+  liveBodyWithheldRemoved:
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. ohmail no longer reads this mailbox, so this text does not come back here.",
   /**
    * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
    * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
@@ -2162,6 +2166,23 @@ const TABLE = {
   /* It took the dial and would not serve it now, past the send's own retries. */
   replyBusy: "Not sent. Your mail server is busy and wouldn't take it right now. Try again in a moment.",
   replyNotSignedIn: "Not sent — your draft is kept. This mailbox isn't signed in here. Sign in again in Settings.",
+  /* A FORWARD LISTS THE ORIGINAL'S FILES (`compose/forward-files.ts`); a forward never says "total". */
+  forwardFilesHead: "Forwarded with it",
+  forwardFilesLine: (kept: string, more: string) => `Forwarded files: ${kept}. Up to ${more} more from this phone.`,
+  forwardFilesAllGo: (size: string, more: string) =>
+    `Forwarded files: ${size}. All of them go with it. Up to ${more} more from this phone.`,
+  forwardFilesNone: (more: string) => `Up to ${more} from this phone.`,
+  forwardFilesReading: "Reading the letter's files…",
+  forwardFilesUnreadKept: "The letter's files could not be read here. The ones you kept go with it.",
+  forwardFilesUnreadAllGo: "The letter's files could not be read here. All of them go with it.",
+  /* A choice made earlier that the server said it cannot honour. */
+  forwardFilesRemovedGo: (size: string, more: string) =>
+    `Forwarded files: ${size}. Your server sends all of them, the ones you removed too. Up to ${more} more from this phone.`,
+  forwardFilesUnreadRemovedGo: "The letter's files could not be read here. Your server sends all of them, the ones you removed too.",
+  forwardFilesTooLarge: (limit: string) => `The forwarded files are over ${limit}. Remove some to send it.`,
+  forwardTotalTooLarge: (limit: string) => `This is over the ${limit} your mail server takes. Remove some files to send it.`,
+  replyForwardPartsUnsupported: "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
+  replyForwardPartsChanged: "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
   replyForwardOriginalUnavailable: "Not sent. The original could not be loaded, so it was not forwarded.",
   replySentElsewhere: "Not sent: this draft already went from another device.",
   composeSentElsewhere: "This draft was sent from another device. Anything you type now is kept as a new draft.",
@@ -3017,7 +3038,8 @@ const TABLE = {
   stripDismiss: "Got it",
   /**
    * THE EMPTIED-TEXT NOTICE (`ui/StorageNotice.tsx`): what happened, that the letters stay complete
-   * on the mail server, and what keeps more text from now on. Never that emptied text comes back.
+   * on the mail server, what keeps more text from now on, and that with room ohmail fetches emptied
+   * text back, newest first, for the mailboxes it still reads. Never that all of it comes back.
    */
   storageNoticeEmptied: (cap: string, count: number) =>
     `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
@@ -3051,7 +3073,14 @@ const TABLE = {
   storageOfferTrialTop: "Once your subscription is paid, the storage add-on keeps more text from now on.",
   storageOfferActive: "A bigger plan or the storage add-on keeps more text from now on.",
   storageOfferActiveTop: "The storage add-on keeps more text from now on.",
+  /** After the offer, only where the refill never runs: ohmail reads none of the mailboxes. */
   storageNoticeNoRestore: "It does not bring back text that was already emptied.",
+  /** After the offer, where the refill runs. */
+  storageNoticeRefill:
+    "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.",
+  /** Text emptied under an earlier cap, with room under the refill's mark, where the refill runs. */
+  storageNoticeRefilling:
+    "There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back from your mail server, newest first, as far as the room allows.",
   storageNoticeManage: "Manage subscription",
   storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one

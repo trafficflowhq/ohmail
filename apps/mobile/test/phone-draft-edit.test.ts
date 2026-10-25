@@ -37,7 +37,7 @@ describe("which drafts the phone edits", () => {
       subject: "",
       to: [{ name: "Ada", address: "ada@fake.test" }, { name: "Doe, Bob", address: "bob@fake.test" }, { name: null, address: "cy@fake.test" }],
     }));
-    expect(edit).toEqual({ mailboxId: "mb-1", to: 'Ada <ada@fake.test>, "Doe, Bob" <bob@fake.test>, cy@fake.test', cc: "", bcc: "", subject: "", forwardOf: null });
+    expect(edit).toEqual({ mailboxId: "mb-1", to: 'Ada <ada@fake.test>, "Doe, Bob" <bob@fake.test>, cy@fake.test', cc: "", bcc: "", subject: "", forwardOf: null, forwardParts: null });
     expect(parseRecipients(edit!.to), "the typed To does not parse back to the row's recipients").toEqual([
       { name: "Ada", address: "ada@fake.test" }, { name: "Doe, Bob", address: "bob@fake.test" }, { name: null, address: "cy@fake.test" },
     ]);

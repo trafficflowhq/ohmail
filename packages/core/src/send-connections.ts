@@ -5,7 +5,14 @@ import type { OutboundMessage, SendAdapter, SendOptions } from "./send.js";
  * A connected send adapter that can say whether its connection is still there. `ImapAdapter`
  * answers from imapflow's own `usable` flag; a double without the method is never kept.
  */
-export type WarmSendAdapter = SendAdapter & { isLive?(): boolean };
+export type WarmSendAdapter = SendAdapter & { isLive?(): boolean; noop?(): Promise<void> };
+
+/**
+ * How long a kept connection has to answer a NOOP before a checking press uses it: one or two
+ * round trips on a provider answering in 2 s, with room left for a fresh dial inside the send's
+ * attempt ceiling.
+ */
+export const KEPT_PROVE_MS = 5_000;
 
 /** The idle clock, injectable so a test drives it without waiting out the deadline. */
 export interface KeepTimers {
@@ -15,7 +22,7 @@ export interface KeepTimers {
 
 interface Kept {
   readonly mailboxId: string;
-  readonly real: SendAdapter & { isLive(): boolean };
+  readonly real: SendAdapter & { isLive(): boolean; noop?(): Promise<void> };
   leases: number;
   idle: unknown;
   /** Set by a bounded `closeAll` while leased: called once the last lease has closed it. */
@@ -48,17 +55,33 @@ export class SendConnections {
    * The one door. A live kept connection is leased; a dial in flight is awaited and its result
    * leased; otherwise `dial` runs once and its connection is kept. A result without `isLive` —
    * every hand-written double — is handed back as it is and never kept.
+   *
+   * With `prove`, a kept connection is used only once it has answered a NOOP within
+   * {@link KEPT_PROVE_MS}: imapflow's `usable` stays true on a server that stopped answering, and a
+   * press over such a connection would reach SMTP with its Sent copy stuck behind it. A silent
+   * one is forgotten (destroyed unless another press holds it) and this press dials its own.
    */
-  async open(mailboxId: string, dial: () => Promise<WarmSendAdapter>): Promise<SendAdapter> {
+  async open(
+    mailboxId: string, dial: () => Promise<WarmSendAdapter>, opts: { prove?: boolean } = {},
+  ): Promise<SendAdapter> {
     const entry = this.kept.get(mailboxId);
     if (entry !== undefined) {
-      if (entry.real.isLive()) return this.lease(entry);
-      // Died while idle: the next press re-dials rather than failing on a socket that is gone.
-      this.drop(entry);
-      entry.real.forceClose?.();
+      if (entry.real.isLive()) {
+        if (opts.prove !== true) return this.lease(entry);
+        // Leased first, so the idle clock cannot close it under the check.
+        const lease = this.lease(entry);
+        if (await this.answers(entry)) return lease;
+        entry.leases = Math.max(0, entry.leases - 1);
+        this.drop(entry);
+        if (entry.leases === 0) { entry.real.forceClose?.(); entry.closed?.(); }
+      } else {
+        // Died while idle: the next press re-dials rather than failing on a socket that is gone.
+        this.drop(entry);
+        entry.real.forceClose?.();
+      }
     }
     const pending = this.dialling.get(mailboxId);
-    if (pending !== undefined) return pending.then(() => this.open(mailboxId, dial));
+    if (pending !== undefined) return pending.then(() => this.open(mailboxId, dial, opts));
     const dialled = (async (): Promise<SendAdapter> => {
       const real = await dial();
       if (typeof real.isLive !== "function") return real;
@@ -68,6 +91,19 @@ export class SendConnections {
     })();
     this.dialling.set(mailboxId, dialled);
     try { return await dialled; } finally { this.dialling.delete(mailboxId); }
+  }
+
+  /** Does the kept connection answer a NOOP within {@link KEPT_PROVE_MS}? A double without one does. */
+  private async answers(entry: Kept): Promise<boolean> {
+    const real = entry.real;
+    if (typeof real.noop !== "function") return true;
+    let timer: unknown = null;
+    const late = new Promise<false>((resolve) => { timer = this.timers.set(() => resolve(false), KEPT_PROVE_MS); });
+    try {
+      return await Promise.race([real.noop().then(() => true, () => false), late]);
+    } finally {
+      this.timers.clear(timer);
+    }
   }
 
   /** How many connections are kept right now (tests and vitals). */

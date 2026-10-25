@@ -1151,6 +1151,11 @@ export interface DraftDTO {
   inReplyToMessageId: string | null;
   /** The message this draft forwards, exclusive with {@link inReplyToMessageId}. */
   forwardOfMessageId: string | null;
+  /**
+   * The original's attachment ids the person kept (sorted), only beside {@link forwardOfMessageId};
+   * `null`: nothing was removed, every part goes. Absent from a server that predates it.
+   */
+  forwardParts: string[] | null;
   subject: string;
   /**
    * The text/plain body, authoritative for a plain draft.

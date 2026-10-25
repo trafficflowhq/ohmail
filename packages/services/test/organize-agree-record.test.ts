@@ -12,7 +12,7 @@ import type { ServiceContext } from "../src/context.js";
  * `organizeHere` writes it in the consent transaction, at the stamp's own instant, only when the press
  * came from the window step (`screenBacklog`) AND this is the first consent. A claim-back over an
  * earlier consent, and a press from a door that stated no rule, leave no record, so their stamps sweep
- * nothing (`agreeSweepPass`).
+ * nothing (`agreeSweepSlice`).
  */
 
 const NOW = new Date("2026-10-09T14:00:00.000Z");
@@ -49,8 +49,16 @@ describe("organizeHere — the agree record", () => {
     const r = await w.row();
     expect(r.c).toEqual(NOW);
     expect(r.s).toEqual(NOW);
-    expect(await w.records()).toEqual([{ at: NOW, payload: { mailboxId: w.mailboxId } }]);
+    // The window agreed to rides with the record: a later change of the dials never widens the sweep.
+    const cutoff = new Date(NOW.getTime() - 365 * 86_400_000).toISOString();
+    expect(await w.records()).toEqual([{ at: NOW, payload: { mailboxId: w.mailboxId, cutoff } }]);
     expect(await agreeRecordedAt(w.tx, { accountId: w.accountId, mailboxId: w.mailboxId, stamp: NOW })).toBe(true);
+  });
+
+  it("an agree to All time records no cutoff", async () => {
+    const w = await reader();
+    await w.svc.organizeHere(w.ctxAt(NOW), w.mailboxId, { intent: "join", screening: { scope: "all_time" }, screenBacklog: true });
+    expect(await w.records()).toEqual([{ at: NOW, payload: { mailboxId: w.mailboxId, cutoff: null } }]);
   });
 
   it("CONTROL — a first consent from a press that stated no rule leaves no record", async () => {

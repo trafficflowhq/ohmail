@@ -6,10 +6,11 @@ import {
   isOwnSent,
   newestFromSomeone,
   ohboxView,
+  FOLDED_PILES,
   pileOfState,
+  pileRowIdsOf,
   resurfacedFocus,
   resurfacedThreads,
-  threadOf,
   winningStates,
   type OhboxView,
   type ResurfacedThreadRow,
@@ -198,23 +199,24 @@ export function triageSubjectIds(reader: EntityReader, ids: readonly string[]): 
 }
 
 /**
- * What a Park on `messageId` files. Standing in an Ohbox row: every member of it that stands in the
- * Ohbox, our own reply included, so the row leaves (a Resurfaced row's pins, and its INBOX and own Sent
- * members not filed in a pile). Parked: every parked member of its conversation, so the un-press
- * mirrors the press. In another pile, in no row, or unknown to the reader: itself.
+ * What a pile press (Park, Answer later, and in a pile Resurface) on `messageId` acts on. In Answer later
+ * or Parked: that pile's row for its conversation ({@link pileRowIdsOf}), the pressed id first. Standing
+ * in an Ohbox row (`ohboxRow`): every member of it that stands in the Ohbox, our own reply included, so
+ * the row leaves (a Resurfaced row's pins, and its INBOX and own Sent members not filed in a pile); a
+ * reply still on its way (`local`) has no server id and is left out. Otherwise: itself.
  */
-export function parkSubjectIds(
-  reader: EntityReader, messageId: string, openHeld: string | null = null,
+export function pileSubjectIds(
+  reader: EntityReader, messageId: string, openHeld: string | null = null, ohboxRow = true,
 ): string[] {
   const m = reader.get<EngineMessage>("message", messageId);
   if (!m) return [messageId];
   const claims = winningStates(reader);
   const stateOf = (x: EngineMessage): string | undefined => claims.get(x.id)?.state ?? x.triage?.state;
-  if (stateOf(m) === "set_aside") {
-    const rest = threadOf(reader, messageId).filter((x) => x.id !== messageId && stateOf(x) === "set_aside");
-    return [messageId, ...rest.map((x) => x.id)];
+  const pile = pileOfState(stateOf(m) ?? "");
+  if (pile !== null && FOLDED_PILES.has(pile)) {
+    return [messageId, ...pileRowIdsOf(reader, messageId, pile).filter((id) => id !== messageId)];
   }
-  if (pileOfState(stateOf(m) ?? "")) return [messageId];
+  if (pile !== null || !ohboxRow) return [messageId];
   const key = conversationKeyOf(m);
   const rows = ohboxRows(reader, openHeld);
   for (const section of SECTIONS) {
@@ -222,9 +224,9 @@ export function parkSubjectIds(
     if (!row || !row.members.some((x) => x.id === messageId)) continue;
     const pins = new Set((row.resurfaced?.pinned ?? []).map((x) => x.id));
     const inbox = canonicalDestination(FOLDER_OF_VIEW.ohbox);
-    const standing = row.members.filter((x) => pins.has(x.id) || (
+    const standing = row.members.filter((x) => x.local !== true && (pins.has(x.id) || (
       !pileOfState(stateOf(x) ?? "") && (isOwnSent(x) || canonicalDestination(x.folder) === inbox)
-    )).map((x) => x.id);
+    ))).map((x) => x.id);
     return standing.includes(messageId) ? standing : [messageId];
   }
   return [messageId];

@@ -33,7 +33,7 @@ import { useRoutingUndo } from "./routing-undo";
 import { usePressWatch, type PressWatch } from "./press-watch";
 import { placeLabel } from "./format";
 import { useStableCallback } from "./stable-callback";
-import { createUndoDoor, type UndoToastFn } from "./undo-door";
+import { createUndoDoor, type UndoClaim, type UndoToastFn } from "./undo-door";
 import type { ScreenerReleaseWindow } from "./screener-state";
 
 /**
@@ -399,8 +399,9 @@ export function useShellDispatch({
     sentence: string,
     inverses: readonly EngineMutation[],
     held?: { cancel: () => boolean; undone: string },
+    claim?: UndoClaim,
   ) => {
-    if (inverses.length === 0 && !held) { toast(sentence); return; }
+    if (inverses.length === 0 && !held) { if (claim) door.drop(claim); toast(sentence); return; }
     const fire = () => {
       /* THE CANCEL GOES FIRST, and synchronously: the window is racing a timer, and a cancel
          behind an awaited dispatch is a cancel that can lose to it. */
@@ -426,7 +427,7 @@ export function useShellDispatch({
         toast(refusalSentence(tally.firstRefusal));
       });
     };
-    toast(sentence, { action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire });
+    toast(sentence, { action: t("ohbox.undo"), duration: UNDO_MS, undo: true, onAction: fire, ...(claim ? { claim } : {}) });
   });
 
   const mutateAndReport = useStableCallback(
@@ -434,12 +435,17 @@ export function useShellDispatch({
       /* Read before the dispatch — the inverse names the state this press is about to leave.
          Skipped on the silent paths (`okSentence === null`): no toast, nothing to carry Undo. */
       const inverses = okSentence !== null ? inverseMutations(engine.verbRead(), mutation) : [];
+      // The undo is armed at the press: a `z` before the answer is kept for its offer (`undo-door.ts`).
+      const claim = inverses.length > 0 ? door.expect() : undefined;
       return dispatchPress(mutation).then((out) => {
+        if (claim && (out.kind === "silent" || out.kind === "refused" || (out.kind === "queued" && out.wait === "organizer"))) {
+          door.drop(claim);
+        }
         // A newer press for the same field replaced this one: it owns the sentence.
         if (out.kind === "silent") return true;
         if (out.kind === "refused") { toast(refusalSentence(out.refusal)); return false; }
         if (out.kind === "queued" && out.wait === "organizer") { toast(queuedSentence(out.holder)); return false; }
-        if (okSentence !== null) toastWithUndo(okSentence, inverses);
+        if (okSentence !== null) toastWithUndo(okSentence, inverses, undefined, claim);
         return true;
       });
     },
@@ -459,9 +465,13 @@ export function useShellDispatch({
          — an inverse of a refused press would change state the press never touched. */
       const preRead = engine.verbRead();
       const inversesOf = mutations.map((mu) => inverseMutations(preRead, mu));
+      const claim = inversesOf.some((i) => i.length > 0) ? door.expect() : undefined;
       return Promise.all(mutations.map((mu) => dispatchPress(mu))).then((outs) => {
         const tally = tallyVerdicts(outs);
         const waiting = organizerWaits(outs);
+        const whole = tally.refused === 0 && waiting === 0;
+        const sentence = tally.applied === 0 && outs.length > 0 ? null : say(tally.applied);
+        if (claim && (sentence === null || !whole)) door.drop(claim);
         if (tally.applied === 0 && outs.length > 0) {
           // Every press replaced by a newer one for the same thing: that press says the sentence.
           if (tally.silent === outs.length) return 0;
@@ -469,12 +479,10 @@ export function useShellDispatch({
           toast(refusalSentence(tally.firstRefusal));
           return 0;
         }
-        const sentence = say(tally.applied);
         /* Undo only when the WHOLE set applied: on a partial press the extra sentence below is
            the one left standing (the host renders one toast), and it must not wipe a live offer. */
-        const whole = tally.refused === 0 && waiting === 0;
         if (sentence !== null && whole) {
-          toastWithUndo(sentence, outs.flatMap((o, i) => (o.kind === "applied" ? inversesOf[i]! : [])));
+          toastWithUndo(sentence, outs.flatMap((o, i) => (o.kind === "applied" ? inversesOf[i]! : [])), undefined, claim);
         } else if (sentence !== null) {
           toast(sentence);
         }

@@ -1229,6 +1229,27 @@ function lineIndexOf(all: readonly EngineMessage[], row: WaterlineMeta): number 
   return after < 0 ? all.length : after;
 }
 
+/** How far past the clock a held line's own instant may sit and still hold (`ohbox-where.ts`'s slack). */
+const LINE_FUTURE_SLACK_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Would a leave anchored on `anchor` move the view's line BACK (to an older place than the line
+ * this device holds)? Judged in the partition's own order (`lineIndexOf`): the held letter's place
+ * when the pile holds it, else the instant the visit recorded. A line dated past the clock never
+ * holds (a future-dated letter cannot freeze it); no line, or none placeable, never holds.
+ */
+export function lineHoldsAbove(reader: EntityReader, view: FeedView, anchor: EngineMessage, nowMs: number): boolean {
+  const row = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view));
+  if (!row || row.newestSeenId === anchor.id) return false;
+  const letter = reader.get<EngineMessage>("message", row.newestSeenId);
+  const t = letter && canonicalDestination(letter.folder) === canonicalDestination(FOLDER_OF_VIEW[view])
+    ? tsOf(letter)
+    : row.anchorAt ? Date.parse(row.anchorAt) : Number.NaN;
+  if (!Number.isFinite(t) || t > nowMs + LINE_FUTURE_SLACK_MS) return false;
+  const a = tsOf(anchor);
+  return a < t || (a === t && anchor.id < row.newestSeenId);
+}
+
 export function readsPartition(reader: EntityReader): FeedPartition {
   return feedPartition(reader, "reads");
 }
@@ -2012,6 +2033,8 @@ export function screenerSegments(
 
 export interface TriagePileEntry {
   messageId?: string;
+  /** Every message the row covers, newest first: a folded pile's conversation, else the message alone. */
+  memberIds?: string[];
   title: string;
   subtitle?: string;
   preview?: string;
@@ -2050,6 +2073,46 @@ const PILE_ORDER: Record<keyof TriagePiles, (a: Filed, b: Filed) => number> = {
   resurface: (a, b) => (returnAt(a) - returnAt(b)) || byPileArrival(a, b),
 };
 
+/** The piles that hold a conversation as ONE row: a press on it acts on every member the pile holds. */
+export const FOLDED_PILES: ReadonlySet<keyof TriagePiles> = new Set<keyof TriagePiles>(["replyLater", "setAside"]);
+
+type PileRows = Map<keyof TriagePiles, Map<string, EngineMessage[]>>;
+const pileRowsCache = new WeakMap<EntityReader, { v: number; rows: PileRows }>();
+
+/**
+ * THE FOLDED PILES' ROWS: pile → conversation key → the members that pile holds, newest first. The
+ * state stays per message on the wire; the grouping is the mirror's. A held member keys as itself,
+ * as it stands in no conversation another sender's header threaded it into.
+ */
+export function pileRowsOf(reader: EntityReader): PileRows {
+  const v = typeof reader.version === "function" ? reader.version() : null;
+  const hit = v === null ? undefined : pileRowsCache.get(reader);
+  if (hit && hit.v === v) return hit.rows;
+  const claims = winningStates(reader);
+  const rows: PileRows = new Map();
+  for (const st of claims.values()) {
+    const name = pileOfState(st.state);
+    if (name === null || !FOLDED_PILES.has(name)) continue;
+    const msg = reader.get<EngineMessage>("message", st.messageId);
+    if (msg === undefined) continue;
+    const key = standsHeld(msg, claims) ? `msg:${msg.id}` : conversationKeyOf(msg);
+    const pile = rows.get(name) ?? new Map<string, EngineMessage[]>();
+    rows.set(name, pile);
+    pile.set(key, [...(pile.get(key) ?? []), msg]);
+  }
+  for (const pile of rows.values()) for (const members of pile.values()) members.sort(byDateDesc);
+  if (v !== null) pileRowsCache.set(reader, { v, rows });
+  return rows;
+}
+
+/** The ids of `pile`'s row for `messageId`'s conversation, newest first; `[]` when the pile holds none. */
+export function pileRowIdsOf(reader: EntityReader, messageId: string, pile: keyof TriagePiles): string[] {
+  for (const members of pileRowsOf(reader).get(pile)?.values() ?? []) {
+    if (members.some((m) => m.id === messageId)) return members.map((m) => m.id);
+  }
+  return [];
+}
+
 /**
  * The bottom piles: `message_state` entities joined to their messages, merged with fixture-only `triage_item` entries
  * (demo entries with no backing message). ONE MESSAGE, ONE CLAIM — the records are deduped by MESSAGE id first, in
@@ -2067,21 +2130,30 @@ export function triagePiles(reader: EntityReader): TriagePiles {
     const name = pileOfState(state);
     return name ? filed[name] : null;
   };
+  const entryOf = (msg: EngineMessage, memberIds: string[], bubbleUpAt?: string | null): TriagePileEntry => ({
+    messageId: msg.id,
+    memberIds,
+    title: msg.from.name || msg.from.address || msg.id,
+    ...(msg.subject ? { subtitle: msg.subject } : {}),
+    ...(msg.snippet ? { preview: msg.snippet } : {}),
+    ...(bubbleUpAt ? { resurfaceAt: bubbleUpAt } : {}),
+  });
 
   for (const st of winningStates(reader).values()) {
-    const pile = pileOf(st.state);
-    if (!pile) continue;
+    const name = pileOfState(st.state);
+    if (name === null || FOLDED_PILES.has(name)) continue;
     // A CLAIM WITH NO LETTER IS NO ROW: the letter left the server, waits out a delete's undo,
     // or has not arrived. It is not drawn and not counted — its id was drawn as a dead row.
     const msg = reader.get<EngineMessage>("message", st.messageId);
     if (msg === undefined) continue;
-    pile.push({ msg, entry: {
-      messageId: st.messageId,
-      title: msg.from.name || msg.from.address || st.messageId,
-      ...(msg.subject ? { subtitle: msg.subject } : {}),
-      ...(msg.snippet ? { preview: msg.snippet } : {}),
-      ...(st.bubbleUpAt ? { resurfaceAt: st.bubbleUpAt } : {}),
-    } });
+    filed[name].push({ msg, entry: entryOf(msg, [msg.id], st.bubbleUpAt) });
+  }
+  // A folded pile's row faces, opens and is dated by its newest letter somebody else wrote.
+  for (const [name, rows] of pileRowsOf(reader)) {
+    for (const members of rows.values()) {
+      const target = resurfacedFocus(members);
+      filed[name].push({ msg: target, entry: entryOf(target, members.map((m) => m.id)) });
+    }
   }
   for (const item of reader.list<TriageItemDTO>("triage_item")) {
     const pile = pileOf(item.pile);

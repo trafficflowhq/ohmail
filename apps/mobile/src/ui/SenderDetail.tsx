@@ -28,7 +28,7 @@ import { domainScopeOffered } from "../state/live";
 import { useBodies, useFilesStamp, useWorld } from "../state/world";
 import { Badge, Button, Panel, Screen, Scroller, Tap, Txt } from "./base";
 import { BodyPages } from "./BodyPages";
-import { withheldNote } from "./body-note";
+import { mailboxStatusOf, withheldNote } from "./body-note";
 import { DetailBar, PaneTop } from "./chrome";
 import { Icon } from "./Icon";
 import { AttachmentTiles } from "./MessageReader";
@@ -268,7 +268,7 @@ export function SenderDetail({
                  about not taking a consent decision over a truncation presented as the mail,
                  and a withheld body is permanently exactly that. */
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>
-                {withheldNote(h, true)}
+                {withheldNote(h, true, mailboxStatusOf(w.mailboxes.rows, h.mailboxId))}
               </Txt>
             ) : h.bodyState === "failed" ? (
               <Txt variant="caption" tone="ink3" style={{ marginTop: 12 }}>

@@ -181,6 +181,17 @@ describe("the live engine can open attachments — the gate forwards all three c
     expect(calls).toContain("POST /api/messages/m1/attachments/download-all");
   });
 
+  it("the gate forwards `forwardPartsAnnounced`: the live engine asks GET /api/hello and reads its answer", async () => {
+    // Without the pass-through the web never offers a forward's Remove: the bare adapter has it, the gated one not.
+    answer = (url) =>
+      url.endsWith("/api/hello") ? json(200, { product: "ohmail", features: { forwardParts: true } }) : json(500, {});
+    const engine = createEngine(false, ARMED);
+    expect(await engine.forwardPartsAnnounced()).toBe(true);
+    expect(calls).toContain("GET /api/hello");
+    answer = () => json(200, { product: "ohmail", features: {} });
+    expect(await createEngine(false, ARMED).forwardPartsAnnounced(), "an older server's /hello read as yes").toBe(false);
+  });
+
   it("the CSRF token rides on the download-all POST, because it is an unsafe method", async () => {
     // The one attachment call that is not a GET. Without `X-CSRF-Token` the API refuses it
     // (§1.3) and "Download all" would fail on every real session while every stub passed.

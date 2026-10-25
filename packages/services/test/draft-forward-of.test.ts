@@ -161,3 +161,66 @@ describe("a draft that forwards is sent as a forward, whatever the request names
     expect(send.delivered).toHaveLength(0);
   });
 });
+
+/** THE KEPT LIST (`forwardParts`) rides the forward's row: stored canonical, cleared with the forward. */
+describe("a forward draft keeps the files the person kept", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const C = "cccccccc-0000-4000-8000-000000000003";
+  const status = (p: Promise<unknown>) => p.then(() => 200, (e: { httpStatus?: number }) => e.httpStatus);
+  const kept = async (w: Awaited<ReturnType<typeof world>>, forwardParts: string[]) =>
+    (await draftsService.create(w.ctx, {
+      mailboxId: w.mailboxId, forwardOfMessageId: w.originalId, forwardParts, subject: "Fwd: Q3 plan",
+      body: "Passing this along.", to: [{ name: null, address: "sam@example.test" }],
+    })).draft;
+  const rowOf = async (w: Awaited<ReturnType<typeof world>>, id: string) =>
+    (await w.db.select().from(drafts).where(eq(drafts.id, id)))[0]!;
+
+  it("is stored sorted and deduped, and the DTO echoes it", async () => {
+    const w = await world();
+    const d = await kept(w, [C, A, C]);
+    expect(d.forwardParts).toEqual([A, C]);
+    expect((await rowOf(w, d.id)).forwardParts).toEqual([A, C]);
+    expect((await draftsService.get(w.ctx, d.id)).forwardParts).toEqual([A, C]);
+    expect((await forwardDraft(w)).forwardParts).toBeNull();
+  });
+
+  it("is refused without a forward, past 100 entries, or with a non-id", async () => {
+    const w = await world();
+    const plain = { mailboxId: w.mailboxId, subject: "x", body: "y", to: [] };
+    expect(await status(draftsService.create(w.ctx, { ...plain, forwardParts: [A] }))).toBe(400);
+    const many = Array.from({ length: 101 }, (_, i) => `aaaaaaaa-0000-4000-8000-${String(i).padStart(12, "0")}`);
+    expect(await status(draftsService.create(w.ctx, { ...plain, forwardOfMessageId: w.originalId, forwardParts: many }))).toBe(400);
+    expect(await status(draftsService.create(w.ctx, { ...plain, forwardOfMessageId: w.originalId, forwardParts: [A, "x"] }))).toBe(400);
+    const d = await forwardDraft(w);
+    await draftsService.update(w.ctx, d.id, { forwardOfMessageId: null });
+    expect(await status(draftsService.update(w.ctx, d.id, { forwardParts: [A] })), "a list stored on a row that forwards nothing").toBe(400);
+  });
+
+  it("a patch leaves it when absent, sets it, and clears it with null", async () => {
+    const w = await world();
+    const d = await kept(w, [A, C]);
+    expect((await draftsService.update(w.ctx, d.id, { body: "Edited." })).draft.forwardParts).toEqual([A, C]);
+    expect((await draftsService.update(w.ctx, d.id, { forwardParts: [C] })).draft.forwardParts).toEqual([C]);
+    expect((await draftsService.update(w.ctx, d.id, { forwardParts: null })).draft.forwardParts).toBeNull();
+  });
+
+  it("clearing or changing the forward clears it, unless the patch names a new list", async () => {
+    const w = await world();
+    const d = await kept(w, [A, C]);
+    expect((await draftsService.update(w.ctx, d.id, { forwardOfMessageId: null })).draft.forwardParts).toBeNull();
+    expect((await rowOf(w, d.id)).forwardParts).toBeNull();
+    const d2 = await kept(w, [A, C]);
+    expect((await draftsService.update(w.ctx, d2.id, { forwardOfMessageId: w.otherId })).draft.forwardParts).toBeNull();
+    const d3 = await kept(w, [A, C]);
+    expect((await draftsService.update(w.ctx, d3.id, { forwardOfMessageId: w.otherId, forwardParts: [C] })).draft.forwardParts).toEqual([C]);
+  });
+
+  it("the revision moves when the list changes, and not on a restatement", async () => {
+    const w = await world();
+    const d = await kept(w, [A, C]);
+    const same = (await draftsService.update(w.ctx, d.id, { forwardParts: [C, A] })).draft;
+    expect(same.contentRevision).toBe(d.contentRevision);
+    const moved = (await draftsService.update(w.ctx, d.id, { forwardParts: [A] })).draft;
+    expect(moved.contentRevision).not.toBe(d.contentRevision);
+  });
+});

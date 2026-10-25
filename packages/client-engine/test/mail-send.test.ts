@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { attachments, drafts, messages, outboundSends } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession, seedThread } from "../../api/test/helpers.js";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
   draftsList,
+  FORWARD_PARTS_HELLO_MS,
   HttpAdapter,
   isForwardedByUs,
   MemoryMirrorStore,
@@ -91,7 +92,7 @@ function bridgeFetch(deps: ApiDeps, token: string): FetchLike {
  * message only once something has emitted a change for it and the subject here is the reply,
  * not the delta feed (`contract.test.ts` owns that).
  */
-async function world(opts: { subject?: string } = {}) {
+async function world(opts: { subject?: string; forwardPartsCheck?: boolean } = {}) {
   const spy = makeSendSpy();
   const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: spy.factory });
   const s = await seedSession(db, { now: FIXED_NOW });
@@ -129,7 +130,9 @@ async function world(opts: { subject?: string } = {}) {
   };
 
   const engine = new OhmailEngine({
-    adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }),
+    adapter: new HttpAdapter({
+      baseUrl: "http://localhost", fetch: fetchImpl, ...(opts.forwardPartsCheck ? { forwardPartsCheck: true } : {}),
+    }),
     store: new MemoryMirrorStore(),
   });
   const parent: EngineMessage = {
@@ -632,6 +635,118 @@ describe("mail_send — the client half of the gated send", () => {
       kind: "mail_send", inReplyTo: w.parent.id, forwardParts: ["aaaaaaaa-0000-4000-8000-000000000001"], body: "ok",
     })).status).toBe("confirmed");
     expect(w.sendBodies[2] ?? "").not.toContain("forwardParts");
+  });
+
+  it("the kept list rides the draft save and the send's own row write, so another device sends only those", async () => {
+    const w = await world();
+    const [a] = await w.db.insert(attachments).values({
+      accountId: w.accountId, messageId: w.parent.id, filename: "plan.pdf", contentType: "application/pdf", sizeBytes: 4, partId: "2",
+    }).returning();
+    const to = [{ name: "Sam", address: "sam@colleague.test" }];
+    const saved = await w.engine.mutate({
+      kind: "draft_save", draftId: null, mailboxId: w.parent.mailboxId, forwardOfMessageId: w.parent.id,
+      forwardParts: [a!.id], subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to, cc: [], bcc: [],
+    });
+    expect(saved.status).toBe("confirmed");
+    const rowOf = async (id: string) => (await w.db.select().from(drafts)).find((d) => d.id === id)!;
+    expect((await rowOf(saved.entityId!)).forwardParts, "the save dropped the kept list").toEqual([a!.id]);
+    const sent = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, draftId: saved.entityId!, mailboxId: w.parent.mailboxId,
+      forwardOf: w.parent.id, forwardParts: [], subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to,
+    });
+    expect(sent.status).toBe("confirmed");
+    expect((await rowOf(saved.entityId!)).forwardParts, "the send's row write dropped the kept list").toEqual([]);
+    const fresh = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, forwardOf: w.parent.id, forwardParts: [], subject: "Fwd: again", body: "fyi too", to,
+    });
+    expect(fresh.status).toBe("confirmed");
+    const made = (await w.db.select().from(drafts)).find((d) => d.subject === "Fwd: again")!;
+    expect(made.forwardParts, "the send's own create dropped the kept list").toEqual([]);
+    expect(w.spy.delivered.every((m) => (m.attachments ?? []).length === 0)).toBe(true);
+  });
+
+  describe("a forward naming its files asks /hello first (forwardPartsCheck)", () => {
+    const to = [{ name: "Sam", address: "sam@colleague.test" }];
+    const trimmed = (w: Awaited<ReturnType<typeof world>>) => ({
+      kind: "mail_send" as const, inReplyTo: null, forwardOf: w.parent.id, forwardParts: [] as string[],
+      subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to,
+    });
+    const hello = (features: Record<string, unknown>, status = 200) => new Response(
+      JSON.stringify({ product: "ohmail", features }), { status, headers: { "content-type": "application/json" } },
+    );
+
+    const yes = () => Promise.resolve(hello({ forwardParts: true }));
+
+    it("a server that announces it: asked, then sent with the list", async () => {
+      const w = await world({ forwardPartsCheck: true });
+      w.setIntercept((url, pass) => (url.endsWith("/hello") ? yes() : pass()));
+      expect((await w.engine.mutate(trimmed(w))).status).toBe("confirmed");
+      expect(w.calls.indexOf("GET /hello")).toBeLessThan(w.calls.indexOf("POST /drafts"));
+      expect(JSON.parse(w.sendBodies[0]!)).toMatchObject({ forwardParts: [] });
+    });
+
+    it("a server that does not: refused in words, nothing written, nothing sent", async () => {
+      const w = await world({ forwardPartsCheck: true });
+      w.setIntercept((url, pass) => (url.endsWith("/hello") ? Promise.resolve(hello({ sse: true })) : pass()));
+      const res = await w.engine.mutate(trimmed(w));
+      expect(res.status).toBe("rolled_back");
+      expect(res.error?.code).toBe("forward_parts_unsupported");
+      expect(w.calls.filter((c) => c !== "GET /hello")).toEqual([]);
+      expect(await w.db.select().from(drafts)).toHaveLength(0);
+      expect(w.spy.delivered).toHaveLength(0);
+    });
+
+    it("no answer (503, 404, not ohmail's) stays queued with nothing written, then goes with its list", async () => {
+      for (const answer of [hello({}, 503), new Response("nope", { status: 404 }), new Response("{}", { status: 200 })]) {
+        const w = await world({ forwardPartsCheck: true });
+        let silent = true;
+        w.setIntercept((url, pass) => (url.endsWith("/hello") ? (silent ? Promise.resolve(answer.clone()) : yes()) : pass()));
+        const first = await w.engine.mutate(trimmed(w));
+        expect(first.status).toBe("queued");
+        expect(w.calls.some((c) => c.startsWith("POST") || c.startsWith("PUT")), "a draft was written before the answer").toBe(false);
+        silent = false;
+        const flushed = await w.engine.flushPending();
+        expect(flushed[0]!.status).toBe("confirmed");
+        expect(JSON.parse(w.sendBodies[0]!)).toMatchObject({ forwardParts: [] });
+        expect(w.spy.delivered).toHaveLength(1);
+      }
+    });
+
+    it("an earlier attempt wrote its row, then the server says no: send_unverified naming the row", async () => {
+      const w = await world({ forwardPartsCheck: true });
+      let lose = true;
+      let no = false;
+      w.setIntercept((url, pass) => {
+        if (url.endsWith("/hello")) return no ? Promise.resolve(hello({})) : yes();
+        if (url.endsWith("/send") && lose) { lose = false; return Promise.reject(new Error("connection reset")); }
+        return null;
+      });
+      expect((await w.engine.mutate(trimmed(w))).status).toBe("queued");
+      no = true;
+      const flushed = await w.engine.flushPending();
+      expect(flushed[0]!.status).toBe("rolled_back");
+      expect(flushed[0]!.error?.code).toBe("send_unverified");
+      expect(flushed[0]!.error?.entityId).toBe((await w.db.select().from(drafts))[0]!.id);
+    });
+
+    it("with the option off /hello is never asked", async () => {
+      const w = await world();
+      expect((await w.engine.mutate(trimmed(w))).status).toBe("confirmed");
+      expect(w.calls).not.toContain("GET /hello");
+    });
+
+    it("a /hello that hangs is no answer once the deadline passes", async () => {
+      vi.useFakeTimers();
+      try {
+        const adapter = new HttpAdapter({ baseUrl: "http://x", fetch: () => new Promise<Response>(() => {}), forwardPartsCheck: true });
+        const said = adapter.forwardPartsAnnounced!();
+        await vi.advanceTimersByTimeAsync(FORWARD_PARTS_HELLO_MS + 1);
+        expect(await said).toBeNull();
+        expect(new HttpAdapter({ baseUrl: "http://x", fetch: () => new Promise<Response>(() => {}) }).forwardPartsAnnounced).toBeUndefined();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("a forward's quoted date is the sender's clock — adapter and route carry the zone and language", async () => {

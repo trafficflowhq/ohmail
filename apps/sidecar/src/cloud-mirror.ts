@@ -180,17 +180,17 @@ export const NEWEST_BODIES_FIRST = 5 * BODIES_IDS_MAX;
 /**
  * The withheld markers the HOSTED side refills on its own: a `junk_filed` husk once its message is
  * alive in watched space again (`worker/junk-restore.ts`), an `expunged` one from a later arrival's
- * bytes. Unlike `storage_cap`, which stands until the person frees space, these are transient — and
- * a body is not a `/sync` entity, so nothing announces the refill. See {@link applyPage}, which
- * re-owes them when the message's own change arrives.
+ * bytes, a `storage_cap` one once the account has room again (`worker/storage-refill.ts`). A body
+ * is not a `/sync` entity, so nothing announces the refill but the message's own change. See
+ * {@link applyPage}, which re-owes them when it arrives.
  */
-const REFILLABLE_WITHHELD = ["junk_filed", "expunged"] as const;
+const REFILLABLE_WITHHELD = ["junk_filed", "expunged", "storage_cap"] as const;
 
 /**
  * Every marker this mirror stores, whitelisted: a value the wire invents must not become one.
- * `too_large` stands like `storage_cap`: nothing ever fetches that body.
+ * `too_large` stands: nothing ever fetches that body.
  */
-const MIRRORED_WITHHELD: readonly WithheldMarker[] = ["storage_cap", "too_large", ...REFILLABLE_WITHHELD];
+const MIRRORED_WITHHELD: readonly WithheldMarker[] = ["too_large", ...REFILLABLE_WITHHELD];
 const mirroredWithheld = (w: WithheldMarker | undefined): WithheldMarker | null =>
   w !== undefined && MIRRORED_WITHHELD.includes(w) ? w : null;
 
@@ -370,6 +370,12 @@ interface CursorState {
    * empty body rows for bodies the hosted store was withholding.
    */
   capMarkerRepair: boolean;
+  /**
+   * Set once every local `storage_cap` husk has been asked about once — see {@link repairCapRefills}.
+   * Absent from every cursor file written by a sidecar that kept those husks through the storage
+   * refill's change, which reads as `false`: the population it is for.
+   */
+  capRefillRepair: boolean;
   /**
    * The mirror's own "when was I last caught up" — the instant the last pull drained `/sync` to the
    * horizon, this process's clock, written only at pull completion (a cut pull leaves the old stamp
@@ -677,6 +683,7 @@ interface CursorFile {
   profileRepair?: unknown;
   autoReplyRepair?: unknown;
   capMarkerRepair?: unknown;
+  capRefillRepair?: unknown;
   /** ISO instant of the last completed pull; absent on every file from before the freshen. */
   lastDrainAt?: unknown;
   /** The held rows a page apply could not store; absent on every file from before the quarantine. */
@@ -751,6 +758,7 @@ function readCursor(path: string): CursorState {
       // `=== true`, never `?? true`: an absent key must read FALSE. The inverse would silently
       // exempt every install that HAS the defect and leave only fresh ones correct.
       capMarkerRepair: j.capMarkerRepair === true,
+      capRefillRepair: j.capRefillRepair === true,
       // Absent (every pre-freshen file) reads NULL — "not known to be current" — so an upgraded
       // stale install freshens on its first resume, which is the population the port is for.
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
@@ -773,6 +781,8 @@ function readCursor(path: string): CursorState {
       autoReplyRepair: true,
       // A fresh install has no pre-marker rows and its walk writes markers from the start.
       capMarkerRepair: true,
+      // And its message arm re-owes a cap husk on its message's change from the start.
+      capRefillRepair: true,
       // And it has never completed a pull: the bootstrap's own window owns "newest first" here.
       lastDrainAt: null,
       quarantine: [],
@@ -795,6 +805,7 @@ function writeCursor(path: string, state: CursorState): void {
     profileRepair: state.profileRepair,
     autoReplyRepair: state.autoReplyRepair,
     capMarkerRepair: state.capMarkerRepair,
+    capRefillRepair: state.capRefillRepair,
     ...(state.lastDrainAt !== null ? { lastDrainAt: state.lastDrainAt } : {}),
     // Absent when empty, so a healthy install's cursor file is byte-identical to one written
     // before the field existed — and an old build ignores the key entirely.
@@ -1946,6 +1957,8 @@ async function applyUpsert(
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         forwardOfMessageId: forwardOf,
+        // The kept files ride their forward; the desktop's window reads them from this copy.
+        forwardParts: forwardOf ? d.forwardParts ?? null : null,
         subject: d.subject ?? "",
         ...(bodyCarried ? { body: d.body as string } : {}),
         ...(htmlCarried ? { html: d.html ?? null } : {}),
@@ -2085,7 +2098,7 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.update(drafts).set({ inReplyToMessageId: null })
         .where(eq(drafts.inReplyToMessageId, ch.id));
       // The forward's twin: a draft forwarding this message keeps its note.
-      await tx.update(drafts).set({ forwardOfMessageId: null })
+      await tx.update(drafts).set({ forwardOfMessageId: null, forwardParts: null })
         .where(eq(drafts.forwardOfMessageId, ch.id));
       for (const d of replying) detached?.push({ type: "draft", id: d.id });
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));
@@ -2324,13 +2337,14 @@ async function applyPage(
       }
     }
     /* A MESSAGE THAT CHANGED UPSTREAM RE-OWES A REFILLABLE HUSK OF ITS BODY. The hosted side
-       refills a `junk_filed`/`expunged` husk on its own and records THAT message change; a body is
-       not a `/sync` entity, so the change is the only word this mirror gets. Without this the husk
-       row stood, {@link fetchMissingBodies} offers only ABSENT rows, and a message restored from
-       Junk on another device opened blank here for ever. Dropping the row marks the body owed, and
-       the same pull's body pass fetches it. A husk whose message did not change is never re-asked,
-       and `storage_cap` is not refillable ({@link REFILLABLE_WITHHELD}) so its row stands. Chunked
-       for the reason the detached batch is — PGlite's bind-parameter cap. */
+       refills a `junk_filed`/`expunged`/`storage_cap` husk on its own and records THAT message
+       change; a body is not a `/sync` entity, so the change is the only word this mirror gets.
+       Without this the husk row stood, {@link fetchMissingBodies} offers only ABSENT rows, and a
+       message restored from Junk on another device opened blank here for ever. Dropping the row
+       marks the body owed, and the same pull's body pass fetches it. A husk whose message did not
+       change is never re-asked, and a `too_large` one is not refillable ({@link
+       REFILLABLE_WITHHELD}) so its row stands. Chunked for the reason the detached batch is —
+       PGlite's bind-parameter cap. */
     for (let i = 0; i < touchedMessages.length; i += DETACHED_BATCH_MAX) {
       await hold();
       await tx.delete(messageBodies).where(and(
@@ -3974,6 +3988,49 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * The one-time re-ask of every local `storage_cap` husk, on {@link repairCapMarkers}' shape. An
+   * older sidecar kept a cap husk through the message change the storage refill records, so a letter
+   * whose text came back upstream before this build opens empty here. Each is asked once, and the
+   * cursor records that, so a husk still withheld upstream is not asked again but by its next change.
+   */
+  const repairCapRefills = async (): Promise<number> => {
+    if (cursor.capRefillRepair) return 0;
+    if (cursor.bodies.phase !== "complete") return 0;   // not marked: the walk is still filling
+    let examined = 0;
+    let written = 0;
+    let after: string | null = null;
+    try {
+      for (;;) {
+        if (aborted) return written;
+        const rows = await cfg.db.select({ id: messageBodies.messageId })
+          .from(messageBodies)
+          .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+          .where(and(
+            eq(messages.accountId, cfg.world.accountId),
+            eq(messageBodies.withheldReason, "storage_cap"),
+            ...(after === null ? [] : [gt(messageBodies.messageId, after)]),
+          ))
+          .orderBy(asc(messageBodies.messageId))
+          .limit(BODIES_IDS_MAX);
+        if (rows.length === 0) break;
+        const ids = rows.map((r) => r.id);
+        after = ids[ids.length - 1]!;
+        examined += ids.length;
+        written += await askForIds(ids.filter((id) => !unanswered.has(id)));
+      }
+    } catch (err) {
+      cfg.log?.("cloud_cap_refill_repair_deferred", {
+        reason: "a bodies page failed; the mirror is unaffected and the next launch retries", err,
+      });
+      return written;
+    }
+    cursor.capRefillRepair = true;
+    writeCursor(cfg.cursorPath, cursor);
+    if (examined > 0) cfg.log?.("cloud_cap_refill_repair_done", { examined, written });
+    return written;
+  };
+
+  /**
    * The body pass: walk the account once, then keep only the newcomers topped up. `walkAllBodies`
    * is a keyset walk in the SERVER's order (`messages.id`, a uuid — a random permutation) and must
    * stay so: the `after` cursor is what makes an interrupted walk resume. So during a bootstrap the
@@ -4125,6 +4182,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // to `complete`, and the repair defers (without marking) while it is still walking — so
       // running it first would defer for ever on an install whose walk finishes in this same pull.
       await repairCapMarkers();
+      await repairCapRefills();
       if (aborted) {
         cfg.log?.("cloud_pull_stopped", {
           count: applied,

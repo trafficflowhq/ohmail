@@ -201,7 +201,7 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
+  nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode, serverUnreachable,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
 import { useShellDispatch } from "./shell-dispatch";
@@ -1431,7 +1431,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * order the regions they replace had.
    */
   const {
-    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
+    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
@@ -1597,7 +1597,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         organizerEventAt: firstRunMailbox.organizerEventAt,
         // The takeover's pending half, for the summary's `takeoverState`. Untouched, like the rest.
         takeoverAuthorizedAt: firstRunMailbox.takeoverAuthorizedAt,
-        organizerChecked: firstRunMailbox.organizerChecked,
+        organizerChecked: firstRunMailbox.organizerChecked, unreachable: serverUnreachable(firstRunMailbox),
         // FORWARDED UNTOUCHED, both of them. `mailbox-facts.ts` states the rule and the two
         // measured failures behind it: absent and null are different answers on these fields,
         // and a `?? null` at this seam is what destroyed the distinction the last two times.
@@ -1738,7 +1738,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, parkSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -1935,6 +1935,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
     composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
+    composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -1957,7 +1958,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
-    parkSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+    pileSetFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
     setSubjectRule,
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });
@@ -2082,6 +2083,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       onReplyFrom: setReplyFromId,
       replyAttachments,
       onReplyAttachments: setReplyAttachments,
+      // A forward's original files, listed and removable — the plan its send carries.
+      replyForwardFiles,
       // The signature block's state and the account's stored map — held here for the
       // mounted-twice reason the body is; `sendReply` serializes the same derivation the
       // block renders. The map travels only once server-confirmed, so a block can never be
@@ -2134,8 +2137,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
       // as the override, so the sheet resolves the To/Cc person and not the message's sender.
       ownNameOf,
-      /* The reading pane's delivery line — the same resolver the Reads surfaces take as a prop. */
-      mailboxLabelOf,
+      /* The delivery line and a withheld letter's mailbox status (stable; `mailboxStatusKey` keys the redraw). */
+      mailboxLabelOf, mailboxStatusOf,
       writeTo,
       screenAddress: (messageId: string, address: string, anchor: HTMLElement | null) =>
         openSenderMenu(messageId, anchor, address),
@@ -2168,11 +2171,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         },
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
+      forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit, replyForwardFiles,
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, forwardTargetFor,
+      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, writeTo, openReply, openForward, forwardTargetFor,
       openSubjectRule, conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
@@ -2700,6 +2703,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 /* Which address of yours a row arrived at, above one mailbox — see
                    `mailbox-label.ts`; the view resolves one string per row. */
                 mailboxLabelOf={mailboxLabelOf}
+                mailboxStatusOf={mailboxStatusOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 partition={partition}
@@ -2732,6 +2736,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 settled={mailState.settled}
                 owed={mailState.owed}
                 threadParticipants={participantsOf}
+                mailboxStatusOf={mailboxStatusOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 messages={receipts}
@@ -3097,6 +3102,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 engine={engine}
                 draft={draft}
                 fields={compose}
+                forwardFiles={composeForwardFiles}
                 onFields={onComposeFields}
                 from={composeFrom}
                 sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}

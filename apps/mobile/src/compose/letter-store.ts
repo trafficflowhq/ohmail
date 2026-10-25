@@ -83,6 +83,11 @@ export interface LetterDoor {
   landed(): Promise<"stored" | "lost">;
 }
 
+/** The draft row holds all of this letter: no files, and no forwarded part left out (a row holds no such choice). */
+export function rowHoldsLetter(l: Pick<Letter, "files" | "forwardKept">): boolean {
+  return l.files.length === 0 && (l.forwardKept ?? null) === null;
+}
+
 /** The words a draft row holds, compared to tell an edit from what was saved. */
 export function wordsOf(l: Pick<Letter, "to" | "cc" | "bcc" | "subject" | "body">): string {
   return JSON.stringify([l.to, l.subject, l.body, l.cc, l.bcc]);

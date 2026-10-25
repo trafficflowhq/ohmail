@@ -4,7 +4,7 @@ import {
   assertOrganizerRole, messages, messageStates, folderState, claimIdempotencyKey, recordChange,
   decisionInstant, triageDecidedAfter, type Tx,
 } from "@trafficflow/db";
-import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
+import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import {
   materializeMessage, materializeMessageState, materializeMessagesInOrder,
@@ -89,7 +89,8 @@ export class TriageService {
       throw new ServiceError("validation_failed", 400, "bubbleUpAt is not a valid ISO datetime");
     }
 
-    return asTx(ctx).transaction(async (tx) => {
+    // The account row FOR SHARE first: the key's claim reads it, and after the counter it deadlocked.
+    return withAccountTx(ctx, async (tx) => {
       // Cross-account guard: the message must belong to the caller's account — and the select
       // takes the MESSAGE ROW LOCK, which is what serializes concurrent
       // `setState` calls on one message: the prior-state read below classifies the transition,

@@ -1192,7 +1192,9 @@ export const DE: Deck = {
   liveBodyLoading: "Die ganze Nachricht wird geladen…",
   liveBodyFailed: "Nur die Vorschau ließ sich laden. Öffne sie erneut, um es nochmal zu versuchen.",
   liveBodyWithheld:
-    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. Ein größerer Tarif speichert ab jetzt mehr Text; diesen bringt er nicht zurück.",
+    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. Sobald wieder Platz frei ist, holt ohmail diesen Text von deinem Mailserver zurück.",
+  liveBodyWithheldRemoved:
+    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. ohmail liest dieses Postfach nicht mehr, darum kommt dieser Text hier nicht zurück.",
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
@@ -1480,6 +1482,21 @@ export const DE: Deck = {
   replyTooLarge: "Nicht gesendet. Zu groß zum Senden. Kürze die Nachricht und sende sie nochmal.",
   replyBusy: "Nicht gesendet. Dein Mailserver ist gerade ausgelastet und nimmt nichts an. Versuch es gleich nochmal.",
   replyNotSignedIn: "Nicht gesendet — dein Entwurf ist gesichert. Dieses Postfach ist hier nicht angemeldet. Melde es in den Einstellungen neu an.",
+  forwardFilesHead: "Wird mitgesendet",
+  forwardFilesLine: (kept: string, more: string) => `Weitergeleitete Dateien: ${kept}. Bis zu ${more} mehr von diesem Handy.`,
+  forwardFilesAllGo: (size: string, more: string) =>
+    `Weitergeleitete Dateien: ${size}. Alle gehen mit. Bis zu ${more} mehr von diesem Handy.`,
+  forwardFilesNone: (more: string) => `Bis zu ${more} von diesem Handy.`,
+  forwardFilesReading: "Die Dateien der Nachricht werden gelesen …",
+  forwardFilesUnreadKept: "Die Dateien der Nachricht konnten hier nicht gelesen werden. Die behaltenen gehen mit.",
+  forwardFilesUnreadAllGo: "Die Dateien der Nachricht konnten hier nicht gelesen werden. Alle gehen mit.",
+  forwardFilesRemovedGo: (size: string, more: string) =>
+    `Weitergeleitete Dateien: ${size}. Dein Server sendet alle mit, auch die entfernten. Bis zu ${more} mehr von diesem Handy.`,
+  forwardFilesUnreadRemovedGo: "Die Dateien der Nachricht konnten hier nicht gelesen werden. Dein Server sendet alle mit, auch die entfernten.",
+  forwardFilesTooLarge: (limit: string) => `Die weitergeleiteten Dateien sind über ${limit}. Entferne einige, um sie zu senden.`,
+  forwardTotalTooLarge: (limit: string) => `Das ist über den ${limit}, die dein Mailserver annimmt. Entferne einige Dateien, um sie zu senden.`,
+  replyForwardPartsUnsupported: "Nicht gesendet. Dein Server sendet jede Datei einer Weiterleitung mit und kann die entfernten nicht weglassen.",
+  replyForwardPartsChanged: "Nichts wurde gesendet. Die Dateien der weitergeleiteten Nachricht haben sich geändert. Öffne sie noch einmal und leite sie weiter.",
   replyForwardOriginalUnavailable: "Nicht gesendet. Das Original konnte nicht geladen werden, darum wurde es nicht weitergeleitet.",
   replySentElsewhere: "Nicht gesendet: Dieser Entwurf ging bereits von einem anderen Gerät aus.",
   composeSentElsewhere: "Dieser Entwurf wurde von einem anderen Gerät gesendet. Was du jetzt schreibst, wird als neuer Entwurf gespeichert.",
@@ -2110,6 +2127,10 @@ export const DE: Deck = {
   storageOfferActive: "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text.",
   storageOfferActiveTop: "Das Speicher-Add-on speichert ab jetzt mehr Text.",
   storageNoticeNoRestore: "Bereits entfernten Text bringt das nicht zurück.",
+  storageNoticeRefill:
+    "Mit mehr Platz holt ohmail den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, für die Postfächer, die es noch liest.",
+  storageNoticeRefilling:
+    "Es ist wieder Platz frei: Für die Postfächer, die ohmail noch liest, holt es den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, soweit der Platz reicht.",
   storageNoticeManage: "Abo verwalten",
   storageNoticeDismiss: "Schließen",
 

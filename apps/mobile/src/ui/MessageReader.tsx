@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsFocused } from "expo-router";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
-import { invitationNote, junkLeaving, withheldNote } from "./body-note";
+import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import {
   ActivityIndicator, Animated, AppState, Easing, Linking, Platform, ScrollView, StyleSheet, useWindowDimensions, View,
@@ -335,7 +335,6 @@ export function MessageReader({
     () => createOpenAnchor({
       holding: !hasPaneScroll(scrollKey) || place.current !== null,
       applies: () => landingOf() !== null || place.current !== null || (facts.current.inOhbox && aboveCount.current > 0),
-      start: startAt.y,
       target: () => openTarget(),
       extent: () => box.current,
       scrollTo: (y) => { seen.asked(y); scrollRef.current?.scrollTo({ y, animated: false }); },
@@ -417,7 +416,7 @@ export function MessageReader({
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : !m.protected && m.bodyState === "withheld"
-        ? withheldNote(m, refillExpired)
+        ? withheldNote(m, refillExpired, mailboxStatusOf(w.mailboxes.rows, m.mailboxId))
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;
@@ -694,7 +693,7 @@ export function MessageReader({
           {below.length > 0 ? (
             <View
               style={{ marginTop: 34, gap: 12 }}
-              onLayout={(e) => seen.offset("below", e.nativeEvent.layout.y)}
+              onLayout={(e) => { seen.offset("below", e.nativeEvent.layout.y); anchor.layout(); }}
             >
               {/* The heading over the members listed after the opened message — where it leads; in the
                   Ohbox's time order the conversation reads on without one, as the web's column. */}

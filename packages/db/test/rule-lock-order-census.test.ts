@@ -644,8 +644,8 @@ const DERIVED = deriveWriters(SCANNED_ROOTS.flatMap(sourcesUnder));
 
 /**
  * THE READINGS NAMED BEFORE THE DERIVATION: writers outside this census's subject (the device
- * mirror, erasure, the backlog walks, writers that read the account after the counter), each
- * group with its gap row. A ratchet: a new reading is refused, and a gone one must leave.
+ * mirror, erasure, the backlog walks, the sent letter's doorbell), each group with its gap row or
+ * its reason. A ratchet: a new reading is refused, and a gone one must leave.
  */
 const KNOWN_READINGS: ReadonlySet<string> = new Set<string>([
   // The device mirror applying the Cloud's deltas: its order is its own and unmeasured here (DEVICE-MIRROR-ORDER-UNMEASURED).
@@ -694,22 +694,7 @@ const KNOWN_READINGS: ReadonlySet<string> = new Set<string>([
   "packages/services/src/account-deletion-service.ts#deleteAccount: the change-log counter (.delete(accountSyncState)) taken after the graduation row",
   // Mailbox erasure: the same, for one mailbox.
   "packages/db/src/mailbox-erasure.ts#eraseOwedMailbox: held folder_state rows (.delete(folderState)) taken after the change-log counter",
-  // The account read after the counter, the in-app move's old shape (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
-  "packages/services/src/message-service.ts#delete: the account row (fenceErased) taken after the change-log counter",
-  "packages/services/src/message-service.ts#restore: the account row (fenceErased) taken after the change-log counter",
-  // The account read after the counter (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
-  "packages/services/src/folder-ops-service.ts#create: the account row (fenceErased) taken after the change-log counter",
-  "packages/services/src/folder-ops-service.ts#dismiss: the account row (fenceErased) taken after the change-log counter",
-  "packages/services/src/folder-ops-service.ts#remove: the account row (fenceErased) taken after the change-log counter",
-  "packages/services/src/folder-ops-service.ts#rename: the account row (fenceErased) taken after the change-log counter",
-  // The account read after the counter (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
-  "packages/services/src/thread-service.ts#merge: the account row (fenceErased) taken after the change-log counter",
-  // The account read after the counter (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
-  "packages/services/src/triage-service.ts#setState: the account row (fenceErased) taken after the change-log counter",
-  // A mailbox row taken exclusively after the counter (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
-  "packages/api/src/routes/consent.ts#applyConsentSettings: a mailbox row FOR UPDATE (.update(mailboxes)) taken after the change-log counter",
-  "packages/api/src/routes/consent.ts#applyConsentSettings: a mailbox row taken shared and then exclusively (.update(mailboxes))",
-  // A mailbox row taken exclusively after contacts (WRITERS-READ-THE-ACCOUNT-AFTER-THE-COUNTER).
+  // The sent letter's doorbell takes its mailbox row SKIP LOCKED after contacts: it never waits.
   "packages/services/src/send-service.ts#finalizeSent: a mailbox row FOR UPDATE (.update(mailboxes)) taken after contacts",
 ]);
 

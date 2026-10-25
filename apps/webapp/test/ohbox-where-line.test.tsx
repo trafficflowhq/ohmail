@@ -353,7 +353,9 @@ describe("the list is not touched", () => {
       h(OhboxWhereLine, { filed: FILED, demo: false }),
       h("div", { className: "ohx-notice" }, "offer"),
     ));
-    expect(withLine.querySelector(".scroller")!.innerHTML).toBe(bare.querySelector(".scroller")!.innerHTML);
+    // Each row's description node has a document-unique id, so two mounts differ there alone.
+    const rowsOf = (host: HTMLElement): string => host.querySelector(".scroller")!.innerHTML.replace(/_r_[0-9a-z]+_/g, "_r_");
+    expect(rowsOf(withLine)).toBe(rowsOf(bare));
     const order = [...withLine.querySelectorAll(".ohbox-where, .ohx-notice, .doorbell")].map((e) => e.className.split(" ")[0]);
     expect(order).toEqual(["ohbox-where", "ohx-notice", "doorbell"]);
   });

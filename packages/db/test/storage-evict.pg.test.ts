@@ -8,8 +8,9 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { brandDialect, dialect } from "../src/dialect/index.js";
 import { accounts, accountStorage, mailboxes, messages, messageBodies } from "../src/schema-mail.js";
 import {
-  bodyBytesOf, evictOldestBodies, reserveBodyBytes, reserveBodyBytesEvicting,
-  storageUsageOf, EVICT_INLINE_MAX_BODIES,
+  bodyBytesOf, evictOldestBodies, recomputeAccountStorage, recordRefilledForSpace, recordWithheldForSpace,
+  reserveBodyBytes, reserveBodyBytesEvicting, storageUsageOf,
+  EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES, EVICT_LOW_WATER_RATIO,
 } from "../src/storage.js";
 import type { Tx } from "../src/change-log.js";
 
@@ -167,7 +168,7 @@ describe.skipIf(!PG_UP)("evictOldestBodies — the rolling window's trim", () =>
     expect(await storageUsageOf(db as unknown as Tx, accountId)).toBe(0);
   });
 
-  it("a count the release filled keeps the first time unrecorded; the next trim sets only the latest", async () => {
+  it("a count the release filled with no first time gets one at the next trim", async () => {
     const { accountId } = await seed(4, 1_000);
     // 0166 counts the letters emptied before it and leaves both times NULL.
     await db.update(accountStorage).set({ huskedForSpace: 3 }).where(eq(accountStorage.accountId, accountId));
@@ -176,8 +177,8 @@ describe.skipIf(!PG_UP)("evictOldestBodies — the rolling window's trim", () =>
     const [r] = await db.select({ n: accountStorage.huskedForSpace, first: accountStorage.firstHuskedAt, last: accountStorage.lastHuskedAt })
       .from(accountStorage).where(eq(accountStorage.accountId, accountId));
     expect(r!.n).toBe(4);
-    expect(r!.first, "the first time was made up from a later trim").toBeNull();
-    expect(r!.last).toBeInstanceOf(Date);
+    expect(r!.first, "a back-filled count stayed undated after a trim").toBeInstanceOf(Date);
+    expect(r!.last!.getTime()).toBe(r!.first!.getTime());
   });
 
   it("kept_from is the month after the newest letter emptied, never the month of one", async () => {
@@ -201,6 +202,86 @@ describe.skipIf(!PG_UP)("evictOldestBodies — the rolling window's trim", () =>
     expect(r2.evicted).toBe(2);
     expect(await storageUsageOf(db as unknown as Tx, accountId)).toBe(1_000);
     expect(r2.more).toBe(false);
+  });
+});
+
+/**
+ * WHAT THE REFILL STANDS ON. The refill puts text back only while the counter stays at or under the
+ * trim's mark, so after a trim the newest emptied letter must never fit the room the trim left: its
+ * overshoot is always smaller than the last letter it emptied, and trim and refill never pass one
+ * letter back and forth.
+ */
+describe.skipIf(!PG_UP)("the trim and the refill's counter helper", () => {
+  const rng = (seed: number): (() => number) => {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; };
+  };
+
+  it("after a trim to the mark, the newest emptied letter never fits the room left", async () => {
+    for (let trial = 0; trial < 8; trial++) {
+      const r = rng(4_100 + trial);
+      const sizes = Array.from({ length: 30 }, () => 200 + Math.floor(r() * 5_000));
+      const { accountId, ids } = await seed(30, 1, (i) => new Date(Date.UTC(2025, 0, 30 - i)));
+      // Each letter its own size: ids[0] is the newest.
+      for (const [i, id] of ids.entries()) {
+        await db.update(messageBodies).set({ text: "y".repeat(sizes[i]!) }).where(eq(messageBodies.messageId, id));
+      }
+      await db.transaction(async (tx) => recomputeAccountStorage(tx as unknown as Tx, dialect(db), accountId, new Date()));
+      const total = sizes.reduce((a, b) => a + b, 0);
+      const cap = Math.floor(total * (0.4 + r() * 0.4));
+      const mark = Math.floor(cap * EVICT_LOW_WATER_RATIO);
+      for (let round = 0; round < 10; round++) {
+        const res = await db.transaction(async (tx) =>
+          evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: mark, maxBodies: EVICT_BATCH_BODIES }));
+        if (!res.more) break;
+      }
+      const used = await storageUsageOf(db as unknown as Tx, accountId);
+      const capped = (await db.select({ id: messageBodies.messageId, w: messageBodies.withheldReason }).from(messageBodies)
+        .where(inArray(messageBodies.messageId, ids))).filter((b) => b.w === "storage_cap").map((b) => b.id);
+      // ids[0] is the newest, so the first capped index is the newest emptied letter.
+      const first = ids.findIndex((id) => capped.includes(id));
+      expect(first, `trial ${trial}: the trim emptied nothing`).toBeGreaterThanOrEqual(0);
+      expect(used).toBeLessThanOrEqual(mark);
+      expect(sizes[first]!, `trial ${trial}: room ${mark - used}`).toBeGreaterThan(mark - used);
+    }
+  });
+
+  it("a refilled arrival leaves the arrivals' count, a refilled trimmed letter does not, and the recount agrees", async () => {
+    // Four letters, one a month from June back to March; the trim empties March and April.
+    const { accountId, ids } = await seed(4, 1_000, (i) => new Date(Date.UTC(2026, 5 - i, 15)));
+    await db.transaction(async (tx) =>
+      evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: 2_000, maxBodies: 100 }));
+    // A fifth letter arrives while the storage is full and is stored without its text.
+    const [mb] = await db.select({ id: messages.mailboxId }).from(messages).where(eq(messages.id, ids[0]!));
+    const [late] = await db.insert(messages).values({
+      accountId, mailboxId: mb!.id, bodyHash: "late", dedupKey: `${accountId}:late`, subject: "late",
+      date: new Date(Date.UTC(2026, 6, 2)),
+    }).returning();
+    await db.insert(messageBodies).values({ messageId: late!.id, text: "", html: null, withheldReason: "storage_cap", headers: {} });
+    await db.transaction(async (tx) => recordWithheldForSpace(tx as unknown as Tx, dialect(db), accountId, late!.id));
+    const facts = async () => {
+      const [row] = await db.select().from(accountStorage).where(eq(accountStorage.accountId, accountId));
+      return { bytes: Number(row!.bytes), husked: row!.huskedForSpace, onArrival: row!.withheldOnArrival, keptFrom: row!.keptFrom };
+    };
+    expect(await facts()).toEqual({ bytes: 2_000, husked: 3, onArrival: 1, keptFrom: "2026-05-01" });
+
+    /** The refill's write, by hand: the text back, then the counter under its lock. */
+    const refill = (id: string, at: Date) => db.transaction(async (tx) => {
+      await (tx as unknown as typeof db).update(messageBodies).set({ text: "z".repeat(700), withheldReason: null })
+        .where(eq(messageBodies.messageId, id));
+      await recordRefilledForSpace(tx as unknown as Tx, dialect(db), accountId, 700, at);
+    });
+    await refill(late!.id, new Date(Date.UTC(2026, 6, 2)));
+    expect(await facts()).toEqual({ bytes: 2_700, husked: 2, onArrival: 0, keptFrom: "2026-05-01" });
+    await refill(ids[2]!, new Date(Date.UTC(2026, 3, 15)));
+    expect(await facts()).toEqual({ bytes: 3_400, husked: 1, onArrival: 0, keptFrom: "2026-05-01" });
+
+    const recount = await db.transaction(async (tx) =>
+      recomputeAccountStorage(tx as unknown as Tx, dialect(db), accountId, new Date()));
+    expect({ drift: recount.drift, husked: recount.huskedForSpace, onArrival: recount.withheldOnArrival })
+      .toEqual({ drift: 0, husked: 1, onArrival: 0 });
+    // The recount pulls the month back to the one after the letter still emptied.
+    expect(recount.keptFrom).toBe("2026-04-01");
   });
 });
 

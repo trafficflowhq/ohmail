@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
+import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, attachments as attachmentsTbl, routingDecisions, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, listBrandsOf, readListAddresses } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -16,8 +16,8 @@ import { canonicalDestination, LEGACY_NEWS_FOLDER, NEWS_FOLDER, SENT_SHAPED_PATH
 import { messageSearchUpsert, reindexMessageSearch, type MessageSearchInput } from "../message-search.js";
 import type { NormalizedMessage } from "../types.js";
 import {
-  unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
-  type JunkHuskIdentity, type JunkUnhuskOutcome,
+  refillStorageCapBody as refillStorageCapBodyTx, unhuskJunkFiledBody as unhuskJunkFiledBodyTx,
+  type JunkHuskIdentity, type JunkUnhuskOutcome, type StorageCapRefill,
 } from "../husk-restore.js";
 import type { BlankMessageRow } from "../blank-repair.js";
 import { listBlankMessageRows } from "./blank-rows.js";
@@ -55,9 +55,10 @@ export {
 export { checkUncheckedById, writeSenderChecks, type UncheckedRow } from "../sender-check-write.js";
 // The undecided-sender set, on the same leaf: the Screener's offer, the organize decision, the organizer.
 export {
-  AGREE_SCREENS_BACKLOG_ACTION, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
-  OHBOX_UNSCREENED_MESSAGES_MAX, agreeRecordedAt, agreeSweepPass, agreeWindowCutoff, gateHoldsSender, placementUndecided,
-  unscreenedGroups, unscreenedWalk, writeScreenerIntents, type AgreeSweepOutcome, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedRow,
+  AGREE_SCREENS_BACKLOG_ACTION, AGREE_SWEEP_SLICES_PER_DRAIN, OHBOX_UNSCREENED_AUDIT_ACTION, OHBOX_UNSCREENED_GROUPS_MAX,
+  OHBOX_UNSCREENED_MESSAGES_MAX, agreeRecordAt, agreeRecordPayload, agreeRecordedAt, agreeSweepSlice, agreeSweepRun, agreeWindowCutoff, gateHoldsSender, placementUndecided,
+  unscreenedGroups, unscreenedWalk, writeScreenerIntents, type AgreeSweepCursor, type AgreeSweepInput, type AgreeSweepOutcome,
+  type AgreeSweepRun, type ScreeningAnswer, type UnscreenedKnowledge, type UnscreenedRow,
   type UnscreenedScope, type UnscreenedSenderGroup, type UnscreenedWalk,
 } from "../unscreened-set.js";
 
@@ -187,6 +188,29 @@ export interface JunkFiledHuskRow {
   uidValidity: string;
   uid: number;
 }
+
+/** Where a newest-first walk over emptied letters resumes: the letters older than this one. */
+export interface StorageCapHuskKey {
+  at: Date;
+  id: string;
+}
+
+/** One `storage_cap` husk the storage refill may fill: its identity, its live place and its date. */
+export interface StorageCapHuskRow extends JunkFiledHuskRow {
+  /** `coalesce(date, created_at)`, the order the trim emptied it in. */
+  at: Date;
+}
+
+/** The counter row's facts the storage refill decides on. */
+export interface StorageRefillCounter {
+  bytes: number;
+  huskedForSpace: number;
+  lastHuskedAt: Date | null;
+  recountedAt: Date | null;
+}
+
+/** Why the storage refill waits for an account: erased, a mailbox being erased, or a live one still importing. */
+export type StorageRefillHold = "account_erased" | "erasing" | "importing";
 
 /** A `flag_state` row still owed an IMAP write, joined to the locator the write needs. */
 export interface PendingFlagState {
@@ -670,6 +694,24 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
   unhuskJunkFiledBody?(
     accountId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number | null,
   ): Promise<JunkUnhuskOutcome>;
+  /**
+   * This mailbox's `storage_cap` husks with a live primary instance, not deleted and not missing
+   * on the server, newest first (`coalesce(date, created_at) desc, id desc`), keyset-paged on
+   * `before`. Instances exist only for watched folders, so Junk is never offered. Optional, as above.
+   */
+  listStorageCapHusks?(
+    accountId: string, mailboxId: string, opts: { limit: number; before?: StorageCapHuskKey },
+  ): Promise<StorageCapHuskRow[]>;
+  /** The storage refill's verify/rewrite (`husk-restore.ts#refillStorageCapBody`), on this repo's connection. */
+  refillStorageCapBody?(
+    accountId: string, mailboxId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number,
+  ): Promise<StorageCapRefill>;
+  /** One primary-key read of the account's counter row; `null` when it has none. */
+  storageRefillCounter?(accountId: string): Promise<StorageRefillCounter | null>;
+  /** Why the storage refill must wait for this account, or `null` when it need not. */
+  storageRefillHold?(accountId: string): Promise<StorageRefillHold | null>;
+  /** `recomputeAccountStorage` in this repo's transaction (the caller's fence). */
+  recountAccountStorage?(accountId: string, now: Date): Promise<AccountRecount>;
   /**
    * Every UID of this mailbox that is still owed — failed, and neither ingested nor written off as
    * void. Read at the top of every cycle and merged into the adapter's known-set, which is what
@@ -1631,6 +1673,92 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     accountId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number | null,
   ): Promise<JunkUnhuskOutcome> {
     return unhuskJunkFiledBodyTx(this.db, { accountId, husk, fresh, capBytes });
+  }
+
+  /** See the interface doc. Each page seeks the walk's key from where the last one stopped. */
+  async listStorageCapHusks(
+    accountId: string, mailboxId: string, opts: { limit: number; before?: StorageCapHuskKey },
+  ): Promise<StorageCapHuskRow[]> {
+    const at = sql`coalesce(${messages.date}, ${messages.createdAt})`;
+    const rows = await this.db.select({
+      messageId: messages.id,
+      dedupKey: messages.dedupKey,
+      messageIdHeader: messages.messageIdHeader,
+      folder: messageInstances.folder,
+      uidValidity: messageInstances.uidvalidity,
+      uid: messageInstances.uid,
+      at: sql<Date>`${at}`.mapWith(messages.createdAt),
+    }).from(messageBodies)
+      .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+      .innerJoin(messageInstances, and(
+        eq(messageInstances.messageId, messages.id),
+        eq(messageInstances.isPrimary, true),
+      ))
+      .where(and(
+        eq(messageBodies.withheldReason, "storage_cap"),
+        eq(messages.accountId, accountId),
+        eq(messages.mailboxId, mailboxId),
+        isNull(messages.deletedAt),
+        isNull(messages.serverMissingAt),
+        ...(opts.before !== undefined
+          ? [sql`(${at}, ${messages.id}) < (${this.d.ts(opts.before.at)}, ${this.d.castUuid(opts.before.id)})`]
+          : []),
+      ))
+      .orderBy(desc(at), desc(messages.id))
+      .limit(opts.limit);
+    return rows.map((r) => ({
+      messageId: r.messageId,
+      dedupKey: r.dedupKey,
+      messageIdHeader: r.messageIdHeader,
+      folder: r.folder,
+      uidValidity: String(r.uidValidity),
+      uid: r.uid,
+      at: r.at,
+    }));
+  }
+
+  /** The storage refill's verify/rewrite, on this repo's connection — the worker's fence tx when fenced. */
+  async refillStorageCapBody(
+    accountId: string, mailboxId: string, husk: JunkHuskIdentity, fresh: NormalizedMessage, capBytes: number,
+  ): Promise<StorageCapRefill> {
+    return refillStorageCapBodyTx(this.db, { accountId, mailboxId, husk, fresh, capBytes });
+  }
+
+  /** See the interface doc. */
+  async storageRefillCounter(accountId: string): Promise<StorageRefillCounter | null> {
+    const [row] = await this.db.select({
+      bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace,
+      lastHuskedAt: accountStorage.lastHuskedAt, recountedAt: accountStorage.recountedAt,
+    }).from(accountStorage).where(eq(accountStorage.accountId, accountId)).limit(1);
+    if (!row) return null;
+    return {
+      bytes: Number(row.bytes), huskedForSpace: Number(row.husked),
+      lastHuskedAt: row.lastHuskedAt ?? null, recountedAt: row.recountedAt ?? null,
+    };
+  }
+
+  /**
+   * See the interface doc: the account erased (or its row gone), a mailbox stamped for erasure and
+   * not finished, or a mailbox neither removed nor erased whose first import has not finished,
+   * one in error included.
+   */
+  async storageRefillHold(accountId: string): Promise<StorageRefillHold | null> {
+    const [account] = await this.db.select({ erasedAt: accounts.erasedAt }).from(accounts)
+      .where(eq(accounts.id, accountId)).limit(1);
+    if (!account || account.erasedAt !== null) return "account_erased";
+    const rows = await this.db.select({ erasedAt: mailboxes.erasedAt, doneAt: mailboxes.erasureDoneAt })
+      .from(mailboxes)
+      .where(and(eq(mailboxes.accountId, accountId), or(
+        and(isNotNull(mailboxes.erasedAt), isNull(mailboxes.erasureDoneAt)),
+        and(isNull(mailboxes.erasedAt), sql`${mailboxes.status} <> 'disabled'`, isNull(mailboxes.initialImportCompletedAt)),
+      )));
+    if (rows.some((r) => r.erasedAt !== null)) return "erasing";
+    return rows.length > 0 ? "importing" : null;
+  }
+
+  /** See the interface doc. */
+  async recountAccountStorage(accountId: string, now: Date): Promise<AccountRecount> {
+    return recomputeAccountStorage(this.db, this.d, accountId, now);
   }
 
   /**

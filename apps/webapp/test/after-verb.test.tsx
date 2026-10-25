@@ -287,3 +287,61 @@ describe("after a verb, on the shipped shell", () => {
     expect(selId(container)).toBeNull();
   });
 });
+
+describe("the keyboard ring stays on the row the verbs act on", () => {
+  /* A key pressed where focus is, as a person's key is: on the focused row, bubbling to the keymap. */
+  const press = async (k: string): Promise<void> => {
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    });
+  };
+  const ringId = (): string | null => (document.activeElement as HTMLElement | null)?.closest?.(".row")?.getAttribute("data-id") ?? null;
+  const focusCursor = async (el: HTMLElement): Promise<void> => {
+    await act(async () => { el.querySelector<HTMLElement>(".view .row.sel")!.focus(); });
+  };
+
+  it("u moves the row up under New, and the ring goes with it, not to the row that slid into its place", async () => {
+    const { container } = await shell();
+    await key("j");
+    await key("j");
+    await waitFor(() => selId(container) === "m2", "the cursor on the middle row");
+    await focusCursor(container);
+    await press("u");
+    await waitFor(() => rowIds(container)[0] === "m2", "the row to move up under New");
+    await settle();
+    expect(selId(container)).toBe("m2");
+    expect(ringId()).toBe("m2");
+  });
+
+  it("a verb that leaves no cursor leaves no ring on a row either: focus stands on the list", async () => {
+    window.localStorage.setItem(AFTER_VERB_STORAGE_KEY, "close");
+    const { container } = await shell();
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    const first = selId(container)!;
+    await focusCursor(container);
+    await press("a");
+    await waitFor(() => !rowIds(container).includes(first), "the acted row to leave");
+    await settle();
+    expect(selId(container)).toBeNull();
+    expect(ringId()).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector(".view .scroller"));
+    // j from the list takes the cursor, and the ring with it.
+    await press("j");
+    await waitFor(() => selId(container) != null, "j to take the cursor");
+    expect(ringId()).toBe(selId(container));
+  });
+
+  it("after the default advance the ring is on the advanced-to row", async () => {
+    const { container } = await shell();
+    await key("j");
+    await waitFor(() => selId(container) != null, "the cursor to stand");
+    const first = selId(container)!;
+    await focusCursor(container);
+    await press("e");
+    await waitFor(() => selId(container) != null && selId(container) !== first, "the selection to advance");
+    await settle();
+    expect(ringId()).toBe(selId(container));
+  });
+});

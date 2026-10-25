@@ -10,8 +10,10 @@
  */
 import { originNeedsPin, type OhmailEngine, type SqlMirrorStore } from "@ohmail/client-engine";
 import {
+  FORWARD_PARTS_HELLO_MS,
   bootEngine,
   forgetMirror,
+  helloForwardParts,
   localEngineTransport,
   mirrorOwnerKey,
   normalizeOrigin,
@@ -78,6 +80,37 @@ export function unreachableSaid(detail: RefusalArg): Refusal | null {
     case "unreachableTimeout": return refuse("unreachableTimeout");
     default: return null;
   }
+}
+
+/**
+ * DOES THIS SESSION'S SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts`.
+ * The phone's own engine always does; `null` is no answer ({@link helloForwardParts}).
+ */
+export async function forwardPartsAnnounced(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): Promise<boolean | null> {
+  return session.standalone
+    || helloForwardParts(session.fetch, normalizeOrigin(session.profile.origin), FORWARD_PARTS_HELLO_MS);
+}
+
+/**
+ * THE SESSION'S ANSWER, HELD — read at once, and asked again, one read at a time, whenever it is read
+ * while still unanswered: a launch without the network does not latch "no" for the whole session.
+ */
+export function forwardPartsReader(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): {
+  said: () => boolean | null; settled: () => Promise<void>;
+} {
+  let said: boolean | null = null;
+  let asking: Promise<void> | null = null;
+  const ask = (): void => {
+    if (asking !== null) return;
+    asking = forwardPartsAnnounced(session)
+      .then((v) => { said = v; }, () => undefined)
+      .finally(() => { asking = null; });
+  };
+  ask();
+  return {
+    said: () => { if (said === null) ask(); return said; },
+    settled: () => asking ?? Promise.resolve(),
+  };
 }
 
 export async function negotiate(fetchImpl: FetchLike, origin: string): Promise<Negotiation> {

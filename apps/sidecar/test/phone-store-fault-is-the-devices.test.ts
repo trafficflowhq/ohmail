@@ -6,8 +6,9 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { createLogger, storeFaultOf } from "@trafficflow/core/mail";
+import { agreeSweepRun, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
-  accounts, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
+  accounts, auditAction, auditLog, changeLog, folderState, mailboxes, messageBodies, messageFailures, messages, threads,
 } from "@trafficflow/db";
 import { screenUnscreened, type ServiceContext } from "@trafficflow/services/mail";
 import { classifyIngestFault, markStoreStatement, StoreStatementFaultError } from "@trafficflow/worker/dead-letter";
@@ -558,6 +559,33 @@ describe.runIf(ON_DEVICE_STORE)("a thousand-letter Screen press on a device-slow
     await (opened.ingestDb as unknown as TxHandle).transaction(async (tx) => tx.run(sql`select 1`));
     expect(Date.now() - t0).toBeLessThan(1_000);
     expect((await screenUnscreened(pressCtx(opened.routeDb, w.accountId))).total).toBe(1_000);
+    await opened.close?.().catch(() => undefined);
+  });
+});
+
+describe.runIf(ON_DEVICE_STORE)("the agree's sweep over a big import on a device-slow store", () => {
+  it("a drain's transaction during the sweep is served between its slices, and every in-window letter moves", async () => {
+    const pace: Pace = { delayMs: 0, inTx: 0, maxInTx: 0, open: false };
+    const exec = faultingExecutor(() => new Error("unused"), { left: 0 }, pace);
+    const opened = await openPhoneStore(exec, 3_000);
+    const w = await organizerOhbox(opened.db, 1_200, 150);
+    const stamp = new Date();
+    const d = opened.db as unknown as { insert: (t: unknown) => { values: (v: unknown) => Promise<unknown> } };
+    await d.insert(auditLog).values({
+      accountId: w.accountId, action: auditAction("organizer.agree_screens_backlog"), payload: { mailboxId: w.mailboxId }, createdAt: stamp,
+    });
+    pace.delayMs = 2;
+    pace.maxInTx = 0;
+    const sweep = agreeSweepRun(opened.db as never, {
+      accountId: w.accountId, mailboxId: w.mailboxId, stamp, held: false, now: new Date(),
+      knowledgeFor: (tx) => makeDrizzleRepo(tx as never), ledgerOf: (tx) => tx as never,
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const drain = await (opened.ingestDb as unknown as TxHandle)
+      .transaction(async (tx) => tx.run(sql`select 1`)).then(() => "served", (e: unknown) => e);
+    const out = await sweep;
+    expect({ drain, total: out.total, next: out.next }).toEqual({ drain: "served", total: 1_200, next: null });
+    expect(pace.maxInTx, "one slice held the store for too many statements").toBeLessThanOrEqual(40);
     await opened.close?.().catch(() => undefined);
   });
 });

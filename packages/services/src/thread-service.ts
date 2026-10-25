@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   drafts, messages, threadNotes, threads, claimIdempotencyKey, recordChange, type Tx,
 } from "@trafficflow/db";
-import { bridgeDb, bridgeTx, type Db, type ServiceContext } from "./context.js";
+import { bridgeDb, bridgeTx, withAccountTx, type Db, type ServiceContext } from "./context.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { materializeThread } from "./dto/materialize.js";
 import type { ThreadDTO } from "./dto/types.js";
@@ -118,7 +118,8 @@ export class ThreadService {
       throw new ServiceError("validation_failed", 400, "subject must be a string");
     }
 
-    const merged = await asTx(ctx).transaction(async (tx) => {
+    // The account row FOR SHARE first, before the thread rows: the key's claim reads it at the end.
+    const merged = await withAccountTx(ctx, async (tx) => {
       // Ownership gate: EVERY id must belong to the caller's account, else 404 — and the
       // gate LOCKS what it reads. Taking the thread rows first puts this transaction on the
       // one lock order every writer of a thread shares (thread rows, then message rows, then

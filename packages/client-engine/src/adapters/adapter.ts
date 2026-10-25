@@ -388,6 +388,12 @@ export interface EngineAdapter {
   withdrawSend(key: string, draftId: string | null): Promise<WithdrawSendAnswer>;
 
   /**
+   * DOES THE SERVER THIS ADAPTER SENDS TO HONOUR A FORWARD'S KEPT FILES (`GET /hello`
+   * `features.forwardParts`)? `null` is no answer. Optional: an adapter without it never offers Remove.
+   */
+  forwardPartsAnnounced?(): Promise<boolean | null>;
+
+  /**
    * `GET /drafts/:id` — THE DRAFT'S TEXT, when the mirror row arrived without it.
    *
    * OPTIONAL for the reason `fetchBodies` is: absence is a real answer. The FixturesAdapter's

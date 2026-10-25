@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateActio
 import type { useTranslations } from "next-intl";
 import {
   isResurfaced,
-  parkSubjectIds,
+  pileSubjectIds,
   ownFaceOfRow,
   rowOpenTarget,
   senderKey,
@@ -319,8 +319,8 @@ export function useShellOpenState({
    * every message.
    */
   const columnHolds = useStableCallback((id: string): boolean => {
-    const has = (rows: ReadonlyArray<{ id?: string; messageId?: string }>): boolean =>
-      rows.some((r) => (r.messageId ?? r.id) === id);
+    const has = (rows: ReadonlyArray<{ id?: string; messageId?: string; memberIds?: readonly string[] }>): boolean =>
+      rows.some((r) => (r.messageId ?? r.id) === id || r.memberIds?.includes(id) === true);
     switch (route.view) {
       case "history": return true;
       case "triage":
@@ -596,9 +596,9 @@ export function useShellOpenState({
   const readSetMemo = useMemo(() => createReadSetMemo(), []);
   const readSetFor = useStableCallback((messageId: string): string[] =>
     readSetMemo(presented, engine.read(), messageId));
-  /** What a Park on a message files (`parkSubjectIds`): its Ohbox row, or a parked one's parked conversation. */
-  const parkSetFor = useStableCallback((messageId: string): string[] =>
-    parkSubjectIds(presented, messageId, engine.openRowHeld()));
+  /** What a pile press on a message acts on (`pileSubjectIds`): its pile row, or (`ohboxRow`) its Ohbox row. */
+  const pileSetFor = useStableCallback((messageId: string, ohboxRow: boolean): string[] =>
+    pileSubjectIds(presented, messageId, engine.openRowHeld(), ohboxRow));
   /**
    * The sheet's message, with read state as the list behind it draws it (`presentsUnread`): a
    * RESURFACED message reads unread whatever its stored flag says (owner ruling 2026-08-31), so the
@@ -1325,7 +1325,7 @@ export function useShellOpenState({
   return {
     forwardTargetFor,
     ownFaceFor,
-    parkSetFor,
+    pileSetFor,
     selectOhboxRow,
     absoluteTime,
     barPanel,

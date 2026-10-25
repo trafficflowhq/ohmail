@@ -19,7 +19,7 @@ import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./out
 // The per-MESSAGE ceiling and the staleness cutoff, imported rather than restated: `resolve`
 // refuses an attempt younger than this window because it may still be running, and a second
 // spelling of that number is a second answer to "is this send over".
-import { SEND_MAX_RECIPIENTS, SEND_STALE_AFTER_MS } from "./send-service.js";
+import { SEND_MAX_RECIPIENTS, SEND_STALE_AFTER_MS, forwardPartsList, readForwardParts } from "./send-service.js";
 
 /**
  * Where a person's answer for a stuck send is recorded — the same `service` the machine's own
@@ -107,6 +107,12 @@ export interface CreateDraftBody {
    * attachments it carries. Exclusive with {@link inReplyToMessageId}: both set is a 400.
    */
   forwardOfMessageId?: string | null;
+  /**
+   * The original's attachment ids the person kept, only beside {@link forwardOfMessageId} (a 400
+   * otherwise); stored sorted and deduped. Absent or `null` on create: every part goes. On a patch,
+   * absent leaves the row's list, `null` clears it; a patch that moves the forward clears it too.
+   */
+  forwardParts?: string[] | null;
   subject?: string;
   /**
    * The text/plain body.
@@ -263,6 +269,7 @@ export class DraftsService {
     const rationale = body.rationale ?? null;
     const forwardOf = body.forwardOfMessageId ?? null;
     this.refuseReplyAndForward(body.inReplyToMessageId ?? null, forwardOf);
+    const forwardParts = body.forwardParts == null ? null : readForwardParts(body.forwardParts, forwardOf)!.sort();
     const now = ctx.now();
 
     /* THROUGH THE SEAM, WITH THE MAILBOX. `validMailbox` above ran before this transaction — a
@@ -290,7 +297,7 @@ export class DraftsService {
         mailboxId,
         threadId: body.threadId ?? null,
         inReplyToMessageId: body.inReplyToMessageId ?? null,
-        forwardOfMessageId: forwardOf,
+        forwardOfMessageId: forwardOf, forwardParts,
         subject, body: text, html, to, cc, bcc, rationale,
         status: "draft",
         createdAt: now, updatedAt: now,
@@ -383,6 +390,8 @@ export class DraftsService {
     if (patch.inReplyToMessageId !== undefined) set.inReplyToMessageId = patch.inReplyToMessageId ?? null;
     if (patch.forwardOfMessageId !== undefined) set.forwardOfMessageId = patch.forwardOfMessageId ?? null;
     this.refuseReplyAndForward(patch.inReplyToMessageId ?? null, patch.forwardOfMessageId ?? null);
+    const keptPatch = patch.forwardParts === undefined ? undefined
+      : patch.forwardParts === null ? null : forwardPartsList(patch.forwardParts).sort();
 
     const seq = await asTx(ctx).transaction(async (tx) => {
       // A reply target moves FIRST, before the draft row is written: the FK check on the new
@@ -411,12 +420,22 @@ export class DraftsService {
        */
       const [locked] = await dialect(ctx.db).forUpdate(tx.select({
         id: drafts.id, inReplyToMessageId: drafts.inReplyToMessageId,
-        forwardOfMessageId: drafts.forwardOfMessageId, sendAt: drafts.sendAt, mailboxId: drafts.mailboxId,
-        status: drafts.status, sendKey: drafts.sendKey,
+        forwardOfMessageId: drafts.forwardOfMessageId, forwardParts: drafts.forwardParts,
+        sendAt: drafts.sendAt, mailboxId: drafts.mailboxId, status: drafts.status, sendKey: drafts.sendKey,
         subject: drafts.subject, body: drafts.body, html: drafts.html, to: drafts.to, cc: drafts.cc, bcc: drafts.bcc,
       }).from(drafts)
         .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
+      /* THE KEPT FILES FOLLOW THE FORWARD THE ROW WILL HOLD: a list needs one, and a patch that moves
+         the forward to another original (or none) drops the old list unless it names a new one. */
+      if (locked) {
+        const forward = patch.forwardOfMessageId !== undefined ? patch.forwardOfMessageId ?? null : locked.forwardOfMessageId;
+        if (keptPatch && forward === null) {
+          throw new ServiceError("validation_failed", 400, "forwardParts needs forwardOf");
+        }
+        if (keptPatch !== undefined) set.forwardParts = keptPatch;
+        else if (forward !== locked.forwardOfMessageId) set.forwardParts = null;
+      }
       /* THE VERSION THIS EDIT WAS MADE ON. A draft moved off it (another window or device saved
          since) refuses the edit, writing nothing, so neither side's words are lost; one already
          holding exactly these words answers as written. Absent is unconditional, as before. */
@@ -481,6 +500,7 @@ export class DraftsService {
         const [row] = await tx.select({
           status: drafts.status, sendKey: drafts.sendKey, mailboxId: drafts.mailboxId,
           inReplyToMessageId: drafts.inReplyToMessageId, forwardOfMessageId: drafts.forwardOfMessageId,
+          forwardParts: drafts.forwardParts,
           subject: drafts.subject, body: drafts.body, html: drafts.html, to: drafts.to, cc: drafts.cc, bcc: drafts.bcc,
         }).from(drafts)
           .where(and(eq(drafts.id, id), eq(drafts.accountId, ctx.accountId))).limit(1);

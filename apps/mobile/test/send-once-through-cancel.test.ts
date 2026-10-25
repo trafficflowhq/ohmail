@@ -631,6 +631,11 @@ describe("the intent, and the decisions the composer takes", () => {
     expect(sendWireDiffers({ ...waiting, attachments: [file] } as EngineMutation, { ...press, attachments: [{ ...file }] } as EngineMutation)).toBe(false);
     expect(sendWireDiffers(waiting, { ...press, sendAt: "2030-01-02T09:00:00Z" } as EngineMutation)).toBe(true);
     expect(sendWireDiffers(waiting, { ...press, body: "Other words." } as EngineMutation)).toBe(true);
+    // A forward that keeps other files of its original is another message; the order is not.
+    const fwd = { kind: "mail_send", inReplyTo: null, forwardOf: "m-1", body: "", forwardParts: ["a", "b"] } as EngineMutation;
+    expect(sendWireDiffers(fwd, { ...fwd, forwardParts: ["a"] } as EngineMutation)).toBe(true);
+    expect(sendWireDiffers(fwd, { ...fwd, forwardParts: undefined } as EngineMutation)).toBe(true);
+    expect(sendWireDiffers(fwd, { ...fwd, forwardParts: ["b", "a"] } as EngineMutation)).toBe(false);
   });
 
   it("a close keeps a queued send, only Cancel send withdraws it, and every other close is just a close", () => {

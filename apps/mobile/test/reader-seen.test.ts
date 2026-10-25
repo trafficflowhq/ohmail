@@ -161,6 +161,20 @@ describe("a message turns read once its top has been in view for the dwell", () 
     flush();
     expect(heres.at(-1), "at the end the last").toBe("m2");
   });
+
+  it("a panel's top is named only once it and its group have reported: a remount aims at no made-up top", () => {
+    const c = core();
+    c.viewport(800);
+    c.content(1300);
+    c.panel("m1", "below", 0, 400);
+    expect({ open: c.topOf("open"), m1: c.topOf("m1"), layout: c.layout("open") }).toEqual({ open: null, m1: null, layout: [] });
+    c.offset("padded", 0);
+    c.offset("opened", 18);
+    expect({ open: c.topOf("open"), m1: c.topOf("m1") }, "its group not reported yet").toEqual({ open: 18, m1: null });
+    c.offset("below", 400);
+    expect({ open: c.topOf("open"), m1: c.topOf("m1") }).toEqual({ open: 18, m1: 400 });
+    expect(c.layout("open").map((p) => p.id)).toEqual(["open", "m1"]);
+  });
 });
 
 /**

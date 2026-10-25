@@ -118,6 +118,8 @@ let ownName: string | null = null;
 let bodyState: "full" | "snippet" | "loading" | "failed" | "withheld" | null = null;
 /** Mutation point: WHICH policy withheld the body — the marker the per-reason copy switches on. */
 let bodyWithheld: "storage_cap" | "junk_filed" | "expunged" | "too_large" | null = null;
+/** Mutation point: the status `GET /mailboxes` gives the messages' mailbox (`mb`) — the chrome's `mailboxStatusOf`. */
+let mailboxStatus: string | null = null;
 /**
  * Mutation point: the html part the chrome reports for a hydrated body. `null` — the default —
  * is a plain-text mail, which is what every assertion written before the siblings were
@@ -245,6 +247,7 @@ async function mountPane(open: Record<string, unknown>, prepare?: (host: HTMLDiv
             }),
             hydrateBody: (id: string) => { retried.push(id); },
             hydrateThread: (ids: string[]) => { threadAsks.push([...ids]); },
+            mailboxStatusOf: (id: string) => (id === "mb" ? mailboxStatus : null),
             // The reply and subject-rule seams — the same optional chrome methods the shell wires to `openReply`,
             // the forward model, and the subject-rule sheet. Present (unless `headerVerbs` says
             // this mount is a shell with no reply machine) so the header's ⋯ menu and the
@@ -305,6 +308,7 @@ beforeEach(() => {
   ownName = null;
   bodyState = null;
   bodyWithheld = null;
+  mailboxStatus = null;
   bodyHtml = null;
   retried = [];
   threadAsks = [];
@@ -1326,7 +1330,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     expect([...host!.querySelectorAll("button")].find((x) => x.textContent?.includes("Retry"))).toBeUndefined();
   });
 
-  it("the storage-cap marker keeps the storage sentence, and promises no text back", async () => {
+  it("the storage-cap marker keeps the storage sentence, and says the text comes back once there is room", async () => {
     bodyState = "withheld";
     bodyWithheld = "storage_cap";
     conversation = [A, B, C];
@@ -1335,8 +1339,24 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     expect(notes).toHaveLength(2);
     for (const n of notes) {
       expect(n.textContent).toContain("stopped storing the text of older letters");
-      expect(n.textContent).toContain("it does not bring this text back");
+      expect(n.textContent).toContain("When there is room again, ohmail fetches this text back from your mail server.");
     }
+  });
+
+  /* The refill runs only for mailboxes the worker still visits: a removed one is not. */
+  it("a storage-cap letter of a mailbox ohmail no longer reads says its text does not come back", async () => {
+    bodyState = "withheld";
+    bodyWithheld = "storage_cap";
+    mailboxStatus = "disabled";
+    conversation = [A, B, C];
+    await mountPane(B);
+    const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
+    expect(notes).toHaveLength(2);
+    for (const n of notes) {
+      expect(n.textContent).toContain("stopped storing the text of older letters");
+      expect(n.textContent).toContain("ohmail no longer reads this mailbox, so this text does not come back here.");
+    }
+    expect(text()).not.toContain("room again");
   });
 
   it("a LIVE sensitive sibling renders its body like any other sibling", async () => {

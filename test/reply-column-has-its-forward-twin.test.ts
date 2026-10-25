@@ -104,7 +104,7 @@ describe("the reply column and its forward twin", () => {
   it("CONTROL: a real twin removed from its statement is refused", () => {
     const f = files.find((x) => x.file === "packages/db/src/mailbox-erasure.ts")!;
     expect(unpairedSites(f.file, f.raw), "the control's subject is not paired to begin with").toEqual([]);
-    const cut = f.raw.replace(/\) \+ n\(await tx\.update\(drafts\)\n\s*\/\/[^\n]*\n\s*\.set\(\{ forwardOfMessageId: null \}\)[\s\S]*?\)\)\);/, "));");
+    const cut = f.raw.replace(/\) \+ n\(await tx\.update\(drafts\)\n\s*\/\/[^\n]*\n\s*\.set\(\{ forwardOfMessageId: null(?:, forwardParts: null)? \}\)[\s\S]*?\)\)\);/, "));");
     expect(cut, "the control could not remove the twin").not.toBe(f.raw);
     expect(unpairedSites(f.file, cut).length, "a statement that lost its forward twin was admitted").toBeGreaterThan(0);
   });

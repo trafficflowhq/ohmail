@@ -43,6 +43,8 @@ const SEED = {
   ohbox: ["o-new", "o-thread-a", "o-thread-b"],
   // Triaged into Answer Later below — presented on the PILE surface, not the ohbox list.
   piled: ["o-seen"],
+  // A two-message conversation parked whole: one pile row carrying both ids.
+  parked: ["p-thread-a", "p-thread-b"],
   reads: ["rd-1", "rd-2"],
   // Three receipts across two days, so the day-grouping is exercised.
   receipts: ["rc-1", "rc-2", "rc-3"],
@@ -83,6 +85,11 @@ beforeAll(async () => {
   };
   thread("o-thread-a", at("16"));
   thread("o-thread-b", at("15"));
+  for (const [id, d] of [["p-thread-a", "14"], ["p-thread-b", "13"]] as const) {
+    const m = dto(id, { subject: id, from: sender("alice"), unread: false, date: at(d) });
+    m.threadId = "th-2";
+    fake.addMessage(m);
+  }
 
   fake.addMessage(dto("rd-1", { subject: "rd-1", folder: "ohmail/News", from: sender("issuer"), date: at("18") }));
   fake.addMessage(dto("rd-2", { subject: "rd-2", folder: "ohmail/News", from: sender("issuer"), unread: false, date: at("14") }));
@@ -112,6 +119,7 @@ beforeAll(async () => {
   // surface renders a real triage item whose identity the census can demand back.
   const actions = liveActions({ engine, toast: () => undefined });
   await actions.setPile("o-seen", "replyLater");
+  for (const id of SEED.parked) await actions.setPile(id, "setAside");
   await engine.syncOnce();
 });
 
@@ -146,7 +154,7 @@ function fullManifest(): string[] {
   const heldIds = [...screener.waiting, ...screener.screened, ...screener.spam].flatMap((r) =>
     r.held.map((h) => h.id),
   );
-  const pileIds = piles.flatMap((p) => p.items.map((i) => i.messageId ?? i.id));
+  const pileIds = piles.flatMap((p) => p.items.flatMap((i) => i.memberIds ?? [i.messageId ?? i.id]));
   return [...listIds, ...threadIds, ...heldIds, ...pileIds, ...historyIds];
 }
 
@@ -214,7 +222,9 @@ describe("per-surface manifests are complete", () => {
     const piles = livePiles(pres, view);
     const reply = piles.find((p) => p.kind === "replyLater");
     expect(reply?.items.map((i) => i.messageId)).toEqual(["o-seen"]);
-    expect(piles.reduce((n, p) => n + p.items.length, 0)).toBe(1);
+    const parked = piles.find((p) => p.kind === "setAside");
+    expect(parked?.items.map((i) => i.memberIds), "the parked conversation is one row with both").toEqual([["p-thread-a", "p-thread-b"]]);
+    expect(piles.reduce((n, p) => n + p.items.length, 0)).toBe(2);
   });
 });
 

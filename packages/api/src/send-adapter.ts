@@ -49,7 +49,8 @@ async function storedSentFolder(deps: ApiDeps, mailboxId: string): Promise<strin
 export async function makeSendAdapter(
   deps: ApiDeps,
   mailboxId: string,
-  opts: { timeouts?: Partial<NetTimeouts> } = {},
+  /* `proveKept`: the local engines' door; a kept connection must answer a NOOP before a press uses it. */
+  opts: { timeouts?: Partial<NetTimeouts>; proveKept?: boolean } = {},
   /* FOURTH, not third, so every existing caller keeps the position it passes `opts` in. */
   newAdapter: (cfg: ConstructorParameters<typeof ImapAdapter>[0]) => ImapAdapter =
     (cfg) => new ImapAdapter(cfg),
@@ -204,8 +205,9 @@ export async function makeSendAdapter(
       // the hand-written doubles have no `isLive`, so they are handed back uncached and dialled
       // fresh every time, exactly as before.
       ...(typeof adapter.isLive === "function" ? { isLive: (): boolean => adapter.isLive() } : {}),
+      ...(typeof adapter.noop === "function" ? { noop: (): Promise<void> => adapter.noop() } : {}),
     };
-  });
+  }, { prove: opts.proveKept === true });
 }
 
 function domainOf(address: string | undefined): string | undefined {

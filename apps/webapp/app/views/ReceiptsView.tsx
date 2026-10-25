@@ -46,6 +46,7 @@ export function ReceiptsView({
   newCount,
   tags,
   threadParticipants,
+  mailboxStatusOf,
   absoluteTime,
   onToggleTime,
   now,
@@ -103,6 +104,8 @@ export function ReceiptsView({
    * always did. Optional, so a view mounted without it (the demo, most tests) is unchanged.
    */
   threadParticipants?: (threadId: string) => { initials: string; hue: number }[];
+  /** A mailbox's status from the shell's `GET /mailboxes` facts, for a card's withheld sentence; absent is null. */
+  mailboxStatusOf?: (mailboxId: string) => string | null;
   /**
    * THE DATE STAMPS — which form they are in, and the press that flips them.
    *
@@ -492,7 +495,7 @@ export function ReceiptsView({
         loadingLabel={loadingLabel}
         failedLabel={failedLabel}
         /* Per MARKER (`withheldCopyKey`): which policy emptied the body decides the sentence. */
-        withheldKey={withheldCopyKey(body.withheld, m.folder)}
+        withheldKey={withheldCopyKey(body.withheld, m.folder, mailboxStatusOf?.(m.mailboxId))}
         onReask={reaskBody}
         onSelect={onCur}
         onToggle={onToggle}

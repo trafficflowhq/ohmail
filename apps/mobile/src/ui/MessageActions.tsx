@@ -85,6 +85,7 @@ import { useNetworkNow } from "../net/network-door";
 import { queuedCaptionKey } from "../engine/send-waits";
 import {
   admitPicked,
+  forwardCaps,
   shrinkPicked,
   phoneAttachCap,
   phoneSendNeedsContent,
@@ -96,6 +97,8 @@ import {
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
 import { letterSession, openLetterKeeper, type LetterKeeper } from "../compose/letter-keeper";
 import { KEPT_FILES_MAX_BYTES } from "../compose/letter-store";
+import { forwardFilesPlan } from "../compose/forward-files";
+import { sayRefusal, type Refusal } from "../refusal";
 import { usePrefs } from "../state/store";
 import { cancelAct, cancelSendOffered, cancelSendPress, keptSay } from "./send-cancel";
 import { autosaveKeep, keepAct, unmountKeep, worthKeeping } from "./compose-keep";
@@ -1332,6 +1335,34 @@ export function ComposeSheet({
     });
   });
   const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body };
+  /* THE ORIGINAL'S FILES, LISTED (`compose/forward-files.ts`): held while the sheet stands, removable
+     where the server sends only the parts the forward names, and weighed apart from the phone's own. */
+  /* The ids kept once one was removed (`Letter.forwardKept`), so a reopened or restored forward keeps its choice;
+     else the row's, so a draft trimmed on another device opens listing only the kept files. */
+  const [forwardKept, setForwardKept] = useState<readonly string[] | null>(
+    () => keeper?.current().forwardKept ?? draft?.forwardParts ?? null,
+  );
+  /** The kept files every save of a forward writes onto its row; never a clearing null. */
+  const keptOnRow = forward && forwardKept !== null ? { forwardParts: forwardKept } : {};
+  const [forwardNote, setForwardNote] = useState<Refusal | null>(null);
+  useEffect(() => {
+    if (!forward || m === null) return undefined;
+    w.actions.holdFiles([m.id]);
+    return () => w.actions.releaseFiles([m.id]);
+    // The original is the sheet's for its life.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const forwardPlan = forward && m !== null ? forwardFilesPlan({
+    list: w.actions.forwardFiles(m.id), supported: w.actions.forwardPartsSupported(), kept: forwardKept,
+    addedBytes: attachments.reduce((n, a) => n + a.sizeBytes, 0), caps: forwardCaps(w.mailboxes.rows, sendFrom ?? ""),
+  }) : null;
+  const removePart = (id: string) => {
+    if (phase !== "idle" || forwardPlan === null) return;
+    const next = (forwardKept ?? forwardPlan.rows.map((r) => r.id)).filter((k) => k !== id);
+    setForwardKept(next);
+    setForwardNote(null);
+    keeper?.forwardKept(next);
+  };
   useEffect(() => {
     keeper?.edit({ ...letterWords, envelope: keeper.current().envelope });
     // The words are the change; the keeper reads the rest.
@@ -1416,7 +1447,7 @@ export function ComposeSheet({
        A forward draft is saved as a forward of its original, never as a new mail. */
     void autosaveKeep(saved, onScreen, () => w.actions.draftKeep({
       mode: forward ? "forward" : "new", messageId: forward ? m!.id : null,
-      mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true,
+      mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
       rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; },
     })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot); }).catch(() => undefined).finally(() => {
       if (savingFor.current === snapshot) savingFor.current = null;
@@ -1535,7 +1566,9 @@ export function ComposeSheet({
     setAgainSaid(outcome);
   };
   const press = (act: typeof pressAct, andDone = false) => {
-    if (act === "send") void send(null, andDone);
+    /* A FORWARD WHOSE FILES ARE STILL READ, OR TOO LARGE, ANSWERS IN WORDS rather than doing nothing. */
+    if (act === "send" && forwardPlan?.refusal) setForwardNote(forwardPlan.refusal);
+    else if (act === "send") void send(null, andDone);
     else if (act === "needContent") setNeedNote(true);
     else if (act === "again") setAgainNote(true);
   };
@@ -1658,6 +1691,7 @@ export function ComposeSheet({
         const kept = await w.actions.draftKeep({
           mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
           ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, ...(draft !== undefined ? { quiet: true } : {}),
+          ...keptOnRow,
           rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
         });
         keeping.current = false;
@@ -1715,7 +1749,7 @@ export function ComposeSheet({
     /* Answered after the sheet is gone; a keep that never answers is the next launch's to settle. */
     void w.actions.draftKeep({
       mode, messageId: m?.id ?? null, mailboxId, to: addressed ? keptRecipients(to) : [],
-      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true,
+      ...(fresh ? copiesToKeep(copies) : {}), subject, body, files, dropped, draftId, quiet: true, ...keptOnRow,
       rebind: setDraftId, row: (r) => keeper?.keepAnswered(r),
     });
     keeper?.release();
@@ -1738,7 +1772,8 @@ export function ComposeSheet({
     const toRow = async (draftId: string | null) => fresh
       ? await w.actions.sendNew(sendFrom, recipients ?? [], subject, body, sigText, sendAt, files, draftId, sendCopies ?? undefined)
       : forward
-        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId)
+        ? await w.actions.sendForward(m!.id, recipients ?? [], body, sigText, files, andDone, forwardConfirmed, draftId,
+          forwardPlan?.wire !== undefined ? { forwardParts: forwardPlan.wire } : {})
         : await w.actions.sendReply(m!.id, body, mode === "replyAll", sigText, sendAt, files, andDone, draftId);
     const press = () => toRow(asNew && draftId !== null && w.actions.draftLeft(draftId) !== null ? null : draftId);
     /* MARKED BEFORE THE DISPATCH: a hard stop from here on leaves the next launch a sent letter, which
@@ -1813,6 +1848,11 @@ export function ComposeSheet({
     needNote && needsContent ? (
       <Txt key="needContent" variant="caption" tone="ink2" accessibilityRole="alert">
         {Copy.composeNeedContent}
+      </Txt>
+    ) : null,
+    forwardNote !== null && forwardPlan?.refusal ? (
+      <Txt key="forwardFiles" variant="caption" tone="ink2" accessibilityRole="alert">
+        {sayRefusal(forwardPlan.refusal)}
       </Txt>
     ) : null,
     failNote !== null && phase === "idle" ? (
@@ -2088,6 +2128,48 @@ export function ComposeSheet({
               fields once a send is dispatched. ── */}
           {later === null ? (
             <>
+              {/* THE ORIGINAL'S FILES go with a forward: listed, each removable where the server
+                  sends only the parts named (`compose/forward-files.ts`). */}
+              {forwardPlan !== null && forwardPlan.rows.length > 0 ? (
+                <View style={{ gap: 6 }}>
+                  <Txt variant="caption" tone="ink3">
+                    {Copy.forwardFilesHead}
+                  </Txt>
+                  {forwardPlan.rows.filter((part) => forwardPlan.kept.includes(part.id) || !part.removable).map((part) => (
+                    <View
+                      key={part.id}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        backgroundColor: t.c.tint2,
+                        borderRadius: t.radius.card,
+                        paddingHorizontal: 14,
+                        paddingVertical: 8,
+                      }}
+                    >
+                      <Icon name="clip" size={13} color={t.c.ink3} />
+                      <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flex: 1 }}>
+                        {part.filename}
+                      </Txt>
+                      <Txt variant="caption" tone="ink3">
+                        {sizeLabel(part.sizeBytes)}
+                      </Txt>
+                      {part.removable ? (
+                        <Tap
+                          onPress={() => removePart(part.id)}
+                          accessibilityRole="button"
+                          accessibilityState={{ disabled: phase !== "idle" }}
+                          accessibilityLabel={Copy.attachRemove(part.filename)}
+                          style={{ padding: 8, marginRight: -8 }}
+                        >
+                          <Icon name="x" size={13} color={t.c.ink3} />
+                        </Tap>
+                      ) : null}
+                    </View>
+                  ))}
+                </View>
+              ) : null}
               {attachments.map((file) => (
                 <View
                   key={`${file.filename}:${file.sizeBytes}`}
@@ -2144,14 +2226,26 @@ export function ComposeSheet({
                     onPress={() => void pick("photos")}
                   />
                 </View>
-                <Txt
-                  variant="caption"
-                  tone="ink3"
-                  style={attachHintStyle(attachHintFits(attachRow.row, [attachRow.files, attachRow.photos], attachRow.hint))}
-                  onLayout={(e) => measureAttach("hint", e.nativeEvent.layout.width)}
-                >
-                  {Copy.attachCap(sizeLabel(attachCap))}
-                </Txt>
+                {forwardPlan === null ? (
+                  <Txt
+                    variant="caption"
+                    tone="ink3"
+                    style={attachHintStyle(attachHintFits(attachRow.row, [attachRow.files, attachRow.photos], attachRow.hint))}
+                    onLayout={(e) => measureAttach("hint", e.nativeEvent.layout.width)}
+                  >
+                    {Copy.attachCap(sizeLabel(attachCap))}
+                  </Txt>
+                ) : (
+                  /* A forward never says "total": its own files are weighed apart from these. */
+                  <Txt
+                    variant="caption"
+                    tone="ink3"
+                    style={attachHintStyle(attachHintFits(attachRow.row, [attachRow.files, attachRow.photos], attachRow.hint))}
+                    onLayout={(e) => measureAttach("hint", e.nativeEvent.layout.width)}
+                  >
+                    {sayRefusal(forwardPlan.line)}
+                  </Txt>
+                )}
               </View>
               {attachNotes.map((note) => (
                 <Txt key={note.kind} variant="caption" tone="ink2" accessibilityRole="alert">

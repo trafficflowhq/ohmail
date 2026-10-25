@@ -609,13 +609,20 @@ export interface MessageBodyRecord {
   /**
    * The server's word for why a `ready` record's text is empty: `"storage_cap"` means ingest
    * declined to store the body (the mail is untouched in the mailbox). Answered-terminal: never
-   * `failed` (Retry cannot un-withhold), never re-asked. Tri-state like `html`: `"storage_cap"`
+   * `failed` (Retry cannot un-withhold), not re-asked until its message changes (the store sheds
+   * it then: the server may have given the text back). Tri-state like `html`: `"storage_cap"`
    * = withheld; `null` = answered by a withheld-aware build, ordinarily stored; `undefined` =
    * no aware build ever answered — a pre-slice tab could persist `{state:"ready", text:""}` for
    * a withheld body, a permanent lie nothing could heal. Both write sites normalize
    * (`fetchBodyInto`, `fetchBodiesInto`); the WIRE type stays two-state.
    */
   withheld?: WithheldMarker | null;
+  /**
+   * Set on a `storage_cap` record by a build that sheds it on its message's change, the signal the
+   * storage refill gives. A `storage_cap` record without it was written by an older build, which kept
+   * it through such a change, so it is asked once more.
+   */
+  capRefill?: true;
   /**
    * The endpoint's html part, or `null` — none, sensitive mail, or a record that is not
    * `ready`. Held off the message row so a `/sync` delta cannot erase it. Optional because of
@@ -754,6 +761,8 @@ export interface EngineDraft {
   inReplyToMessageId: string | null;
   /** The message this draft forwards. Absent from an older server, read as none. */
   forwardOfMessageId?: string | null;
+  /** The original's files the person kept, beside a forward; `null` or absent: every file. */
+  forwardParts?: string[] | null;
   subject: string;
   /**
    * The draft's plain text, or `null` when THIS MIRROR DOES NOT HOLD IT.
@@ -1495,6 +1504,8 @@ export type EngineMutation =
       inReplyToMessageId?: string | null;
       /** The message this draft forwards. Absent leaves the row's own; `null` clears it. */
       forwardOfMessageId?: string | null;
+      /** The original's files the person kept, beside a forward. Absent leaves the row's list. */
+      forwardParts?: string[] | null;
       subject: string;
       /**
        * The plain rendering, always. It is what the Drafts list shows and what decides there is

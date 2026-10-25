@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { IMAP_READ_DEADLINE_MS } from "../src/adapters/imap-bounds.js";
 import type { OutboundMessage } from "../src/send.js";
-import { SendConnections, type KeepTimers, type WarmSendAdapter } from "../src/send-connections.js";
+import { KEPT_PROVE_MS, SendConnections, type KeepTimers, type WarmSendAdapter } from "../src/send-connections.js";
 
 /**
  * THE SEND DOOR REUSES A LIVE CONNECTION AND DIALS ONLY WHEN NONE EXISTS — the keeper, over
@@ -11,7 +11,7 @@ import { SendConnections, type KeepTimers, type WarmSendAdapter } from "../src/s
  * THE MUTATION THAT MAKES THIS RED: in `SendConnections.open`, the reuse branch
  * `if (entry.real.isLive()) return this.lease(entry);` — drop it (always dial) and (1), (4) and
  * (5) go red on the dial count; make it `if (true)` and (3) goes red because a dead connection
- * is handed out. Watched fail and restored.
+ * is handed out. Watched fail and restored. (14) to (16) are red without the `prove` check.
  */
 
 const MSG: OutboundMessage = { from: "a@x.test", to: "b@x.test", subject: "s", text: "t" };
@@ -29,10 +29,11 @@ function fakeTimers(): KeepTimers & { fire(): number; armed: number[] } {
   };
 }
 
-/** A connected double: live until `die()`, counting sends and closes. */
+/** A connected double: live until `die()`, counting sends and closes; `silent` NOOPs never answer. */
 function connection(name: string) {
-  const state = { name, live: true, sends: 0, closes: 0, forced: 0 };
+  const state = { name, live: true, sends: 0, closes: 0, forced: 0, noops: 0, silent: false };
   const real: WarmSendAdapter = {
+    noop() { state.noops += 1; return state.silent ? new Promise<void>(() => undefined) : Promise.resolve(); },
     async send() { state.sends += 1; return { providerMessageId: `<${name}-${state.sends}@x>` }; },
     async messageInSent() { return false; },
     async close() { state.closes += 1; state.live = false; },
@@ -243,5 +244,62 @@ describe("SendConnections — one connection across consecutive presses", () => 
     expect(lease.isLive?.()).toBe(true);
     await lease.close();
     expect(lease.isLive?.(), "a released lease is not a connection to probe on").toBe(false);
+  });
+
+  it("(14) with the check on, a kept connection whose NOOP never answers is destroyed at the bound and the press dials", async () => {
+    const timers = fakeTimers();
+    const keep = new SendConnections({ timers });
+    const d = dialler();
+    await (await keep.open("mb-1", d.dial, { prove: true })).close();
+    d.made[0]!.state.silent = true;             // the server froze; imapflow's `usable` still reads true
+    const opening = keep.open("mb-1", d.dial, { prove: true });
+    await new Promise((r) => { setImmediate(r); });
+    expect(timers.armed.at(-1)).toBe(KEPT_PROVE_MS);
+    timers.fire();
+    const b = await opening;
+    await b.send(MSG);
+    expect(d.dials()).toBe(2);
+    expect(d.made[0]!.state).toMatchObject({ noops: 1, sends: 0, forced: 1 });
+    expect(d.made[1]!.state.sends).toBe(1);
+  });
+
+  it("(15) with the check on, a connection that answers costs one NOOP and no second dial", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const d = dialler();
+    await (await keep.open("mb-1", d.dial, { prove: true })).close();
+    expect(d.made[0]!.state.noops, "a fresh dial is not checked").toBe(0);
+    const b = await keep.open("mb-1", d.dial, { prove: true });
+    await b.send(MSG);
+    expect(d.dials()).toBe(1);
+    expect(d.made[0]!.state).toMatchObject({ noops: 1, sends: 1, forced: 0 });
+  });
+
+  it("(16) a silent connection another press holds is forgotten but left to it; its release closes it", async () => {
+    const timers = fakeTimers();
+    const keep = new SendConnections({ timers });
+    const d = dialler();
+    const holder = await keep.open("mb-1", d.dial, { prove: true });
+    d.made[0]!.state.silent = true;
+    const opening = keep.open("mb-1", d.dial, { prove: true });
+    await new Promise((r) => { setImmediate(r); });
+    timers.fire();
+    const b = await opening;
+    expect(d.dials()).toBe(2);
+    expect(d.made[0]!.state.forced, "destroyed under the press holding it").toBe(0);
+    await holder.close();
+    expect(d.made[0]!.state.closes).toBe(1);
+    await b.close();
+    expect(d.made[1]!.state.closes, "the new connection is the one kept").toBe(0);
+    expect(keep.size()).toBe(1);
+  });
+
+  it("(17) without the check, a kept connection is reused with no NOOP (every other door)", async () => {
+    const keep = new SendConnections({ timers: fakeTimers() });
+    const d = dialler();
+    await (await keep.open("mb-1", d.dial)).close();
+    d.made[0]!.state.silent = true;
+    await (await keep.open("mb-1", d.dial)).close();
+    expect(d.dials()).toBe(1);
+    expect(d.made[0]!.state.noops).toBe(0);
   });
 });

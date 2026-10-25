@@ -80,6 +80,11 @@ export interface ComposeFields {
    */
   forwardOf?: string | null;
   /**
+   * The original's files kept once one was removed, beside {@link forwardOf}; `null` or absent: nothing
+   * removed, every file goes. Persisted in the scratch buffer (ids only) and on the row (`draft_save`).
+   */
+  forwardParts?: string[] | null;
+  /**
    * THE SIGNATURE BLOCK'S STATE for this message — follows the From selector until the user
    * removes or edits it, and then their choice wins (`signature.ts` owns the model and the
    * serialization). Absent means `following`, which is what every buffer written before the
@@ -452,6 +457,11 @@ export function readComposeDraft(): ComposeFields {
       // `fromMailboxId`: a buffer written before this field existed reads back as a plain compose.
       forwardOf: typeof parsed.forwardOf === "string" && parsed.forwardOf.length > 0
         ? parsed.forwardOf
+        : null,
+      // The kept files: a list of at most 100 ids, else nothing removed.
+      forwardParts: Array.isArray(parsed.forwardParts) && parsed.forwardParts.length <= 100
+        && parsed.forwardParts.every((id) => typeof id === "string")
+        ? [...parsed.forwardParts]
         : null,
       // Guarded field-wise like its neighbours: only the three shapes the model names restore,
       // and anything else — a buffer from before the field, or a value some other version wrote
@@ -944,6 +954,8 @@ export function composePlan(
       // when there is nothing to forward, so a plain compose builds the identical request it always
       // did and the http adapter's `if (m.forwardOf)` sees no key at all.
       ...(fields.forwardOf ? { forwardOf: fields.forwardOf } : {}),
+      // The kept files ride only a forward that has a list: absent, the server sends every one.
+      ...(fields.forwardOf && fields.forwardParts ? { forwardParts: [...fields.forwardParts] } : {}),
       ...(mailboxId ? { mailboxId } : {}),
       ...(draftId ? { draftId } : {}),
       threadId: null,

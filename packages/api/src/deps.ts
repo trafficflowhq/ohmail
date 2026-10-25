@@ -325,6 +325,8 @@ export interface ApiServices {
   sendCopyOutlivesAnswer?: boolean;
   /** The upload ceiling of a host that keeps running (`SendDeps.submissionCeilingMs`); absent elsewhere. */
   sendSubmissionCeilingMs?: number;
+  /** The local engine leaving: a press whose transport opens too late is held (`SendDeps.holdOffer`). */
+  sendHoldOffer?: () => boolean;
   /**
    * See {@link AttachmentStagingPort}. Present on a host with object storage; ABSENT on a local
    * install, where its absence is what keeps the standalone door from staging to Cloud storage.

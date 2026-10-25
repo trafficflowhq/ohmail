@@ -241,9 +241,14 @@ export const StreamShell = forwardRef<
   const pileIndexOfRef = useRef(pileIndexOf);
   pileIndexOfRef.current = pileIndexOf;
 
+  /** A far landing in flight: what it passes or flashes is not displayed, so nothing is tracked or marked. */
+  const landingRef = useRef(false);
+  const seenUnlessLanding = useCallback((id: string) => {
+    if (!landingRef.current) onSeenRef.current(id);
+  }, []);
   const observer = useSeenOnScroll({
     root: divRef,
-    onSeen,
+    onSeen: seenUnlessLanding,
     rootMargin: "0px 0px -62% 0px",
   });
   // Read inside the []-deps scroll effect, so it must reach the LATEST observer by ref.
@@ -256,17 +261,20 @@ export const StreamShell = forwardRef<
    * `measure()` walks the mounted cards and records which are inside the viewport right now,
    * plus the newest card ever displayed (`newestSeenId` — kept by comparing indices in the
    * CURRENT card order, so arrivals shifting positions cannot corrupt it, and a tracked card
-   * that leaves the pile resets it to what is actually on screen). It runs on mount, on every
-   * `contentKey` pass and inside the scroll handler's rAF — never at unmount, when the DOM is
-   * already detached and every rect reads zero.
+   * that leaves the pile resets it to what is actually on screen; a move that skips cards starts a
+   * new run, see `shownRef`). It runs after every render
+   * and inside the scroll handler's rAF, but not while a far landing is in flight, and never at
+   * unmount, when the DOM is already detached and every rect reads zero.
    */
   const rangeRef = useRef<{ newestSeenId: string | null; bottomVisibleId: string | null }>({
     newestSeenId: null,
     bottomVisibleId: null,
   });
+  /** The screen the last measure saw, by id: a move that neither overlaps nor touches it skipped cards. */
+  const shownRef = useRef<{ top: string; bottom: string } | null>(null);
   const measure = () => {
     const el = divRef.current;
-    if (!el) return;
+    if (!el || landingRef.current) return;
     const cards = Array.from(el.querySelectorAll<HTMLElement>(".scast[data-sid]"));
     if (cards.length === 0) return;
     const rootRect = cssRect(el);
@@ -280,10 +288,17 @@ export const StreamShell = forwardRef<
       bottomVisible = c.dataset.sid!;
     }
     if (topVisible === null) return;
-    const kept = rangeRef.current.newestSeenId;
+    const last = shownRef.current;
+    shownRef.current = { top: topVisible, bottom: bottomVisible! };
+    let kept = rangeRef.current.newestSeenId;
+    const pIdx = pileIndexOfRef.current;
+    if (kept !== null && last && pIdx) {
+      // A move that skipped cards (End, a scrollbar drag) ends the run: they were never on screen.
+      const [lt, lb, ti, bi] = [last.top, last.bottom, topVisible, bottomVisible!].map((id) => pIdx(id));
+      if (Math.min(lt, lb, ti, bi) >= 0 && (ti > lb + 1 || bi < lt - 1)) kept = null;
+    }
     let newest = topVisible;
     if (kept !== null) {
-      const pIdx = pileIndexOfRef.current;
       if (pIdx) {
         /**
          * JUDGED IN THE PILE'S ORDER, NOT THE MOUNTED DOM'S. Under the sliding window
@@ -320,6 +335,8 @@ export const StreamShell = forwardRef<
   useVisit(
     () => {
       rangeRef.current = { newestSeenId: null, bottomVisibleId: null };
+      shownRef.current = null;
+      landingRef.current = false;
       curRef.current = null;
       jumpRef.current = null;
       const el = divRef.current;
@@ -333,12 +350,15 @@ export const StreamShell = forwardRef<
     () => {},
   );
 
+  // Re-scan only when the mounted cards change: a re-observe re-reports every card.
   useEffect(() => {
-    observer.observe();
+    observerRef.current.observe();
+  }, [contentKey]);
+  useEffect(() => {
     measureRef.current();
     // A slide of the window can unmount a card somebody is waiting on.
     settleOffScreenRef.current();
-  }, [observer, contentKey]);
+  });
 
   /** An anchoring loop must not outlive the stream it is scrolling. */
   useEffect(
@@ -765,6 +785,17 @@ export const StreamShell = forwardRef<
        * smooth path, landed 63px below the fold, and never corrected.
        */
       const near = lineOf(card) > -el.clientHeight && lineOf(card) < el.clientHeight * 2;
+      // A far jump ends the tracked run; the next one starts where the landing rests.
+      if (!near) {
+        landingRef.current = true;
+        rangeRef.current = { newestSeenId: null, bottomVisibleId: null };
+        shownRef.current = null;
+      } else if (landingRef.current) {
+        // A near jump cut a far landing short: the run starts here.
+        landingRef.current = false;
+        observerRef.current.restart();
+        measureRef.current();
+      }
       // `behavior` is always explicit: `stream.css` sets `scroll-behavior: smooth` on `.stream`,
       // so an omitted behavior is a smooth scroll — which is exactly what a correction must not be.
       el.scrollTo({ top: aimTop(card), behavior: near ? "smooth" : "instant" });
@@ -788,10 +819,15 @@ export const StreamShell = forwardRef<
        * an under-estimate. Either must hold for {@link ANCHOR_STABLE_FRAMES}; the loop is bounded
        * by {@link ANCHOR_FRAMES} so an unsettled card cannot keep it open.
        */
+      const rest = () => {
+        landingRef.current = false;
+        observerRef.current.restart();
+        measureRef.current();
+      };
       const settle = () => {
         anchorRef.current = 0;
         const c = find();
-        if (!c) return; // left the stream mid-flight — nothing landed
+        if (!c) { rest(); return; } // left the stream mid-flight — nothing landed
         const aim = aimTop(c);
         const line = lineOf(c);
         const atLine = Math.abs(rawTop(c) - el.scrollTop) <= ANCHOR_TOLERANCE_PX;
@@ -799,6 +835,7 @@ export const StreamShell = forwardRef<
         const parked = Math.abs(aim - el.scrollTop) <= ANCHOR_TOLERANCE_PX && onScreen;
         if (atLine || parked) {
           if (++held >= ANCHOR_STABLE_FRAMES) {
+            rest();
             onLanded?.();
             return;
           }
@@ -807,6 +844,7 @@ export const StreamShell = forwardRef<
           el.scrollTo({ top: aim, behavior: "instant" });
         }
         if (++frames > ANCHOR_FRAMES) {
+          rest();
           onLanded?.();
           return;
         }

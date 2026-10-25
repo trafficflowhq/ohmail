@@ -31,6 +31,8 @@ import { sendKeyOf, sendRefusal, sendStateFor, sendVerb, type SendState, type Sh
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import { parseRecipients, type MailSend } from "./compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
+import { ForwardFiles } from "./ForwardFiles";
+import type { ForwardFilesPlan } from "./forward-files";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "./rich-text";
@@ -151,6 +153,7 @@ export function InlineReply({
   subjectEdit = null,
   onSubject,
   heldResolve = null,
+  forwardFiles = null,
 }: {
   message: EngineMessage;
   /**
@@ -299,6 +302,8 @@ export function InlineReply({
     draftId: string;
     onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
   } | null;
+  /** A forward's original files, listed and removable — the shell's plan, the one its send carries. */
+  forwardFiles?: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null;
 }) {
   const t = useTranslations("reply");
   /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
@@ -521,6 +526,7 @@ export function InlineReply({
         // mutation and the sent one must carry the same content or the lock lies about it.
         ...(attachments.length > 0 ? { attachments: [...attachments] } : {}),
         plan: envPlan,
+        ...(forwardFiles?.plan.wire !== undefined ? { forwardParts: forwardFiles.plan.wire } : {}),
       })
     : {
         kind: "mail_send",
@@ -744,6 +750,9 @@ export function InlineReply({
       {mode === "forward" ? (
         <p className="reply-forwarding">{tc("forwardingNote")}</p>
       ) : null}
+      {mode === "forward" && forwardFiles ? (
+        <ForwardFiles plan={forwardFiles.plan} onRemove={forwardFiles.onRemove} disabled={inFlight} said={forwardFiles.said} />
+      ) : null}
 
       {/* FROM — a control when there is a choice, otherwise the sentence. This used to be
           static text on the premise that a reply's sender is a fact; it is editable when the
@@ -835,6 +844,8 @@ export function InlineReply({
           /* The SAME two inputs, so the number and the clause beside it cannot
              disagree about which ceiling bound. */
           capBinding={composeAttachCapBinding(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
+          /* A forward's own files are weighed apart from the original's: never "total". */
+          forward={mode === "forward"}
           /* The reply panel takes pastes and drops exactly as compose does — a pasted picture
              is an attachment, not a silent nothing (`ComposeAttach.dropZone`). */
           dropZone={box}

@@ -400,6 +400,20 @@ export async function runReconcileCron(
     const listLetters = await db.select({ at: accountSettings.blockAutoUnsubscribeAt })
       .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1)
       .then(([settings]) => (settings?.at ?? null) === null, () => false);
+    // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
+    // worker would have, so it asks the same port for the same cap (and, inside a trial's floor,
+    // the plan's own limit the refill fills to) — read once here and held on the deps below for
+    // the sweep's two cycles.
+    const capFor = makeStorageCapResolver(
+      config.entitlements
+        ? makeEntitlementsClient({
+          baseUrl: config.entitlements.url, secret: config.entitlements.secret,
+          // A failed call is a row (arm `worker`), awaited: this sweep's process exits after it.
+          onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
+        })
+        : (UNMETERED satisfies EntitlementsComposition),
+      log,
+    );
     /* WITHOUT THE PERMIT, and the type says so: this object is the sweep's two cycles' shared
        facts, and the receipt every page inside a cycle asks is named at each call below. */
     const deps: Omit<SyncDeps, "writeAuthority"> = {
@@ -413,19 +427,8 @@ export async function runReconcileCron(
       trustedAuthservIds: providerAuthservIds(config.imap.host),
       // Where it names none, the sender's own signature, as the loop this pass stands in for.
       signatures: { ...makeSignatureCheck({ keys: makeDnsDkimKeys() }), listLetters },
-      // METERED, like the loop this pass stands in for: the backstop ingests the same mail the
-      // worker would have, so it asks the same port for the same cap — read once here and held
-      // on these deps for the sweep's two cycles.
-      storageCap: await makeStorageCapResolver(
-        config.entitlements
-          ? makeEntitlementsClient({
-            baseUrl: config.entitlements.url, secret: config.entitlements.secret,
-            // A failed call is a row (arm `worker`), awaited: this sweep's process exits after it.
-            onCallFault: entitlementsFaultRecorder(() => db as unknown as Tx, "worker", { log }),
-          })
-          : (UNMETERED satisfies EntitlementsComposition),
-        log,
-      )(accountId),
+      storageCap: await capFor(accountId),
+      storagePlanLimit: await capFor.planLimit(accountId),
       // The leader fence, on this path too. Same builder, same shard-leadership definition, same
       // synchronous tripwire — see the block at the top of this file.
       fence: makeSyncWriteFence(db, mailboxId, fence, () => lockLost),

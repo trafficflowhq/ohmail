@@ -306,9 +306,10 @@ function useListFocusFollow(followId: string | null | undefined, selector: strin
   useEffect(() => {
     if (followId == null) return;
     const cur = document.activeElement;
-    if (!(cur instanceof HTMLElement) || !cur.matches(".row")) return;
+    if (!(cur instanceof HTMLElement) || !cur.matches(".row, .scroller")) return;
     const sel = queryVisible<HTMLElement>(selector);
-    if (sel && sel !== cur) sel.focus({ preventScroll: true });
+    // The list's own stop counts as in the list: the cursor that lands from there takes the ring.
+    if (sel && sel !== cur && (cur.matches(".row") || cur.contains(sel))) sel.focus({ preventScroll: true });
   }, [followId, selector]);
 }
 

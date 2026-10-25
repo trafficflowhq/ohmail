@@ -153,6 +153,7 @@ export function ComposeAttach({
   disabled,
   maxTotalBytes = COMPOSE_ATTACH_MAX_TOTAL_BYTES,
   capBinding,
+  forward = false,
   dropZone,
 }: {
   attachments: ComposeAttachment[];
@@ -190,6 +191,8 @@ export function ComposeAttach({
    * ABSENT says nothing, so a caller that has not been taught it renders exactly what it did.
    */
   capBinding?: ComposeAttachCapBinding;
+  /** A forward: the cap names the person's own files, apart from the original's, and never says "total". */
+  forward?: boolean;
   /**
    * THE SURFACE WHOSE PASTES AND DROPS BELONG TO THIS SEND — the compose form, the reply panel.
    * A picture pasted into the editor and a file dropped on the surface both land in the
@@ -768,7 +771,7 @@ export function ComposeAttach({
         <span className="compose-attach-cap">
           {attachments.length > 0
             ? t("attachUsed", { used: formatSize(used), total: formatSize(maxTotalBytes) })
-            : t("attachCap", { size: formatSize(maxTotalBytes) })}
+            : t(forward ? "attachForward" : "attachCap", { size: formatSize(maxTotalBytes) })}
         </span>
         {/* Only where this window's transport is the smaller ceiling — see `capBinding`. */}
         {capBinding === "surface"

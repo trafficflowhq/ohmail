@@ -219,6 +219,13 @@ describe("the keymap census — the one table, surface by surface", () => {
       "shift+o", "shift+r", "shift+c", // the read twins (demoting ones have none)
       "a", "s", "j", "k", "Enter", "Escape",
     ]);
+    // `s` is one sender here as in the reader; no key decides every waiting sender.
+    const labels = [...container.querySelectorAll(".ks li")].map((li) => ({
+      label: li.querySelector(".ks-lab")!.textContent ?? "",
+      caps: [...li.querySelectorAll(".ks-chord")].map((c) => [...c.querySelectorAll("kbd")].map((k) => k.textContent).join("")),
+    }));
+    expect(labels.find((r) => r.caps.includes(cap("s")))?.label).toBe(messages.shortcuts.screen);
+    expect(labels.map((r) => r.label)).not.toContain("Mark every waiting sender spam");
   });
 
   it("the Compose sheet carries send, schedule and the send-later digits", async () => {

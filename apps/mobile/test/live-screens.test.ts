@@ -849,6 +849,8 @@ describe("the actions facade is ONE object delegating per call", () => {
     },
     hydrateMessage: () => calls.push(`${tag}:hydrateMessage`),
     forwardFetch: () => (calls.push(`${tag}:forwardFetch`), null),
+    forwardFiles: () => (calls.push(`${tag}:forwardFiles`), { state: "failed" as const, parts: [] }),
+    forwardPartsSupported: () => (calls.push(`${tag}:forwardPartsSupported`), false),
     // The two abandoned-change verbs are async, so the recorder returns a resolved promise; the
     // facade test is about WHICH object a call lands on, not what it answers.
     retryAbandoned: async (id: string) => {

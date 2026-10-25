@@ -459,11 +459,11 @@ describe("R13-06 — with a coarse pointer the Screener's and the drawer's keyca
     return [...host!.querySelectorAll<HTMLElement>("kbd")];
   }
 
-  it("Mark all spam's s, the row menu's letters, Compose's c, Search's / and the dock's chord are hidden", async () => {
+  it("the row menu's letters, Compose's c, Search's / and the dock's chord are hidden", async () => {
     load(touchRules());
     const caps = await mountAll();
     const said = caps.map((k) => k.textContent);
-    for (const want of ["s", "o", "x", "c", "/", "⌘K"]) expect(said, `the evidence's ${want}`).toContain(want);
+    for (const want of ["o", "x", "c", "/", "⌘K"]) expect(said, `the evidence's ${want}`).toContain(want);
     expect(caps.filter(drawn).map((k) => k.textContent), "keycaps drawn on a touch-only screen").toEqual([]);
   });
 

@@ -13,7 +13,15 @@ import { accessOf, type EntitlementsComposition } from "@trafficflow/db";
  * compile error, not an unmetered cap. */
 export interface StorageCapResolver {
   (accountId: string): Promise<StorageCap>;
+  /**
+   * Inside a trial's storage floor, the plan's own limit (`trialStorage.planBytesLimit`) where it is below
+   * the cap, else `null`: what the storage refill fills to (`SyncDeps.storagePlanLimit`). The same read and
+   * cache as the cap; a fault answers `null` beside the unmetered cap, which refills nothing.
+   */
+  planLimit(accountId: string): Promise<number | null>;
 }
+
+interface Resolved { value: StorageCap; planLimit: number | null }
 
 export function makeStorageCapResolver(
   entitlements: EntitlementsComposition,
@@ -22,20 +30,28 @@ export function makeStorageCapResolver(
 ): StorageCapResolver {
   const ttlMs = opts.ttlMs ?? 30_000;
   const now = opts.now ?? ((): Date => new Date());
-  const cache = new Map<string, { at: number; value: StorageCap }>();
-  return async (accountId: string): Promise<StorageCap> => {
+  const cache = new Map<string, Resolved & { at: number }>();
+  const resolved = async (accountId: string): Promise<Resolved> => {
     const at = now().getTime();
     const hit = cache.get(accountId);
-    if (hit && at - hit.at < ttlMs) return hit.value;
+    if (hit && at - hit.at < ttlMs) return hit;
     try {
       const verdict = await accessOf(entitlements, accountId);
       const cap = verdict.ok ? verdict.limits.storageBytes : null;
-      const value: StorageCap = cap === null ? UNMETERED_STORAGE_CAP : cap;
-      cache.set(accountId, { at, value });
-      return value;
+      const plan = verdict.ok ? verdict.trialStorage?.planBytesLimit ?? null : null;
+      const entry: Resolved & { at: number } = {
+        at, value: cap === null ? UNMETERED_STORAGE_CAP : cap,
+        planLimit: cap !== null && plan !== null && plan < cap ? plan : null,
+      };
+      cache.set(accountId, entry);
+      return entry;
     } catch (err) {
       log.warn("storage_cap_read_failed", { accountId, err });
-      return UNMETERED_STORAGE_CAP;
+      return { value: UNMETERED_STORAGE_CAP, planLimit: null };
     }
   };
+  const resolve = async (accountId: string): Promise<StorageCap> => (await resolved(accountId)).value;
+  return Object.assign(resolve, {
+    planLimit: async (accountId: string): Promise<number | null> => (await resolved(accountId)).planLimit,
+  });
 }

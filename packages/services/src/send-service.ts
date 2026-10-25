@@ -24,6 +24,7 @@ import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
 } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
+import { requireUuid } from "./ids.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -193,6 +194,14 @@ export interface SendDeps {
    * end-of-data mark and the send fails. Absent: no ceiling beyond the socket deadlines.
    */
   submissionCeilingMs?: number;
+  /**
+   * THE HOST IS LEAVING (the local engine's quit), asked once the press's transport has opened,
+   * right before the offer. True holds the press: nothing is offered and nothing recorded, so its
+   * reservation stays unoffered for the next start to forget (a Send again is held again), and the
+   * answer is retryable, so the window keeps the press and sends it under its key then. The Sent
+   * copy's re-dial never asks. Absent: never held.
+   */
+  holdOffer?: () => boolean;
   /** The copy's clock, {@link SEND_COPY_TIMING} by default. A test seam, never a host knob. */
   copyTiming?: Partial<SendCopyTiming>;
 }
@@ -319,6 +328,38 @@ export interface SendInput {
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
 export const FORWARD_MAX_PARTS = 100;
 export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The forwarded parts the person kept, as a request names them: absent stays absent (every part
+ * goes); otherwise a list of at most `FORWARD_MAX_PARTS` ids, duplicates dropped, and only beside a
+ * forward. Anything else is a 400, never a guess about which files to send. The send route and the
+ * draft doors both read it here.
+ */
+export function readForwardParts(raw: unknown, forwardOf: string | null | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!forwardOf) throw new ServiceError("validation_failed", 400, "forwardParts needs forwardOf");
+  return forwardPartsList(raw);
+}
+
+/** The list's own shape, without the forward it needs beside it. */
+export function forwardPartsList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) throw new ServiceError("validation_failed", 400, "forwardParts must be a list");
+  if (raw.length > FORWARD_MAX_PARTS) {
+    throw new ServiceError("validation_failed", 400, `forwardParts must contain at most ${FORWARD_MAX_PARTS} entries`);
+  }
+  return [...new Set(raw.map((id) => requireUuid(id, "forwardParts")))];
+}
+
+/**
+ * THE PARTS THIS SEND CARRIES: the request's list, else the row's when the row forwards the same
+ * original. One answer for the part selection and the content claim, so the two cannot disagree.
+ */
+function forwardPartsOf(d: typeof drafts.$inferSelect, input: SendInput): readonly string[] | undefined {
+  if (input.forwardParts !== undefined) return input.forwardParts;
+  const forwardOf = input.forwardOf ?? d.forwardOfMessageId ?? null;
+  return forwardOf && d.forwardOfMessageId === forwardOf ? d.forwardParts ?? undefined : undefined;
+}
+
 /**
  * The whole-message read for an original whose stored words were let go: handed to `fetchRaw`,
  * which refuses on the server's RFC822.SIZE before buffering past it. 20 MiB of parts base64-encoded
@@ -749,6 +790,7 @@ export function sendContentFingerprint(input: {
  * Inline files are digested by content; a send carrying staged files takes no claim at all.
  */
 function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): string {
+  const forwardParts = forwardPartsOf(d, input);
   return sendContentFingerprint({
     to: (d.to as EmailAddress[]) ?? [],
     cc: (d.cc as EmailAddress[]) ?? [],
@@ -758,7 +800,7 @@ function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): 
     body: d.body,
     inReplyToMessageId: d.inReplyToMessageId ?? null,
     forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
-    ...(input.forwardParts ? { forwardParts: input.forwardParts } : {}),
+    ...(forwardParts ? { forwardParts } : {}),
     sendAt: d.sendAt ?? null,
     attachments: (input.attachments ?? []).map((a) => ({
       filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
@@ -863,6 +905,11 @@ export function firstSendFacts(status: string, at: Date): FirstSendFacts {
 
 /** What a replay of a key a Cancel tombstoned is told (409 `send_withdrawn`). */
 export const SEND_WITHDRAWN_SENTENCE = "This send was cancelled before it left; nothing was sent.";
+
+/** What a press the leaving host held is told (`SendDeps.holdOffer`): 503, retryable. */
+export const SEND_HELD_SENTENCE = "ohmail closed before this message was sent; it is sent when ohmail starts again";
+/** …and a Send again, which the next start holds again (`earlier_unverified`) rather than sends. */
+export const SEND_AGAIN_HELD_SENTENCE = "ohmail closed before this message was sent again; it stays held, and Send again sends it";
 
 /**
  * WHAT THE SERVER SAYS ABOUT A CANCEL — `POST /sends/withdraw`. `withdrawn`: nothing under this key
@@ -1613,6 +1660,14 @@ export class SendService {
             firstSend: firstSendFacts("sent", reservation.again.heldAt),
           };
         }
+      }
+
+      // HELD BY A LEAVING HOST (`SendDeps.holdOffer`): offered nothing, recorded nothing, told so.
+      if (deps.holdOffer?.() === true) {
+        await adapter.close().catch(() => { /* the connection is already broken */ });
+        (deps.log ?? defaultLog).info("send_held_for_next_start", { draftId, accountId: ctx.accountId, sendId });
+        const said = reservation.again === undefined ? SEND_HELD_SENTENCE : SEND_AGAIN_HELD_SENTENCE;
+        throw new ServiceError("upstream_unavailable", 503, said, undefined, true);
       }
 
       // THE OFFER, COMMITTED BEFORE ANY SMTP TRAFFIC (mail 0162): a row still `unoffered` or
@@ -2456,8 +2511,9 @@ export class SendService {
         /* THE PARTS THE PERSON KEPT, chosen only among this original's rows (never by id alone,
            which would name another account's file); the checks above ran on every row. */
         let sentRows = attRows;
-        if (input.forwardParts !== undefined) {
-          const want = [...new Set(input.forwardParts)];
+        const kept = forwardPartsOf(d, input);
+        if (kept !== undefined) {
+          const want = [...new Set(kept)];
           // scoped-by: orig was loaded by (id, accountId) earlier in this send
           sentRows = want.length === 0 ? [] : await tx.select({
             id: attachments.id, contentSha256: attachments.contentSha256,

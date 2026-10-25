@@ -135,6 +135,29 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState };
 }
 
+/**
+ * The hosted account's id, for Help & contact's diagnostics: one `GET /auth/session`, forwarded on
+ * the account door. `null` on any other door and until the account answers; never an address.
+ */
+export function useHostedAccountId(accountDoor: boolean): string | null {
+  const [id, setId] = useState<string | null>(null);
+  useEffect(() => {
+    setId(null);
+    if (!accountDoor) return undefined;
+    let live = true;
+    void (async () => {
+      try {
+        const res = await bridgeFetch("/auth/session");
+        const body = res.ok ? ((await res.json()) as { user?: { accountId?: unknown } } | null) : null;
+        const named = body?.user?.accountId;
+        if (live && typeof named === "string" && named !== "") setId(named);
+      } catch { /* no answer: the block says none */ }
+    })();
+    return () => { live = false; };
+  }, [accountDoor]);
+  return id;
+}
+
 /** Nothing drawn yet. */
 const NO_LINKS: readonly string[] = [];
 

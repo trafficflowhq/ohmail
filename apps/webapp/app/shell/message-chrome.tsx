@@ -27,6 +27,7 @@ import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 import type { WithheldCopyKey } from "./format";
+import type { ForwardFilesPlan } from "./forward-files";
 
 /**
  * The three sub-rows that can take the action bar's place. Declared HERE and not in
@@ -190,6 +191,8 @@ export interface MessageChrome {
    */
   replyAttachments: readonly ComposeAttachment[];
   onReplyAttachments?: (next: ComposeAttachment[]) => void;
+  /** A forward's original files and how to remove one (`forward-files.ts`); absent on a reply. */
+  replyForwardFiles?: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null;
   /**
    * THE REPLY'S SIGNATURE BLOCK STATE — held here beside the body (mounted-twice again) and
    * serialized by `sendReply` from the SAME derivation the block renders (`signature.ts`).
@@ -299,6 +302,12 @@ export interface MessageChrome {
    * a surface with no mailbox facts (the desktop shell, a bare mount) names no mailbox.
    */
   mailboxLabelOf?: (mailboxId: string) => string | null;
+  /**
+   * A MAILBOX'S STATUS as `GET /mailboxes` gives it, or null where the shell has no facts — what the
+   * note on a letter emptied for space asks (`withheldCopyKey`). Resolved in `AppShell` from the facts
+   * `mailboxLabelOf` reads. Optional, and absent is that same null.
+   */
+  mailboxStatusOf?: (mailboxId: string) => string | null;
   /**
    * PREFILL A NEW MESSAGE to `address` — the contact popover's Write verb.
    *

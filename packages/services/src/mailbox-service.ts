@@ -15,6 +15,7 @@ import {
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
+import { agreeRecordPayload } from "@trafficflow/core/adapters/drizzle-repo";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
@@ -1827,9 +1828,9 @@ export class MailboxService {
       // The account row FIRST, before any `mailboxes` row — the order `delete` takes with its
       // erasure fence, and the whole argument is in {@link lockAccountRow}. Unconditional: whether
       // the allowance gate is reached is decided by rows this transaction has not read yet. SHARED
-      // for a disable: it reaches no gate and takes the counter (see `lockAccountRow`).
+      // unless the body could re-enable the mailbox, the gate's one way in (see `lockAccountRow`).
       await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId,
-        patch.status === "disabled" ? "share" : "update");
+        patch.status !== undefined && patch.status !== "disabled" ? "update" : "share");
       // The rule-key lock before the mailbox row, every rules writer's order; unconditional, so the
       // census can match it to the leave's belt ask below.
       await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
@@ -2742,7 +2743,7 @@ export class MailboxService {
       if (input.screenBacklog === true && current.organizeConsentedAt === null && stamp !== null) {
         await tx.insert(auditLog).values({
           accountId: ctx.accountId, action: auditAction("organizer.agree_screens_backlog"),
-          payload: { mailboxId: id }, createdAt: stamp,
+          payload: await agreeRecordPayload(tx, ctx.accountId, id, ctx.now()), createdAt: stamp,
         });
       }
       // The baseline and the window above: the doorbell after the commit rings for them.

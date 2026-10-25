@@ -48,7 +48,7 @@ function scene() {
       },
     } as never,
   });
-  return { engine, net, clock, wire };
+  return { engine, net, clock, wire, inner };
 }
 type Scene = ReturnType<typeof scene>;
 
@@ -250,6 +250,26 @@ describe("the reply's own discharge and the release, over one source", () => {
     expect(wire.filter((m) => m.kind === "mail_send")).toHaveLength(1);
     expect(wire.filter((m) => m.kind === "mark_seen"), "the discharge and the release both read the source").toHaveLength(1);
     expect(said).toHaveLength(1);
+  });
+
+  it("a reply clears its whole conversation from Answer later, and leaves Parked alone", async () => {
+    const s = scene();
+    const src = await sourceIn(s.engine);
+    const m = s.engine.read().get<EngineMessage>("message", src)!;
+    const emit = (s.inner as unknown as { emit: (t: string, id: string, e: unknown) => void }).emit.bind(s.inner);
+    emit("message", src, { ...m, threadId: "TQ" });
+    for (const id of ["q2", "q3"]) emit("message", id, { ...m, id, threadId: "TQ", unread: false });
+    await s.engine.syncOnce();
+    for (const [id, state] of [[src, "reply_later"], ["q2", "reply_later"], ["q3", "set_aside"]] as const) {
+      await s.engine.mutate({ kind: "triage_set", messageId: id, state } as EngineMutation);
+    }
+    const send = await lane(s, [], []);
+    await act(async () => { send(reply(src)); });
+    await drain();
+    expect(sends(s)).toHaveLength(1);
+    const cleared = s.wire.filter((x) => x.kind === "triage_set" && (x as { state?: string }).state === "none")
+      .map((x) => (x as { messageId: string }).messageId).sort();
+    expect(cleared, "every message of the Answer later row, nothing parked").toEqual([src, "q2"].sort());
   });
 
   it("a source parked after the press gets the discharge, and no Done", async () => {

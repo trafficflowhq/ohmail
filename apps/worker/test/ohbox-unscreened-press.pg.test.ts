@@ -31,7 +31,9 @@ const AVAILABLE = await realPgAvailable();
 const OHBOX = "INBOX";
 const GATE = "ohmail/Screener";
 const NOW = new Date("2026-09-22T09:00:00.000Z");
-const ARRIVED = new Date("2024-03-01T08:00:00.000Z");
+// Inside the default window; OLD is outside it.
+const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
+const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 let sql: ReturnType<typeof postgres>;
 let db: Db;
@@ -55,12 +57,12 @@ async function newWorld(): Promise<World> {
 
 let n = 0;
 
-async function seedOhbox(w: World, from: string): Promise<string> {
+async function seedOhbox(w: World, from: string, arrivedAt = ARRIVED): Promise<string> {
   const i = n++;
   const [m] = await db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
     dedupKey: `oup:${randomUUID()}`, subject: `Note ${i}`, fromAddress: from,
-    date: ARRIVED, createdAt: ARRIVED, unread: false,
+    date: arrivedAt, createdAt: arrivedAt, arrivedAt, unread: false,
     nativeLocator: { folder: OHBOX, ref: `1:${i}` },
   }).returning();
   await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
@@ -85,10 +87,11 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     const stranger = await seedOhbox(w, "stranger@x.test");
     const second = await seedOhbox(w, "stranger@x.test");
     const contact = await seedOhbox(w, "pal@x.test");
+    const old = await seedOhbox(w, "stranger@x.test", OLD);
 
     const repo = makeDrizzleRepo(db as never);
     // NOTHING IS OWED BEFORE THE PRESS — the read moved no row, which is the Ohbox's own rule.
-    expect(await unscreenedSummary(db as never, w.accountId)).toMatchObject({ total: 2 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toMatchObject({ total: 2 });
     expect(await repo.listPendingFolderStates(w.mailboxId)).toEqual([]);
 
     await screenUnscreened(ctxOf(w));
@@ -102,9 +105,11 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
       expect(row.lastSetBy).toBe("us");
       expect(row.nativeLocator).toMatchObject({ folder: OHBOX });
     }
-    const [still] = await db.select({ d: folderState.desiredFolder })
-      .from(folderState).where(eq(folderState.messageId, contact));
-    expect(still!.d).toBe(OHBOX);
+    for (const id of [contact, old]) {
+      const [still] = await db.select({ d: folderState.desiredFolder })
+        .from(folderState).where(eq(folderState.messageId, id));
+      expect(still!.d).toBe(OHBOX);
+    }
   });
 
   it("a letter gone from the server is not offered, pressed or counted; its live twin is", async () => {
@@ -116,7 +121,7 @@ describe.skipIf(!AVAILABLE)("the pressed mail joins the organizer's filing queue
     await db.update(messages).set({ deletedAt: NOW }).where(eq(messages.id, gone));
     await db.update(messages).set({ serverMissingAt: NOW }).where(eq(messages.id, missing));
 
-    expect(await unscreenedSummary(db as never, w.accountId)).toMatchObject({ total: 1 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toMatchObject({ total: 1 });
     expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { scope: "all_time" })).toMatchObject({ letters: 1, total: 1 });
     await screenUnscreened(ctxOf(w));
     const owed = await makeDrizzleRepo(db as never).listPendingFolderStates(w.mailboxId);

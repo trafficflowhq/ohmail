@@ -56,6 +56,8 @@ export interface SeenObserver {
    * flips this true, which is what keeps a jump from writing `\Seen` to the user's own IMAP.
    */
   userHasDriven: () => boolean;
+  /** Forget what this observer has seen and start a new run from the cards on screen now. */
+  restart: () => void;
 }
 
 export function useSeenOnScroll({
@@ -65,6 +67,7 @@ export function useSeenOnScroll({
   rootMargin = "0px 0px -67% 0px",
 }: UseSeenOnScrollOptions): SeenObserver {
   const ioRef = useRef<IntersectionObserver | null>(null);
+  const shownRef = useRef<WeakSet<Element>>(new WeakSet());
   const userDrove = useRef(false);
   const onSeenRef = useRef(onSeen);
   onSeenRef.current = onSeen;
@@ -88,12 +91,16 @@ export function useSeenOnScroll({
     el.addEventListener("touchmove", arm, { passive: true });
     el.addEventListener("keydown", armOnScrollKey);
 
+    // What this observer has seen in its band since it mounted (= this visit) or last restarted.
+    shownRef.current = new WeakSet();
     const io = new IntersectionObserver(
       (entries) => {
+        const shown = shownRef.current;
+        for (const en of entries) if (en.isIntersecting) shown.add(en.target);
         if (!userDrove.current) return;
         for (const en of entries) {
           const t = en.target as HTMLElement;
-          if (!t.hasAttribute("data-unseen") || !en.rootBounds) continue;
+          if (!shown.has(t) || !t.hasAttribute("data-unseen") || !en.rootBounds) continue;
           if (en.boundingClientRect.bottom <= en.rootBounds.bottom + 2) {
             const id = t.dataset.id ?? t.dataset.sid;
             if (id) onSeenRef.current(id);
@@ -129,6 +136,10 @@ export function useSeenOnScroll({
   }, [root, selector]);
 
   const userHasDriven = useCallback(() => userDrove.current, []);
+  const restart = useCallback(() => {
+    shownRef.current = new WeakSet();
+    observe();
+  }, [observe]);
 
-  return { observe, userHasDriven };
+  return { observe, userHasDriven, restart };
 }

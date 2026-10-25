@@ -262,9 +262,10 @@ describe("an answered conversation, all read: the row stands for the letter", ()
     expect(threadRow(p.engine)?.target).toBe("a1");
   });
 
-  // Set aside is Park: it takes the whole row, our reply too, so the row leaves the Ohbox.
+  // Later and Set aside (Park) take the whole row, our reply too, so the row leaves the Ohbox;
+  // the pile holds it as one row facing the letter.
   for (const [verb, ids, pile] of [
-    ["Later", ["a1"], "replyLater"],
+    ["Later", ["a1", "x2"], "replyLater"],
     ["Set aside", ["a1", "x2"], "setAside"],
     ["Junk", null, null],
   ] as const) {
@@ -278,7 +279,7 @@ describe("an answered conversation, all read: the row stands for the letter", ()
       if (pile) {
         const state = pile === "replyLater" ? "reply_later" : "set_aside";
         expect([...p.posted].sort()).toEqual(ids!.map((id) => `triage_set:${id}:${state}`));
-        expect(triagePiles(p.engine.read())[pile].map((e) => e.messageId).sort()).toEqual([...ids!]);
+        expect(triagePiles(p.engine.read())[pile].map((e) => [e.messageId, [...(e.memberIds ?? [])].sort()])).toEqual([["a1", [...ids!]]]);
       } else {
         expect(p.posted.some((x) => x.includes("x2")), `nothing acts on our reply: ${p.posted.join(" ")}`).toBe(false);
         expect(p.posted.some((x) => x.includes("a1")), `the letter moved: ${p.posted.join(" ")}`).toBe(true);
@@ -299,12 +300,13 @@ describe("an answered conversation, all read: the row stands for the letter", ()
     }
   });
 
-  it("CONTROL: the row's swipe Later, with its members, files the letter alone", async () => {
+  it("the row's swipe Later, with its members, files the row, our reply too", async () => {
     const p = await phone(answered());
     const w = p.world();
     const row = [...w.ohbox.fresh, ...w.ohbox.seen].find((r) => (r.memberIds ?? []).includes("a1"))!;
     await p.actions.pileToggle(row.id, "replyLater", row.memberIds);
-    expect(p.posted).toEqual(["triage_set:a1:reply_later"]);
+    expect([...p.posted].sort()).toEqual(["triage_set:a1:reply_later", "triage_set:x2:reply_later"]);
+    expect([...p.world().ohbox.fresh, ...p.world().ohbox.seen], "the row left the Ohbox").toEqual([]);
   });
 });
 
@@ -327,29 +329,29 @@ describe("an answered conversation marked unread from its row still stands for t
     await p.actions.openMessage(open);
     p.posted.length = 0;
     await VERBS.Later!(p, w, open);
-    return { open, posted: [...p.posted], pile: triagePiles(p.engine.read()).replyLater.map((e) => e.messageId) };
+    return { open, posted: [...p.posted].sort(), pile: triagePiles(p.engine.read()).replyLater.map((e) => e.messageId) };
   };
 
-  it("the swipe's Mark unread marks the letter alone; the press opens the letter and the reader's Later files it", async () => {
+  it("the swipe's Mark unread marks the letter alone; the press opens the letter and the reader's Later files the row", async () => {
     const p = await phone([create("message", "a1", msg("a1", AT)), create("message", "x2", msg("x2", AT + 3_600_000, ours))]);
     const row = rowHolding(p.world(), "a1");
     expect(readFaceOf({ pile: row.pile ?? null, unread: !!row.unread }), "the premise: the all-read row's read slot").toBe("markUnread");
     await swipeReadSlot(p, row);
     expect(p.posted, "our own reply stays read").toEqual(["mark_seen:a1:unread"]);
     expect(rowHolding(p.world(), "a1").id).toBe("a1");
-    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later", "triage_set:x2:reply_later"], pile: ["a1"] });
   });
 
-  it("our reply left unread beside the read letter (an earlier Mark unread): the press opens the letter and Later files it", async () => {
+  it("our reply left unread beside the read letter (an earlier Mark unread): the press opens the letter and Later files the row", async () => {
     const p = await phone([create("message", "a1", msg("a1", AT)), create("message", "x2", msg("x2", AT + 3_600_000, { ...ours, unread: true }))]);
     expect(rowHolding(p.world(), "a1").id).toBe("a1");
-    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later", "triage_set:x2:reply_later"], pile: ["a1"] });
   });
 
   it("the letter and our reply both unread (as another device's Mark unread left them): the letter", async () => {
     const p = await phone([create("message", "a1", msg("a1", AT, { unread: true })), create("message", "x2", msg("x2", AT + 3_600_000, { ...ours, unread: true }))]);
     expect(rowHolding(p.world(), "a1").id).toBe("a1");
-    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later"], pile: ["a1"] });
+    expect(await pressThenLater(p)).toEqual({ open: "a1", posted: ["triage_set:a1:reply_later", "triage_set:x2:reply_later"], pile: ["a1"] });
   });
 
   it("CONTROL: the read slot's Mark read still marks every member, our reply included", async () => {
@@ -360,6 +362,34 @@ describe("an answered conversation marked unread from its row still stands for t
     expect(p.posted).toHaveLength(1);
     const [kind, ids, direction] = p.posted[0]!.split(":");
     expect([kind, ids!.split(",").sort(), direction]).toEqual(["mark_seen", ["a1", "x2"], undefined]);
+  });
+});
+
+describe("Answer later and Parked hold a conversation as one row", () => {
+  const IDS = ["m1", "m2", "m3", "m4", "m5", "m6", "x7"];
+  const filedAt = new Date(AT).toISOString();
+  const seven = (state: string) => IDS.map((id, i) => create("message", id, msg(id, AT + i * 60_000, {
+    ...(id === "x7" ? laterX2["our own reply"] : {}),
+    triage: { messageId: id, state, bubbleUpAt: null, setAt: filedAt, updatedAt: filedAt } as EngineMessage["triage"],
+  })));
+  const pile = (w: Projected, kind: string) => w.piles.find((p) => p.kind === kind)!.items;
+
+  it("a parked seven-message conversation is one item, carrying every id; the More count and the meta say 1", async () => {
+    const p = await phone(seven("set_aside"));
+    const w = p.world();
+    expect(pile(w, "setAside").map((i) => [i.messageId, i.memberIds])).toEqual([["m6", ["x7", "m6", "m5", "m4", "m3", "m2", "m1"]]]);
+    expect(w.pilesMeta).toBe("1 item");
+  });
+
+  it("the reader's Park on the parked row takes all seven out; Later moves all seven; Resurface Now brings all seven back", async () => {
+    for (const [verb, state] of [["setAside", "none"], ["replyLater", "reply_later"]] as const) {
+      const p = await phone(seven("set_aside"));
+      await p.actions.pileToggle("m6", verb);
+      expect([...p.posted].sort()).toEqual(IDS.map((id) => `triage_set:${id}:${state}`));
+    }
+    const p = await phone(seven("reply_later"));
+    await p.actions.resurfaceNow("m3");
+    expect([...p.posted].sort()).toEqual(IDS.map((id) => `triage_set:${id}:resurfaced`));
   });
 });
 

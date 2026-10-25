@@ -1,4 +1,4 @@
-import type { MouseEvent, ReactNode } from "react";
+import { useId, type MouseEvent, type ReactNode } from "react";
 import { AddressText } from "../primitives/AddressText.js";
 import { Avatar } from "../primitives/Avatar.js";
 import { Badge, Chip, type TagHueName } from "../primitives/Chip.js";
@@ -612,6 +612,11 @@ export function MessageRow(props: MessageRowProps) {
     tags,
   });
 
+  /* WebKitGTK's AT-SPI bridge does not expose `aria-description`; it does expose a description
+     referenced by `aria-describedby`, so the same words also ride a hidden node, as its label so
+     that the row's text is unchanged. */
+  const descId = useId();
+
   const rowButton = (
     <button
       type="button"
@@ -623,6 +628,7 @@ export function MessageRow(props: MessageRowProps) {
       data-unseen={unread ? "1" : undefined}
       aria-label={`${from}: ${subject}`}
       aria-description={description}
+      aria-describedby={description ? descId : undefined}
       role="option"
       aria-setsize={inSet?.size}
       aria-posinset={inSet?.position}
@@ -638,6 +644,7 @@ export function MessageRow(props: MessageRowProps) {
       ) : (
         body
       )}
+      {description ? <span id={descId} hidden aria-label={description} /> : null}
     </button>
   );
 

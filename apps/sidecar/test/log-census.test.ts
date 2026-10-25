@@ -807,6 +807,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // counts and the reason, on the logger's own allowed vocabulary.
   cloud_cap_marker_repair_done: "info",
   cloud_cap_marker_repair_deferred: "info",
+  // The one-time re-ask of the cap husks an older sidecar kept through the storage refill's change:
+  // the same shape, two counts and the reason, no message named.
+  cloud_cap_refill_repair_done: "info",
+  cloud_cap_refill_repair_deferred: "info",
   cloud_refresh_failed: "error",
   // The hosted API DEFINITIVELY refused to renew the session (401/403 — revoked or rotated-past
   // family). `error`, because a person must act (sign in again) — the measured alternative was a
@@ -985,7 +989,7 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      holding the mailbox and nobody having stopped it. Ordinary, so `info`; the mailbox, the state
      and a constant sentence. */
   organizer_own_claim_resumed: "info",
-  // The agree's sweep after that promotion (`agreeSweepPass`): what it did, or the failure that leaves
+  // The agree's sweep after that promotion (`agreeSweepSlice`): what it did, or the failure that leaves
   // the counted letters to the Screener's offer.
   organizer_agree_sweep: "info",
   organizer_agree_sweep_failed: "error",

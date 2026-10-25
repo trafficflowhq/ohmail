@@ -45,6 +45,8 @@ import { SignatureBlock } from "../shell/SignatureBlock";
 import { SupportDiagnostics } from "../shell/SupportDiagnostics";
 import { SIG_FOLLOWING } from "../shell/signature";
 import { useFocusFollows } from "../shell/focus-follows";
+import { ForwardFiles } from "../shell/ForwardFiles";
+import type { ForwardFilesPlan } from "../shell/forward-files";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the
@@ -72,6 +74,7 @@ export function ComposeView({
   engine,
   draft,
   fields,
+  forwardFiles = null,
   onFields,
   from,
   sendSurfaceMaxTotalBytes,
@@ -97,6 +100,8 @@ export function ComposeView({
   draft: EngineDraft | null;
   /** The form, owned by `AppShell` so it survives navigating away — see `compose.ts`. */
   fields: ComposeFields;
+  /** A forward's original files, listed and removable — the shell's plan, the one its send carries. */
+  forwardFiles?: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null;
   onFields: (next: ComposeFields) => void;
   /**
    * WHICH ADDRESS THIS SENDS FROM — resolved by the shell, rendered here.
@@ -885,6 +890,9 @@ export function ComposeView({
           {fields.forwardOf ? (
             <p className="compose-forwarding">{t("forwardingNote")}</p>
           ) : null}
+          {fields.forwardOf && forwardFiles ? (
+            <ForwardFiles plan={forwardFiles.plan} onRemove={forwardFiles.onRemove} disabled={inFlight} said={forwardFiles.said} />
+          ) : null}
 
           {cardVisible ? (
             <div className="draft-card">
@@ -1003,6 +1011,7 @@ export function ComposeView({
               /* The SAME two inputs, so the number and the clause beside it cannot
                  disagree about which ceiling bound. */
               capBinding={composeAttachCapBinding(from.maxMessageBytes, sendSurfaceMaxTotalBytes)}
+              forward={Boolean(fields.forwardOf)}
             />
             {/* WHY SEND IS WAITING, named. A live region because the press that reveals it is the
                 press it refuses. */}

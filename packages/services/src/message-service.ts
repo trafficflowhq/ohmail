@@ -1522,7 +1522,8 @@ export class MessageService {
     let filed: string | null = null;
     const floor = ctx.pressFloor ?? null;
     const aged = floor !== null && ctx.pressAged === true;
-    const answer = await asTx(ctx).transaction(async (tx) => {
+    // Fenced at the top, as `move` opens: the key's claim reads the account row, and after the counter it deadlocked.
+    const answer = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
         dedupKey: messages.dedupKey, deletedAt: messages.deletedAt,
@@ -1672,7 +1673,8 @@ export class MessageService {
     opts: { idempotency?: MoveIdempotency | null } = {},
   ): Promise<{ restoreTo: string; pending: boolean; seq: number }> {
     let filed: string | null = null;
-    const answer = await asTx(ctx).transaction(async (tx) => {
+    // Fenced at the top, as `delete` opens.
+    const answer = await withAccountTx(ctx, async (tx) => {
       const [msg] = await tx.select({
         id: messages.id, nativeLocator: messages.nativeLocator, mailboxId: messages.mailboxId,
       }).from(messages)

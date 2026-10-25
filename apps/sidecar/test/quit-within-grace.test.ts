@@ -66,6 +66,8 @@ interface Knobs {
   smtpRefuses?: boolean;
   /** The send door's IMAP login (before any SMTP) takes this long: a slow server at the quit. */
   connectMs?: number;
+  /** The caller files the Sent copy, and the connection drops under its first try. */
+  copyDropsOnce?: boolean;
 }
 interface SendSeen { connectAt?: number | null; sends?: number; startedAt: number | null; doneAt: number | null; closedAt: number | null; forcedAt: number | null; append: string | null }
 interface Seen {
@@ -95,12 +97,22 @@ function sendConnection(knobs: Knobs, seen: SendSeen): MailboxAdapter {
         seen.append = "refused_session";
         throw new SendNotSubmitted("login", { message: "5.7.8 authentication refused", responseCode: 535 });
       }
+      if (knobs.copyDropsOnce) return { providerMessageId: msg.messageId!, sentLocator: null, raw: null, unfiledCopy: Buffer.from("copy") };
       if (closed) { seen.append = "logged_out_first"; throw new SentCopyAppendFailed(msg.messageId!, new Error("LOGOUT came first")); }
       if (knobs.appendFails) { seen.append = "append_refused"; throw new SentCopyAppendFailed(msg.messageId!, new Error("APPEND refused")); }
       seen.append = "appended";
       return { providerMessageId: msg.messageId!, sentLocator: null, raw: null };
     },
     async messageInSent(): Promise<boolean> { return false; },
+    async fileSentCopy(): Promise<null> {
+      if (seen.append === null) {
+        closed = true;
+        seen.append = "copy_dropped";
+        throw Object.assign(new Error("connection reset"), { code: "ECONNRESET" });
+      }
+      seen.append = "copy_filed_on_redial";
+      return null;
+    },
     async close(): Promise<void> { seen.closedAt ??= performance.now(); closed = true; },
     forceClose(): void { seen.forcedAt ??= performance.now(); closed = true; },
     isLive: () => !closed,
@@ -510,6 +522,17 @@ describe("a quit on the plan", () => {
     expect(exits).toEqual([0]);
     const next = await boot(knobs, { organize: false, dataDir: rig.dataDir });
     expect(await sendRows(next.sidecar, draftId)).toEqual({ sends: ["sent"], drafts: ["sent"] });
+  });
+
+  it("a Sent copy whose connection drops 1.4 s into the quit is filed on a fresh dial, not refused for the quit", async () => {
+    const rig = await boot({ ...SEND_KNOBS, copyDropsOnce: true }, { organize: false });
+    const { sending, answer } = await pressSend(rig, "quit-copy-redial");
+    await sleep(PRESSED_BEFORE_MS);
+    const { exits } = await quitDuring(rig, sending);
+    await sending;
+    expect(exits).toEqual([0]);
+    expect(answer.body, "the copy was given up").toMatchObject({ status: "sent", sentCopy: "filed" });
+    expect(rig.seen.send.append).toBe("copy_filed_on_redial");
   });
 
   it("a send the mail server refuses, just before the quit, is recorded failed", async () => {

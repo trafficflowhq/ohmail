@@ -55,16 +55,20 @@ const ABOVE_LINE = Math.floor((LINE + 2) / ROW_H);
 type IOEntry = Partial<IntersectionObserverEntry>;
 
 class MockIO {
-  static byRoot = new Map<Element, MockIO>();
+  static byRoot = new Map<Element, Set<MockIO>>();
   cb: (entries: IOEntry[]) => void;
   root: Element | null;
   observed = new Set<Element>();
   constructor(cb: (entries: IOEntry[]) => void, options?: IntersectionObserverInit) {
     this.cb = cb;
     this.root = (options?.root as Element | null) ?? null;
-    if (this.root) MockIO.byRoot.set(this.root, this);
+    if (this.root) MockIO.byRoot.set(this.root, (MockIO.byRoot.get(this.root) ?? new Set()).add(this));
   }
-  observe(el: Element): void { this.observed.add(el); }
+  observe(el: Element): void {
+    this.observed.add(el);
+    // The browser reports a target's state when it is first observed.
+    if (this.root) { const e = entryOf(this.root, el); if (e) this.cb([e]); }
+  }
   unobserve(el: Element): void { this.observed.delete(el); }
   disconnect(): void { this.observed.clear(); }
 }
@@ -77,27 +81,30 @@ function rowsOf(root: Element): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>("[data-id],[data-sid]")];
 }
 
+function entryOf(root: Element, el: Element): IOEntry | null {
+  if (!root.contains(el)) return null;
+  const i = rowsOf(root).indexOf(el as HTMLElement);
+  if (i < 0) return null;
+  const top = i * ROW_H - (scrollTops.get(root) ?? 0);
+  return {
+    target: el,
+    isIntersecting: top + ROW_H > 0 && top < LINE,
+    boundingClientRect: { bottom: top + ROW_H } as DOMRectReadOnly,
+    rootBounds: { bottom: LINE } as DOMRectReadOnly,
+  };
+}
+
 /** What the browser's IntersectionObserver would report at the scroller's current offset. */
 function deliver(root: Element): void {
   if (delivered++ > 400) return;
-  const io = MockIO.byRoot.get(root);
-  if (!io) return;
-  const order = rowsOf(root);
-  const top = scrollTops.get(root) ?? 0;
-  const entries: IOEntry[] = [];
-  for (const el of io.observed) {
+  // Every observer on the root is told, as the browser tells each one.
+  for (const io of MockIO.byRoot.get(root) ?? []) {
+    const entries: IOEntry[] = [];
     // A row that re-rendered into a different parent is a NEW node; the browser stops
     // reporting the detached one, and so does this.
-    if (!root.contains(el)) continue;
-    const i = order.indexOf(el as HTMLElement);
-    if (i < 0) continue;
-    entries.push({
-      target: el,
-      boundingClientRect: { bottom: (i + 1) * ROW_H - top } as DOMRectReadOnly,
-      rootBounds: { bottom: LINE } as DOMRectReadOnly,
-    });
+    for (const el of io.observed) { const e = entryOf(root, el); if (e) entries.push(e); }
+    if (entries.length) io.cb(entries);
   }
-  if (entries.length) io.cb(entries);
 }
 
 function setScroll(root: Element, next: number): void {
@@ -289,7 +296,9 @@ async function wheel(by: number): Promise<void> {
   const el = listEl();
   await act(async () => {
     el.dispatchEvent(new Event("wheel", { bubbles: true }));
-    setScroll(el, listTop() + by);
+    // A wheel is many frames, each reported: rows pass through the band on the way.
+    const to = listTop() + by;
+    while (listTop() < to) { const before = listTop(); setScroll(el, Math.min(to, before + ROW_H / 2)); if (listTop() === before) break; }
   });
 }
 
@@ -444,10 +453,10 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
       el.dispatchEvent(new Event("touchmove", { bubbles: true }));
       setScroll(el, 480);
     });
-    // Everything above the line at 480px, including the rows the programmatic scroll had
-    // already carried past it — once a human is driving this pane, what is above the line
-    // is what they scrolled past.
-    expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"]);
+    // What is above the line at 480px and was shown in the band: r0–r2 sat there at mount,
+    // r5–r7 entered it on the way. r3 and r4 were carried from below the band past it in
+    // one programmatic frame, never displayed in it, so they stay unread.
+    expect(marked).toEqual(["r0", "r1", "r2", "r5", "r6", "r7"]);
   });
 
   it("`j` commits its own target and NOT the rows its scroll passed", async () => {
@@ -470,7 +479,7 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
     const el = listEl();
     await act(async () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
-      setScroll(el, 400);
+      for (let y = 40; y <= 400; y += 40) setScroll(el, y);
     });
     expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
   });
@@ -544,8 +553,10 @@ describe("Reads: the same two guards, on the view that shares the machinery", ()
       stream.dispatchEvent(new Event("wheel", { bubbles: true }));
       setScroll(stream, 300);
     });
+    // The stream's own observer marks what rose past its line; the dwell adds the landing card.
+    const beforeDwell = marked.length;
     await act(async () => { vi.advanceTimersByTime(2500); });
-    expect(marked).toHaveLength(1);
+    expect(marked.length - beforeDwell).toBe(1);
   });
 
   it("a PROGRAMMATIC scroll arms the dwell but never fires it — userHasDriven gates it", async () => {

@@ -188,6 +188,8 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── counts and roster arithmetic (the worker's roster pass, kickstart, thread backfill) ──
   "accounts", "accountsAffected", "mailboxes", "maxMailboxes", "selected", "serving",
   "dropped", "unexplained", "examined", "resolved", "rerouted", "pruned", "count", "more",
+  // The agree's sweep (`organizer_agree_sweep`): slices one drain ran, and whether the window is done.
+  "slices", "done",
   // The Cloud mirror's refusals counted by key past its held cap (`cloud_row_quarantine_full`):
   // an integer the mirror counts itself, never a key or a table name.
   "overflow",

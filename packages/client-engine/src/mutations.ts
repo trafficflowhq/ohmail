@@ -6,7 +6,7 @@ import { heldCheckOf } from "./held-check.js";
 import { domainOfAddress } from "./consent-cutline.js";
 import { ruleKeyOf, twinWinner } from "./rule-twins.js";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
-import { rulesList, senderKey } from "./selectors.js";
+import { lineHoldsAbove, rulesList, senderKey } from "./selectors.js";
 import type { EntityReader } from "./store.js";
 import { storeInstantOf } from "./store-pages.js";
 import {
@@ -768,10 +768,14 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
       // the partition could not find would draw no line at all.
       const anchor = m.upToId ? feed.find((msg) => msg.id === m.upToId) : undefined;
       if (anchor) {
+        // The line never moves back; the held row is re-stated so the verb is not refused as empty.
+        const held = reader.get<WaterlineMeta>("view_meta", waterlineIdOf(view));
         effects.push({
           type: "view_meta",
           id: waterlineIdOf(view),
-          entity: { newestSeenId: anchor.id, at: iso, anchorAt: new Date(storeInstantOf(anchor)).toISOString() } satisfies WaterlineMeta,
+          entity: held && lineHoldsAbove(reader, view, anchor, ctx.now().getTime())
+            ? held
+            : { newestSeenId: anchor.id, at: iso, anchorAt: new Date(storeInstantOf(anchor)).toISOString() } satisfies WaterlineMeta,
         });
       }
       return effects;
@@ -866,6 +870,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         threadId: m.threadId ?? parent?.threadId ?? null,
         inReplyToMessageId: parent?.id ?? null,
         forwardOfMessageId: m.forwardOf ?? null,
+        ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
         subject: m.subject ?? (parent ? replySubject(parent.subject) : ""),
         body: m.body,
         to,
@@ -907,6 +912,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           threadId: m.threadId ?? null,
           inReplyToMessageId: m.inReplyToMessageId ?? null,
           forwardOfMessageId: m.forwardOfMessageId ?? null,
+          ...(m.forwardOfMessageId && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
           subject: m.subject,
           body: m.body,
           to: m.to,
@@ -940,6 +946,7 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
           bcc: m.bcc,
           ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
           ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+          ...(m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
           // The markup the save states, so the next save reads it while this one is in flight.
           ...(m.html !== undefined ? { html: m.html } : {}),
           updatedAt: iso,

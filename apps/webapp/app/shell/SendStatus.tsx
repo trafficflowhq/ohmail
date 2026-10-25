@@ -90,6 +90,11 @@ export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; ke
                 ? { tone: "error", key: "statusNotSignedIn" }
               : send.code === "forward_original_unavailable"
                 ? { tone: "error", key: "statusForwardOriginalUnavailable" }
+              /* A forward's kept files: an older server cannot leave any out, or the original's files changed. */
+              : send.code === "forward_parts_unsupported"
+                ? { tone: "error", key: "statusForwardPartsUnsupported" }
+              : send.code === "forward_parts_changed"
+                ? { tone: "error", key: "statusForwardPartsChanged" }
               /**
                * A FORWARD'S ORIGINAL THAT DID NOT READ BACK, and a dial that ran out of time. Each
                * reached a person as "Sending didn't work … Try again" (2026-10-19: a forwarded PDF

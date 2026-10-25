@@ -290,6 +290,19 @@ describe("the bridge", () => {
       "POST /drafts -", "POST /drafts later", "POST /drafts/d-1/send later", "PUT /drafts/d-1 later", "POST /drafts/d-1/send later",
     ]);
   });
+
+  it("a forward naming its files asks the engine's /hello first; a server without it is refused with nothing posted", async () => {
+    const asked = shellAnswering(({ payload }) =>
+      encode(200, String(payload?.url) === "/hello" ? JSON.stringify({ product: "ohmail", features: {} }) : "{}"));
+    const adapter = createEngineAdapter();
+    const refused = await adapter.mutate(
+      { kind: "mail_send", inReplyTo: null, forwardOf: "m-1", forwardParts: [], subject: "Fwd: x", body: "fyi", to: [{ name: null, address: "sam@example.test" }] },
+      { idempotencyKey: "k-1" },
+    ).catch((e: unknown) => e as { code?: string });
+    expect((refused as { code?: string }).code).toBe("forward_parts_unsupported");
+    const requests = asked.filter((a) => a.command === "engine_request").map((a) => `${String(a.payload!.method)} ${String(a.payload!.url)}`);
+    expect(requests).toEqual(["GET /hello"]);
+  });
 });
 
 describe("the offline guard", () => {

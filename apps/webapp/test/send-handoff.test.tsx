@@ -151,6 +151,25 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     for (let i = 0; i < 48; i++) await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
     expect(window.location.hash, "a late confirmation moved the person").toBe("#/drafts");
   }, 40_000);
+
+  it("7 — a send the last session left on its outbox: after the reload the foot says Sending to Mila…, then Sent", async () => {
+    const before = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(before);
+    gate(before);                                // never answered: the window closes with the send on its way
+    await press(composeSend(before.el)!, "Send");
+    await waitFor(() => before.el.querySelector(".view-compose") == null, "the composer gone");
+    expect(before.engine.read().list("outbox_entry"), "the premise: the send is on the outbox").toHaveLength(1);
+    await unmountAll();
+    stubDom();
+    const held: DraftShell["sendGate"] = { wait: null };
+    let release!: () => void;
+    held.wait = new Promise<void>((r) => { release = () => { held.wait = null; r(); }; });
+    const after = await mountShell("#/ohbox", [], [], { handOff: true, store: before.store, sendGate: held });
+    await waitFor(() => footLine().includes("Sending to Mila…"), "the restored send in the foot");
+    await act(async () => { release(); });
+    await waitFor(() => footLine().includes(en.sendingLine.sent), "the restored send finishes in the foot");
+    expect(sends(after), "the replay went once").toHaveLength(1);
+  }, 40_000);
 });
 
 type Addressed = EngineMutation & { to?: EmailAddress[]; cc?: EmailAddress[]; bcc?: EmailAddress[] };

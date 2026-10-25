@@ -23,7 +23,9 @@ import {
 const OHBOX = "INBOX";
 const GATE = "ohmail/Screener";
 const NOW = new Date("2026-09-22T09:00:00.000Z");
-const ARRIVED = new Date("2024-03-01T08:00:00.000Z");
+// Inside the default window; OLD is outside it, the control each count carries.
+const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
+const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 async function world() {
   const db = await makeTestDb();
@@ -40,13 +42,13 @@ let n = 0;
 
 async function seed(
   w: Awaited<ReturnType<typeof world>>, from: string, body = "",
-  thread?: { threadId: string; to?: string[]; headers?: Record<string, string[]> },
+  thread?: { threadId: string; to?: string[]; headers?: Record<string, string[]> }, arrivedAt = ARRIVED,
 ): Promise<string> {
   const i = n++;
   const [m] = await w.db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
     dedupKey: `oud:${randomUUID()}`, subject: `Note ${i}`, fromAddress: from,
-    date: ARRIVED, createdAt: ARRIVED, unread: false,
+    date: arrivedAt, createdAt: arrivedAt, arrivedAt, unread: false,
     nativeLocator: { folder: OHBOX, ref: `1:${i}` },
     ...(thread ? {
       threadId: thread.threadId, messageIdHeader: `m${i}@x.test`,
@@ -94,8 +96,9 @@ describe("the undecided-sender walk speaks both dialects", () => {
     await seed(w, "pal@x.test");
     await seed(w, "stranger@x.test");
     await seed(w, "stranger@x.test");
+    await seed(w, "olden@x.test", "", undefined, OLD);
 
-    const summary = await unscreenedSummary(w.db as never, w.accountId);
+    const summary = await unscreenedSummary(w.db as never, w.accountId, NOW);
     expect(summary.groups).toEqual([
       { address: "stranger@x.test", count: 2, newestAt: ARRIVED.toISOString() },
     ]);
@@ -105,12 +108,14 @@ describe("the undecided-sender walk speaks both dialects", () => {
   it("the press writes the intent, on either store, and a second press finds nothing", async () => {
     const w = await world();
     const id = await seed(w, "stranger@x.test");
+    const old = await seed(w, "stranger@x.test", "", undefined, OLD);
 
     const pressed = await screenUnscreened(ctxOf(w));
     expect(pressed.total).toBe(1);
     expect(await desiredOf(w, id)).toBe(GATE);
+    expect(await desiredOf(w, old)).toBe(OHBOX);
 
-    expect((await unscreenedSummary(w.db as never, w.accountId)).total).toBe(0);
+    expect((await unscreenedSummary(w.db as never, w.accountId, NOW)).total).toBe(0);
     expect(await screenUnscreened(ctxOf(w))).toEqual({ screened: [], total: 0 });
   });
 
@@ -158,7 +163,7 @@ describe("the undecided-sender walk speaks both dialects", () => {
     await seed(w, "list@x.test", "hello there");
     // No header on either row, so the rule fires on neither and both senders stay undecided —
     // what this arm measures is the JOIN and the cast, which the walk now takes for both columns.
-    expect((await unscreenedSummary(w.db as never, w.accountId)).total).toBe(2);
+    expect((await unscreenedSummary(w.db as never, w.accountId, NOW)).total).toBe(2);
   });
 
   /* AN UNRELATED REPLY IN A THREAD NEVER ADMITS A STRANGER. Thread membership was the question
@@ -173,7 +178,7 @@ describe("the undecided-sender walk speaks both dialects", () => {
     await seed(w, "colleague@x.test", "", { threadId });
     await seed(w, own, "", { threadId, to: ["colleague@x.test"] });
     await seed(w, "newcomer@x.test", "", { threadId });
-    const offered = (await unscreenedSummary(w.db as never, w.accountId)).groups.map((g) => g.address);
+    const offered = (await unscreenedSummary(w.db as never, w.accountId, NOW)).groups.map((g) => g.address);
     expect(offered).toContain("newcomer@x.test");
   });
 
@@ -189,7 +194,7 @@ describe("the undecided-sender walk speaks both dialects", () => {
     const [row] = await w.db.select({ h: messages.messageIdHeader }).from(messages).where(eq(messages.id, theirs));
     await seed(w, own, "", { threadId: t2, to: ["list@x.test"], headers: { "in-reply-to": [`<${row!.h}>`] } });
     await seed(w, "stranger@x.test");
-    const offered = (await unscreenedSummary(w.db as never, w.accountId)).groups.map((g) => g.address);
+    const offered = (await unscreenedSummary(w.db as never, w.accountId, NOW)).groups.map((g) => g.address);
     expect(offered).toEqual(["stranger@x.test"]);
   });
 
@@ -203,7 +208,7 @@ describe("the undecided-sender walk speaks both dialects", () => {
     });
     await seed(w, "padded@x.test");
     await seed(w, "stranger@x.test");
-    const offered = (await unscreenedSummary(w.db as never, w.accountId)).groups.map((g) => g.address);
+    const offered = (await unscreenedSummary(w.db as never, w.accountId, NOW)).groups.map((g) => g.address);
     expect(offered).toEqual(["stranger@x.test"]);
   });
 
@@ -212,6 +217,6 @@ describe("the undecided-sender walk speaks both dialects", () => {
     await w.db.update(mailboxes).set({ organizerRole: "reader" })
       .where(eq(mailboxes.id, w.mailboxId));
     await seed(w, "stranger@x.test");
-    expect(await unscreenedSummary(w.db as never, w.accountId)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(w.db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
   });
 });

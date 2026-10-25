@@ -8,7 +8,8 @@ import { UNDO_MS } from "../app/shell/screener-state";
 /**
  * THE PANEL IN VIEW AT OPEN IS THE PANEL THE BAR ACTS ON, through the shipped shell and the real engine.
  * The Ohbox row opens `a1` under a newer `x2` of each kind `conversation-bar-forward.test.tsx` names; the
- * ringed panel is `a1`, and the bar's Delete and Later reach the wire for `a1` alone. A wheel on the stack
+ * ringed panel is `a1`, and the bar's Delete reaches the wire for `a1` alone, Later for `a1` and the row's
+ * own reply beside it (the row is taken whole). A wheel on the stack
  * moves nothing the bar reads. Mutation: rebind the bar to the conversation's last member — red at the id.
  */
 
@@ -123,11 +124,13 @@ describe("the bar acts on the panel the conversation opened at", () => {
       expect(deletesOf("x2"), "x2 was deleted").toBe(0);
     }, 30_000);
 
-    it(`with ${label} newer than a1, Later files a1 alone`, async () => {
+    // Our own reply is a member of the row, which Later takes whole; nothing else beside a1 is.
+    const rowTakesX2 = label === "our own reply";
+    it(`with ${label} newer than a1, Later files ${rowTakesX2 ? "a1 and our reply" : "a1 alone"}`, async () => {
       const host = await mountOpenedAtA1(over);
       await click(host.querySelector(".read-col .abar .abar-later"), "the bar's Later");
       expect(triagesOf("a1"), "a1's Later reached the wire").toBe(1);
-      expect(triagesOf("x2"), "x2 was filed").toBe(0);
+      expect(triagesOf("x2"), "x2's filing").toBe(rowTakesX2 ? 1 : 0);
     }, 30_000);
   }
 

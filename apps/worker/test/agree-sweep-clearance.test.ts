@@ -9,7 +9,7 @@ import { OrganizerProfileSync, sweepHeld } from "../src/profile.js";
  * THE AGREE'S SWEEP FAILS CLOSED (LOW-1). A one-time bulk move runs only
  * on a FRESH, clean read of the shared settings folder that finds no question open. A read fault, a
  * garbled settings document and an adapter that cannot reach the folder each answer `unread`, which
- * `agreeSweepPass` turns into "nothing moved"; `importHoldNow` keeps its own routing answer.
+ * `agreeSweepSlice` turns into "nothing moved"; `importHoldNow` keeps its own routing answer.
  */
 
 const SELF = "W-self";

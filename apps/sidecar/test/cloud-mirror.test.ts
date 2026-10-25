@@ -759,6 +759,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
   });
 
   it("a forward draft mirrors with its original, and deleting the original DETACHES it", async () => {
+    const KEPT_PART = randomUUID();
     const { opened, world, cursorPath } = await standUp();
     const db = opened.db;
     const threadId = randomUUID();
@@ -766,6 +767,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     const draftId = randomUUID();
     const draftDTO = {
       id: draftId, mailboxId: CLOUD_MAILBOX, threadId: null, inReplyToMessageId: null, forwardOfMessageId: msgId,
+      forwardParts: [KEPT_PART],
       subject: "Fwd: Can we talk?", body: "see below", html: null,
       to: [{ name: null, address: "stranger@nowhere.test" }], cc: [], bcc: [], rationale: null,
       status: "draft", createdAt: iso(), updatedAt: iso(),
@@ -780,6 +782,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     }).pullOnce();
     const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     expect(before?.forwardOfMessageId, "the forward draft did not mirror with its original").toBe(msgId);
+    expect(before?.forwardParts, "the kept files did not reach the window's copy").toEqual([KEPT_PART]);
 
     writeFileSync(cursorPath, JSON.stringify({ version: CURSOR_VERSION, sync: "c1", bodies: null }));
     await createCloudMirror({
@@ -791,6 +794,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     const [after] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     expect(after, "the forward draft was deleted with its original").toBeDefined();
     expect(after!.forwardOfMessageId).toBeNull();
+    expect(after!.forwardParts, "the kept list outlived its original").toBeNull();
     expect(after!.body).toBe("see below");
   });
 
@@ -3884,7 +3888,7 @@ describe("a body the hosted account withheld is re-owed when its message changes
     expect(healed!.withheldReason, "the marker outlived the husk").toBeNull();
   });
 
-  it("a husk that STAYS husked is asked once and re-stored; a cap or too-large husk is not asked at all", async () => {
+  it("a husk that STAYS husked is asked once and re-stored; a too-large husk is not asked at all", async () => {
     const { opened, world, cursorPath } = await standUp();
     const db = opened.db;
     const threadId = randomUUID();
@@ -3913,7 +3917,7 @@ describe("a body the hosted account withheld is re-owed when its message changes
     expect(calls, "the re-owed body is one ask, not a walk").toHaveLength(1);
     expect(calls[0]!.includes(junkId), "the junk husk's message changed, so its body is owed").toBe(true);
     expect(calls[0]!.includes(capId),
-      "a storage_cap husk is not refilled upstream and must not be re-asked").toBe(false);
+      "the storage refill gives a cap husk its text back with a message change, so its body is owed").toBe(true);
 
     // The account answered with the husk again, so the husk is what this mirror holds — no body
     // was invented, and the hosted Junk exclusion is untouched.
@@ -3921,7 +3925,7 @@ describe("a body the hosted account withheld is re-owed when its message changes
     expect(junk!.text).toBe("");
     expect(junk!.withheldReason).toBe("junk_filed");
     const [cap] = await db.select().from(messageBodies).where(eq(messageBodies.messageId, capId));
-    expect(cap!.withheldReason, "the cap husk's row was dropped and re-fetched for nothing").toBe("storage_cap");
+    expect(cap!.withheldReason, "the cap husk still withheld upstream was not stored as itself").toBe("storage_cap");
     // A message over the download ceiling keeps its marker here, so the desktop says why it is empty.
     expect(calls[0]!.includes(bigId), "nothing refills a too-large body, so it is never re-asked").toBe(false);
     const [big] = await db.select().from(messageBodies).where(eq(messageBodies.messageId, bigId));
@@ -3949,5 +3953,45 @@ describe("a body the hosted account withheld is re-owed when its message changes
 
     expect(bodyCalls(asked), "a husk left absent would be re-asked on every poll, for ever").toEqual([]);
     expect((await db.select().from(messageBodies)).length, "both rows are settled answers").toBe(2);
+  });
+
+  /**
+   * An older sidecar kept a cap husk through the change the storage refill records, so a letter whose
+   * text came back upstream before the upgrade opens empty here. Every local cap husk is asked once,
+   * recorded in the cursor file; a fresh install's flag is born set.
+   */
+  it("an upgraded mirror asks once for every cap husk an older sidecar kept, and never again", async () => {
+    const { opened, world, cursorPath } = await standUp();
+    const db = opened.db;
+    const threadId = randomUUID();
+    const capId = randomUUID();
+    const plainId = randomUUID();
+    await createCloudMirror({
+      db, world, cursorPath, now: () => new Date(),
+      auth: fakeAuth([seedPage(threadId, [capId, plainId], "c1")], [husk(capId, "storage_cap"), bodyItem(plainId, "a body")]),
+    }).pullOnce();
+    const onDisk = JSON.parse(readFileSync(cursorPath, "utf8")) as Record<string, unknown>;
+    expect(onDisk.bodies, "the premise: the walk finished in pull 1").toBe("complete");
+    expect(onDisk.capRefillRepair, "a fresh install's flag is born set").toBe(true);
+    delete onDisk.capRefillRepair;
+    writeFileSync(cursorPath, JSON.stringify(onDisk));
+
+    const corpus = [bodyItem(capId, "the text that came back"), bodyItem(plainId, "a body")];
+    const asked: Asked = [];
+    await createCloudMirror({
+      db, world, cursorPath, now: () => new Date(),
+      auth: fakeAuth([], corpus, NO_TAGS, { asked }),
+    }).pullOnce();
+    const [row] = await db.select().from(messageBodies).where(eq(messageBodies.messageId, capId));
+    expect({ text: row!.text, withheld: row!.withheldReason }).toEqual({ text: "the text that came back", withheld: null });
+    expect(bodyCalls(asked).some((p) => p.includes(plainId)), "a body with text is not asked").toBe(false);
+    expect(JSON.parse(readFileSync(cursorPath, "utf8"))).toMatchObject({ capRefillRepair: true });
+
+    const later: Asked = [];
+    await createCloudMirror({
+      db, world, cursorPath, now: () => new Date(),
+      auth: fakeAuth([], corpus, NO_TAGS, { asked: later }),
+    }).pullOnce();
+    expect(bodyCalls(later), "the re-ask ran a second time — it is not one-time").toEqual([]);
   });
 });

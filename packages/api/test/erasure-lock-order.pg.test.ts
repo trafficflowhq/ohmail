@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
-  accounts, refreshTokens, sessions, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
+  accounts, accountSettings, accountSyncState, changeLog, folderOps, mailboxFolders, mailboxes, messages,
+  refreshTokens, sessions, threads, users, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, UNMETERED_ACCESS,
   type EntitlementsPort,
 } from "@trafficflow/db";
 import { credentials, makeOwnedDb, recoveryCodes, totpSecrets, webauthnCredentials, type OwnedDb } from "@trafficflow/db/cloud";
@@ -11,7 +12,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
   generateToken, hashToken, makeAuthService, makeTestAuthDeps, mintPairingToken, redeemDevicePair,
-  type Db, type ServiceContext,
+  FolderOpsService, ThreadService, type Db, type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -555,4 +556,111 @@ describe.skipIf(!PG_UP)("DELETE /account parked before DELETE users, against a w
         .toEqual({ route: "200 erased cancelled", erased: true, erasureEnded: [], writer: refused });
     }, 60_000);
   }
+});
+
+/**
+ * A KEYED WRITER THAT TAKES THE CHANGE-LOG COUNTER, against DELETE /account: a thread merge and a
+ * folder dismiss with an Idempotency-Key. The writer is parked at its first change row (a third
+ * connection holds the next seq), so it holds the counter and its data rows; the erasure then runs
+ * until it waits on the writer. While the key's claim read the account row only after the counter,
+ * that was a cycle (40P01). The writer now opens on the account row, so the erasure's stamp waits
+ * behind it and both commit; with the erasure first, the writer waits at its first statement and is
+ * refused 410.
+ */
+interface Held { mailboxId: string; threadIds: [string, string]; folderId: string }
+
+async function held(p: Person): Promise<Held> {
+  const tag = randomUUID().slice(0, 8);
+  const now = new Date();
+  const [mb] = await db().insert(mailboxes).values({
+    accountId: p.accountId, provider: "imap", address: `fix026-${tag}@erase.test`,
+    organizerRole: "organizer", organizeConsentedAt: now, trashFolder: "Trash",
+  }).returning();
+  await db().insert(accountSettings).values({ accountId: p.accountId, foldersEnabledAt: now, updatedAt: now });
+  await db().insert(accountSyncState).values({ accountId: p.accountId });
+  const ts = await db().insert(threads).values([{ accountId: p.accountId }, { accountId: p.accountId }]).returning();
+  for (const [i, t] of ts.entries()) {
+    await db().insert(messages).values({
+      accountId: p.accountId, mailboxId: mb!.id, threadId: t.id, bodyHash: `fix026-${tag}-${i}`,
+      dedupKey: `fix026:${tag}:${i}`, subject: "hello", nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
+    });
+  }
+  const [f] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Projects" }).returning();
+  await db().insert(folderOps).values({
+    accountId: p.accountId, mailboxId: mb!.id, folderId: f!.id, op: "rename", toFolder: "Elsewhere",
+    status: "failed", error: "exists",
+  });
+  return { mailboxId: mb!.id, threadIds: [ts[0]!.id, ts[1]!.id], folderId: f!.id };
+}
+
+const KEYED: Array<[string, (h: unknown, p: Person, d: Held) => Promise<unknown>]> = [
+  ["thread merge", (h, p, d) => new ThreadService().merge(ctxOn(h, { accountId: p.accountId }),
+    { threadIds: d.threadIds }, { idempotency: { key: `fix026-merge-${p.accountId}`, requestHash: "fix026" } })],
+  ["folder dismiss", (h, p, d) => new FolderOpsService().dismiss(ctxOn(h, { accountId: p.accountId }),
+    d.folderId, { idempotency: { key: `fix026-dismiss-${p.accountId}`, requestHash: "fix026" } })],
+];
+
+/** A third party holding an uncommitted change row at the account's next seq; rolled back on release. */
+async function holdNextSeq(h: OwnedDb, accountId: string): Promise<{ release: () => void; done: Promise<unknown> }> {
+  let reach!: () => void; let go!: () => void;
+  const reached = new Promise<void>((r) => { reach = r; });
+  const gone = new Promise<void>((r) => { go = r; });
+  const done = h.db.transaction(async (tx) => {
+    const rows = await tx.execute(sql`select greatest(s.next_seq, coalesce((select max(c.seq) from change_log c
+      where c.account_id = ${accountId}), 0)) + 1 as next from account_sync_state s where s.account_id = ${accountId}`);
+    const next = BigInt(String((rows as unknown as Array<{ next: unknown }>)[0]!.next));
+    await tx.insert(changeLog).values({ accountId, seq: next, entityType: "settings", entityId: accountId, op: "update" });
+    reach();
+    await gone;
+    tx.rollback();
+  }).catch(() => undefined);
+  await reached;
+  return { release: go, done };
+}
+
+describe.skipIf(!PG_UP)("DELETE /account against a keyed writer that takes the change-log counter", () => {
+  for (const [label, run] of KEYED) {
+    it(`${label}, parked holding the counter: the erasure waits on it, and both commit`, async () => {
+      const p = await person();
+      const d = await held(p);
+      const tag = randomUUID().slice(0, 8);
+      const [H, E, W] = [`fix026-seq-${tag}`, `fix026-erase-${tag}`, `fix026-write-${tag}`];
+      const erEnded: string[] = []; const wrEnded: string[] = [];
+      const hold = named(H); const er = watched(named(E), erEnded); const wr = watched(named(W), wrEnded);
+      try {
+        const seq = await holdNextSeq(hold, p.accountId);
+        const write = settle(run(wr.db, p, d));
+        const parked = await blockedOn(W, H, 10_000);
+        const route = settle(erase(p.eraser, routeDeps(er.db, [])));
+        const erasureWaited = await blockedOn(E, W, 10_000);
+        seq.release();
+        await seq.done;
+        const [r, w] = await Promise.all([route, write]);
+        const reading = {
+          parked: parked !== null, erasureWaited: erasureWaited !== null,
+          route: r.ok ? await said(r.v) : `threw ${codeOf(r.e)}`, writer: w.ok ? "ok" : codeOf(w.e),
+          victims: [...(erEnded.includes("40P01") ? ["erasure"] : []), ...(wrEnded.includes("40P01") ? ["writer"] : [])],
+          erased: (await state(p)).erased,
+        };
+        if (READINGS) appendFileSync(READINGS, `${JSON.stringify({ ...reading, case: `keyed ${label}, writer first` })}\n`);
+        expect(reading).toEqual({
+          parked: true, erasureWaited: true, route: "200 erased cancelled", writer: "ok", victims: [], erased: true,
+        });
+      } finally {
+        await Promise.all([hold.close(), er.close(), wr.close()]);
+      }
+    }, 60_000);
+  }
+
+  it("thread merge, the erasure first: the merge waits at its first statement and is refused 410", async () => {
+    let d!: Held;
+    const r = await measured("keyed thread merge", async (p) => {
+      d = await held(p);
+      return (h) => KEYED[0]![1](h, p, d);
+    }, "writer waits last");
+    expect({ route: r.route, writer: r.writerAnswer, waited: r.writerWaitedOn, erased: r.erased, victims: r.victims },
+      `reading: ${JSON.stringify(r)}`).toEqual({
+      route: "200 erased cancelled", writer: "account_erased", waited: "accounts FOR SHARE", erased: true, victims: [],
+    });
+  }, 60_000);
 });

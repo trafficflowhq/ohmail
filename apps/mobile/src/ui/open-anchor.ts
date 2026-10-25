@@ -51,8 +51,6 @@ export interface OpenAnchorOptions {
   holding: boolean;
   /** A place applies (a landing, a kept place, older members above the opened message); absent, always. */
   applies?: () => boolean;
-  /** Where the scroll view starts. */
-  start: number;
   /** Where the view should stand (the opened message's top, less its air), `null` before its layout or where none applies. */
   target: () => number | null;
   /** The content and view heights the reader was told about. */
@@ -76,12 +74,11 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
   });
   const now = o.now ?? Date.now;
   let holding = o.holding;
-  let at = o.start;
+  /** Where the view stands: its last report, before any 0 (a kept start the view applied moved it, and a move reports). */
+  let at = 0;
   let placed = false;
   /** The last aim found the view at its place. */
   let standing = false;
-  /** A scroll report came: `at` is the view's own word, not the kept start. */
-  let reported = false;
   let until = 0;
   let pending: (() => void) | null = null;
 
@@ -93,21 +90,11 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     const y = Math.max(0, t);
     return content > 0 && view > 0 ? Math.min(y, Math.max(0, content - view)) : y;
   };
-  /* The view clamps a kept start past the content's end, and reports nothing where that lands where it stands (0).
-     It applies the start once, at its first layout: content that grows after it does not move the view, so the
-     clamp is taken once, against the first extent known, and stands as the view's own word from then on. */
-  const held = (): number => {
-    if (!reported) {
-      const { content, view } = o.extent();
-      if (content > 0 && view > 0) { at = Math.min(at, Math.max(0, content - view)); reported = true; }
-    }
-    return at;
-  };
   const aim = (): void => {
     pending = null;
     if (!holding) return;
     const w = want();
-    standing = w !== null && Math.abs(held() - w) <= 1;
+    standing = w !== null && Math.abs(at - w) <= 1;
     if (w === null) return;
     if (standing) {
       if (!placed) { placed = true; o.onPlaced(); }
@@ -141,7 +128,6 @@ export function createOpenAnchor(o: OpenAnchorOptions): OpenAnchor {
     },
     reached: (y) => {
       at = y;
-      reported = true;
       o.stand(y);
     },
     handOver: () => {

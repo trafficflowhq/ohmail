@@ -15,6 +15,7 @@ import { and, eq } from "drizzle-orm";
 import { DraftsService } from "../src/index.js";
 import { draftContentRevision } from "../src/draft-revision.js";
 import type { ServiceContext } from "../src/index.js";
+import { seedMessage } from "../../api/test/helpers.js";
 
 const svc = new DraftsService();
 
@@ -79,6 +80,21 @@ describe("a content PUT on a sent draft", () => {
     expect(upd.draft.body).toBe(EARLIER);
     expect(await s.read()).toEqual(before);
     expect(await s.changes(), "a restatement wrote a change").toBe(changes);
+  });
+
+  it("a sent forward restated with its own kept files answers 200; another list is draft_sent", async () => {
+    const s = await setup();
+    const orig = await seedMessage(s.db as never, { accountId: s.A, mailboxId: s.mb });
+    const kept = [randomUUID(), randomUUID()].sort();
+    const { draft } = await svc.create(s.ctx, {
+      mailboxId: s.mb, forwardOfMessageId: orig.id, forwardParts: kept, subject: "Fwd: x", body: EARLIER, to: TO,
+    });
+    await s.db.update(drafts).set({ status: "sent" }).where(eq(drafts.id, draft.id));
+    const restated = await svc.update(s.ctx, draft.id, {
+      forwardOfMessageId: orig.id, forwardParts: [...kept].reverse(), subject: "Fwd: x", body: EARLIER, to: TO,
+    });
+    expect(restated.seq, "a replayed confirmed forward was refused as a change").toBeNull();
+    expect(await answerOf(svc.update(s.ctx, draft.id, { forwardParts: [kept[0]!] }))).toEqual({ httpStatus: 409, code: "draft_sent" });
   });
 
   it("a mailbox move alone on a sent row is a different message: draft_sent", async () => {

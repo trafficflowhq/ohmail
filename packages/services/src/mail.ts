@@ -25,6 +25,8 @@ export { withAccountTx } from "./context.js";
 /* The fence itself, for a writer that already holds its transaction — the local install's consent
    write is one, and it is on the mail leaf for the same reason the door above is. */
 export { fenceErasedAccount, fenceErasedScope, asServiceRefusal } from "./erasure-fence.js";
+// The head of the settings save's chain: its settings row, then the mailbox rows it writes.
+export { lockAccountSettingsRow, lockMailboxRows } from "./account-lock.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, assertSnapshotWindow,
   STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
@@ -306,14 +308,14 @@ export {
   SEND_SUBMISSION_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_COPY_GRACE_MS, SEND_COPY_RETRY_WAITS_MS,
   SEND_UPLOAD_DROPPED_SENTENCE, SEND_REFUSED_BY_SERVER_SENTENCE, type SendCopyTiming,
   SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS, inUnverifiedProbeWindow,
-  SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE, FORWARD_MAX_RAW_BYTES, FORWARD_MAX_PARTS, FORWARD_MAX_TOTAL_BYTES,
+  SEND_ATTEMPT_CEILING_MS, SEND_TIMEOUT_SENTENCE, FORWARD_MAX_RAW_BYTES, FORWARD_MAX_PARTS, FORWARD_MAX_TOTAL_BYTES, readForwardParts,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, SEND_UNMEASURED_MESSAGE_BYTES, attachmentBudgetFor,
   effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf,
   type SendDeps, type SendResult, type SendAttachment, type SendInput, type MailServerRefusalKind,
   type StagedAttachmentSource,
-  SEND_WITHDRAWN_SENTENCE, type SendWithdrawOutcome, type SendWithdrawResult,
+  SEND_WITHDRAWN_SENTENCE, SEND_HELD_SENTENCE, SEND_AGAIN_HELD_SENTENCE, type SendWithdrawOutcome, type SendWithdrawResult,
 } from "./send-service.js";
 export {
   WorkflowsService, workflowsService,

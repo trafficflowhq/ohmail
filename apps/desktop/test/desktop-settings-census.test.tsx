@@ -568,6 +568,10 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
             metered ? { metered: true, canAddMailbox: true, mailboxes: 1 } : { metered: false },
           ));
         }
+        // The hosted session, forwarded on the account door: whose account this window is.
+        if (url === "/auth/session") {
+          return encode(200, JSON.stringify({ scope: "full", user: { accountId: "acct-hosted-7" } }));
+        }
         if (url === MANAGE_LINK_PATH) {
           return manageLink === null
             ? encode(404, JSON.stringify({ error: { code: "no_manage_surface" } }))
@@ -833,6 +837,29 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
     expect(mountPoint!.querySelector('a[href^="mailto:"]')).toBeNull();
     expect([...mountPoint!.querySelectorAll("button")].some((b) => b.textContent === "Copy address")).toBe(true);
   });
+
+  /* Support matches a letter to its account by this line; the cloud door has one, standalone none. */
+  for (const [door, status, line] of [
+    ["the cloud door names the hosted account", CLOUD_SERVING, "Account: acct-hosted-7"],
+    ["the standalone door names none, and asks for none", LOCAL_SERVING, "Account: none"],
+  ] as const) {
+    it(`Help & contact's diagnostics: ${door}`, async () => {
+      mailboxesBody = JSON.stringify({ items: [] });
+      let copied = "";
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true, value: { writeText: async (text: string) => { copied = text; } },
+      });
+      await navFor(status, true);
+      const help = [...mountPoint!.querySelectorAll<HTMLElement>(".set-nav button")].find((b) => b.textContent?.trim() === label("help"))!;
+      await act(async () => { help.click(); });
+      await settle(5);
+      const copy = [...mountPoint!.querySelectorAll("button")].find((b) => b.textContent === "Copy diagnostics")!;
+      await act(async () => { copy.click(); });
+      await settle(2);
+      expect(copied.split("\n")).toContain(line);
+      expect(enginePaths.includes("/auth/session")).toBe(status === CLOUD_SERVING);
+    });
+  }
 
   it("the standalone door", async () => {
     const nav = await navFor(LOCAL_SERVING, true);

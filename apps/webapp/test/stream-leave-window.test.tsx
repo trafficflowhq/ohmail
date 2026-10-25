@@ -137,14 +137,16 @@ describe("newestSeenId under the sliding window", () => {
     const s = await shell([0, 40]);
     // The reader starts at the top: c0 is displayed and becomes the newest seen.
     await s.scroll(10);
-    // A deep scroll: the window slides to [500, 540) and c0 unmounts.
-    await s.render([500, 540]);
-    await s.scroll(500 * CARD_PX);
+    // A deep scroll, a screen at a time: the window slides to [20, 60) and c0 unmounts.
+    for (let px = VIEWPORT; px <= 30 * CARD_PX; px += VIEWPORT) await s.scroll(px);
+    await s.render([20, 60]);
+    for (let px = 30 * CARD_PX; px < 50 * CARD_PX; px += VIEWPORT) await s.scroll(px);
+    await s.scroll(50 * CARD_PX);
     const left = await s.leave();
-    // c0 was DISPLAYED; c500 merely being at the top of a later viewport must not steal the
-    // claim — the waterline would land hundreds of cards too deep.
+    // c0 was DISPLAYED; c50 merely being at the top of a later viewport must not steal the
+    // claim — the waterline would land fifty cards too deep.
     expect(left.newestSeenId).toBe("c0");
-    expect(left.bottomVisibleId).toBe("c503");
+    expect(left.bottomVisibleId).toBe("c53");
   });
 
   it("a tracked card that left the PILE falls back to what is on screen", async () => {

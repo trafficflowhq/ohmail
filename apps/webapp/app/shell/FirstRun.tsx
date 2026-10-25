@@ -120,7 +120,10 @@ const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | 
  */
 const SETTLE_MS = 4_000;
 
-/** How often the window step reads its count again while the first import is still reading mail. */
+/**
+ * How often the window step reads its count again while the first import is still reading mail: at
+ * least this, and at least ten times as long as the last read took, so the reads cost a tenth of the time.
+ */
 const COUNT_REREAD_MS = 5_000;
 
 /**
@@ -207,8 +210,6 @@ export interface FirstRunProps {
   serverMessageCount?: number;
   /** The guided decision's sender, or `null` when the queue is empty (the step is skipped). */
   decide: FirstRunDecideSubject | null;
-  /** `true` while the run resumed after the connection dropped — the pull's own notice. */
-  resumed?: boolean;
   /**
    * `true` while the import is over and the shell waits for the store's answer about the Screener's
    * queue (`first-run-queue-settle.ts`); the pull screen says so. The shell already narrows the
@@ -357,8 +358,9 @@ export function nextStep(
 }
 
 /**
- * The window step's count, in words: all of it, the newest N of M, or nothing to screen. While the
- * first import is still reading the mailbox it is a count so far and says so, never "nothing".
+ * The window step's count, in words: all of it, more than N when the walk stopped at its bound, or
+ * nothing to screen. While the first import is still reading the mailbox it is a count so far and
+ * says so, never "nothing".
  */
 export function decisionCountSentence(
   t: (key: string, values?: Record<string, number>) => string, c: FirstRunDecisionCount,
@@ -367,12 +369,7 @@ export function decisionCountSentence(
     return c.letters === 0 ? t("agreeCountReading") : t("agreeCountSoFar", { letters: c.letters, senders: c.senders });
   }
   if (c.letters === 0) return t("agreeCountNone");
-  if (c.total > c.letters) {
-    return t(c.complete ? "agreeCountFirst" : "agreeCountFirstFloor", {
-      letters: c.letters, total: c.total, rest: c.total - c.letters,
-    });
-  }
-  return t("agreeCount", { letters: c.letters, senders: c.senders });
+  return t(c.complete ? "agreeCount" : "agreeCountFloor", { letters: c.letters, senders: c.senders });
 }
 
 export function firstRunStep(
@@ -517,7 +514,7 @@ export function firstRunStep(
 }
 
 export function FirstRun({
-  host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, resumed, queueSettling, rereadQueue,
+  host, facts: wireFacts, onRefresh, onLeave, pull, serverMessageCount, decide, queueSettling, rereadQueue,
   mailboxId, organizedSince, rerun, add, screening, mailboxAddress, onConnected,
   subjectVanished, subjectChoices, onChooseMailbox, accountOrganizer,
 }: FirstRunProps) {
@@ -571,6 +568,17 @@ export function FirstRun({
   }, [consented, mailboxId, wireFacts, sweepHolding]);
   /** The import's own end, before the hold narrows it: the pull's line says which wait it is. */
   const importReallyOver = wireFacts.mailbox !== null && importOverOf(wireFacts.mailbox);
+  /* THE IMPORT'S CONNECTION, as the shell reads it: while the import is open a drop is said in plain
+     words, and its return once, until it drops again. */
+  const unreachable = wireFacts.mailbox?.unreachable === true;
+  const reconnecting = unreachable && !importReallyOver;
+  const wasUnreachable = useRef(false);
+  const [cameBack, setCameBack] = useState(false);
+  useEffect(() => {
+    if (unreachable) setCameBack(false);
+    else if (wasUnreachable.current) setCameBack(true);
+    wasUnreachable.current = unreachable;
+  }, [unreachable]);
   const queuedNow = wireFacts.queuedSenders > 0;
   /* A ref: the shell passes a fresh closure each render, and the pull screen renders often. */
   const rereadRef = useRef(rereadQueue);
@@ -1248,11 +1256,12 @@ export function FirstRun({
     let again: ReturnType<typeof setTimeout> | null = null;
     // A count read while the first import still runs is read again until the import is done.
     const read = (): void => {
+      const started = Date.now();
       count(mailboxId, win === "all" ? { scope: "all_time" } : { dormancyDays: Number(win), scope: "window" })
         .then((value) => {
           if (!live) return;
           setDecisionCount({ key: countKey, value });
-          if (!value.mirrored) again = setTimeout(read, COUNT_REREAD_MS);
+          if (!value.mirrored) again = setTimeout(read, Math.max(COUNT_REREAD_MS, 10 * (Date.now() - started)));
         }, () => { /* no count, no claim */ });
     };
     read();
@@ -1851,6 +1860,7 @@ export function FirstRun({
               {shownCount !== null ? (
                 <p className="ob-consent ob-agree-count" role="status">{decisionCountSentence(t, shownCount)}</p>
               ) : null}
+              {reconnecting ? <SettingsVerdict state="wait" headline={t("windowReconnecting")} /> : null}
               <p className="ob-consent ob-window-recap">{firstSentence(t("consentBody"))}</p>
               {checking ? <SettingsVerdict state="wait" headline={t("windowCheckingHolder")} /> : null}
               {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
@@ -2001,7 +2011,9 @@ export function FirstRun({
                   ? t("eta", { eta: durationWords(etaMs), rate: Math.round(rate) })
                   : readAll ? t("pullRead") : t("etaSoon")}
             </p>
-            {resumed ? <SettingsVerdict state="wait" headline={t("pullResumed")} /> : null}
+            {reconnecting
+              ? <SettingsVerdict state="wait" headline={t("pullReconnecting")} />
+              : cameBack && !importReallyOver ? <SettingsVerdict state="wait" headline={t("pullResumed")} /> : null}
             {foot({
               primary: (
                 <Button variant="ghost" type="submit" data-focus-entry disabled={busy}>{t("pullLeave")}</Button>

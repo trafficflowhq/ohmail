@@ -476,6 +476,34 @@ const layAt = (el: HTMLElement, g: Geo, told = true): void => {
   lay(v.scroll, { y: 0, height: g.view, width: g.width });
   act(() => { native.props!.onContentSizeChange?.(g.width, at.content); });
 };
+/** As `layAt`, in a device's order: the scroll view and its content first, then the column top down. A view past the new end clamps to it and reports. */
+const layDown = (el: HTMLElement, g: Geo): void => {
+  const v = views(el);
+  const at = tops(g);
+  const [a, b, c] = g.heights;
+  native.content = at.content;
+  native.view = g.view;
+  const max = Math.max(0, at.content - g.view);
+  if (native.offset > max) {
+    native.offset = max;
+    native.events.push(() => native.props?.onScroll?.({ nativeEvent: { contentOffset: { x: 0, y: max } } }));
+  }
+  lay(v.scroll, { y: 0, height: g.view, width: g.width });
+  act(() => { native.props!.onContentSizeChange?.(g.width, at.content); });
+  lay(v.padded, { y: 0, height: at.content - 100, width: g.width });
+  lay(v.above, { y: 18, height: a + b + c + 24, width: g.width });
+  for (const [mid, h] of [["p1", a], ["p2", b], ["p3", c]] as const) {
+    const p = v.member(mid);
+    lay(p.panel, { y: at[mid] - 18, height: h, width: g.width - 40 });
+    lay(p.header, { y: 18, height: 22 });
+    lay(p.body, { y: 50, height: 0 });
+    lay(p.end, { y: h - 18, height: 0 });
+  }
+  lay(v.opened, { y: at.opened, height: g.opened, width: g.width - 40 });
+  lay(v.from, { y: 0, height: 20 });
+  lay(v.obody, { y: 120, height: 0 });
+  lay(v.oend, { y: g.opened, height: 0 });
+};
 
 /**
  * A NEW WIDTH KEEPS THE PLACE (a rotation, a fold to the outer screen, a density change): every panel
@@ -713,6 +741,69 @@ describe("a new width keeps the place in the conversation", () => {
     expect(native.offset).toBe(endOf(OUTER));
     expect(world.glanced.flat()).toEqual([]);
   });
+
+  /* THE WAY BACK, laid out in a device's order: the scroll view reports before the panels. The kept start of the
+     wider pane is past the narrower one's end; the view applies it clamped, or drops it (`dropped`: it starts at 0). */
+  const remountDown = (g: Geo, dropped: boolean, gap = 300): HTMLElement => {
+    act(() => root?.unmount());
+    host?.remove();
+    pass(gap);
+    if (dropped) { native.content = 0; native.offset = 0; }
+    const el = mountReader("p4");
+    layDown(el, g);
+    settle(1000);
+    quiet();
+    return el;
+  };
+  const ringed = (el: HTMLElement): string[] =>
+    all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-") && x.__props?.accessibilityState?.selected === true)
+      .map((x) => x.getAttribute("data-test")!.slice("rail-".length));
+
+  for (const dropped of [false, true]) {
+    const how = dropped ? "the kept start dropped" : "the kept start applied";
+    for (const [one, other, name] of [[PORTRAIT, LANDSCAPE, "two panes"], [ONE, BOOK, "the book posture"]] as const) {
+      it(`landed at the end, one pane to ${name} and back (${how}): the end each time, nothing read`, () => {
+        forgetPaneScroll("msg:p4");
+        world.mail = thread(["p1", "p2", "p3"]);
+        layDown(mountReader("p4"), one);
+        settle(1000);
+        expect(native.offset, "the premise: the open lands at the end").toBe(endOf(one));
+        expect(endOf(other), "the premise: the other end is past this one").toBeGreaterThan(endOf(one));
+        const out: number[] = [];
+        let el: HTMLElement | null = null;
+        for (const g of [other, one]) { el = remountDown(g, dropped); out.push(native.offset); }
+        expect({ out, read: world.glanced.flat(), ring: ringed(el!) }).toEqual({ out: [endOf(other), endOf(one)], read: [], ring: ["p4"] });
+      });
+    }
+
+    it(`the person's own place deep in the third message on two panes, then one pane where it is past the end (${how}): the end, nothing read`, () => {
+      forgetPaneScroll("msg:p4");
+      world.mail = thread(["p1", "p2"]);
+      layDown(mountReader("p4"), PORTRAIT);
+      settle(1000);
+      remountDown(LANDSCAPE, false);
+      dragTo(tops(LANDSCAPE).p3 + LANDSCAPE.heights[2] * 0.7);
+      settle(300);
+      quiet();
+      expect(tops(PORTRAIT).p3 + PORTRAIT.heights[2] * 0.7, "the premise: past the one-pane end").toBeGreaterThan(endOf(PORTRAIT));
+      remountDown(PORTRAIT, dropped, 16);
+      expect({ at: native.offset, read: world.glanced.flat() }).toEqual({ at: endOf(PORTRAIT), read: [] });
+    });
+
+    it(`control: 40% into the second message, one pane to two and back (${how}): the same place, nothing read`, () => {
+      forgetPaneScroll("msg:p4");
+      world.mail = thread(["p1", "p2", "p3"]);
+      layDown(mountReader("p4"), PORTRAIT);
+      settle(1000);
+      dragTo(tops(PORTRAIT).p2 + PORTRAIT.heights[1] * 0.4);
+      settle(300);
+      quiet();
+      const out: number[] = [];
+      for (const g of [LANDSCAPE, PORTRAIT]) { remountDown(g, dropped, 100); out.push(Math.round(native.offset)); }
+      const at = (g: Geo): number => Math.round(tops(g).p2 + g.heights[1] * 0.4);
+      expect({ out, read: world.glanced.flat() }).toEqual({ out: [at(LANDSCAPE), at(PORTRAIT)], read: [] });
+    });
+  }
 
   it("landed at the end, remounted where the whole conversation fits (no scroll report): every member on screen is read", () => {
     landAtEnd(["p1", "p2", "p3"]);

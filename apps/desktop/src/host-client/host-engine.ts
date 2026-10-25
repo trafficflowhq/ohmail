@@ -40,6 +40,8 @@ export function createHostClientEngine(
       baseUrl: "",
       headers: () => bearer.headers(),
       fetch: bearer.fetch,
+      // The paired host answers /hello; an older one sends every file of a forward.
+      forwardPartsCheck: true,
     }),
     store: new HostOutboxStore({
       scope: opts.scope,

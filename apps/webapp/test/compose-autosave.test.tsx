@@ -254,6 +254,20 @@ describe("one row, however long somebody types", () => {
    * Mutation: remove the `if (signature === saved.current) return;` line. Real failure text:
    *   AssertionError: an idle form kept writing itself to the account: expected 3 to be 1
    */
+  it("a forward's kept files are saved with it once one was removed, and never as null", async () => {
+    const engine = new OhmailEngine({ adapter: adapterWith() });
+    await mount(engine, typed({ forwardOf: "m-orig", forwardParts: null }));
+    await settle();
+    const first = sent[0] as Extract<EngineMutation, { kind: "draft_save" }>;
+    expect(first.forwardOfMessageId).toBe("m-orig");
+    expect(first, "no screen may clear another device's choice").not.toHaveProperty("forwardParts");
+    // A removal is an edit: it saves, and the row learns the list.
+    await rerender(engine, typed({ forwardOf: "m-orig", forwardParts: ["p-1"] }));
+    await settle();
+    expect(sent).toHaveLength(2);
+    expect((sent[1] as Extract<EngineMutation, { kind: "draft_save" }>).forwardParts).toEqual(["p-1"]);
+  });
+
   it("an unchanged form writes nothing, however often it re-renders", async () => {
     const engine = new OhmailEngine({ adapter: adapterWith() });
     await mount(engine, typed());
@@ -1217,7 +1231,7 @@ describe("the shell is the consumer, not just the harness", () => {
     expect(shell, "autosave runs whether or not Compose is open")
       .toMatch(/active:\s*route\.view === "compose"/);
     expect(shell, "Send would create a second row beside the autosaved one")
-      .toMatch(/composePlan\(compose, composeMailbox, autosave\.draftId\)/);
+      .toMatch(/composePlan\(\{ \.\.\.compose, forwardParts: [^}]*\}, composeMailbox, autosave\.draftId\)/);
     expect(shellFrameOf("drafts").source, "the Drafts list is built from something other than the selector")
       .toContain("draftsList(reader)");
     /* The rail entry is chrome, and the rail left `AppShell.tsx` for `shell-keys.tsx` with the
