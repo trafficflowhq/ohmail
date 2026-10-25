@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import createNextIntlPlugin from "next-intl/plugin";
 import { API_BASE, MARKETING_PATHS, ZONE_PATHS, rewritesFor } from "./routes.mjs";
 import { GA_ID_VAR, assertMeasurementId, withAnalytics } from "./analytics.mjs";
+import { STAGING_ORIGIN_VAR, assertStagingOrigin, stagingUploadSource, withStaging } from "./staging-origin.mjs";
 import {
   ALLOWED_LANDING_ZONES, ZONE_BYPASS_VAR, ZONE_VAR, armedZone, resolveLandingZone,
 } from "./landing-zone.mjs";
@@ -519,12 +520,15 @@ const ZONE_PREFIX_SOURCE = ZONE_PATHS.filter((p) => p.endsWith("/:path*"))
  * branded 404 included, keeps the baseline; credential pages are re-set by middleware as before.
  * With an ARMED landing zone the zone's paths (`ZONE_PATHS`) get the three static headers and no
  * policy from here — the website sends its own, Google's sources included, and a second would
- * intersect with it — while every other path keeps exactly the rule it has unarmed.
+ * intersect with it — while every other path keeps exactly the rule it has unarmed. A storage
+ * upload source (`staging-origin.mjs`) joins `connect-src` in every policy here but the demo's.
  *
  * @param {string | null} gaId
  * @param {string | null} [zone] the armed zone (`armedZone` in `landing-zone.mjs`), or null
+ * @param {string | null} [staging] the upload source (`stagingUploadSource`), or null
  */
-export function headerRules(gaId, zone = null) {
+export function headerRules(gaId, zone = null, staging = null) {
+  const baseline = withStaging(BASELINE_CSP, staging);
   const demo = {
     // FIRST and EXCLUSIVE — see the note above SHARED_CSP. The demo is the real mail
     // client in demo mode (`app/(product)/demo/page.tsx`), framed same-origin by the
@@ -547,7 +551,7 @@ export function headerRules(gaId, zone = null) {
         // Every path but the demo and the zone's, which the blanket policy would intersect with.
         source: `/((?!demo)(?!(?:${ZONE_EXACT_SOURCE})$)(?!(?:${ZONE_PREFIX_SOURCE})/).*)`,
         headers: [
-          { key: "Content-Security-Policy", value: BASELINE_CSP },
+          { key: "Content-Security-Policy", value: baseline },
           ...STATIC_SECURITY_HEADERS,
         ],
       },
@@ -566,7 +570,7 @@ export function headerRules(gaId, zone = null) {
         // off `/demo` — the one path in the deployment that may be framed by this origin.
         source: "/((?!demo).*)",
         headers: [
-          { key: "Content-Security-Policy", value: BASELINE_CSP },
+          { key: "Content-Security-Policy", value: baseline },
           ...STATIC_SECURITY_HEADERS,
         ],
       },
@@ -578,14 +582,14 @@ export function headerRules(gaId, zone = null) {
     ...MARKETING_PATHS.map((source) => ({
       source,
       headers: [
-        { key: "Content-Security-Policy", value: withAnalytics(BASELINE_CSP) },
+        { key: "Content-Security-Policy", value: withAnalytics(baseline) },
         ...STATIC_SECURITY_HEADERS,
       ],
     })),
     {
       source: `/((?!demo)(?!(?:${site})$).*)`,
       headers: [
-        { key: "Content-Security-Policy", value: BASELINE_CSP },
+        { key: "Content-Security-Policy", value: baseline },
         ...STATIC_SECURITY_HEADERS,
       ],
     },
@@ -661,6 +665,8 @@ const gaId = assertMeasurementId(process.env);
 const inAppMarketing = existsSync(fileURLToPath(new URL("./app/(marketing)/page.tsx", import.meta.url)));
 assertLandingZone(rawZone, zone, process.env, { selfhost, inAppMarketing, gaId });
 const headerZone = armedZone(zone, (process.env[ZONE_BYPASS_VAR] ?? "").trim());
+// The storage project staged uploads go to (`staging-origin.mjs`), refused when malformed or on a self-host build.
+const stagingOrigin = assertStagingOrigin(process.env, { selfhost });
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -709,12 +715,15 @@ const nextConfig = {
     // build the constant is absent and every self-host branch is unreachable regardless of the
     // runtime environment, which is the same reasoning as the compiled rewrite allow-list.
     ...(selfhost ? { [PUBLIC_FLAVOR_VAR]: "selfhost" } : {}),
+    // Always emitted, "" when unarmed, so the client and the middleware compile it and never read
+    // it at runtime: a dashboard edit without a rebuild cannot widen the policy middleware sends.
+    [STAGING_ORIGIN_VAR]: stagingOrigin ?? "",
     [BUILD_VAR]: buildIdentity(process.env),
     [VERSION_VAR]: appVersion(),
   },
 
   async headers() {
-    return headerRules(gaId, headerZone);
+    return headerRules(gaId, headerZone, stagingUploadSource(stagingOrigin));
   },
 
   async rewrites() {

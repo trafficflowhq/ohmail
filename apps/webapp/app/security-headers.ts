@@ -1,3 +1,5 @@
+import { stagingUploadSource, withStaging } from "../staging-origin.mjs";
+
 /**
  * The browser-enforced containment the single origin left unbuilt. `origins.ts` says it plainly: "the landing is
  * never an auth origin" is gone, and nothing at the origin layer can restate it — the marketing surface, the demo,
@@ -7,9 +9,12 @@
 
 /**
  * `connect-src 'self'` is the load-bearing directive: injected script can read `tf_csrf` and issue same-origin
- * requests — unavoidable under one origin — but it cannot SEND what it reads anywhere (no fetch, XHR, WebSocket,
- * EventSource or sendBeacon off-origin); `form-action` and `base-uri` close the classic non-connect exfiltration
- * channels, `img-src` refuses the pixel, `default-src 'self'` keeps an off-origin script tag from loading at all.
+ * requests — unavoidable under one origin — but it cannot SEND what it reads anywhere but here (no fetch, XHR,
+ * WebSocket, EventSource or sendBeacon off-origin). One exception, on a build that names a storage project
+ * (`staging-origin.mjs`): that project's signed-upload path, which takes a PUT only with an upload token our API
+ * mints per object — a narrow channel, not a closed one. `form-action` and `base-uri` close the classic non-connect
+ * exfiltration channels, `img-src` refuses the pixel, `default-src 'self'` keeps an off-origin script tag from loading
+ * at all.
  * `frame-ancestors 'none'` replaces an accident with a control: framing was blocked only as a side effect of
  * `SameSite=Strict`, and relaxing the cookie would otherwise make the mail client framable with no separate control
  * noticing.
@@ -57,6 +62,12 @@ export const SHARED_CSP_DIRECTIVES: readonly string[] = [
   "upgrade-insecure-requests",
 ];
 
+/**
+ * The storage upload path this build admits, or null. Compiled: `next.config.mjs` emits the variable
+ * through `env`, so the middleware never reads it at runtime.
+ */
+export const STAGING_UPLOAD_SOURCE: string | null = stagingUploadSource(process.env.NEXT_PUBLIC_STAGING_ORIGIN);
+
 /** The policy for statically prerendered documents — see the header for why `unsafe-inline`. */
 export const BASELINE_CSP: string = [
   ...SHARED_CSP_DIRECTIVES,
@@ -73,8 +84,8 @@ export const BASELINE_CSP: string = [
  * chunk load depend on Next's loader being nonce-propagating, for no gain on an origin
  * that is already proven to load no third-party script.
  */
-export function nonceCsp(nonce: string): string {
-  return [...SHARED_CSP_DIRECTIVES, `script-src 'self' 'nonce-${nonce}'`].join("; ");
+export function nonceCsp(nonce: string, source: string | null = STAGING_UPLOAD_SOURCE): string {
+  return withStaging([...SHARED_CSP_DIRECTIVES, `script-src 'self' 'nonce-${nonce}'`].join("; "), source);
 }
 
 /**

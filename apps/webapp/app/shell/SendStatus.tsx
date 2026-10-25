@@ -107,6 +107,10 @@ export function sendLine(send: SendState, longAt: boolean): { tone: SendTone; ke
                 ? { tone: "error", key: "statusTooLong" }
               : send.code === "payload_too_large"
                 ? { tone: "error", key: "statusTooLarge" }
+              /* THIS PAGE MAY NOT UPLOAD FILES THIS LARGE: nothing left, the draft is kept, and a
+                 smaller set of files goes inline. */
+              : send.code === "staging_refused"
+                ? { tone: "error", key: "statusStagingRefused" }
               /**
                * ANOTHER WINDOW WROTE THIS DRAFT BETWEEN THE LAST SAVE AND THIS PRESS. `warn`, not
                * `error`: nothing failed and nothing left — the row simply is not the message this

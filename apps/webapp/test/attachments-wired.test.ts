@@ -494,3 +494,34 @@ describe("the surface consumes it — a paperclip is reachable, not merely fetch
     expect(copy).not.toContain("Downloading attachments isn't wired up yet.");
   });
 });
+
+describe("the live engine's staged upload goes only where the page policy lets it", () => {
+  const ORIGIN = "https://abcdefghijklmnopqrst.storage.example";
+  const GRANT = `${ORIGIN}/storage/v1/object/upload/sign/attachment-staging/acct-1/t1?token=t`;
+  const big = {
+    kind: "mail_send", mailboxId: "mb", inReplyTo: null, subject: "plans", body: "attached",
+    to: [{ name: null, address: "lena@atelier.example" }],
+    attachments: [{ filename: "plans.pdf", contentType: "application/pdf", contentBase64: Buffer.alloc(4 << 20, 7).toString("base64") }],
+  } as const;
+  beforeEach(() => {
+    answer = (url, init) => {
+      if (url === "/api/drafts" && init?.method === "POST") return json(201, { id: "d1", bcc: [], contentRevision: "r1" });
+      if (url === "/api/attachments/staging") return json(201, { id: "t1", uploadUrl: GRANT, uploadMethod: "PUT", uploadHeaders: {} });
+      if (url === GRANT) return new Response(null, { status: 200 });
+      if (url === "/api/drafts/d1/send") return json(200, { status: "sent", providerMessageId: "<p1@x>" });
+      return json(404, { error: { code: "not_found", message: url } });
+    };
+  });
+
+  it("a build naming no storage origin ends the send `staging_refused`, the row named, nothing PUT or sent", async () => {
+    const res = await createEngine(false, ARMED).mutate(big as never);
+    expect(res).toMatchObject({ status: "rolled_back", entityId: "d1", error: { code: "staging_refused" } });
+    expect(calls.filter((c) => c.startsWith("PUT ") || c.endsWith("/send"))).toEqual([]);
+  });
+
+  it("a build naming the grant's origin PUTs the bytes there and sends", async () => {
+    const res = await createEngine(false, { ...ARMED, NEXT_PUBLIC_STAGING_ORIGIN: ORIGIN }).mutate(big as never);
+    expect(res.status).toBe("confirmed");
+    expect(calls).toEqual(expect.arrayContaining([`PUT ${GRANT}`, "POST /api/drafts/d1/send"]));
+  });
+});

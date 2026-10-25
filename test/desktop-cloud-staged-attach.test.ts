@@ -43,7 +43,7 @@ function encodeAnswer(res: { status: number; headers: Headers; bytes: Uint8Array
 }
 
 /** The shell, the engine's hosted door, the account and its storage — all four recorded. */
-function rig() {
+function rig(storage: "up" | "down" = "up") {
   const window: Seen[] = [];
   const account: Seen[] = [];
   const stored: Array<{ url: string; method: string; headers: Record<string, string>; sha: string; bytes: number }> = [];
@@ -74,6 +74,7 @@ function rig() {
 
   const staged = createStagedUploads({
     fetchImpl: (async (url: string, init?: RequestInit) => {
+      if (storage === "down") throw new TypeError("fetch failed");
       const headers: Record<string, string> = {};
       new Headers(init?.headers).forEach((v, k) => { headers[k] = v; });
       const bytes = new Uint8Array(init!.body as ArrayBuffer);
@@ -173,6 +174,16 @@ describe("the hosted door stages a 4 MB video through the engine", () => {
     expect(stored[0]!.sha).toBe(createHash("sha256").update(Buffer.from(file.contentBase64, "base64")).digest("hex"));
     expect(window.find((c) => c.method === "PUT")!.body).toBe(DESKTOP_WINDOW_SEND_MAX_TOTAL_BYTES - 1);
   }, 60_000);
+
+  it("storage out of reach keeps the door's code, so the outbox counts the send toward its end", async () => {
+    const { account } = rig("down");
+    const err = await createEngineAdapter({ stageAttachments: true })
+      .mutate(send([video(4 * MIB)]), { idempotencyKey: "k-down" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: "staging_unreachable", status: 503, retryable: true, retryAfterMs: 5_000, entityId: "draft-1",
+    });
+    expect(account.some((c) => c.path.endsWith("/send"))).toBe(false);
+  });
 
   it("the window and the engine name one upload path", () => {
     expect(WINDOW_PREFIX).toBe(STAGED_UPLOAD_PATH_PREFIX);

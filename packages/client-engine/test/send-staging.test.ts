@@ -245,6 +245,43 @@ describe("A STAGING FAILURE REFUSES THE SEND — there is no silent inline fallb
     }
   });
 
+  it("a grant this client may not reach ends the send — final, the row named, no upload and no send", async () => {
+    const { calls, fetchImpl } = harness({ attempt: "none" });
+    const asked: string[] = [];
+    const a = new HttpAdapter({
+      baseUrl: "http://localhost", fetch: fetchImpl, stageAttachments: true,
+      uploadAdmits: (url) => { asked.push(url); return !url.startsWith("https://storage.example/"); },
+    });
+    const err = await a.mutate(send([file(4 * MIB)]), { idempotencyKey: "k-refused" })
+      .catch((e: unknown) => e) as MutationRejectedError;
+    expect(err).toBeInstanceOf(MutationRejectedError);
+    expect(err).toMatchObject({ code: "staging_refused", retryable: false, entityId: "draft-1" });
+    expect(asked).toEqual(["https://storage.example/o/1?token=abc"]);
+    expect(calls.some((c) => c.url.startsWith("https://storage.example/")), "the refused grant was PUT").toBe(false);
+    expect(calls.some((c) => c.url.endsWith("/send"))).toBe(false);
+
+    // CONTROL: the same send to a client that may reach the grant uploads and goes.
+    const ok = harness({ attempt: "none" });
+    await new HttpAdapter({
+      baseUrl: "http://localhost", fetch: ok.fetchImpl, stageAttachments: true,
+      uploadAdmits: (url) => url.startsWith("https://storage.example/"),
+    }).mutate(send([file(4 * MIB)]), { idempotencyKey: "k-admitted" });
+    expect(sendBodyOf(ok.calls).stagedAttachmentIds).toEqual(["ticket-1"]);
+  });
+
+  it("an upload that throws is `staging_unreachable` — retried, and the row named", async () => {
+    const { calls, fetchImpl } = harness({ attempt: "none" });
+    const blocked: FetchLike = async (url, init) => {
+      if (url.startsWith("https://storage.example/")) throw new TypeError("Failed to fetch");
+      return fetchImpl(url, init);
+    };
+    const err = await new HttpAdapter({ baseUrl: "http://localhost", fetch: blocked, stageAttachments: true })
+      .mutate(send([file(4 * MIB)]), { idempotencyKey: "k-unreachable" })
+      .catch((e: unknown) => e) as MutationRejectedError;
+    expect(err).toMatchObject({ code: "staging_unreachable", retryable: true, status: null, entityId: "draft-1" });
+    expect(calls.some((c) => c.url.endsWith("/send"))).toBe(false);
+  });
+
   it("a send with no resolvable mailbox is refused rather than staged blind", async () => {
     const { fetchImpl } = harness();
     const a = new HttpAdapter({

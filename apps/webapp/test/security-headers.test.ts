@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BASELINE_CSP,
   SHARED_CSP_DIRECTIVES,
@@ -8,6 +8,7 @@ import {
   newNonce,
   nonceCsp,
 } from "../app/security-headers.js";
+import { stagingAdmits, stagingUploadSource, withStaging } from "../staging-origin.mjs";
 
 /**
  * THE ORIGIN SHIPS A POLICY.
@@ -32,6 +33,10 @@ function configList(name: string): string[] {
   expect(body, `${name} not found in next.config.mjs`).toBeDefined();
   return [...body!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
 }
+
+/** A storage project's origin, and the one source a build naming it admits (`staging-origin.mjs`). */
+const ORIGIN = "https://abcdefghijklmnopqrst.storage.example";
+const S = `${ORIGIN}/storage/v1/object/upload/sign/`;
 
 describe("the two copies of the policy cannot drift", () => {
   it("SHARED_CSP is identical in next.config.mjs and app/security-headers.ts", () => {
@@ -163,10 +168,10 @@ describe("the demo route is the real client, framable and otherwise baseline", (
 
 describe("one policy per route group, with and without the website's measurement id", () => {
   /** The CSPs the header rules give `path`, through Next's own matcher. */
-  async function cspsAt(gaId: string | null, path: string, zone: string | null = null): Promise<string[]> {
+  async function cspsAt(gaId: string | null, path: string, zone: string | null = null, staging: string | null = null): Promise<string[]> {
     const { headerRules } = await import("../next.config.mjs");
     const { getPathMatch } = await import("next/dist/shared/lib/router/utils/path-match");
-    return (headerRules(gaId, zone) as Array<{ source: string; headers: Array<{ key: string; value: string }> }>)
+    return (headerRules(gaId, zone, staging) as Array<{ source: string; headers: Array<{ key: string; value: string }> }>)
       .filter((r) => getPathMatch(r.source, { strict: true, removeUnnamedParams: true })(path) !== false)
       .flatMap((r) => r.headers.filter((h) => h.key === "Content-Security-Policy").map((h) => h.value));
   }
@@ -210,5 +215,109 @@ describe("one policy per route group, with and without the website's measurement
     for (const p of Object.values(GROUPS).flat()) {
       for (const csp of await cspsAt("G-9SPZX4FS1X", p, zone)) expect(csp, p).not.toMatch(/google/);
     }
+  });
+
+  it("a storage source joins connect-src on every non-demo path, one policy each, nothing else moves", async () => {
+    for (const gaId of [null, "G-9SPZX4FS1X"]) {
+      for (const p of Object.values(GROUPS).flat()) {
+        const [plain, staged] = [await cspsAt(gaId, p), await cspsAt(gaId, p, null, S)];
+        expect(staged, p).toHaveLength(1);
+        expect(staged[0], p).toBe(plain[0]!.replace("connect-src 'self'", `connect-src 'self' ${S}`));
+      }
+    }
+    expect(await cspsAt(null, "/mailbox", null, S)).toEqual([BASELINE_CSP.replace("connect-src 'self'", `connect-src 'self' ${S}`)]);
+  });
+
+  it("the demo and an armed zone's paths carry no storage source", async () => {
+    expect(await cspsAt(null, "/demo", null, S)).toEqual(await cspsAt(null, "/demo"));
+    const zone = "https://site.ohmail.app";
+    for (const p of GROUPS.marketing) expect(await cspsAt(null, p, zone, S), p).toEqual([]);
+    expect(await cspsAt(null, "/login", zone, S)).toEqual([withStaging(BASELINE_CSP, S)]);
+  });
+});
+
+describe("a Cloud build admits its storage project's upload path, and nothing wider", () => {
+  afterEach(() => { vi.resetModules(); });
+
+  it("the source is the origin's signed-upload path; anything but one https origin, written exactly, is none", () => {
+    expect(stagingUploadSource(ORIGIN)).toBe(S);
+    expect(stagingUploadSource(` ${ORIGIN}\n`)).toBe(S);
+    for (const bad of [
+      undefined, "", "*", "https://*.storage.example", "https://*", "http://abcdefghijklmnopqrst.storage.example",
+      `${ORIGIN}/`, `${ORIGIN}/storage/v1`, `${ORIGIN}?x=1`, `${ORIGIN}#x`, `${ORIGIN}:443`, `${ORIGIN}:8443`,
+      "https://u@abcdefghijklmnopqrst.storage.example", "https://ABCDEFGHIJKLMNOPQRST.storage.example",
+      "https://192.0.2.10", "https://[::1]", "https://storage", "'self'", "https://a.example 'unsafe-inline'",
+    ]) {
+      expect(stagingUploadSource(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("the nonce policy's connect-src is exactly 'self' and the source, every other directive the same", () => {
+    const [plain, staged] = [nonceCsp("AbCd1234", null), nonceCsp("AbCd1234", S)].map((c) => c.split("; "));
+    expect(staged).toContain(`connect-src 'self' ${S}`);
+    expect(staged!.filter((d) => !d.startsWith("connect-src"))).toEqual(plain!.filter((d) => !d.startsWith("connect-src")));
+    // This test environment names no storage project, so the compiled default is the policy as before.
+    expect(nonceCsp("AbCd1234")).toBe(nonceCsp("AbCd1234", null));
+  });
+
+  it("the policy is widened only by a source of that exact shape, and only where it has connect-src", () => {
+    expect(withStaging(BASELINE_CSP, null)).toBe(BASELINE_CSP);
+    for (const wide of [ORIGIN, `${ORIGIN}/`, "https://*.storage.example/storage/v1/object/upload/sign/", "'self'; script-src *"]) {
+      expect(() => withStaging(BASELINE_CSP, wide), wide).toThrow(/upload source/);
+    }
+    expect(() => withStaging("default-src 'self'", S)).toThrow(/connect-src/);
+  });
+
+  it("the page may PUT to its own origin and under the source, nowhere else", () => {
+    const page = "https://ohmail.app";
+    expect(stagingAdmits(`${S}attachment-staging/acc/t1.pdf?token=t`, S, page)).toBe(true);
+    expect(stagingAdmits("/attachment-staging/acc/t1", null, page)).toBe(true);
+    for (const off of [
+      `${ORIGIN}/rest/v1/accounts`, `${ORIGIN}/storage/v1/object/attachment-staging/acc/t1`, `${S}../../../rest/v1/x`,
+      "https://zyxwvutsrqponmlkjihg.storage.example/storage/v1/object/upload/sign/x", `${ORIGIN}:8443/storage/v1/object/upload/sign/x`,
+    ]) {
+      expect(stagingAdmits(off, S, page), off).toBe(false);
+    }
+    expect(stagingAdmits(`${S}x`, null, page)).toBe(false);
+  });
+
+  /** `next.config.mjs` evaluated as Next evaluates it, with `vars` in the environment. */
+  async function build(vars: Record<string, string | undefined>): Promise<{
+    env: Record<string, string>; headers(): Promise<Array<{ source: string; headers: Array<{ key: string; value: string }> }>>;
+  }> {
+    const all = {
+      NEXT_PUBLIC_GITHUB_STARS: "1", NEXT_PUBLIC_STAGING_ORIGIN: undefined, OHMAIL_FLAVOR: undefined,
+      TF_API_ORIGIN: undefined, NEXT_PUBLIC_API_BASE: undefined, LANDING_ZONE_ORIGIN: undefined, ...vars,
+    };
+    const previous = Object.fromEntries(Object.keys(all).map((k) => [k, process.env[k]]));
+    for (const [k, v] of Object.entries(all)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.resetModules();
+    try {
+      return await ((await import("../next.config.mjs")).default as () => Promise<never>)();
+    } finally {
+      for (const [k, v] of Object.entries(previous)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it("the build compiles the origin and widens its headers; unset compiles nothing and widens nothing", async () => {
+    const armed = await build({ NEXT_PUBLIC_STAGING_ORIGIN: ORIGIN });
+    expect(armed.env.NEXT_PUBLIC_STAGING_ORIGIN).toBe(ORIGIN);
+    expect(JSON.stringify(await armed.headers())).toContain(`connect-src 'self' ${S}`);
+    const unset = await build({});
+    expect(unset.env.NEXT_PUBLIC_STAGING_ORIGIN).toBe("");
+    expect(JSON.stringify(await unset.headers())).not.toContain("upload/sign");
+  });
+
+  it("the build refuses the variable on a self-host build, and a value that is not a project origin", async () => {
+    await expect(build({ OHMAIL_FLAVOR: "selfhost", NEXT_PUBLIC_STAGING_ORIGIN: ORIGIN })).rejects.toThrow(/must not be set/);
+    await expect(build({ NEXT_PUBLIC_STAGING_ORIGIN: "https://*.storage.example" })).rejects.toThrow(/https origin, written exactly/);
+    await expect(build({ NEXT_PUBLIC_STAGING_ORIGIN: `${ORIGIN}/storage/v1` })).rejects.toThrow(/https origin, written exactly/);
+    expect((await build({ OHMAIL_FLAVOR: "selfhost" })).env.NEXT_PUBLIC_STAGING_ORIGIN).toBe("");
   });
 });

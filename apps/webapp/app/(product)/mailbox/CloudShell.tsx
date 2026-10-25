@@ -9,7 +9,7 @@ import { buildToken } from "../../shell/app-update";
 import { startBuildWatch } from "../../shell/build-watch";
 import { reviveStandingDown } from "../../shell/sync-scheduler";
 import { useResolvedDemoModeFrom } from "../../shell/engine";
-import { COMPOSE_ATTACH_STAGED_SURFACE_BYTES } from "../../components/ComposeAttach";
+import { sendSurfaceFor } from "./send-surface";
 import {
   bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
@@ -60,6 +60,9 @@ import { useSignedOutElsewhere } from "./useSignedOutElsewhere";
  */
 pendApiOwner(readOwner());
 beginOAuthReturn();
+
+/** The staged ceiling where this page can PUT the files, else none (`send-surface.ts`). Compiled. */
+const SEND_SURFACE = sendSurfaceFor(SELF_HOST_BUILD, process.env.NEXT_PUBLIC_STAGING_ORIGIN);
 
 /** Settings → Mailboxes' waiting filings, on the Cloud API. Module scope: one identity per load. */
 const filingsApi: MailboxFilingsApi = {
@@ -300,8 +303,9 @@ export function CloudShell({ demo }: { demo: boolean }) {
            the bucket refuses an over-size object in the browser's own PUT,
            with an unfixable "try again". So the surface is the bucket's
            ceiling, applied server-side at the mint too. The desktop's cloud
-           door keeps the constant: it forwards verbatim (`DesktopGate.tsx`). */
-        sendSurfaceMaxTotalBytes={COMPOSE_ATTACH_STAGED_SURFACE_BYTES}
+           door keeps the constant: it forwards verbatim (`DesktopGate.tsx`).
+           Declared only where this page can PUT the files (`send-surface.ts`). */
+        {...(SEND_SURFACE !== undefined ? { sendSurfaceMaxTotalBytes: SEND_SURFACE } : {})}
         /* The password change sits above the account's own cards, managed and self-hosted alike;
            the wall (`AccessLock`) opens the same pane. */
         accountSection={<><PasswordSection /><AccountSection /></>}

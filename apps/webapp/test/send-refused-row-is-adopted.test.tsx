@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type MirrorStore,
+  HttpAdapter, MemoryMirrorStore, OhmailEngine, type EngineMutation, type HttpAdapterOptions, type MirrorStore,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
@@ -24,6 +24,8 @@ const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const NOW = new Date("2026-09-27T09:00:00.000Z");
+/** The real clock, taken before `beforeEach` fakes it. */
+const realTimeout = globalThis.setTimeout;
 const FAILED_SENTENCE = "A prior send under this key failed and was not delivered.";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -62,6 +64,8 @@ const dto = (id: string, row: { body: string }, rev: string) => ({
 
 function fakeFetch(r: Route) {
   return async (url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => {
+    // The storage host, as a page whose policy refuses it sees it: the PUT never leaves.
+    if (url.startsWith("https://storage.example/")) throw new TypeError("Failed to fetch");
     const path = new URL(url, "http://x").pathname;
     const method = init.method ?? "GET";
     const body = init.body ? JSON.parse(init.body) as Record<string, unknown> : {};
@@ -91,12 +95,15 @@ function fakeFetch(r: Route) {
       if (r.loseFirstAnswer) throw new TypeError("Failed to fetch");
       return json(502, { error: { code: "send_rejected", message: "rejected", retryable: false } });
     }
+    if (method === "POST" && path === "/attachments/staging") {
+      return json(201, { id: "t1", uploadUrl: "https://storage.example/o/t1?token=t", uploadMethod: "PUT", uploadHeaders: {} });
+    }
     return json(404, { error: { code: "not_found", message: path, retryable: false } });
   };
 }
 
-function engineOver(store: MirrorStore, r: Route): OhmailEngine {
-  const http = new HttpAdapter({ baseUrl: "http://x", fetch: fakeFetch(r) as never, getCookie: () => null });
+function engineOver(store: MirrorStore, r: Route, staging: Partial<HttpAdapterOptions> = {}): OhmailEngine {
+  const http = new HttpAdapter({ baseUrl: "http://x", fetch: fakeFetch(r) as never, getCookie: () => null, ...staging });
   return new OhmailEngine({
     store,
     now: () => NOW,
@@ -127,7 +134,7 @@ const fieldsFor = (body: string): ComposeFields => ({
 } as never);
 
 interface Surface {
-  press: () => Promise<void>;
+  press: (attachments?: unknown[]) => Promise<void>;
   edit: (next: string) => Promise<void>;
   draftId: () => string | null;
   phase: () => string;
@@ -166,12 +173,13 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
     });
     fateRef.current = autosave.settleCompose as never;
     api = {
-      press: async () => {
+      press: async (attachments?: unknown[]) => {
         await act(async () => {
           (mail.send as unknown as (m: Record<string, unknown>) => void)({
             kind: "mail_send", inReplyTo: null, body: fields.body, subject: fields.subject,
             to: [{ name: null, address: "lena@atelier.example" }], mailboxId: "mb",
             ...(autosave.draftId ? { draftId: autosave.draftId } : {}),
+            ...(attachments ? { attachments } : {}),
           });
         });
       },
@@ -198,7 +206,7 @@ async function surface(engine: OhmailEngine, body: string): Promise<Surface> {
     }));
   });
   return {
-    press: () => api.press(), edit: (n) => api.edit(n),
+    press: (a) => api.press(a), edit: (n) => api.edit(n),
     draftId: () => api.draftId(), phase: () => api.phase(),
   };
 }
@@ -286,6 +294,30 @@ describe("a send the server refused for good", () => {
     await pause();
     expect(r.creates - before, "the composer created a row beside the one the refused replay named").toBe(0);
     expect(s2.draftId(), "the composer is not bound to the row the refusal named").toBe("d1");
+  });
+
+  it("3 — an upload this page may not make ends the send: the composer takes its row and makes none", async () => {
+    // Tester round 46: a 5 MB send whose PUT the page's policy refused stayed queued for ever,
+    // and Compose held it. The adapter is told what the page admits, and storage is not it.
+    const r = route();
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = engineOver(store, r, { stageAttachments: true, uploadAdmits: () => false });
+    const s = await surface(engine, "Die Pläne im Anhang.");
+    await act(async () => { await engine.start(); });
+    const plans = { filename: "plans.pdf", contentType: "application/pdf", contentBase64: Buffer.alloc(4 * 1024 * 1024, 7).toString("base64") };
+    await s.press([plans]);
+    // The file's digest is the platform's own work, done on the real clock.
+    for (let i = 0; i < 200 && s.phase() === "sending"; i++) {
+      await act(async () => { await new Promise((ok) => { realTimeout(ok, 10); }); await vi.advanceTimersByTimeAsync(1); });
+    }
+    expect(s.phase(), "the refused upload left the send waiting, holding the composer").toBe("failed");
+    await act(async () => { await engine.syncOnce(); });
+
+    await s.edit("Die Pläne im Anhang, kleiner.");
+    await pause();
+    expect(r.creates, "the composer made a second row beside the one the send left").toBe(1);
+    expect(s.draftId(), "the composer is not bound to the row the refusal named").toBe("d1");
   });
 
   it("CONTROL: a refusal that names no row leaves the composer making its own", async () => {

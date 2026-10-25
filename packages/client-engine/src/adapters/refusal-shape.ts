@@ -56,3 +56,11 @@ export function classifyRefusal(
  * NOTHING: a verb the person cancelled owes no sentence, and "it failed" would be the wrong one.
  */
 export const OUTBOX_WITHDRAWN_CODE = "withdrawn";
+
+/**
+ * A staged upload that threw right after the API answered its mint, or that the desktop's hosted
+ * door answered with this code (its own PUT to storage threw): the storage host is out of reach
+ * while the API is not. The outbox counts it toward its ceiling (`serverAnswered`), so a send that
+ * can never upload ends visibly instead of retrying for ever.
+ */
+export const STAGING_UNREACHABLE_CODE = "staging_unreachable";

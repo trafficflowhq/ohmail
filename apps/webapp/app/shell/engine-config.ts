@@ -13,6 +13,7 @@ import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 import { sessionFetch, sessionMayAsk } from "./session-truth";
 import { webLane, type ResumeLane } from "./resume-lane";
+import { stagingAdmits, stagingUploadSource } from "../../staging-origin.mjs";
 
 /**
  * The engine decision, extracted so it can be TESTED rather than described. Inside `engine.tsx` (a `"use client"`
@@ -32,12 +33,18 @@ export interface EngineEnv {
    * it is a build flag rather than a prop.
    */
   NEXT_PUBLIC_DESKTOP?: string;
+  /**
+   * The storage project a staged upload may go to (`staging-origin.mjs`), compiled by the web build;
+   * absent, the page reaches only its own origin. The desktop build folds it to `undefined`.
+   */
+  NEXT_PUBLIC_STAGING_ORIGIN?: string;
 }
 
 /** The build-time environment, read once. */
 const BUILD_ENV: EngineEnv = {
   NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE,
   NEXT_PUBLIC_DESKTOP: process.env.NEXT_PUBLIC_DESKTOP,
+  NEXT_PUBLIC_STAGING_ORIGIN: process.env.NEXT_PUBLIC_STAGING_ORIGIN,
 };
 
 let saidNoWebLocks = false;
@@ -212,6 +219,7 @@ export function createEngine(
    * pollute" and leaves open.
    */
   const gate = createSyncGate(owner ?? null);
+  const uploadSource = stagingUploadSource(env.NEXT_PUBLIC_STAGING_ORIGIN);
   return registerSyncGate(
     new OhmailEngine({
       /**
@@ -221,6 +229,8 @@ export function createEngine(
        * request cap expressed as 3 MB of raw bytes. The desktop's hosted door stages too (`bridge-fetch.ts`), its
        * PUT carried by the local engine; its standalone and paired doors never do — no hosted storage stands
        * behind them. The server still accepts the inline shape older builds send.
+       * `uploadAdmits` is the page policy's own answer (`staging-origin.mjs`): a grant on a host it refuses
+       * ends the send with a sentence instead of a PUT the browser blocks on every retry.
        */
       /*
        * `mayAsk` — THE ENGINE'S HALF OF THE DEAD-SESSION GATE. The sync gate above answers "is this
@@ -247,6 +257,7 @@ export function createEngine(
       adapter: gate.guard(
         new HttpAdapter({
           baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
+          uploadAdmits: (url) => stagingAdmits(url, uploadSource, globalThis.location?.origin ?? ""),
           headers: () => ({ ...ERASED_DECLARATION }),
           fetch: erasedAwareFetch(sessionFetch, sessionEndedResponse),
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },

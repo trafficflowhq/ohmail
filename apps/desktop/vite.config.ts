@@ -734,6 +734,9 @@ export default defineConfig({
        tabs keep their hidden-tab-zero-syncs behaviour unchanged — a web-side guard fails if the
        flag ever leaks on (grep `syncsWhileHidden` in the web app's test suite). */
     "process.env.NEXT_PUBLIC_DESKTOP": HOST_CLIENT ? "undefined" : JSON.stringify("1"),
+    /* The storage project a WEB build's staged uploads go to, read by `engine-config.ts` beside the
+       API base; no artifact here builds that engine, so it folds to `undefined` like the base. */
+    "process.env.NEXT_PUBLIC_STAGING_ORIGIN": "undefined",
     /* `__OHMAIL_LOCAL_ENGINE__` was defined here while a fixtures-only preview artifact shared
        this entry — `main.tsx` branched on it and the bundler removed the arm not taken. The
        preview is retired, the entry has one arm, and the flag is gone with its last consumer

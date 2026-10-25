@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { mailboxes } from "@trafficflow/db";
-import { attachmentStaging } from "@trafficflow/db/cloud";
+import { attachmentStaging, makeSupabaseStagingStorage } from "@trafficflow/db/cloud";
 import { makeAttachmentStagingPort } from "@trafficflow/services";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { FIXED_NOW, makeDeps, seedSession } from "../packages/api/test/helpers.js";
 import { HttpAdapter, MutationRejectedError, type EngineMutation, type FetchLike } from "@ohmail/client-engine";
+import { stagingAdmits, stagingUploadSource } from "../apps/webapp/staging-origin.mjs";
 
 /**
  * ═══ ACCEPTANCE: A REAL 5 MB FILE THROUGH THE WHOLE STACK, AND THE 0.9.3 REPLAY BESIDE IT ══
@@ -228,5 +229,23 @@ describe("ACCEPTANCE — the 0.9.3 replay, on the same deployment", () => {
     expect(err).toBeInstanceOf(MutationRejectedError);
     expect(err.status).toBe(413);
     expect(spy.delivered).toHaveLength(1);
+  });
+});
+
+describe("THE WEB PAGE MAY PUT A REAL STORAGE GRANT, AND ONLY ITS OWN PROJECT'S", () => {
+  it("a grant `makeSupabaseStagingStorage` signs is under its project's upload source, and no other's", async () => {
+    // The page policy (`apps/webapp/staging-origin.mjs`) and the grant the API hands out are two
+    // spellings of one URL; were they to drift, every staged send from the browser would be refused.
+    const origin = "https://abcdefghijklmnopqrst.storage.example";
+    const signed = (async () => new Response(JSON.stringify({
+      url: "/object/upload/sign/attachment-staging/acct-1/ticket-1?token=t",
+    }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    const storage = makeSupabaseStagingStorage({ url: origin, serviceKey: "test-only", bucket: "attachment-staging" }, signed);
+    const grant = await storage.signUpload("acct-1/ticket-1", "application/pdf");
+
+    const page = "https://ohmail.app";
+    expect(stagingAdmits(grant.uploadUrl, stagingUploadSource(origin), page)).toBe(true);
+    expect(stagingAdmits(grant.uploadUrl, stagingUploadSource("https://zyxwvutsrqponmlkjihg.storage.example"), page)).toBe(false);
+    expect(stagingAdmits(grant.uploadUrl, null, page), "a build naming no project admits it").toBe(false);
   });
 });

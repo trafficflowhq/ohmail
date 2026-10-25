@@ -36,7 +36,7 @@ import type {
   MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
-import { OUTBOX_WITHDRAWN_CODE } from "./refusal-shape.js";
+import { OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE } from "./refusal-shape.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
 import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
@@ -103,6 +103,12 @@ export interface HttpAdapterOptions {
   stageAttachments?: boolean;
   /** A send's own writes ask the door to answer before its copy echoes them (`x-ohmail-echo: later`). */
   sendEchoLater?: boolean;
+  /**
+   * May this client PUT a staged upload to this URL? Asked before each PUT; a grant it refuses ends
+   * the send (`staging_refused`) instead of failing the same way on every retry. The browser passes
+   * its page policy's answer (`engine-config.ts`); absent, every grant is admitted.
+   */
+  uploadAdmits?: (url: string) => boolean;
   /**
    * Where a window's failed pull is reported ({@link EngineAdapter.reportSyncFailure}). Set by the
    * desktop's bridge adapter, which posts the record to the local engine; absent on the hosted
@@ -370,6 +376,8 @@ export class HttpAdapter implements EngineAdapter {
   /** See {@link HttpAdapterOptions.stageAttachments}. `false` unless a host asked for it. */
   private readonly stageAttachments: boolean;
   private readonly sendEchoLater: boolean;
+  /** See {@link HttpAdapterOptions.uploadAdmits}. Admits every grant unless a host supplied one. */
+  private readonly uploadAdmits: (url: string) => boolean;
   /** See {@link HttpAdapterOptions.mayAsk}. `() => true` unless a host supplied one. */
   private readonly mayAsk: () => boolean;
   /** See {@link HttpAdapterOptions.syncDeadlines}. `null` unless a host asked for them. */
@@ -494,6 +502,7 @@ export class HttpAdapter implements EngineAdapter {
     // `=== true` rather than `?? false`, so nothing truthy-but-not-boolean can turn this on.
     this.stageAttachments = opts.stageAttachments === true;
     this.sendEchoLater = opts.sendEchoLater === true;
+    this.uploadAdmits = opts.uploadAdmits ?? (() => true);
     // The capability EXISTS only where a sink was given, so `typeof adapter.reportSyncFailure`
     // answers the engine's question the way `requestPull` does: absent means "no door for this".
     if (opts.syncFailureSink) {
@@ -2685,7 +2694,15 @@ export class HttpAdapter implements EngineAdapter {
        server answers from the reservation it already holds. See {@link keyWasPresented} for why
        every uncertain answer stages instead. */
     const alreadyPresented = this.willStage(m) && await this.keyWasPresented(draftId, idempotencyKey);
-    const staged = alreadyPresented ? null : await this.stagedIdsFor(m, idempotencyKey);
+    const staged = alreadyPresented ? null : await this.stagedIdsFor(m, idempotencyKey).catch((err: unknown) => {
+      /* A STAGING REFUSAL NAMES THE ROW, as the send's own refusals do: a waiting send stays bound to
+         it across a reload, and a terminal one hands it back to the composer instead of a second draft. */
+      if (!(err instanceof MutationRejectedError)) throw err;
+      throw new MutationRejectedError(err.message, {
+        status: err.status, code: err.code, retryable: err.retryable, retryAfterMs: err.retryAfterMs,
+        details: err.details, createAttempted: err.createAttempted, entityId: draftId ?? null,
+      });
+    });
     if (staged) sendBody.stagedAttachmentIds = staged;
     else if (!alreadyPresented && m.attachments && m.attachments.length) sendBody.attachments = m.attachments;
     if (m.forwardOf) sendBody.forwardOf = m.forwardOf;
@@ -3064,23 +3081,40 @@ export class HttpAdapter implements EngineAdapter {
           },
         );
       }
+      // A grant this client may not reach (the page's policy refuses its host) fails the same way
+      // on every retry, so the send ends here and says so.
+      if (!this.uploadAdmits(grant.uploadUrl)) {
+        throw new MutationRejectedError(
+          "This message was not sent: files this large can't be uploaded from this page — your draft is kept. "
+            + "Remove the largest attachments and send again.",
+          { code: "staging_refused", retryable: false },
+        );
+      }
 
       // THE UPLOAD DOES NOT GO THROUGH `request()`. It carries no session cookie, no CSRF token
       // and none of this client's headers: its authority is the signed URL and nothing else, and
       // sending a credential to a URL the server handed us would widen what that URL can do. The
       // method and headers are used VERBATIM — the storage wire is the server's business, and a
       // client that reconstructed them would be a second implementation of a one-sided contract.
-      let put: Response;
+      let put: Response | null = null;
       try {
         put = await this.fetchImpl(grant.uploadUrl, {
           method: grant.uploadMethod ?? "PUT",
           headers: grant.uploadHeaders ?? {},
           body: bytes as unknown as BodyInit,
         });
-      } catch {
+      } catch { /* storage out of reach: below */ }
+      // The desktop's hosted door answers its own PUT's throw as 503 `staging_unreachable`.
+      const doorCode = put && !put.ok
+        ? await put.json().then((b: { error?: { code?: unknown } } | null) => b?.error?.code, () => undefined)
+        : undefined;
+      if (put === null || doorCode === STAGING_UNREACHABLE_CODE) {
         throw new MutationRejectedError(
           "This message was not sent: an attachment could not be uploaded. Check your connection and try again.",
-          { code: "staging_failed", retryable: true },
+          {
+            code: STAGING_UNREACHABLE_CODE, status: put?.status ?? null, retryable: true,
+            retryAfterMs: put ? retryAfterMsOf(put) : null,
+          },
         );
       }
       if (!put.ok) {

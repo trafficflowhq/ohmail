@@ -46,7 +46,9 @@ import type { WindowSearchPhases } from "./search-phases.js";
 import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
 import { sendFingerprint } from "./send-fingerprint.js";
-import { OUTBOX_WITHDRAWN_CODE, UNJUDGED_WRITE_CODES, type UnjudgedWriteCode } from "./adapters/refusal-shape.js";
+import {
+  OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE, UNJUDGED_WRITE_CODES, type UnjudgedWriteCode,
+} from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { REASK_MAX, wireFailed } from "./wire-reask.js";
 import { bytesBlob, retypedBlob } from "./bytes-blob.js";
@@ -7726,6 +7728,9 @@ export class OhmailEngine {
    */
   private static serverAnswered(err: Pick<MutationRejectedError, "code" | "status" | "retryAfterMs">): boolean {
     if (err.code === "network" || err.code === "timeout") return false;
+    // The API had just answered the mint, so only storage is out of reach: counted, status or not,
+    // and before the carve-out below, since the desktop's door names a wait for it.
+    if (err.code === STAGING_UNREACHABLE_CODE) return true;
     if (err.retryAfterMs !== null) return false;
     if (MODELLED_WAIT_CODES.has(err.code ?? "")) return false;
     // A BARE 429 — an edge or proxy rate limit with no JSON body and no `Retry-After`, so it

@@ -260,6 +260,23 @@ describe("a failed send never relays the wire", () => {
     expect(de1).not.toContain("gespeichert");
   });
 
+  it("a page that may not upload files this large says so, keeps the draft and names the remedy, in both scopes and languages", () => {
+    // Tester round 46: a 5 MB send whose upload this page could not make said "still trying" for ever.
+    const send = phaseFor({ status: "rolled_back", error: { code: "staging_refused", retryable: false, message: "x" } } as never);
+    for (const scope of ["reply", "compose"] as const) {
+      expect(render(send, en, "en", scope)).toBe(
+        "Not sent. Files this large can't be uploaded from this page — your draft is kept. Remove the largest attachments and send again.",
+      );
+      act(() => root?.unmount());
+      host?.remove();
+      expect(render(send, de, "de", scope)).toBe(
+        "Nicht gesendet. So große Dateien können von dieser Seite nicht hochgeladen werden — dein Entwurf ist gesichert. Entferne die größten Anhänge und sende sie nochmal.",
+      );
+      act(() => root?.unmount());
+      host?.remove();
+    }
+  });
+
   it("control: a refusal with no sentence of its own still says the general line", () => {
     const text = render({ phase: "failed", reason: "x", code: "some_new_code" }, en, "en", "compose");
     expect(text).toBe(en.compose.statusFailed);

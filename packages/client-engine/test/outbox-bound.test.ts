@@ -208,6 +208,32 @@ describe("the durable outbox gives up after a bounded number of server-answered 
     store.close();
   });
 
+  it.each([
+    // No status, as `network` has none: the browser's PUT threw.
+    { door: "the browser", shape: {} },
+    // The desktop's hosted door, whose own PUT threw: 503 and a named wait, counted all the same.
+    { door: "the desktop's hosted door", shape: { status: 503, retryAfterMs: 5_000 } },
+  ])("an upload that cannot reach storage spends the ceiling and ends in the abandoned list ($door)", async ({ shape }) => {
+    const factory = new IDBFactory();
+    const c = clock();
+    const w = rig(new FixturesAdapter());
+    const store = new IndexedDbMirrorStore({ owner: "acct-staging", factory });
+    const engine = new OhmailEngine({ adapter: w.adapter, store, now: c.now });
+    await engine.start();
+
+    // The API had just answered the mint, so the verb is what fails, and retrying it for ever was
+    // the send that never left.
+    w.fail(() => new MutationRejectedError("could not upload", { code: "staging_unreachable", retryable: true, ...shape }));
+    const first = await engine.mutate(VERB);
+    for (let i = 0; i < OUTBOX_MAX_SERVER_FAILURES * 3; i++) {
+      c.advance(OUTBOX_BACKOFF_CAP_MS + 1);
+      await engine.syncOnce();
+    }
+    expect(w.mutates).toBe(OUTBOX_MAX_SERVER_FAILURES);
+    expect(engine.abandoned().map((a) => a.key)).toEqual([first.key]);
+    store.close();
+  });
+
   it("a refusal that names its own interval waits that long and spends no patience", async () => {
     const factory = new IDBFactory();
     const c = clock();

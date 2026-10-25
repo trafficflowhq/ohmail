@@ -232,6 +232,24 @@ describe("compose — the stated ceiling follows the surface declaration", () =>
   });
 });
 
+describe("the mailbox page declares the staged ceiling only where it can upload", () => {
+  it("a managed build naming no storage project binds 3 MB; one naming it, the staged ceiling", async () => {
+    // Tester round 46: "Up to 38.3 MB total" on a page whose policy refused every upload.
+    const { sendSurfaceFor } = await import("../app/(product)/mailbox/send-surface.js");
+    const origin = "https://abcdefghijklmnopqrst.storage.example";
+    expect(sendSurfaceFor(false, "https://*.storage.example")).toBeUndefined();
+    expect(sendSurfaceFor(true, undefined), "a self-host page uploads to its own origin").toBe(COMPOSE_ATTACH_STAGED_SURFACE_BYTES);
+
+    await mountShell({ size: 50 * MIB, surface: sendSurfaceFor(false, undefined) });
+    await goCompose();
+    expect(capText(".view-compose")).toContain("3.1 MB");
+
+    await mountShell({ size: 50 * MIB, surface: sendSurfaceFor(false, origin) });
+    await goCompose();
+    expect(capText(".view-compose")).toContain("38.3 MB");
+  });
+});
+
 describe("inline reply — the same declaration reaches the editor through the chrome", () => {
   it("an uncapped surface promises what the mailbox's announcement carries", async () => {
     await mountShell({ size: 25 * MIB, surface: null });
