@@ -28,6 +28,8 @@ import {
   appointmentStamp,
   messageDisplayTime,
   composeZonedWallClock,
+  firstDayOffset,
+  morningDayOffset,
   zonedFields,
   zonedInstant,
   zonedWeekday,
@@ -6340,11 +6342,19 @@ function horizonOn(
   };
 }
 
-/** Tomorrow, at the account's resurface time where the reader is — the chooser's first preset. */
+/** Tomorrow, at the account's resurface time where the reader is — the chooser's first preset.
+ *  In the small hours it is the coming morning (`morningDayOffset`). */
 export function tomorrowAt(
   from: Date, at: string | null | undefined, zone: string = readerZone(),
 ): ResurfaceHorizon {
-  return horizonOn(from, 1, at, zone);
+  return horizonOn(from, morningDayOffset(from, zone, resurfaceClock(at)), at, zone);
+}
+
+export { SMALL_HOURS_END } from "@ohmail/client-engine";
+
+/** The first "Pick a date" row: 0 while today's `at` is still ahead, else 1. */
+export function pickFloor(from: Date, at: string | null | undefined, zone: string = readerZone()): 0 | 1 {
+  return firstDayOffset(from, zone, resurfaceClock(at));
 }
 
 /** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
@@ -6374,6 +6384,23 @@ export function nextWeekNine(from: Date): Date {
 /** A calendar day `n` days ahead, 09:00 local — {@link dayAt} at the product's hour. */
 export function dayNine(from: Date, daysAhead: number): Date {
   return dayAt(from, daysAhead, null).at;
+}
+
+/** Resurface's Tomorrow and Next week; `nextWeek` is null when it is the same instant (a Sunday). */
+export function resurfaceHorizons(
+  from: Date, at: string | null | undefined, zone: string = readerZone(),
+): { tomorrow: ResurfaceHorizon; nextWeek: ResurfaceHorizon | null } {
+  const tomorrow = tomorrowAt(from, at, zone);
+  const nextWeek = nextWeekAt(from, at, zone);
+  return { tomorrow, nextWeek: nextWeek.at.getTime() === tomorrow.at.getTime() ? null : nextWeek };
+}
+
+/** Send later's two morning presets, by the same rule: `monday` is null when it is `tomorrow`. */
+export function sendLaterMornings(
+  from: Date, zone: string = readerZone(),
+): { tomorrow: Date; monday: Date | null } {
+  const { tomorrow, nextWeek } = resurfaceHorizons(from, null, zone);
+  return { tomorrow: tomorrow.at, monday: nextWeek?.at ?? null };
 }
 
 /*

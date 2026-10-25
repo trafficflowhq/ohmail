@@ -181,15 +181,13 @@ export function useMessageVerbs(input: MessageVerbsInput): void {
       run: () => shown && onAction("reply", shown),
     },
     {
-      /* Gated exactly as the bar's own Reply-all button is: a 1:1 message has nobody else to
-         answer, and a key that dispatched anyway would compose a reply the send path then
-         resolves to the same single recipient. */
+      /* On a 1:1 message everyone on it is the sender, so the key opens the plain reply. */
       chord: "shift+r",
       group: "message",
       label: labels.replyAll,
-      disabled: none || !canReplyAll(shown!),
+      disabled: none,
       ...parked,
-      run: () => shown && onAction("reply_all", shown),
+      run: () => shown && onAction(canReplyAll(shown) ? "reply_all" : "reply", shown),
     },
     {
       /* `⇧F` reads the one predicate its button reads (`forwardOffered`); the press asks or

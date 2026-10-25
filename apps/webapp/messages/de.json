@@ -3362,6 +3362,7 @@
       "app": "App"
     },
     "undo": "Letzte Aktion rückgängig",
+    "nothingToUndo": "Nichts rückgängig zu machen.",
     "goOhbox": "Zur Ohbox",
     "goReads": "Zu News",
     "goReceipts": "Zu den Belegen",

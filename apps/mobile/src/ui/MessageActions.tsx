@@ -30,13 +30,13 @@ import {
   forwardOffered,
   moveTargetsFor,
   moveTargetLabel,
-  nextWeekAt,
-  nextWeekNine,
+  pickFloor,
   keptRecipients,
   type WorldDraftEdit,
   parseRecipients,
   readerZone,
   resurfaceClock,
+  resurfaceHorizons,
   resurfaceTimeLabel,
   RESURFACE_HOURS,
   sizeLabel,
@@ -47,8 +47,8 @@ import {
   SIG_FOLLOWING,
   usableHours,
   todayEvening,
-  tomorrowAt,
-  tomorrowNine,
+  sendLaterMornings,
+  SMALL_HOURS_END,
   type ForwardAsk,
   type ResurfaceHorizon,
   type SignatureState,
@@ -382,9 +382,12 @@ export function MessageActions({
    */
   /* Per reader day and chosen hour, not per render: the reader re-renders on every body and bar change. */
   const today = new Date();
-  const horizonDay = today.getFullYear() * 10_000 + today.getMonth() * 100 + today.getDate();
+  // The small hours are their own key: "Tomorrow" is the coming morning until 05:00.
+  const horizonDay = (today.getFullYear() * 10_000 + today.getMonth() * 100 + today.getDate()) * 2
+    + (today.getHours() < SMALL_HOURS_END ? 1 : 0);
+  // On a Sunday after the small hours Next week is Tomorrow's Monday, so it is not offered.
   const { tomorrow, nextWeek } = useMemo(
-    () => ({ tomorrow: tomorrowAt(new Date(), resurfaceTime), nextWeek: nextWeekAt(new Date(), resurfaceTime) }),
+    () => resurfaceHorizons(new Date(), resurfaceTime),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [resurfaceTime, horizonDay],
   );
@@ -688,12 +691,16 @@ export function MessageActions({
               onPress={() => pickResurface(tomorrow)}
             />
             <SkipNote horizon={tomorrow} label={Copy.resurfaceTomorrow} asked={resurfaceTime} />
-            <SheetRow
-              label={Copy.resurfaceNextWeek}
-              detail={nextWeek.time}
-              onPress={() => pickResurface(nextWeek)}
-            />
-            <SkipNote horizon={nextWeek} label={Copy.resurfaceNextWeek} asked={resurfaceTime} />
+            {nextWeek ? (
+              <>
+                <SheetRow
+                  label={Copy.resurfaceNextWeek}
+                  detail={nextWeek.time}
+                  onPress={() => pickResurface(nextWeek)}
+                />
+                <SkipNote horizon={nextWeek} label={Copy.resurfaceNextWeek} asked={resurfaceTime} />
+              </>
+            ) : null}
             <SheetRow icon="chev" label={Copy.resurfacePick} onPress={() => setOpen("pick")} />
           </>
         ) : open === "time" ? (
@@ -713,14 +720,14 @@ export function MessageActions({
           </ScrollView>
         ) : open === "pick" ? (
           // The picked day, as rows — the native idiom for the webapp's date input, floored at
-          // tomorrow so the chooser cannot name a horizon in the past. Built only while this list
+          // the first day the chosen time is still ahead (today, while it is). Built only while this list
           // is open: it stood in the closed branch, so every reader render built ninety rows.
           <ScrollView style={{ maxHeight: 320 }} nestedScrollEnabled>
             {/* Ninety days of rows — the webapp's date input takes any future day; a list is
                 the phone's idiom, and a quarter ahead covers the horizons people actually
                 book. A fortnight did not, and was an exclusion nothing on screen admitted. */}
             {Array.from({ length: 90 }, (_, i) => {
-              const day = dayAt(new Date(), i + 1, resurfaceTime);
+              const day = dayAt(new Date(), i + pickFloor(new Date(), resurfaceTime), resurfaceTime);
               return (
                 <Fragment key={day.at.toISOString()}>
                   <SheetRow
@@ -1528,6 +1535,7 @@ export function ComposeSheet({
    */
   const eveningAt = todayEvening(openedAt).instant;
   const eveningUsable = eveningAt.getTime() - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const mornings = sendLaterMornings(openedAt, zone);
   const openLater = () => {
     // The keyboard would cover the picker it is being asked to read.
     Keyboard.dismiss();
@@ -2144,16 +2152,18 @@ export function ComposeSheet({
                   ) : null}
                   <SheetRow
                     label={Copy.sendLaterTomorrow(
-                      scheduleLabel(tomorrowNine(openedAt).toISOString(), openedAt, zone),
+                      scheduleLabel(mornings.tomorrow.toISOString(), openedAt, zone),
                     )}
-                    onPress={() => pickLater(tomorrowNine(openedAt))}
+                    onPress={() => pickLater(mornings.tomorrow)}
                   />
-                  <SheetRow
-                    label={Copy.sendLaterMonday(
-                      scheduleLabel(nextWeekNine(openedAt).toISOString(), openedAt, zone),
-                    )}
-                    onPress={() => pickLater(nextWeekNine(openedAt))}
-                  />
+                  {mornings.monday ? (
+                    <SheetRow
+                      label={Copy.sendLaterMonday(
+                        scheduleLabel(mornings.monday.toISOString(), openedAt, zone),
+                      )}
+                      onPress={() => pickLater(mornings.monday!)}
+                    />
+                  ) : null}
                   <SheetRow
                     icon="chev"
                     label={Copy.sendLaterPick}

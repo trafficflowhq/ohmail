@@ -2912,6 +2912,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 hydrateBody={hydrateBody}
                 onAction={onMessageAction}
                 onAddTag={openTagPicker}
+                onScreen={openSenderMenu}
+                canDelete={canDeleteMessage}
+                canReplyAll={canReplyAllTo}
               />
             ) : null}
 

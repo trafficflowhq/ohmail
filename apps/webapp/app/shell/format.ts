@@ -7,12 +7,14 @@ import {
   appointmentStamp,
   clock,
   composeZonedWallClock,
+  firstDayOffset,
   folderLeaf,
   isJunkHuskLeaving,
   isOwnSent,
   JUNK_REFILL_BOUND_MS,
   fullDateTime as stampFullDateTime,
   messageDisplayTime,
+  morningDayOffset,
   VIEW_OF_FOLDER,
   zonedFields,
   zonedInstant,
@@ -247,12 +249,19 @@ export function nextFridayNine(base: Date): string {
  * Tomorrow, at the account's resurface time where the reader is (mail 0110). `at` is the stored
  * `'HH:MM'`, or `null`/an unreadable value for the product's 09:00 — see {@link resurfaceClock}.
  * A {@link ResurfaceHorizon}, not a bare instant: the caller labels the button from the same
- * value it dispatches.
+ * value it dispatches. In the small hours it is the coming morning (`morningDayOffset`).
  */
 export function tomorrowAt(base: Date, at: string | null | undefined): ResurfaceHorizon {
   const zone = activeFormatZone();
   const f = zonedFields(base, zone);
-  return clockOn(zone, f.year, f.month, f.day + 1, at);
+  return clockOn(zone, f.year, f.month, f.day + morningDayOffset(base, zone, resurfaceClock(at)), at);
+}
+
+/** The first day `at` is still ahead — today or tomorrow — as the day picker's floor. */
+export function firstDayAt(base: Date, at: string | null | undefined): ResurfaceHorizon {
+  const zone = activeFormatZone();
+  const f = zonedFields(base, zone);
+  return clockOn(zone, f.year, f.month, f.day + firstDayOffset(base, zone, resurfaceClock(at)), at);
 }
 
 /** The coming Monday at that time — and never "later today": a Monday resolves to the next one. */
@@ -270,6 +279,21 @@ export function tomorrowNine(base: Date): string {
 /** The coming Monday, 09:00 — {@link nextWeekAt} at the product's hour. */
 export function nextWeekNine(base: Date): string {
   return nextWeekAt(base, null).iso;
+}
+
+/** Resurface's Tomorrow and Next week; `nextWeek` is null when it is the same instant (a Sunday). */
+export function resurfaceHorizons(
+  base: Date, at: string | null | undefined,
+): { tomorrow: ResurfaceHorizon; nextWeek: ResurfaceHorizon | null } {
+  const tomorrow = tomorrowAt(base, at);
+  const nextWeek = nextWeekAt(base, at);
+  return { tomorrow, nextWeek: nextWeek.iso === tomorrow.iso ? null : nextWeek };
+}
+
+/** Send later's two morning presets, by the same rule: `monday` is null when it is `tomorrow`. */
+export function sendLaterMornings(base: Date): { tomorrow: string; monday: string | null } {
+  const { tomorrow, nextWeek } = resurfaceHorizons(base, null);
+  return { tomorrow: tomorrow.iso, monday: nextWeek?.iso ?? null };
 }
 
 /* ═══ THE SEND-LATER HORIZONS (mail 0077) ══════════════════════════════════════════════════

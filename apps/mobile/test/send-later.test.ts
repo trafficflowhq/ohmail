@@ -39,6 +39,7 @@ import {
   scheduleLabel,
   SEND_LATER_HOURS,
   SEND_LATER_MIN_LEAD_MS,
+  sendLaterMornings,
   todayEvening,
   usableHours,
   type LiveWorldActions,
@@ -662,6 +663,15 @@ describe("send later composes the wall clock the webapp composes", () => {
     const at = dayAtHour(new Date("2026-10-22T09:00:00.000Z"), 3, 2, Z);
     expect(at.instant.toISOString()).toBe("2026-10-25T00:00:00.000Z");
     expect(at.verdict).toBe("first_of_two");
+  });
+
+  it("after midnight it offers this morning, and never the same instant twice", () => {
+    const night = sendLaterMornings(new Date("2026-10-24T22:28:00.000Z"), Z);
+    expect([night.tomorrow.toISOString(), night.monday?.toISOString()])
+      .toEqual(["2026-10-25T08:00:00.000Z", "2026-10-26T08:00:00.000Z"]);
+    // Sunday daytime: tomorrow morning IS Monday morning, offered once.
+    const sunday = sendLaterMornings(new Date("2026-10-25T10:00:00.000Z"), Z);
+    expect([sunday.tomorrow.toISOString(), sunday.monday]).toEqual(["2026-10-26T08:00:00.000Z", null]);
   });
 
   it("the evening preset is a composition too, verdict and all", () => {

@@ -158,6 +158,76 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
+describe("after midnight, Tomorrow is the coming morning (00:28 on a Sunday)", () => {
+  /** 00:28 CEST on Sunday 25 October 2026, the autumn night; 09:00 that morning is CET. */
+  const AUTUMN_SMALL_HOURS = new Date("2026-10-24T22:28:00.000Z");
+  /** 00:28 CET on Sunday 28 March 2027, the spring night; 09:00 that morning is CEST. */
+  const SPRING_SMALL_HOURS = new Date("2027-03-27T23:28:00.000Z");
+
+  it("books this morning's 09:00 across the autumn change, not Monday's", async () => {
+    await mountBar(AUTUMN_SMALL_HOURS, "09:00");
+    const { said, iso } = await choose("Tomorrow");
+    expect(iso).toBe("2026-10-25T08:00:00.000Z");
+    expect(said).toBe("Tomorrow, 09:00");
+  });
+
+  it("…and across the spring change", async () => {
+    await mountBar(SPRING_SMALL_HOURS, "09:00");
+    const { iso } = await choose("Tomorrow");
+    expect(iso).toBe("2027-03-28T07:00:00.000Z");
+  });
+
+  it("the picker lets today be chosen while today's hour is still ahead", async () => {
+    await mountBar(AUTUMN_SMALL_HOURS, "09:00");
+    await openStrip();
+    await act(async () => { byText("Pick a date").click(); });
+    const today = host!.querySelector('[data-day="2026-10-25"]');
+    expect(today?.getAttribute("aria-disabled"), "today is blocked at 00:28").toBeNull();
+    await act(async () => { (today as HTMLElement).click(); });
+    expect(log).toContain("resurface:2026-10-25T08:00:00.000Z");
+  });
+
+  it("in the day, a later hour unlocks today and a passed one keeps it closed", async () => {
+    for (const [stored, open] of [["18:00", true], ["09:00", false]] as const) {
+      await mountBar(PLAIN_EVE, stored);
+      await openStrip();
+      await act(async () => { byText("Pick a date").click(); });
+      const today = host!.querySelector('[data-day="2026-08-11"]');
+      expect(today?.getAttribute("aria-disabled") == null, `today at ${stored}`).toBe(open);
+    }
+  });
+
+  it("on a Sunday in the day, Tomorrow and Next week are one Monday, offered once", async () => {
+    await mountBar(new Date("2026-10-25T10:00:00.000Z"), "09:00");
+    await openStrip();
+    const labels = [...host!.querySelectorAll(".abar-panel button")].map((b) => (b.textContent ?? "").trim());
+    expect(labels.filter((l) => l.startsWith("Next week"))).toEqual([]);
+    await act(async () => { byText("Tomorrow").click(); });
+    expect(log).toContain("resurface:2026-10-26T08:00:00.000Z");
+    const { resurfaceHorizons } = await import("../app/shell/format.js");
+    expect(resurfaceHorizons(new Date("2026-10-25T04:01:00.000Z"), "09:00").nextWeek).toBeNull();
+    expect(resurfaceHorizons(new Date("2026-10-25T21:30:00.000Z"), "09:00").nextWeek).toBeNull();
+  });
+
+  it("at 00:28 on that Sunday both are offered: this morning and Monday", async () => {
+    await mountBar(AUTUMN_SMALL_HOURS, "09:00");
+    expect((await choose("Next week")).iso).toBe("2026-10-26T08:00:00.000Z");
+    log = [];
+    expect((await choose("Tomorrow")).iso).toBe("2026-10-25T08:00:00.000Z");
+  });
+
+  it("send later offers this morning, and never the same instant twice", async () => {
+    const { sendLaterMornings } = await import("../app/shell/format.js");
+    expect(sendLaterMornings(AUTUMN_SMALL_HOURS)).toEqual({
+      tomorrow: "2026-10-25T08:00:00.000Z", monday: "2026-10-26T08:00:00.000Z",
+    });
+    // Sunday daytime: tomorrow morning IS Monday morning, so Monday is not offered again.
+    expect(sendLaterMornings(new Date("2026-10-25T10:00:00.000Z"))).toEqual({
+      tomorrow: "2026-10-26T08:00:00.000Z", monday: null,
+    });
+  });
+});
+
 describe("a resurface across a clock change", () => {
   it("books the hour the strip is showing on an ordinary night", async () => {
     await mountBar(PLAIN_EVE, "14:30");

@@ -459,7 +459,7 @@ export function useShellKeys({
   /**
    * NO CURSOR IS ITS OWN REASON — spread into every `message` binding below whose `disabled` begins `focused ==
    * null`. See `keymap.tsx#DisabledReason` and `placeCursor` above. EMPTY when a cursor exists, so a verb resting for
-   * its own reason keeps falling through: `⇧R` on a message with nobody else on it, `⇧F` on a `no_forward` one or a
+   * its own reason keeps falling through: `⇧F` on a `no_forward` message or a
    * row the mirror does not hold, `d` with the folders foundation off. Placing a cursor for one of those would show a
    * sentence promising a second press that cannot work. NOT on `f`, `mod+Enter` or the two Zero exits: none of them
    * rests on a cursor (an empty Answer Later pile, no run in flight, no reply open, no sheet up), and `p` is an `app`
@@ -562,18 +562,19 @@ export function useShellKeys({
     },
     {
       // `shift+r` — the shifted variant of the verb it widens, the convention `shift+u`
-      // already set. Inert wherever `r` is, and ADDITIONALLY on a message whose audience is
-      // the sender alone: `replyAllRecipients` is the bar's own visibility predicate, so the
-      // key and the button appear and disappear together.
+      // already set. Inert wherever `r` is. On a message whose audience is the sender alone
+      // (`replyAllRecipients` null, the bar shows Reply only) everyone on it is that sender,
+      // so the key opens the plain reply.
       chord: "shift+r",
       group: "message",
       label: t("shortcuts.replyAll"),
-      disabled: focused == null || replyAllRecipients(focused, ownAddresses) === null,
+      disabled: focused == null,
       ...noCursor,
       run: () => {
         if (!focused) return;
-        if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, true);
-        else onStreamAction("reply_all", focused);
+        const all = replyAllRecipients(focused, ownAddresses) !== null;
+        if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, all);
+        else onStreamAction(all ? "reply_all" : "reply", focused);
       },
     },
     {
@@ -611,7 +612,8 @@ export function useShellKeys({
         else onStreamAction("forward", focused);
       },
     },
-    {
+    /* Declared only while a run is open, so the sheet never prints its line where there is no run. */
+    ...(fr == null ? [] : [{
       /* SEND, INSIDE THE REPLY RUN. The overlay's Done button and this chord are one path —
          the run below mirrors `onDone` (AppShell's FocusReplyOverlay wiring) verbatim, so
          the no-message refusal and the shared scratch buffer behave identically. Declared
@@ -625,9 +627,9 @@ export function useShellKeys({
       inInput: true,
       // The run's overlay is a page modal; this is its own send.
       inModal: true,
-      disabled: fr == null || fr.step >= fr.items.length,
+      disabled: fr.step >= fr.items.length,
       run: () => {
-        if (!fr || fr.step >= fr.items.length) return;
+        if (fr.step >= fr.items.length) return;
         const item = fr.items[fr.step]!;
         if (!item.messageId) return;
         const v = frValues[frKeyOf(item)] ?? EMPTY_RICH;
@@ -638,7 +640,7 @@ export function useShellKeys({
           ...(v.html ? { html: v.html } : {}),
         });
       },
-    },
+    } satisfies KeyBinding]),
     {
       // SENDING FROM THE KEYBOARD. `inInput` is not optional: the editor takes focus the moment it opens, so without
       // it the one place the shortcut is for is the one place it would not fire — the same reasoning Escape's binding
@@ -863,8 +865,8 @@ export function useShellKeys({
       run: cycleLayout,
     },
     /* ONE UNDO KEY FOR EVERY VERB (the 0.20 review): presses the live toast's own offer — the same
-       consumed-once arm the button fires — and does nothing once the window has closed, because
-       claiming an undo that did not happen is the Screener's own forbidden shape. */
+       consumed-once arm the button fires. Once the window has closed it takes nothing back and says
+       "Nothing to undo." (`runArmedUndo`): claiming an undo that did not happen is forbidden, silence too. */
     {
       chord: "z",
       group: "app",

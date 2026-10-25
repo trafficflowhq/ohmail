@@ -318,11 +318,12 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       await tick(30_000);
       const committed = p.sends();
       expect(committed, "the window never committed").toBeGreaterThan(0);
-      const before = notice();
       await key("z");
+      const answer = notice();
       await tick(30_000);
       expect(p.sends()).toBe(committed);
-      expect(notice()).toBe(before);
+      // Past the window `z` says so rather than nothing; it never claims an undo.
+      expect(answer).toBe(messages.shortcuts.nothingToUndo);
     });
   }
 
@@ -667,5 +668,49 @@ describe("the palette's Move is the m key", () => {
       delete adapterProto.listTrash;
       delete adapterProto.restoreFromTrash;
     }
+  });
+});
+
+/* ── four sheet lines that did less than they say ──────────────────────────────────────────── */
+
+describe("the sheet's delete keys, Reply to everyone and Send in the views that list them", () => {
+  it("Answer Later: d asks, d again deletes the letter on screen", async () => {
+    await mountShell("#/triage");
+    await tick(2000);
+    sent = [];
+    await key("d");
+    expect(stripShown("d"), `d asked nothing: ${JSON.stringify(bars())}`).toBe(true);
+    await key("d");
+    await tick(30_000);
+    expect(kinds("message_delete")).toHaveLength(1);
+  });
+
+  for (const k of ["Backspace", "Delete"] as const) {
+    it(`Answer Later: ${k} moves the letter on screen to Trash`, async () => {
+      await mountShell("#/triage");
+      await tick(2000);
+      sent = [];
+      await key(k);
+      await tick(30_000);
+      expect(kinds("message_delete"), `${k} did nothing in Answer Later`).toHaveLength(1);
+    });
+  }
+
+  it("⇧R on a letter from one person opens the reply to that person", async () => {
+    await mountShell("#/ohbox");
+    await key("j");
+    expect(barButton("Reply all"), "the control: this letter has nobody else on it").toBeUndefined();
+    expect(host!.querySelector(".reply[data-reply-for]")).toBeNull();
+    await key("R", { shiftKey: true });
+    expect(host!.querySelector(".reply[data-reply-for]"), "⇧R opened nothing").toBeTruthy();
+  });
+
+  it("the sheet names Ctrl+Enter for what it does outside the Reply Run", async () => {
+    await mountShell("#/ohbox");
+    await key("j");
+    const table = await sheetTable();
+    const labels = table.map((r) => r.label);
+    expect(labels).toContain(messages.shortcuts.sendReply);
+    expect(labels, "the Reply Run's line is printed where there is no run").not.toContain(messages.shortcuts.frSend);
   });
 });

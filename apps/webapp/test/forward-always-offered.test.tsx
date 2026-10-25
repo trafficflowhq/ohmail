@@ -107,7 +107,6 @@ const DOORS: Array<[string, RegExp]> = [
   ["apps/webapp/app/shell/MessageCard.tsx", /chrome\.forward && forwardOffered\(message\)/],
   ["apps/webapp/app/shell/message-verbs.ts", /disabled: none \|\| !forwardOffered\(shown\)/],
   ["apps/webapp/app/shell/shell-keys.tsx", /disabled: !forwardOffered\(focused\)/],
-  ["apps/webapp/app/views/TriageView.tsx", /forwardOffered\(shown\)/],
   ["apps/mobile/src/ui/MessageActions.tsx", /forwardOffered: forwardOffered\(m\)/],
 ];
 const code = (rel: string) => scan.withoutCommentsAndLiterals(source(rel));

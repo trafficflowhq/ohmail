@@ -9,7 +9,9 @@ import {
   liveActions,
   nextWeekAt,
   nextWeekNine,
+  pickFloor,
   resurfaceClock,
+  resurfaceHorizons,
   resurfaceTimeLabel,
   tomorrowAt,
   tomorrowNine,
@@ -166,6 +168,29 @@ describe("a phone horizon across a clock change", () => {
     const week = nextWeekAt(new Date("2026-10-19T10:00:00Z"), "02:30", Z);
     // The coming Monday (26 October) is the day after the repeated hour: an ordinary 02:30.
     expect([week.verdict, wall(week.at)]).toEqual(["exact", "26/10/2026, 02:30"]);
+  });
+
+  it("after midnight on a Sunday, Tomorrow is this morning, across the change", () => {
+    // 00:28 CEST on Sunday 25 October 2026 (back at 03:00) and 00:28 CET on 28 March 2027.
+    expect(tomorrowAt(new Date("2026-10-24T22:28:00Z"), "09:00", Z).at.toISOString()).toBe("2026-10-25T08:00:00.000Z");
+    expect(tomorrowAt(new Date("2027-03-27T23:28:00Z"), "09:00", Z).at.toISOString()).toBe("2027-03-28T07:00:00.000Z");
+    expect(tomorrowAt(new Date("2026-10-25T10:00:00Z"), "09:00", Z).at.toISOString()).toBe("2026-10-26T08:00:00.000Z");
+  });
+
+  it("on a Sunday in the day, Next week is Tomorrow's Monday, so it is not offered", () => {
+    for (const iso of ["2026-10-25T04:01:00Z", "2026-10-25T10:00:00Z", "2026-10-25T21:30:00Z"]) {
+      const h = resurfaceHorizons(new Date(iso), "09:00", Z);
+      expect([h.tomorrow.at.toISOString(), h.nextWeek], iso).toEqual(["2026-10-26T08:00:00.000Z", null]);
+    }
+    const night = resurfaceHorizons(new Date("2026-10-24T22:28:00Z"), "09:00", Z);
+    expect([night.tomorrow.at.toISOString(), night.nextWeek?.at.toISOString()])
+      .toEqual(["2026-10-25T08:00:00.000Z", "2026-10-26T08:00:00.000Z"]);
+  });
+
+  it("Pick a date starts today while today's hour is still ahead", () => {
+    expect(pickFloor(new Date("2026-10-24T22:28:00Z"), "09:00", Z)).toBe(0);
+    expect(pickFloor(new Date("2026-08-11T10:00:00Z"), "18:00", Z)).toBe(0);
+    expect(pickFloor(new Date("2026-08-11T10:00:00Z"), "09:00", Z)).toBe(1);
   });
 
   it("the phone and the webapp resolve the same night the same way", async () => {

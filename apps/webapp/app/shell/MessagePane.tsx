@@ -16,7 +16,7 @@ import { MessageBody } from "../components/MessageBody";
 import { ConversationPanels } from "./Conversation";
 import { MessageHeader } from "./MessageCard";
 import type { BlockNotice } from "../components/BlockNotice";
-import { PLACE_LABEL, dayAt, dayValue, hueOf, nextWeekAt, resurfaceClock, tagsOfMessage, tomorrowAt, withheldCopyKey, type ResurfaceHorizon } from "./format";
+import { PLACE_LABEL, dayAt, dayValue, firstDayAt, hueOf, resurfaceClock, resurfaceHorizons, tagsOfMessage, withheldCopyKey, type ResurfaceHorizon } from "./format";
 import { activeFormatLocale } from "./locale";
 import { replyAllRecipients } from "./compose-from";
 import { useBarDensity } from "./bar-density";
@@ -782,21 +782,21 @@ function ActionBar({
      * THE HORIZON CHOOSER — three ways to say when, feeding a concrete instant into the action. Tomorrow and next
      * week are composed from `now` at the time the strip is showing, in the reader's zone, and each carries the wall
      * clock it BOOKED: on the night the clocks skip the chosen hour the label states that hour and says why. "Pick a
-     * date" opens the product's own `DatePicker` (below), floored at tomorrow through its `min`. Each choice closes
+     * date" opens the product's own `DatePicker` (below), floored at the first day the time is still ahead. Each choice closes
      * the panel and dispatches `resurface:<iso>`; the shell mutates and states the day it reads back off the instant.
      * FOUR NOW, and the fourth is first because it is the only one that costs nothing to change your mind about.
      * "Now" dispatches `resurface_now` — a state, not a date; see {@link MessageAction}, and it is separated from the
      * three horizons by nothing but order: the question the strip asks is still "when?".
      */
     const base = nowAt();
-    const tomorrow = tomorrowAt(base, resurfaceAt);
-    const nextWeek = nextWeekAt(base, resurfaceAt);
+    // On a Sunday after the small hours Next week is Tomorrow's Monday, so it is not offered.
+    const { tomorrow, nextWeek } = resurfaceHorizons(base, resurfaceAt);
     /** The horizon whose night skips the chosen hour, where there is one — the strip's own sentence
      *  about it is rendered below, before anything is pressed. Only a booking that DIFFERS from the
      *  request earns one: the repeated-hour night books the time that was asked for. */
     const skipped = [
       { name: t("resurfaceTomorrow"), horizon: tomorrow },
-      { name: t("resurfaceNextWeek"), horizon: nextWeek },
+      ...(nextWeek ? [{ name: t("resurfaceNextWeek"), horizon: nextWeek }] : []),
     ].find((x) => x.horizon.verdict === "shifted_forward");
     /**
      * A DATED ANSWER — dispatch it, then remember the hour it was given at. The order is the
@@ -856,18 +856,23 @@ function ActionBar({
             type="button"
             className="abar-b abar-solo"
             aria-label={withTime(t("resurfaceTomorrow"), tomorrow.time)}
-            onClick={() => pick(() => tomorrowAt(nowAt(), resurfaceAt))}
+            onClick={() => pick(() => resurfaceHorizons(nowAt(), resurfaceAt).tomorrow)}
           >
             {t("resurfaceTomorrow")}
           </button>
-          <button
-            type="button"
-            className="abar-b abar-solo"
-            aria-label={withTime(t("resurfaceNextWeek"), nextWeek.time)}
-            onClick={() => pick(() => nextWeekAt(nowAt(), resurfaceAt))}
-          >
-            {t("resurfaceNextWeek")}
-          </button>
+          {nextWeek ? (
+            <button
+              type="button"
+              className="abar-b abar-solo"
+              aria-label={withTime(t("resurfaceNextWeek"), nextWeek.time)}
+              onClick={() => pick(() => {
+                const now = resurfaceHorizons(nowAt(), resurfaceAt);
+                return now.nextWeek ?? now.tomorrow;
+              })}
+            >
+              {t("resurfaceNextWeek")}
+            </button>
+          ) : null}
           <button
             ref={dateRef}
             type="button"
@@ -886,7 +891,7 @@ function ActionBar({
             <DatePicker
               locale={activeFormatLocale()}
               today={dayValue(nowAt().toISOString())}
-              min={dayValue(tomorrow.iso)}
+              min={dayValue(firstDayAt(base, resurfaceAt).iso)}
               anchor={dateRef.current}
               /* THE HOUR EACH DAY WOULD BOOK, composed for that day — the same `dayAt` the
                  press dispatches, so a cell cannot name an hour its own press would not book. */

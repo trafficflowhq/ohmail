@@ -358,6 +358,9 @@ export {
 // horizons with it, rather than each keeping a copy that drifts on a DST edge.
 export {
   composeZonedWallClock,
+  firstDayOffset,
+  morningDayOffset,
+  SMALL_HOURS_END,
   zonedDayNumber,
   zonedFields,
   zonedInstant,
