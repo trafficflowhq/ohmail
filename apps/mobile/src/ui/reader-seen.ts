@@ -98,7 +98,7 @@ export interface PhoneThreadReadOptions {
 /** A line of body text where the reader names none: the stream body's, 14.5 at 1.7. */
 const LINE_DP = 24.65;
 
-interface Member { group: PhoneGroup; y: number; h: number; fromY: number | null; fromH: number; bodyY: number | null; endY: number | null }
+interface Member { group: PhoneGroup; laid: boolean; y: number; h: number; fromY: number | null; fromH: number; bodyY: number | null; endY: number | null }
 
 const NOTHING: ReadonlySet<string> = new Set();
 
@@ -114,6 +114,8 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
   const now = o.now ?? Date.now;
   const lines = o.lines ?? (() => THREAD_TOP_LINES * LINE_DP);
   const offsets = { padded: 0, opened: 0, above: 0, below: 0 };
+  /** Which offsets have reported: a top is named only from reported ones. */
+  const known = { padded: false, opened: false, above: false, below: false };
   const members = new Map<string, Member>();
   let height = 0;
   let chrome = 0;
@@ -133,7 +135,7 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
 
   const member = (id: string): Member => {
     let m = members.get(id);
-    if (!m) { m = { group: "below", y: 0, h: 0, fromY: null, fromH: 0, bodyY: null, endY: null }; members.set(id, m); }
+    if (!m) { m = { group: "below", laid: false, y: 0, h: 0, fromY: null, fromH: 0, bodyY: null, endY: null }; members.set(id, m); }
     return m;
   };
   const topOfMember = (m: Member): number => offsets.padded + offsets[m.group] + m.y;
@@ -247,11 +249,11 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     restart,
     viewport: (h) => { height = h; moved(); },
     chrome: (overlap) => { chrome = Math.max(0, overlap); moved(); },
-    offset: (which, v) => { offsets[which] = v; moved(); },
+    offset: (which, v) => { offsets[which] = v; known[which] = true; moved(); },
     openedFrom: (fy, fh) => { from = { y: fy, h: fh }; poke(); },
     openedBody: (by) => { body = by; poke(); },
     openedEnd: (ey) => { end = ey; poke(); },
-    panel: (id, group, py, h) => { const m = member(id); m.group = group; m.y = py; m.h = h; moved(); },
+    panel: (id, group, py, h) => { const m = member(id); m.group = group; m.laid = true; m.y = py; m.h = h; moved(); },
     panelHeader: (id, hy, hh) => { const m = member(id); m.fromY = hy; m.fromH = hh; moved(); },
     panelBody: (id, by) => { member(id).bodyY = by; poke(); },
     panelEnd: (id, ey) => { member(id).endY = ey; poke(); },
@@ -271,13 +273,14 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     },
     poke,
     layout: (openedId) => {
-      const boxes = (group: PhoneGroup) => listed(group).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h }));
-      return [...boxes("above"), { id: openedId, top: offsets.padded + offsets.opened, height: end ?? 0 }, ...boxes("below")];
+      const boxes = (group: PhoneGroup) => (known.padded && known[group] ? listed(group).filter(([, m]) => m.laid).map(([id, m]) => ({ id, top: topOfMember(m), height: m.h })) : []);
+      const opened = known.padded && known.opened ? [{ id: openedId, top: offsets.padded + offsets.opened, height: end ?? 0 }] : [];
+      return [...boxes("above"), ...opened, ...boxes("below")];
     },
     topOf: (id) => {
-      if (id === o.openedId()) return offsets.padded + offsets.opened;
+      if (id === o.openedId()) return known.padded && known.opened ? offsets.padded + offsets.opened : null;
       const m = members.get(id);
-      return m ? topOfMember(m) : null;
+      return m && m.laid && known.padded && known[m.group] ? topOfMember(m) : null;
     },
     dispose: () => {
       live = false;

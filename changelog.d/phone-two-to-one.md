@@ -1,0 +1,3 @@
+### A foldable keeps your place and marks nothing read when a pane change shortens the conversation
+
+On a foldable phone, the reader could lose your place when it moved to a pane where the conversation ends before the point you stood at: rotating back to one pane, unfolding from the half-folded book posture, folding the book posture shut to the outer screen, or unfolding from the outer screen into two panes. It came back at the conversation's first message and marked the messages there read on the server. 0.30.4's notes said rotations and folds kept your place "(and back)" with nothing marked read; that was not true on these paths. The reader now returns to where you were and reads nothing until it stands there.

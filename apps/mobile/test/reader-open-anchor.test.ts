@@ -67,11 +67,10 @@ beforeEach(() => {
   anchor = build();
 });
 
-const build = (applies?: () => boolean, start = 0): OpenAnchor =>
+const build = (applies?: () => boolean): OpenAnchor =>
   createOpenAnchor({
     holding: true,
     ...(applies ? { applies } : {}),
-    start,
     target: () => (openedTop === null ? null : openedTop - 8),
     extent: () => told,
     scrollTo,
@@ -253,13 +252,24 @@ describe("settling: what the view shows is no place the person chose", () => {
   });
 
   it("a kept start past the end of a content that now fits stands at once: the view clamped it to 0 and reported nothing", () => {
-    anchor = build(undefined, 2600);
+    anchor = build();
     openedTop = 600;
     told.content = 700;
     mount();
     anchor.layout();
     frameFor(ANCHOR_SETTLE_MS + 200);
     expect({ at: native.at, heard, settling: anchor.settling, placed }).toEqual({ at: 0, heard: [], settling: false, placed: 1 });
+  });
+
+  it("a remount whose view has not reported, over content taller than the view, its place past the end: it asks for the end and stands only on the view's report", () => {
+    anchor = build();
+    openedTop = 3226;
+    told.content = 3386;
+    mount();
+    anchor.layout();
+    expect([anchor.settling, placed], "not standing on a start the view never reported").toEqual([true, 0]);
+    frameFor(100);
+    expect({ at: native.at, heard, settling: anchor.settling, placed }).toEqual({ at: 2586, heard: [2586], settling: false, placed: 1 });
   });
 
   it("never where no place applies", () => {
