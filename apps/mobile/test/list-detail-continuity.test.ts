@@ -70,11 +70,7 @@ describe("the migrations are wired, both directions", () => {
     const route = read("../app/sender/[seg]/[id].tsx");
     expect(route).toContain('usePaneMove(twoPane && id !== "" ? { pathname: "/screener", params: { open: id, seg } } : null, held)');
   });
-  it("the pair hands an open reading to the pushed route when the pane goes", () => {
-    const ld = read("../src/ui/list-detail.tsx");
-    expect(ld).toContain("if (!twoPane && open !== null)");
-    expect(ld).toContain("router.push(toRoute(open))");
-  });
+  /* The pair's hand-off when the pane goes is rendered in foldable-postures-keep-the-reply.test.tsx. */
   it("the selection is the route's open param — state no remount holds", () => {
     const ld = read("../src/ui/list-detail.tsx");
     expect(ld).toContain('useLocalSearchParams<{ open?: string }>');

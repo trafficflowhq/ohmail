@@ -92,17 +92,19 @@ export function ListDetail({
   if (plan.panes === 2) lastAxis.current = plan.paneAxis;
   else if (!holding) lastAxis.current = null;
   const twoPane = plan.panes === 2 || holding;
+  /* Only the tab in front moves its reading: every tab stays mounted, and a Screener sender left
+     selected was pushed over the conversation being read. A tab behind moves its own on return. */
+  const focused = useIsFocused();
   useEffect(() => {
-    if (!twoPane && open !== null) {
+    if (!twoPane && open !== null && focused) {
       router.push(toRoute(open));
       onClose();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [twoPane, open]);
+  }, [twoPane, open, focused]);
 
   /* SYSTEM BACK CLOSES THE READING PANE first: the selection is a param, not a screen on the stack,
      so Back went past it and left the app. Only the screen in front answers. */
-  const focused = useIsFocused();
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {

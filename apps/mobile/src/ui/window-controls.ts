@@ -22,10 +22,14 @@ export function windowedOnPad({ isPad, window, screen }: WindowShape): boolean {
 
 /**
  * The top inset a screen pays: the system's, raised to the controls' own edge where the system
- * read it (`controlsTop`, null where it could not), else the frame strip on a windowed iPad.
+ * read it (`controlsTop`, null where it could not), else the frame strip on a windowed iPad. A
+ * windowed reading short of the strip is no reading: resizable windows answer the status bar alone.
  */
 export function topInsetWithControls(systemTop: number, shape: WindowShape, controlsTop: number | null = null): number {
   if (!shape.isPad) return systemTop;
-  if (controlsTop !== null && Number.isFinite(controlsTop)) return Math.max(systemTop, controlsTop);
-  return windowedOnPad(shape) ? systemTop + IPAD_WINDOW_CONTROLS_PT : systemTop;
+  const windowed = windowedOnPad(shape);
+  if (controlsTop !== null && Number.isFinite(controlsTop) && !(windowed && controlsTop < IPAD_WINDOW_CONTROLS_PT)) {
+    return Math.max(systemTop, controlsTop);
+  }
+  return windowed ? systemTop + IPAD_WINDOW_CONTROLS_PT : systemTop;
 }
