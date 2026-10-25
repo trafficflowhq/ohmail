@@ -4,9 +4,9 @@ import { makeDb, closeDb } from "../src/cloud.js";
 import { runMigrations } from "../src/migrate.js";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { PG_TEST_URL } from "../src/testing.js";
+import { pgTestUrl } from "../src/testing.js";
 
-const URL = PG_TEST_URL;
+const URL = pgTestUrl(import.meta.url);
 const ACCT = randomUUID(); // fresh account per run → idempotent against the persistent test DB
 
 describe("schema extension (rules, contacts, folder_state upsert)", () => {

@@ -1,9 +1,9 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { runMigrations } from "@trafficflow/db/admin";
 import { acquireLeaderLock } from "../src/leader-lock.js";
-import { PG_TEST_URL } from "@trafficflow/db/testing";
+import { pgTestUrl } from "@trafficflow/db/testing";
 
-const URL = PG_TEST_URL;
+const URL = pgTestUrl(import.meta.url);
 
 describe("leader lock (session-mode advisory)", () => {
   const held: Array<{ release: () => Promise<void> }> = [];

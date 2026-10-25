@@ -7,8 +7,10 @@ import { eq } from "drizzle-orm";
 import { SendService, type ServiceContext } from "@trafficflow/services";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * A FORWARD ROUND TRIP: OUR SEND, THE WIRE, OUR OWN PARSER. Measured 2026-09-21: two forwards

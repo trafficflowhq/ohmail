@@ -4,8 +4,10 @@ import { eq } from "drizzle-orm";
 import { messages, folderState, whyTheyStayed, type Tx } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { runSyncCycle, type SyncDeps } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * THE SERVER HALF OF "FILED IN ANOTHER MAIL APP". Another client moves a

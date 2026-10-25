@@ -7,8 +7,10 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { mailboxService } from "@trafficflow/services";
 import { runSyncCycle } from "../src/sync.js";
-import { makeHarness, rawClient, emlOf, imapCfg, DB_URL } from "./_workerenv.js";
+import { makeHarness, rawClient, emlOf, imapCfg, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════

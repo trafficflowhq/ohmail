@@ -6,9 +6,9 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { makeDrizzleRepo } from "../../src/adapters/drizzle-repo.js";
 import type { InsertMessageInput } from "../../src/index.js";
 import { randomUUID } from "node:crypto";
-import { PG_TEST_URL } from "@trafficflow/db/testing";
+import { pgTestUrl } from "@trafficflow/db/testing";
 
-const URL = PG_TEST_URL;
+const URL = pgTestUrl(import.meta.url);
 const ACCT = randomUUID(); // fresh account per run → idempotent against the persistent test DB
 
 describe("DrizzleRepo (RepoPort + WorkerRepo, real Postgres)", () => {

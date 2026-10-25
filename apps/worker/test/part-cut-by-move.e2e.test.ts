@@ -9,9 +9,11 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { AttachmentsService, ServiceError, type ServiceContext } from "@trafficflow/services";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import { runSyncCycle } from "../src/sync.js";
-import { byMessageId, DB_URL, makeHarness, rawClient } from "./_workerenv.js";
+import { byMessageId, dbUrlFor, makeHarness, rawClient } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
 import { startFaultProxy, type FaultProxy } from "../../../packages/core/test/adapters/_fault-proxy.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * A PICTURE OPENED WHILE THE ORGANIZER FILES ITS MESSAGE (GreenMail + Postgres, the real door).

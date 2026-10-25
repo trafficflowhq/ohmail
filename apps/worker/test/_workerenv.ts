@@ -13,7 +13,7 @@ import { FIXTURE_DOOR } from "./_door.js";
 export { greenmailPorts };
 /* The Postgres half lives in `_workerdb.ts`, which reaches no mail server; re-exported so every
    importer of this module is unchanged. */
-export { DB_URL, refuseDriftedSharedDb, repoWithFailingMethod, byMessageId, ORGANIZER_CONSENT } from "./_workerdb.js";
+export { DB_URL, dbUrlFor, refuseDriftedSharedDb, repoWithFailingMethod, byMessageId, ORGANIZER_CONSENT } from "./_workerdb.js";
 
 export function imapCfg() {
   const user = `t-${randomUUID()}@trafficflow.test`;

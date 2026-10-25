@@ -10,7 +10,9 @@ import { META_FOLDER, parseClaim } from "@trafficflow/core/adapters/organizer-le
 import { runReconcileCron } from "../src/reconcile-cron.js";
 import { acquireLeaderLock, leaderLockKeyFor } from "../src/leader-lock.js";
 import { cloudInstallId } from "../src/lease.js";
-import { byMessageId, makeHarness, rawClient, emlOf, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, emlOf, dbUrlFor } from "./_workerenv.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * The backend PID(s) holding a given advisory lock — the thing a failover kills.

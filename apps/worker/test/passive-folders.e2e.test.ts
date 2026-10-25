@@ -5,9 +5,11 @@ import { messages, folderState, mailboxFolders, messageInstances } from "@traffi
 import { runMigrations } from "@trafficflow/db/admin";
 import { runSyncCycle } from "../src/sync.js";
 import { stampInitialImportComplete } from "../src/mailboxes.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
 import { mailboxes } from "@trafficflow/db";
 import { FIXTURE_DOOR, FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * MAIL IN A FOLDER THE CUSTOMER MADE — end to end, against a real IMAP server.

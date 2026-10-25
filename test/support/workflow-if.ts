@@ -1,6 +1,6 @@
 /**
  * A workflow expression evaluated the way the runner reads it, for the expressions the published workflows write:
- * contexts, string and boolean literals, `null`, `==`, `!=`, `!`, `&&`, `||`, parentheses, `cancelled()`,
+ * contexts, string, integer and boolean literals, `null`, `==`, `!=`, `!`, `&&`, `||`, parentheses, `cancelled()`,
  * `startsWith()`, `endsWith()`, `contains()` and `fromJSON()` over a string literal (`startsWith`, `endsWith` and
  * `contains` ignore case, as GitHub's do; `contains` over a list asks for an element, over a string for a part of it,
  * and reads null as the empty string, as GitHub's does). `evalValue` returns the expression's value — `&&` and `||`
@@ -16,8 +16,8 @@
  */
 export type IfContext = Record<string, string | null>;
 
-const TOKEN = /\s*(?:('(?:[^']|'')*')|([A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*)|(==|!=|&&|\|\||!|\(|\)|,))/y;
-type Token = { s?: string; id?: string; op?: string; at: number };
+const TOKEN = /\s*(?:('(?:[^']|'')*')|([A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*)|(==|!=|&&|\|\||!|\(|\)|,)|(\d+)(?![\w.]))/y;
+type Token = { s?: string; id?: string; op?: string; n?: number; at: number };
 
 /** An expression's tokens, its `${{ }}` dropped; a character this does not read refuses. */
 function tokenize(raw: string): { expr: string; tokens: Token[] } {
@@ -30,6 +30,7 @@ function tokenize(raw: string): { expr: string; tokens: Token[] } {
     if (!m) throw new Error(`not an expression this reads, at ${at}: ${expr}`);
     if (m[1] !== undefined) tokens.push({ s: m[1].slice(1, -1).replace(/''/g, "'"), at });
     else if (m[2] !== undefined) tokens.push({ id: m[2], at });
+    else if (m[4] !== undefined) tokens.push({ n: Number(m[4]), at });
     else tokens.push({ op: m[3], at });
   }
   return { expr, tokens };
@@ -41,6 +42,7 @@ export function evalValue(raw: string, ctx: IfContext, opts: { cancelled?: boole
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (t.s !== undefined) js += JSON.stringify(t.s);
+    else if (t.n !== undefined) js += String(t.n);
     else if (t.id !== undefined) {
       const id = t.id;
       if (id === "true" || id === "false" || id === "null") js += id;

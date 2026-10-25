@@ -6,8 +6,10 @@ import { messages, messageBodies, attachments } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { AttachmentsService, type OpenAdapter, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 // End-to-end (GreenMail IMAP + Postgres): attachment METADATA is captured atomically
 // at ingest; the BLOB bytes are fetched ON-DEMAND from IMAP and NEVER stored.

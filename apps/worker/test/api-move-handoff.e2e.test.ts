@@ -5,8 +5,10 @@ import { messages, folderState } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
 import { MessageService, type ServiceContext } from "@trafficflow/services";
 import { runSyncCycle } from "../src/sync.js";
-import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, DB_URL } from "./_workerenv.js";
+import { byMessageId, makeHarness, rawClient, emlOf, uidInFolder, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * End-to-end proof: the serverless API is the single writer of DESIRED state

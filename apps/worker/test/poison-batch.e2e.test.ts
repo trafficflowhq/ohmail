@@ -7,8 +7,10 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ImapCursor, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { runSyncCycle } from "../src/sync.js";
 import { DeadLetterLedger } from "../src/dead-letter.js";
-import { makeHarness, rawClient, emlOf, DB_URL } from "./_workerenv.js";
+import { makeHarness, rawClient, emlOf, dbUrlFor } from "./_workerenv.js";
 import { FIXTURE_LEASE } from "./_door.js";
+
+const DB_URL = dbUrlFor(import.meta.url);
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
