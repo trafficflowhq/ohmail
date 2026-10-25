@@ -388,7 +388,7 @@ describe("the open row's strip", () => {
         };
       });
       expect(m.orientation).toBe("horizontal");
-      expect(m.marks, "the open row's 8px squares hide under the strip; a row with an empty follower keeps its own").toEqual(["none", "flex"]);
+      expect(m.marks, "the open row draws no 8px squares beside the strip; a row with an empty follower keeps its own").toEqual(["flex"]);
       expect(m.strip.right, "the strip stays in the list column").toBeLessThanOrEqual(m.list.right + 0.5);
       expect(m.button.h, "a square's button").toBe(20);
       expect(m.button.w).toBeGreaterThanOrEqual(16);
@@ -400,6 +400,125 @@ describe("the open row's strip", () => {
       await page.close();
     }
   }, 60_000);
+});
+
+/**
+ * EVERY STATE OF A ROW, IN A REAL ENGINE: at most one strip of squares, at most one painted box (the
+ * slot's, around the row and its strip), nothing over the next row or past the list column. The
+ * reported frame: the open row's own squares beside its strip, and the focus ring round the row's
+ * button inside the slot's ring round the row and the strip, two boxes.
+ */
+describe("one strip and one box per row, in every state", () => {
+  type State = { selected?: boolean; walked?: boolean; picked?: boolean; focus?: boolean; hover?: boolean; settling?: boolean; actions?: boolean };
+  const STATES: Record<string, State> = {
+    "open, keyboard focus": { selected: true, walked: true, focus: true },
+    "open, by pointer": { selected: true, walked: true },
+    "closed, its place kept": { walked: true },
+    "open and picked": { selected: true, walked: true, picked: true },
+    "open, hovered": { selected: true, walked: true, hover: true },
+    "open, sliding to Earlier": { selected: true, walked: true, settling: true },
+    "another conversation open": {},
+    "selected, focused, no strip": { selected: true, focus: true },
+    "with actions, focused": { selected: true, focus: true, actions: true },
+  };
+  const SEVEN = Array.from({ length: 7 }, (_, i) => member(`w${i}`, i === 6));
+  const kinds = SEVEN.map((m) => (m.unread ? "unread" : "read") as "unread" | "read");
+  const rowsOf = (st: State): string => renderToStaticMarkup(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+      <div className="view view-ohbox"><div className="list-col" style={{ width: 400 }}><div role="listbox">
+        <MessageRow id="a" from="Peter" subject="Interview" time="10:02" preview="Hey, I will do it" marks={["read", "read"]} />
+        <MessageRow id="w6" from="Lena" subject="Abos" time="09:12" preview="Perfekt, danke dir!" marks={kinds} marksLabel="7 messages"
+          participants={[{ initials: "L", hue: 20 }, { initials: "N", hue: 200 }, { initials: "A", hue: 300 }]}
+          selected={st.selected} picked={st.picked} className={st.settling ? "settling" : undefined}
+          actions={st.actions ? <button type="button">Done</button> : undefined}
+          follow={st.walked ? <ThreadMarksBar axis="x" messages={SEVEN} here="w6" tabStop="w6" onJump={() => {}} /> : null} />
+        <MessageRow id="z" from="Bo" subject="Other" time="08:00" preview="more words" marks={["read", "unread"]} />
+      </div></div></div>
+    </NextIntlClientProvider>,
+  );
+  const FACES: ReadonlyArray<[string, "light" | "dark"]> = [["ohmarchy", "dark"], ["paper", "light"]];
+  for (const [face, theme] of FACES) {
+    for (const [name, st] of Object.entries(STATES)) {
+      it(`${face} ${theme}, ${name}`, async () => {
+        const page = await browser!.newPage({ viewport: { width: 900, height: 600 } });
+        try {
+          await page.setContent(`<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8"><style>${SHEETS}</style>
+            <style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${rowsOf(st)}</body></html>`);
+          if (st.focus) {
+            await page.keyboard.press("Shift");
+            await page.evaluate(() => document.querySelector<HTMLElement>('.row[data-id="w6"]')!.focus());
+          }
+          if (st.hover) await page.hover('.row[data-id="w6"] .subj');
+          await page.waitForTimeout(st.settling ? 500 : 300);
+          const m = await page.evaluate(() => {
+            const btn = document.querySelector<HTMLElement>('.row[data-id="w6"]')!;
+            const unit = btn.closest<HTMLElement>(".row-slot") ?? btn;
+            const shown = (el: Element): boolean => {
+              const r = el.getBoundingClientRect();
+              if (r.height < 1 || r.width < 1) return false;
+              for (let e: Element | null = el; e; e = e.parentElement) {
+                const cs = getComputedStyle(e);
+                if (cs.display === "none" || cs.visibility === "hidden" || parseFloat(cs.opacity) === 0) return false;
+              }
+              return true;
+            };
+            const clear = (c: string): boolean => c === "transparent" || c === "rgba(0, 0, 0, 0)" || /\/\s*0\)$/.test(c);
+            const paints = (el: Element): boolean => {
+              const cs = getComputedStyle(el);
+              return !clear(cs.backgroundColor) || cs.boxShadow !== "none" || (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0);
+            };
+            const parts: Array<[string, Element | null]> = [
+              ["slot", unit === btn ? null : unit], ["button", btn],
+              ["follower", unit.querySelector(".row-follow")], ["strip", unit.querySelector(".tm-strip")],
+            ];
+            const box = (el: Element) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, right: r.right }; };
+            const strips = [...unit.querySelectorAll(".row-marks, .tm-strip")].filter(shown);
+            return {
+              strips: strips.map((el) => (el.matches(".tm-strip") ? "strip" : "own")),
+              painted: parts.filter(([, el]) => el !== null && shown(el) && paints(el)).map(([n]) => n),
+              unit: box(unit),
+              stripBox: strips[0] ? box(strips[0]) : null,
+              next: box(document.querySelector('.row[data-id="z"]')!),
+              list: box(document.querySelector(".list-col")!),
+              listOverflow: document.querySelector(".list-col")!.scrollWidth - document.querySelector(".list-col")!.clientWidth,
+            };
+          });
+          const want = st.settling ? [] : st.walked ? ["strip"] : ["own"];
+          expect(m.strips, "the row's strips of squares").toEqual(want);
+          expect(m.painted.length, `boxes painted: ${m.painted.join(", ")}`).toBeLessThanOrEqual(1);
+          if (m.painted.length === 1 && (st.walked || st.actions)) expect(m.painted, "the box is the slot's, round the row and its strip").toEqual(["slot"]);
+          if (m.stripBox) {
+            expect(m.stripBox.bottom, "the strip inside the row's box").toBeLessThanOrEqual(m.unit.bottom + 0.5);
+            expect(m.stripBox.right, "the strip inside the list column").toBeLessThanOrEqual(m.list.right + 0.5);
+          }
+          expect(m.next.top, "over the next row").toBeGreaterThanOrEqual(m.unit.bottom - 0.5);
+          expect(m.listOverflow).toBeLessThanOrEqual(0);
+          if (st.picked && st.selected) {
+            // the cursor stays visible on a picked row: its lift ring on top of the pick's paint
+            const paint = () => page.evaluate(() => {
+              const s = getComputedStyle(document.querySelector('.row[data-id="w6"]')!.closest(".row-slot")!);
+              return { bg: `${s.backgroundImage} ${s.backgroundColor}`, shadow: s.boxShadow };
+            });
+            const lift = await page.evaluate(() => {
+              const p = document.createElement("i");
+              p.style.boxShadow = "var(--lift-2)";
+              document.querySelector(".list-col")!.append(p);
+              return getComputedStyle(p).boxShadow;
+            });
+            const both = await paint();
+            await page.evaluate(() => document.querySelector('.row[data-id="w6"]')!.classList.remove("sel"));
+            await page.waitForTimeout(300);
+            const pickedOnly = await paint();
+            expect(both.shadow, "the cursor's lift ring on a picked row").toContain(lift);
+            expect(both.shadow, "the pick's rail stays").toContain("inset");
+            expect(both, "the cursor on a picked row reads apart from a picked row").not.toEqual(pickedOnly);
+          }
+        } finally {
+          await page.close();
+        }
+      }, 60_000);
+    }
+  }
 });
 
 /**

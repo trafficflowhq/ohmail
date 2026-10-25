@@ -690,12 +690,11 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(glances().length, "nothing read by the landing").toBe(before);
   }, 30_000);
 
-  /** The kinds of the strip's squares, and of the row's own (hidden while the strip shows). */
+  /** The kinds of the strip's squares, and the row's own squares in words (the strip draws them). */
   const stripKinds = (host: HTMLElement): string[] =>
     [...(strip(host)?.querySelectorAll<HTMLElement>(".tm-sq") ?? [])].map((s) => [...s.classList].find((c) => c !== "tm-sq")!);
-  const rowKinds = (host: HTMLElement): string[] =>
-    [...(strip(host)?.closest(".row-slot")?.querySelector(".row-marks")?.querySelectorAll<HTMLElement>(".rm-sq") ?? [])]
-      .map((s) => [...s.classList].find((c) => c !== "rm-sq")!);
+  const rowSays = (host: HTMLElement): string =>
+    strip(host)?.closest(".row-slot")?.querySelector(".row")?.getAttribute("aria-description") ?? "";
 
   it("closed, a reply that arrives gets its square in the strip, as in the row's own marks", async () => {
     const host = await shortLast();
@@ -707,9 +706,10 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     arriveLater([msg("p5", 40)], ["p1", "p2", "p3", "p4", "p5"]);
     await tick(20_000);
     await settle();
-    expect(rowKinds(host).length, "the reply never arrived: the case is not exercised").toBe(5);
-    expect(rowKinds(host)[4]).toBe("unread");
-    expect(stripKinds(host), "the strip draws the conversation as it stands now").toEqual(rowKinds(host));
+    expect(stripKinds(host).length, "the reply never arrived: the case is not exercised").toBe(5);
+    expect(stripKinds(host)[4]).toBe("unread");
+    const unread = stripKinds(host).filter((k) => k === "unread").length;
+    expect(rowSays(host), "the strip draws the conversation as the row has it").toContain(`5 messages, oldest first: ${unread} unread`);
     expect(strip(host)?.querySelector('.tm-mb[data-for="p5"]'), "the reply's square").not.toBeNull();
   }, 60_000);
 
@@ -724,8 +724,9 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
     expect(stripKinds(host)).toEqual(["read", "read", "read", "read"]);
     await key("u");
-    expect(rowKinds(host), "u never reached the row: the case is not exercised").toContain("unread");
-    expect(stripKinds(host), "the strip draws the conversation as it stands now").toEqual(rowKinds(host));
+    const unread = stripKinds(host).filter((k) => k === "unread").length;
+    expect(unread, "u never reached the strip").toBeGreaterThan(0);
+    expect(rowSays(host), "the strip draws the conversation as the row has it").toContain(`4 messages, oldest first: ${unread} unread`);
   }, 30_000);
 
   /** The one chip on screen, or null. */
@@ -840,6 +841,45 @@ describe("the walk: the ring follows the reading line, the row's strip follows t
     await click(rowOf(host, "s1"), "another conversation");
     expect(strip(host), "the strip left with the conversation").toBeNull();
   }, 30_000);
+
+  /** Every list row's strips of squares, as drawn: its own 8px line and the walking strip. */
+  const stripsPerRow = (host: HTMLElement): Record<string, string[]> => Object.fromEntries(
+    [...host.querySelectorAll<HTMLElement>('[role="listbox"] .row')].map((row) => {
+      const unit = row.closest(".row-slot") ?? row;
+      const drawn = [...unit.querySelectorAll(".row-marks, .tm-strip")].map((el) => (el.matches(".tm-strip") ? "strip" : "own"));
+      return [(row.dataset.ids ?? row.dataset.id ?? "").split(" ").sort().join(" "), drawn];
+    }),
+  );
+  const T = "p1 p2 p3 p4";
+  const S = "s1 s2";
+  it("one strip per row in every state: closed, opened, walked, closed again, another chosen, a reply, Mark unread", async () => {
+    const host = await shortLast([msg("s1", 40, { threadId: "S" }), msg("s2", 41, { threadId: "S" })]);
+    const expectRows = (state: string, rows: Record<string, string[]>): void =>
+      expect(stripsPerRow(host), state).toEqual(rows);
+    expectRows("nothing open", { [T]: ["own"], [S]: ["own"] });
+    await click(rowOf(host, "p4") ?? host.querySelector<HTMLElement>('[role="listbox"] .row[data-ids~="p4"]'), "T's row");
+    expectRows("T open", { [T]: ["strip"], [S]: ["own"] });
+    await dwell();
+    expectRows("T read", { [T]: ["strip"], [S]: ["own"] });
+    for (const y of [0, 300, 620]) {
+      await layout.handScroll(y);
+      await settle();
+      expectRows(`T walked to ${y}`, { [T]: ["strip"], [S]: ["own"] });
+    }
+    await click(document.querySelector(".read-col-close"), "the column's close");
+    expectRows("T closed, its place kept", { [T]: ["strip"], [S]: ["own"] });
+    arriveLater([msg("p5", 50)], ["p1", "p2", "p3", "p4", "p5"]);
+    await tick(20_000);
+    await settle();
+    const withReply = `${T} p5`;
+    expect(Object.keys(stripsPerRow(host)), "the reply never arrived: the case is not exercised").toContain(withReply);
+    expectRows("a reply into closed T", { [withReply]: ["strip"], [S]: ["own"] });
+    await click(host.querySelector<HTMLElement>('[role="listbox"] .row[data-ids~="s2"]') ?? rowOf(host, "s2"), "S's row");
+    expectRows("S chosen", { [withReply]: ["own"], [S]: ["strip"] });
+    await key("x");
+    await key("u");
+    expectRows("S picked and marked unread", { [withReply]: ["own"], [S]: ["strip"] });
+  }, 60_000);
 
   it("an own reply in the strip opens its conversation on it, never a removed-elsewhere notice", async () => {
     bodies(["p1", "o1", "p3"]);

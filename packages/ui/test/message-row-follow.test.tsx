@@ -39,6 +39,25 @@ describe("MessageRow follow", () => {
     expect([...slot.children].map((c) => c.className)).toEqual([expect.stringContaining("row"), "row-actions", "row-follow"]);
   });
 
+  it("a follower given is the row's squares: the row draws none of its own, keeps their words, keeps ⤷ N back", () => {
+    const marks = ["read", "unread", "mine"] as const;
+    const { container } = render(
+      <MessageRow {...base} threadCount={3} marks={marks} marksLabel="3 messages" follow={<i className="probe" />} />,
+    );
+    const row = container.querySelector<HTMLElement>(".row")!;
+    expect(container.querySelectorAll(".row-marks").length, "two strips: the row's squares beside the follower").toBe(0);
+    expect(container.querySelectorAll(".probe").length).toBe(1);
+    expect(row.getAttribute("aria-description")).toContain("3 messages");
+    expect(row.querySelector(".bdg-thread"), "the squares still say the length").toBeNull();
+  });
+
+  it("a null follower keeps the slot and the row's own squares", () => {
+    const { container } = render(<MessageRow {...base} marks={["read", "unread"]} follow={null} />);
+    expect(container.firstElementChild?.className).toBe("row-slot");
+    expect(container.querySelectorAll(".row .row-marks .rm-sq").length).toBe(2);
+    expect(container.querySelector(".row-follow")?.childElementCount).toBe(0);
+  });
+
   it("absent, the row is the bare button, as before", () => {
     const bare = renderToStaticMarkup(<MessageRow {...base} />);
     expect(bare.startsWith("<button"), "a slot appeared around a row with nothing beside it").toBe(true);

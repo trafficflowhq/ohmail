@@ -286,7 +286,9 @@ export interface MessageRowProps {
    * WHAT FOLLOWS THE ROW, under it — the open conversation's strip of squares on the Ohbox. Like
    * `actions` it stands beside the row button in the `role="presentation"` slot, never inside it,
    * on the slot's second line; the slot then carries the row's `data-index`, so a windowed list
-   * measures the row with what follows it. Absent ⇒ the row renders exactly as without it.
+   * measures the row with what follows it. Given (not null), it IS the row's squares: the row draws
+   * none of its own `marks`, so a row never shows two strips. `null` keeps the slot and the row's
+   * own squares. Absent ⇒ the row renders exactly as without it.
    */
   follow?: ReactNode;
   onClick?: () => void;
@@ -547,7 +549,7 @@ export function MessageRow(props: MessageRowProps) {
         {amount ? <span className="amt num">{amount}</span> : null}
       </span>
       {preview ? <span className="prev" style={{ display: "block" }}>{preview.slice(0, ROW_PREVIEW_MAX_CHARS)}</span> : null}
-      {squares ? (
+      {squares && follow == null ? (
         <span className="row-marks" aria-hidden="true">
           <span className="row-marks-in">
             {squares.map((k, i) => <i key={i} className={`rm-sq ${k}`} />)}

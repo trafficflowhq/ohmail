@@ -26,6 +26,9 @@
 }
 /* …and the button inside a slot draws none of it, or the slot's tint would be laid twice. */
 .row-slot>.row:hover,.row-slot>.row.sel{background:none;box-shadow:none;transform:none}
+/* The keyboard ring too is the slot's: round the button alone it was a second box inside the slot's. */
+.row-slot>.row:focus-visible{outline:none}
+.row-slot:has(> .row:focus-visible){outline:var(--focus-w) solid var(--accent);outline-offset:var(--focus-offset)}
 /* ONE SACRIFICE ORDER FOR "WHO · ADDRESS · TIME" (row, stream card head, reader header). The time
    and an amount never give. The name never wraps and is never padded. The address gives first:
    it takes only the room the name leaves, and when that room is under 14ch its text leaves (the
@@ -189,6 +192,8 @@
     height:0 !important;padding-top:0;padding-bottom:0;
     transition:opacity .18s var(--swift), transform .22s var(--swift),
                height .28s var(--spring), padding .28s var(--spring)}
+  /* the strip under a leaving row leaves with it, never standing alone in the slot's box */
+  .row-slot:has(> .row.settling) > .row-follow{display:none}
 }
 /* Under `prefers-reduced-motion: reduce` there is no rule at all: the row keeps its slot, unstyled
    and unchanged, and simply appears under "Earlier" on the render the timer schedules. The move
@@ -210,11 +215,9 @@
 .row-actions-in{display:flex;align-items:center;gap:4px;padding:0 12px 0 8px}
 .row-actions-in:empty{display:none}
 /* WHAT FOLLOWS THE ROW (`MessageRow` `follow`): the slot's second line, the whole slot wide — the
-   open conversation's strip of squares on the Ohbox. While it stands there the row's own 8px squares
-   step aside: the strip is the same squares, drawn to be pressed. An empty follower (a conversation's
-   row while another is open) takes no room and hides nothing. */
+   open conversation's strip of squares on the Ohbox, drawn in place of the row's own 8px squares
+   (`MessageRow` leaves them out). An empty follower takes no room. */
 .row-follow{grid-column:1 / -1;grid-row:2;min-width:0}
-.row-slot:has(> .row-follow:not(:empty)) > .row .row-marks{display:none}
 
 /* THE PLACE BADGES LEAVE FIRST in a LIST COLUMN UNDER 380px (the two-pane band's 300-379, a phone's
    up to 390): where a message lives, which mailbox, its state note go, so the subject keeps the

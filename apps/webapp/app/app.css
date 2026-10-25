@@ -1353,6 +1353,20 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   background: var(--accent-soft);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+/* In a slot the pick is the slot's, round the row and its strip, as the cursor's raise is. */
+.view-ohbox .row-slot:has(> .row.picked) {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.view-ohbox .row-slot > .row.picked {
+  background: none;
+  box-shadow: none;
+}
+/* Picked and under the cursor: the pick's wash and rail over the cursor's raise, both at once. */
+.view-ohbox .row-slot:has(> .row.picked.sel) {
+  background: linear-gradient(var(--accent-soft), var(--accent-soft)) var(--float);
+  box-shadow: inset 2px 0 0 var(--accent), var(--lift-2);
+}
 
 /* ============ ohbox where-line: when mail was last checked and where it went ============
    `OhboxWhereLine` under the Ohbox title, in the header meta's own register (`.vhead .meta`):

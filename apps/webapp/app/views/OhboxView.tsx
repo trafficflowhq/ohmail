@@ -18,7 +18,7 @@ import {
 import type { ListSurface, ThreadMark, ThreadRead } from "@ohmail/client-engine";
 import type { ThreadReadWiring } from "../shell/reader-seen";
 import { createThreadWalkChannel } from "../shell/thread-walk-channel";
-import { ThreadStrip } from "../shell/ThreadStrip";
+import { ThreadStrip, useWalkedRow } from "../shell/ThreadStrip";
 import type { EngineMessage, ResurfacedThreadRow, TagDTO } from "@ohmail/client-engine";
 import {
   Doorbell,
@@ -1973,13 +1973,15 @@ export function OhboxView({
       enter(target);
     }
   };
+  const walked = useWalkedRow(walk);
   /**
-   * A conversation's row carries the strip, drawn while the walked conversation is this row's. Its
+   * The walked conversation's row carries the strip, in place of its own squares; every other
+   * conversation's row an empty follower, so opening never remounts the row's button. The strip's
    * squares are the conversation as it stands (`conversationOf`), asked again when the row's own
    * marks change; only the place comes from the walk.
    */
   const followOf = (members: readonly EngineMessage[], target: EngineMessage, threadId: string | null | undefined): ReactNode =>
-    <ThreadStrip
+    !walked(members.map((m) => m.id)) ? null : <ThreadStrip
       channel={walk}
       members={members.map((m) => m.id)}
       onOpen={() => stripOpen(target)}

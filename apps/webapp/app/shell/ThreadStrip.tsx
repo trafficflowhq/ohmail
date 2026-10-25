@@ -12,20 +12,31 @@
  *
  * The squares are the conversation AS IT STANDS (`conversationOf`), never the reader's last picture:
  * closed, a reply that arrives gets its square and a Mark unread turns them, as on the row's own
- * marks, which the strip hides. Only the place (the ring) is the walk's.
+ * marks. Only the place (the ring) is the walk's. The host gives the strip only to the walked row
+ * ({@link useWalkedRow}), and a row with a strip draws none of its own squares: one strip per row.
  */
 import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
 import { ThreadMarksBar, marksKeys } from "./ThreadMarks";
 import type { ThreadWalkChannel, ThreadWalkSnapshot } from "./thread-walk-channel";
 
+const walkedKey = (channel: ThreadWalkChannel): string => channel.get()?.messages.map((m) => m.id).join("\n") ?? "";
+
+/**
+ * Which rows are the walked conversation's, for the host that decides each row's `follow`. It changes
+ * when the walk changes conversation or members, never on a ring step.
+ */
+export function useWalkedRow(channel: ThreadWalkChannel): (members: readonly string[]) => boolean {
+  const key = useSyncExternalStore(channel.subscribe, () => walkedKey(channel), () => walkedKey(channel));
+  return useMemo(() => {
+    const ids = new Set(key === "" ? [] : key.split("\n"));
+    return (members) => members.some((id) => ids.has(id));
+  }, [key]);
+}
+
 export function ThreadStrip({ channel, members, onOpen, conversationOf, marks }: {
   channel: ThreadWalkChannel;
-  /**
-   * The ids the row stands for. Every conversation's row carries a strip, drawn only while the walked
-   * conversation is this row's: the row's markup stays one shape, so opening the conversation never
-   * remounts the row's button (and never takes its focus).
-   */
+  /** The ids the row stands for; the strip draws only while the walked conversation is this row's. */
   members: readonly string[];
   /** The row's own open — the press's way in when no reader is on screen. */
   onOpen: () => void;
