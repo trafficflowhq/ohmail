@@ -6,6 +6,7 @@
  * mail keeps arriving at the cap. Absent or malformed figures say nothing, never "0 of 0".
  * Shared by the browser and the desktop window (which reads the same block over its bridge).
  */
+import { firstImportsOf } from "./consent-options";
 
 /**
  * The block, narrowed. `keptFrom` is "YYYY-MM": text is kept for letters from that month on (the month
@@ -94,6 +95,53 @@ export const STORAGE_NEAR_CAP_RATIO = 0.9;
  */
 export function storageEmptyingNow(facts: StorageFacts): boolean {
   return facts.emptyingNow;
+}
+
+/**
+ * Where the storage refill stands for the account's mailboxes (the shell's `GET /mailboxes` facts):
+ * `runs` with a mailbox ohmail still reads and none of them on its first import; `waits` while one is
+ * (the refill waits for it, one in error included); `never` when ohmail reads none of them (the worker
+ * never visits a removed mailbox). `null` with no facts yet. The account's import stamp first
+ * (`firstImportsOf`); a row with none is no hold.
+ */
+export type StorageRefill = "runs" | "waits" | "never";
+
+export function storageRefillOf(
+  mailboxes: ReadonlyArray<{
+    id: string; status: string | null; initialImportCompletedAt?: string | null; hostedImportCompletedAt?: string | null;
+  }> | null,
+): StorageRefill | null {
+  if (mailboxes === null) return null;
+  const read = mailboxes.filter((m) => m.status !== "disabled");
+  if (read.length === 0) return "never";
+  const imports = firstImportsOf(read) ?? {};
+  return read.every((m) => imports[m.id] !== null) ? "runs" : "waits";
+}
+
+/**
+ * Is there room for the refill now: the counter under nine tenths of the cap, inside the trial's floor
+ * of the plan's own limit, the mark the worker's refill fills to (`core/husk-restore.ts`).
+ */
+export function storageRefillRoom(facts: StorageFacts): boolean {
+  const limit = facts.planLimitBytes === null ? facts.limitBytes : Math.min(facts.limitBytes, facts.planLimitBytes);
+  return facts.usedBytes < Math.floor(limit * STORAGE_NEAR_CAP_RATIO);
+}
+
+/**
+ * What the notice says about emptied text coming back, as a catalogue key, or `null`. After the offer:
+ * that more room brings it back where the refill runs, and that the offer does not where it never can
+ * (a recorded trim only, never a back-filled count). With no offer, at `past` with room under the
+ * refill's mark: that it is coming back. Nothing while the refill waits, or with no facts.
+ */
+export function storageRestoreKey(
+  facts: StorageFacts, level: StorageLevel, offered: boolean, refill: StorageRefill | null,
+): "storageNoticeRefill" | "storageNoticeRefilling" | "storageNoticeNoRestore" | null {
+  if (facts.emptiedForSpace <= 0) return null;
+  if (offered) {
+    if (refill === "runs") return "storageNoticeRefill";
+    return refill === "never" && storageTrimRecorded(facts) ? "storageNoticeNoRestore" : null;
+  }
+  return level === "past" && refill === "runs" && storageRefillRoom(facts) ? "storageNoticeRefilling" : null;
 }
 
 /**

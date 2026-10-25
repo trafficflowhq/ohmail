@@ -1828,7 +1828,7 @@ export function MessagePane({
   /* A verdict's husk on a message moved out of Junk is text on its way — `useWithheldSentence`. */
   const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
   const withheldSentence = useWithheldSentence(
-    message.id, body.state, withheldCopyKey(body.withheld, message.folder), reaskBody,
+    message.id, body.state, withheldCopyKey(body.withheld, message.folder, chrome.mailboxStatusOf?.(message.mailboxId)), reaskBody,
   );
   /**
    * THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE: "Couldn't load the full message — Retry" was this

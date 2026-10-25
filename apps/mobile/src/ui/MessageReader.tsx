@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useIsFocused } from "expo-router";
 import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from "../state/live";
-import { invitationNote, junkLeaving, withheldNote } from "./body-note";
+import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import {
   ActivityIndicator, Animated, AppState, Easing, Linking, Platform, ScrollView, StyleSheet, useWindowDimensions, View,
@@ -417,7 +417,7 @@ export function MessageReader({
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
       : !m.protected && m.bodyState === "withheld"
-        ? withheldNote(m, refillExpired)
+        ? withheldNote(m, refillExpired, mailboxStatusOf(w.mailboxes.rows, m.mailboxId))
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
           : null;

@@ -6893,14 +6893,20 @@ export type { EngineDraft };
 /**
  * ONE MESSAGE'S BODY, read at the moment a surface draws it — the list rows carry none (see
  * {@link toListRow}). The surface subscribes to the body stamp (`useBodyStamp`) so a body that lands
- * redraws it. `null` for a message the mirror does not hold.
+ * redraws it. `null` for a message the mirror does not hold. Its mailbox rides along: a withheld
+ * body's sentence asks whether ohmail still reads it (`withheldNote`).
  */
-export function liveBody(engine: OhmailEngine, id: string): Pick<WorldMail, "body" | "bodyState" | "bodyWithheld"> | null {
+export function liveBody(
+  engine: OhmailEngine, id: string,
+): Pick<WorldMail, "body" | "bodyState" | "bodyWithheld" | "mailboxId"> | null {
   const reader = engine.read();
   const m = reader.get<EngineMessage>("message", id);
   if (m === undefined) return null;
   const b = bodyOf(reader, m);
-  return { body: b.text, bodyState: b.state, ...(b.state === "withheld" && b.withheld ? { bodyWithheld: b.withheld } : {}) };
+  return {
+    body: b.text, bodyState: b.state, mailboxId: m.mailboxId,
+    ...(b.state === "withheld" && b.withheld ? { bodyWithheld: b.withheld } : {}),
+  };
 }
 
 /**

@@ -84,6 +84,37 @@ describe("makeStorageCapResolver", () => {
     // …and must not stick: the next resolution asks again and gets the real cap.
     expect(await resolve("a3")).toBe(1_000);
   });
+
+  it("inside a trial's storage floor the plan's own limit rides the same read; none at or above the cap", async () => {
+    const answers = new Map<string, { storageBytes: number; plan?: number } | "throw">([
+      ["solo-trial", { storageBytes: 4_000_000_000, plan: 2_000_000_000 }],
+      ["plus-trial", { storageBytes: 5_000_000_000, plan: 5_000_000_000 }],
+      ["paid", { storageBytes: 2_000_000_000 }],
+      ["blip", "throw"],
+    ]);
+    let calls = 0;
+    const { port: base } = portFor([null]);
+    const port: EntitlementsPort = {
+      ...base,
+      async access(accountId: string) {
+        calls += 1;
+        const a = answers.get(accountId)!;
+        if (a === "throw") throw new Error("pooler blip");
+        return {
+          ok: true, limits: { mailboxes: null, storageBytes: a.storageBytes, canAddMailbox: true, aiEnabled: true },
+          ...(a.plan !== undefined ? { trialStorage: { planBytesLimit: a.plan, until: null } } : {}),
+        };
+      },
+    };
+    const resolve = makeStorageCapResolver(port, silent);
+    expect(await resolve("solo-trial")).toBe(4_000_000_000);
+    expect(await resolve.planLimit("solo-trial")).toBe(2_000_000_000);
+    expect(calls, "the plan's limit asked the program again").toBe(1);
+    expect(await resolve.planLimit("plus-trial")).toBeNull();
+    expect(await resolve.planLimit("paid")).toBeNull();
+    // A fault answers no plan limit, beside the unmetered cap that refills nothing.
+    expect(await resolve.planLimit("blip")).toBeNull();
+  });
 });
 
 describe("the hosted composition utters the resolver — the wiring pin", () => {

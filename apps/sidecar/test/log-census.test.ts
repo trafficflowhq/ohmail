@@ -807,6 +807,10 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // counts and the reason, on the logger's own allowed vocabulary.
   cloud_cap_marker_repair_done: "info",
   cloud_cap_marker_repair_deferred: "info",
+  // The one-time re-ask of the cap husks an older sidecar kept through the storage refill's change:
+  // the same shape, two counts and the reason, no message named.
+  cloud_cap_refill_repair_done: "info",
+  cloud_cap_refill_repair_deferred: "info",
   cloud_refresh_failed: "error",
   // The hosted API DEFINITIVELY refused to renew the session (401/403 — revoked or rotated-past
   // family). `error`, because a person must act (sign in again) — the measured alternative was a

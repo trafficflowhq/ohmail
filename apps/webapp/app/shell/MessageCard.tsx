@@ -333,7 +333,7 @@ export function MessageCard({
   // The focused pane's rule for a verdict's husk outside Junk: loading, re-asked, bounded.
   const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
   const withheldSentence = useWithheldSentence(
-    message.id, body.state, withheldCopyKey(body.withheld, message.folder), reaskBody,
+    message.id, body.state, withheldCopyKey(body.withheld, message.folder, chrome.mailboxStatusOf?.(message.mailboxId)), reaskBody,
   );
 
   /**

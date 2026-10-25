@@ -203,30 +203,36 @@ describe("a cap-withheld body on the wire", () => {
     expect(asks).toBe(1);
   });
 
-  it("a storage_cap husk is NOT invalidated by a message change — nothing can restore it", async () => {
+  it("a storage_cap husk is shed by a message change too — the storage refill gives text back with one", async () => {
     const store = await seeded(["m7"]);
     let asks = 0;
+    let serve: "husk" | "refilled" = "husk";
     const adapter: EngineAdapter = {
       ...QUIET,
       withdrawSend: async () => ({ outcome: "unsupported" as const }),
       fetchBody: async () => {
         asks += 1;
-        return { text: "", html: null, loadedRemoteContent: false, unsubscribe: "no_header" as const, unsubscribeUrl: null, withheld: "storage_cap" as const };
+        return serve === "husk"
+          ? { text: "", html: null, loadedRemoteContent: false, unsubscribe: "no_header" as const, unsubscribeUrl: null, withheld: "storage_cap" as const }
+          : { text: "the text that came back", html: null, loadedRemoteContent: false, unsubscribe: "no_header" as const, unsubscribeUrl: null };
       },
     };
     const engine = new OhmailEngine({ adapter, store, now: () => NOW });
     await engine.hydrateBody("m7");
     await drain();
+    expect(bodyOf(store, store.get<EngineMessage>("message", "m7")!).state).toBe("withheld");
+
+    // The refill writes the text back and records the message's change.
+    serve = "refilled";
     await store.applyChanges([{
       type: "message", op: "update", id: "m7", seq: ++seq, updatedAt: NOW.toISOString(),
       entity: { ...msg("m7"), updatedAt: NOW.toISOString() },
     }]);
-    // The cap's husk is answered-terminal: a duplicate arrival deliberately cannot restore it,
-    // so shedding it buys another request that can only return the same husk, on every update.
+    expect(store.get("message_body", "m7")).toBeFalsy();
     await engine.hydrateBody("m7");
     await drain();
-    expect(asks).toBe(1);
-    expect(bodyOf(store, store.get<EngineMessage>("message", "m7")!).state).toBe("withheld");
+    expect(asks).toBe(2);
+    expect(bodyOf(store, store.get<EngineMessage>("message", "m7")!).text).toBe("the text that came back");
   });
 
   it("an ordinary READY body survives the same message change — no re-download storm", async () => {
@@ -366,5 +372,61 @@ describe("a body record written before the withheld marker existed", () => {
     await engine.hydrateBody("m5");
     await drain();
     expect(asks).toBe(1);
+  });
+});
+
+/**
+ * ═══ A STORAGE-CAP RECORD FROM BEFORE THE REFILL ════════════════════════════════════════════
+ *
+ * An older build kept a `storage_cap` husk through every message change, so a letter whose text the
+ * storage refill brought back while that build ran still opens empty after the upgrade. Such a
+ * record carries no stamp: it is asked once more, and the answer is stamped, so a reload asks
+ * nothing.
+ */
+describe("a storage_cap record written before the refill existed", () => {
+  async function withOlderCapRecord(id: string): Promise<MemoryMirrorStore> {
+    const store = await seeded([id]);
+    await store.putLocal("message_body", id, {
+      messageId: id, state: "ready", text: "", html: null, loadedRemoteContent: false,
+      unsubscribe: "no_header", unsubscribeUrl: null, withheld: "storage_cap",
+    });
+    return store;
+  }
+  const capAdapter = (answer: () => Record<string, unknown>, asked: { n: number }): EngineAdapter => ({
+    ...QUIET,
+    withdrawSend: async () => ({ outcome: "unsupported" as const }),
+    fetchBody: async () => { asked.n += 1; return answer() as never; },
+  });
+
+  it("opens with the text that came back meanwhile", async () => {
+    const store = await withOlderCapRecord("m9");
+    const asked = { n: 0 };
+    const engine = new OhmailEngine({
+      adapter: capAdapter(() => ({ text: "back from the mail server", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }), asked),
+      store, now: () => NOW,
+    });
+    await engine.hydrateBody("m9");
+    await drain();
+    expect(asked.n).toBe(1);
+    expect(bodyOf(store, store.get<EngineMessage>("message", "m9")!).text).toBe("back from the mail server");
+  });
+
+  it("is asked once ever: a husk still empty is not asked again, in this engine or the next", async () => {
+    const store = await withOlderCapRecord("m10");
+    const asked = { n: 0 };
+    const adapter = capAdapter(() => ({
+      text: "", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null, withheld: "storage_cap",
+    }), asked);
+    const engine = new OhmailEngine({ adapter, store, now: () => NOW });
+    await engine.hydrateBody("m10");
+    await drain();
+    await engine.hydrateBody("m10");
+    await drain();
+    expect(asked.n).toBe(1);
+    const engine2 = new OhmailEngine({ adapter, store, now: () => NOW });
+    await engine2.hydrateBody("m10");
+    await drain();
+    expect(asked.n, "the re-ask is once ever, not once per reload").toBe(1);
+    expect(bodyOf(store, store.get<EngineMessage>("message", "m10")!).state).toBe("withheld");
   });
 });

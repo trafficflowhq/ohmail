@@ -1431,7 +1431,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * order the regions they replace had.
    */
   const {
-    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, consentView, presented, trashPage, trashWindow,
+    ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
@@ -2134,8 +2134,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
       // as the override, so the sheet resolves the To/Cc person and not the message's sender.
       ownNameOf,
-      /* The reading pane's delivery line — the same resolver the Reads surfaces take as a prop. */
-      mailboxLabelOf,
+      /* The delivery line and a withheld letter's mailbox status (stable; `mailboxStatusKey` keys the redraw). */
+      mailboxLabelOf, mailboxStatusOf,
       writeTo,
       screenAddress: (messageId: string, address: string, anchor: HTMLElement | null) =>
         openSenderMenu(messageId, anchor, address),
@@ -2172,7 +2172,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
-      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, writeTo, openReply, openForward, forwardTargetFor,
+      openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, writeTo, openReply, openForward, forwardTargetFor,
       openSubjectRule, conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
@@ -2700,6 +2700,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 /* Which address of yours a row arrived at, above one mailbox — see
                    `mailbox-label.ts`; the view resolves one string per row. */
                 mailboxLabelOf={mailboxLabelOf}
+                mailboxStatusOf={mailboxStatusOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 partition={partition}
@@ -2732,6 +2733,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 settled={mailState.settled}
                 owed={mailState.owed}
                 threadParticipants={participantsOf}
+                mailboxStatusOf={mailboxStatusOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 messages={receipts}

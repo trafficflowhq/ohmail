@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq, sql as sqlTag } from "drizzle-orm";
 import {
-  accountStorage, applyBodyBytesDelta, releaseBodyBytes, reserveBodyBytes, storageUsageOf,
+  accountStorage, applyBodyBytesDelta, recordRefilledForSpace, releaseBodyBytes, reserveBodyBytes, storageUsageOf,
 } from "@trafficflow/db";
 import { dialect, dialectOf } from "../src/dialect/index.js";
 import { makeTestDb } from "../src/testing.js";
@@ -145,6 +145,66 @@ describe("the stored-body counter moves on whichever store the engine opened", (
     expect(await storageUsageOf(db as never, ACCOUNT)).toBe(110);
     await applyBodyBytesDelta(db as never, d, ACCOUNT, -10_000);
     expect(await storageUsageOf(db as never, ACCOUNT)).toBe(0);
+  });
+
+  it("a refilled letter adds its bytes and takes one letter off the emptied count, never the trim's facts", async () => {
+    const db = await makeTestDb();
+    const d = dialect(db);
+    await freshCounter(db, 1_000);
+    const TRIMMED = new Date("2026-08-10T00:00:00.000Z");
+    await db.update(accountStorage).set({
+      huskedForSpace: 3, withheldOnArrival: 1, keptFrom: "2026-09-01",
+      firstHuskedAt: TRIMMED, lastHuskedAt: TRIMMED, recountedAt: TRIMMED,
+    }).where(eq(accountStorage.accountId, ACCOUNT));
+    const facts = async () => {
+      const r = await rowOf(db);
+      return { bytes: Number(r?.bytes), husked: r?.huskedForSpace, onArrival: r?.withheldOnArrival };
+    };
+
+    // A letter the trim emptied, dated before the month text is kept from.
+    await recordRefilledForSpace(db as never, d, ACCOUNT, 400, new Date("2026-08-20T00:00:00.000Z"));
+    expect(await facts()).toEqual({ bytes: 1_400, husked: 2, onArrival: 1 });
+    // A letter withheld on arrival, dated on or after it.
+    await recordRefilledForSpace(db as never, d, ACCOUNT, 300, new Date("2026-09-03T00:00:00.000Z"));
+    expect(await facts()).toEqual({ bytes: 1_700, husked: 1, onArrival: 0 });
+
+    const after = await rowOf(db);
+    expect(after?.keptFrom).toBe("2026-09-01");
+    for (const at of [after?.firstHuskedAt, after?.lastHuskedAt, after?.recountedAt]) {
+      expect((at as Date).getTime()).toBe(TRIMMED.getTime());
+    }
+    expect((after?.updatedAt as Date).getTime()).toBeGreaterThan(LONG_AGO.getTime());
+
+    // A body that shrank, past the last emptied letter: clamped, never negative.
+    await recordRefilledForSpace(db as never, d, ACCOUNT, -5_000, new Date("2026-09-04T00:00:00.000Z"));
+    await recordRefilledForSpace(db as never, d, ACCOUNT, 10, new Date("2026-09-05T00:00:00.000Z"));
+    expect(await facts()).toEqual({ bytes: 10, husked: 0, onArrival: 0 });
+    // The last emptied letter back: no first time is kept, so the next trim dates its own.
+    expect((await rowOf(db))?.firstHuskedAt, "a count back at zero kept its first time").toBeNull();
+  });
+
+  it("a back-filled count with no first time stays undated as its letters come back", async () => {
+    const db = await makeTestDb();
+    const d = dialect(db);
+    await freshCounter(db, 0);
+    await db.update(accountStorage).set({ huskedForSpace: 2 }).where(eq(accountStorage.accountId, ACCOUNT));
+    for (const left of [1, 0]) {
+      await recordRefilledForSpace(db as never, d, ACCOUNT, 50, null);
+      const r = await rowOf(db);
+      expect({ husked: r?.huskedForSpace, first: r?.firstHuskedAt ?? null }).toEqual({ husked: left, first: null });
+    }
+  });
+
+  it("with no month recorded, the letters withheld on arrival are clamped to the letters left", async () => {
+    const db = await makeTestDb();
+    const d = dialect(db);
+    await freshCounter(db, 0);
+    await db.update(accountStorage).set({ huskedForSpace: 2, withheldOnArrival: 2 })
+      .where(eq(accountStorage.accountId, ACCOUNT));
+    await recordRefilledForSpace(db as never, d, ACCOUNT, 50, new Date("2026-09-03T00:00:00.000Z"));
+    const r = await rowOf(db);
+    expect({ husked: r?.huskedForSpace, onArrival: r?.withheldOnArrival, keptFrom: r?.keptFrom })
+      .toEqual({ husked: 1, onArrival: 1, keptFrom: null });
   });
 
   it("reads a raw statement back POSITIONALLY through the seam, on both stores", async () => {

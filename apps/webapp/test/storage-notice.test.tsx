@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -11,8 +11,14 @@ import de from "../messages/de.json";
  * THE NOTICE THAT OHMAIL EMPTIED LETTER TEXT FOR SPACE, and the Settings line beside the plan. Shown
  * once per browser and account while `GET /account/access` reports emptied letters; put away, it
  * stays away across a reload. Trial and paid accounts are told different ways to keep more text, and
- * neither is promised the emptied text back.
+ * that with more room ohmail fetches emptied text back from the mail server, never that all of it comes back:
+ * only for the mailboxes it still reads. That an offer brings nothing back is said only where no mailbox is read.
  */
+
+/** The shell's `GET /mailboxes` facts the notice reads; one live, imported mailbox unless a case says otherwise. */
+let mailboxFacts: Array<Record<string, unknown>> | null = null;
+vi.mock("../app/shell/MailStateProvider", () => ({ useMailboxFacts: () => mailboxFacts }));
+const LIVE = { id: "mb_1", address: "a@example.invalid", status: "connected", initialImportCompletedAt: "2026-10-01T00:00:00.000Z" };
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -43,6 +49,7 @@ beforeEach(async () => {
   const { forgetAccess } = await import("../app/api-client");
   forgetAccess();
   globalThis.localStorage.clear();
+  mailboxFacts = [LIVE];
   globalThis.fetch = (async (url: RequestInfo | URL) =>
     (String(url).includes("/account/access") ? json(access) : json({}))) as typeof fetch;
   host = document.createElement("div");
@@ -99,29 +106,88 @@ describe("the emptied-text notice", () => {
     expect(text()).toContain("stay complete in your mailbox on your mail server");
   });
 
-  it("a trial is offered a bigger plan, a paid account the plan or the add-on, and neither the text back", async () => {
+  it("a trial is offered a bigger plan, a paid account the plan or the add-on, and both that text comes back with room", async () => {
+    const back =
+      "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.";
     access = open(EMPTIED, "trialing");
     await mount("notice");
     const trial = text();
     expect(trial).toContain("A bigger plan keeps more text from now on.");
     expect(trial).not.toContain("add-on");
-    expect(trial).toContain("does not bring back text");
+    expect(trial).toContain(back);
     await act(async () => { root.unmount(); });
     root = createRoot(host);
     access = open(EMPTIED, "active");
     await mount("notice");
     expect(text()).toContain("A bigger plan or the storage add-on keeps more text from now on.");
-    expect(text()).toContain("does not bring back text");
+    expect(text()).toContain(back);
+    expect(text()).not.toContain("does not bring back");
   });
 
-  it("after an upgrade, below the new cap, it says what happened then and offers nothing", async () => {
+  it("after an upgrade, below the new cap, it says what happened then, that the text is coming back, and offers nothing", async () => {
     access = open({ ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false }, "active");
     await mount("notice");
     expect(text()).toContain(
       "To stay within your plan's storage at the time, ohmail stopped storing the text of your 80,000 oldest letters.");
+    expect(text()).toContain(
+      "There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back from your mail server, newest first, as far as the room allows.");
     expect(text()).not.toContain("10 GB");
     expect(text()).not.toMatch(/bigger plan|add-on/);
     expect(text()).toContain("stay complete in your mailbox on your mail server");
+  });
+
+  /*
+   * ONE RULE: the refill sentence where the refill runs (a mailbox ohmail reads, room under its mark), the
+   * "does not bring back" sentence only where it never can (every mailbox removed: the worker visits none),
+   * neither while it waits for a first import or before the mailbox facts land.
+   */
+  const remount = async (a: Record<string, unknown>, locale: "en" | "de" = "en"): Promise<string> => {
+    await act(async () => { root.unmount(); });
+    root = createRoot(host);
+    access = a;
+    await mount("notice", locale);
+    return text();
+  };
+  const BELOW = { ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false };
+
+  it("every mailbox removed: the offer brings nothing back, and nothing is said to come back", async () => {
+    mailboxFacts = [{ ...LIVE, status: "disabled" }];
+    const at = await remount(open(EMPTIED, "active"));
+    expect(at).toContain("A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.");
+    expect(at).not.toMatch(/fetches|room again/);
+    const below = await remount(open(BELOW, "active"));
+    expect(below).toContain("stay complete in your mailbox on your mail server");
+    expect(below).not.toMatch(/fetches|room again|bring back/);
+  });
+
+  it("a mailbox still on its first import, or no facts yet: neither that the text comes back nor that it does not", async () => {
+    for (const facts of [[LIVE, { ...LIVE, id: "mb_2", status: "error", initialImportCompletedAt: null }], null]) {
+      mailboxFacts = facts;
+      for (const storage of [EMPTIED, BELOW]) {
+        const said = await remount(open(storage, "active"));
+        expect(said, JSON.stringify(facts)).toContain("stay complete in your mailbox on your mail server");
+        expect(said, JSON.stringify(facts)).not.toMatch(/fetches|room again|bring back/);
+        // The offer stands where the cap empties text now.
+        expect(said.includes("A bigger plan or the storage add-on keeps more text from now on.")).toBe(storage === EMPTIED);
+      }
+    }
+  });
+
+  it("a removed mailbox beside one ohmail reads keeps the refill sentence, scoped to the mailboxes it reads", async () => {
+    mailboxFacts = [{ ...LIVE, id: "mb_0", status: "disabled" }, LIVE];
+    expect(await remount(open(BELOW, "active"))).toContain("There is room again: for the mailboxes ohmail still reads, it fetches");
+    const at = await remount(open(EMPTIED, "active"));
+    expect(at).toContain("With more room, ohmail fetches the text of emptied letters back");
+    expect(at).not.toContain("does not bring back");
+  });
+
+  it("inside the trial's floor the room is under the plan's own limit: no 'room again' at its mark", async () => {
+    const floor = { ...EMPTIED, limitBytes: 4_000_000_000, planLimitBytes: 2_000_000_000, limitDropsAt: null, emptyingNow: false };
+    expect(await remount(open({ ...floor, usedBytes: 1_700_000_000 }, "trialing"))).toContain("There is room again");
+    // Nine tenths of the plan's 2 GB, far under the floor's 4 GB: the refill has no room.
+    const atMark = await remount(open({ ...floor, usedBytes: 1_800_000_000 }, "trialing"));
+    expect(atMark).not.toContain("There is room again");
+    expect(atMark).toContain("A bigger plan keeps more text from now on. With more room, ohmail fetches the text of emptied letters back");
   });
 
   it("past due or in grace, no add-on and no plan is offered", async () => {
@@ -160,7 +226,13 @@ describe("the emptied-text notice", () => {
     access = open(EMPTIED, "active");
     await mount("notice", "de");
     expect(text()).toContain("Für Nachrichten ab April 2019 bleibt der Text gespeichert.");
-    expect(text()).toContain("Bereits entfernten Text bringt das nicht zurück.");
+    expect(text()).toContain(
+      "Mit mehr Platz holt ohmail den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, für die Postfächer, die es noch liest.");
+    expect(text()).not.toContain("Bereits entfernten Text bringt das nicht zurück.");
+    expect(await remount(open(BELOW, "active"), "de")).toContain(
+      "Es ist wieder Platz frei: Für die Postfächer, die ohmail noch liest, holt es den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, soweit der Platz reicht.");
+    mailboxFacts = [{ ...LIVE, status: "disabled" }];
+    expect(await remount(open(EMPTIED, "active"), "de")).toContain("Bereits entfernten Text bringt das nicht zurück.");
   });
 });
 
@@ -193,7 +265,11 @@ describe("the upgrade message at ninety percent and at the cap, by plan", () => 
     expect(pro).toContain("To stay within your plan's 10 GB");
     expect(pro).toContain("The storage add-on keeps more text from now on.");
     expect(pro).not.toContain("bigger plan");
-    expect(pro).toContain("does not bring back text");
+    expect(pro).toContain("With more room, ohmail fetches the text of emptied letters back");
+    expect(pro).not.toContain("does not bring back");
+    mailboxFacts = [{ ...LIVE, status: "disabled" }];
+    const gone = await remount(open({ ...EMPTIED, limitBytes: 10_000_000_000, usedBytes: 9_000_000_000, upgrade: "addon" }, "active"));
+    expect(gone).toContain("The storage add-on keeps more text from now on. It does not bring back text that was already emptied.");
   });
 
   it("a trial on the largest plan is told the add-on comes once the subscription is paid", async () => {
@@ -352,6 +428,11 @@ describe("back-filled counts with no trim recorded", () => {
     expect(said).toContain("Until 14 days after your first payment, ohmail keeps up to 4 GB of letter text.");
     expect(said).toContain("A bigger plan keeps more text from now on.");
     expect(said).toContain("Manage subscription");
+    // The refill brings back any letter emptied for space, dated or not; with every mailbox removed,
+    // a count with no recorded trim still gets no restore sentence.
+    expect(said).toContain("With more room, ohmail fetches the text of emptied letters back");
+    mailboxFacts = [{ ...LIVE, status: "disabled" }];
+    expect(await remount(open(B, "trialing"))).not.toMatch(/fetches|bring back/);
   });
 
   it("the Settings line says the plain count too", async () => {

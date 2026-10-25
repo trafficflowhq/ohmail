@@ -315,6 +315,10 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // that finds a candidate, which is exactly why it must be named here: unclassified it would
   // drop the memo once per restore and re-read listKnownLocators for the whole mailbox.
   "unhuskJunkFiledBody",
+  // the storage refill: its reads (the husk walk, the counter, the erasure/import hold), its rewrite
+  // (message_bodies, the storage counter, the search document, messages.updated_at, one change_log
+  // row) and the counter's recount — never an instance, a locator or a read-state column.
+  "listStorageCapHusks", "storageRefillCounter", "storageRefillHold", "refillStorageCapBody", "recountAccountStorage",
   // the folder-op pass's NARROW half (mail 0074): the pending-command read, the create's
   // completion (folder_ops + mailbox_folders.updated_at + change_log), the failure/deferral
   // stamps, the subtree read. None of these touches an instance row or a projected column.

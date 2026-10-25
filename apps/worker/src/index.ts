@@ -2815,6 +2815,7 @@ export async function startWorkerWithLock(
           // it, so this value's real job is that the field cannot be forgotten: it is required,
           // and this composition is the metered one.
           storageCap: await storageCapFor(mb.accountId),
+          storagePlanLimit: await storageCapFor.planLimit(mb.accountId),
           log,
           // `OHMAIL_BLANK_REPAIR`, as the config read it: unset is apply (`blank-repair.ts`).
           ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
@@ -4188,6 +4189,8 @@ export async function startWorkerWithLock(
             // The cap is refreshed per cycle like the screening posture beside it, so an
             // upgrade's headroom (or a downgrade's new ceiling) applies without a re-attach.
             storageCap: await storageCapFor(rt.accountId),
+            // Inside a trial's floor the plan's own limit, the refill's ceiling; the same cached read.
+            storagePlanLimit: await storageCapFor.planLimit(rt.accountId),
             // The routing half of the organizer-profile hold (TAKEOVER-RESCREEN), EVALUATED
             // from the current facts at every cycle edge — never cached: the defects
             // measured that any arm/release choreography over a folder, a store and a

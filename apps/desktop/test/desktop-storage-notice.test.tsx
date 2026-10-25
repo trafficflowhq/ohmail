@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -10,9 +10,19 @@ import type { StorageFacts } from "../../webapp/app/shell/storage-state";
 
 /**
  * THE EMPTIED-TEXT NOTICE ON THE CLOUD DOOR: the words follow the current usage and the subscription.
- * When the current cap is not what emptied the text it says what happened then and offers nothing; a past-due or
+ * When the current cap is not what emptied the text it says what happened then and that the text is coming
+ * back, and offers nothing; a past-due or
  * grace subscription is offered no plan and no add-on; a build that may not link out offers neither.
+ * The text comes back only for the mailboxes ohmail still reads, which the shell's mailbox facts say.
  */
+const LIVE = { id: "mb_1", status: "connected", hostedImportCompletedAt: "2026-10-01T00:00:00.000Z" };
+let mailboxFacts: Array<Record<string, unknown>> | null = [LIVE];
+vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
+  const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
+    "../../webapp/app/shell/MailStateProvider",
+  );
+  return { ...real, useMailboxFacts: () => mailboxFacts };
+});
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const act = (React as unknown as { act: (cb: () => void) => void }).act;
 const h = React.createElement;
@@ -27,6 +37,7 @@ let root: Root;
 
 beforeEach(() => {
   globalThis.localStorage.clear();
+  mailboxFacts = [LIVE];
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -51,6 +62,23 @@ describe("the desktop's emptied-text notice", () => {
     expect(said).toContain("To stay within your plan's 2 GB, ohmail no longer stores the text of your 80,000 oldest letters.");
     expect(said).toContain("Text is kept for letters from April 2019 on.");
     expect(said).toContain("A bigger plan or the storage add-on keeps more text from now on.");
+    expect(said).toContain(
+      "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.");
+    expect(said).not.toContain("does not bring back");
+  });
+
+  it("with every mailbox removed the offer brings nothing back; while one is on its first import neither is said", () => {
+    const below = { ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false };
+    mailboxFacts = [{ ...LIVE, status: "disabled" }];
+    const gone = draw(EMPTIED, "active");
+    expect(gone).toContain("A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.");
+    expect(gone).not.toMatch(/fetches|room again/);
+    expect(draw(below, "active")).not.toMatch(/fetches|room again|bring back/);
+    mailboxFacts = [LIVE, { ...LIVE, id: "mb_2", hostedImportCompletedAt: null }];
+    const waiting = draw(EMPTIED, "active");
+    expect(waiting).toContain("A bigger plan or the storage add-on keeps more text from now on.");
+    expect(waiting).not.toMatch(/fetches|room again|bring back/);
+    expect(draw(below, "active")).not.toMatch(/fetches|room again|bring back/);
   });
 
   it("letters that arrived while the storage was full are counted apart from the oldest", () => {
@@ -59,9 +87,10 @@ describe("the desktop's emptied-text notice", () => {
     expect(said).toContain("Text is kept for letters from April 2019 on, apart from 5 letters that arrived while your storage was full.");
   });
 
-  it("upgraded to 10 GB, 19% used: what happened then, no cap and no offer", () => {
+  it("upgraded to 10 GB, 19% used: what happened then, that the text is coming back, no cap and no offer", () => {
     const said = draw({ ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false }, "active");
     expect(said).toContain("To stay within your plan's storage at the time, ohmail stopped storing the text of your 80,000 oldest letters.");
+    expect(said).toContain("There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back");
     expect(said).not.toContain("10 GB");
     expect(said).not.toMatch(/bigger plan|add-on/);
   });

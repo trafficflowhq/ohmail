@@ -244,6 +244,20 @@ export function useShellDerivations({
   const mailboxLabelOf = useStableCallback((mailboxId: string, form?: "short" | "label"): string | null =>
     mailboxLabels(mailboxId, form));
   /**
+   * EACH MAILBOX'S STATUS, for the note on a letter emptied for space (`withheldCopyKey`). The map is
+   * keyed on the statuses alone and read through a stable callback (this frame derives over the whole
+   * mirror, so it keeps no memoized closure); `mailboxStatusKey` is what a memo keys on so a removal
+   * redraws the notes it changes.
+   */
+  const mailboxStatusKey = JSON.stringify(facts?.map((m) => [m.id, m.status]) ?? null);
+  const mailboxStatuses = useMemo(
+    () => new Map((facts ?? []).map((m) => [m.id, m.status] as const)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mailboxStatusKey],
+  );
+  const mailboxStatusOf = useStableCallback((mailboxId: string): string | null =>
+    mailboxStatuses.get(mailboxId) ?? null);
+  /**
    * …AND THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.
    *
    * A windowed mirror decides dormancy from the mail it kept, the server from the whole account,
@@ -673,6 +687,8 @@ export function useShellDerivations({
     firstImportDoneAt,
     ownNameOf,
     mailboxLabelOf,
+    mailboxStatusOf,
+    mailboxStatusKey,
     consentView,
     presented,
     trashPage,

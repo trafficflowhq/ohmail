@@ -110,6 +110,19 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "the visit's leased adapter, read-only; writes through the fenced group",
   },
   {
+    name: "storage_refill",
+    module: `${W}/storage-refill.ts`, entry: "storageRefillPass",
+    triggers: ["visit"],
+    cadence: "at the visit's tail after junk_gone, only when the cycle deferred nothing; a mailbox at most every REFILL_EVERY_MS, "
+      + "on a numeric cap with room under the trim's mark, while no mailbox of the account is erasing or on its first import",
+    budget: "REFILL_FETCHES_PER_RUN letters, REFILL_RUN_BUDGET_MS and REFILL_MAX_PAGES pages per run; REFILL_BYTES_PER_DAY raw bytes "
+      + "per mailbox per rolling day; REFILL_MAX_BYTES per letter",
+    owns: "letters whose text the trim emptied for space get it back from the mail server, newest first, while the counter stays "
+      + "at or under nine tenths of the cap",
+    fence: "the visit's leased adapter, read-only (BODY.PEEK); each rewrite and the recount through the fenced group, the counter "
+      + "row locked before the room is read",
+  },
+  {
     name: "blank_repair",
     module: `${W}/blank-repair.ts`, entry: "blankRepairPass",
     // "visit" is every door that runs `runSyncCycle`: the worker, the reconcile backstop, and the

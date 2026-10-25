@@ -1796,13 +1796,17 @@ const TABLE = {
   liveBodyFailed: "Only the preview could be loaded. Reopen to try again.",
   /**
    * THE STORAGE CAP'S TERMINAL STATE — an ANSWER, not a failure, so it must not borrow
-   * {@link liveBodyFailed}'s "reopen to try again": reopening cannot change it. The server holds
+   * {@link liveBodyFailed}'s "reopen to try again": reopening does not change it, the storage refill
+   * does once there is room. The server holds
    * no content for this message because the account's storage space was full when it arrived;
    * the mail itself is untouched on the user's own mail server, which is the half the reader
    * needs, and the preview above the note is real.
    */
   liveBodyWithheld:
-    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. A bigger plan keeps more text from now on; it does not bring this text back.",
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. When there is room again, ohmail fetches this text back from your mail server.",
+  /** The same letter in a mailbox ohmail no longer reads (removed): the refill never visits it. */
+  liveBodyWithheldRemoved:
+    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. ohmail no longer reads this mailbox, so this text does not come back here.",
   /**
    * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
    * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
@@ -3017,7 +3021,8 @@ const TABLE = {
   stripDismiss: "Got it",
   /**
    * THE EMPTIED-TEXT NOTICE (`ui/StorageNotice.tsx`): what happened, that the letters stay complete
-   * on the mail server, and what keeps more text from now on. Never that emptied text comes back.
+   * on the mail server, what keeps more text from now on, and that with room ohmail fetches emptied
+   * text back, newest first, for the mailboxes it still reads. Never that all of it comes back.
    */
   storageNoticeEmptied: (cap: string, count: number) =>
     `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
@@ -3051,7 +3056,14 @@ const TABLE = {
   storageOfferTrialTop: "Once your subscription is paid, the storage add-on keeps more text from now on.",
   storageOfferActive: "A bigger plan or the storage add-on keeps more text from now on.",
   storageOfferActiveTop: "The storage add-on keeps more text from now on.",
+  /** After the offer, only where the refill never runs: ohmail reads none of the mailboxes. */
   storageNoticeNoRestore: "It does not bring back text that was already emptied.",
+  /** After the offer, where the refill runs. */
+  storageNoticeRefill:
+    "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.",
+  /** Text emptied under an earlier cap, with room under the refill's mark, where the refill runs. */
+  storageNoticeRefilling:
+    "There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back from your mail server, newest first, as far as the room allows.",
   storageNoticeManage: "Manage subscription",
   storageNoticeDismiss: "Dismiss",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one

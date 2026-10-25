@@ -300,6 +300,12 @@ export interface MessageChrome {
    */
   mailboxLabelOf?: (mailboxId: string) => string | null;
   /**
+   * A MAILBOX'S STATUS as `GET /mailboxes` gives it, or null where the shell has no facts — what the
+   * note on a letter emptied for space asks (`withheldCopyKey`). Resolved in `AppShell` from the facts
+   * `mailboxLabelOf` reads. Optional, and absent is that same null.
+   */
+  mailboxStatusOf?: (mailboxId: string) => string | null;
+  /**
    * PREFILL A NEW MESSAGE to `address` — the contact popover's Write verb.
    *
    * Filled by `AppShell` (compose seeded with the recipient, then the route change), which is

@@ -77,15 +77,19 @@ export function placeLabel(folder: string): string {
  * names the space, the junk filing the verdict, the expunge the gone copies, the size refusal the
  * ceiling. The verdict's is true only while the message is IN the spam pile: a `junk_filed` husk
  * moved out is being refilled from the mail server, so it reads "loading" (`withheldJunkLoading`,
- * `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. One resolver for every
- * surface; a new member is a type error at this mapping until it gets its own sentence.
+ * `isJunkHuskLeaving`), bounded by the engine's JUNK_REFILL_BOUND_MS. The storage cap's text comes
+ * back with room, but never in a mailbox ohmail no longer reads (`mailboxStatus` "disabled": removed or
+ * stood down), which the storage refill does not visit. One resolver for every surface; a new member
+ * is a type error at this mapping until it gets its own sentence.
  */
 /** The `body.*` key a withheld body's sentence is rendered through. */
-export type WithheldCopyKey = "withheld" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge";
+export type WithheldCopyKey =
+  | "withheld" | "withheldRemoved" | "withheldJunk" | "withheldJunkLoading" | "withheldExpunged" | "withheldTooLarge";
 
 export function withheldCopyKey(
   marker: WithheldMarker | null | undefined,
   folder: string | null | undefined,
+  mailboxStatus: string | null | undefined,
 ): WithheldCopyKey {
   switch (marker) {
     case "junk_filed":
@@ -98,7 +102,7 @@ export function withheldCopyKey(
     case "storage_cap":
     case null:
     case undefined:
-      return "withheld";
+      return mailboxStatus === "disabled" ? "withheldRemoved" : "withheld";
     default: {
       // The exhaustiveness proof the doc block promises: a widened set fails to compile here.
       const unreachable: never = marker;

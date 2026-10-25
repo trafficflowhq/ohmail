@@ -237,6 +237,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "the stored id is compared with the re-read message's before a body is rewritten",
   },
+  "apps/worker/src/storage-refill.ts": {
+    terms: ["messageIdHeader"], classes: ["dedup-content"],
+    why: "a letter emptied for space gets its text back only from bytes whose id and dedup key match the stored row",
+  },
   "apps/worker/src/sensitive-backfill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "same verification before a backfilled row's body is rewritten",

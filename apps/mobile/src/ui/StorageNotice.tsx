@@ -2,7 +2,7 @@
  * THE STORAGE NOTICE (near the cap, at it, text emptied), under the lifecycle strip on the main screen.
  * It decides nothing — `storage-notice.ts` answers whether it is due and what it offers; this renders
  * it, presses, and puts it away for the account on this phone. It reads the access feed the strip
- * already keeps fresh, so it asks nothing of its own.
+ * already keeps fresh and the world's mailbox read, so it asks nothing of its own.
  */
 
 import { useCallback, useState, useSyncExternalStore } from "react";
@@ -10,15 +10,21 @@ import { Linking, View } from "react-native";
 import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { Button, Panel, Txt } from "./base";
-import { storageNoticeCap, storageNoticeHeld, storageNoticeKey, storageNoticeOf, storageNoticeText } from "./storage-notice";
+import {
+  storageNoticeCap, storageNoticeHeld, storageNoticeKey, storageNoticeOf, storageNoticeText, storageRefillOf,
+} from "./storage-notice";
 import { accessFeedFor, mintManageLink, onAccessFeed, type ManageLink } from "../net/account";
 import {
   onStorageNotices, putAwayStorageNotice, storageNoticePutAway, storageNoticesHeld,
 } from "../state/storage-notice";
+import { useWorld } from "../state/world";
 import type { ConnectedSession } from "../net/pairing";
 
 export function StorageNotice({ session }: { session: ConnectedSession | null }) {
   const locale = useLocale();
+  const mailboxes = useWorld().mailboxes;
+  // Nothing said about text coming back before the mailbox read lands.
+  const refill = storageRefillOf(mailboxes.known ? mailboxes.rows : null);
   const profileId = session !== null && !session.standalone ? session.profile.id : null;
   const feedOf = useCallback(() => (profileId === null ? null : accessFeedFor(profileId)), [profileId]);
   const entry = useSyncExternalStore(onAccessFeed, feedOf, feedOf);
@@ -46,7 +52,7 @@ export function StorageNotice({ session }: { session: ConnectedSession | null })
   return (
     <Panel style={{ marginHorizontal: 16, marginTop: 8, padding: 14, gap: 8 }}>
       <Txt variant="body" accessibilityRole="summary">
-        {storageNoticeText(notice, Copy, locale)}
+        {storageNoticeText(notice, Copy, locale, refill)}
       </Txt>
       <View style={{ flexDirection: "row", gap: 8 }}>
         {notice.manage ? (

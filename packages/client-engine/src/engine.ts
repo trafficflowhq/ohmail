@@ -5789,7 +5789,9 @@ export class OhmailEngine {
        * never become a request, and `bodyHealed` bounds it to once per engine even if the mirror write is refused.
        */
       const preCapEmpty = held.text === "" && held.html === null && held.withheld === undefined;
-      if (!preCapEmpty || this.bodyHealed.has(messageId)) return { kind: "skip" };
+      // The same once, for a `storage_cap` record an older build kept through the refill's change.
+      const preRefillCap = held.withheld === "storage_cap" && held.capRefill !== true;
+      if (!(preCapEmpty || preRefillCap) || this.bodyHealed.has(messageId)) return { kind: "skip" };
       this.bodyHealed.add(messageId);
       return { kind: "fetch", held };
     }
@@ -6103,6 +6105,7 @@ export class OhmailEngine {
           // such build ever touched, which is what makes the pre-slice heal terminate. The batch
           // path and the single path must agree; see `MessageBodyRecord.withheld`.
           withheld: withheldMarkerOf(wire.withheld),
+          ...(wire.withheld === "storage_cap" ? { capRefill: true as const } : {}),
         },
       });
     }
@@ -6432,6 +6435,8 @@ export class OhmailEngine {
               // the guard below distinguish "not withheld" from "never asked by a build that
               // could tell", and so what makes the pre-slice heal happen ONCE and stop.
               withheld: withheldMarkerOf(wire.withheld),
+              // A build that sheds this husk on its message's change says so (`MessageBodyRecord.capRefill`).
+              ...(wire.withheld === "storage_cap" ? { capRefill: true as const } : {}),
             },
       );
     } catch (err) {

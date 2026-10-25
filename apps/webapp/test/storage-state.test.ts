@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   formatStorageBytes, storageDayName, storageFactsOf, storageKeptLine, storageLevelOf, storageMonthName, storageNoticeCap,
-  storageNoticeDue, storageNoticeKey, storageNoticeKeyBefore, storageNoticeOffers, storagePlanOf, storageState,
-  STORAGE_NEAR_CAP_RATIO,
+  storageNoticeDue, storageNoticeKey, storageNoticeKeyBefore, storageNoticeOffers, storagePlanOf, storageRefillOf,
+  storageRestoreKey, storageState, STORAGE_NEAR_CAP_RATIO,
 } from "../app/shell/storage-state";
 
 /**
@@ -158,6 +158,31 @@ describe("storageState", () => {
     expect(storageKeptLine(facts({ withheldOnArrival: 2 }), "en"))
       .toEqual({ key: "storageNoticeOnArrival", values: { count: 2 } });
     expect(storageKeptLine(facts({}), "en")).toBeNull();
+  });
+
+  it("the refill runs with a mailbox ohmail reads, waits for a first import, never runs with every mailbox removed", () => {
+    const live = { id: "a", status: "connected", initialImportCompletedAt: "2026-10-01T00:00:00.000Z" };
+    expect(storageRefillOf([live, { ...live, id: "b", status: "disabled", initialImportCompletedAt: null }])).toBe("runs");
+    expect(storageRefillOf([{ ...live, status: "disabled" }])).toBe("never");
+    expect(storageRefillOf([live, { ...live, id: "b", status: "error", initialImportCompletedAt: null }])).toBe("waits");
+    // An older server sends no stamp: no hold. A Cloud-paired desktop reads the account's import, not its mirror's.
+    expect(storageRefillOf([{ id: "a", status: "connected" }])).toBe("runs");
+    expect(storageRefillOf([{ ...live, hostedImportCompletedAt: null }])).toBe("waits");
+    // An answer with no mailboxes is one; no answer yet says nothing.
+    expect(storageRefillOf([])).toBe("never");
+    expect(storageRefillOf(null)).toBeNull();
+  });
+
+  it("the room the refill fills is under nine tenths of the cap, inside the trial's floor of the plan's own limit", () => {
+    const at = (usedBytes: number, over: Record<string, unknown> = {}) =>
+      storageRestoreKey(storageFactsOf(block({ usedBytes, emptiedForSpace: 9, firstEmptiedAt: "2026-10-20T03:00:00.000Z", ...over }))!, "past", false, "runs");
+    expect(at(4_499_999_999)).toBe("storageNoticeRefilling");
+    // Inside the floor the plan keeps 2 GB: its mark is 1.8 GB whatever the floor's.
+    const floor = { limitBytes: 4_000_000_000, planLimitBytes: 2_000_000_001 };
+    expect(at(1_799_999_999, floor)).toBe("storageNoticeRefilling");
+    expect(at(1_800_000_000, floor)).toBeNull();
+    // Nothing emptied, nothing said.
+    expect(storageRestoreKey(storageFactsOf(block({ usedBytes: 10 }))!, "past", false, "runs")).toBeNull();
   });
 });
 

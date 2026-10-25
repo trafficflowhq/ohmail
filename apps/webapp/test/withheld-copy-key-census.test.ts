@@ -9,7 +9,8 @@ import ts from "typescript";
  * callers. The resolver can only tell a husk in the spam pile from one moved out of it when it is
  * handed the message's folder; a call site passing the marker alone would put "your spam verdict
  * filed this message" back under a message the person has already moved. Parsed for the CALL
- * (never a text match), over the whole app, with the known callers as the positive control.
+ * (never a text match), over the whole app, with the known callers as the positive control. The
+ * mailbox's status rides too: a letter emptied for space in a removed mailbox gets no text back.
  */
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../app");
 
@@ -34,7 +35,7 @@ function calls(file: string): Array<{ line: number; args: number }> {
   return out;
 }
 
-describe("withheldCopyKey is always handed the message's folder", () => {
+describe("withheldCopyKey is always handed the message's folder and its mailbox's status", () => {
   const found = sources(APP).flatMap((f) => calls(f).map((c) => ({ file: path.relative(APP, f), ...c })));
 
   it("CONTROL: the census sees the reader surfaces it exists for", () => {
@@ -44,8 +45,8 @@ describe("withheldCopyKey is always handed the message's folder", () => {
     }
   });
 
-  it("every call passes the marker AND the folder", () => {
-    const short = found.filter((c) => c.args !== 2).map((c) => `${c.file}:${c.line}`);
+  it("every call passes the marker, the folder AND the mailbox's status", () => {
+    const short = found.filter((c) => c.args !== 3).map((c) => `${c.file}:${c.line}`);
     expect(short).toEqual([]);
   });
 });

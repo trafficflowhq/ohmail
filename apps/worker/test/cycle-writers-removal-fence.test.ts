@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
-  accounts, accountStorage, auditLog, bodyBytesOf, changeLog, folderState, mailboxes,
+  accounts, accountStorage, auditLog, bodyBytesOf, changeLog, evictOldestBodies, folderState, mailboxes,
   messageBodies, messageInstances, messages, type Tx,
 } from "@trafficflow/db";
+import { dialect } from "@trafficflow/db/dialect";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   createLogger, UNMETERED_STORAGE_CAP, fingerprintDedupKey, messageFingerprint, normalizeMime,
@@ -70,6 +71,34 @@ async function seedHusk(
   // The filing's own husk — the production write, so the marker and the released bytes are real.
   const husked = await repo.huskBody!(accountId, m!.id, "junk_filed");
   expect(husked, "the fixture never husked the body — there is no candidate to restore").toBe(true);
+  return m!.id;
+}
+
+/**
+ * A letter stored through the counted writer and then emptied by the production trim, on a mailbox
+ * past its first import: the candidate the storage refill fills once there is room.
+ */
+async function seedEmptied(
+  db: Tx, repo: DrizzleRepo, accountId: string, mailboxId: string,
+  held: { from: string; subject: string; messageId: string }, uid: number,
+): Promise<string> {
+  const norm = await normalizeMime(rawOf(held));
+  await db.update(mailboxes).set({ initialImportCompletedAt: new Date() }).where(eq(mailboxes.id, mailboxId));
+  const [m] = await db.insert(messages).values({
+    accountId, mailboxId,
+    dedupKey: fingerprintDedupKey(messageFingerprint(norm)),
+    messageIdHeader: norm.canonical.messageIdHeader,
+    fromAddress: norm.from.address, subject: norm.subject,
+    bodyHash: norm.canonical.bodyHash,
+    nativeLocator: LOC("INBOX", `1:${uid}`),
+  }).returning();
+  await db.insert(messageInstances).values({
+    accountId, messageId: m!.id, mailboxId, folder: "INBOX", uid, uidvalidity: 1n, isPrimary: true,
+  });
+  await repo.insertMessageBody(m!.id, { text: norm.textBody, html: null, headers: {} }, { accountId, capBytes: null });
+  const trimmed = await db.transaction(async (tx) =>
+    evictOldestBodies(tx as unknown as Tx, dialect(db), accountId, { targetBytes: 0, maxBodies: 10 }));
+  expect(trimmed.evicted, "the fixture never emptied the letter — there is nothing to refill").toBe(1);
   return m!.id;
 }
 
@@ -213,6 +242,57 @@ describe("every writer in the sync cycle asks the removal fence", () => {
       .toEqual(["junk_restore_mailbox_removed"]);
     expect(events.filter((e) => e === "junk_restore_pass_failed"),
       "a removed mailbox was reported as a pass that failed").toEqual([]);
+  }, 60_000);
+
+  it("gives an emptied letter its text back on a live mailbox with room", async () => {
+    /* THE POSITIVE CONTROL for the storage refill: a metered cycle with room writes the text back. */
+    const db = (await makeTestDb()) as unknown as Tx;
+    const { accountId, mailboxId } = await seedMailbox(db, "sr-ok");
+    const held = { from: "stranger@elsewhere.test", subject: "emptied for space", messageId: `sr-ok-${randomUUID()}@x` };
+    const repo = makeDrizzleRepo(db as never);
+    const messageId = await seedEmptied(db, repo, accountId, mailboxId, held, 61);
+    const { adapter } = fleetFor(mailboxId, held, 61);
+
+    await cycle({ writeAuthority: FIXTURE_LEASE, repo, adapter, accountId, mailboxId, storageCap: 10_000_000 });
+
+    const [body] = await db.select().from(messageBodies).where(eq(messageBodies.messageId, messageId));
+    expect({ withheld: body?.withheldReason ?? null, hasText: (body?.text ?? "").length > 0 },
+      "the letter's text did not come back — the storage refill does not write on a live mailbox")
+      .toEqual({ withheld: null, hasText: true });
+  }, 60_000);
+
+  it("inside a trial's storage floor the cycle's refill stops at the plan's own limit", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const { accountId, mailboxId } = await seedMailbox(db, "sr-plan");
+    const held = { from: "stranger@elsewhere.test", subject: "emptied for space", messageId: `sr-plan-${randomUUID()}@x` };
+    const repo = makeDrizzleRepo(db as never);
+    const messageId = await seedEmptied(db, repo, accountId, mailboxId, held, 63);
+    const { adapter } = fleetFor(mailboxId, held, 63);
+
+    // The floor has room for the letter's five bytes; the plan's own limit, five bytes, keeps four.
+    await cycle({ writeAuthority: FIXTURE_LEASE, repo, adapter, accountId, mailboxId, storageCap: 10_000_000, storagePlanLimit: 5 });
+
+    const [body] = await db.select().from(messageBodies).where(eq(messageBodies.messageId, messageId));
+    expect(body?.withheldReason ?? null, "the cycle's refill filled past the plan's own limit").toBe("storage_cap");
+  }, 60_000);
+
+  it("REFUSES the storage refill's rewrite when the mailbox is removed under the pass", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const { accountId, mailboxId } = await seedMailbox(db, "sr-gone");
+    const held = { from: "stranger@elsewhere.test", subject: "emptied for space", messageId: `sr-gone-${randomUUID()}@x` };
+    const real = makeDrizzleRepo(db as never);
+    const messageId = await seedEmptied(db, real, accountId, mailboxId, held, 62);
+    const { adapter } = fleetFor(mailboxId, held, 62);
+    const { repo, removed } = removingAt(real, db, mailboxId, "listStorageCapHusks");
+
+    const { events, log } = recorder();
+    await expect(cycle({ writeAuthority: FIXTURE_LEASE, repo, adapter, accountId, mailboxId, log, storageCap: 10_000_000 }),
+      "the storage refill wrote a letter's text into a removed mailbox")
+      .rejects.toBeInstanceOf(MailboxRemovedError);
+    expect(removed(), "the removal never happened — the case measured nothing").toBe(true);
+    expect(await writesIn(db, accountId, messageId)).toMatchObject({ bodyWithheld: "storage_cap", changes: 0 });
+    expect(events.filter((e) => e === "storage_refill_mailbox_removed")).toEqual(["storage_refill_mailbox_removed"]);
+    expect(events.filter((e) => e === "storage_refill_pass_failed")).toEqual([]);
   }, 60_000);
 
   it("files a pending move on a live mailbox", async () => {

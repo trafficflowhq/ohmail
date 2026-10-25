@@ -6,9 +6,9 @@
  * (the operator refuses an add-on then). Inside the trial's floor it says when the plan's own limit
  * applies and what that empties (`carry`). Text emptied under an earlier cap (`past`) is said without
  * the cap; below the near threshold (of the cap and of the trial's plan limit) nothing is offered and
- * no press is drawn. A count with no recorded trim is said plainly, never "oldest" or "at the time". The store face names no plan and offers no press (App Review 3.1.1),
- * and no face promises emptied text back. Put away at a level, it comes back at a worse one or under
- * a new cap.
+ * no press is drawn. A count with no recorded trim is said plainly, never "oldest" or "at the time". The store face names no plan and offers no press (App Review 3.1.1).
+ * Emptied text coming back is said only where the storage refill runs, never that all of it comes
+ * back ({@link storageRestoreLine}). Put away at a level, it comes back at a worse one or under a new cap.
  */
 import type { AccessFeed, StorageFacts } from "../net/account";
 import type { Deck } from "../copy.en";
@@ -107,9 +107,10 @@ export function storageNoticeOf(
  * letters emptied, then the month text is kept from with the letters that arrived while the storage
  * was full excepted (or those letters alone when no month is recorded). Then near or full (at the cap
  * only when nothing is emptied: the emptied letters say it), inside the trial's floor when the plan's
- * own limit applies, then the offer.
+ * own limit applies, then the offer, then whether emptied text comes back ({@link storageRestoreLine}).
+ * `refill`: {@link storageRefillOf}.
  */
-export function storageNoticeText(n: StorageNoticeFacts, deck: Deck, locale: string): string {
+export function storageNoticeText(n: StorageNoticeFacts, deck: Deck, locale: string, refill: StorageRefill | null): string {
   const arrived = n.facts.withheldOnArrival;
   const emptied = n.facts.emptiedForSpace > 0;
   // A back-filled count (no trim recorded) is said plainly: not which letters, not under which cap.
@@ -140,8 +141,45 @@ export function storageNoticeText(n: StorageNoticeFacts, deck: Deck, locale: str
         capGigabytes(n.facts.planLimitBytes, locale),
       ),
     offer,
-    offer !== null && trimmed ? deck.storageNoticeNoRestore : null,
+    storageRestoreLine(n, deck, offer !== null, refill),
   ].filter((line): line is string => line !== null).join(" ");
+}
+
+/**
+ * Where the storage refill stands for the account's mailboxes (the phone's mailbox read): `runs` with a
+ * mailbox ohmail still reads and none of them on its first import; `waits` while one is (the refill
+ * waits for it, one in error included); `never` when ohmail reads none of them (the worker never visits
+ * a removed mailbox). `null` before the read lands. A row whose server sent no stamp is no hold.
+ */
+export type StorageRefill = "runs" | "waits" | "never";
+
+export function storageRefillOf(
+  rows: readonly { status: string | null; initialImportCompletedAt?: string | null }[] | null,
+): StorageRefill | null {
+  if (rows === null) return null;
+  const read = rows.filter((m) => m.status !== "disabled");
+  if (read.length === 0) return "never";
+  return read.every((m) => m.initialImportCompletedAt !== null) ? "runs" : "waits";
+}
+
+/**
+ * Whether emptied text comes back, the web's `storageRestoreKey`. After the offer: more room brings it
+ * back where the refill runs, and the offer does not where it never can (a recorded trim only). With no
+ * offer, at `past` with room under the refill's mark (nine tenths of the cap, inside the trial's floor
+ * of the plan's own limit): it is coming back. Nothing while the refill waits, or before the read.
+ */
+export function storageRestoreLine(
+  n: StorageNoticeFacts, deck: Deck, offered: boolean, refill: StorageRefill | null,
+): string | null {
+  const facts = n.facts;
+  if (facts.emptiedForSpace <= 0) return null;
+  if (offered) {
+    if (refill === "runs") return deck.storageNoticeRefill;
+    return refill === "never" && facts.firstEmptiedAt !== null ? deck.storageNoticeNoRestore : null;
+  }
+  const limit = facts.planLimitBytes === null ? facts.limitBytes : Math.min(facts.limitBytes, facts.planLimitBytes);
+  const room = facts.usedBytes < Math.floor(limit * STORAGE_NEAR_CAP_RATIO);
+  return n.level === "past" && refill === "runs" && room ? deck.storageNoticeRefilling : null;
 }
 
 /** The cap in decimal gigabytes, the plan card's unit: "2", "1,5" in German. No formatter call. */

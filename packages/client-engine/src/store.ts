@@ -753,17 +753,15 @@ export abstract class BaseMirrorStore implements MirrorStore {
       // than the raw delta:
       // · the message is now PROTECTED — a cached body flipped sensitive must not survive;
 
-      // · the cached body is a RESTORABLE husk (mail 0065) — `junk_filed`/`expunged` records are terminal on the
-      //   client ("ready", never re-asked), but the SERVER can refill those two: a message restored from the
-      //   provider's Junk/Trash gets its content back and announces itself with the very message change in hand.
-      //   Shedding the husk here is the invalidation signal — the next open re-fetches and finds either the restored
-      //   body or the same husk again. `storage_cap` is deliberately NOT in the set: nothing restores the cap's husk
-      //   through an arrival, so shedding it would buy a request that can only return the same husk, on every later
-      //   update, for ever.
+      // · the cached body is a RESTORABLE husk (mail 0065) — `junk_filed`/`expunged`/`storage_cap` records are
+      //   terminal on the client ("ready", never re-asked), but the SERVER can refill all three: a message restored
+      //   from the provider's Junk/Trash, or a letter the storage refill gave its text back once there was room,
+      //   announces itself with the very message change in hand. Shedding the husk here is the invalidation signal —
+      //   the next open re-fetches and finds either the restored body or the same husk again.
       if (ch.op !== "delete") {
         const cached = held.entity as { state?: string; withheld?: string | null };
         const withheldHusk = cached.state === "ready"
-          && (cached.withheld === "junk_filed" || cached.withheld === "expunged");
+          && (cached.withheld === "junk_filed" || cached.withheld === "expunged" || cached.withheld === "storage_cap");
         if (!withheldHusk && !isProtectedMessage(this.get<EngineMessage>("message", ch.id))) continue;
       }
       const tombstone: MirrorRecord = { type: "message_body", id: ch.id, seq: 0, entity: null };
