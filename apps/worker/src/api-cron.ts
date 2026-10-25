@@ -14,7 +14,7 @@ import { UNSUB_DRAIN_CEILING_MS } from "@trafficflow/core/mail";
 export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
-    | "send_reconcile" | "away_responder" | "platform_signals" | "unsubscribe_drain"
+    | "send_reconcile" | "away_responder" | "unsubscribe_drain"
     | "account_lifecycle" | "security_notices";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
@@ -149,30 +149,6 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     // ceiling; this bound is the caller's mirror of that ceiling, not a hope.
     timeoutMs: 60 * 1000,
     jitterMs: 6 * 1000,
-  },
-  {
-    // WHAT THE PLATFORM SERVED (cloud 0030) — the API host's own 5xx rate, which it cannot measure about
-    // itself: a 502-and-die invocation writes nothing to the database, so only the platform's request log
-    // knows. This clock pokes the route that reads it; the route lives on the API host because the token
-    // that can read the log is an env var on THAT deployment (polling here would provision the credential
-    // onto a second host). EVERY FIVE MINUTES — the alert reads a fifteen-minute window, so three rows
-    // mean one missed poll still leaves two windows; a coarser clock would make GAPS (one poll writes one
-    // aligned window), and a gap is indistinguishable from a quiet period once summed. A deployment with no
-    // platform token writes NOTHING and says so ("5xx: not measured"), distinguishable from a real zero.
-    target: "platform_signals",
-    route: "/internal/platform-signals/run",
-    everyMs: 5 * 60 * 1000,
-    // Late in the first cycle: it is an observability read with no customer waiting on it, and
-    // its five-minute clock catches up within one cadence anyway. Distinct from `platform_costs`'
-    // nine minutes so a leader takeover does not put two platform-API calls on the same instant.
-    firstDelayMs: 3 * 60 * 1000,
-    // The route walks a paged log endpoint under its own page budget, inside a platform ceiling
-    // of 60 s; this is the caller's mirror of that ceiling, not a hope.
-    timeoutMs: 60 * 1000,
-    // A tenth of the cadence — {@link ApiCronTarget.jitterMs}'s rule. The default five minutes of
-    // jitter on a five-minute clock would be a schedule made entirely of jitter, and the window
-    // alignment that keeps re-polls idempotent would be doing all the work.
-    jitterMs: 30 * 1000,
   },
   {
     // WHAT THE SCREENER'S OWN FAN-OUT COULD NOT FINISH. Capping the in-request fan-out is honest

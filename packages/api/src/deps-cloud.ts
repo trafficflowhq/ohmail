@@ -1,5 +1,5 @@
 import type {
-  AdminDb, AuthService, ProposalsService, WaitlistService, PlatformSignalPort,
+  AdminDb, AuthService, ProposalsService, WaitlistService,
 } from "@trafficflow/services";
 import type {
   AlertHeartbeat, AlertSink, AlertThresholds, EvaluateOptions, MsOAuthBootstrap,
@@ -42,17 +42,6 @@ declare module "./deps.js" {
     // absent, and `WaitlistService` handles that by recording the row and reporting
     // `mailed: false`, so `apps/api-vercel` builds one unconditionally.
     waitlist?: WaitlistService;
-    /**
-     * What the platform served — the read port behind `GET /internal/platform-signals/run`.
-     * Optional, and the three-way distinction is the reason this slot exists rather than the
-     * pass reading `process.env`:
-     *  · no port — nobody wired the question (desktop, self-host): `200 {skipped}`;
-     *  · a port answering `unconfigured` — we asked, there is no platform token; the board
-     *    renders "5xx: not measured";
-     *  · a port answering `rows` — a real measurement, and a `0` in it is a real zero.
-     * The first two both write nothing, so only a typed seam can tell them apart.
-     */
-    platformSignals?: PlatformSignalPort;
   }
   interface ApiDeps {
     /**

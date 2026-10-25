@@ -170,17 +170,6 @@ const UNAUTHENTICATED = [
    * choose. An unauthenticated route whose cost a caller could pick would not belong in this list.
    */
   "GET /internal/mailboxes/smtp-size",
-  // The PLATFORM COST clock (cloud 0029), on the three reconciliation doors' exact terms — a
-  // scheduler's door authorised by a shared secret, resolving no session. What one call may
-  // cause is three bounded GETs to vendors WE pay, with a per-request deadline inside the port
-  // and nothing a caller can choose; on the hosted service today every one of them answers `unconfigured`
-  // and the pass writes nothing at all.
-  // The PLATFORM SIGNAL clock (cloud 0030), on the cost clock's exact terms one line up — a
-  // scheduler's door authorised by a shared secret, resolving no session. What one call may cause
-  // is a bounded walk of one vendor's log endpoint (`SIGNAL_PAGE_BUDGET` pages per project, a
-  // per-request deadline in the port) with nothing a caller can choose; on the hosted service today the
-  // port answers `unconfigured` and the pass writes nothing at all.
-  "GET /internal/platform-signals/run",
   /**
    * THE SIGN-IN THROTTLE'S SECURITY NOTICES — `unauthenticated` on the lifecycle pass's exact
    * terms: the worker's api-cron with a shared secret, no session, no verified address for the
@@ -953,7 +942,9 @@ describe("the route table declares what every handler causes", () => {
     // presses are `work` and join the gated remainder.
     // 256 -> 257: `POST /mailboxes/discover`, a `connection` (it makes this process query DNS about
     // a name the caller chose), so it joins the gated remainder.
-    expect(apiRoutes).toHaveLength(257);
+    // 257 -> 256: `GET /internal/platform-signals/run` left with the 5xx poll, now the worker's. It
+    // was `unauthenticated`, so it leaves the exempt list above and this total together.
+    expect(apiRoutes).toHaveLength(256);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1186,7 +1177,8 @@ describe("the route table declares what every handler causes", () => {
     // 253 -> 256 with the waiting filings: the GET joins `READ`, the two presses grow the
     // remainder by two.
     // 256 -> 257 with the mail-domain lookup, a `connection`: the remainder grows by one.
-    expect(gated.length).toBe(257 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 257 -> 256 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
+    expect(gated.length).toBe(256 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

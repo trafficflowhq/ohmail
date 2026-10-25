@@ -336,9 +336,12 @@ describe("startApiCron", () => {
     // The census's sentence a third time: the reminder mails and the erasure run only when this
     // clock pokes them, and a pass poked by nobody leaves closed accounts un-noticed for ever
     // and retention promises that never execute.
+    //
+    // `platform_signals` left: the 5xx poll runs in this worker on its own credential
+    // (`platform-signal-poll.ts`), so the API host holds no platform token.
     expect(API_CRON_TARGETS.map((t) => t.target))
       .toEqual([ "sessions_reap", "smtp_size", "scheduled_send",
-        "send_reconcile", "away_responder", "platform_signals", "unsubscribe_drain",
+        "send_reconcile", "away_responder", "unsubscribe_drain",
         "account_lifecycle", "security_notices",
       ]);
     /* ADDRESSED BY NAME FROM HERE DOWN, and the change is the lesson: three targets left the

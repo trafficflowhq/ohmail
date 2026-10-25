@@ -136,6 +136,17 @@ export {
   type AtCapReading, type AccountsAtCapReader, renderResolvedText, apiFaultRateText,
 } from "./alerts.js";
 
+/* What the hosting platform served (cloud 0030): the 5xx poll's port and pass, beside the rows they
+ * write. Here so the worker, which may import only core and db, runs it with its own credential. */
+export {
+  makePlatformSignalPort, runPlatformSignalPass, SAMPLE_CAUSES,
+  VERCEL_REQUEST_LOGS_URL, DEFAULT_SIGNAL_PROJECTS, SSE_DISABLED_REFUSAL,
+  SIGNAL_PAGE_BUDGET, SIGNAL_WINDOW_MS, SIGNAL_RETENTION_MS,
+  type SignalProvider, type SampleCause, type PlatformSignalPort, type PlatformSignalFetch,
+  type PlatformSignalRow, type PlatformSignalEnv, type DeliberateRefusal,
+  type PlatformSignalPassReport, type PlatformSignalPassOptions,
+} from "./platform-signals.js";
+
 /* Who is at their storage cap, read for the two alert drivers, and the one reader bag a host
  * composes for them. CLOUD-ONLY: the reader reads a table and asks the entitlements program. */
 export {

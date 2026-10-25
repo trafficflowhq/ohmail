@@ -7,8 +7,8 @@ import {
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { resetHostState } from "../src/config.js";
-import { resetServices } from "../src/deps.js";
+import { loadHostConfig, resetHostState } from "../src/config.js";
+import { buildDeps, resetServices } from "../src/deps.js";
 import { handleApiRequest } from "../src/handler.js";
 import { API_FAULT_RECORD_BUDGET_MS } from "@trafficflow/api";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
@@ -19,6 +19,22 @@ const STRIPE_KEY = stripeTestKey("handler-metered");
 
 it("the fixture Stripe key has the vendor key's shape", () => {
   expect(STRIPE_KEY).toMatch(FIXTURE_SHAPES.stripeTest);
+});
+
+/** A platform token and the internal surface's secret, assembled at run time like the key above. */
+const PLATFORM_TOKEN = ["platform", "fixture", "value"].join("-");
+const PLATFORM_TEAM = ["team", "fixture"].join("_");
+const ALERT_SECRET = ["alert", "door", "fixture", "secret", "value"].join("-");
+
+it("the API composition builds no platform-signal port, whatever the environment holds", () => {
+  // The 5xx poll is the worker's (TF_SIGNAL_*): code running in this function reaches no platform token.
+  install(envFor({ VERCEL_TOKEN: PLATFORM_TOKEN, VERCEL_TEAM_ID: PLATFORM_TEAM, TF_ALERT_SECRET: ALERT_SECRET }));
+  try {
+    const services = buildDeps(at("/health"), loadHostConfig(process.env)).services as unknown as Record<string, unknown>;
+    expect(services.platformSignals).toBeUndefined();
+  } finally {
+    install(envFor());
+  }
 });
 
 /**
@@ -73,7 +89,8 @@ function install(env: NodeJS.ProcessEnv): void {
     // the previous test. Both spellings are deleted: the retired one cannot come back either.
     "ENTITLEMENTS_URL", "BILLING_PLANE_URL", "BILLING_PLANE_SECRET",
     "STRIPE_SECRET_KEY", "STRIPE_ACCOUNT_ID", "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_PRICE_SOLO", "STRIPE_PRICE_PLUS", "STRIPE_PRICE_PRO", "TF_APP_URL"]) {
+    "STRIPE_PRICE_SOLO", "STRIPE_PRICE_PLUS", "STRIPE_PRICE_PRO", "TF_APP_URL",
+    "TF_ALERT_SECRET", "CRON_SECRET", "VERCEL_TOKEN", "VERCEL_TEAM_ID", "VERCEL_SIGNAL_PROJECTS"]) {
     delete process.env[k];
   }
   for (const [k, v] of Object.entries(env)) {
@@ -369,7 +386,7 @@ describe.skipIf(!PG_UP)("apps/api-vercel — the retired webhook door, and the c
   };
 
   /** Anything this host put on the wire, captured at the fetch boundary. */
-  type OutboundCall = { url: string };
+  type OutboundCall = { url: string; auth: string };
   let calls: OutboundCall[] = [];
   const realFetch = globalThis.fetch;
 
@@ -382,8 +399,8 @@ describe.skipIf(!PG_UP)("apps/api-vercel — the retired webhook door, and the c
     // Swapped BEFORE the first request, because a lazy client captures the implementation at
     // construction. Its job here is to catch an outbound call that should not happen at all.
     calls = [];
-    (globalThis as { fetch: unknown }).fetch = async (url: string) => {
-      calls.push({ url });
+    (globalThis as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") ?? "" });
       return { status: 400, json: async () => ({ error: "unexpected_outbound_call" }) };
     };
     install(envFor(meteredEnv));
@@ -408,6 +425,19 @@ describe.skipIf(!PG_UP)("apps/api-vercel — the retired webhook door, and the c
       expect(calls, `${path} dialled outward`).toHaveLength(0);
       // The host is otherwise healthy — an absent door is not a broken deployment.
       expect((await handleApiRequest(at("/health"))).status).toBe(200);
+    },
+  );
+
+  it.each(["/internal/platform-signals/run", "/api/internal/platform-signals/run"])(
+    "%s is NOT a door either: 404 with the internal surface armed, and the platform token goes nowhere",
+    async (path) => {
+      install(envFor({
+        ...meteredEnv, TF_ALERT_SECRET: ALERT_SECRET, VERCEL_TOKEN: PLATFORM_TOKEN, VERCEL_TEAM_ID: PLATFORM_TEAM,
+      }));
+      const res = await handleApiRequest(at(path, { headers: { authorization: `Bearer ${ALERT_SECRET}` } }));
+      expect(calls.filter((c) => c.auth.includes(PLATFORM_TOKEN)), `${path} sent the platform token`).toEqual([]);
+      expect(res.status).toBe(404);
+      expect(calls, `${path} dialled outward`).toHaveLength(0);
     },
   );
 

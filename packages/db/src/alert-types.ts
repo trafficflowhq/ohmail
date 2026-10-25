@@ -142,10 +142,11 @@ export type AlertKind =
    */
   | "alert_sink_degraded"
   /**
-   * One of the API routes the worker drives on a clock (`api-cron.ts`) has not answered 2xx within
-   * twice its cadence with its retry failed too, or within three cadences (floor fifteen minutes):
-   * the schedule stopped, the poke is refused, or the route keeps failing. Evaluated by the worker
-   * driver, which holds the schedule's memory; only a 2xx clears it.
+   * One of the API routes the worker drives on a clock (`api-cron.ts`), or the 5xx poll it runs
+   * itself (`platform_signals`), has not succeeded within twice its cadence with its retry failed
+   * too, or within three cadences (floor fifteen minutes): the schedule stopped, the poke is
+   * refused, or the pass keeps failing. Evaluated by the worker driver, which holds the schedule's
+   * memory; only a success clears it.
    */
   | "api_cron_stale"
   /**

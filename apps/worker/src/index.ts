@@ -69,6 +69,7 @@ import {
 } from "./health.js";
 import { acquireLeaderLock, leaderLockKeyFor, LockLostError, type LeaderLock } from "./leader-lock.js";
 import { startApiCron, type ApiCronHandle, type ApiCronTargetHealth } from "./api-cron.js";
+import { startPlatformSignalPoll, type PlatformSignalPollHandle } from "./platform-signal-poll.js";
 import { runSyncCycle, LeaderFencedError, refusalIsRemoval, type SyncDeps } from "./sync.js";
 import {
   applyMetaRequests, driveOutstandingRequests, settleOwnOutstandingRequests, shrinkMetaOnRefusal,
@@ -6152,9 +6153,16 @@ export async function startWorkerWithLock(
           // An API arm exists only where this worker drives the API host's internal routes (the
           // secret is shared); there, an API driver that has never run is dark, not a choice.
           apiArmExpected: Boolean(config.apiCron),
-          // The schedule this leader holds, for `api_cron_stale`. `null` on shards > 0, on the
-          // self-hosted organizer and after quiescing: unread, so it clears none of shard 0's rows.
-          apiCron: apiCron ? { since: apiCron.since(), targets: apiCron.health() } : null,
+          // The schedule this leader holds, for `api_cron_stale`, with the in-process 5xx poll as one
+          // more target. `null` on shards > 0, on the self-hosted organizer and after quiescing:
+          // unread, so it clears none of shard 0's rows.
+          apiCron: apiCron || signalPoll ? {
+            since: (apiCron ?? signalPoll)!.since(),
+            targets: [
+              ...(apiCron?.health() ?? []),
+              ...(signalPoll ? [{ ...signalPoll.health(), inProcess: true as const }] : []),
+            ],
+          } : null,
           // The billing plane's own failures (`/v1/ops`), shard 0 only; `null` reads nothing.
           planeOps: shardIndex === 0 ? alertReaders.planeOps : null,
         });
@@ -6307,6 +6315,8 @@ export async function startWorkerWithLock(
      * process — so "stop doing work NOW" must take it down with the rest.
      */
     let apiCron: ApiCronHandle | null = null;
+    /** The 5xx poll (`platform-signal-poll.ts`): shard 0's leader only, stopped with the rest. */
+    let signalPoll: PlatformSignalPollHandle | null = null;
     function clearTimers(): void {
       if (pollTimer) clearInterval(pollTimer);
       if (rosterTimer) clearInterval(rosterTimer);
@@ -6316,6 +6326,8 @@ export async function startWorkerWithLock(
       pollTimer = rosterTimer = alertTimer = syncKickTimer = hbTimer = null;
       apiCron?.stop();
       apiCron = null;
+      signalPoll?.stop();
+      signalPoll = null;
       pushWake?.stop();
       pushWake = null;
       const hub = wakeHub;
@@ -6447,6 +6459,10 @@ export async function startWorkerWithLock(
      */
     if (config.apiCron && shardIndex === 0) {
       apiCron = startApiCron({ baseUrl: config.apiCron.baseUrl, secret: config.apiCron.secret, log });
+    }
+    // The 5xx poll, on this worker's own platform credential (`TF_SIGNAL_*`): deployment-wide, so shard 0.
+    if (config.signals && shardIndex === 0) {
+      signalPoll = startPlatformSignalPoll({ db: db as unknown as Tx, signals: config.signals, log });
     }
     // Enforced sync (mail 0049): a short scan for mailboxes the API stamped `sync_requested_at`. OFF
     // the serial queue like the alert pass — it is one indexed read plus a compare-and-clear, no

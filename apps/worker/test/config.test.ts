@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
+import { makePlatformSignalPort, SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
 import {
   ATTACH_DEADLINE_MS, DEFAULT_ATTACH_CONCURRENCY, DEFAULT_SYNC_BLOCK_GRACE_MS, MAX_ATTACH_CONCURRENCY,
   WorkerConfigError, loadConfig, resolveAttachConcurrency,
@@ -66,6 +67,40 @@ describe("attach concurrency and deadline", () => {
 
   it("gives up on an attach before the row's sync-block grace runs out", () => {
     expect(ATTACH_DEADLINE_MS).toBeLessThan(DEFAULT_SYNC_BLOCK_GRACE_MS);
+  });
+});
+
+describe("the 5xx poll's own credential, TF_SIGNAL_*", () => {
+  const TOKEN = ["signal", "fixture", "value"].join("-");
+  const TEAM = ["team", "fixture"].join("_");
+  const PAIR = { ...BASE, TF_SIGNAL_VERCEL_TOKEN: TOKEN, TF_SIGNAL_VERCEL_TEAM_ID: TEAM };
+
+  it("the worker's pair arms the poll; the API's VERCEL_* names arm nothing", () => {
+    expect(loadConfig(BASE).signals).toBeUndefined();
+    expect(loadConfig({ ...BASE, VERCEL_TOKEN: TOKEN, VERCEL_TEAM_ID: TEAM }).signals).toBeUndefined();
+    expect(loadConfig({ ...PAIR, TF_SIGNAL_PROJECTS: "ohmail-api,ohmail-web" }).signals).toEqual({
+      env: { VERCEL_TOKEN: TOKEN, VERCEL_TEAM_ID: TEAM, VERCEL_SIGNAL_PROJECTS: "ohmail-api,ohmail-web" },
+      deliberate: [],
+    });
+  });
+
+  it("TF_SIGNAL_SSE_OFF=1 counts the stream's 503 as deliberate, any other value counts it as an error", () => {
+    expect(loadConfig({ ...PAIR, TF_SIGNAL_SSE_OFF: "1" }).signals?.deliberate).toEqual([SSE_DISABLED_REFUSAL]);
+    for (const v of ["0", "true", ""]) {
+      expect(loadConfig({ ...PAIR, TF_SIGNAL_SSE_OFF: v }).signals?.deliberate, v).toEqual([]);
+    }
+  });
+
+  it("half a pair boots and builds a poll that asks nothing (the port answers unconfigured)", async () => {
+    const window = { start: new Date(Date.now() - 600_000), end: new Date(Date.now() - 300_000) };
+    for (const half of [{ TF_SIGNAL_VERCEL_TOKEN: TOKEN }, { TF_SIGNAL_VERCEL_TEAM_ID: TEAM, VERCEL_TOKEN: TOKEN }]) {
+      const signals = loadConfig({ ...BASE, ...half }).signals;
+      expect(signals, JSON.stringify(Object.keys(half))).toBeDefined();
+      const asked: unknown[] = [];
+      const port = makePlatformSignalPort(signals!.env, { fetchImpl: (async (u: unknown) => { asked.push(u); return new Response("{}"); }) as typeof fetch });
+      expect(await port.fetch(window)).toEqual({ unconfigured: true });
+      expect(asked).toEqual([]);
+    }
   });
 });
 

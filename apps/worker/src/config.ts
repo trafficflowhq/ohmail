@@ -12,13 +12,14 @@ import {
 import { transactionPoolerReason, sessionUrlRejection } from "@trafficflow/db";
 import { pgTransportReason } from "@trafficflow/db/cloud";
 import {
-  DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, type HeartbeatGet, type PostJson,
+  DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, SSE_DISABLED_REFUSAL, type HeartbeatGet, type PostJson,
 } from "@trafficflow/db/cloud";
 import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
 import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
+import type { PlatformSignalConfig } from "./platform-signal-poll.js";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
 export const DEFAULT_MAX_MAILBOXES = 64;
@@ -503,6 +504,13 @@ export interface WorkerConfig {
    */
   apiCron?: { baseUrl: string; secret: string };
   /**
+   * The 5xx poll (`platform-signal-poll.ts`), armed by this worker's OWN platform credential:
+   * `TF_SIGNAL_VERCEL_TOKEN` + `TF_SIGNAL_VERCEL_TEAM_ID`, `TF_SIGNAL_PROJECTS` (default `ohmail-api`)
+   * and `TF_SIGNAL_SSE_OFF=1` while the API's live stream is off. Neither half set ⇒ absent, no poll.
+   * Never the API's `VERCEL_*` names, never a boot refusal.
+   */
+  signals?: PlatformSignalConfig;
+  /**
    * The credential that reads the WHOLE health snapshot (counts included) as `Authorization: Bearer
    * …`; everyone else reads liveness only (`health.ts#PUBLIC_HEALTH_KEYS`). `TF_HEALTH_SECRET`, else
    * the API-cron secret the managed deployment already holds. Absent ⇒ nobody reads the counts over
@@ -906,6 +914,17 @@ function apiCronFrom(env: NodeJS.ProcessEnv): { baseUrl: string; secret: string 
   return { baseUrl: parsed.origin, secret };
 }
 
+/** The 5xx poll's block — see {@link WorkerConfig.signals}. Half a pair still builds it. */
+function signalsFrom(env: NodeJS.ProcessEnv): PlatformSignalConfig | undefined {
+  const token = env.TF_SIGNAL_VERCEL_TOKEN?.trim() || undefined;
+  const team = env.TF_SIGNAL_VERCEL_TEAM_ID?.trim() || undefined;
+  if (!token && !team) return undefined;
+  return {
+    env: { VERCEL_TOKEN: token, VERCEL_TEAM_ID: team, VERCEL_SIGNAL_PROJECTS: env.TF_SIGNAL_PROJECTS },
+    deliberate: env.TF_SIGNAL_SSE_OFF?.trim() === "1" ? [SSE_DISABLED_REFUSAL] : [],
+  };
+}
+
 /**
  * The entitlements block — the same two variables and the same all-or-nothing rule the API host
  * validates, because a half-configured host would charge nobody while looking configured.
@@ -1115,6 +1134,7 @@ export function loadConfig(
     alertIntervalMs: optInt(env, "TF_ALERT_INTERVAL_MS", DEFAULT_ALERT_INTERVAL_MS),
     alertHeartbeatUrl: env.TF_ALERT_HEARTBEAT_URL,
     apiCron: apiCronFrom(env),
+    signals: signalsFrom(env),
     healthDetailSecret: healthDetailSecretFrom(env),
     ...loadAttachmentStagingConfig(env),
     aiProvider: ai?.provider ?? null,

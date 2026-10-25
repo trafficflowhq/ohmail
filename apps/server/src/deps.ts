@@ -212,9 +212,8 @@ export interface ServerRuntime {
  * whose absence would have meant something different: `UNMETERED` says this operator runs no
  * entitlements program, where an absent member says nobody finished the composition.
  *
- * WHAT IS ABSENT, against the managed bag, each on purpose (the bag-parity test freezes this
- * list): `waitlist` (no funnel) and `platformSignals` (one hosting platform's request-log API,
- * which a box the operator runs does not have). The subscription members this sentence used to
+ * WHAT IS ABSENT, against the managed bag, on purpose (the bag-parity test freezes this
+ * list): `waitlist` (no funnel). The subscription members this sentence used to
  * name are on NEITHER bag now — they left with the machinery — so they are not exceptions here
  * either. AI metering is not a member at all: it is the spend half of `entitlementsPort`, which
  * this bag fills with `UNMETERED` above — the operator supplies the model key and pays the model
