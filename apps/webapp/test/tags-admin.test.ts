@@ -519,7 +519,10 @@ describe("the rail's inline tag create — what only the rendered rail can be wr
     await renderRail(["Invoices"], []);
     await act(async () => { trigger()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     const input = host.querySelector<HTMLInputElement>(".ritem-new-input")!;
-    await act(async () => { input.blur(); });
+    // A synchronous act, read in the same task: it flushes whatever the blur's own dispatch
+    // set, and yields nothing, so the deferred check cannot have run yet. An awaited act
+    // drains through setImmediate, and on a loaded runner the 1 ms timer fires first.
+    void act(() => { input.blur(); });
     expect(host.querySelector(".ritem-new-input"), "unmounted inside the blur's dispatch").toBe(input);
     await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
     expect(host.querySelector(".ritem-new-input")).toBeNull();
