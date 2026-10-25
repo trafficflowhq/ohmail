@@ -805,6 +805,8 @@ export interface ReplyEditorMeta {
   envelope?: LaneEnvelope;
   /** The keys of the creates the lane claims (`draft-creates.ts`), at most eight: keys only, never words. */
   creates?: string[];
+  /** A forward lane's kept files once one was removed (`forward-files.ts`); absent: every file. */
+  forwardParts?: string[];
 }
 
 /**
@@ -856,9 +858,12 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
     const sig = parsed.sig;
     const row = parsed.row;
     const envelope = envelopeOf(parsed.envelope);
+    const parts = parsed.forwardParts;
     return {
       ...(typeof parsed.subject === "string" ? { subject: parsed.subject } : {}),
       ...(envelope !== null ? { envelope } : {}),
+      ...(Array.isArray(parts) && parts.length <= 100 && parts.every((id) => typeof id === "string")
+        ? { forwardParts: [...parts] } : {}),
       ...(typeof row?.id === "string" && typeof row.at === "string"
         ? { row: {
           id: row.id, at: row.at,
@@ -882,7 +887,7 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
 export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
   if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined
-    && (meta.creates === undefined || meta.creates.length === 0)) {
+    && (meta.creates === undefined || meta.creates.length === 0) && meta.forwardParts === undefined) {
     durableRemove(replyMetaKey(lane), "reply.meta");
     return;
   }
@@ -973,7 +978,7 @@ export async function promoteOrphanedReplyLane(
   plan: LanePromotionPlan | null,
   save: (m: {
     kind: "draft_save"; draftId: string | null; mailboxId: string;
-    inReplyToMessageId?: string; forwardOfMessageId?: string;
+    inReplyToMessageId?: string; forwardOfMessageId?: string; forwardParts?: string[];
     subject: string; body: string; html?: string | null;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
@@ -984,10 +989,13 @@ export async function promoteOrphanedReplyLane(
   // A FORWARD LANE SAVES A FORWARD: its note names the original it forwards, never as
   // the message it answers — that would thread a forward onto its original as a reply.
   const forward = lane !== parentId;
+  // A forward lane's kept files ride its promoted row, so it still sends only those.
+  const kept = forward ? readReplyMeta(lane).forwardParts : undefined;
   const result = await save({
     kind: "draft_save", draftId: plan.rowId,
     mailboxId: plan.mailboxId,
     ...(forward ? { forwardOfMessageId: parentId } : { inReplyToMessageId: parentId }),
+    ...(kept ? { forwardParts: kept } : {}),
     subject: plan.subject, body: body.text,
     html: body.html ? body.html : null,
     to: plan.to.map((a) => ({ ...a })), cc: plan.cc.map((a) => ({ ...a })), bcc: plan.bcc.map((a) => ({ ...a })),

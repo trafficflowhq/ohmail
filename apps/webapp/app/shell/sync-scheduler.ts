@@ -933,6 +933,11 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.fetchAllAttachments
           ? { fetchAllAttachments: gatedRead(adapter.fetchAllAttachments.bind(adapter), "every attachment") }
           : {}),
+        /* Whether a forward's Remove is offered: forwarded, bound and spread on the same rule, or the
+           live web never offers it while the bare-adapter suites stay green. */
+        ...(adapter.forwardPartsAnnounced
+          ? { forwardPartsAnnounced: gatedRead(adapter.forwardPartsAnnounced.bind(adapter), "whether your server sends only the files you kept") }
+          : {}),
 
         /**
          * MAIL HELD AT THE GATE — the pair, forwarded and spread for the reasons above, and gated

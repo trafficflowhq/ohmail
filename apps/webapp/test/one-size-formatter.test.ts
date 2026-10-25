@@ -30,6 +30,8 @@ const CALLERS = [
   "components/AttachmentPreview.tsx",
   "components/AttachmentStrip.tsx",
   "components/ComposeAttach.tsx",
+  // A forward's original files and the sentence under them.
+  "shell/ForwardFiles.tsx",
   "shell/SendStatus.tsx",
   "views/ComposeView.tsx",
 ];

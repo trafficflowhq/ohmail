@@ -136,6 +136,12 @@ export interface HttpAdapterOptions {
    * engine's `DRAIN_REQUEST_CEILING_MS` is the belt for every door.
    */
   syncDeadlines?: { answerMs: number; bodyMs: number };
+  /**
+   * ASK `GET /hello` BEFORE A FORWARD THAT NAMES ITS PARTS, on every attempt: a server that does not
+   * announce `forwardParts` would send every file. Off by default (the phone asks on its own door);
+   * on, {@link HttpAdapter.forwardPartsAnnounced} exists too.
+   */
+  forwardPartsCheck?: boolean;
 }
 
 /** The zone this runtime names for itself, or `null` where it cannot name one. */
@@ -242,6 +248,9 @@ export const PULL_RING_TIMEOUT_MS = 8_000;
 
 /** How long a Cancel's question to the server may take before it is `unreachable` (asked again later). */
 export const WITHDRAW_SEND_TIMEOUT_MS = 12_000;
+
+/** How long a forward that names its parts waits for `GET /hello`; the engine puts no limit on a send. */
+export const FORWARD_PARTS_HELLO_MS = 8_000;
 
 /**
  * HOW LONG `GET /sync` AND `GET /sync/snapshot` MAY TAKE TO ANSWER, on a door that asks for a bound
@@ -518,6 +527,31 @@ export class HttpAdapter implements EngineAdapter {
     }
     this.mayAsk = opts.mayAsk ?? (() => true);
     this.syncDeadlines = opts.syncDeadlines ?? null;
+    this.forwardPartsCheck = opts.forwardPartsCheck === true;
+    if (this.forwardPartsCheck) this.forwardPartsAnnounced = () => this.askForwardParts();
+  }
+
+  /** See {@link HttpAdapterOptions.forwardPartsCheck}; present only where it is on. */
+  forwardPartsAnnounced?: () => Promise<boolean | null>;
+  private readonly forwardPartsCheck: boolean;
+
+  /**
+   * DOES THIS SERVER SEND ONLY THE FORWARDED PARTS A SEND NAMES — `features.forwardParts` on
+   * `GET /hello`, through this adapter's own transport, so it is the server that will send. `false`
+   * only from ohmail's own `/hello` without it; anything else (network, deadline, a non-2xx, a body
+   * that is not ohmail's) is `null`, no answer.
+   */
+  private async askForwardParts(): Promise<boolean | null> {
+    try {
+      return await this.withDeadline(FORWARD_PARTS_HELLO_MS, async (signal) => {
+        const res = await this.request("GET", "/hello", signal ? { signal } : {});
+        if (!res.ok) return null;
+        const body = await res.json().catch(() => null) as { product?: unknown; features?: { forwardParts?: unknown } } | null;
+        return body?.product === "ohmail" ? body.features?.forwardParts === true : null;
+      });
+    } catch {
+      return null;
+    }
   }
 
   /** See {@link HttpAdapterOptions.syncFailureSink}; assigned in the constructor when one was given. */
@@ -2274,6 +2308,31 @@ export class HttpAdapter implements EngineAdapter {
      * it finds. The staleness is bounded by the debounce and by the fact that the composer wrote on every pause; a
      * network that cannot take a PUT is unlikely to take the send either, and that failure IS reported.
      */
+    /* A FORWARD THAT NAMES ITS PARTS GOES ONLY TO A SERVER THAT SAYS IT HONOURS THEM — asked on every
+       attempt, outbox replays included, before anything is written. No answer stays queued. */
+    if (this.forwardPartsCheck && m.forwardOf && m.forwardParts !== undefined) {
+      const said = await this.askForwardParts();
+      if (said === null) {
+        throw new MutationRejectedError("ohmail could not ask your server whether it sends only the files you kept", {
+          code: "network", retryable: true,
+        });
+      }
+      if (said === false) {
+        // An earlier attempt under this key wrote its row and may have reached the send: only the
+        // server's same-key answer may say "not sent".
+        const earlier = createdRow?.id ?? this.draftForKey.get(idempotencyKey) ?? null;
+        if (earlier !== null) {
+          throw new MutationRejectedError(
+            "We couldn't confirm this send. It's held under the same send — check your Sent folder to see whether it arrived.",
+            { code: "send_unverified", retryable: false, entityId: earlier },
+          );
+        }
+        throw new MutationRejectedError(
+          "Your server sends every file of a forward and can't leave out the ones you removed.",
+          { code: "forward_parts_unsupported", retryable: false },
+        );
+      }
+    }
     /* THE ROW THIS KEY ALREADY MADE, handed back after a reload: this adapter's memory of it is
        seeded as the adapter that made it would hold it — the row, the revision it was written at,
        and which words it holds. */

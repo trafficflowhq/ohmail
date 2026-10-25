@@ -74,7 +74,8 @@ const DIRECTIONAL = ["nach", "zu", "zur", "zum", "ins"];
  * needs both halves: a German directional preposition AND an argument English treats as somewhere
  * mail is put.
  */
-const PUTTING = /\b(mov(e|es|ed|ing)|fil(e|es|ed|ing)|renam(e|es|ed|ing)|sort(s|ed|ing)?|put|deliver(s|ed)?|releas(e|es|ed))\b/i;
+// A putting word right after a possessive or determiner is a noun ("your own files"), not the verb.
+const PUTTING = /(?<!\b(?:own|your|the|its|their|my|our|these|those)\s)\b(mov(e|es|ed|ing)|fil(e|es|ed|ing)|renam(e|es|ed|ing)|sort(s|ed|ing)?|put|deliver(s|ed)?|releas(e|es|ed))\b/i;
 
 function destinationArgs(catalogue: unknown): Set<string> {
   const out = new Set<string>();
@@ -139,6 +140,11 @@ describe("no German string sends the reader to a folder as though it were a plac
     // Anti-vacuity: a renamed file or a changed shape would make the census below pass over nothing.
     expect(ALL.length, "the catalogue walk found almost no strings").toBeGreaterThan(1500);
     expect(ALL.some(([k]) => k === "ohbox.toastBulkMovedSenders")).toBe(true);
+  });
+
+  it("reads a quantity after 'to' as no folder, and a real filing verb still as one", () => {
+    expect([...destinationArgs({ a: "Up to {size} of your own files" })]).toEqual([]);
+    expect([...destinationArgs({ a: "The rule files it into {folder}" })]).toEqual(["folder"]);
   });
 
   it("no directional preposition stands in front of a folder name", () => {

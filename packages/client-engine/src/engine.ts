@@ -11065,6 +11065,17 @@ export class OhmailEngine {
    * paperclip must not offer a control that cannot work. Resolved from the adapter's own optional
    * capability, so it cannot disagree with what the methods below will do.
    */
+  /** Does the sending server honour a forward's kept files? `null`: no answer, or an adapter that cannot ask. */
+  async forwardPartsAnnounced(): Promise<boolean | null> {
+    const ask = this.adapter.forwardPartsAnnounced;
+    if (typeof ask !== "function") return null;
+    try {
+      return await ask.call(this.adapter);
+    } catch {
+      return null;
+    }
+  }
+
   attachmentsAvailable(): boolean {
     return typeof this.adapter.listAttachments === "function"
       && typeof this.adapter.fetchAttachment === "function";

@@ -2046,6 +2046,8 @@ export function MessagePane({
          attach control there. */
       attachments={chrome.replyAttachments}
       onAttachments={chrome.onReplyAttachments}
+      /* A forward's original files — the shell's plan, the one its send carries. */
+      forwardFiles={(chrome.replyMode ?? "reply") === "forward" ? chrome.replyForwardFiles ?? null : null}
       /* THE SIGNATURE BLOCK — state on the chrome (mounted-twice), the stored map from the
          shell's consent read, serialized by `sendReply` from the same derivation the block
          renders. `onReplySig` absent on the inert chrome renders no block there. */

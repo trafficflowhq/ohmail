@@ -900,6 +900,8 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
     baseUrl: "", fetch: bridgeFetch,
     syncFailureSink: reportWindowSyncFailure, searchPhasesSink: reportWindowSearchPhases,
     sendEchoLater: true,
+    // /hello reaches the server that sends: the local engine, or Cloud through the relay.
+    forwardPartsCheck: true,
     ...(stage ? { stageAttachments: true } : {}),
   });
 }

@@ -52,6 +52,8 @@ export function forwardSend(
     plan: ReplyEnvelopePlan;
     /** The person answered the `no_forward` ask (`forwardPress`); the server refuses without it. */
     confirmed?: boolean;
+    /** The original's files kept once one was removed; absent, the server sends every one. */
+    forwardParts?: readonly string[];
   },
 ): MailSend {
   return {
@@ -59,6 +61,7 @@ export function forwardSend(
     inReplyTo: null,
     forwardOf: parent.id,
     ...(input.confirmed === true ? { forwardConfirmed: true } : {}),
+    ...(input.forwardParts !== undefined ? { forwardParts: [...input.forwardParts] } : {}),
     // The quoted header names the original's date on the reader's clock, as the rows read it.
     forwardClock: { zone: activeFormatZone(), locale: activeFormatLocale() },
     subject: forwardSubject(parent.subject),

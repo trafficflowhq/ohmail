@@ -27,6 +27,7 @@ import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 import type { WithheldCopyKey } from "./format";
+import type { ForwardFilesPlan } from "./forward-files";
 
 /**
  * The three sub-rows that can take the action bar's place. Declared HERE and not in
@@ -190,6 +191,8 @@ export interface MessageChrome {
    */
   replyAttachments: readonly ComposeAttachment[];
   onReplyAttachments?: (next: ComposeAttachment[]) => void;
+  /** A forward's original files and how to remove one (`forward-files.ts`); absent on a reply. */
+  replyForwardFiles?: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null;
   /**
    * THE REPLY'S SIGNATURE BLOCK STATE — held here beside the body (mounted-twice again) and
    * serialized by `sendReply` from the SAME derivation the block renders (`signature.ts`).

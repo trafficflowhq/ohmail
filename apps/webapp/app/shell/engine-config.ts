@@ -261,6 +261,8 @@ export function createEngine(
           headers: () => ({ ...ERASED_DECLARATION }),
           fetch: erasedAwareFetch(sessionFetch, sessionEndedResponse),
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
+          // A forward naming its kept files asks /hello first: an older server would send them all.
+          forwardPartsCheck: true,
         }),
       ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),

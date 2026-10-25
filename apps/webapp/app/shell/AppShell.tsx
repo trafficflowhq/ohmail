@@ -1935,6 +1935,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
     composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
+    composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
@@ -2082,6 +2083,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       onReplyFrom: setReplyFromId,
       replyAttachments,
       onReplyAttachments: setReplyAttachments,
+      // A forward's original files, listed and removable — the plan its send carries.
+      replyForwardFiles,
       // The signature block's state and the account's stored map — held here for the
       // mounted-twice reason the body is; `sendReply` serializes the same derivation the
       // block renders. The map travels only once server-confirmed, so a block can never be
@@ -2168,7 +2171,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         },
     }),
     [ownAddresses, absoluteTime, toggleAbsoluteTime, replyTo, replyAll, replyMode, replyBody, onReplyBody, closeReply, sendReply, mailSend, draftReplyChrome,
-      forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit,
+      forwardAsk, confirmForward, replyEnvelope, replyFromId, replyAttachments, replySig, replySubjectEdit, replyForwardFiles,
       onReplySig, onReplySubject,
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
@@ -3099,6 +3102,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 engine={engine}
                 draft={draft}
                 fields={compose}
+                forwardFiles={composeForwardFiles}
                 onFields={onComposeFields}
                 from={composeFrom}
                 sendSurfaceMaxTotalBytes={sendSurfaceMaxTotalBytes}

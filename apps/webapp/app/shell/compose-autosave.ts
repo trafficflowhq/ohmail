@@ -121,7 +121,11 @@ export function worthCreating(f: ComposeFields): boolean {
  * "has the form changed" depend on an argument the form does not hold.
  */
 function signatureOf(f: ComposeFields): string {
-  return JSON.stringify([f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? "", f.forwardOf ?? ""]);
+  return JSON.stringify([
+    f.to, f.cc ?? "", f.bcc ?? "", f.subject, f.body, f.html ?? "", f.forwardOf ?? "",
+    // The kept files only when there is a list, so every older buffer keeps its signature.
+    ...(f.forwardOf && f.forwardParts ? [[...f.forwardParts].sort()] : []),
+  ]);
 }
 
 /** {@link signatureOf} hashed, for the marker the buffer carries — the body is not stored twice. */
@@ -146,9 +150,13 @@ export function sigOf(s: string): string {
 /** The fields a save writes, as the row holds them: a queued save has landed when the row reads the same. */
 function rowShapeOf(r: {
   subject: string; body: string | null; html?: string | null; to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
-}): string {
+}, parts?: readonly string[] | null): string {
   const who = (xs: EmailAddress[]): string => xs.map((a) => a.address.toLowerCase()).join(",");
-  return JSON.stringify([r.subject, r.body, r.html || null, who(r.to), who(r.cc), who(r.bcc)]);
+  // The kept files, when the save wrote a list: the row holds it only once that save landed.
+  return JSON.stringify([
+    r.subject, r.body, r.html || null, who(r.to), who(r.cc), who(r.bcc),
+    ...(parts === undefined ? [] : [parts === null ? null : [...parts].sort()]),
+  ]);
 }
 
 /**
@@ -466,7 +474,7 @@ export function useComposeAutosave(opts: {
    * AN UPDATE THE OUTBOX TOOK (offline) for the bound row, until the row is seen holding it: then
    * it is what the row holds, as if it had been answered `confirmed`.
    */
-  const pendingLand = useRef<{ row: string; signature: string; hash: string; shape: string } | null>(null);
+  const pendingLand = useRef<{ row: string; signature: string; hash: string; shape: string; parts?: boolean } | null>(null);
   /* THE ROW WAS DELETED ELSEWHERE WHILE A SAVE OF THESE WORDS WAITED UNSEEN: they may be the row's,
      so they are shown and not saved again until they change. Marked, so a reload does the same. */
   const keepUnsure = useCallback((rowId: string, f: ComposeFields, holds: ComposeRowHolds) => {
@@ -1061,6 +1069,8 @@ export function useComposeAutosave(opts: {
           ...(mailbox ? { mailboxId: mailbox } : {}),
           // The message a forward carries, so the row reopened anywhere still forwards it.
           ...(f.forwardOf ? { forwardOfMessageId: f.forwardOf } : {}),
+          // The kept files, only when there is a list: no screen clears another device's choice.
+          ...(f.forwardOf && f.forwardParts ? { forwardParts: [...f.forwardParts] } : {}),
           subject: f.subject,
           body: f.body,
           html: f.html ? f.html : null,
@@ -1101,7 +1111,9 @@ export function useComposeAutosave(opts: {
             const hash = holdsSig(f);
             waitingUpdates.current.set(result.key, { sig: signature, hash, mailbox });
             pendingLand.current = {
-              row, signature, hash, shape: rowShapeOf({ subject: f.subject, body: f.body, html: f.html, to, cc, bcc }),
+              row, signature, hash,
+              shape: rowShapeOf({ subject: f.subject, body: f.body, html: f.html, to, cc, bcc }, f.forwardOf && f.forwardParts ? f.forwardParts : undefined),
+              parts: Boolean(f.forwardOf && f.forwardParts),
             };
             const prev = readComposeRowHolds();
             markComposeRowHolds({
@@ -1318,7 +1330,7 @@ export function useComposeAutosave(opts: {
       const land = pendingLand.current;
       if (land !== null && land.row === draftId) {
         const r = engine.store?.get?.<EngineDraft>("draft", draftId);
-        if (r != null && rowShapeOf(r) === land.shape) {
+        if (r != null && rowShapeOf(r, land.parts === true ? r.forwardParts ?? null : undefined) === land.shape) {
           pendingLand.current = null;
           saved.current = land.signature;
           savedHash.current = land.hash;

@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { MemoryMirrorStore, OhmailEngine, mutationEffects, type EngineMessage, type EngineMutation, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 
@@ -526,5 +527,184 @@ describe("the drafter never writes into a forward", () => {
     await mountStubbedPane([older, newer], newer);
     expect(host!.querySelector(".reply-dock .reply"), "the dock is up in forward mode").toBeTruthy();
     expect(host!.querySelector(".reply-dock .dr-card"), "…with no drafter card in it").toBeNull();
+  });
+});
+
+/* ══ THE ORIGINAL'S FILES, LISTED IN THE FORWARD DOCK — over an engine with an attachment list ══ */
+
+const PART_A = "a0000000-0000-4000-8000-000000000001";
+const PART_B = "b0000000-0000-4000-8000-000000000002";
+const PART_C = "c0000000-0000-4000-8000-000000000003";
+const FNOW = new Date("2026-09-16T09:00:00.000Z");
+let fwdSent: EngineMutation[] = [];
+let fwdEngine: OhmailEngine | null = null;
+
+const fwdMsg = {
+  id: "m1", accountId: "a1", mailboxId: "mb1", threadId: "t-m1", folder: "INBOX", subject: "Plans",
+  from: { address: "colleague@example.invalid", name: "The colleague" }, to: [{ address: "me@example.invalid", name: "Me" }],
+  cc: [], date: "2026-09-16T08:29:00.000Z", unread: false, hasAttachments: true, attachmentCount: 3,
+  updatedAt: "2026-09-16T08:29:00.000Z",
+} as unknown as EngineMessage;
+
+async function mountForwardShell(o: {
+  supported: boolean | null; parts?: Array<{ id: string; filename: string | null; contentType: string; sizeBytes: number; inline: boolean }>;
+}): Promise<void> {
+  await unmount();
+  setViewport();
+  window.location.hash = "#/ohbox";
+  (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
+  const el = Element.prototype as unknown as Record<string, () => void>;
+  el.scrollIntoView = () => {};
+  el.scrollTo = () => {};
+  (globalThis as Record<string, unknown>).IntersectionObserver = class {
+    observe(): void {} unobserve(): void {} disconnect(): void {} takeRecords(): [] { return []; }
+  };
+  fwdSent = [];
+  let seq = 0;
+  const s = new MemoryMirrorStore();
+  await s.load();
+  await s.applyChanges([
+    { type: "message", op: "create", id: "m1", seq: ++seq, updatedAt: fwdMsg.updatedAt, entity: fwdMsg },
+    { type: "rule", op: "create", id: "r1", seq: ++seq, updatedAt: fwdMsg.updatedAt, entity: {
+      id: "r1", kind: "sender", match: "colleague@example.invalid", destination: "INBOX", enabled: true,
+      createdAt: "2026-09-01T00:00:00.000Z",
+    } },
+  ] as SyncChange[]);
+  const parts = o.parts ?? [
+    { id: PART_A, filename: "plan.pdf", contentType: "application/pdf", sizeBytes: 1000, inline: false },
+    { id: PART_B, filename: "logo.png", contentType: "image/png", sizeBytes: 200, inline: true },
+    { id: PART_C, filename: "budget.xlsx", contentType: "application/octet-stream", sizeBytes: 3000, inline: false },
+  ];
+  fwdEngine = new OhmailEngine({
+    store: s, now: () => FNOW,
+    adapter: {
+      sync: async () => ({
+        changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: s.getCursor(), hasMore: false, serverTime: FNOW.toISOString(),
+      }),
+      mutate: async (m: EngineMutation) => {
+        fwdSent.push(m);
+        const changes = mutationEffects(s, m, { now: () => FNOW, uuid: () => `id-${++seq}` })
+          .map((e) => ({ type: e.type, op: e.entity === null ? "delete" : "update", id: e.id, seq: ++seq, updatedAt: FNOW.toISOString(), entity: e.entity })) as SyncChange[];
+        await s.applyChanges(changes);
+        return { changes, seq: null, ...(m.kind === "mail_send" ? { providerMessageId: "<fwd@example.invalid>" } : {}) };
+      },
+      fetchBody: async () => ({ text: "body", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null }),
+      listAttachments: async (id: string) => (id === "m1" ? parts.map((p) => ({ ...p, messageId: "m1" })) : []),
+      fetchAttachment: async () => new Blob(["x"]),
+      forwardPartsAnnounced: async () => o.supported,
+    },
+  } as never);
+  const { AppShell } = await import("../app/shell/AppShell.js");
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(h(NextIntlClientProvider, {
+      locale: "en", messages, timeZone: "UTC", now: FNOW,
+      children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, { children: h(AppShell as never, {
+        demo: false, engine: fwdEngine,
+        consentTransport: {
+          foldersStorable: true,
+          state: async () => ({ seedConfirmedAt: "2026-09-01T00:00:00.000Z", screeningResetAt: null, dormancyDays: 90, foldersEnabledAt: "2026-09-01T00:00:00.000Z" }),
+        },
+        mailboxFacts: async () => [{
+          id: "mb1", address: "me@example.invalid", status: "connected", errorCode: null, disabledReason: null,
+          syncBlockedReason: null, syncBlockedSince: null, lastSyncAt: "2026-09-16T08:59:00.000Z", createdAt: "2026-09-01T00:00:00.000Z",
+          organizerRole: "organizer", organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
+        }],
+      } as never) }) }),
+    }));
+  });
+  expect(await waitUntil(() => host!.querySelector('.view-ohbox .row[data-id="m1"]') !== null), "m1 in the Ohbox").toBe(true);
+  const row = host!.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+  await act(async () => {
+    row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await settle();
+  await pressMenuItem(openPanel(), "Forward");
+  const dock = host!.querySelector<HTMLElement>(".read-col .reply[data-reply-for]")!;
+  const toInput = dock.querySelector<HTMLInputElement>(".rcp-input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(toInput, "colleague@example.net, ");
+    toInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+}
+
+const fwdDock = (): HTMLElement => host!.querySelector<HTMLElement>(".read-col .reply[data-reply-for]")!;
+const listedParts = (): string[] => [...fwdDock().querySelectorAll<HTMLElement>("[data-forward-part]")].map((r) => r.dataset.forwardPart!);
+const removeButtons = (): HTMLButtonElement[] => [...fwdDock().querySelectorAll<HTMLButtonElement>("[data-forward-part] .compose-attach-remove")];
+const fwdSend = async (): Promise<Extract<EngineMutation, { kind: "mail_send" }> | undefined> => {
+  const send = [...fwdDock().querySelectorAll<HTMLButtonElement>("button")].find((b) => buttonLabel(b) === "Send")!;
+  await act(async () => { send.click(); });
+  await settle();
+  return fwdSent.find((m): m is Extract<EngineMutation, { kind: "mail_send" }> => m.kind === "mail_send");
+};
+
+describe("the forward dock lists the original's files", () => {
+  afterEach(() => {
+    delete (globalThis as Record<string, unknown>).IntersectionObserver;
+    delete (globalThis as Record<string, unknown>).CSS;
+  });
+
+  it("lists all three; removing one sends the two kept ids, and the Sent copy lists two", async () => {
+    await mountForwardShell({ supported: true });
+    expect(await waitUntil(() => listedParts().length === 3), "the three parts listed").toBe(true);
+    expect(fwdDock().textContent).toContain("embedded");
+    await act(async () => { removeButtons()[2]!.click(); });
+    expect(listedParts()).toEqual([PART_A, PART_B]);
+    const m = await fwdSend();
+    expect(m?.forwardParts, "the send did not name the kept files").toEqual([PART_A, PART_B]);
+    const copy = fwdEngine!.read().list<EngineMessage>("message").find((x) => x.id !== "m1");
+    expect(copy, "no Sent copy").toBeDefined();
+    await fwdEngine!.loadAttachments(copy!.id);
+    const held = fwdEngine!.attachmentsOf(copy!.id, { includeInlineParts: true });
+    expect(held.state === "ready" ? held.items.map((i) => i.id) : held.state).toEqual([PART_A, PART_B]);
+  });
+
+  it("nothing removed sends no forwardParts key", async () => {
+    await mountForwardShell({ supported: true });
+    expect(await waitUntil(() => listedParts().length === 3)).toBe(true);
+    const m = await fwdSend();
+    expect(m).toBeDefined();
+    expect(m!).not.toHaveProperty("forwardParts");
+  });
+
+  it("a server that cannot honour it offers no Remove, and the line says every file goes", async () => {
+    await mountForwardShell({ supported: false });
+    expect(await waitUntil(() => listedParts().length === 3)).toBe(true);
+    expect(removeButtons()).toHaveLength(0);
+    expect(fwdDock().textContent).toContain("All of them go with it.");
+  });
+
+  it("a calendar body stays in the kept list when another file is removed", async () => {
+    await mountForwardShell({ supported: true, parts: [
+      { id: PART_A, filename: "plan.pdf", contentType: "application/pdf", sizeBytes: 1000, inline: false },
+      { id: PART_B, filename: null, contentType: "text/calendar", sizeBytes: 400, inline: false },
+      { id: PART_C, filename: "budget.xlsx", contentType: "application/octet-stream", sizeBytes: 3000, inline: false },
+    ] });
+    expect(await waitUntil(() => listedParts().length === 3), "the calendar body is listed").toBe(true);
+    await act(async () => { removeButtons()[0]!.click(); });
+    expect((await fwdSend())?.forwardParts).toEqual([PART_B, PART_C]);
+  });
+
+  it("files over the forwarded ceiling are refused in words, and nothing is sent", async () => {
+    await mountForwardShell({ supported: true, parts: [
+      { id: PART_A, filename: "huge.mov", contentType: "video/quicktime", sizeBytes: 21 * 1024 * 1024, inline: false },
+    ] });
+    expect(await waitUntil(() => listedParts().length === 1)).toBe(true);
+    expect(await fwdSend()).toBeUndefined();
+    expect(fwdDock().querySelector(".forward-files-refusal")?.textContent ?? "").toMatch(/^The forwarded files are over .+\. Remove some to send it\.$/);
+  });
+
+  it("files over what the mailbox takes are refused in words, and nothing is sent", async () => {
+    await mountForwardShell({ supported: true, parts: [
+      { id: PART_A, filename: "big.mov", contentType: "video/quicktime", sizeBytes: 19 * 1024 * 1024, inline: false },
+    ] });
+    expect(await waitUntil(() => listedParts().length === 1)).toBe(true);
+    expect(await fwdSend()).toBeUndefined();
+    expect(fwdDock().querySelector(".forward-files-refusal")?.textContent ?? "").toMatch(/your mail server takes\. Remove some files to send it\.$/);
   });
 });

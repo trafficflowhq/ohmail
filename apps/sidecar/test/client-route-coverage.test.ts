@@ -171,6 +171,11 @@ const FORWARDED_IN_CLOUD_MODE = [
      retry re-uploads anything. It forwards for the plainest reason on this list: the reservation
      it reads is a row on the HOSTED account, and a local mirror holds none of them. */
   "GET /drafts/x/send-attempt",
+  /* A FORWARD'S CAPABILITY QUESTION, a read that joined on purpose: before a forward that names its
+     kept files the client asks `GET /hello` whether the server that SENDS honours `forwardParts`
+     (`HttpAdapter.forwardPartsAnnounced`). On this door the hosted deployment sends, so a local
+     answer would speak for a server that does not. Its answer names no sequence number. */
+  "GET /hello",
   /* THE HELD SEND'S ONE EXIT — the reader answering for a send the account could not confirm.
      A MUTATION on the hosted rows: `arrived` records the delivery and takes the draft out of
      Drafts, `not_arrived` returns it to an ordinary draft. `unverified` is a state of the HOSTED

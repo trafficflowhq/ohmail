@@ -52,6 +52,10 @@ let pending: SyncChange[] = [];
 let refuseDraftSave = false;
 /** The viewport the next mount runs at — 390px is where the reader is a SHEET. */
 let mobile = false;
+/** The original's parts a forward lists; `null`: the adapter has no attachment list. */
+let originalParts: Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline: boolean }> | null = null;
+/** The original's list never answers. */
+let listHangs = false;
 
 beforeEach(() => {
   window.location.hash = "#/ohbox";
@@ -84,6 +88,8 @@ beforeEach(() => {
   pending = [];
   refuseDraftSave = false;
   mobile = false;
+  originalParts = null;
+  listHangs = false;
 });
 
 afterEach(async () => {
@@ -166,8 +172,15 @@ function engineOver(s: MirrorStore): OhmailEngine {
         return {
           changes, seq: changes[changes.length - 1]?.seq ?? null,
           ...(created ? { entityId: created } : {}),
+          ...(originalParts !== null && m.kind === "mail_send" ? { providerMessageId: "<fwd@example.invalid>" } : {}),
         };
       },
+      ...(originalParts !== null ? {
+        listAttachments: (id: string) => (listHangs ? new Promise(() => {})
+          : Promise.resolve(id === "m2" ? originalParts!.map((p) => ({ ...p, messageId: id })) : [])),
+        fetchAttachment: async () => new Blob(["x"]),
+        forwardPartsAnnounced: async () => true,
+      } : {}),
       fetchBody: async () => ({
         text: "body", html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
@@ -545,6 +558,109 @@ describe("a forward kept as a draft is still a forward", () => {
     const send = sent.find((m) => m.kind === "mail_send") as Extract<EngineMutation, { kind: "mail_send" }>;
     expect(send.forwardOf, "the reopened forward left as a plain mail").toBe("m2");
     expect(send.draftId, "the send made a row of its own instead of sending the draft").toBe("d-fwd");
+  }, 20_000);
+
+  it("a row trimmed on another device opens listing only the kept files, and sends only those", async () => {
+    const [A, B, C] = ["a0000000-0000-4000-8000-000000000001", "b0000000-0000-4000-8000-000000000002", "c0000000-0000-4000-8000-000000000003"];
+    originalParts = [A, B, C].map((id, i) => ({ id, filename: `f${i}.pdf`, contentType: "application/pdf", sizeBytes: 100, inline: false }));
+    const container = await shell(["m1", "m2"], async (s) => {
+      await s.applyChanges([{
+        type: "draft", op: "create", id: "d-fwd", seq: 8000, updatedAt: NOW.toISOString(),
+        entity: {
+          id: "d-fwd", mailboxId: "mb1", threadId: null, inReplyToMessageId: null, forwardOfMessageId: "m2", forwardParts: [A, C],
+          subject: "Fwd: Subject m2", body: "see below", to: [{ address: "peer@example.invalid", name: null }],
+          cc: [], bcc: [], rationale: null, status: "draft",
+          createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+        },
+      } as unknown as SyncChange]);
+    });
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await waitFor(() => container.querySelector(".draft-row .draft-open") !== null, "the forward in Drafts");
+    const row = container.querySelector<HTMLElement>(".draft-row .draft-open")!;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const listed = (): string[] => [...container.querySelectorAll<HTMLElement>(".view-compose [data-forward-part]")].map((r) => r.dataset.forwardPart!);
+    await waitFor(() => listed().length > 0, "the forward's files listed");
+    expect(listed(), "the files removed elsewhere came back").toEqual([A, C]);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".view-compose .btn.primary")!.click(); });
+    await waitFor(() => sent.some((m) => m.kind === "mail_send"), "the send reaching the wire");
+    const send = sent.find((m) => m.kind === "mail_send") as Extract<EngineMutation, { kind: "mail_send" }>;
+    expect(send.forwardParts, "a phone-trimmed draft sent every file").toEqual([A, C]);
+    const copy = engine!.read().list<EngineMessage>("message").find((x) => x.id !== "m1" && x.id !== "m2");
+    expect(copy, "no Sent copy").toBeDefined();
+    await engine!.loadAttachments(copy!.id);
+    const held = engine!.attachmentsOf(copy!.id);
+    expect(held.state === "ready" ? held.items.map((i) => i.id) : held.state).toEqual([A, C]);
+  }, 20_000);
+
+  const P = ["a0000000-0000-4000-8000-000000000001", "b0000000-0000-4000-8000-000000000002", "c0000000-0000-4000-8000-000000000003"];
+  const listedIn = (c: HTMLElement): string[] => [...c.querySelectorAll<HTMLElement>(".view-compose [data-forward-part]")].map((r) => r.dataset.forwardPart!);
+  async function openForwardDraft(rowParts: string[] | null): Promise<HTMLElement> {
+    originalParts = P.map((id, i) => ({ id, filename: `f${i}.pdf`, contentType: "application/pdf", sizeBytes: 100, inline: false }));
+    const container = await shell(["m1", "m2"], async (s) => {
+      await s.applyChanges([{
+        type: "draft", op: "create", id: "d-fwd", seq: 8000, updatedAt: NOW.toISOString(),
+        entity: {
+          id: "d-fwd", mailboxId: "mb1", threadId: null, inReplyToMessageId: null, forwardOfMessageId: "m2", forwardParts: rowParts,
+          subject: "Fwd: Subject m2", body: "see below", to: [{ address: "peer@example.invalid", name: null }],
+          cc: [], bcc: [], rationale: null, status: "draft",
+          createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+        },
+      } as unknown as SyncChange]);
+    });
+    await act(async () => { window.location.hash = "#/drafts"; });
+    await waitFor(() => container.querySelector(".draft-row .draft-open") !== null, "the forward in Drafts");
+    const row = container.querySelector<HTMLElement>(".draft-row .draft-open")!;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() => container.querySelector(".view-compose .btn.primary") !== null, "the compose form");
+    return container;
+  }
+  const sendOf = (): Extract<EngineMutation, { kind: "mail_send" }> | undefined =>
+    sent.find((m) => m.kind === "mail_send") as Extract<EngineMutation, { kind: "mail_send" }> | undefined;
+
+  it.each([
+    ["nothing removed", null, 3],
+    ["a kept list", [P[0], P[2]], 2],
+  ] as const)("%s: the reader releasing the original's list leaves the forward sendable", async (_, rowParts, shown) => {
+    const container = await openForwardDraft(rowParts === null ? null : [...rowParts]);
+    await waitFor(() => listedIn(container).length === shown, "the forward's files listed");
+    // Read the original, then move on: the reader releases the original's list.
+    await act(async () => { window.location.hash = "#/ohbox"; });
+    await waitFor(() => rowIds(container).includes("m2"), "the Ohbox rows");
+    await openRow(container, "m2");
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    await openRow(container, "m1");
+    await act(async () => { await new Promise((r) => setTimeout(r, 200)); });
+    await act(async () => { window.location.hash = "#/compose"; });
+    await waitFor(() => listedIn(container).length === shown, "the forward's files listed again");
+    await act(async () => { container.querySelector<HTMLButtonElement>(".view-compose .btn.primary")!.click(); });
+    await waitFor(() => sendOf() !== undefined, "the send reaching the wire");
+    if (rowParts === null) expect(sendOf()!, "a forward with nothing removed named its parts").not.toHaveProperty("forwardParts");
+    else expect(sendOf()!.forwardParts).toEqual([P[0], P[2]]);
+  }, 20_000);
+
+  it("while the original's list is still read, a forward with nothing removed sends every file", async () => {
+    listHangs = true;
+    const container = await openForwardDraft(null);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".view-compose .btn.primary")!.click(); });
+    await waitFor(() => sendOf() !== undefined, "the send reaching the wire");
+    expect(sendOf()!).not.toHaveProperty("forwardParts");
+    expect(sendOf()!.forwardOf).toBe("m2");
+  }, 20_000);
+
+  it("a kept list is not sent before the original's list is read", async () => {
+    listHangs = true;
+    const container = await openForwardDraft([P[0], P[2]]);
+    await act(async () => { container.querySelector<HTMLButtonElement>(".view-compose .btn.primary")!.click(); });
+    await waitFor(() => container.querySelector(".forward-files-refusal") !== null, "the refusal said");
+    expect(sendOf(), "a kept list went unread").toBeUndefined();
   }, 20_000);
 });
 
