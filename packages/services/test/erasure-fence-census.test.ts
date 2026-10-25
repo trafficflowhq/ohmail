@@ -563,7 +563,7 @@ const ALLOWLIST: Record<string, string> = {
   "packages/core/src/adapters/drizzle-repo.ts insert auditLog": "the operational trail, on the caller's tx",
   "packages/core/src/unscreened-set.ts insert auditLog":
     "the undo row of an undecided-sender move: on `screenUnscreened`'s fenced transaction for the " +
-    "Screener's offer, and in `agreeSweepPass` — the organizer's sweep after a promotion — a background " +
+    "Screener's offer, and in `agreeSweepSlice` — a slice of the organizer's sweep after a promotion — a background " +
     "pass, no session; ids, an address the row already held, and counts",
   "packages/core/src/adapters/drizzle-repo.ts insert accountStorage": "the byte counter, on the caller's tx",
   "packages/core/src/adapters/drizzle-repo.ts insert threads": "the ingest repository, on the caller's tx",

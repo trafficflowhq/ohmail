@@ -36,6 +36,7 @@ import { useTranslations } from "next-intl";
 import { Icon, useToast } from "@ohmail/ui";
 import { useDemoMode, useEngine } from "./engine";
 import type { MailboxProbe } from "./MailStateProvider";
+import { serverUnreachable } from "./mail-state";
 
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_CAP_MS = 30_000;
@@ -51,11 +52,6 @@ const SETTLE_CAP_MS = 30_000;
 const DRAIN_JUDGE_CAP_MS = 10_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** This install cannot reach the mailbox's server: its own outage clock, or a settled connect error. */
-function serverUnreachable(m: { status: string; errorCode: string | null; unreachableSince?: string | null }): boolean {
-  return typeof m.unreachableSince === "string" || (m.status === "error" && m.errorCode === "connect");
-}
 
 /**
  * Wait on one drain, bounded. `"ok"` is a drain that COMPLETED SUCCESSFULLY within the cap;

@@ -985,7 +985,7 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      holding the mailbox and nobody having stopped it. Ordinary, so `info`; the mailbox, the state
      and a constant sentence. */
   organizer_own_claim_resumed: "info",
-  // The agree's sweep after that promotion (`agreeSweepPass`): what it did, or the failure that leaves
+  // The agree's sweep after that promotion (`agreeSweepSlice`): what it did, or the failure that leaves
   // the counted letters to the Screener's offer.
   organizer_agree_sweep: "info",
   organizer_agree_sweep_failed: "error",

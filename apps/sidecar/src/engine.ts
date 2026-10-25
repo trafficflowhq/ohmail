@@ -11,7 +11,7 @@ import {
   isImapBoundExceeded, loopbackHarnessReason, googleAuthHint, type ImapConfig, type MailboxAdapter, type CredMetaAuth,
   type NetTimeouts,
 } from "@trafficflow/core/adapters/imap";
-import { agreeSweepPass, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { agreeSweepRun, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { makeSignatureCheck, type DkimKeyLookup } from "@trafficflow/core/adapters/dkim";
 // The release refusal's OWN class, from the one module that throws it: `releaseOwnClaim` tells a
 // live-sibling refusal (`nonce_unknown` — the pane owes the sibling-lapse sentence) from "could not look".
@@ -470,6 +470,8 @@ export interface SidecarConfig {
    */
   fetchImpl?: typeof fetch;
   now?: () => Date;
+  /** Letters one slice of the agree's sweep moves; absent is the core's bound. Tests set it smaller. */
+  agreeSweepSlice?: number;
   /**
    * The monotonic clock the organizer permit reads beside `now` (`performance.now()`'s unit).
    * Absent means `performance.now()`; the permit refuses a runtime that has neither.
@@ -4902,8 +4904,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * nothing to re-create.
        */
       let foldersEnsured = false;
-      /** The stamp the last promotion spent, until the next organizing drain's sweep reads it once. */
-      let agreeStamp: Date | null = null;
+      /**
+       * The stamp the last promotion spent and where its sweep stands. Each organizing drain runs the
+       * sweep until `next` is null; any other verdict or a throw clears it. Memory only.
+       */
+      let agreeSweep: { stamp: Date; cursor: AgreeSweepCursor | null } | null = null;
 
       /**
        * CLOSE THE SEND-LATER APPOINTMENTS A STAND-DOWN ORPHANS — the local half of
@@ -5954,8 +5959,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                     "nobody having stopped it, so it organizes the mailbox again with no press",
                 });
               }
-              // The next organizing drain asks, once, whether this was a person's first agree.
-              agreeStamp = spentStamp;
+              // The next organizing drain asks whether this was a person's first agree.
+              agreeSweep = spentStamp === null ? null : { stamp: spentStamp, cursor: null };
             } catch (err) {
               /* THE ROLE WENT WITH THE STAMP, so this is not "one more spendable cycle": the write
                * that failed is the one that makes the row say `organizer`, and without it this
@@ -6419,21 +6424,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       /** The change-log mark this runtime's last drain left behind; `null` is an unknown. */
       let knownSetMark: string | null = null;
 
-      /** Never throws: a failure leaves the letters to the Screener's offer, and says so. */
-      const sweepAfterAgree = async (stamp: Date): Promise<void> => {
+      /**
+       * One drain's run of the agree's sweep: one settings-folder read, then up to the core's slice
+       * bound. Keeps the cursor while slices remain. Never throws: a failure leaves the letters to
+       * the Screener's offer, and says so.
+       */
+      const sweepAfterAgree = async (sweep: { stamp: Date; cursor: AgreeSweepCursor | null }): Promise<void> => {
         try {
           const clearance = await profileSync.sweepClearance();
-          const out = await agreeSweepPass(db as unknown as Parameters<typeof agreeSweepPass>[0], {
-            accountId: world.accountId, mailboxId: mb.id, stamp, held: sweepHeld(clearance), now: now(),
+          const out = await agreeSweepRun(db as unknown as Parameters<typeof agreeSweepRun>[0], {
+            accountId: world.accountId, mailboxId: mb.id, stamp: sweep.stamp, held: sweepHeld(clearance), now: now(),
             knowledgeFor: (tx) => makeDrizzleRepo(tx as unknown as Parameters<typeof makeDrizzleRepo>[0]),
             ledgerOf: (tx) => tx as unknown as LedgerTx,
+            cursor: sweep.cursor,
+            ...(config.agreeSweepSlice !== undefined ? { slice: config.agreeSweepSlice } : {}),
           });
+          agreeSweep = out.next === null ? null : { stamp: sweep.stamp, cursor: out.next };
           log("organizer_agree_sweep", {
-            mailboxId: mb.id, verdict: out.kind, moved: out.kind === "swept" ? out.total : 0,
-            count: out.kind === "swept" ? out.senders : 0,
+            mailboxId: mb.id, verdict: out.verdict, moved: out.total, count: out.senders,
+            slices: out.slices, done: out.next === null,
             why: clearance.kind === "unread" ? clearance.why : null,
           });
         } catch (err) {
+          agreeSweep = null;
           log("organizer_agree_sweep_failed", {
             err, mailboxId: mb.id,
             reason: "the agree's in-window letters were not given to the Screener; the Screener's "
@@ -6460,14 +6473,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            an organizer-only mailbox write off a reader's drain. */
         assertSameConnection(gen, conn);
         if (organizing) await profileSync.armHoldFromFolder();
-        /* THE AGREE'S SWEEP, once, after the hold preflight: `agreeSweepPass` decides whether the
-           spent stamp was a person's first agree and moves the counted set as intents, which this
-           drain's cycles then carry to the mailbox. */
-        if (organizing && agreeStamp !== null) {
-          const stamp = agreeStamp;
-          agreeStamp = null;
-          await sweepAfterAgree(stamp);
-        }
+        /* THE AGREE'S SWEEP, after the hold preflight: `agreeSweepRun` decides whether the spent
+           stamp was a person's first agree and moves the counted set as intents, slice by slice,
+           which this drain's cycles then carry to the mailbox. */
+        if (organizing && agreeSweep !== null) await sweepAfterAgree(agreeSweep);
         // BEFORE the cycles, not after: a resurface is a local database fact and does not depend on
         // the mailbox being reachable, so it must survive a cycle that throws on a dead connection.
         /* THE INSTALL'S OWN WORK, ONCE. See {@link onceForTheAccount}: another mailbox's drain that

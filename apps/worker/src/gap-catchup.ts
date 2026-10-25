@@ -181,7 +181,7 @@ export async function gapCatchupPass(
       }
       if (set.screen.length > 0) {
         const res = await writeScreenerIntents(tx, tx as unknown as LedgerTx, {
-          accountId: deps.accountId, rows: set.screen.map(unscreenedRowOf), now, via: "gap",
+          accountId: deps.accountId, rows: set.screen.map(unscreenedRowOf), now, via: "gap", groups: "shown",
         });
         // The groups were bounded when counted, so all of them move; anything else rolls back.
         if (res.total !== set.screen.length) {

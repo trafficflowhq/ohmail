@@ -201,7 +201,7 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
    what changed about who organizes these mailboxes that nobody has acknowledged? Settings →
    Mailboxes renders its own state line from the same `readerStandDown` underneath. */
 import {
-  nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
+  nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode, serverUnreachable,
 } from "./mail-state";
 /* Every press that changes mail leaves through here. See the module. */
 import { useShellDispatch } from "./shell-dispatch";
@@ -1597,7 +1597,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
         organizerEventAt: firstRunMailbox.organizerEventAt,
         // The takeover's pending half, for the summary's `takeoverState`. Untouched, like the rest.
         takeoverAuthorizedAt: firstRunMailbox.takeoverAuthorizedAt,
-        organizerChecked: firstRunMailbox.organizerChecked,
+        organizerChecked: firstRunMailbox.organizerChecked, unreachable: serverUnreachable(firstRunMailbox),
         // FORWARDED UNTOUCHED, both of them. `mailbox-facts.ts` states the rule and the two
         // measured failures behind it: absent and null are different answers on these fields,
         // and a `?? null` at this seam is what destroyed the distinction the last two times.

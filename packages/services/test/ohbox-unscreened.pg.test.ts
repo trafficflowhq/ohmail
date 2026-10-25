@@ -37,7 +37,9 @@ const PG_UP = await realPgAvailable();
 const OHBOX = "INBOX";
 const GATE = "ohmail/Screener";
 const NOW = new Date("2026-09-22T09:00:00.000Z");
-const ARRIVED = new Date("2024-03-01T08:00:00.000Z");
+// Inside the default window; OLD is outside it, the control the counts below carry.
+const ARRIVED = new Date("2026-09-17T08:00:00.000Z");
+const OLD = new Date("2024-03-01T08:00:00.000Z");
 
 let client: ReturnType<typeof postgres>;
 let db: ReturnType<typeof drizzle<typeof schema>>;
@@ -61,17 +63,17 @@ async function newWorld(role: "organizer" | "reader" = "organizer"): Promise<Wor
 
 let seq = 0;
 
-/** One message where the blanket default put it — in the Ohbox, read, years ago. */
+/** One message where the blanket default put it — in the Ohbox, read, days ago. */
 async function seedOhbox(w: World, o: {
   from: string; subject?: string; body?: string; headers?: Record<string, string[]>;
-  folder?: string; unread?: boolean; lastSetBy?: string; threadId?: string; to?: string[];
+  folder?: string; unread?: boolean; lastSetBy?: string; threadId?: string; to?: string[]; arrivedAt?: Date;
 }): Promise<string> {
   const i = seq++;
   const folder = o.folder ?? OHBOX;
   const [m] = await db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`,
     dedupKey: `ous:${randomUUID()}`, subject: o.subject ?? `Note ${i}`, fromAddress: o.from,
-    date: ARRIVED, createdAt: ARRIVED, unread: o.unread ?? false,
+    date: o.arrivedAt ?? ARRIVED, createdAt: ARRIVED, arrivedAt: o.arrivedAt ?? ARRIVED, unread: o.unread ?? false,
     ...(o.threadId ? { threadId: o.threadId } : {}),
     ...(o.to ? { toAddresses: o.to.map((address) => ({ name: null, address })) } : {}),
     nativeLocator: { folder, ref: `1:${i}` },
@@ -107,8 +109,9 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
   it("a stranger's read Ohbox mail is offered, and the press sends it to the Screener", async () => {
     const w = await newWorld();
     const id = await seedOhbox(w, { from: "stranger@x.test" });
+    const old = await seedOhbox(w, { from: "stranger@x.test", arrivedAt: OLD });
 
-    const before = await unscreenedSummary(db as never, w.accountId);
+    const before = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(addressesOf(before.groups)).toEqual(["stranger@x.test"]);
     expect(before.total).toBe(1);
     expect(before.groups[0]!.count).toBe(1);
@@ -121,6 +124,8 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     // THE INTENT, not a move: desired is the gate, observed is untouched, so `reconcile_status`
     // derives `pending` and the organizer's reconciler is what carries it to IMAP.
     expect(await desiredOf(id)).toEqual({ desired: GATE, status: "pending" });
+    // Older than the window: neither counted nor moved.
+    expect(await desiredOf(old)).toEqual({ desired: OHBOX, status: "reconciled" });
   });
 
   it("the offer is idempotent by the predicate — a second press finds nothing", async () => {
@@ -128,7 +133,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     await seedOhbox(w, { from: "stranger@x.test" });
     expect((await screenUnscreened(ctxOf(w))).total).toBe(1);
 
-    expect((await unscreenedSummary(db as never, w.accountId)).total).toBe(0);
+    expect((await unscreenedSummary(db as never, w.accountId, NOW)).total).toBe(0);
     const again = await screenUnscreened(ctxOf(w));
     expect(again).toEqual({ screened: [], total: 0 });
   });
@@ -151,7 +156,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const mine = await seedOhbox(w, { from: w.address });
     await seedOhbox(w, { from: "stranger@x.test" });
 
-    const summary = await unscreenedSummary(db as never, w.accountId);
+    const summary = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(addressesOf(summary.groups)).toEqual(["stranger@x.test"]);
 
     await screenUnscreened(ctxOf(w));
@@ -167,14 +172,14 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
       provenance: "manual", enabled: false, priority: 0, retroRequestedAt: null,
     });
     await seedOhbox(w, { from: "lapsed@x.test" });
-    expect(addressesOf((await unscreenedSummary(db as never, w.accountId)).groups))
+    expect(addressesOf((await unscreenedSummary(db as never, w.accountId, NOW)).groups))
       .toEqual(["lapsed@x.test"]);
   });
 
   it("a reader install offers nothing — it arranges nobody's mailbox", async () => {
     const w = await newWorld("reader");
     await seedOhbox(w, { from: "stranger@x.test" });
-    expect(await unscreenedSummary(db as never, w.accountId)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
     expect(await screenUnscreened(ctxOf(w))).toEqual({ screened: [], total: 0 });
   });
 
@@ -197,7 +202,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const filed = await seedOhbox(w, { from: "d@x.test", folder: "ohmail/News" });
     await seedOhbox(w, { from: "e@x.test" });
 
-    const summary = await unscreenedSummary(db as never, w.accountId);
+    const summary = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(addressesOf(summary.groups)).toEqual(["e@x.test"]);
 
     await screenUnscreened(ctxOf(w));
@@ -213,7 +218,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     await db.insert(approvals).values({
       accountId: w.accountId, kind: "routing", messageId: id, action: "move", status: "pending",
     });
-    expect(addressesOf((await unscreenedSummary(db as never, w.accountId)).groups))
+    expect(addressesOf((await unscreenedSummary(db as never, w.accountId, NOW)).groups))
       .toEqual(["pending@x.test"]);
   });
 
@@ -231,7 +236,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const claimed = await seedOhbox(w, { from: "mixed@x.test", subject: "your receipt" });
     const other = await seedOhbox(w, { from: "mixed@x.test", subject: "hello there" });
 
-    expect(await unscreenedSummary(db as never, w.accountId)).toEqual({ groups: [], total: 0 });
+    expect(await unscreenedSummary(db as never, w.accountId, NOW)).toEqual({ groups: [], total: 0 });
     await screenUnscreened(ctxOf(w));
     for (const id of [claimed, other]) expect((await desiredOf(id)).desired).toBe(OHBOX);
   });
@@ -247,7 +252,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const claimed = await seedOhbox(w, { from: "list@x.test", headers: { "list-id": ["<a.x.test>"] } });
     const bare = await seedOhbox(w, { from: "list@x.test" });
 
-    const summary = await unscreenedSummary(db as never, w.accountId);
+    const summary = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(summary.total).toBe(1);
 
     await screenUnscreened(ctxOf(w));
@@ -266,7 +271,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     const claimed = await seedOhbox(w, { from: "list@x.test", headers: hdr, body: "your invoice is ready" });
     const unclaimed = await seedOhbox(w, { from: "list@x.test", headers: hdr, body: "hello there" });
 
-    const summary = await unscreenedSummary(db as never, w.accountId);
+    const summary = await unscreenedSummary(db as never, w.accountId, NOW);
     // The term narrows the rule to ONE message; the rest of that header's mail is undecided.
     expect(summary.total).toBe(1);
     expect(summary.groups[0]).toMatchObject({ address: "list@x.test", count: 1 });
@@ -276,13 +281,12 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     expect((await desiredOf(unclaimed)).desired).toBe(GATE);
   });
 
-  it("with no header and no body rule the two wide columns are never read", async () => {
-    // The other arm of both conditions — the account that pays nothing for terms nobody wrote.
-    // An admission arm, so the two together say the reads are a cost decision, not a membership one.
+  it("with no header and no body rule the stored header and body decide nothing", async () => {
+    // The other arm of both conditions: the reads are a cost decision, not a membership one.
     const w = await newWorld();
     await seedOhbox(w, { from: "list@x.test", headers: { "list-id": ["<a.x.test>"] }, body: "your invoice is ready" });
     await seedOhbox(w, { from: "list@x.test", body: "hello there" });
-    const summary = await unscreenedSummary(db as never, w.accountId);
+    const summary = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(summary.groups).toEqual([
       { address: "list@x.test", count: 2, newestAt: ARRIVED.toISOString() },
     ]);
@@ -295,7 +299,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     await db.insert(contacts).values({ accountId: w.accountId, address: "pal@x.test" });
     await seedOhbox(w, { from: "pal@x.test" });
 
-    const shown = await unscreenedSummary(db as never, w.accountId);
+    const shown = await unscreenedSummary(db as never, w.accountId, NOW);
     expect(shown.groups).toEqual([
       { address: "many@x.test", count: 3, newestAt: ARRIVED.toISOString() },
       { address: "few@x.test", count: 2, newestAt: ARRIVED.toISOString() },
@@ -367,9 +371,9 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     await seedOhbox(a, { from: "newcomer@x.test", threadId: ta });
     await seedOhbox(a, { from: a.address, threadId: ta, to: ["newcomer@x.test"] });
 
-    expect(addressesOf((await unscreenedSummary(db as never, b.accountId)).groups))
+    expect(addressesOf((await unscreenedSummary(db as never, b.accountId, NOW)).groups))
       .toEqual(["newcomer@x.test"]);
-    expect(addressesOf((await unscreenedSummary(db as never, a.accountId)).groups)).toEqual([]);
+    expect(addressesOf((await unscreenedSummary(db as never, a.accountId, NOW)).groups)).toEqual([]);
   });
 
   it("another account's Ohbox is not in this account's answer", async () => {
@@ -378,7 +382,7 @@ describe.skipIf(!PG_UP)("the Ohbox's undecided senders", () => {
     await seedOhbox(mine, { from: "stranger@x.test" });
     const hers = await seedOhbox(theirs, { from: "stranger@x.test" });
 
-    expect((await unscreenedSummary(db as never, mine.accountId)).total).toBe(1);
+    expect((await unscreenedSummary(db as never, mine.accountId, NOW)).total).toBe(1);
     await screenUnscreened(ctxOf(mine));
     expect((await desiredOf(hers)).desired).toBe(OHBOX);
   });

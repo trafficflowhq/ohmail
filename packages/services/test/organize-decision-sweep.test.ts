@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
-  accounts, accountSettings, auditAction, auditLog, folderState, mailboxes, messageBodies, messageStates,
+  accounts, accountSettings, auditAction, auditLog, changeLog, folderState, mailboxes, messageBodies, messageStates,
   mailboxFolders, messageInstances, messageTags, messages, rules, tags, threads, type LedgerTx,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { agreeSweepPass, makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { organizeDecisionCount, type ServiceContext } from "../src/mail.js";
+import { agreeSweepSlice, agreeSweepRun, makeDrizzleRepo, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
+import { ScreenerService, organizeDecisionCount, setDormancyDays, type ServiceContext } from "../src/mail.js";
 
 /**
  * THE ORGANIZE DECISION DOES WHAT ITS SCREEN SAYS, ON BOTH STORES.
@@ -38,13 +38,13 @@ type World = Awaited<ReturnType<typeof world>>;
 let n = 0;
 async function seed(
   w: World, from: string, daysOld: number,
-  opts: { decided?: boolean; noArrival?: boolean; storedAt?: Date; headers?: Record<string, string[]>; threadId?: string } = {},
+  opts: { decided?: boolean; noArrival?: boolean; storedAt?: Date; headers?: Record<string, string[]>; threadId?: string; date?: Date } = {},
 ): Promise<string> {
   const i = n++;
   const arrived = new Date(NOW.getTime() - daysOld * DAY);
   const [m] = await w.db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `h${i}`, dedupKey: `ods:${randomUUID()}`,
-    subject: `Letter ${i}`, fromAddress: from, date: arrived, createdAt: opts.storedAt ?? NOW,
+    subject: `Letter ${i}`, fromAddress: from, date: opts.date ?? arrived, createdAt: opts.storedAt ?? NOW,
     arrivedAt: opts.noArrival ? null : arrived, unread: true, messageIdHeader: `l${i}@rig.test`,
     ...(opts.threadId ? { threadId: opts.threadId } : {}),
     nativeLocator: { folder: INBOX, ref: `1:${i}` },
@@ -62,8 +62,11 @@ const ctxOf = (w: World): ServiceContext => ({
   now: () => NOW, requestId: `ods-${randomUUID().slice(0, 8)}`,
 });
 
-/** What the consent transaction of a person's first agree writes, at one instant (`organizeHere`). */
-async function agreed(w: World, opts: { record: boolean }): Promise<void> {
+/**
+ * What the consent transaction of a person's first agree writes, at one instant (`organizeHere`).
+ * `cutoff` is the window the record names (null all time); absent, a record from before it did.
+ */
+async function agreed(w: World, opts: { record: boolean; cutoff?: Date | null }): Promise<void> {
   await w.db.insert(accountSettings).values({ accountId: w.accountId, screeningBaselineAt: AT, dormancyDays: 365, screeningScope: "window" })
     .onConflictDoNothing();
   await w.db.update(mailboxes).set({ organizeConsentedAt: AT, takeoverAuthorizedAt: AT })
@@ -71,7 +74,9 @@ async function agreed(w: World, opts: { record: boolean }): Promise<void> {
   if (opts.record) {
     await w.db.insert(auditLog).values({
       accountId: w.accountId, action: auditAction("organizer.agree_screens_backlog"),
-      payload: { mailboxId: w.mailboxId }, createdAt: AT,
+      payload: opts.cutoff === undefined ? { mailboxId: w.mailboxId }
+        : { mailboxId: w.mailboxId, cutoff: opts.cutoff === null ? null : opts.cutoff.toISOString() },
+      createdAt: AT,
     });
   }
 }
@@ -82,11 +87,67 @@ async function promote(w: World): Promise<void> {
     .where(eq(mailboxes.id, w.mailboxId));
 }
 
-const sweep = (w: World, stamp: Date, held: boolean | "unread" = false) => agreeSweepPass(w.db as never, {
-  accountId: w.accountId, mailboxId: w.mailboxId, stamp, held, now: AT,
-  knowledgeFor: (tx) => makeDrizzleRepo(tx as never),
-  ledgerOf: (tx) => tx as unknown as LedgerTx,
+const knowledge = {
+  knowledgeFor: (tx: unknown) => makeDrizzleRepo(tx as never),
+  ledgerOf: (tx: unknown) => tx as LedgerTx,
+};
+
+/** One slice, as the hosts' run calls it. */
+const sweep = (
+  w: World, stamp: Date, held: boolean | "unread" = false,
+  o: { now?: Date; cursor?: AgreeSweepCursor | null; slice?: number } = {},
+) => agreeSweepSlice(w.db as never, {
+  accountId: w.accountId, mailboxId: w.mailboxId, stamp, held, now: o.now ?? AT, ...knowledge,
+  ...(o.cursor !== undefined ? { cursor: o.cursor } : {}), ...(o.slice !== undefined ? { slice: o.slice } : {}),
 });
+
+/** The run both hosts call once per organizing drain. */
+const sweepRun = (w: World, o: { now?: Date; cursor?: AgreeSweepCursor | null; slice?: number; maxSlices?: number } = {}) =>
+  agreeSweepRun(w.db as never, {
+    accountId: w.accountId, mailboxId: w.mailboxId, stamp: AT, held: false, now: o.now ?? AT, ...knowledge,
+    cursor: o.cursor ?? null, ...(o.slice !== undefined ? { slice: o.slice } : {}),
+    ...(o.maxSlices !== undefined ? { maxSlices: o.maxSlices } : {}),
+  });
+
+/** Many letters in a few statements, each a day-fraction older than the last; returns ids in order. */
+async function bulk(w: World, rows: ReadonlyArray<{ from: string; daysOld: number }>, tag: string): Promise<string[]> {
+  const ids: string[] = [];
+  for (let at = 0; at < rows.length; at += 250) {
+    const part = rows.slice(at, at + 250);
+    const made = await w.db.insert(messages).values(part.map((r, j) => {
+      const arrived = new Date(NOW.getTime() - r.daysOld * DAY - (at + j) * 1000);
+      return {
+        accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: `${tag}${at + j}`, dedupKey: `ods:${randomUUID()}`,
+        subject: `${tag} ${at + j}`, fromAddress: r.from, date: arrived, createdAt: NOW, arrivedAt: arrived,
+        unread: true, nativeLocator: { folder: INBOX, ref: `7:${tag}${at + j}` },
+      };
+    })).returning({ id: messages.id, subject: messages.subject });
+    for (const m of made) ids[Number(m.subject.slice(tag.length + 1))] = m.id;
+    await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers: {} })));
+    await w.db.insert(folderState).values(made.map((m) => ({
+      messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
+      reconcileStatus: "reconciled" as const, conflict: false,
+    })));
+  }
+  return ids;
+}
+
+const inInbox = async (w: World, ids: readonly string[]): Promise<number> => {
+  let left = 0;
+  for (const id of ids) if (await desired(w, id) === INBOX) left++;
+  return left;
+};
+
+/** Where the letter is, whether it is unread, and how many change rows name it. */
+const untouched = async (w: World, id: string) => {
+  const [fs] = await w.db.select({ d: folderState.desiredFolder, o: folderState.observedFolder })
+    .from(folderState).where(eq(folderState.messageId, id));
+  const [m] = await w.db.select({ unread: messages.unread }).from(messages).where(eq(messages.id, id));
+  const rows = await w.db.select({ seq: changeLog.seq }).from(changeLog)
+    .where(and(eq(changeLog.accountId, w.accountId), eq(changeLog.entityId, id)));
+  return { desired: fs!.d, observed: fs!.o, unread: m!.unread, changes: rows.length };
+};
+const STAY = { desired: INBOX, observed: INBOX, unread: true, changes: 0 };
 
 const desired = async (w: World, id: string): Promise<string> =>
   (await w.db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
@@ -110,10 +171,10 @@ describe("the organize decision moves exactly what it counted", () => {
     await agreed(w, { record: true });
     await promote(w);
     const out = await sweep(w, AT);
-    expect(out).toEqual({ kind: "swept", total: before.letters, senders: before.senders });
+    expect(out).toEqual({ kind: "swept", total: before.letters, senders: before.senders, next: null });
     for (const id of ids) expect(await desired(w, id)).toBe(GATE);
     // Once: the moved letters leave the set.
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 0, senders: 0 });
+    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 0, senders: 0, next: null });
   });
 
   it("nothing outside the window moves, and the count leaves it out too", async () => {
@@ -162,7 +223,7 @@ describe("the organize decision moves exactly what it counted", () => {
       .toMatchObject({ letters: 1, senders: 1 });
     await agreed(w, { record: true });
     await promote(w);
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1 });
+    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1, next: null });
     for (const id of [moved, piled, tagged, ruled]) expect(await desired(w, id)).toBe(INBOX);
     expect(await desired(w, stranger)).toBe(GATE);
   });
@@ -235,7 +296,7 @@ describe("the hand-back's rulings", () => {
     await agreed(w, { record: true });
     await w.db.update(accountSettings).set({ dormancyDays: 60 }).where(eq(accountSettings.accountId, w.accountId));
     await promote(w);
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1 });
+    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1, next: null });
     expect(await desired(w, legacy)).toBe(INBOX);
     expect(await desired(w, lately)).toBe(INBOX);
     expect(await desired(w, recorded)).toBe(GATE);
@@ -270,12 +331,12 @@ describe("the hand-back's rulings", () => {
       .toMatchObject({ letters: 1, senders: 1 });
     await agreed(w, { record: true });
     await promote(w);
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1 });
+    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1, next: null });
     expect(await desired(w, reply)).toBe(INBOX);
     expect(await desired(w, stranger)).toBe(GATE);
   });
 
-  it("over the move bound the newest letters by arrival move, and the oldest stay", async () => {
+  it("slice 1 takes the newest 1,000 by arrival and slice 2 the rest", async () => {
     const w = await world();
     // Stored oldest first, so neither the insert order nor the id order is the arrival order asked for.
     const rows = Array.from({ length: 1003 }, (_, k) => ({ k, arrived: new Date(NOW.getTime() - (k + 1) * 60_000) })).reverse();
@@ -295,14 +356,71 @@ describe("the hand-back's rulings", () => {
       })));
     }
     expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { dormancyDays: 365, scope: "window" }))
-      .toMatchObject({ letters: 1000, total: 1003, complete: true });
+      .toMatchObject({ letters: 1003, senders: 7, total: 1003, complete: true });
     await agreed(w, { record: true });
     await promote(w);
-    expect(await sweep(w, AT)).toMatchObject({ kind: "swept", total: 1000 });
+    const first = await sweep(w, AT);
+    expect(first).toMatchObject({ kind: "swept", total: 1000, next: { storedBy: AT } });
     for (const k of [0, 1, 999]) expect(await desired(w, ids[k]!)).toBe(GATE);
     for (const k of [1000, 1001, 1002]) expect(await desired(w, ids[k]!)).toBe(INBOX);
+    const second = await sweep(w, AT, false, { cursor: first.kind === "swept" ? first.next : null });
+    expect(second).toEqual({ kind: "swept", total: 3, senders: 3, next: null });
+    for (const k of [1000, 1001, 1002]) expect(await desired(w, ids[k]!)).toBe(GATE);
     // 1003 letters through the store and the sweep: up to 7.9 s on the CI VMs and 200 s under 10% of a
     // CPU, past the 5 s default only because it never yields. No wait of its own.
+  }, 300_000);
+
+  it("a sender whose letters all sit past the first slice reaches the Screener (1,000 + 5)", async () => {
+    const w = await world();
+    const newer = await bulk(w, Array.from({ length: 1000 }, (_, k) => ({ from: `s${k % 7}@bulk.test`, daysOld: 1 })), "n");
+    const late = await bulk(w, Array.from({ length: 5 }, () => ({ from: "late@bulk.test", daysOld: 30 })), "l");
+    const old = await bulk(w, [{ from: "olden@bulk.test", daysOld: 800 }], "o");
+    await agreed(w, { record: true });
+    await promote(w);
+    expect(await sweepRun(w)).toEqual({ verdict: "swept", total: 1005, senders: 8, slices: 2, next: null });
+    expect(await inInbox(w, [...newer, ...late])).toBe(0);
+    // CONTROL: outside the window stays where it is.
+    expect(await desired(w, old[0]!)).toBe(INBOX);
+  }, 300_000);
+
+  it("a thousand letters from more senders than the 200 groups a press shows all move", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 1000 }, (_, k) => ({ from: `g${k % 250}@grp.test`, daysOld: 1 })), "g");
+    await agreed(w, { record: true });
+    await promote(w);
+    expect(await sweepRun(w)).toMatchObject({ verdict: "swept", total: 1000, senders: 250, next: null });
+    expect(await inInbox(w, ids)).toBe(0);
+  }, 300_000);
+
+  it("a drain's run stops at its slice bound and the next drain goes on from the cursor", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 7 }, (_, k) => ({ from: `p${k}@rig.test`, daysOld: 1 })), "p");
+    await agreed(w, { record: true });
+    await promote(w);
+    const one = await sweepRun(w, { slice: 2, maxSlices: 2 });
+    expect(one).toMatchObject({ verdict: "swept", total: 4, slices: 2, next: { storedBy: AT } });
+    expect(await inInbox(w, ids)).toBe(3);
+    const two = await sweepRun(w, { slice: 2, maxSlices: 2, cursor: one.next });
+    expect(two).toMatchObject({ total: 3, next: null });
+    expect(await inInbox(w, ids)).toBe(0);
+  });
+
+  it("a cursor whose letter vanished still finishes, from the top", async () => {
+    const w = await world();
+    const ids = await bulk(w, Array.from({ length: 5 }, (_, k) => ({ from: `v${k}@rig.test`, daysOld: 1 })), "v");
+    await agreed(w, { record: true });
+    await promote(w);
+    const gone: AgreeSweepCursor = { storedBy: AT, after: randomUUID(), agreed: new Date(AT.getTime() - 365 * DAY) };
+    expect(await sweepRun(w, { cursor: gone })).toMatchObject({ verdict: "swept", total: 5, next: null });
+    expect(await inInbox(w, ids)).toBe(0);
+  });
+
+  it("while the import reads, the count names every in-window letter and sender: 1,250 from 220", async () => {
+    const w = await world();
+    await bulk(w, Array.from({ length: 1250 }, (_, k) => ({ from: `f${k % 220}@fx.test`, daysOld: 1 })), "f");
+    await bulk(w, Array.from({ length: 30 }, (_, k) => ({ from: `f${k % 220}@fx.test`, daysOld: 800 })), "x");
+    expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { dormancyDays: 365, scope: "window" }))
+      .toMatchObject({ letters: 1250, senders: 220, total: 1250, complete: true, mirrored: false });
   }, 300_000);
 
   it("undated letters never stand in front of a dated one: under All time the dated letter moves, the undated stay", async () => {
@@ -326,7 +444,7 @@ describe("the hand-back's rulings", () => {
     await agreed(w, { record: true });
     await w.db.update(accountSettings).set({ screeningScope: "all_time" }).where(eq(accountSettings.accountId, w.accountId));
     await promote(w);
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1 });
+    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1, next: null });
     expect(await desired(w, dated)).toBe(GATE);
     for (const id of [undated[0]!, undated[200]!]) expect(await desired(w, id)).toBe(INBOX);
   });
@@ -339,10 +457,10 @@ describe("the hand-back's rulings", () => {
     expect(await sweep(w, AT, "unread")).toEqual({ kind: "unread" });
     for (const id of ids) expect(await desired(w, id)).toBe(INBOX);
     // CONTROL: the clean read after it sweeps the same letters.
-    expect(await sweep(w, AT, false)).toEqual({ kind: "swept", total: 18, senders: 3 });
+    expect(await sweep(w, AT, false)).toEqual({ kind: "swept", total: 18, senders: 3, next: null });
   });
 
-  it("the sweep moves only what the store held at the press; the count says while it is still reading", async () => {
+  it("mail stored between the press and the promotion is swept; the count says while it is still reading", async () => {
     const w = await world();
     const before = await seed(w, "early@rig.test", 1);
     expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { dormancyDays: 60, scope: "window" }))
@@ -350,11 +468,85 @@ describe("the hand-back's rulings", () => {
     await agreed(w, { record: true });
     const after = await seed(w, "late@rig.test", 1, { storedAt: new Date(AT.getTime() + 60_000) });
     await promote(w);
-    expect(await sweep(w, AT)).toEqual({ kind: "swept", total: 1, senders: 1 });
+    const start = new Date(AT.getTime() + 120_000);
+    const first = await sweep(w, AT, false, { now: start, slice: 1 });
+    expect(first).toMatchObject({ kind: "swept", total: 1, next: { storedBy: start } });
+    // Stored after the sweep started: the organizer's own gate takes it, not the sweep.
+    const later = await seed(w, "later@rig.test", 1, { storedAt: new Date(start.getTime() + 60_000) });
+    const second = await sweep(w, AT, false, { now: new Date(start.getTime() + 120_000), cursor: first.kind === "swept" ? first.next : null });
+    expect(second).toMatchObject({ kind: "swept", total: 1 });
     expect(await desired(w, before)).toBe(GATE);
-    expect(await desired(w, after)).toBe(INBOX);
+    expect(await desired(w, after)).toBe(GATE);
+    expect(await desired(w, later)).toBe(INBOX);
     await w.db.update(mailboxes).set({ initialImportCompletedAt: AT }).where(eq(mailboxes.id, w.mailboxId));
     expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { dormancyDays: 60, scope: "window" }))
       .toMatchObject({ mirrored: true });
+  });
+});
+
+describe("the sweep keeps to the window the person saw and agreed to", () => {
+  it("migrated mail (an old Date, a recent arrival) is neither counted nor swept; CONTROL — both inside moves and is listed", async () => {
+    const w = await world();
+    const old = new Date(NOW.getTime() - 800 * DAY);
+    const migrated: string[] = [];
+    for (const who of ["mig1@rig.test", "mig2@rig.test", "mig1@rig.test"]) migrated.push(await seed(w, who, 3, { date: old }));
+    const fresh = await seed(w, "fresh@rig.test", 3);
+    expect(await organizeDecisionCount(ctxOf(w), w.mailboxId, { dormancyDays: 365, scope: "window" }))
+      .toMatchObject({ letters: 1, senders: 1 });
+    await agreed(w, { record: true });
+    await promote(w);
+    expect(await sweepRun(w)).toMatchObject({ verdict: "swept", total: 1, senders: 1, next: null });
+    for (const id of migrated) expect(await untouched(w, id)).toEqual(STAY);
+    expect(await desired(w, fresh)).toBe(GATE);
+    const page = await new ScreenerService({ adapter: {} as never }).list(ctxOf(w), {});
+    expect(page.items.map((i) => i.sender.address)).toEqual(["fresh@rig.test"]);
+  });
+
+  /** Two fresh letters, one 200 days old and one 800: slice 1 takes one fresh letter. */
+  async function halfSwept(w: World, cutoff?: Date | null) {
+    const ids = {
+      fresh: [await seed(w, "a@rig.test", 1), await seed(w, "b@rig.test", 2)],
+      mid: await seed(w, "mid@rig.test", 200),
+      old: await seed(w, "old@rig.test", 800),
+    };
+    await agreed(w, { record: true, ...(cutoff !== undefined ? { cutoff } : {}) });
+    await promote(w);
+    const first = await sweepRun(w, { slice: 1, maxSlices: 1 });
+    expect(first).toMatchObject({ verdict: "swept", total: 1 });
+    return { ids, next: first.next };
+  }
+
+  it("a window widened to All time while slices remain moves nothing older than the agreed one", async () => {
+    const w = await world();
+    const { ids, next } = await halfSwept(w, new Date(AT.getTime() - 365 * DAY));
+    await setDormancyDays(ctxOf(w), undefined, "all_time");
+    expect(await sweepRun(w, { slice: 1, cursor: next })).toMatchObject({ verdict: "swept", total: 2, next: null });
+    expect(await inInbox(w, [...ids.fresh, ids.mid])).toBe(0);
+    expect(await untouched(w, ids.old)).toEqual(STAY);
+  });
+
+  it("a record from before the window was named: the first slice's window holds for the rest", async () => {
+    const w = await world();
+    const { ids, next } = await halfSwept(w);
+    await setDormancyDays(ctxOf(w), undefined, "all_time");
+    expect(await sweepRun(w, { slice: 1, cursor: next })).toMatchObject({ total: 2, next: null });
+    expect(await untouched(w, ids.old)).toEqual(STAY);
+  });
+
+  it("CONTROL — a window narrowed to 90 days while slices remain narrows the rest", async () => {
+    const w = await world();
+    const { ids, next } = await halfSwept(w, new Date(AT.getTime() - 365 * DAY));
+    await setDormancyDays(ctxOf(w), 90);
+    expect(await sweepRun(w, { slice: 1, cursor: next })).toMatchObject({ total: 1, next: null });
+    expect(await inInbox(w, ids.fresh)).toBe(0);
+    for (const id of [ids.mid, ids.old]) expect(await untouched(w, id)).toEqual(STAY);
+  });
+
+  it("CONTROL — agreed to All time, the old letter moves", async () => {
+    const w = await world();
+    await w.db.insert(accountSettings).values({ accountId: w.accountId, screeningBaselineAt: AT, screeningScope: "all_time" });
+    const { ids, next } = await halfSwept(w, null);
+    expect(await sweepRun(w, { slice: 1, cursor: next })).toMatchObject({ total: 3, next: null });
+    expect(await desired(w, ids.old)).toBe(GATE);
   });
 });

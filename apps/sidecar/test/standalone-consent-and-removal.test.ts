@@ -12,14 +12,14 @@ import type { LeaseIo, LeasePeekIo, RawClaimMessage } from "@trafficflow/core/ad
 import { formatClaim, isMalformed, parseClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { ProfileUnavailableError } from "@trafficflow/core/adapters/organizer-profile";
 import {
-  approvals, attachments, awayReplies, awayResponderSent, changeLog, drafts, flagState, folderOps, folderState,
+  accountSettings, approvals, attachments, auditLog, awayReplies, awayResponderSent, changeLog, drafts, flagState, folderOps, folderState,
   junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes, messageBodies,
   messageFailures, messageInstances, messageStates, messageTags, messages, organizerRequests,
   outboundSendFingerprints, outboundSends, REMOVED_MAILBOX_SEND_SENTENCE, routingDecisions, sessions, tags,
   threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
-import { createSidecar, type Sidecar } from "../src/engine.js";
+import { createSidecar, type Sidecar, type SidecarConfig } from "../src/engine.js";
 /* THE PRESS, as the pane presses it. `POST /local/organizer/takeover` and
    `POST /local/mailboxes/:id/organize` both call THIS — engine.ts says so where it mounts them:
    *"The ceremony is `requestOrganizerTakeover`'s and is NOT re-implemented here — this handler
@@ -371,14 +371,15 @@ function recordingMailbox(
           locator: { folder: "INBOX", ref: `1:${uid}` } as NativeLocator,
           raw: arrival(uid),
           // The server's receive clock, as a real FETCH reports it: the agree's window reads it.
-          internalDate: new Date(),
+          // From uid 900 on a letter is 800 days old, outside any window the step offers.
+          internalDate: uid >= 900 ? new Date(Date.now() - 800 * 24 * HOUR) : new Date(),
         })) as ChangeBatch["creates"],
         moves: [], flagChanges: [], deletes: [], newCursor: EMPTY_CURSOR,
       };
     },
     async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
       wire.push({ verb: "move", detail: `${locator.ref}→${toFolder}` });
-      return { folder: toFolder, ref: "7:41" };
+      return { folder: toFolder, ref: `7:${locator.ref.split(":")[1]}` };
     },
     async setFlags(locator: NativeLocator, flags: { seen?: boolean }): Promise<void> {
       wire.push({ verb: "setFlags", detail: `${locator.ref} seen=${String(flags.seen)}` });
@@ -420,6 +421,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
      * Absent, the engine reads the wall clock, which is what every case that predates this does.
      */
     clock?: () => Date,
+    extra: Partial<SidecarConfig> = {},
   ): Promise<{
     sidecar: Sidecar; closes: () => number; dataDir: string;
   }> {
@@ -445,6 +447,7 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
       adapterFactory: mailbox.factory,
       log: (event, detail) => { events.push({ event, detail }); },
       ...(clock ? { now: clock } : {}),
+      ...extra,
     });
     cleanups.push(async () => {
       await sidecar.stop().catch(() => undefined);
@@ -598,6 +601,29 @@ describe("the standalone door reads a mailbox until somebody agrees, and lets go
       .toEqual(["ohmail/Screener"]);
     expect(wire.filter((w) => w.verb === "move").map((w) => w.detail)).toEqual(["1:41→ohmail/Screener"]);
     expect(events.find((e) => e.event === "organizer_agree_sweep")?.detail).toMatchObject({ verdict: "swept", moved: 1 });
+    // The record names the window agreed to, so a later widening never extends the sweep.
+    const [set] = await sidecar.db.select({ at: accountSettings.screeningBaselineAt }).from(accountSettings);
+    const [rec] = await sidecar.db.select({ p: auditLog.payload }).from(auditLog)
+      .where(eq(auditLog.action, "organizer.agree_screens_backlog"));
+    expect(rec!.p).toEqual({ mailboxId: sidecar.world.mailboxId, cutoff: new Date(set!.at!.getTime() - 365 * 86_400_000).toISOString() });
+  });
+
+  it("AGREE OVER A BIG IMPORT — every in-window letter reaches the Screener, the sweep carried across drains; older ones stay", async () => {
+    const meta = new MemoryMeta();
+    const fresh = Array.from({ length: 12 }, (_, i) => 100 + i);
+    const { sidecar } = await boot([...fresh, 900, 901], meta, undefined, "clean", undefined, { agreeSweepSlice: 1 });
+    await agreeFromTheWindowStep(sidecar, true);
+    await sidecar.syncUntilQuiet();
+    const sweeps = () => events.filter((e) => e.event === "organizer_agree_sweep").map((e) => e.detail);
+    // Ten one-letter slices are one drain's bound; the next drain goes on from the cursor.
+    expect(sweeps()).toEqual([
+      expect.objectContaining({ verdict: "swept", moved: 10, slices: 10, done: false }),
+      expect.objectContaining({ verdict: "swept", moved: 2, done: true }),
+    ]);
+    const moved = wire.filter((w) => w.verb === "move").map((w) => w.detail).sort();
+    expect(moved).toEqual(fresh.map((uid) => `1:${uid}→ohmail/Screener`).sort());
+    await sidecar.syncUntilQuiet();
+    expect(sweeps(), "a finished sweep ran again").toHaveLength(2);
   });
 
   it("CONTROL — the same agree with no count on its screen moves nothing old", async () => {

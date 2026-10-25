@@ -85,7 +85,7 @@ async function world() {
       waiting: page.items.map((i) => i.sender.address).sort(),
       total: page.total,
       counts: await cutlineCounts(ctx, { baselineAt: BASELINE }),
-      screenOffer: (await unscreenedSummary(tx, accountId)).groups.map((g) => g.address).sort(),
+      screenOffer: (await unscreenedSummary(tx, accountId, NOW)).groups.map((g) => g.address).sort(),
     };
   };
   const placement = async () => (await db.select({ id: folderState.messageId, d: folderState.desiredFolder, o: folderState.observedFolder })
@@ -104,8 +104,9 @@ describe("the identity backfill and the Screener's Waiting list", () => {
     const listed = [
       "anna@bekannt-neu.invalid", "konto@neu-zahlung.invalid", "rechnung@partner-zwei.invalid", "x@alt-datum.invalid",
     ];
-    // 0.25.17 offered the stranger's Ohbox mail and not the domain-admitted sender's.
-    const offered = ["noreply@konto-update.invalid"];
+    // The stranger's Ohbox mail is history (2023, before the window): the offer leaves it, and the
+    // domain-admitted sender's, in the Inbox.
+    const offered: string[] = [];
     const before = await w.read();
     expect.soft(before.waiting, "what 0.25.17 listed, plus new mail held at ingest").toEqual(listed);
     expect.soft(before.screenOffer, "the Screen offer before the backfill").toEqual(offered);

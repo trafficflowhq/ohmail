@@ -126,6 +126,11 @@ export interface OnboardingMailbox {
    * caller that cannot say, and the stamp rule above stands — read through {@link importOverOf}.
    */
   importOver?: boolean;
+  /**
+   * This install cannot reach the mailbox's server right now (`serverUnreachable`, `mail-state.ts`).
+   * Read by the SCREEN while the import is open; absent is a caller that cannot say.
+   */
+  unreachable?: boolean;
 }
 
 /** The one reading of "is the import over" every setup surface takes. */

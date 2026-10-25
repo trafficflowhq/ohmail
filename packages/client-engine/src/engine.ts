@@ -145,6 +145,11 @@ export type MutationStatus = "confirmed" | "queued" | "awaiting_organizer" | "ro
 /** The server's refusal of a press replayed after the field it sets was decided elsewhere. */
 export const STALE_PRESS_CODE = "stale_press";
 
+/** The Ohbox's folder, as the mirror's messages name it. */
+const OHBOX_FOLDER = "INBOX";
+/** Ohbox mail coming in re-asks the undecided-sender offer at most this often. */
+export const UNSCREENED_REASK_MS = 30_000;
+
 /**
  * WHAT A WITHDRAWAL FOUND — {@link OhmailEngine.withdrawQueued}'s answer. `withdrawn` is the
  * cancellation: nothing was on the wire and nothing will be. `on_the_wire` withdraws nothing —
@@ -2918,10 +2923,13 @@ export class OhmailEngine {
     { armed: false, dirty: false, seq: 0, asking: 0, caughtUpAt: null };
   /**
    * The undecided-sender offer's freshness ({@link refreshUnscreened}). `armed`: a surface asked.
-   * `owed`: a page changed what it counts (a rule's walk ended, a mailbox went), so the settle
-   * asks again. `bell`: that ask in flight.
+   * `owed`: a page changed what it counts (a rule's walk ended, a mailbox or the settings changed),
+   * so the settle asks again. `ohboxDue`: Ohbox mail came or went, asked at most once per
+   * {@link UNSCREENED_REASK_MS} from `askedAt` and kept until a settle makes it. `bell`: the ask in flight.
    */
-  private unscreenedAsk: { armed: boolean; owed: boolean; bell: Promise<void> | null } = { armed: false, owed: false, bell: null };
+  private unscreenedAsk: {
+    armed: boolean; owed: boolean; ohboxDue: boolean; askedAt: number | null; bell: Promise<void> | null;
+  } = { armed: false, owed: false, ohboxDue: false, askedAt: null, bell: null };
   /** Representatives served on pages past the first, which the mirror never holds (capped). */
   private readonly screenerPageReps = new Set<string>();
   /** Which index answered — see {@link OhmailEngine.searchIndexRevision}. */
@@ -6608,27 +6616,53 @@ export class OhmailEngine {
    * ended or that asked for none (`held-release-service.ts#decidedRule`), and every mailbox. A
    * rule entering or leaving that state, or a mailbox delete, owes both a re-ask at the settle.
    * A rule arriving with its walk still running is not one: it is counted when the walk ends.
+   * The undecided-sender offer also follows any mailbox or settings change, and Ohbox mail
+   * coming or going (a first import fills it page by page), the last throttled.
    */
   private noteOfferChanges(changes: SyncChange[]): void {
     const settled = (r: RuleDTO | null | undefined): boolean =>
       r != null && r.enabled !== false && (r.retro === undefined || r.retro.requestedAt === null || r.retro.doneAt !== null);
+    const u = this.unscreenedAsk;
     for (const ch of changes) {
+      if (ch.type === "message") {
+        if (!u.ohboxDue && this.touchesOhbox(ch)) u.ohboxDue = true;
+        continue;
+      }
+      if (ch.type === "settings" || (ch.type === MAILBOX_TYPE && ch.op !== "delete")) {
+        u.owed = true;
+        continue;
+      }
       const removed = ch.type === MAILBOX_TYPE && ch.op === "delete";
       const walked = ch.type === "rule" && settled(this.store.record("rule", ch.id)?.entity as RuleDTO | undefined)
         !== settled(ch.op === "delete" ? null : ch.entity as RuleDTO | undefined);
       if (!removed && !walked) continue;
       this.heldRelease.owed = true;
-      this.unscreenedAsk.owed = true;
-      return;
+      u.owed = true;
     }
   }
 
-  /** The undecided-sender offer's bell, rung at the settle like the held-release one; never awaited. */
+  /** Is the Ohbox this message's folder before the change or after it? Read before the apply. */
+  private touchesOhbox(ch: SyncChange): boolean {
+    const folderOf = (e: unknown): unknown => (e as { folder?: unknown } | null | undefined)?.folder;
+    return folderOf(this.store.record("message", ch.id)?.entity) === OHBOX_FOLDER
+      || (ch.op !== "delete" && folderOf(ch.entity) === OHBOX_FOLDER)
+      || ch.move?.from === OHBOX_FOLDER || ch.move?.to === OHBOX_FOLDER;
+  }
+
+  /**
+   * The undecided-sender offer's bell, rung at the settle like the held-release one; never awaited.
+   * An owed ask goes at once; Ohbox mail waits out {@link UNSCREENED_REASK_MS} since the last ask and
+   * is made at the first settle after it — the surfaces' poll, empty or not (the engine owns no
+   * timer). A failed ask stays owed.
+   */
   private ringUnscreenedBell(): void {
     const u = this.unscreenedAsk;
-    if (!u.armed || !u.owed || u.bell !== null) return;
+    if (!u.armed || u.bell !== null || (!u.owed && !u.ohboxDue)) return;
+    if (!u.owed && (u.askedAt ?? -Infinity) + UNSCREENED_REASK_MS > this.now().getTime()) return;
+    const owed = u.owed;
+    const due = u.ohboxDue;
     u.bell = this.refreshUnscreened()
-      .catch(() => { /* an offer: the next change asks again */ })
+      .catch(() => { u.owed ||= owed; u.ohboxDue ||= due; })
       .finally(() => { u.bell = null; });
   }
 
@@ -6680,6 +6714,8 @@ export class OhmailEngine {
     if (!ask) return;
     this.unscreenedAsk.armed = true;
     this.unscreenedAsk.owed = false;
+    this.unscreenedAsk.ohboxDue = false;
+    this.unscreenedAsk.askedAt = this.now().getTime();
     const wire = await ask.call(this.adapter);
     const before = this.read().list<UnscreenedGroupDTO>(UNSCREENED_TYPE);
     const keep = new Set(wire.groups.map((g) => g.address));

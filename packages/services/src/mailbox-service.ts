@@ -15,6 +15,7 @@ import {
   type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
+import { agreeRecordPayload } from "@trafficflow/core/adapters/drizzle-repo";
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes } from "./read-bounds.js";
@@ -2742,7 +2743,7 @@ export class MailboxService {
       if (input.screenBacklog === true && current.organizeConsentedAt === null && stamp !== null) {
         await tx.insert(auditLog).values({
           accountId: ctx.accountId, action: auditAction("organizer.agree_screens_backlog"),
-          payload: { mailboxId: id }, createdAt: stamp,
+          payload: await agreeRecordPayload(tx, ctx.accountId, id, ctx.now()), createdAt: stamp,
         });
       }
       // The baseline and the window above: the doorbell after the commit rings for them.

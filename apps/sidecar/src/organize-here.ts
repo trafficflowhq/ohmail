@@ -1,13 +1,14 @@
 import { and, eq, ne, sql } from "drizzle-orm";
 import {
   accountSettings, auditAction, auditLog, mailboxes, recordChanges, standDownMemory,
-  type LedgerTx, type OrganizerIntent,
+  type LedgerTx, type OrganizerIntent, type Tx,
 } from "@trafficflow/db";
 import { dialect, type Dialect } from "@trafficflow/db/dialect";
 // The product default and the scope union, from the ONE place that owns them — never a second
 // literal `60` and never a hand-written string union. `consent-cutline.ts` re-exports these from
 // core for the same reason and its header says so.
 import { DEFAULT_DORMANCY_DAYS, type ScreeningScope } from "@trafficflow/core/mail";
+import { agreeRecordPayload } from "@trafficflow/core/adapters/drizzle-repo";
 import { ServiceError, fenceErasedAccount } from "@trafficflow/services/mail";
 import { openLocalDb, type LocalDb } from "./db.js";
 import { createSidecarLog, type Diagnostic } from "./log.js";
@@ -538,7 +539,7 @@ export async function requestOrganizerTakeover(
     if (updated.length > 0 && input.screenBacklog === true && row.organizeConsentedAt === null) {
       await tx.insert(auditLog).values({
         accountId: row.accountId, action: auditAction("organizer.agree_screens_backlog"),
-        payload: { mailboxId: row.id }, createdAt: input.now,
+        payload: await agreeRecordPayload(tx as unknown as Tx, row.accountId, row.id, input.now), createdAt: input.now,
       });
     }
   });

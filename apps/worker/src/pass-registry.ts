@@ -216,11 +216,11 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
   },
   {
     name: "agree_sweep",
-    module: `${CORE}/unscreened-set.ts`, entry: "agreeSweepPass",
-    // The desktop and phone engine call the same function at the head of their first organizing drain.
+    module: `${CORE}/unscreened-set.ts`, entry: "agreeSweepRun",
+    // The desktop and phone engine call the same function at the head of each organizing drain while it runs.
     triggers: ["visit", "attach"],
-    cadence: "once, after the promotion that spends the stamp written with a person's first agree from the window step",
-    budget: "OHBOX_UNSCREENED_MESSAGES_MAX letters, the walk's 25 pages",
+    cadence: "after the promotion that spends the stamp written with a person's first agree from the window step, then every organizing visit until its cursor is done",
+    budget: "AGREE_SWEEP_SLICES_PER_DRAIN slices a visit, each OHBOX_UNSCREENED_MESSAGES_MAX letters and the walk's 25 pages in its own transaction",
     owns: "agreeing screens the in-window mail of never-decided senders, the set the agree screen counted",
     fence: "the mailbox row FOR UPDATE, then FOR UPDATE OF folder_state; desired-state writes only (the reconciler moves)",
   },

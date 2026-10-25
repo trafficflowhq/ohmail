@@ -106,7 +106,7 @@ describe("the Screener's reads, by plan", () => {
        Ohbox it has, it walks the candidates in order (8 ms). The planner's own estimate of the
        candidates, against their count, is what decided it. */
     const estimate = async (): Promise<{ planned: number; found: number }> => {
-      const seen = await recorded(() => unscreenedSummary(o.db as unknown as Tx, accountId));
+      const seen = await recorded(() => unscreenedSummary(o.db as unknown as Tx, accountId, new Date(NOW)));
       const walk = seen.find((s) => /from "folder_state" inner join "messages"/.test(s.text) && /limit \$\d+$/.test(s.text.trim()));
       expect(walk, "the walk's page statement was not seen").toBeDefined();
       const all = `select count(*) from (${walk!.text.trim().replace(/ limit \$\d+$/, "")}) q`;
@@ -127,7 +127,8 @@ describe("the Screener's reads, by plan", () => {
     await vi.waitFor(async () => expect(await reltuples("mailboxes")).toBeGreaterThanOrEqual(0), { timeout: 20_000 });
     const after = await estimate();
     expect(after.found).toBe(before.found);
-    expect(after.planned, "the walk is still planned for a sliver of the Ohbox").toBeGreaterThanOrEqual(after.found / 2);
+    // The control's own line: the window's range on an unindexed column halves the estimate, never to a sliver.
+    expect(after.planned, "the walk is still planned for a sliver of the Ohbox").toBeGreaterThanOrEqual(after.found / 4);
   });
 
   it("GET /screener reads the held window once, page and total together", async () => {

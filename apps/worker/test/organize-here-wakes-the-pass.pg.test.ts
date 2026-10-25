@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { accounts, mailboxCredentials, mailboxes, type Tx } from "@trafficflow/db";
+import { accounts, mailboxCredentials, mailboxes, messages, type Tx } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider } from "@trafficflow/core";
+import { createLogger } from "@trafficflow/core/mail";
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 import { startWorker } from "../src/index.js";
 import { syncKickPass } from "../src/sync-kick.js";
@@ -30,13 +31,14 @@ let DB = "";
 let DB2 = "";
 
 /** A handed-back mailbox: consent recorded, the row a reader, the release marker standing. */
-async function handedBack(db: Db): Promise<ServiceContext & { mailboxId: string }> {
+async function handedBack(db: Db, fresh = false): Promise<ServiceContext & { mailboxId: string }> {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: "organize-here" });
   const [row] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`,
-    organizerRole: "reader", organizeConsentedAt: new Date(Date.now() - 3_600_000),
-    organizerReleasedAt: new Date(Date.now() - 60_000),
+    // `fresh`: a new person's mailbox, read and never agreed to.
+    organizerRole: "reader", organizeConsentedAt: fresh ? null : new Date(Date.now() - 3_600_000),
+    organizerReleasedAt: fresh ? null : new Date(Date.now() - 60_000),
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
@@ -119,6 +121,41 @@ describe("Organize here wakes the pass", () => {
     expect(claimed, "the press was never honoured").toBe(true);
     expect(ms, "the claim waited for the roster interval, not the kick").toBeLessThan(CLAIM_WITHIN_MS);
     expect(fleet.metaFor(ctx.mailboxId).appends).toBe(1);
+  }, 90_000);
+
+  it("the window step's agree gives every in-window letter to the Screener, the sweep carried across visits", async () => {
+    const db = makeDb(DB);
+    const ctx = await handedBack(db, true);
+    const fleet = new FakeAdapterFleet();
+    const old = new Date(Date.now() - 800 * 86_400_000);
+    fleet.behave(ctx.mailboxId, {
+      deliver: Array.from({ length: 14 }, (_, i) => ({
+        from: "stranger@elsewhere.test", subject: `first mail ${i}`, messageId: `w${i}-${randomUUID()}@elsewhere.test`,
+        internalDate: i >= 12 ? old : new Date(),
+      })),
+    });
+    const lines: string[] = [];
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 300, rosterIntervalMs: 200, sentDomain: "trafficflow.test",
+      adapterFactory: fleet.factory, agreeSweepSlice: 1,
+      logger: createLogger({ service: "worker", level: "info", sink: (line) => { lines.push(line); } }),
+      organizer: { installId: "cloud-orgwake", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+    const stored = async () => (await db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.mailboxId, ctx.mailboxId))).length;
+    expect(await waitFor(async () => (await stored()) === 14, 20_000), "the reader did not import").toBe(true);
+
+    expect((await svc.organizeHere(ctx, ctx.mailboxId, {
+      intent: "takeover", screening: { dormancyDays: 365 }, screenBacklog: true,
+    })).outcome).toBe("authorized");
+    // Ten one-letter slices a visit: twelve letters need the cursor carried to a second visit.
+    const screened = () => fleet.movesFor(ctx.mailboxId).filter((f) => f === "ohmail/Screener").length;
+    expect(await waitFor(async () => screened() === 12, 40_000), `moved ${screened()} of 12`).toBe(true);
+    await new Promise((r) => setTimeout(r, 1_000));
+    expect(screened(), "an older letter left the Inbox").toBe(12);
+    const sweeps = lines.filter((l) => l.includes('"organizer_agree_sweep"')).map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(sweeps.map((l) => [l.moved, l.done])).toEqual([[10, false], [2, true]]);
   }, 90_000);
 
   /* THE COUNTERWEIGHT. Two installs (two hosted databases, two install ids) over ONE `_meta`, both

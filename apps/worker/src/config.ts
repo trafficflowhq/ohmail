@@ -280,6 +280,8 @@ export interface WorkerConfig {
   /** How often the leader RE-READS the roster so a mailbox registered (or disabled)
    *  after startup is picked up (or dropped) without a restart. */
   rosterIntervalMs?: number;
+  /** Letters one slice of the agree's sweep moves; absent is the core's bound. Test-only. */
+  agreeSweepSlice?: number;
   /** How often the leader proves it still holds its advisory lock (split-brain guard). */
   lockHeartbeatMs?: number;
   /**

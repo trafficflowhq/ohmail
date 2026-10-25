@@ -12,9 +12,10 @@ import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding
 /**
  * THE AGREE SCREEN NAMES WHAT AGREEING SCREENS. "How far back" says how many letters
  * from how many undecided senders will wait in the Screener, for the window being chosen, and the press
- * carries `screenBacklog` only when that count was on screen. A count over the move bound says "the
- * first N of M" and names the rest as the Screener's offer. Controls: a door with no count names none
- * and asks for no screening of older mail; a takeover asks for none either.
+ * carries `screenBacklog` only when that count was on screen. The count is the whole window, past
+ * 1,000 too; a walk stopped at its bound says "more than". Controls: a door with no count names none
+ * and asks for no screening of older mail; a takeover asks for none either. While the import is open
+ * a lost connection is said in plain words, and its return once.
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -40,19 +41,20 @@ afterEach(async () => {
 async function mount(
   first: OnboardingMailbox,
   count: ((s: { dormancyDays?: number; scope?: string }) => FirstRunDecisionCount) | null,
-  behind?: () => void,
+  { behind, raw, ai = "unset" }: { behind?: () => void; raw?: FirstRunHost["countDecision"]; ai?: OnboardingFacts["ai"] } = {},
 ) {
   const facts: OnboardingFacts = {
-    door: "selfhost", mailbox: first, account: { onboardingCompletedAt: null }, ai: "unset", queuedSenders: 0,
+    door: "selfhost", mailbox: first, account: { onboardingCompletedAt: null }, ai, queuedSenders: 0,
   };
   const asked: Array<{ dormancyDays?: number; scope?: string }> = [];
   const organizedWith: Array<Record<string, unknown>> = [];
   const host: FirstRunHost = {
-    door: "selfhost", ai: "unset",
+    door: "selfhost", ai,
     probe: async () => ({ host: "h", user: "u", folders: 1 }),
     connect: async () => ({ id: "mb-1" }),
     organize: async (_id, body) => { organizedWith.push(body as Record<string, unknown>); return "stored"; },
     ...(count ? { countDecision: async (_id: string, s: { dormancyDays?: number; scope?: string }) => { asked.push(s); return count(s); } } : {}),
+    ...(raw ? { countDecision: raw } : {}),
     complete: async () => { /* stamped */ },
     probeReason: () => null,
     probeMessage: () => null,
@@ -66,18 +68,22 @@ async function mount(
   document.body.appendChild(el);
   const root = createRoot(el);
   roots.push(root);
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: [
-        h(Behind, { key: "b" }),
-        h(FirstRun, {
-          key: "s", host, facts, onRefresh: () => { /* re-read */ }, onLeave: () => { /* left */ },
-          pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
-        }),
-      ] }),
-    }));
-  });
+  /** The shell's render, again with a newer read of the mailbox. */
+  const render = async (mailbox: OnboardingMailbox): Promise<void> => {
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages, timeZone: "UTC",
+        children: h(KeymapProvider, { children: [
+          h(Behind, { key: "b" }),
+          h(FirstRun, {
+            key: "s", host, facts: { ...facts, mailbox }, onRefresh: () => { /* re-read */ }, onLeave: () => { /* left */ },
+            pull: { screened: 0, history: 0, pulled: 0 }, decide: null, mailboxId: "mb-1",
+          }),
+        ] }),
+      }));
+    });
+  };
+  await render(first);
   const flush = async () => { await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); }); };
   const button = (label: string) =>
     [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label)) as HTMLButtonElement | undefined;
@@ -88,7 +94,7 @@ async function mount(
     await flush();
   };
   return {
-    el, asked, organizedWith, press, flush,
+    el, asked, organizedWith, press, flush, render,
     heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
     countLine: () => (el.querySelector(".ob-agree-count")?.textContent ?? "").trim(),
     choose: async (label: string) => {
@@ -119,17 +125,21 @@ describe("How far back names what agreeing screens", () => {
     expect(s.organizedWith[0]).toMatchObject({ intent: "join", screenBacklog: true });
   });
 
-  it("asks again for another window, and says the newest N of M over the bound", async () => {
+  it("asks again for another window, and names the whole count past 1,000", async () => {
     const s = await mount(NOBODY, (sc) => (sc.scope === "all_time"
-      ? { letters: 1000, senders: 41, total: 4212, complete: true, mirrored: true }
+      ? { letters: 4212, senders: 41, total: 4212, complete: true, mirrored: true }
       : EIGHTEEN));
     await s.press(t.continue);
     await s.choose(t.winAll);
     expect(s.asked.at(-1)).toEqual({ scope: "all_time" });
-    expect(s.countLine()).toBe(
-      "The newest 1,000 of 4,212 letters from senders you have not decided about will wait in the Screener. "
-      + "The Screener offers the remaining 3,212.",
-    );
+    expect(s.countLine()).toBe("4,212 letters from 41 senders you have not decided about will wait in the Screener.");
+  });
+
+  it("a walk that stopped at its bound says more than", async () => {
+    const s = await mount(NOBODY, () => ({ letters: 5000, senders: 22, total: 5000, complete: false, mirrored: true }));
+    await s.press(t.continue);
+    await s.flush();
+    expect(s.countLine()).toBe("More than 5,000 letters from at least 22 senders you have not decided about will wait in the Screener.");
   });
 
   it("says when nothing in the window waits for a decision", async () => {
@@ -171,13 +181,42 @@ describe("How far back names what agreeing screens", () => {
     }
   });
 
+  it("a slow count is read again at ten times its own time, never two at once", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      let reads = 0;
+      let inFlight = 0;
+      let most = 0;
+      const slow: FirstRunHost["countDecision"] = () => {
+        reads++;
+        inFlight++;
+        most = Math.max(most, inFlight);
+        return new Promise((r) => setTimeout(() => {
+          inFlight--;
+          r({ letters: 5, senders: 2, total: 5, complete: true, mirrored: false });
+        }, 1_000));
+      };
+      const s = await mount(NOBODY, null, { raw: slow });
+      await s.press(t.continue);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(reads).toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+      expect(reads, "read again before ten times its own time").toBe(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+      expect(reads).toBe(2);
+      expect(most).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a count so far names itself so", async () => {
     const s = await mount(NOBODY, () => ({ letters: 5, senders: 2, total: 5, complete: true, mirrored: false }));
     await s.press(t.continue);
     await s.flush();
     expect(s.countLine()).toBe(
       "ohmail is still reading this window. So far 5 letters from 2 senders you have not decided about would wait in the "
-      + "Screener; mail it reads after you agree stays for the Screener to offer.",
+      + "Screener; mail it reads after you agree goes to the Screener too.",
     );
   });
 
@@ -207,12 +246,46 @@ describe("How far back names what agreeing screens", () => {
 describe("the stage keeps focus", () => {
   it("a shell binding behind it does not run, and Escape asks", async () => {
     let ran = 0;
-    const s = await mount(NOBODY, () => EIGHTEEN, () => { ran++; });
+    const s = await mount(NOBODY, () => EIGHTEEN, { behind: () => { ran++; } });
     await s.key("g");
     await s.key("s");
     expect(ran, "a key behind the stage reached the shell").toBe(0);
     await s.key("Escape");
     await s.flush();
     expect(s.el.textContent).toContain(t.cancel);
+  });
+});
+
+describe("the import's lost connection is said in plain words", () => {
+  const COUNT = { letters: 5, senders: 2, total: 5, complete: true, mirrored: false };
+  const PULLING: OnboardingMailbox = {
+    ...NOBODY, organizerRole: "organizer", organizeConsentedAt: "2026-10-24T08:00:00.000Z", initialImportCompletedAt: null,
+  };
+
+  it("the window step says it is reconnecting while the server cannot be reached", async () => {
+    const s = await mount({ ...NOBODY, unreachable: true }, () => COUNT);
+    await s.press(t.continue);
+    await s.flush();
+    expect(s.el.textContent).toContain(t.windowReconnecting);
+    await s.render(NOBODY);
+    expect(s.el.textContent).not.toContain(t.windowReconnecting);
+  });
+
+  it("the pull step says reconnecting, then that the connection came back", async () => {
+    const s = await mount(PULLING, () => COUNT, { ai: "off" });
+    expect(s.heading()).toBe(t.pullTitle);
+    expect(s.el.textContent).not.toContain(t.pullResumed);
+    await s.render({ ...PULLING, unreachable: true });
+    expect(s.el.textContent).toContain(t.pullReconnecting);
+    expect(s.el.textContent).not.toContain(t.pullResumed);
+    await s.render(PULLING);
+    expect(s.el.textContent).not.toContain(t.pullReconnecting);
+    expect(s.el.textContent).toContain(t.pullResumed);
+  });
+
+  it("CONTROL — once the import is over neither line shows", async () => {
+    const s = await mount({ ...PULLING, initialImportCompletedAt: "2026-10-24T09:00:00.000Z", unreachable: true }, () => COUNT, { ai: "off" });
+    expect(s.el.textContent).not.toContain(t.pullReconnecting);
+    expect(s.el.textContent).not.toContain(t.windowReconnecting);
   });
 });
