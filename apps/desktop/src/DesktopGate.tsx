@@ -65,7 +65,7 @@ import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
-import { DesktopSubscription, useDesktopManageOffer } from "./DesktopSubscription.js";
+import { DesktopSubscription, useDesktopManageOffer, useHostedAccountId } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint } from "./desktop-first-paint.js";
@@ -512,6 +512,7 @@ export function DesktopGate() {
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
   const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
+  const hostedAccountId = useHostedAccountId(accountDoor);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
   const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
 
@@ -1330,9 +1331,9 @@ export function DesktopGate() {
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
-        /* SETTINGS → HELP & CONTACT. The window holds no account id, so the block says none; a
-           mailto here would come back into this window's composer, so the fallback is copy. */
-        {...(status ? { support: { surface: "desktop" as const, version: BUILD_VERSION, commit: BUILD_SHA || null, accountId: null, mailtoLeaves: false } } : {})}
+        /* SETTINGS → HELP & CONTACT. The block names the hosted account on the account door and none
+           elsewhere; a mailto here would come back into this window's composer, so the fallback is copy. */
+        {...(status ? { support: { surface: "desktop" as const, version: BUILD_VERSION, commit: BUILD_SHA || null, accountId: hostedAccountId, mailtoLeaves: false } } : {})}
         /* The pane the web client cannot have. Present only when the shell answered — outside
            the app there is no install to describe, and an empty one would be a pane about
            nothing. */

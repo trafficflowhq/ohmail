@@ -161,6 +161,10 @@ function land(p: Place, returnTo: boolean): boolean {
     }
   } else if (p.layer?.isConnected && (modal === null || modal.contains(p.layer))) {
     return enterInto(p.layer);
+  } else if (p.el !== null && p.el === p.row && p.el.hasAttribute("tabindex")) {
+    /* A CURSOR ROW TAKEN AWAY (moved under New, or filed): the ring goes where the cursor is, or
+       to the list's own stop. A neighbour would wear the ring while the verbs act elsewhere. */
+    if (take(cursorRow()) || take(p.list?.closest<HTMLElement>(".scroller") ?? null)) return true;
   }
   for (const q of chain) {
     if (take(q.next) || take(rowById(q.nextId)) || take(q.prev) || take(rowById(q.prevId))) return true;

@@ -235,6 +235,29 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     }, 30_000);
   }
 
+  it("a month chosen by keyboard takes the cursor and the focus to its first row, and j walks on from there", async () => {
+    const { rows, starts } = rowsOf(WINDOWED);
+    const fx = await storeFixture(rows);
+    const { host } = await mount(fx.engine);
+    await settle(4);
+    await press(host, "2025", true);
+    const slot = starts.get("2025-10")!;
+    const oct = rail(host).find((b) => b.textContent === "Oct" && !b.classList.contains("year"))!;
+    // ↵ on a focused button is its click.
+    await act(async () => { oct.focus(); oct.click(); await Promise.resolve(); });
+    await landOn(host, slot);
+    for (let i = 0; i < 40 && host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index !== String(slot); i++) await settle(1);
+    const sel = host.querySelector<HTMLElement>(".rows > .row.sel");
+    expect(sel?.dataset.index, "the month's first row holds the cursor").toBe(String(slot));
+    expect(document.activeElement, "and the focus").toBe(sel);
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
+    });
+    await settle(2);
+    expect(host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index, "j walks the month").toBe(String(slot + 1));
+    expect((document.activeElement as HTMLElement).dataset.index).toBe(String(slot + 1));
+  });
+
   it("the keyboard cursor stays on screen under the note: ↓ scrolls before its row passes the bottom edge", async () => {
     rowPx = () => 80;
     const { rows } = rowsOf(WINDOWED);

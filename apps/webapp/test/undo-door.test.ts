@@ -63,6 +63,42 @@ describe("the undo door", () => {
     expect(door.press()).toBe(false);
   });
 
+  it("z before the offer is raised takes it the moment it is: the press arms the undo, the toast only shows it", () => {
+    const { door, shown } = rig();
+    let taken = 0;
+    const claim = door.expect();
+    expect(door.press()).toBe(true);
+    door.toast("Parked.", { action: "Undo", duration: 8000, undo: true, onAction: () => { taken++; }, claim });
+    expect(taken).toBe(1);
+    expect(shown).toEqual([]);
+    expect(door.press()).toBe(false);
+  });
+
+  it("an offer raised with no z waiting stands as before, and a press that offers nothing leaves z with nothing", () => {
+    const { door } = rig();
+    let taken = 0;
+    const claim = door.expect();
+    door.toast("Parked.", { action: "Undo", duration: 8000, undo: true, onAction: () => { taken++; }, claim });
+    expect(taken).toBe(0);
+    expect(door.press()).toBe(true);
+    expect(taken).toBe(1);
+    door.drop(door.expect());
+    expect(door.press()).toBe(false);
+  });
+
+  it("an offer raised with no claim while an earlier press is unanswered is the newer press: z takes it", () => {
+    const { door, shown } = rig();
+    const taken: string[] = [];
+    const claim = door.expect();
+    door.toast("Deleted.", { action: "Undo", duration: 8000, undo: true, onAction: () => { taken.push("delete"); } });
+    expect(door.press()).toBe(true);
+    expect(taken).toEqual(["delete"]);
+    expect(claim.asked).toBe(false);
+    door.toast("Parked.", { action: "Undo", duration: 8000, undo: true, onAction: () => { taken.push("park"); }, claim });
+    expect(taken).toEqual(["delete"]);
+    expect(shown.map((s) => s.message)).toEqual(["Deleted.", "Parked."]);
+  });
+
   it("an action that is not an Undo passes through and arms nothing (the control)", () => {
     const { door, shown } = rig();
     let pressed = 0;

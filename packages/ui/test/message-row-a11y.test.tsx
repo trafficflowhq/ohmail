@@ -13,10 +13,9 @@
  * DESCRIPTION is read off the attribute here, because the `dom-accessibility-api` this repo
  * resolves (0.5.x, through `@testing-library/dom`) predates `aria-description` and reports every
  * row as having none. Browsers do not: Chromium's own tree, read over the shipped shell through
- * CDP, computes `description` from it, and Playwright's computation agrees in WebKit — the engine
- * the Linux desktop renders in. The browser reading is the rig's, and it is what settled the
- * attribute over an `aria-describedby` node, which would have cost one element on every row of a
- * list that mounts tens per scroll.
+ * CDP, computes `description` from it. Playwright's computation in WebKit is its own script, not the
+ * engine's tree: over AT-SPI the Linux desktop (WebKitGTK) exposed no description at all, so the
+ * words also ride an `aria-describedby` node.
  *
  * MUTATION-PROVEN AT AUTHORING TIME (each applied, watched red, restored, `cmp`-verified):
  *   · `chosen` → `false` — the selection cases go red, the naming cases stay green.
@@ -192,15 +191,21 @@ describe("a mail row states its name, its stamp, its read state and its selectio
     expect(chosen[0]!.getAttribute("aria-label")).toBe("Sender 2: Subject 2");
   });
 
-  it("adds no node to a row — one attribute is the whole cost", () => {
-    const { container } = render(<List />);
+  it("carries its description through aria-describedby too, which WebKitGTK's AT-SPI exposes and aria-description is not", () => {
+    const { container, getAllByRole } = render(<List />);
     const row = container.querySelector<HTMLElement>('[role="option"][aria-label="Sender 0: Subject 0"]')!;
-    /* The row's own children, counted: the lead is absent in this fixture, so what is here is the
-       two lines a row has always drawn. A description that cost a hidden node per row would show
-       up as one more, on every row, in a list that mounts tens of them per scroll. */
-    expect(row.querySelectorAll("span[aria-hidden], .sr-desc, [id^='desc-']")).toHaveLength(0);
-    expect(row.getAttribute("aria-describedby")).toBeNull();
-    expect(row.getAttribute("aria-description")).toContain("Unread");
+    // The referenced node's label is what the tree computes the description from.
+    const said = document.getElementById(row.getAttribute("aria-describedby") ?? "")?.getAttribute("aria-label");
+    expect(said).toBe(row.getAttribute("aria-description"));
+    expect(said).toContain("Unread");
+    // Hidden from sight and from the tree on its own; the row's name is unchanged.
+    const node = document.getElementById(row.getAttribute("aria-describedby")!)!;
+    expect(node.hidden).toBe(true);
+    expect(node.textContent).toBe("");
+    expect(getAllByRole("option", { name: "Sender 0: Subject 0" })).toEqual([row]);
+    // Two rows, two references: a list never names one row's facts for another.
+    const other = container.querySelector<HTMLElement>('[role="option"][aria-label="Sender 1: Subject 1"]')!;
+    expect(other.getAttribute("aria-describedby")).not.toBe(row.getAttribute("aria-describedby"));
   });
 
   it("keeps every new prop comparable, so a shallow row memo still skips an unrelated render", () => {
