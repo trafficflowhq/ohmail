@@ -1,5 +1,5 @@
 import {
-  planChange, commitChange, canonicalDestination, isNewsFolder, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
+  planChange, commitChange, adoptExternalPlacement, canonicalDestination, isNewsFolder, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
   LEGACY_NEWS_FOLDER, NEWS_FOLDER,
   type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
   type CycleSignatures, type ImportHold, type Logger, type OhboxPolicy, type PlanSignatures, type ProcessResult,
@@ -869,9 +869,9 @@ async function commitFenced(
  * and the cycle goes on: like a crash before this line, it is owed again by the next override.
  */
 async function runOwedDemotions(
-  repo: WorkerRepo, accountId: string, mailboxId: string, result: ProcessResult, log: Logger | undefined,
+  repo: WorkerRepo, accountId: string, mailboxId: string, owed: readonly string[], log: Logger | undefined,
 ): Promise<void> {
-  for (const patternKey of result.owedDemotions ?? []) {
+  for (const patternKey of owed) {
     try {
       await repo.demoteRoute(accountId, patternKey);
     } catch (err) {
@@ -1415,8 +1415,7 @@ async function syncCycleWithin(
     proved.set(f, group);
   };
   for (const ch of batch.resetGone ?? []) prove("reset_reread", ch);
-  let deletesCapped = false;
-  let deletesRecorded = 0;
+  const believed: Change[] = [];
   for (const ch of batch.deletes) {
     const site = siteOf(ch);
     const live = observedEpochs.get(site.folder) ?? batch.newCursor.folders[site.folder]?.uidValidity;
@@ -1425,11 +1424,44 @@ async function syncCycleWithin(
     // The organizer's repair re-points them (`news-repair.ts`), and the row retires once it has.
     if (goneFolders.has(site.folder) && site.folder === LEGACY_NEWS_FOLDER) continue;
     if (goneFolders.has(site.folder)) { prove("folder_gone", ch); continue; }
+    believed.push(ch);
+  }
+  // Every copy this pass reports gone, past the cap too: a promoted copy among them is a deletion.
+  const goneKey = (l: NativeLocator): string | null => {
+    const { uidValidity, uid } = parseRef(l.ref);
+    const e = epochOf(uidValidity);
+    return e.known ? `${l.folder}\u0000${e.value}\u0000${uid}` : null;
+  };
+  const vanishing = new Set<string | null>([...believed, ...[...proved.values()].flatMap((g) => g.changes)]
+    .map((ch) => goneKey(ch.locator)));
+  vanishing.delete(null);
+  // A copy the expunge promoted is where the letter now is: a settled, live row follows it, as the
+  // arrival would have had the expunge come first. In the forget's own group: once that commits the
+  // vanished UID leaves the known-set and is never reported again. No IMAP command here.
+  const sentPath = batch.deletes.length > 0 || proved.size > 0 ? (await sentFolderOf(deps)).sentFolder ?? null : null;
+  const owedDemotions: string[] = [];
+  const forgetAndSettle = async (r: WorkerRepo, gone: NativeLocator): Promise<void> => {
+    const copy = await r.forgetInstanceAt(mailboxId, gone);
+    if (copy == null || copy.tombstoned || copy.folder === sentPath || vanishing.has(goneKey(copy))) return;
+    const from = canonicalDestination(gone.folder);
+    if (canonicalDestination(copy.folder) === from) return;
+    const state = await r.getFolderState(copy.messageId);
+    if (state === null || canonicalDestination(state.desiredFolder) !== from
+      || canonicalDestination(state.observedFolder) !== from) return;
+    const adopted = await adoptExternalPlacement({
+      repo: r, routing: r, accountId, mailboxId,
+      ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
+    }, copy.messageId, state.desiredFolder, copy.folder);
+    if (adopted.owedDemotion !== null) owedDemotions.push(adopted.owedDemotion);
+  };
+  let deletesCapped = false;
+  let deletesRecorded = 0;
+  for (const ch of believed) {
     // BOUNDED — see {@link DELETE_EVIDENCE_PER_CYCLE}. The cap is counted over the deletes this
     // cycle BELIEVES, not over everything the adapter reported: a UIDVALIDITY reset's prior-epoch
     // refs are skipped above and must not spend a budget meant for real disappearances.
     if (deletesRecorded >= DELETE_EVIDENCE_PER_CYCLE) { deletesCapped = true; break; }
-    await fencedLiveGroup(deps, (r) => r.forgetInstanceAt(mailboxId, ch.locator));
+    await fencedLiveGroup(deps, (r) => forgetAndSettle(r, ch.locator));
     deletesRecorded++;
   }
   if (deletesCapped) {
@@ -1442,7 +1474,7 @@ async function syncCycleWithin(
   }
   for (const [folder, { kind, changes }] of proved) {
     await fencedLiveGroup(deps, async (r) => {
-      for (const ch of changes) await r.forgetInstanceAt(mailboxId, ch.locator);
+      for (const ch of changes) await forgetAndSettle(r, ch.locator);
     });
     log?.info("sync_folder_instances_forgotten", {
       mailboxId, accountId, folderLabel: folderLabel(folder), kind, count: changes.length,
@@ -1451,6 +1483,7 @@ async function syncCycleWithin(
         : "a UIDVALIDITY reset's whole re-read holds none of these letters, so they are gone",
     });
   }
+  await runOwedDemotions(repo, accountId, mailboxId, owedDemotions, log);
 
   // The reaper (mail 0065): a message whose every watched instance is gone leaves the mirror.
   // `forgetInstanceAt` above removes instances and promotes survivors, and until this pass that was
@@ -1501,7 +1534,7 @@ async function syncCycleWithin(
           repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
           ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
         }, deps.fence !== undefined));
-      await runOwedDemotions(repo, accountId, mailboxId, committed, log);
+      await runOwedDemotions(repo, accountId, mailboxId, committed.owedDemotions ?? [], log);
       // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
       if (plan.outcome === "new") { deadLetters.noteStored(); deadLetters.noteProgressIn(ch.locator.folder); }
       // A message RE-LEARNED, which a renumbered folder's re-read does once per message: progress
@@ -2024,7 +2057,7 @@ async function retryFailedMessages(
             deps.fence !== undefined,
           ),
         );
-        await runOwedDemotions(repo, accountId, mailboxId, committed, log);
+        await runOwedDemotions(repo, accountId, mailboxId, committed.owedDemotions ?? [], log);
         // The retry is the SAME two-phase ingest, so a held sender it commits owes the same
         // visit — the path beside the one above, fixed together ({@link SyncDeps.onScreenerHold}).
         if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);

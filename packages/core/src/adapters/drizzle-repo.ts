@@ -212,6 +212,12 @@ export interface StorageRefillCounter {
 /** Why the storage refill waits for an account: erased, a mailbox being erased, or a live one still importing. */
 export type StorageRefillHold = "account_erased" | "erasing" | "importing";
 
+/** The copy an observed expunge made primary, the message it belongs to, and whether that row is deleted. */
+export interface PromotedCopy extends NativeLocator {
+  messageId: string;
+  tombstoned: boolean;
+}
+
 /** A `flag_state` row still owed an IMAP write, joined to the locator the write needs. */
 export interface PendingFlagState {
   messageId: string; desiredSeen: boolean; observedSeen: boolean;
@@ -601,7 +607,7 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * a surviving watched copy, `null` otherwise — a promoted survivor means the message is still
    * in watched space, so a delete filing is not done (`junk-filing.ts#completeFiling`).
    */
-  forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null>;
+  forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<PromotedCopy | null>;
   /**
    * Is `locator` the ONLY instance recorded for this message? The reconciler asks it when a move
    * finds its source absent: with no other copy on record, the message has no server instance and
@@ -1466,7 +1472,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * exists. No-op when the deleted row was not primary or nothing survives; returns the promoted
    * survivor's locator, else `null`.
    */
-  async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<NativeLocator | null> {
+  async forgetInstanceAt(mailboxId: string, locator: NativeLocator): Promise<PromotedCopy | null> {
     const removed = await this.db.delete(messageInstances).where(and(
       eq(messageInstances.mailboxId, mailboxId),
       eq(messageInstances.folder, locator.folder),
@@ -1491,9 +1497,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     };
     await this.db.update(messageInstances)
       .set({ isPrimary: true }).where(eq(messageInstances.id, survivor.id));
-    await this.db.update(messages).set({ nativeLocator: promoted })
-      .where(eq(messages.id, orphaned.messageId));
-    return promoted;
+    const [row] = await this.db.update(messages).set({ nativeLocator: promoted })
+      .where(eq(messages.id, orphaned.messageId)).returning({ deletedAt: messages.deletedAt });
+    return { ...promoted, messageId: orphaned.messageId, tombstoned: row?.deletedAt != null };
   }
 
   /** See {@link WorkerRepo.onlyInstanceAt}. One read of at most two rows. */

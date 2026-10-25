@@ -142,7 +142,7 @@ function adoptArms(text: string, fileName = "x.ts"): Array<{ writes: string[]; v
         if (ts.isCallExpression(m)) {
           const nm = calleeName(m);
           if (nm !== null && (CONDITIONAL_WRITES.has(nm) || BLIND_WRITES.has(nm))) writes.push(nm);
-          if (nm === "adoptWithWitness") viaHelper = true;
+          if (nm === "adoptWithWitness" || nm === "adoptExternalPlacement") viaHelper = true;
         }
         ts.forEachChild(m, walk);
       };
@@ -277,6 +277,8 @@ describe("post-round-trip and blind folder-state writes, censused by source root
     // is asked instead, so a blind write cannot enter the adoption by either route.
     expect(writesInFunction(text, "adoptWithWitness", "pipeline.ts"))
       .toEqual(["adoptFolderState", "completeFolderState"]);
+    // The shared adoption door (the arm's, and a promoted copy's in the sync loop) writes through it only.
+    expect(writesInFunction(text, "adoptExternalPlacement", "pipeline.ts")).toEqual([]);
 
     // The one arm — the ingest arrival's; the reconcile writer admits no adoption — goes through
     // it and writes nothing of its own. The COUNT is asserted: an arm that stopped existing would

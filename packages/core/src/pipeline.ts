@@ -150,6 +150,27 @@ export async function adoptWithWitness(
 }
 
 /**
+ * THE PERSON'S PLACEMENT, ADOPTED: the witnessed write, the `move` delta clients follow, and the
+ * override the route that filed it is owed. One door for an arrival found elsewhere
+ * ({@link commitChange}) and for a copy an expunge promoted (the sync loop's delete arm).
+ */
+export async function adoptExternalPlacement(
+  deps: Pick<CommitDeps, "repo" | "accountId" | "mailboxId" | "routing" | "observedSince">,
+  messageId: string, witness: string, to: string,
+): Promise<{ owedDemotion: string | null }> {
+  const { repo, accountId } = deps;
+  const observedSince = deps.observedSince !== undefined ? deps.observedSince : await adoptionBound(repo, deps.mailboxId);
+  await adoptWithWitness({ repo, accountId, observedSince }, messageId, to, witness);
+  const seq = await repo.recordChange({
+    accountId, entityType: "message", entityId: messageId, op: "move", meta: { from: witness, to },
+  });
+  const override = await deps.routing?.recordExternalOverride?.({
+    accountId, messageId, filedTo: witness, movedTo: to, seq,
+  });
+  return { owedDemotion: override?.demoted ? override.patternKey : null };
+}
+
+/**
  * The "Organization Writer": the port writes for a computed reconcile action. Idempotent, and the
  * move runs OUTSIDE the seq/change_log tx. A gone source locator is DEFERRED, never thrown — each
  * call site is a committed decision — and writes no folder state (a post-I/O write of a pre-I/O
@@ -2104,27 +2125,12 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
       // observation is older than it. A miss records where the message IS and leaves the desire
       // to the newer press. The three writes below stand either way — the person's hand landing
       // somewhere is a fact whichever desire won.
-      const observedSince = deps.observedSince !== undefined ? deps.observedSince : await adoptionBound(repo, mailboxId);
-      await adoptWithWitness({ repo, accountId, observedSince }, e.messageId, to, e.state.desiredFolder);
-      // The tombstone was already cleared before the switch (every arrival shape clears it, not
-      // only this arm — see the block above); the `move` change below carries the live entity,
-      // so this arm needs no separate resurrection delta.
-      const adoptSeq = await repo.recordChange({
-        accountId, entityType: "message", entityId: e.messageId, op: "move",
-        meta: { from: e.state.desiredFolder, to },
-      });
-      // ── THE OVERRIDE FEEDS THE ROUTE THAT FILED IT ──────────────────────────────────────
-      //
-      // The one seam where a graduated route is contradicted by the only evidence that settles
-      // it: the person moved the mail out of the folder we chose. `null` for every ordinary
-      // adoption, so the ingest path pays one indexed read here and nothing else.
-      const override = await routing?.recordExternalOverride?.({
-        accountId, messageId: e.messageId,
-        filedTo: e.state.desiredFolder, movedTo: to, seq: adoptSeq,
-      });
-      // The demotion is OWED, not run: its rule write and that write's delta happen after this
-      // commit, through the one door, so this transaction ends at the graduation's row.
-      if (override?.demoted) owedDemotion = override.patternKey;
+      // The tombstone was already cleared before the switch; the `move` change carries the live
+      // entity. The override's demotion is OWED, run after this commit through the one door.
+      ({ owedDemotion } = await adoptExternalPlacement(
+        { repo, accountId, mailboxId, ...(routing !== undefined ? { routing } : {}), ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}) },
+        e.messageId, e.state.desiredFolder, to,
+      ));
       break;
     }
     case "move": {

@@ -1,15 +1,17 @@
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNull, max } from "drizzle-orm";
 import type {
-  ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, MoveManyResult,
+  Change, ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, MoveManyResult,
   NativeLocator, OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import { formatClaim, type LeaseIo, type RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
   formatProfileMessage, makeProfileDoc, type ProfileIo, type RawProfileMessage,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { changeLog, folderState, mailboxProfileMirror, mailboxes, routingDecisions, rules } from "@trafficflow/db";
+import {
+  changeLog, folderState, mailboxProfileMirror, mailboxes, messages, routingDecisions, rules,
+} from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { authorizeOrganizerTakeover } from "../src/organize-here.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -34,6 +36,8 @@ class MetaWorld {
   claims: RawClaimMessage[] = [];
   profileReads = 0;
   moves = 0;
+  /** What the server reports, one batch per pass; an empty pass once the queue is drained. */
+  batches: Array<Partial<ChangeBatch>> = [];
   private profiles: RawProfileMessage[] = [];
 
   /** The host takes the mailbox, and has published one decision: B is let in. */
@@ -86,7 +90,7 @@ function rigAdapter(meta: MetaWorld): (cfg: ImapConfig) => MailboxAdapter {
       return { move: true, uidplus: true, condstore: true, qresync: false, idle: true, specialUse: true, sentFolder: null };
     },
     async ensureFolders(): Promise<void> {},
-    async changesSince(): Promise<ChangeBatch> { return { ...empty }; },
+    async changesSince(): Promise<ChangeBatch> { return { ...empty, ...meta.batches.shift() }; },
     async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
       meta.moves += 1;
       return { folder: toFolder, ref: locator.ref };
@@ -103,6 +107,25 @@ function rigAdapter(meta: MetaWorld): (cfg: ImapConfig) => MailboxAdapter {
   } as MailboxAdapter & Record<string, unknown>;
   return () => adapter;
 }
+
+// ── A LETTER THE ORGANIZER FILED, IN EVERY ORDER THE READER CAN SEE IT ─────────────────────────
+const NEWS = "ohmail/News";
+const CURSOR = { folders: {
+  INBOX: { uidValidity: "11", uidNext: 100, highestModseq: "5" },
+  [NEWS]: { uidValidity: "22", uidNext: 100, highestModseq: "5" },
+} };
+const EPOCH: Record<string, string> = { INBOX: "11", [NEWS]: "22" };
+const digest = (id: string): Buffer => Buffer.from([
+  "From: Person Six <person06@sender.test>", `To: ${ADDRESS}`, "Subject: Weekly digest",
+  "Date: Sat, 26 Sep 2026 08:00:11 +0000", `Message-ID: <${id}@sender.test>`,
+  "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", "This week in news.", "",
+].join("\r\n"));
+const at = (folder: string, uid: number) => ({ folder, ref: `${EPOCH[folder]}:${uid}` });
+const arrive = (folder: string, uid: number, raw: Buffer): Change => ({
+  type: "create", locator: at(folder, uid), raw, seen: false, internalDate: new Date("2026-09-26T08:00:11.000Z"),
+});
+const gone = (folder: string, uid: number): Change => ({ type: "delete", locator: at(folder, uid) });
+const pass = (p: Partial<ChangeBatch>): Partial<ChangeBatch> => ({ newCursor: CURSOR, ...p });
 
 describe("a reading desktop's cycle", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
@@ -193,4 +216,64 @@ describe("a reading desktop's cycle", () => {
     const next = await again.json() as { changes: Array<{ type: string }> };
     expect(next.changes.filter((c) => c.type === "mailbox_profile")).toHaveLength(0);
   });
+
+  async function letterState(s: Sidecar) {
+    const [m] = await s.db.select().from(messages);
+    const [fs] = await s.db.select().from(folderState).where(eq(folderState.messageId, m!.id));
+    const res = await s.handle(new Request("http://sidecar/sync/snapshot", {
+      headers: { authorization: `Bearer ${s.sessionToken}` },
+    }));
+    const page = await res.json() as { changes: Array<{ type: string; id: string; entity: { folder?: string } }> };
+    const rows = await s.db.select({ op: changeLog.op, meta: changeLog.meta }).from(changeLog)
+      .where(eq(changeLog.entityId, m!.id));
+    return {
+      shown: page.changes.find((c) => c.type === "message" && c.id === m!.id)?.entity.folder,
+      desired: fs!.desiredFolder, observed: fs!.observedFolder, lastSetBy: fs!.lastSetBy, conflict: fs!.conflict,
+      moves: rows.filter((r) => r.op === "move").map((r) => r.meta), changes: rows.length,
+    };
+  }
+  const topSeq = async (s: Sidecar): Promise<bigint | null> =>
+    (await s.db.select({ top: max(changeLog.seq) }).from(changeLog))[0]!.top;
+
+  it.each([
+    ["both copies in one pass, then the INBOX expunge", [
+      { creates: [arrive("INBOX", 7, digest("race")), arrive(NEWS, 3, digest("race"))] },
+      { deletes: [gone("INBOX", 7)] },
+    ]],
+    ["the News copy in one pass, the INBOX expunge in the next", [
+      { creates: [arrive("INBOX", 7, digest("race"))] },
+      { creates: [arrive(NEWS, 3, digest("race"))] },
+      { deletes: [gone("INBOX", 7)] },
+    ]],
+    ["the INBOX expunge before the News copy", [
+      { creates: [arrive("INBOX", 7, digest("race"))] },
+      { deletes: [gone("INBOX", 7)], creates: [arrive(NEWS, 3, digest("race"))] },
+    ]],
+    ["a correlated move", [
+      { creates: [arrive("INBOX", 7, digest("race"))] },
+      { moves: [{ ...arrive(NEWS, 3, digest("race")), type: "move" } as Change] },
+    ]],
+  ] as Array<[string, Array<Partial<ChangeBatch>>]>)(
+    "shows a letter the organizer filed into News in News, whatever the order: %s",
+    async (_order, passes) => {
+      const meta = new MetaWorld();
+      const sidecar = await boot(meta);
+      meta.hostOrganizes();
+      for (const p of passes) {
+        meta.batches.push(pass(p));
+        await sidecar.syncMailbox(sidecar.world.mailboxId);
+        nowMs += 11_000;
+      }
+      expect(sidecar.organizerState().organizing).toBe(false);
+      expect(await letterState(sidecar), "the reader kept the INBOX placement after its copy vanished").toEqual({
+        shown: NEWS, desired: NEWS, observed: NEWS, lastSetBy: "external", conflict: false,
+        moves: [{ from: "INBOX", to: NEWS }], changes: expect.any(Number),
+      });
+      expect(meta.moves, "a reader issued an IMAP move").toBe(0);
+      const settled = await topSeq(sidecar);
+      await sidecar.syncMailbox(sidecar.world.mailboxId);
+      expect(await topSeq(sidecar), "a further drain wrote again").toBe(settled);
+    },
+  );
+
 });
