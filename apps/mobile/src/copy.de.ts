@@ -132,6 +132,9 @@ export const DE: Deck = {
   phoneStateStopping: "Wird beendet",
   phoneStateStopPending: "Stopp ausstehend",
   phoneStateStopPendingWhy: "Ein Stopp steht bereits aus; es wartet auf das Postfach.",
+  phoneStateSettingsUnsynced: "Organisiert, aber die Einstellungen dieses Postfachs lassen sich auf dem Mailserver nicht speichern oder lesen. ohmail versucht es weiter.",
+  phoneStateSettingsUnsyncedCode: (code: string) =>
+    `Organisiert, aber die Einstellungen dieses Postfachs lassen sich auf dem Mailserver nicht speichern oder lesen (${code}). ohmail versucht es weiter.`,
   phoneStateStopSiblingLapse: "Eine andere Kopie dieses Handys hält den Anspruch auf das Postfach noch; der Stopp endet, wenn dieser Anspruch verfällt.",
   /* Ohne Desktop-Zwilling: nur auf dem Handy kann ein Start hinter einem Stopp warten. */
   phoneStateStarting: "Wird gestartet",

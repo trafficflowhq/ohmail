@@ -226,6 +226,10 @@ const TABLE = {
      still ours and "Organizing" would say the press did nothing. */
   phoneStateStopPending: "Stop pending",
   phoneStateStopPendingWhy: "A stop is already pending; waiting for the mailbox.",
+  /* The desktop's `desktopStateSettingsUnreadable`, write-accurate: the block covers reads and appends. */
+  phoneStateSettingsUnsynced: "Organizing, but this mailbox's settings can't be saved to or read from the mail server. ohmail keeps trying.",
+  phoneStateSettingsUnsyncedCode: (code: string) =>
+    `Organizing, but this mailbox's settings can't be saved to or read from the mail server (${code}). ohmail keeps trying.`,
   /* The stop waits on a copy of this phone's claim — the desktop's `stopOrganizingSiblingLapse`. */
   phoneStateStopSiblingLapse: "Another copy of this phone still holds the mailbox's claim; the stop finishes when that claim lapses.",
   /* The sixth, and the only one with no desktop twin: a computer has no start to wait through —

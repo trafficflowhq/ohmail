@@ -319,7 +319,7 @@ export type PhoneClaim =
    * answer, carried so the chip is the engine's state rather than a plain `Organizing` over a
    * mailbox somebody has already asked this phone to let go.
    */
-  | { k: "ours"; stopping: boolean; releasePending: boolean; siblingLapse?: boolean }
+  | { k: "ours"; stopping: boolean; releasePending: boolean; siblingLapse?: boolean; settingsBlocked?: { code: string | null } }
   /** Read, and no install holds it. `starting` = a start is asked for and not yet confirmed. */
   | { k: "free"; starting: boolean }
   /**
@@ -377,7 +377,8 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
          the same verb again. */
       return claim.stopping ? Copy.phoneStateStopping
         : claim.releasePending ? Copy.phoneStateStopPending
-          : Copy.phoneStateOrganizing;
+          : claim.settingsBlocked ? settingsBlockedLine(claim.settingsBlocked.code)
+            : Copy.phoneStateOrganizing;
     case "free":
       return claim.starting ? Copy.phoneStateStarting : Copy.phoneStateNotOrganized;
     case "pairedServer":
@@ -394,6 +395,11 @@ export function claimChipLabel(claim: PhoneClaim): string | null {
       // The chip is the whole sentence: the desktop row's, word for word.
       return metaBlockedLine(claim.reason);
   }
+}
+
+/** Organizing, with the settings document that cannot be kept named by its code where there is one. */
+function settingsBlockedLine(code: string | null): string {
+  return code === null ? Copy.phoneStateSettingsUnsynced : Copy.phoneStateSettingsUnsyncedCode(code);
 }
 
 /** The desktop row's sentence for the gate's named refusals. */
@@ -612,6 +618,8 @@ export function claimHere(
     releaseRefusal?: "sibling_lapse" | null;
     /** The gate's named `_meta` refusal ({@link StandaloneHere}); absent reads as none. */
     metaBlocked?: GateBlock | null;
+    /** The engine's confirmed settings-document block ({@link StandaloneHere}); absent reads as none. */
+    profileBlocked?: { code: string | null } | null;
     /**
      * WHO ELSE HOLDS IT, from the engine's stand-down or its last look. `holderState` decides
      * whether that holder still organizes: `none` or `stopped` is nobody, as {@link claimFrom}
@@ -647,8 +655,10 @@ export function claimHere(
      reporting itself organizing or has already stopped reporting it. */
   const releasePending = here.releaseRequestedAt !== null;
   const siblingLapse = releasePending && here.releaseRefusal === "sibling_lapse";
+  const settingsBlocked = here.profileBlocked ?? null;
   const ours = (): PhoneClaim => ({
     k: "ours", stopping: instruction === "stopping", releasePending, ...(siblingLapse ? { siblingLapse } : {}),
+    ...(settingsBlocked !== null ? { settingsBlocked: { code: settingsBlocked.code } } : {}),
   });
   /* A REFUSED GATE'S REASON WINS OVER `organizing`, the desktop's precedence — except while a
      stop the person made is being carried out, which is their act and says so. */

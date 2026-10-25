@@ -214,6 +214,8 @@ export interface StandaloneEngine {
       storeFaultSince?: Date | null;
       /** HOW MANY MESSAGES THIS PHONE SET ASIDE and has not read since. Absent reads as none. */
       setAside?: number;
+      /** THE SETTINGS DOCUMENT CANNOT BE KEPT (a read or a write keeps failing); absent or unconfirmed reads as none. */
+      profileBlocked?: { code: string | null; confirmed: boolean } | null;
       /**
        * AND WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`, or
        * `produced_nothing_readable`. The third is the one no surface could report: a drain came

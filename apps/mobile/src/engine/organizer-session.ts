@@ -281,6 +281,8 @@ export interface StandaloneHere {
   readonly writeOffsHeld: boolean;
   /** Messages this phone set aside and has not read since, summed over its mailboxes; 0 while unsaid. */
   readonly setAside: number;
+  /** The engine's confirmed settings-document block (profile reads or writes keep failing), or `null`. */
+  readonly profileBlocked: { readonly code: string | null } | null;
   /**
    * WHAT THE FIRST SYNC OF THIS MAILBOX PRODUCED — `pending`, `finished`,
    * `produced_nothing_readable`, or `null` while the engine has not said, exactly as the two
@@ -317,6 +319,7 @@ export function standaloneHere(): StandaloneHere | null {
   let dialled = true;
   let writeOffsHeld = false;
   let setAside = 0;
+  let profileBlocked: StandaloneHere["profileBlocked"] = null;
   /** `null` until the engine has said — see the field. */
   let firstSync: string | null = null;
   /**
@@ -393,6 +396,9 @@ export function standaloneHere(): StandaloneHere | null {
       writeOffsHeld = conn.some((c) => c.writeOffsHeldSince instanceof Date || c.storeFaultSince instanceof Date);
       /* A SUM, not `some`: the sentence names a count. A value that is not a whole number is unsaid. */
       setAside = conn.reduce((n, c) => n + (Number.isInteger(c.setAside) && c.setAside! > 0 ? c.setAside! : 0), 0);
+      /* The first CONFIRMED block, the desktop's rule: an unconfirmed one is not yet news. */
+      const block = conn.map((c) => c.profileBlocked).find((b) => b?.confirmed === true);
+      profileBlocked = block ? { code: typeof block.code === "string" && block.code !== "" ? block.code : null } : null;
       const since = conn
         .map((c) => c.unreachableSince)
         .filter((d): d is Date => d instanceof Date)
@@ -419,7 +425,7 @@ export function standaloneHere(): StandaloneHere | null {
   return {
     id, address: held.address, organizing, releaseRequestedAt, releaseRefusal, heldBy, metaBlocked, reachable,
     unreachableSince, signInRefused, certificateRefused, needsCredential, dialled, firstSync,
-    writeOffsHeld, setAside,
+    writeOffsHeld, setAside, profileBlocked,
   };
 }
 
