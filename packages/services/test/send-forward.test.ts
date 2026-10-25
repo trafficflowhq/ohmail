@@ -973,3 +973,59 @@ describe("forwardParts — only the files the person kept leave", () => {
     expect(s.send.delivered).toHaveLength(2);
   });
 });
+
+/**
+ * THE KEPT LIST ON THE DRAFT ROW (`drafts.forward_parts`): a forward trimmed on one device and sent
+ * from another sends only the kept files. The request's list wins over the row's; one resolved list
+ * feeds both the part selection and the content claim.
+ */
+describe("forwardParts — the draft row's kept list", () => {
+  const A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const B = "bbbbbbbb-0000-4000-8000-000000000002";
+  const C = "cccccccc-0000-4000-8000-000000000003";
+  async function kept(rowParts: string[] | null) {
+    const w = await world();
+    for (const [id, partId] of [[A, "2"], [B, "3"], [C, "4"]] as const) {
+      await w.db.insert(attachments).values({
+        id, accountId: w.ctx.accountId, messageId: w.originalId, filename: `f-${partId}.bin`,
+        contentType: "application/octet-stream", sizeBytes: 1, partId, inline: false,
+      });
+    }
+    await w.db.update(drafts).set({ forwardOfMessageId: w.originalId, forwardParts: rowParts }).where(eq(drafts.id, w.draftId));
+    return { w, send: sendSpy(), fetch: fetchSpy({ "2": new Uint8Array([2]), "3": new Uint8Array([3]), "4": new Uint8Array([4]) }) };
+  }
+  const go = (s: Awaited<ReturnType<typeof kept>>, draftId: string, key: string, input: Record<string, unknown>) =>
+    sendService.send(s.w.ctx, draftId, key,
+      { openSendAdapter: s.send.openSendAdapter, openFetchAdapter: s.fetch.openFetchAdapter }, input);
+
+  it("a row holding two of three, sent with no list, sends those two and the Sent copy lists two", async () => {
+    const s = await kept([A, C]);
+    expect((await go(s, s.w.draftId, "fk-1", {})).status).toBe("sent");
+    expect(s.fetch.asked).toEqual(["2", "4"]);
+    expect(s.send.delivered[0]!.attachments?.map((a) => a.filename)).toEqual(["part-2.bin", "part-4.bin"]);
+  });
+
+  it("the request's list wins over the row's", async () => {
+    const s = await kept([A, C]);
+    expect((await go(s, s.w.draftId, "fk-2", { forwardOf: s.w.originalId, forwardParts: [A] })).status).toBe("sent");
+    expect(s.fetch.asked).toEqual(["2"]);
+  });
+
+  it("nothing stored and nothing named sends every part", async () => {
+    const s = await kept(null);
+    expect((await go(s, s.w.draftId, "fk-3", {})).status).toBe("sent");
+    expect(s.fetch.asked).toEqual(["2", "3", "4"]);
+  });
+
+  it("the same message via the row or via the request is one claim: the second press delivers nothing", async () => {
+    const s = await kept([A, C]);
+    expect((await go(s, s.w.draftId, "fk-4a", {})).status).toBe("sent");
+    const [d2] = await s.w.db.insert(drafts).values({
+      accountId: s.w.ctx.accountId, mailboxId: (await s.w.db.select().from(drafts))[0]!.mailboxId,
+      subject: "Fwd: Q3 plan", body: "Passing this along.", to: [{ name: null, address: "sam@example.test" }],
+      cc: [], bcc: [], status: "draft", createdAt: FIXED_NOW, updatedAt: FIXED_NOW,
+    }).returning();
+    await go(s, d2!.id, "fk-4b", { forwardOf: s.w.originalId, forwardParts: [C, A] }).catch(() => null);
+    expect(s.send.delivered, "one forward, two claim digests").toHaveLength(1);
+  });
+});

@@ -201,7 +201,7 @@ export async function deleteMailboxRows(
     .where(and(isNotNull(drafts.inReplyToMessageId), inArray(drafts.inReplyToMessageId, ownMessages)));
   // …and a forward drafted there of a message here: the note stays, the original goes.
   await db.update(drafts)
-    .set({ forwardOfMessageId: null })
+    .set({ forwardOfMessageId: null, forwardParts: null })
     .where(and(isNotNull(drafts.forwardOfMessageId), inArray(drafts.forwardOfMessageId, ownMessages)));
 
   // ── THE MESSAGES' OWN CHILDREN ────────────────────────────────────────────────────────────

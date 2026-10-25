@@ -1,5 +1,5 @@
 import {
-  ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, FORWARD_MAX_PARTS, dedupeStagedIds,
+  ServiceError, SEND_ATTACHMENT_FIELD_MAX_CHARS, SEND_MAX_ATTACHMENT_PARTS, dedupeStagedIds, readForwardParts,
   requireUuid, parseReaderLocale, parseReaderZone,
   type CreateDraftBody, type PatchDraftBody, type SendResolution,
 } from "@trafficflow/services/mail";
@@ -114,21 +114,6 @@ function readStagedIds(raw: unknown): string[] | undefined {
   // input census means "the shape test is the bound"; here there was no shape test.
   for (const id of ids) requireUuid(id, "stagedAttachmentIds");
   return ids.length > 0 ? ids : undefined;
-}
-
-/**
- * The forwarded parts the person kept: absent stays absent (every part goes); otherwise a list of
- * at most `FORWARD_MAX_PARTS` ids, duplicates dropped, and only beside `forwardOf`. Anything else
- * is a 400, never a guess about which files to send.
- */
-function readForwardParts(raw: unknown, forwardOf: string | undefined): string[] | undefined {
-  if (raw === undefined) return undefined;
-  if (forwardOf === undefined) throw new ServiceError("validation_failed", 400, "forwardParts needs forwardOf");
-  if (!Array.isArray(raw)) throw new ServiceError("validation_failed", 400, "forwardParts must be a list");
-  if (raw.length > FORWARD_MAX_PARTS) {
-    throw new ServiceError("validation_failed", 400, `forwardParts must contain at most ${FORWARD_MAX_PARTS} entries`);
-  }
-  return [...new Set(raw.map((id) => requireUuid(id, "forwardParts")))];
 }
 
 /**

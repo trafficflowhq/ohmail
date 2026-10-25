@@ -8,7 +8,7 @@ import {
 } from "@trafficflow/api";
 import {
   ATTACHMENT_MAX_FETCH_BYTES, BODIES_IDS_MAX, CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT,
-  DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS,
+  DOWNLOAD_ALL_MAX_BYTES, DOWNLOAD_ALL_MAX_PARTS, DRAFT_MAX_RECIPIENTS, FORWARD_MAX_PARTS,
   DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
   MAILBOX_SIGNATURE_MAX_CHARS, MARK_SEEN_MAX_IDS, MAX_PAGE_LIMIT, OHBOX_BAR_MAX_BYTES,
   PROFILE_IMPORT_MAX, SCHEDULE_MAX_AHEAD_MS, SEARCH_QUERY_MAX_CHARS,
@@ -796,13 +796,14 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   "PATCH /folders/:id": { bounds: [FOLDER_PATH_MAX] },
 
   // ── drafts + send ───────────────────────────────────────────────────────────────────────
+  // `forwardParts` (a forward's kept files): at most FORWARD_MAX_PARTS uuid-shaped ids.
   "POST /drafts": {
     bounds: [DRAFT_MAX_RECIPIENTS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-      DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES],
+      DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
   "PUT /drafts/:id": {
     bounds: [DRAFT_MAX_RECIPIENTS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
-      DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES],
+      DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
   // The resolution verb. Its body carries ONE field, `outcome`, a two-member enum
@@ -2128,7 +2129,8 @@ describe("SECTION 4 — the door's large-body exemption is derived, not asserted
           + DRAFT_SUBJECT_MAX_CHARS * JSON_MAX_BYTES_PER_CHAR
           + DRAFT_MAX_RECIPIENTS
             * ((RECIPIENT_ADDRESS_MAX_CHARS + RECIPIENT_NAME_MAX_CHARS) * JSON_MAX_BYTES_PER_CHAR
-              + JSON_STRING_OVERHEAD * 4)],
+              + JSON_STRING_OVERHEAD * 4)
+          + FORWARD_MAX_PARTS * (36 + JSON_STRING_OVERHEAD)],
       // PATCH /messages — the largest COUNT-shaped body; small, and included so the comparison
       // is over the whole family rather than the two that happen to be big today.
       ["PATCH /messages", MARK_SEEN_MAX_IDS * (36 + JSON_STRING_OVERHEAD)],

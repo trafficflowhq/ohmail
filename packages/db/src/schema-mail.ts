@@ -2164,6 +2164,9 @@ export const drafts = pgTable("drafts", {
   // draft answers one message or forwards one, `drafts_reply_xor_forward`). The send reads it when
   // the request names none, so a forward kept as a draft still carries its original.
   forwardOfMessageId: uuid("forward_of_message_id").references(() => messages.id),
+  // Mail 0168 — the original's attachment ids the person kept (sorted, at most 100), only beside
+  // `forward_of_message_id`. NULL: nothing was removed, every part goes.
+  forwardParts: jsonb("forward_parts").$type<string[]>(),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),

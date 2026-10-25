@@ -759,6 +759,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
   });
 
   it("a forward draft mirrors with its original, and deleting the original DETACHES it", async () => {
+    const KEPT_PART = randomUUID();
     const { opened, world, cursorPath } = await standUp();
     const db = opened.db;
     const threadId = randomUUID();
@@ -766,6 +767,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     const draftId = randomUUID();
     const draftDTO = {
       id: draftId, mailboxId: CLOUD_MAILBOX, threadId: null, inReplyToMessageId: null, forwardOfMessageId: msgId,
+      forwardParts: [KEPT_PART],
       subject: "Fwd: Can we talk?", body: "see below", html: null,
       to: [{ name: null, address: "stranger@nowhere.test" }], cc: [], bcc: [], rationale: null,
       status: "draft", createdAt: iso(), updatedAt: iso(),
@@ -780,6 +782,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     }).pullOnce();
     const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     expect(before?.forwardOfMessageId, "the forward draft did not mirror with its original").toBe(msgId);
+    expect(before?.forwardParts, "the kept files did not reach the window's copy").toEqual([KEPT_PART]);
 
     writeFileSync(cursorPath, JSON.stringify({ version: CURSOR_VERSION, sync: "c1", bodies: null }));
     await createCloudMirror({
@@ -791,6 +794,7 @@ describe("a delete never wedges the feed on a foreign key", () => {
     const [after] = await db.select().from(drafts).where(eq(drafts.id, draftId));
     expect(after, "the forward draft was deleted with its original").toBeDefined();
     expect(after!.forwardOfMessageId).toBeNull();
+    expect(after!.forwardParts, "the kept list outlived its original").toBeNull();
     expect(after!.body).toBe("see below");
   });
 

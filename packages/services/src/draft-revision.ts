@@ -15,6 +15,7 @@ export function draftContentRevision(row: {
   mailboxId: string;
   inReplyToMessageId: string | null;
   forwardOfMessageId?: string | null;
+  forwardParts?: readonly string[] | null;
   subject: string;
   body: string;
   html: string | null;
@@ -36,6 +37,8 @@ export function draftContentRevision(row: {
     addrs(row.to), addrs(row.cc), addrs(row.bcc),
     // Only when set, so a row that forwards nothing keeps the revision it had.
     ...(row.forwardOfMessageId ? [["forwardOf", row.forwardOfMessageId]] : []),
+    // The kept files, only beside a forward, so a row that kept every file keeps its revision.
+    ...(row.forwardOfMessageId && row.forwardParts ? [["forwardParts", [...new Set(row.forwardParts)].sort()]] : []),
   ]);
   return createHash("sha256").update(canonical, "utf8").digest("hex");
 }

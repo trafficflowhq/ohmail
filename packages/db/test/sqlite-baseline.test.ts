@@ -210,6 +210,8 @@ describe("the SQLite journal, applied", () => {
       "0166_account_storage_facts.sql",
       // A Rules-page Change's re-filing, the pg columns' twins.
       "0167_rules_refile.sql",
+      // A forward's kept files, the pg column's twin.
+      "0168_drafts_forward_parts.sql",
     ]);
     const rows = db.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`).all() as { name: string }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -348,6 +350,8 @@ describe("the SQLite journal, applied", () => {
       "0166_account_storage_facts.sql",
       // A Rules-page Change's re-filing, the pg columns' twins.
       "0167_rules_refile.sql",
+      // A forward's kept files, the pg column's twin.
+      "0168_drafts_forward_parts.sql",
     ]);
   });
 

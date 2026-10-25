@@ -24,6 +24,7 @@ import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
 } from "./attachments-service.js";
 import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
+import { requireUuid } from "./ids.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
@@ -319,6 +320,38 @@ export interface SendInput {
 /** How many original parts a forward may re-attach, and their combined byte ceiling. */
 export const FORWARD_MAX_PARTS = 100;
 export const FORWARD_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The forwarded parts the person kept, as a request names them: absent stays absent (every part
+ * goes); otherwise a list of at most `FORWARD_MAX_PARTS` ids, duplicates dropped, and only beside a
+ * forward. Anything else is a 400, never a guess about which files to send. The send route and the
+ * draft doors both read it here.
+ */
+export function readForwardParts(raw: unknown, forwardOf: string | null | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!forwardOf) throw new ServiceError("validation_failed", 400, "forwardParts needs forwardOf");
+  return forwardPartsList(raw);
+}
+
+/** The list's own shape, without the forward it needs beside it. */
+export function forwardPartsList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) throw new ServiceError("validation_failed", 400, "forwardParts must be a list");
+  if (raw.length > FORWARD_MAX_PARTS) {
+    throw new ServiceError("validation_failed", 400, `forwardParts must contain at most ${FORWARD_MAX_PARTS} entries`);
+  }
+  return [...new Set(raw.map((id) => requireUuid(id, "forwardParts")))];
+}
+
+/**
+ * THE PARTS THIS SEND CARRIES: the request's list, else the row's when the row forwards the same
+ * original. One answer for the part selection and the content claim, so the two cannot disagree.
+ */
+function forwardPartsOf(d: typeof drafts.$inferSelect, input: SendInput): readonly string[] | undefined {
+  if (input.forwardParts !== undefined) return input.forwardParts;
+  const forwardOf = input.forwardOf ?? d.forwardOfMessageId ?? null;
+  return forwardOf && d.forwardOfMessageId === forwardOf ? d.forwardParts ?? undefined : undefined;
+}
+
 /**
  * The whole-message read for an original whose stored words were let go: handed to `fetchRaw`,
  * which refuses on the server's RFC822.SIZE before buffering past it. 20 MiB of parts base64-encoded
@@ -749,6 +782,7 @@ export function sendContentFingerprint(input: {
  * Inline files are digested by content; a send carrying staged files takes no claim at all.
  */
 function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): string {
+  const forwardParts = forwardPartsOf(d, input);
   return sendContentFingerprint({
     to: (d.to as EmailAddress[]) ?? [],
     cc: (d.cc as EmailAddress[]) ?? [],
@@ -758,7 +792,7 @@ function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): 
     body: d.body,
     inReplyToMessageId: d.inReplyToMessageId ?? null,
     forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
-    ...(input.forwardParts ? { forwardParts: input.forwardParts } : {}),
+    ...(forwardParts ? { forwardParts } : {}),
     sendAt: d.sendAt ?? null,
     attachments: (input.attachments ?? []).map((a) => ({
       filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
@@ -2456,8 +2490,9 @@ export class SendService {
         /* THE PARTS THE PERSON KEPT, chosen only among this original's rows (never by id alone,
            which would name another account's file); the checks above ran on every row. */
         let sentRows = attRows;
-        if (input.forwardParts !== undefined) {
-          const want = [...new Set(input.forwardParts)];
+        const kept = forwardPartsOf(d, input);
+        if (kept !== undefined) {
+          const want = [...new Set(kept)];
           // scoped-by: orig was loaded by (id, accountId) earlier in this send
           sentRows = want.length === 0 ? [] : await tx.select({
             id: attachments.id, contentSha256: attachments.contentSha256,

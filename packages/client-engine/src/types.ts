@@ -754,6 +754,8 @@ export interface EngineDraft {
   inReplyToMessageId: string | null;
   /** The message this draft forwards. Absent from an older server, read as none. */
   forwardOfMessageId?: string | null;
+  /** The original's files the person kept, beside a forward; `null` or absent: every file. */
+  forwardParts?: string[] | null;
   subject: string;
   /**
    * The draft's plain text, or `null` when THIS MIRROR DOES NOT HOLD IT.
@@ -1495,6 +1497,8 @@ export type EngineMutation =
       inReplyToMessageId?: string | null;
       /** The message this draft forwards. Absent leaves the row's own; `null` clears it. */
       forwardOfMessageId?: string | null;
+      /** The original's files the person kept, beside a forward. Absent leaves the row's list. */
+      forwardParts?: string[] | null;
       subject: string;
       /**
        * The plain rendering, always. It is what the Drafts list shows and what decides there is

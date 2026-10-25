@@ -213,7 +213,8 @@ describe.skipIf(!PG_UP)("per-mailbox erasure — real Postgres, real foreign key
     const keep = await seedSibling(seeded.accountId, `f-${Date.now().toString(36)}`);
     const [forward] = await db.insert(drafts).values({
       accountId: seeded.accountId, mailboxId: keep.mailboxId,
-      forwardOfMessageId: seeded.messageId, subject: "Fwd: Glaze order", body: "see below",
+      forwardOfMessageId: seeded.messageId, forwardParts: ["aaaaaaaa-0000-4000-8000-000000000001"],
+      subject: "Fwd: Glaze order", body: "see below",
     }).returning();
     const ctx = ctxFor(seeded.accountId, seeded.userId);
     const target = await db.select().from(mailboxes)
@@ -225,6 +226,7 @@ describe.skipIf(!PG_UP)("per-mailbox erasure — real Postgres, real foreign key
     const after = await db.select().from(drafts).where(eq(drafts.id, forward!.id));
     expect(after, "the sibling's unsent forward was deleted, not unanchored").toHaveLength(1);
     expect(after[0]!.forwardOfMessageId).toBeNull();
+    expect(after[0]!.forwardParts, "the kept list outlived its forward").toBeNull();
     expect(after[0]!.body).toBe("see below");
   });
 

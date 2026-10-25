@@ -1946,6 +1946,8 @@ async function applyUpsert(
         threadId: d.threadId ?? null,
         inReplyToMessageId: inReplyTo,
         forwardOfMessageId: forwardOf,
+        // The kept files ride their forward; the desktop's window reads them from this copy.
+        forwardParts: forwardOf ? d.forwardParts ?? null : null,
         subject: d.subject ?? "",
         ...(bodyCarried ? { body: d.body as string } : {}),
         ...(htmlCarried ? { html: d.html ?? null } : {}),
@@ -2085,7 +2087,7 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.update(drafts).set({ inReplyToMessageId: null })
         .where(eq(drafts.inReplyToMessageId, ch.id));
       // The forward's twin: a draft forwarding this message keeps its note.
-      await tx.update(drafts).set({ forwardOfMessageId: null })
+      await tx.update(drafts).set({ forwardOfMessageId: null, forwardParts: null })
         .where(eq(drafts.forwardOfMessageId, ch.id));
       for (const d of replying) detached?.push({ type: "draft", id: d.id });
       await tx.delete(folderState).where(eq(folderState.messageId, ch.id));

@@ -634,6 +634,34 @@ describe("mail_send — the client half of the gated send", () => {
     expect(w.sendBodies[2] ?? "").not.toContain("forwardParts");
   });
 
+  it("the kept list rides the draft save and the send's own row write, so another device sends only those", async () => {
+    const w = await world();
+    const [a] = await w.db.insert(attachments).values({
+      accountId: w.accountId, messageId: w.parent.id, filename: "plan.pdf", contentType: "application/pdf", sizeBytes: 4, partId: "2",
+    }).returning();
+    const to = [{ name: "Sam", address: "sam@colleague.test" }];
+    const saved = await w.engine.mutate({
+      kind: "draft_save", draftId: null, mailboxId: w.parent.mailboxId, forwardOfMessageId: w.parent.id,
+      forwardParts: [a!.id], subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to, cc: [], bcc: [],
+    });
+    expect(saved.status).toBe("confirmed");
+    const rowOf = async (id: string) => (await w.db.select().from(drafts)).find((d) => d.id === id)!;
+    expect((await rowOf(saved.entityId!)).forwardParts, "the save dropped the kept list").toEqual([a!.id]);
+    const sent = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, draftId: saved.entityId!, mailboxId: w.parent.mailboxId,
+      forwardOf: w.parent.id, forwardParts: [], subject: "Fwd: Werkstatt-Besuch?", body: "fyi", to,
+    });
+    expect(sent.status).toBe("confirmed");
+    expect((await rowOf(saved.entityId!)).forwardParts, "the send's row write dropped the kept list").toEqual([]);
+    const fresh = await w.engine.mutate({
+      kind: "mail_send", inReplyTo: null, forwardOf: w.parent.id, forwardParts: [], subject: "Fwd: again", body: "fyi too", to,
+    });
+    expect(fresh.status).toBe("confirmed");
+    const made = (await w.db.select().from(drafts)).find((d) => d.subject === "Fwd: again")!;
+    expect(made.forwardParts, "the send's own create dropped the kept list").toEqual([]);
+    expect(w.spy.delivered.every((m) => (m.attachments ?? []).length === 0)).toBe(true);
+  });
+
   it("a forward's quoted date is the sender's clock — adapter and route carry the zone and language", async () => {
     const w = await world();
     const threadId = await seedThread(w.db, { accountId: w.accountId, subject: "Werkstatt-Besuch?" });

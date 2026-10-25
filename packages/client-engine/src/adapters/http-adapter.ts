@@ -2062,6 +2062,7 @@ export class HttpAdapter implements EngineAdapter {
               threadId: m.threadId ?? null,
               inReplyToMessageId: m.inReplyToMessageId ?? null,
               ...(m.forwardOfMessageId ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+              ...(m.forwardOfMessageId && m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
               ...fields,
             },
             idempotencyKey: opts.idempotencyKey, ...sig,
@@ -2114,6 +2115,7 @@ export class HttpAdapter implements EngineAdapter {
             ...fields, ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
             // Absent leaves the row's own (the server's patch rule); `null` clears it.
             ...(m.forwardOfMessageId !== undefined ? { forwardOfMessageId: m.forwardOfMessageId } : {}),
+            ...(m.forwardParts !== undefined ? { forwardParts: m.forwardParts } : {}),
             ...(stated ? { ifContentRevision: stated } : {}),
           },
           idempotencyKey: opts.idempotencyKey, ...sig,
@@ -2336,8 +2338,9 @@ export class HttpAdapter implements EngineAdapter {
               // `draft`, so the send that follows dials the identity on screen rather than the
               // frozen one — the wrong-From incident this line exists to close.
               ...(m.mailboxId ? { mailboxId: m.mailboxId } : {}),
-              // The original a forward sends, onto the row it sends.
+              // The original a forward sends, and the files it keeps, onto the row it sends.
               ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
+              ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
               ...(stated ? { ifContentRevision: stated } : {}),
             },
             echoLater: this.sendEchoLater,
@@ -2529,6 +2532,7 @@ export class HttpAdapter implements EngineAdapter {
           inReplyToMessageId: m.inReplyTo,
           // The row a forward makes names its original, so a reopened copy still forwards it.
           ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
+          ...(m.forwardOf && m.forwardParts ? { forwardParts: m.forwardParts } : {}),
           subject: m.subject ?? "",
           // ONE of the two, never both. `DraftsService` derives the text/plain alternative
           // from the sanitized html itself and refuses a request that carries a `body`
