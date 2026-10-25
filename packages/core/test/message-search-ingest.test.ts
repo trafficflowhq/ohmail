@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { planChange, commitChange, UNMETERED_STORAGE_CAP } from "../src/pipeline.js";
-import { searchBodyOf, searchDocumentOf, SEARCH_BODY_MAX_CHARS, SEARCH_TERMS_MAX_CHARS } from "../src/message-search.js";
+import { searchBodyOf, searchDocumentOf, SEARCH_BODY_MAX_CHARS, SEARCH_HEAD_PART_MAX_CHARS, SEARCH_TERMS_MAX_CHARS } from "../src/message-search.js";
 import { htmlToPlainText } from "../src/html-text.js";
 import { bodyBytesOf } from "@trafficflow/db";
 import { FakeRepo } from "./fakes.js";
@@ -74,13 +74,46 @@ describe("the document's parts", () => {
       accountId: "a", subject: "MyAXA Portal", from: { name: "Anna", address: "anna@axa.example" },
       to: [], cc: [], attachmentNames: ["Policy.PDF"], bodyText: "x".repeat(SEARCH_BODY_MAX_CHARS + 10), source: "text",
     });
-    expect(parts.body.length).toBe(SEARCH_BODY_MAX_CHARS);
+    expect(parts.body).toBe(`${"x".repeat(SEARCH_BODY_MAX_CHARS)}\nPolicy PDF`);
     expect(terms).toBe("myaxa portal anna anna@axa.example policy.pdf");
     expect(parts.people).toContain("axa example");
     const long = searchDocumentOf({
       accountId: "a", subject: "s".repeat(5000), from: null, to: [], cc: [], attachmentNames: [], bodyText: "", source: "headers_only",
     });
     expect(long.terms.length).toBe(SEARCH_TERMS_MAX_CHARS);
+  });
+
+  it("writes each file name's parts as words of the text, after the body; the head and the substring corpus keep the names whole", () => {
+    const { parts, terms } = searchDocumentOf({
+      accountId: "a", subject: "Papers", from: null, to: [], cc: [], bodyText: "See attached.", source: "text",
+      attachmentNames: ["harbour-ledger-7731.pdf", "PDFReport_v2.docx", "scan0042.PDF", "README", "x7k2q9w4.bin"],
+    });
+    expect(parts.attachments).toBe("harbour-ledger-7731.pdf PDFReport_v2.docx scan0042.PDF README x7k2q9w4.bin");
+    expect(parts.body).toBe("See attached.\nharbour ledger 7731 pdf PDFReport Report v2 docx scan0042 scan 0042 README x7k2q9w4 bin");
+    expect(terms).toBe("papers harbour-ledger-7731.pdf pdfreport_v2.docx scan0042.pdf readme x7k2q9w4.bin");
+  });
+
+  it("splits only what fits in a head part's ceiling, however many or long the names", () => {
+    const many = Array.from({ length: 5000 }, (_, i) => `ledger-${i}.pdf`);
+    const { parts } = searchDocumentOf({
+      accountId: "a", subject: "", from: null, to: [], cc: [], bodyText: "", source: "headers_only",
+      attachmentNames: [...many, `${"q".repeat(SEARCH_HEAD_PART_MAX_CHARS)}-tailword.pdf`],
+    });
+    const words = parts.body.slice(1).split(" ");
+    expect(parts.body.length).toBeLessThanOrEqual(SEARCH_HEAD_PART_MAX_CHARS + 1);
+    expect(words.slice(0, 4)).toEqual(["ledger", "0", "pdf", "1"]);
+    // Whole words only, in order, and only from the names the head part holds: about the first 1,100.
+    expect(new Set(words).size).toBe(words.length);
+    expect(Number(words.at(-1))).toBeGreaterThan(1000);
+    expect(Number(words.at(-1))).toBeLessThan(1100);
+    expect(words).not.toContain("tailword");
+    // The same name over and over: its parts written once, the head part at its ceiling.
+    const same = searchDocumentOf({
+      accountId: "a", subject: "", from: null, to: [], cc: [], bodyText: "", source: "headers_only",
+      attachmentNames: Array.from({ length: 10_000 }, () => "scan0042.PDF"),
+    });
+    expect(same.parts.body).toBe("\nscan0042 scan 0042 PDF");
+    expect(same.parts.attachments.length).toBe(SEARCH_HEAD_PART_MAX_CHARS);
   });
 
   it("is NOT metered: a body's stored bytes do not count the document", () => {

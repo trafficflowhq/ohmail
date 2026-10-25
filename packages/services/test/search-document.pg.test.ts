@@ -41,6 +41,8 @@ const H = randomUUID();
 const J = randomUUID();
 /** Three older letters that only resemble `kai survey`, 130 newer of Kai's survey samples, 20 newest holding none. */
 const N = randomUUID();
+/** Ines Varga's letter with `harbour-ledger-7731.pdf`, and one with the same words apart. */
+const V = randomUUID();
 const ids: Record<string, string> = {};
 /** The setup hook's own settling, which the teardown awaits. */
 let setupDone: Promise<void> = Promise.resolve();
@@ -213,7 +215,7 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
 
   afterAll(async () => {
     await setupDone;
-    for (const a of [D, P, L, K, KL, F, G, H, J, N]) {
+    for (const a of [D, P, L, K, KL, F, G, H, J, N, V]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from attachments where account_id = ${a}`);
       await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${a})`);
@@ -385,6 +387,32 @@ describe("search reads the search document (real Postgres, pg_trgm)", () => {
       { sort: "relevance", part: "both", tier: "exact", items: 0, total: 0 },
     ]);
   }, 120_000);
+
+  it("(3f) any part of a file name beside another word, in the exact tier", async () => {
+    const [mv] = await db.insert(mailboxes).values({ accountId: V, provider: "imap", address: "v@tf.example" }).returning();
+    await seed({ key: "v-sr2", accountId: V, mailboxId: mv!.id, subject: "Papers tq92c7557f21 SR2", from: person("Ines Varga", "iv@post.example"), text: "SR2: the scan is attached.", daysAgo: 1, files: ["harbour-ledger-7731.pdf"] });
+    await seed({ key: "v-d2", accountId: V, mailboxId: mv!.id, subject: "Ledger copy", from: person("Port Office", "office@port.example"), text: "The harbour scan.", daysAgo: 2, files: ["notes.txt"] });
+    await db.insert(accountSettings).values({ accountId: V, searchIndexBuiltAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    const keyOf = new Map([[ids["v-sr2"], "sr2"], [ids["v-d2"], "d2"]]);
+    const table: ReadonlyArray<readonly [string, readonly string[]]> = [
+      ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
+      ["ines harbour-ledger-7731.pdf", ["sr2"]], ["scan pdf", ["sr2"]], ["scan 7731", ["sr2"]], ["papers ledger", ["sr2"]],
+      ["harbour ledger", ["d2", "sr2"]], ["ledger 7731 scan", ["sr2"]], ["ines harbour 7731", ["sr2"]],
+      ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]],
+    ];
+    const read = async (q: string) => {
+      const r = await svc.search(ctx(V), { q });
+      return { q, tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id) ?? m.id).sort() };
+    };
+    const got = [];
+    for (const [q] of table) got.push(await read(q));
+    expect(got).toEqual(table.map(([q, keys]) => ({ q, tier: "exact", keys: [...keys] })));
+    // A phrase reads whole words; a part under three characters is not looked for inside a name.
+    const whole = [];
+    for (const q of ['"ines ledger"', "ines 77"]) whole.push(await read(q));
+    expect(whole.filter((r) => r.tier === "exact" && r.keys.length > 0)).toEqual([]);
+  });
 
   it("(4) a subject hit ranks above a newer, louder body-only hit", async () => {
     const r = await svc.page(ctx(D), { q: "renewal" });

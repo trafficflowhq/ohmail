@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { messageBodies } from "@trafficflow/db";
+import { attachments, messageBodies } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { SearchIndex, type EngineMessage } from "@ohmail/client-engine";
@@ -407,6 +407,60 @@ describe("the subject's last word beside a body word", () => {
     expect(JOINED.filter((q) => !q.startsWith('"')).map((q) => ({ q, keys: mirror(q) })).filter((r) => r.keys.length > 0)).toEqual([]);
     expect(FOUND.filter(([q, keys]) => !mirror(q).every((k) => keys.includes(k))).map(([q]) => ({ q, mirror: mirror(q) }))).toEqual([]);
   });
+});
+
+/**
+ * A file name's later parts beside another word: `ledger` alone found the letter, `ines ledger` did not.
+ * The document's head vector holds the parts as words. NAMES, the device apart: its word index holds
+ * the subject, the sender's address and the text (mail 0138), so a name, a recipient or a file name
+ * is read there only as the whole query inside the header text, and these cases are the server's.
+ */
+describe("each part of a file name beside another word", () => {
+  const FILES: ReadonlyArray<readonly [key: string, name: string, from: string, subject: string, body: string, file: string]> = [
+    ["sr2", "Ines Varga", "iv@post.example", "Papers tq92c7557f21 SR2", "SR2: the scan is attached.", "harbour-ledger-7731.pdf"],
+    ["d2", "Port Office", "office@port.example", "Ledger copy", "The harbour scan.", "notes.txt"],
+  ];
+  const FOUND: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
+    ["ledger", ["d2", "sr2"]], ["ines harbour", ["sr2"]], ["ines ledger", ["sr2"]], ["ines pdf", ["sr2"]], ["ines 7731", ["sr2"]],
+    ["ines harbour-ledger-7731.pdf", ["sr2"]], ["scan pdf", ["sr2"]], ["scan 7731", ["sr2"]], ["papers ledger", ["sr2"]],
+    ["harbour ledger", ["d2", "sr2"]], ["ledger 7731 scan", ["sr2"]], ["ines harbour 7731", ["sr2"]],
+    ["Ines LEDGER", ["sr2"]], ["SCAN Pdf 7731", ["sr2"]],
+  ];
+  /** A phrase reads whole words, and the start of a part is no word of the letter. */
+  const NOT_EXACT = ['"ines ledger"', "ines 77"];
+  let read: (svc: SearchService, q: string) => Promise<{ tier: string; keys: string[] }>;
+  let device = false;
+  beforeAll(async () => {
+    const { db, ctx, accountId, mailboxId } = await makeCtx();
+    device = dialect(db).name === "sqlite";
+    const keyOf = new Map<string, string>();
+    for (const [i, [key, name, from, subject, body, file]] of FILES.entries()) {
+      const date = new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000);
+      const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
+      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
+      keyOf.set(id, key);
+    }
+    expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
+    read = async (svc, q) => {
+      const r = await svc.search(ctx, { q, limit: 50 });
+      return { tier: r.tier, keys: r.items.map((m) => keyOf.get(m.id)!).sort() };
+    };
+  }, 60_000);
+
+  for (const [label, svc] of [["the store", new SearchService()], ["the desktop's own store", new SearchService({ indexFills: true, localStore: true })]] as const) {
+    it(`${label} finds the letter by any part of its file name beside another word, in the exact tier`, async (t) => {
+      if (device) t.skip(); // NAMES, above
+      const { got, want } = await answers((q) => read(svc, q), FOUND);
+      expect(got).toEqual(want);
+      const exact: Array<{ q: string; keys: string[] }> = [];
+      for (const q of NOT_EXACT) {
+        const r = await read(svc, q);
+        if (r.tier === "exact" && r.keys.length > 0) exact.push({ q, keys: r.keys });
+      }
+      expect(exact).toEqual([]);
+    });
+  }
 });
 
 /**
