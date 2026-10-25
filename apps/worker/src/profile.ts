@@ -1005,7 +1005,9 @@ export class OrganizerProfileSync {
       /* THE PINNED CONNECTION, not the live getter — see the parameter. Correct wherever this
          line moves to, and no longer dependent on nothing awaiting above it. */
       const io = adapter.profileIo({ installId: deps.self.installId, mailboxId: deps.mailboxId });
-      const { payload, leftOut, screening } = await serializeOrganizerProfileCounted(deps.db, deps.accountId, deps.mailboxId);
+      const { payload, leftOut, screening, applied } = await serializeOrganizerProfileCounted(
+        deps.db, deps.accountId, deps.mailboxId, { applied: true, now },
+      );
       const screeningKey = screeningKeyOf(screening);
       const leavingGap = this.leavingGap;
       const gapKey = gapKeyOf(leavingGap ?? undefined);
@@ -1163,7 +1165,7 @@ export class OrganizerProfileSync {
         // residue of a transient organizer overlap (two documents from two writers, neither of
         // which will ever change its store again) and what notices a document appearing
         // under an established organizer without any local change.
-        await this.verifyFolder(io, payload, screening, log);
+        await this.verifyFolder(io, payload, screening, applied, log);
         return;
       }
       // A mailbox that has said nothing gets no document: writing an empty payload into a fresh
@@ -1186,6 +1188,8 @@ export class OrganizerProfileSync {
         screening,
         // Only the release flush's tick carries the gap; every other write leaves it out.
         ...(leavingGap === null ? {} : { gap: leavingGap }),
+        // Rides every write, never causes one: a new id alone leaves the dirty check closed.
+        ...(applied === undefined ? {} : { applied }),
       });
       /* ONE WRITE, and a second one only from the never-owned `foreign` arm, which holds the
          document it met and then publishes this install's own settings beside it. */
@@ -1529,6 +1533,7 @@ export class OrganizerProfileSync {
     io: ProfileIo,
     local: OrganizerProfilePayload,
     screening: ProfileScreening,
+    applied: readonly string[] | undefined,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
     const { deps } = this;
@@ -1569,7 +1574,7 @@ export class OrganizerProfileSync {
         // The held record is the question this organizer asks, never mid-flight residue.
         if (this.holdFingerprint !== null && docFingerprint === this.holdFingerprint) return;
         if (localSaysWhatTheDocumentSays(local, read.doc)) {
-          if (read.encoded === false) await this.reencodeOnce(io, local, screening, read, log);
+          if (read.encoded === false) await this.reencodeOnce(io, local, screening, applied, read, log);
           return;
         }
         if (ours) {
@@ -1600,6 +1605,7 @@ export class OrganizerProfileSync {
     io: ProfileIo,
     local: OrganizerProfilePayload,
     screening: ProfileScreening,
+    applied: readonly string[] | undefined,
     read: Extract<ProfileReadResult, { state: "found" }>,
     log: (event: string, detail: Record<string, unknown>) => void,
   ): Promise<void> {
@@ -1608,7 +1614,10 @@ export class OrganizerProfileSync {
     if (REENCODED.has(key)) return;
     REENCODED.add(key);
     const now = (deps.now ?? ((): Date => new Date()))();
-    const doc = makeProfileDoc(local, { updatedAt: now, producer: { kind: deps.self.kind, version: deps.producerVersion }, screening });
+    const doc = makeProfileDoc(local, {
+      updatedAt: now, producer: { kind: deps.self.kind, version: deps.producerVersion }, screening,
+      ...(applied === undefined ? {} : { applied }),
+    });
     const keep = this.retained();
     const result = await writeOrganizerProfile({
       io, doc, installId: deps.self.installId, tidyMode: deps.tidyMode ?? "remove", now,

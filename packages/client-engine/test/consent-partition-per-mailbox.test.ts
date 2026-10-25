@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, decidedDestination, mailboxProfiles,
-  presentationReader, rulesInPlay, rulesList, screenerSegments, senderKey,
+  presentationReader, rulesAsRun, rulesInPlay, rulesList, rulesShown, screenerSegments, senderKey,
   type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
 import { placedRule } from "../src/consent-cutline.js";
@@ -112,5 +112,48 @@ describe("one sender, two mailboxes, two organizers", () => {
     };
     expect(await sheet(msg("r1", READ, B, "ohmail/Receipts"))).toEqual([`profile:${READ}:0`]);
     expect(await sheet(onRead)).toEqual([]);
+  });
+});
+
+describe("a reader-only install's rules, from the organizer's copy", () => {
+  const OTHER = "mb-read-2";
+  const staleLocal = rule("local-1", B, "ohmail/News");
+  const theirs = (mb: string, at: number) => rule(`profile:${mb}:${at}`, B, "ohmail/Receipts");
+  const filed = msg("r1", READ, B, "ohmail/Receipts");
+  const shown = (store: MemoryMirrorStore, readerOnly = true) =>
+    rulesShown(store, { readerOnly, queued: [], applied: [], now: NOW });
+
+  it("the sheet beside a stale local twin names only the organizer's rule", async () => {
+    const store = await mirror([m(filed), r(staleLocal), p(profile(READ, [theirs(READ, 0)]))]);
+    const placeOf = consentPartition(store, { now: NOW }).placeOf;
+    const inPlay = rulesInPlay({ reader: store, placeOf, subject: [filed], scope: "sender", match: B });
+    expect(inPlay.lines.flatMap((l) => l.rules.map((x) => `${x.id}->${x.destination}`))).toEqual([`profile:${READ}:0->ohmail/Receipts`]);
+  });
+
+  it("two copies saying the same give one row, carrying the local twin's id and the organizer's place", async () => {
+    const store = await mirror([r(staleLocal), p(profile(READ, [theirs(READ, 0)])), p(profile(OTHER, [theirs(OTHER, 3)]))]);
+    const s = shown(store);
+    expect(s.source).toBe("published");
+    expect(s.rules.map((x) => `${x.id}->${x.destination}`)).toEqual(["local-1->ohmail/Receipts"]);
+    expect(s.doorless.size).toBe(0);
+    expect(s.holder).toBe("Host");
+  });
+
+  it("copies that differ under one key stay twins; a rule only the organizer has is doorless", async () => {
+    const elsewhere = rule(`profile:${OTHER}:0`, B, "INBOX");
+    const onlyThere = rule(`profile:${READ}:1`, "c@sender.test", "ohmail/News");
+    const store = await mirror([p(profile(READ, [theirs(READ, 0), onlyThere])), p(profile(OTHER, [elsewhere]))]);
+    const s = shown(store);
+    expect(s.rules.filter((x) => x.match === B).map((x) => x.destination).sort()).toEqual(["INBOX", "ohmail/Receipts"]);
+    expect(new Set(s.rules.map((x) => x.id)).size, "two rows share an id").toBe(s.rules.length);
+    expect(s.rules.every((x) => s.doorless.has(x.id))).toBe(true);
+  });
+
+  it("CONTROLS: an organizer, and a reader with no copy, list rulesAsRun", async () => {
+    const withCopy = await mirror([r(staleLocal), p(profile(READ, [theirs(READ, 0)]))]);
+    expect(shown(withCopy, false)).toEqual({ source: "local", rules: rulesAsRun(withCopy, []), doorless: new Set(), holder: null });
+    const noCopy = await mirror([r(staleLocal)]);
+    expect(shown(noCopy).rules).toEqual(rulesAsRun(noCopy, []));
+    expect(shown(noCopy).source).toBe("local");
   });
 });

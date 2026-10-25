@@ -246,3 +246,20 @@ describe("which refusals the waiting list says", () => {
     expect(w.engine.waitingOnOrganizer().map((x) => [x.requestId, x.refusedReason])).toEqual([["req-2", "stale"]]);
   });
 });
+
+describe("the rule requests the organizer applied", () => {
+  it("lists the applied rule rows of the last read, and nothing in flight or of another kind", async () => {
+    const w = world();
+    await w.engine.start();
+    w.serverSays([
+      row("applied"), { ...row("sent"), id: "req-2" }, { ...row("refused"), id: "req-3" },
+      { ...row("applied"), id: "req-4", kind: "message.move", target: { messageId: "m1", folder: "INBOX" } },
+    ]);
+    w.engine.refreshWaitingOnOrganizer();
+    await settle();
+    expect(w.engine.appliedRuleRequests()).toEqual([{
+      requestId: "req-1", kind: "rule.delete", mailboxId: "mb1", decidedAt: NOW.toISOString(), resolvedAt: NOW.toISOString(),
+      target: { rule: KEY },
+    }]);
+  });
+});

@@ -868,3 +868,31 @@ describe("a rule's age travels beside it, outside the canonical form and the fin
     expect(doc.rules.find((r) => r.match === "shop.example")!.updatedAt).toBeUndefined();
   });
 });
+
+describe("the requests an organizer applied travel in the envelope", () => {
+  const IDS = ["0b7e4f1c-2a8d-4e8a-9b1f-1c2d3e4f5a6b", "9f8e7d6c-5b4a-4321-8765-0a1b2c3d4e5f"];
+  const read = (raw: string) => {
+    const parsed = parseProfileMessage(raw);
+    if (parsed === null || isMalformedProfile(parsed) || parsed.status !== "ok") throw new Error("expected a readable document");
+    return parsed;
+  };
+
+  it("round-trips in order, written plain, and the copy reads as encoded as written", () => {
+    const raw = formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, applied: IDS }), { installId: "a" });
+    expect(raw).toContain(`"${IDS[0]}"`);
+    const parsed = read(raw);
+    expect(parsed.doc!.applied).toEqual(IDS);
+    expect(parsed.encoded).toBe(true);
+    expect(profileFingerprint(parsed.doc!)).toBe(profileFingerprint(richPayload()));
+  });
+
+  it("a document without it parses as before, and a malformed list reads as unstated", () => {
+    expect(read(formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER }), { installId: "a" })).doc!.applied)
+      .toBeUndefined();
+    const raw = formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, applied: IDS }), { installId: "a" })
+      .replace(`"${IDS[1]}"`, "42");
+    const parsed = read(raw);
+    expect(parsed.doc!.applied).toBeUndefined();
+    expect(parsed.doc!.rules.length).toBe(richPayload().rules.length);
+  });
+});
