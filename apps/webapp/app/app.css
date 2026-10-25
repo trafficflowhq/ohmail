@@ -2031,6 +2031,12 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-weight: 400;
   color: var(--ink2);
 }
+/* Mark all spam's question: the held block's sentences, its two answers side by side. */
+.scn-ask-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 /* "Filed automatically" under the auto-apply switch: one row per message, its Put back beside it. */
 .scn-autofiled {
   display: flex;

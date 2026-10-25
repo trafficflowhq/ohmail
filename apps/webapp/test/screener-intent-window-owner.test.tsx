@@ -91,6 +91,9 @@ function engineOver(store: MirrorStore): OhmailEngine {
 interface StateLike {
   waiting: Array<{ id: string; from: { address: string } }>;
   decide: (sender: unknown, dest: string, opts: { read: boolean; scope: string }) => void;
+  markAllSpam: (scopeOf: () => string) => void;
+  spamAllCount: number;
+  flush: () => void;
 }
 
 interface Tab {
@@ -263,6 +266,31 @@ describe("the Screener's undo window belongs to one tab", () => {
     await tab.settle();
     expect(decides(), "a stranded decision was not replayed").toHaveLength(1);
     expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+  });
+});
+
+describe("Mark all spam in a second tab", () => {
+  it("skips the sender another tab holds, and moves the number it states", async () => {
+    const store = await freshStore();
+    const other = msg("h2", "promo@else.example", "ohmail/Screener");
+    await store.applyChanges([{ type: "message", op: "create", id: other.id, seq: ++seq, updatedAt: other.updatedAt, entity: other }]);
+    // Both tabs open first, so B learns of A's window by its claim and not from the journal at boot.
+    const tabA = await mountTab(engineOver(store));
+    await tabA.settle();
+    const tabB = await mountTab(engineOver(store));
+    await tabB.settle();
+    const held = tabA.get().waiting.find((x) => x.id === "h1");
+    await act(async () => { tabA.get().decide(held, "screened", { read: false, scope: "sender" }); });
+    await tabB.settle();
+    expect(tabB.get().waiting.map((x) => x.id), "premise: B withholds the row A holds").toEqual(["h2"]);
+    const stated = tabB.get().spamAllCount;
+    await act(async () => { tabB.get().markAllSpam(() => "sender"); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    await act(async () => { tabB.get().flush(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(decides().map((m) => (m as { senderId: string }).senderId)).toEqual(["h2"]);
+    expect(stated).toBe(1);
   });
 });
 

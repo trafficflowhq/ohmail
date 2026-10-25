@@ -55,6 +55,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+// jsdom has no `CSS`; j/k and `s` look a row up by `CSS.escape`d id.
+(globalThis as { CSS?: { escape: (s: string) => string } }).CSS ??= { escape: (s: string) => s };
 (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia ??= ((query: string) =>
   ({
     matches: false, media: query, onchange: null,
@@ -68,6 +70,8 @@ let seq = 0;
 let sent: EngineMutation[] = [];
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+/** Mail the next `engine.syncOnce()` delivers. */
+let arrivals: EngineMessage[] = [];
 
 const json = (v: unknown, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
@@ -85,8 +89,11 @@ function msg(id: string, from: string, hour: number, folder: Folder = "ohmail/Sc
   };
 }
 
-/** An engine over a mirror already holding `mail`, with every mutation it issues recorded. */
-async function engineWith(mail: EngineMessage[]): Promise<OhmailEngine> {
+/**
+ * An engine over a mirror already holding `mail`, with every mutation it issues recorded.
+ * `queued`: the server queues each decision for the organizer, as for a pending reader; nothing moves.
+ */
+async function engineWith(mail: EngineMessage[], queued = false): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges(
@@ -98,12 +105,19 @@ async function engineWith(mail: EngineMessage[]): Promise<OhmailEngine> {
     store,
     now: () => NOW,
     adapter: {
-      sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
-        cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
-      }),
+      sync: async () => {
+        const creates = arrivals.map((m): SyncChange => ({
+          type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
+        }));
+        arrivals = [];
+        return {
+          changes: { creates, updates: [], moves: [], deletes: [] },
+          cursor: creates.length ? `c${seq}` : store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
+        };
+      },
       mutate: async (m) => {
         sent.push(m);
+        if (queued && m.kind === "screener_decide") return { changes: [], seq: null, pendingWith: { name: "Office Mac" } };
         const changes: SyncChange[] = mutationEffects(store, m, { now: () => NOW, uuid: () => `id-${++seq}` })
           .map((e) => ({
             type: e.type, op: e.move ? "move" : "update", id: e.id, seq: ++seq,
@@ -124,6 +138,9 @@ const suggestion = (dest: string, extra: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   sent = [];
+  arrivals = [];
+  // The decide journal replays across mounts: a decision left by one test would hold its sender in the next.
+  window.localStorage.clear();
   globalThis.fetch = (async () => json({})) as typeof fetch;
 });
 
@@ -144,19 +161,31 @@ async function mount(opts: {
   mail: EngineMessage[];
   suggestions: Record<string, unknown>;
   pastTheGate?: boolean;
-}): Promise<{ latest: () => ScreenerState }> {
+  /** The install's role and the decisions the server holds outstanding (`pending` mode). */
+  role?: unknown;
+  outstanding?: unknown[];
+  queued?: boolean;
+}): Promise<{
+  latest: () => ScreenerState;
+  arrive: (mail: EngineMessage[]) => Promise<void>;
+  /** Replace the suggestions, as a purchase landing does. */
+  suggest: (suggestions: Record<string, unknown>) => Promise<void>;
+}> {
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith(opts.mail);
-  const overlay = new Map(
-    Object.entries(opts.suggestions).map(([addr, s]) => [senderKey(addr), s]),
-  );
+  const engine = await engineWith(opts.mail, opts.queued);
+  const overlayOf = (s: Record<string, unknown>) =>
+    new Map(Object.entries(s).map(([addr, x]) => [senderKey(addr), x]));
+  const outstanding = opts.outstanding ?? [];
 
   let live: ScreenerState | null = null;
+  let setOverlay: ((m: Map<string, unknown>) => void) | null = null;
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
+    const [overlay, so] = React.useState(() => overlayOf(opts.suggestions));
+    setOverlay = so;
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const reader = engine.read();
     const presented = opts.pastTheGate
@@ -164,6 +193,7 @@ async function mount(opts: {
       : undefined;
     const state = useScreenerState(
       engine, v, (() => {}) as never, overlay as never, presented as never,
+      true, opts.role as never, outstanding as never,
     );
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
@@ -194,7 +224,18 @@ async function mount(opts: {
   });
   await flush();
   await settleFirstPaint();
-  return { latest: () => live! };
+  return {
+    latest: () => live!,
+    arrive: async (mail) => {
+      arrivals.push(...mail);
+      await act(async () => { await engine.syncOnce(); });
+      await flush();
+    },
+    suggest: async (s) => {
+      await act(async () => { setOverlay!(overlayOf(s)); });
+      await flush();
+    },
+  };
 }
 
 async function flush(): Promise<void> {
@@ -333,5 +374,230 @@ describe("quick-adjust — the decision on the row", () => {
     });
     // One menu at a time, and it closes behind the press.
     expect(host!.querySelector(".scn-act-menu")).toBeNull();
+  });
+});
+
+const selId = (): string | null => host!.querySelector(".view-screener .row.sel")?.getAttribute("data-id") ?? null;
+const decided = (): string[] =>
+  sent.filter((m) => m.kind === "screener_decide").map((m) => (m as { senderId: string }).senderId);
+async function press(key: string): Promise<void> {
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+  await flush();
+}
+async function commit(latest: () => ScreenerState): Promise<void> {
+  await act(async () => { latest().flush(); });
+  await flush();
+}
+const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`.view-screener .row[data-id="${id}"]`)!;
+const rowIds = (): Array<string | null> =>
+  [...host!.querySelectorAll(".view-screener .row")].map((r) => r.getAttribute("data-id"));
+const wait = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
+const markAll = (): HTMLButtonElement =>
+  [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Mark all spam")!;
+const askNow = (): HTMLElement | null => host!.querySelector<HTMLElement>("[role=alertdialog]");
+/** A pending reader: dora's decision waits on the organizer, so she is listed under it as decided. */
+const pending = {
+  role: { mode: "pending", name: "Office Mac", reason: null, oauthOnly: false },
+  outstanding: [{
+    subject: "dora@example.test", scope: "sender", decidedAt: "2026-08-02T08:00:00.000Z",
+    holder: "Office Mac", state: "pending",
+  }],
+  queued: true,
+};
+
+describe("the selection is the person's, not the arrival's", () => {
+  it("a stranger arriving above the shown sender leaves the selection where it was, and o decides the shown sender", async () => {
+    const { latest, arrive } = await mount({ mail: [msg("a1", "anna@example.test", 9)], suggestions: {} });
+    expect(selId()).toBe("a1");
+    await arrive([msg("b1", "bert@example.test", 11)]);
+    expect(selId()).toBe("a1");
+    await press("o");
+    await commit(latest);
+    expect(decided()).toEqual(["a1"]);
+  });
+
+  it("a newer letter from the clicked sender keeps them selected", async () => {
+    const { latest, arrive } = await mount({
+      mail: [msg("b1", "bert@example.test", 11), msg("a1", "anna@example.test", 9)], suggestions: {},
+    });
+    await click(rowOf("a1"));
+    await arrive([msg("a2", "anna@example.test", 10)]);
+    // The row is re-minted under the newer letter's id; the selection follows the sender.
+    expect(selId()).toBe("a2");
+    await press("o");
+    await commit(latest);
+    expect(decided()).toEqual(["a2"]);
+  });
+
+  it("after o the selection takes the row below, so a second o never decides an arrival above", async () => {
+    const { latest, arrive } = await mount({
+      mail: [msg("a1", "anna@example.test", 10), msg("b1", "bert@example.test", 9)], suggestions: {},
+    });
+    await arrive([msg("x1", "xena@example.test", 11)]);
+    await press("o");
+    expect(selId()).toBe("b1");
+    await press("o");
+    await commit(latest);
+    expect(decided().sort()).toEqual(["a1", "b1"]);
+  });
+
+  it("filing the selected row from its own menu advances the same way", async () => {
+    const { arrive } = await mount({
+      mail: [msg("a1", "anna@example.test", 10), msg("b1", "bert@example.test", 9)], suggestions: {},
+    });
+    await click(rowOf("a1"));
+    await arrive([msg("x1", "xena@example.test", 11)]);
+    await click(slot("anna@example.test").querySelector(".scn-act-more")!);
+    const spam = [...slot("anna@example.test").querySelectorAll<HTMLElement>(".scn-act-dest")]
+      .find((b) => (b.textContent ?? "").startsWith("Spam"))!;
+    await click(spam);
+    expect(selId()).toBe("b1");
+  });
+
+  it("control: j then o decides the sender j moved to", async () => {
+    const { latest } = await mount({
+      mail: [msg("a1", "anna@example.test", 10), msg("b1", "bert@example.test", 9)], suggestions: {},
+    });
+    expect(selId()).toBe("a1");
+    await press("j");
+    expect(selId()).toBe("b1");
+    await press("o");
+    await commit(latest);
+    expect(decided()).toEqual(["b1"]);
+  });
+
+  it("pending: deciding the bottom queue row moves to the row above, never onto a decided sender", async () => {
+    const { latest } = await mount({
+      mail: [msg("q1", "quinn@example.test", 11), msg("d1", "dora@example.test", 10), msg("r1", "rita@example.test", 9)],
+      suggestions: {}, ...pending,
+    });
+    expect(latest().decided.map((d) => d.sender.id)).toEqual(["d1"]);
+    await click(rowOf("r1"));
+    await press("x");
+    expect(selId()).toBe("q1");
+    await press("o");
+    await commit(latest);
+    expect(decided().sort()).toEqual(["q1", "r1"]);
+  });
+
+  it("pending: deciding the last queue row selects nobody, so the next key decides nobody", async () => {
+    const { latest } = await mount({
+      mail: [msg("d1", "dora@example.test", 10), msg("r1", "rita@example.test", 9)],
+      suggestions: {}, ...pending,
+    });
+    expect(selId()).toBe("r1");
+    await press("x");
+    expect(selId()).toBeNull();
+    await press("o");
+    await commit(latest);
+    expect(decided()).toEqual(["r1"]);
+    // Sent, rita joins the decided rows: the selection does not follow her there.
+    expect(latest().decided.map((d) => d.sender.id)).toEqual(["d1", "r1"]);
+    expect(selId()).toBeNull();
+    // The person picks again: j takes the first row.
+    await press("j");
+    expect(selId()).toBe("d1");
+  });
+
+  it("under a chip, a suggestion landing on the selected sender keeps them selected and shown; c files them", async () => {
+    const { latest, suggest, arrive } = await mount({
+      mail: [msg("a1", "anna@example.test", 11), msg("b1", "bert@example.test", 10), msg("c1", "cleo@example.test", 8)],
+      suggestions: { "anna@example.test": suggestion("reads") },
+    });
+    // anna is selected and is not in the chip's group: the chip shows its group alone.
+    await click([...host!.querySelectorAll(".scn-chip")].find((c) => (c.textContent ?? "").startsWith("No suggestion"))!);
+    expect(rowIds()).toEqual(["b1", "c1"]);
+    await click(rowOf("c1"));
+    await suggest({ "anna@example.test": suggestion("reads"), "cleo@example.test": suggestion("receipts") });
+    expect(rowIds()).toEqual(["b1", "c1"]);
+    expect(selId()).toBe("c1");
+    // A newer letter from cleo re-mints her row: she stays the one kept and selected.
+    await arrive([msg("c2", "cleo@example.test", 9)]);
+    expect(rowIds()).toEqual(["b1", "c2"]);
+    expect(selId()).toBe("c2");
+    await press("c");
+    await commit(latest);
+    expect(sent.filter((m) => m.kind === "screener_decide")).toMatchObject([{ senderId: "c2", dest: "receipts" }]);
+  });
+});
+
+describe("s is this sender, and Mark all spam asks first", () => {
+  it("s opens the selected row's menu and moves nobody; x then files only that sender", async () => {
+    const { latest } = await mount({
+      mail: [msg("a1", "anna@example.test", 9), msg("b1", "bert@example.test", 10), msg("c1", "cleo@example.test", 11)],
+      suggestions: {},
+    });
+    const shown = selId()!;
+    await press("s");
+    await wait(800);
+    expect(["a1", "b1", "c1"].filter((id) => latest().isExiting(id))).toEqual([]);
+    expect(host!.querySelector(".scn-act-menu")?.closest(".row-slot")?.querySelector(".row")?.getAttribute("data-id")).toBe(shown);
+    await press("x");
+    await wait(300);
+    expect(["a1", "b1", "c1"].filter((id) => latest().isExiting(id))).toEqual([shown]);
+  });
+
+  it("Mark all spam states the number and moves nobody until it is confirmed", async () => {
+    const { latest } = await mount({
+      mail: [msg("a1", "anna@example.test", 9), msg("b1", "bert@example.test", 10)], suggestions: {},
+    });
+    const open = async () => {
+      const btn = [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Mark all spam")!;
+      await click(btn);
+      return host!.querySelector<HTMLElement>("[role=alertdialog]");
+    };
+    const exiting = () => ["a1", "b1"].filter((id) => latest().isExiting(id));
+
+    let ask = await open();
+    expect(ask?.textContent).toContain("Mark all 2 waiting senders as spam?");
+    expect(document.activeElement?.textContent).toBe("Cancel");
+    await wait(600);
+    expect(exiting()).toEqual([]);
+    await click([...ask!.querySelectorAll("button")].find((b) => b.textContent === "Cancel")!);
+    expect(host!.querySelector("[role=alertdialog]")).toBeNull();
+
+    ask = await open();
+    await press("Escape");
+    expect(host!.querySelector("[role=alertdialog]")).toBeNull();
+    await wait(600);
+    expect(exiting()).toEqual([]);
+
+    ask = await open();
+    await click([...ask!.querySelectorAll("button")].find((b) => b.textContent === "Mark 2 as spam")!);
+    await wait(900);
+    expect(exiting()).toEqual(["a1", "b1"]);
+    await commit(latest);
+    expect(decided().sort()).toEqual(["a1", "b1"]);
+  });
+
+  it("a sender arriving while the question is open is not in it: the number stays, the confirm moves only those named", async () => {
+    const { latest, arrive } = await mount({
+      mail: [msg("a1", "anna@example.test", 9), msg("b1", "bert@example.test", 10)], suggestions: {},
+    });
+    await click(markAll());
+    await arrive([msg("c1", "cleo@example.test", 11)]);
+    expect(askNow()?.textContent).toContain("Mark all 2 waiting senders as spam?");
+    await click([...askNow()!.querySelectorAll("button")].find((b) => b.textContent === "Mark 2 as spam")!);
+    await wait(900);
+    await commit(latest);
+    expect(decided().sort()).toEqual(["a1", "b1"]);
+  });
+
+  it("the question follows the senders it named: o lowers the number, the last closes it, and nothing reopens it", async () => {
+    const { latest, arrive } = await mount({
+      mail: [msg("a1", "anna@example.test", 9), msg("b1", "bert@example.test", 10)], suggestions: {},
+    });
+    await click(markAll());
+    (document.activeElement as HTMLElement | null)?.blur();
+    await press("o");
+    expect(askNow()?.textContent).toContain("Mark the 1 waiting sender as spam?");
+    await press("o");
+    expect(askNow()).toBeNull();
+    await commit(latest);
+    expect(decided().sort()).toEqual(["a1", "b1"]);
+    // A newer letter from a sender it named, and a stranger: neither brings it back.
+    await arrive([msg("a2", "anna@example.test", 11), msg("c1", "cleo@example.test", 12)]);
+    expect(rowIds()).toEqual(expect.arrayContaining(["a2", "c1"]));
+    expect(askNow()).toBeNull();
   });
 });

@@ -8,7 +8,7 @@
  * stay reversible; auto-detected spam is held viewable, never deleted
  * silently. On mobile the preview opens full-screen.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import type {
   BodyState,
@@ -814,6 +814,12 @@ export function ScreenerView({
    */
   const [filter, setFilter] = useState<ScreenerFilterId | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  /** Mark all spam's question: the senders it named when it opened (their keys), or null. View state, like the menu. */
+  const [askSet, setAskSet] = useState<ReadonlySet<string> | null>(null);
+  /** A decision left no undecided row to move to: nothing is selected until the person picks one. */
+  const [unpicked, setUnpicked] = useState(false);
+  const askNoteId = useId();
+  const tk = useTranslations("shortcuts");
 
   /**
    * THE SIX COUNTS, over the rows the apply button is counted over.
@@ -855,6 +861,15 @@ export function ScreenerView({
   const shelf: SpamRow[] = shelfHeld === null
     ? []
     : quarantineShelf(state.spam, shelfHeld.ids).filter((r) => shelfRowMatches(r, junk!.search.query));
+  /** The sender last shown in each segment: a newer letter re-mints their row under a new id. */
+  const shownSender = useRef<Partial<Record<ScreenerSegmentId, string>>>({});
+  /* THE SELECTED SENDER STAYS IN A FILTERED LIST when a suggestion moves them to another group:
+     falling to another row would put the next key on a sender nobody picked. */
+  const keptKey = (() => {
+    const sel = selection.waiting;
+    const row = sel ? state.waiting.find((w) => w.id === sel) : undefined;
+    return row ? senderKey(row.from.address) : sel ? shownSender.current.waiting : undefined;
+  })();
   const items: Array<ScreenerSenderDTO | SpamRow> =
     segment === "waiting"
       ? activeFilter === null
@@ -862,7 +877,7 @@ export function ScreenerView({
         : // Exiting rows are filtered by the same predicate as any other: their suggestion has
           // not changed, so a row decided from inside a group stays in that group and animates
           // away where the reader pressed it.
-          state.waiting.filter((w) => filterGroupOf(w) === activeFilter)
+          state.waiting.filter((w) => filterGroupOf(w) === activeFilter || senderKey(w.from.address) === keptKey)
       : segment === "screened"
         ? state.screenedOut
         : junkActive
@@ -904,14 +919,34 @@ export function ScreenerView({
     : segment === "waiting"
       ? [...items.map(idOf), ...state.decided.map((d) => d.sender.id)]
       : items.map(idOf);
+  /** The sender a row id stands for; null for a junk window key. */
+  const senderOfId = (id: string): string | null => {
+    const x = items.find((r) => idOf(r) === id) ?? state.decided.find((d) => d.sender.id === id)?.sender;
+    if (!x) return null;
+    return senderKey(("pinned" in x ? x.sender : x).from.address);
+  };
+  const none = segment === "waiting" && unpicked;
   const activeId = (() => {
     const sel = selection[segment];
     // Exiting rows stay visible but are no longer selectable targets.
     const selectable =
       segment === "waiting" ? ids.filter((id) => !state.isExiting(id)) : ids;
     if (sel && selectable.includes(sel)) return sel;
+    if (none) return null;
+    const k = shownSender.current[segment];
+    const same = k ? selectable.find((id) => senderOfId(id) === k) : undefined;
+    if (same) return same;
     return selectable[0] ?? null;
   })();
+  /* WHAT IS SHOWN IS THE PERSON'S SELECTION, so a sender arriving above it never takes it
+     between their read and their key. */
+  useEffect(() => {
+    if (activeId === null) return;
+    const k = senderOfId(activeId);
+    if (k) shownSender.current[segment] = k;
+    if (selection[segment] !== activeId) onSelect(segment, activeId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [segment, activeId]);
 
   /**
    * THE LIST IS A WINDOW — `useListWindow`, the Ohbox's own. The whole queue used to mount on
@@ -1146,6 +1181,27 @@ export function ScreenerView({
     setMenuFor(null);
   }, [segment, activeFilter]);
   useEffect(() => {
+    setAskSet(null);
+    setUnpicked(false);
+  }, [segment]);
+  /** The senders the question named that are still undecided: the number it states and the set it moves. */
+  const asked = askSet === null
+    ? []
+    : state.waiting.filter((x) => !state.isExiting(x.id) && askSet.has(senderKey(x.from.address)));
+  const askOpen = asked.length > 0;
+  // Closed once nobody it named is left, so a later arrival never reopens it.
+  useEffect(() => {
+    if (askSet !== null && !askOpen) setAskSet(null);
+  }, [askSet, askOpen]);
+  useEffect(() => {
+    if (!askOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAskSet(null);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [askOpen]);
+  useEffect(() => {
     if (menuFor === null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setMenuFor(null);
@@ -1164,7 +1220,12 @@ export function ScreenerView({
 
   const decideCurrent = (dest: Parameters<ScreenerState["decide"]>[1], read: boolean) => {
     if (!current || "pinned" in current) return;
-    const next = ids.filter((id) => id !== current.id && !state.isExiting(id));
+    // The undecided row that takes the decided row's place, else the one above, else none: never a
+    // decided sender, and never the top of the list, where a sender who just arrived sits.
+    const open = new Set(items.map(idOf).filter((id) => id !== current.id && !state.isExiting(id)));
+    const pos = ids.indexOf(current.id);
+    const next = [...ids.slice(pos + 1), ...ids.slice(0, pos).reverse()].find((id) => open.has(id)) ?? null;
+    setMenuFor(null);
     state.decide(current, dest, { read, scope: scopeOf(current) });
     /* ── AND THE SELECTION DOES NOT MOVE ON A REFUSAL ────────────────────────────────────────
        `state.decide` is a no-op that raises a sentence on a mailbox this install does not
@@ -1172,7 +1233,8 @@ export function ScreenerView({
        onto the next one — the queue behaving exactly as it does after a decision that landed,
        which is the shape of the defect this closes rather than a smaller version of it. */
     if (state.role.mode === "blocked") return;
-    onSelect("waiting", next[0] ?? null);
+    setUnpicked(next === null);
+    onSelect("waiting", next);
   };
 
   /**
@@ -1187,11 +1249,10 @@ export function ScreenerView({
    */
   const waiting = segment === "waiting";
   const selectable = waiting ? ids.filter((id) => !state.isExiting(id)) : ids;
-  const at = activeId ? Math.max(0, selectable.indexOf(activeId)) : 0;
-  const step = (next: number) => {
-    const id = selectable[next];
-    if (!id) return;
-    onSelect(segment, id);
+  // -1 with nothing selected, so j takes the first row.
+  const at = activeId ? Math.max(0, selectable.indexOf(activeId)) : -1;
+  /** Bring a row into view, mounting it when it is outside the list window. */
+  const reveal = (id: string) => {
     const mounted = document.querySelector(`.view-screener .row[data-id="${CSS.escape(id)}"]`);
     if (mounted) {
       mounted.scrollIntoView({ block: "nearest" });
@@ -1204,6 +1265,13 @@ export function ScreenerView({
       el.scrollTop = Math.max(0, win.offsetOf(at) - win.rowHeight);
       el.dispatchEvent(new Event("scroll"));
     }
+  };
+  const step = (next: number) => {
+    const id = selectable[next];
+    if (!id) return;
+    setUnpicked(false);
+    onSelect(segment, id);
+    reveal(id);
   };
   const decidable = waiting && current != null && !("pinned" in current);
   /**
@@ -1274,11 +1342,16 @@ export function ScreenerView({
       run: () => state.applyAll(scopeOf),
     },
     {
+      // This sender's destinations, as `s` is in the reader. It moves no mail; the menu's letters do.
       chord: "s",
       group: "screener",
-      label: t("keyAllSpam"),
-      disabled: !waiting || state.waitingCount === 0,
-      run: () => state.markAllSpam(scopeOf),
+      label: tk("screen"),
+      disabled: !decidable || state.role.mode === "blocked" || fullShown,
+      run: () => {
+        if (!activeId) return;
+        reveal(activeId);
+        setMenuFor((open) => (open === activeId ? null : activeId));
+      },
     },
     /* ── [ / ] WALK THE THREE SEGMENTS (the ohmarchy keymap, Phase 1) ──────────────────
        Waiting · Screened out · Spam, in the segmented control's own order, via the SAME
@@ -1336,8 +1409,16 @@ export function ScreenerView({
   useZoneNav({ list: { up: stepUp, down: stepDown, followId: activeId ?? null } });
 
   const selectRow = (id: string) => {
+    setUnpicked(false);
     onSelect(segment, id);
     if (readColumnHidden()) onFull(true);
+  };
+  /** A pressed chip shows its group alone, so a selection outside that group is let go. */
+  const chooseFilter = (f: ScreenerFilterId | null) => {
+    const row = state.waiting.find((w) => w.id === selection.waiting);
+    if (f !== null && row && filterGroupOf(row) !== f) onSelect("waiting", null);
+    setUnpicked(false);
+    setFilter(f);
   };
 
   /**
@@ -1469,6 +1550,10 @@ export function ScreenerView({
                    per-sender choice this reads, so a reader who set this sender to domain scope
                    and then filed from the row gets the rule the bar in front of them named. It
                    IS "sender" for every row nobody has touched, which is the common case. */
+                if (w.id === activeId) {
+                  decideCurrent(dest, false);
+                  return;
+                }
                 state.decide(w, dest, { read: false, scope: scopeOf(w) });
               }}
             />
@@ -1742,11 +1827,46 @@ export function ScreenerView({
                       taking the mailbox over is asking a question this install can answer. */}
                   {suggestNode ?? (suggest ? <SuggestControl control={suggest} subscriptionPane={subscriptionPane} /> : null)}
                   {state.role.mode !== "blocked" ? (
-                    <Button variant="ghost" kbdHint="s" onClick={() => state.markAllSpam(scopeOf)}>
+                    <Button
+                      variant="ghost"
+                      aria-expanded={askOpen}
+                      onClick={() => setAskSet(new Set(state.waiting
+                        .filter((x) => !state.isExiting(x.id)).map((x) => senderKey(x.from.address))))}
+                    >
                       {t("markAllSpam")}
                     </Button>
                   ) : null}
               </BulkStrip>
+            ) : null}
+            {/* EVERY WAITING SENDER TO SPAM IS ASKED FIRST, with the number it moves. No key opens it.
+                It names the senders waiting when it opened; one arriving later is not in it. */}
+            {segment === "waiting" && askOpen && state.role.mode !== "blocked" ? (
+              <div
+                className="scn-held scn-ask"
+                role="alertdialog"
+                aria-label={t("askAllSpam", { count: asked.length })}
+                aria-describedby={askNoteId}
+              >
+                <p className="scn-held-lead">{t("askAllSpam", { count: asked.length })}</p>
+                <p className="scn-held-lead scn-held-sender" id={askNoteId}>
+                  {t("askAllSpamNote")}
+                  {asked.some((x) => unsubLineOf(x, scopeOf(x)) !== null) ? <> {t("bulkUnsub")}</> : null}
+                </p>
+                <div className="scn-ask-acts">
+                  <Button
+                    onClick={() => {
+                      if (askSet === null) return;
+                      setAskSet(null);
+                      state.markAllSpam(scopeOf, (x) => askSet.has(senderKey(x.from.address)));
+                    }}
+                  >
+                    {t("askAllSpamYes", { count: asked.length })}
+                  </Button>
+                  <Button variant="ghost" autoFocus onClick={() => setAskSet(null)}>
+                    {t("cancel")}
+                  </Button>
+                </div>
+              </div>
             ) : null}
             {/* BOTH BULKS SCREEN OUT OR MARK SPAM, so what they send is said beside them, once. */}
             {segment === "waiting" && state.waitingCount > 0 && state.role.mode !== "blocked"
@@ -1773,7 +1893,7 @@ export function ScreenerView({
                 and spam segments are already one group each, and a chip row over them would
                 offer to filter a list by the one thing every row in it has in common. */}
             {segment === "waiting" ? (
-              <FilterChips counts={filterCounts} value={activeFilter} onChange={setFilter} />
+              <FilterChips counts={filterCounts} value={activeFilter} onChange={chooseFilter} />
             ) : null}
           </div>
         }
@@ -1876,8 +1996,9 @@ export function ScreenerView({
           // so with nothing to preview it stands empty, exactly as it does before a sender is
           // selected. `items.length` (not `current`) is the test: a `waiting` segment can have
           // rows that are all mid-exit — none selectable, so `current` is null while the list is
-          // NOT empty — and there the read column keeps its own "nothing selected" state.
-          items.length === 0 ? null : <Empty segment={segment} surface={emptySurface(items.length)} />
+          // NOT empty — and there the read column keeps its own "nothing selected" state. Nothing
+          // picked after the last undecided row was decided stands empty: there is nothing loading.
+          items.length === 0 || none ? null : <Empty segment={segment} surface={emptySurface(items.length)} />
         ) : segment === "waiting" ? (
           <WaitingPreview
             sender={current as ScreenerSenderDTO}

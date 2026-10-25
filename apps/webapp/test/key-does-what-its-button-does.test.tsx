@@ -246,6 +246,27 @@ interface HeldPress {
   sends: () => number;
   /** What Undo says, whichever door took it. */
   undone: RegExp;
+  /** A press that names its set: what the closed window sent, and what the press named. */
+  named?: () => { sent: string[]; named: string[] };
+}
+
+/** The Screener's rows, top to bottom. */
+const screenerRows = (): string[] =>
+  [...host!.querySelectorAll(".view-screener .row")].map((r) => r.getAttribute("data-id") ?? "");
+/** Each Screener decision sent, as "sender destination". */
+const decisions = (): string[] =>
+  kinds("screener_decide").map((m) => `${(m as { senderId: string }).senderId} ${(m as { dest?: string }).dest}`);
+/** The senders Mark all spam's question named: the rows on screen when it opened. */
+let asked: string[] = [];
+/** Mark all spam, then its confirm. No key opens the question, and it states the number it moves. */
+async function markAllSpamConfirmed(): Promise<void> {
+  asked = screenerRows();
+  expect(asked.length, "one waiting sender: no pile to mark").toBeGreaterThan(1);
+  await click(buttonStarting(messages.screener.markAllSpam));
+  const ask = host!.querySelector("[role=alertdialog]");
+  expect(ask?.textContent?.match(/(\d+) waiting senders? as spam\?/)?.[1], "the question names another number").toBe(String(asked.length));
+  const yes = messages.screener.askAllSpamYes.replace("{count}", String(asked.length));
+  await click([...ask!.querySelectorAll("button")].find((b) => b.textContent === yes));
 }
 
 const HELD: readonly HeldPress[] = [
@@ -256,10 +277,12 @@ const HELD: readonly HeldPress[] = [
     undone: /^Undone — 1 waiting again\.$/,
   },
   {
-    name: "a Screener pile (s → every waiting sender to Spam)",
-    press: async () => { await mountShell("#/screener"); await tick(2000); await key("s"); await tick(2000); },
+    name: "a Screener pile (Mark all spam, its question, Mark N as spam)",
+    press: async () => { await mountShell("#/screener"); await tick(2000); await markAllSpamConfirmed(); await tick(2000); },
     sends: () => kinds("screener_decide").length,
-    undone: /^Undone — \d+ waiting again\.$/,
+    // Every sender it named comes back, not some.
+    get undone() { return new RegExp(`^Undone — ${asked.length} waiting again\\.$`); },
+    named: () => ({ sent: decisions().sort(), named: asked.map((id) => `${id} spam`).sort() }),
   },
   {
     name: "the Move strip (Move → News)",
@@ -318,6 +341,10 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       await tick(30_000);
       const committed = p.sends();
       expect(committed, "the window never committed").toBeGreaterThan(0);
+      if (p.named) {
+        const { sent: got, named } = p.named();
+        expect(got, "the window sent other senders than the press named").toEqual(named);
+      }
       await key("z");
       const answer = notice();
       await tick(30_000);
@@ -406,6 +433,33 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
       await tick(30_000);
       expect(commits, `planted atDoor=${atDoor}`).toBe(atDoor ? 0 : 1);
     }
+  });
+});
+
+/* ── `s` in the Screener is one sender ─────────────────────────────────────────
+   Up to 0.30.5 one `s` moved every waiting sender to Spam. It opens the menu the shown row's own
+   button opens and moves nothing; a letter then files that sender alone. */
+describe("s in the Screener opens the shown sender's menu, as the row's own button does", () => {
+  it("s moves nothing; x then files only the shown sender", async () => {
+    await mountShell("#/screener");
+    await tick(2000);
+    // Off the top row, so the shown sender is not merely the first.
+    await key("j");
+    const rows = screenerRows();
+    const shown = host!.querySelector(".view-screener .row.sel")?.getAttribute("data-id");
+    expect(shown, "j showed no second sender").toBe(rows[1]);
+    await key("s");
+    const slot = [...host!.querySelectorAll(".view-screener .row-slot")]
+      .find((r) => r.querySelector(".row")?.getAttribute("data-id") === shown);
+    expect(slot?.querySelector(".scn-act-more")?.getAttribute("aria-expanded"), "s opened no menu on the shown sender").toBe("true");
+    expect(host!.querySelectorAll(".scn-act-menu"), "a menu stands on another sender").toHaveLength(1);
+    await tick(30_000);
+    expect(kinds("screener_decide"), "s moved mail").toEqual([]);
+    expect(undoCapsule(), "s raised an Undo").toBeNull();
+    expect(screenerRows()).toEqual(rows);
+    await key("x");
+    await tick(30_000);
+    expect(decisions()).toEqual([`${shown} spam`]);
   });
 });
 

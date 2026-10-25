@@ -897,6 +897,9 @@
       "autoFailed": "That setting did not save. It is unchanged."
     },
     "markAllSpam": "Mark all spam",
+    "askAllSpam": "{count, plural, one {Mark the # waiting sender as spam?} other {Mark all # waiting senders as spam?}}",
+    "askAllSpamNote": "Their held mail moves to Spam, and so does the mail they send later.",
+    "askAllSpamYes": "Mark {count} as spam",
     "bulkUnsub": "Where a sender offers one-click unsubscribe, Spam and Screen out here also ask to unsubscribe you, now and for their later mail.",
     "heldReleaseLead": "{count, plural, one {1 message from a sender you already decided about is still in the Screener. Release it to its pile.} other {# messages from senders you already decided about are still in the Screener. Release them to their piles.}}",
     "heldReleaseContactLine": "{sender} is in your contacts: {count, plural, one {1 message is} other {# messages are}} still in the Screener. Released, {count, plural, one {it goes} other {they go}} to your Ohbox.",
@@ -1056,7 +1059,6 @@
     "keyLeaveFull": "Leave the full-screen preview",
     "keyAccept": "Accept the suggested destination",
     "keyApplyAll": "Apply every suggestion",
-    "keyAllSpam": "Mark every waiting sender spam",
     "keyFile": "File this sender to {dest}",
     "keyFileRead": "File to {dest} and mark read",
     "retry": "Retry",

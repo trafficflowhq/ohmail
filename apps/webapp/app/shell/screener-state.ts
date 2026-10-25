@@ -365,7 +365,10 @@ export interface ScreenerState {
    */
   unsubClaimOf: (sender: ScreenerSenderDTO, scope: DecisionScope) => UnsubscribeClaim;
   applyAll: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope) => void;
-  markAllSpam: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope) => void;
+  /** `only` limits it to the senders a question named; absent, every undecided row. */
+  markAllSpam: (scopeOf: (s: ScreenerSenderDTO) => DecisionScope, only?: (s: ScreenerSenderDTO) => boolean) => void;
+  /** How many senders {@link markAllSpam} moves: the loaded undecided rows, never the store total. */
+  spamAllCount: number;
   allowScreened: (sender: ScreenerSenderDTO, dest: "ohbox" | "reads") => void;
   notSpamToWaiting: (row: SpamRow) => void;
   notSpamToOhbox: (row: SpamRow) => void;
@@ -1698,9 +1701,10 @@ export function useScreenerState(
     /** Restricts the bulk to rows it can honestly speak for. Absent ⇒ every waiting row. */
     only?: (x: ScreenerSenderDTO) => boolean,
   ) => {
-    // `senderHeld`, not a per-id read: a bulk planned over a queue holding a pending sender's
-    // re-minted row would walk it into a second decision for one sender.
-    const items = waiting.filter((x) => !senderHeld(x) && (only ? only(x) : true));
+    // `senderHeld` (inside `undecided`), not a per-id read: a bulk planned over a queue holding a
+    // pending sender's re-minted row would walk it into a second decision for one sender.
+    // `undecided`, the set the counts are taken over: also skips a sender another tab holds.
+    const items = undecided.filter((x) => (only ? only(x) : true));
     if (!items.length || s.bulkBusy) return;
     s.bulkBusy = true;
     const total = items.length;
@@ -1809,7 +1813,7 @@ export function useScreenerState(
       (x) => x.ai != null && x.ai.dest !== "screener",
     );
 
-  const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope) =>
+  const markAllSpam = (scopeOf: (x: ScreenerSenderDTO) => DecisionScope, only?: (x: ScreenerSenderDTO) => boolean) =>
     bulk(
       () => "spam",
       scopeOf,
@@ -1818,6 +1822,7 @@ export function useScreenerState(
       (snaps) => t("toastBulkSpam", {
         count: snaps.length, unsub: snaps.some((x) => x.claim !== "none") ? "true" : "false",
       }),
+      only,
     );
 
   /**
@@ -2359,6 +2364,7 @@ export function useScreenerState(
     rereadWaiting,
     queueSettled,
     suggestedCount,
+    spamAllCount: undecided.length,
     suggestedDests,
     unsuggestedSenders,
     suggestedSenders,

@@ -897,6 +897,9 @@
       "autoFailed": "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert."
     },
     "markAllSpam": "Alles als Spam markieren",
+    "askAllSpam": "{count, plural, one {Den # wartenden Absender als Spam markieren?} other {Alle # wartenden Absender als Spam markieren?}}",
+    "askAllSpamNote": "Ihre zurückgehaltenen Mails kommen in Spam, ebenso alles, was sie später senden.",
+    "askAllSpamYes": "{count} als Spam markieren",
     "bulkUnsub": "Bietet ein Absender Ein-Klick-Abmeldung an, melden Spam und Aussortieren dich hier gleich mit ab, jetzt und bei seinen späteren Mails.",
     "heldReleaseLead": "{count, plural, one {1 Nachricht von einem Absender, \u00fcber den du schon entschieden hast, liegt noch im Screener. Gib sie in ihren Stapel frei.} other {# Nachrichten von Absendern, \u00fcber die du schon entschieden hast, liegen noch im Screener. Gib sie in ihre Stapel frei.}}",
     "heldReleaseContactLine": "{sender} ist in deinen Kontakten: {count, plural, one {1 Nachricht liegt} other {# Nachrichten liegen}} noch im Screener. Freigegeben {count, plural, one {kommt sie} other {kommen sie}} in deine Ohbox.",
@@ -1056,7 +1059,6 @@
     "keyLeaveFull": "Vollbildvorschau verlassen",
     "keyAccept": "Vorgeschlagenes Ziel übernehmen",
     "keyApplyAll": "Alle Vorschläge übernehmen",
-    "keyAllSpam": "Alle wartenden Absender als Spam markieren",
     "keyFile": "Diesen Absender einsortieren: {dest}",
     "keyFileRead": "Einsortieren: {dest} \u2014 und als gelesen markieren",
     "retry": "Erneut versuchen",
