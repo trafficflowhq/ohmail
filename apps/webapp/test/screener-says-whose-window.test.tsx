@@ -4,13 +4,14 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  OhmailEngine, MemoryMirrorStore,
+  OhmailEngine, MemoryMirrorStore, consentPartition, presentationReader,
   type EngineMessage, type ScreenerWaitingWire, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import messagesDe from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
+import type { ShellConsentFacts } from "../app/shell/consent-options.js";
 
 /**
  * A FOLDER-WHOLE COUNT SAYS WHY (RULING-026). Where a mailbox's organizer has published no window
@@ -56,12 +57,14 @@ const ONWARD: ScreenerWaitingWire = {
 
 type Door = "answers" | "refuses" | "none";
 
-async function engineWith(door: Door): Promise<OhmailEngine> {
-  const store = new MemoryMirrorStore();
-  await store.load();
-  await store.applyChanges([held("m0", "a@one.test"), held("m1", "b@one.test")].map((m): SyncChange => ({
-    type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
-  })));
+async function engineWith(door: Door, given?: MemoryMirrorStore): Promise<OhmailEngine> {
+  const store = given ?? new MemoryMirrorStore();
+  if (!given) {
+    await store.load();
+    await store.applyChanges([held("m0", "a@one.test"), held("m1", "b@one.test")].map((m): SyncChange => ({
+      type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m,
+    })));
+  }
   return new OhmailEngine({
     store, now: () => NOW,
     adapter: {
@@ -90,15 +93,21 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
 }
 
-async function mount(door: Door, degrade: unknown = null, locale = "en"): Promise<void> {
+/** The shell's lists over the mirror: the store, and the consent facts the partition reads. */
+interface Over { store: MemoryMirrorStore; consent: ShellConsentFacts }
+
+async function mount(door: Door, degrade: unknown = null, locale = "en", over?: Over): Promise<void> {
   const { useScreenerState } = await import("../app/shell/screener-state.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
-  const engine = await engineWith(door);
+  const { shellConsentOptions } = await import("../app/shell/consent-options.js");
+  const engine = await engineWith(door, over?.store);
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const read = engine.read();
+    const presented = over ? presentationReader(read, consentPartition(read, shellConsentOptions(over.consent, NOW, []))) : undefined;
+    const state = useScreenerState(engine, v, (() => {}) as never, undefined, presented);
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {
       owed: false, state, segment: "waiting", settled: true, selection: sel as never,
@@ -169,5 +178,38 @@ describe("the shell partitions with each mailbox's window, and never whose it is
     }, NOW, []);
     expect(withMap.byMailbox).toEqual({ mb: { baselineAt: null, dormancyDays: 30, scope: "window" } });
     expect("byMailbox" in shellConsentOptions({ ...base, screeningByMailbox: null }, NOW, [])).toBe(false);
+  });
+});
+
+describe("a held letter is dated by its arrival, as the gate dated it", () => {
+  it("an old Date received now waits, read or unread; one received before the window does not; a remount says the same", async () => {
+    const { writeBootCache, readBootCache } = await import("../app/shell/boot-cache.js");
+    const { CONSENT_BOOT_SCOPE } = await import("../app/shell/consent-state.js");
+    const JUNE = "2026-06-02T09:00:00.000Z";
+    const letter = (id: string, from: string, unread: boolean, sortAt: string): EngineMessage =>
+      ({ ...held(id, from), date: JUNE, unread, sortAt });
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([
+      letter("u1", "udo@arrived.test", true, "2026-09-26T08:30:00.000Z"),
+      letter("o1", "olga@arrived.test", false, "2026-09-26T08:30:00.000Z"),
+      letter("j1", "june@received.test", true, JUNE),
+    ].map((m): SyncChange => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m })));
+    // The account's answer as the boot cache holds it: 60 days from a baseline of 1 September.
+    writeBootCache(CONSENT_BOOT_SCOPE, "acct", { v: 1, seedConfirmedAt: null, dormancyDays: 60, screeningBaselineAt: "2026-09-01T00:00:00.000Z" });
+    const consent = (): ShellConsentFacts => {
+      const c = readBootCache(CONSENT_BOOT_SCOPE, "acct", (p) => p as { dormancyDays: number; screeningBaselineAt: string | null })!;
+      return { known: true, standalone: false, dormancyDays: c.dormancyDays, screeningBaselineAt: c.screeningBaselineAt,
+        screeningScope: "window", foldersEnabled: false, screeningByMailbox: null };
+    };
+    for (const pass of ["first", "remount"]) {
+      await mount("none", null, "en", { store, consent: consent() });
+      expect(text(), pass).toContain("udo@arrived.test");
+      expect(text(), pass).toContain("olga@arrived.test");
+      expect(text(), pass).not.toContain("june@received.test");
+      await act(async () => { root!.unmount(); });
+      host?.remove();
+      root = null;
+    }
   });
 });

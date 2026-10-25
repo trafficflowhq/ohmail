@@ -50,6 +50,8 @@ function msg(o: {
   date?: string | null;
   /** The arrival (`messages.created_at` on the wire). Absent ⇒ a mirror row older than the field. */
   arrivedAt?: string;
+  /** The wire's sort key: the header clamped to the server's receipt (mail 0119). */
+  sortAt?: string;
   unread?: boolean;
   threadId?: string;
   /** Recipients — on a row in a Sent folder these are the account's own record of who it wrote to. */
@@ -67,6 +69,7 @@ function msg(o: {
     cc: [],
     date: o.date === undefined ? OLD : o.date,
     ...(o.arrivedAt === undefined ? {} : { arrivedAt: o.arrivedAt }),
+    ...(o.sortAt === undefined ? {} : { sortAt: o.sortAt }),
     folder: o.folder as Folder,
     snippet: `snippet ${o.id}`,
     unread: o.unread ?? false,
@@ -253,7 +256,10 @@ describe("the cutline decides who is still owed a decision", () => {
     // The first import finished inside the window, before RECENT.
     const DURING = "2026-07-10T09:00:00.000Z";
     const DONE = "2026-07-10T10:00:00.000Z";
-    // Every Date is OLD, so only the claim could keep a sender active.
+    // Every Date is OLD and every sender decided by the act (so the gate's arrival clock reads none
+    // of them and no person consented): only the claim could keep a sender active.
+    const ids = ["backfilled", "ingested", "imported", "ingested-long-ago", "older-build", "older-build-no-arrival"];
+    const decided = ids.map((id) => rule({ id: `r-${id}`, kind: "sender", match: `${id}@example.com`, destination: "INBOX", provenance: "promoted" }));
     const store = await mirrorOf([
       // Backfilled: never, however recent its arrival.
       claimOf("backfilled", { by: "backfill", recorded: RECENT, sortAt: RECENT }),
@@ -264,7 +270,7 @@ describe("the cutline decides who is still owed a decision", () => {
       // Marked by an older build: the arrival key, as in 0.25.19.
       claimOf("older-build", { sortAt: RECENT }),
       claimOf("older-build-no-arrival", { recorded: RECENT }),
-    ]);
+    ], decided);
     const activity = (imports?: Readonly<Record<string, string | null>>) =>
       consentPartition(store, imports === undefined ? opts : { ...opts, firstImportDoneAt: imports }).activity;
     const finished = activity({ mb: DONE });
@@ -940,6 +946,65 @@ describe("the screening baseline", () => {
     expect(part.placeOf.get("d1")).toBe("ohmail/Screener");
     expect(part.history).toHaveLength(0);
     expect(part.counts.consentedSenders).toBe(1);
+  });
+
+  it("A LETTER HELD AT THE GATE IS DATED BY ITS ARRIVAL: an old header that arrived now waits, read or unread", async () => {
+    const arrived = new Date(BASELINE.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const part = consentPartition(await mirrorOf([
+      msg({ id: "u1", from: "udo@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: arrived, unread: true }),
+      msg({ id: "o1", from: "olga@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: arrived, unread: false }),
+    ]), baselined);
+    expect(part.activity.get("udo@example.com")).toBe("active");
+    expect(part.activity.get("olga@example.com")).toBe("active");
+    expect(part.placeOf.get("u1")).toBe("ohmail/Screener");
+    expect(part.placeOf.get("o1")).toBe("ohmail/Screener");
+    expect(part.counts.activeUndecidedSenders).toBe(2);
+    expect(part.history).toHaveLength(0);
+  });
+
+  it("…but a letter the server received before the window is History, read or unread", async () => {
+    const part = consentPartition(await mirrorOf([
+      msg({ id: "u1", from: "udo@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: OLD_150, unread: true }),
+      msg({ id: "o1", from: "olga@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: OLD_150, unread: false }),
+    ]), baselined);
+    expect(part.activity.get("udo@example.com")).toBe("dormant");
+    expect(part.activity.get("olga@example.com")).toBe("dormant");
+    expect(part.counts.activeUndecidedSenders).toBe(0);
+    expect(part.history.map((m) => m.id).sort()).toEqual(["o1", "u1"]);
+  });
+
+  it("…and a letter the mailbox's first import recorded is History, as for a held claim", async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const arrived = new Date(BASELINE.getTime() + day).toISOString();
+    const done = new Date(BASELINE.getTime() + 2 * day).toISOString();
+    const later = new Date(BASELINE.getTime() + 3 * day).toISOString();
+    const store = await mirrorOf([
+      msg({ id: "p1", from: "imported@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: arrived, arrivedAt: arrived }),
+      msg({ id: "p2", from: "after@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: later, arrivedAt: later }),
+    ]);
+    const finished = consentPartition(store, { ...baselined, firstImportDoneAt: { mb: done } });
+    expect(finished.activity.get("imported@example.com")).toBe("dormant");
+    expect(finished.activity.get("after@example.com")).toBe("active");
+    expect(finished.history.map((m) => m.id)).toEqual(["p1"]);
+    // Still importing: nothing it records waits by its arrival.
+    const importing = consentPartition(store, { ...baselined, firstImportDoneAt: { mb: null } });
+    expect(importing.counts.activeUndecidedSenders).toBe(0);
+  });
+
+  it("the arrival clock reads only held mail of undecided senders", async () => {
+    const arrived = new Date(BASELINE.getTime() + 24 * 60 * 60 * 1000).toISOString();
+    const part = consentPartition(await mirrorOf([
+      msg({ id: "d1", from: "known@example.com", folder: "ohmail/Screener", date: OLD_150, sortAt: arrived }),
+      msg({ id: "i1", from: "inboxed@example.com", folder: "INBOX", date: OLD_150, sortAt: arrived }),
+    ], [rule({ id: "r1", kind: "sender", match: "known@example.com", destination: "INBOX" })]), baselined);
+    // A decided sender is retired at the gate as before, never queued again by it.
+    expect(part.activity.get("known@example.com")).toBe("dormant");
+    expect(part.placeOf.get("d1")).toBe("ohmail/Screener");
+    expect(part.retiredDecided.has("known@example.com")).toBe(true);
+    // A letter in the INBOX keeps today's answer: History.
+    expect(part.activity.get("inboxed@example.com")).toBe("dormant");
+    expect(part.history.map((m) => m.id)).toEqual(["i1"]);
+    expect(part.counts.activeUndecidedSenders).toBe(0);
   });
 
   it("A NULL OR ABSENT BASELINE IS EXACTLY TODAY'S BEHAVIOUR", async () => {

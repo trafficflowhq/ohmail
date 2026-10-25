@@ -1283,13 +1283,32 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(stored.map((r) => r.messageId)).not.toContain(retiredId);
   });
 
+  it("asks about a sender whose old-dated letter the server received inside the cutline, as the queue lists it", async () => {
+    const w = await newWorld({ credits: 50 });
+    await db.update(accountSettings)
+      .set({ screeningBaselineAt: new Date("2026-08-20T00:00:00Z"), screeningScope: "window" })
+      .where(eq(accountSettings.accountId, w.accountId));
+    // Recorded after the first import: an imported letter waits by its Date alone.
+    await db.update(mailboxes).set({ initialImportCompletedAt: new Date(AFTER.getTime() - 60_000) }).where(eq(mailboxes.id, w.mailboxId));
+    // One June header each; only the server's receipt differs.
+    const june = new Date("2026-05-02T09:00:00Z");
+    await heldDated(w, "arrived@example.test", AFTER, june, new Date("2026-09-10T00:00:00Z"));
+    await heldDated(w, "received-june@example.test", AFTER, june, june);
+    const spy = spyClassifier();
+    const result = await screenerAutoSuggestPass(db, {
+      accountId: w.accountId, classifier: spy, credits: w.gate, now: () => new Date("2026-09-11T00:00:00Z"),
+    });
+    expect(spy.screened.map((i) => i.from.address)).toEqual(["arrived@example.test"]);
+    expect(result.bought).toBe(1);
+  });
+
   /** `held` with the header date under the caller's control — the cutline's only input. */
-  async function heldDated(w: World, from: string, at: Date, date: Date): Promise<string> {
+  async function heldDated(w: World, from: string, at: Date, date: Date, receivedAt?: Date): Promise<string> {
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId,
       bodyHash: "h", dedupKey: `sug:${randomUUID()}`,
       subject: `hello from ${from}`, fromAddress: from, snippet: "a first message",
-      date, createdAt: at,
+      date, createdAt: at, ...(receivedAt === undefined ? {} : { arrivedAt: receivedAt }),
       nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(folderState).values({

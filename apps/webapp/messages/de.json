@@ -1591,12 +1591,12 @@
     },
     "dormancy": {
       "title": "Wenn ein Absender still wird",
-      "description": "Tage Stille, bis ein Absender, über den du nie entschieden hast, in der Historie statt im Screener wartet.",
+      "description": "Wie weit vor dem Beginn deines Screenings der Screener nach Absendern fragt, über die du nie entschieden hast. Wer zuletzt davor geschrieben hat, wartet in der Historie.",
       "dayLabel": "{days}",
       "dayLabelDefault": "{days} (Standard)",
       "allTime": "Gesamter Zeitraum",
       "ariaLabel": "Tage, bis ein Absender als still gilt",
-      "microcopy": "Das ändert nur, nach wem der Screener dich fragt. Keine Mail wird verschoben, und Ungelesenes wird immer angezeigt.",
+      "microcopy": "Das ändert nur, nach wem der Screener dich fragt. Keine Mail wird verschoben: Mails von Absendern, nach denen er nicht fragt, stehen in der Historie – gelesen oder ungelesen.",
       "microcopyWider": "Wenn du weiter zurück screenst, kommen ältere Absender in die Screener-Liste. Ihre Mails bleiben, wo sie sind, und werden erst verschoben, wenn du über sie entscheidest.",
       "microcopyAllTime": "Der Screener fragt dich zu jedem Absender, über den du nie entschieden hast — egal, wie lange das her ist. Bis du entscheidest, wird nichts verschoben.",
       "failed": "Das ließ sich nicht speichern — versuch es nochmal."

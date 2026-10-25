@@ -2,8 +2,9 @@
 
 /**
  * The dormancy dial — how long a sender may go quiet before the Screener stops asking about them.
- * Moving it only changes what the Screener SHOWS: it never moves a message, never hides unread
- * mail, never touches a decided or placed sender — a plain settings write, unlike
+ * Moving it only changes what the Screener SHOWS: it never moves a message (a quiet sender's mail,
+ * read or unread, is listed under History) and never touches a decided or placed sender — a plain
+ * settings write, unlike
  * {@link AutoSuggestRow}, which spends money. Presets, not a free field: the window is bounded
  * 1–365 by the column's CHECK, and a free integer invites a 0 that empties the queue and a 2e8
  * that crashes the `GET /consent` read; "60 days" is the default and picking it stores NULL, so

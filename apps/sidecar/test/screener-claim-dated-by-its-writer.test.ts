@@ -124,7 +124,8 @@ describe("the held-claim term and who wrote the fact", () => {
     await w.row({ from: "a15@ingest-outside.invalid", name: "PayPal", date: ago(100 * D), arrivedAt: ago(100 * D), recordedAt: ago(100 * D), by: "ingest" });
     await w.contact("a15@ingest-outside.invalid", "inferred", ago(90 * D));
 
-    const listed = ["a11", "a12", "a13", "a6", "a7", "a8", "n1"];
+    // a14 is undecided and arrived inside the window: it waits by its arrival, whatever its Date.
+    const listed = ["a11", "a12", "a13", "a14", "a6", "a7", "a8", "n1"];
     const before = await w.read();
     expect.soft(before.waiting, "before the backfill").toEqual(listed);
     const placed = await w.placement();

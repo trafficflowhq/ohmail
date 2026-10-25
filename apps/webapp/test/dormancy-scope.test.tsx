@@ -194,6 +194,20 @@ describe("Settings → Screener: the window and its mode", () => {
     }
   });
 
+  it("says quiet senders' mail, read or unread, is in History — never that unread always shows", async () => {
+    for (const [locale, msgs, history, readOrUnread, unreadShows] of [
+      ["en", en, /History/, /read or unread/, /unread always shows/i],
+      ["de", de, /Historie/, /gelesen oder ungelesen/, /Ungelesenes wird immer angezeigt/i],
+    ] as const) {
+      const { host, root } = await mount({ days: 60, scope: "window", messages: msgs as never, locale });
+      const text = host.textContent ?? "";
+      expect(text, locale).toMatch(history);
+      expect(text, locale).toMatch(readOrUnread);
+      expect(text, locale).not.toMatch(unreadShows);
+      await drop(root, host);
+    }
+  });
+
   it("says what widening does, in both locales", async () => {
     for (const [locale, msgs] of [["en", en], ["de", de]] as const) {
       const { host, root } = await mount({

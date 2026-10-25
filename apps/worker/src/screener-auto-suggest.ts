@@ -2,7 +2,7 @@ import { and, asc, desc, eq, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
   accountSettings, folderState, messages,
-  resolveCutline, senderIsActiveSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
+  resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   screenerAttemptKey, storeScreenerSuggestion,
   screenerSuggestedSenderExists, hasScreenerSuggestionForSender, automaticAiAdmits,
   decisionCanBeApplied, readRequestEligibility, reverseCharge,
@@ -625,6 +625,13 @@ async function selectCandidates(
     rank: sql<number>`row_number() over (
       partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
     )`.as("rank"),
+    // A held letter that arrived inside the cutline, over the sender's held rows: the page's mark.
+    heldArrival: (opts.cutline
+      ? sql<number>`max(case when ${heldArrivedInsideSql(d, {
+        folder: sql`${folderState.desiredFolder}`, deletedAt: sql`${messages.deletedAt}`, date: sql`${messages.date}`,
+        arrivedAt: sql`${messages.arrivedAt}`, recordedAt: sql`${messages.createdAt}`, mailboxId: sql`${messages.mailboxId}`,
+      }, opts.cutline)} then 1 else 0 end) over (partition by ${sender})`
+      : sql<number>`0`).as("held_arrival"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(
@@ -664,8 +671,9 @@ async function selectCandidates(
       // now lists through. Without it this pass bought advice about senders no surface shows,
       // which is money spent on a question nobody is being asked. Absent ⇒ inert, so a caller
       // that reads no settings gets the query it always had.
+      // A letter at the gate that arrived inside the cutline counts whatever its Date, as on the page.
       opts.cutline
-        ? senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)
+        ? sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`
         : undefined,
       // (5) THE DECIDED PREDICATE — the same expression the queue's page excludes through, and
       // UNCONDITIONAL for that page's reason. This pass builds its own candidate set, so arm (4)'s

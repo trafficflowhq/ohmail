@@ -24,6 +24,7 @@ async function world(claim: boolean, arrivedAt: Date | null = new Date("2026-10-
   await db.insert(accounts).values({ id: accountId, name: `dc-${accountId.slice(0, 8)}` });
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`, organizerRole: "organizer",
+    initialImportCompletedAt: new Date("2026-01-01T00:00:00.000Z"),
   }).returning();
   // Read, and dated by its sender years before it arrived an hour ago.
   const [m] = await db.insert(messages).values({
@@ -58,10 +59,15 @@ describe("a held claim and the cutline", () => {
     }
   });
 
-  it("CONTROL: the same old mail without the fact is dormant", async () => {
-    const w = await world(false);
+  it("CONTROL: the same old mail without the fact is dated by its arrival", async () => {
+    // Received when its header says: dormant.
+    const w = await world(false, new Date("2020-01-06T09:00:04.000Z"));
     const page = await new ScreenerService({}).list(w.ctx, { limit: 50 });
     expect(page.items).toEqual([]);
     expect(await cutlineCounts(w.ctx, {})).toEqual({ decidedSenders: 0, activeUndecidedSenders: 0, dormantUndecidedSenders: 1 });
+    // Received an hour ago: it waits, as the gate dated it.
+    const now = await world(false);
+    expect((await new ScreenerService({}).list(now.ctx, { limit: 50 })).items.map((i) => i.sender.address)).toEqual([SENDER]);
+    expect(await cutlineCounts(now.ctx, {})).toEqual({ decidedSenders: 0, activeUndecidedSenders: 1, dormantUndecidedSenders: 0 });
   });
 });

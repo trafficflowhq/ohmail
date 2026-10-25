@@ -5,7 +5,7 @@ import {
   applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
-  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, senderIsDecidedSql, heldSortKey,
+  screenerSuggestionsBySender, automaticAiAdmits, resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, heldSortKey,
   decisionCanBeApplied, readRequestEligibility,
   DECIDABLE_FOLDERS, SCREENER_FOLDER, SCREENER_ACT_TRIGGER_PREFIX,
   type ResolvedCutline, type Tx,
@@ -675,6 +675,11 @@ async function selectWaitingSenders(
     rank: sql<number>`row_number() over (
       partition by ${sender} order by ${sortKey} desc, ${messages.id} desc
     )`.as("rank"),
+    // A held letter that arrived inside the cutline, over the sender's held rows: the page's mark.
+    heldArrival: sql<number>`max(case when ${heldArrivedInsideSql(d, {
+      folder: sql`${folderState.desiredFolder}`, deletedAt: sql`${messages.deletedAt}`, date: sql`${messages.date}`,
+      arrivedAt: sql`${messages.arrivedAt}`, recordedAt: sql`${messages.createdAt}`, mailboxId: sql`${messages.mailboxId}`,
+    }, opts.cutline)} then 1 else 0 end) over (partition by ${sender})`.as("held_arrival"),
   }).from(messages)
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
     .where(and(
@@ -737,7 +742,7 @@ async function selectWaitingSenders(
       eq(reps.rank, 1),
       eq(reps.noAi, false),
       isNull(reps.sensitivityCategory),
-      senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline),
+      sql`(${reps.heldArrival} = 1 or ${senderIsActiveSql(d, opts.accountId, sql`lower(${reps.fromAddress})`, opts.cutline)})`,
       sql`not ${senderIsDecidedSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))

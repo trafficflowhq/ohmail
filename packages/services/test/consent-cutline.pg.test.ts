@@ -156,6 +156,9 @@ async function mirror(): Promise<MemoryMirrorStore> {
   return store;
 }
 
+// Top level: both describe blocks below read the one client.
+afterAll(async () => { await client.end({ timeout: 5 }); });
+
 describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
@@ -184,8 +187,6 @@ describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
       });
     }
   }, 120_000);
-
-  afterAll(async () => { await client.end({ timeout: 5 }); });
 
   it("counts who is still owed a decision", async () => {
     const counts = await cutlineCounts(ctx);
@@ -391,5 +392,98 @@ describe.skipIf(!AVAILABLE)("the cutline, and its two implementations", () => {
       `);
       expect(rows.length > 0, `${who} on the server`).toBe(verdict === "active");
     }
+  });
+});
+
+/**
+ * A LETTER HELD AT THE GATE IS DATED BY ITS ARRIVAL, as the gate dated it: `receivedAt` is
+ * `messages.arrived_at` (the server's receipt, mail 0119), `arrivedAt` above stays `created_at`.
+ * An old `Date:` that arrived inside the window waits, read or unread; one the server received
+ * before it is History, read or unread. Its own account, so the totals above stay pinned.
+ */
+describe.skipIf(!AVAILABLE)("a held letter's arrival, on both implementations", () => {
+  const ACCT = randomUUID();
+  const actx: ServiceContext = { db, accountId: ACCT, userId: null, now: () => NOW, requestId: "consent-cutline-arrival" };
+  const BASE = new Date("2026-08-01T00:00:00.000Z");
+  const JUNE = new Date("2026-05-02T09:00:00.000Z");
+  const mbs: string[] = [];
+  const at = (id: number) => mbs[id]!;
+
+  async function arrivalMirror(): Promise<MemoryMirrorStore> {
+    const stored = await db.select({ m: messages, fs: folderState })
+      .from(messages).innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(eq(messages.accountId, ACCT));
+    const storedRules = await db.select().from(rules).where(eq(rules.accountId, ACCT));
+    const store = new MemoryMirrorStore();
+    await store.load();
+    let seq = 0;
+    await store.applyChanges([
+      ...stored.map(({ m, fs }) => ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: NOW.toISOString(),
+        entity: messageRowToDTO(m, fs, undefined, undefined) as unknown as EngineMessage })),
+      ...storedRules.map((r) => ({ type: "rule", op: "create", id: r.id, seq: ++seq, updatedAt: NOW.toISOString(),
+        entity: { id: r.id, kind: r.kind, match: r.match, destination: r.destination, priority: r.priority,
+          provenance: r.provenance, enabled: r.enabled, stats: { hits: 0, lastHitAt: null, demotions: 0 },
+          createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() } as unknown as RuleDTO })),
+    ] as SyncChange[]);
+    return store;
+  }
+
+  beforeAll(async () => {
+    await runMigrations(PG_TEST_URL);
+    await db.insert(accounts).values({ id: ACCT, name: `arr-${ACCT.slice(0, 8)}` });
+    for (const n of [0, 1]) {
+      const [mb] = await db.insert(mailboxes).values({
+        accountId: ACCT, provider: "imap", address: `arr-${n}-${ACCT.slice(0, 8)}@example.com`,
+        initialImportCompletedAt: JUNE,
+      }).returning({ id: mailboxes.id });
+      mbs.push(mb!.id);
+    }
+    const rows: Array<{ from: string; folder: string; unread: boolean; receivedAt: Date; mb?: number }> = [
+      { from: "udo@example.com", folder: "ohmail/Screener", unread: true, receivedAt: ARRIVED },
+      { from: "olga@example.com", folder: "ohmail/Screener", unread: false, receivedAt: ARRIVED },
+      { from: "june-unread@example.com", folder: "ohmail/Screener", unread: true, receivedAt: JUNE },
+      { from: "june-read@example.com", folder: "ohmail/Screener", unread: false, receivedAt: JUNE },
+      { from: "known@example.com", folder: "ohmail/Screener", unread: false, receivedAt: ARRIVED },
+      { from: "inboxed@example.com", folder: "INBOX", unread: false, receivedAt: ARRIVED },
+      { from: "bea@example.com", folder: "ohmail/Screener", unread: false, receivedAt: ARRIVED, mb: 1 },
+    ];
+    for (const r of rows) {
+      const [m] = await db.insert(messages).values({
+        accountId: ACCT, mailboxId: at(r.mb ?? 0), bodyHash: randomUUID(), dedupKey: randomUUID(),
+        fromAddress: r.from, subject: "s", date: JUNE, unread: r.unread, snippet: "",
+        createdAt: ARRIVED, arrivedAt: r.receivedAt,
+      }).returning({ id: messages.id });
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: r.folder, observedFolder: r.folder, lastSetBy: "us", reconcileStatus: "reconciled",
+      });
+    }
+    await db.insert(rules).values({ accountId: ACCT, kind: "sender", match: "known@example.com", destination: "INBOX", provenance: "manual" });
+  }, 120_000);
+
+  it("under a baseline: the arrived-now letters wait, the June-received ones are History", async () => {
+    const server = await cutlineCounts(actx, { baselineAt: BASE });
+    const part = consentPartition(await arrivalMirror(), { now: NOW, baselineAt: BASE });
+    // udo, olga and bea; the June pair and inboxed are dormant; known is decided.
+    expect(server).toEqual({ decidedSenders: 1, activeUndecidedSenders: 3, dormantUndecidedSenders: 3 });
+    expect(part.counts.activeUndecidedSenders).toBe(3);
+    expect(part.counts.dormantUndecidedSenders).toBe(3);
+    for (const who of ["udo", "olga", "bea"]) expect(part.activity.get(`${who}@example.com`), who).toBe("active");
+    expect(part.history.map((m) => m.from.address).sort())
+      .toEqual(["inboxed@example.com", "june-read@example.com", "june-unread@example.com"]);
+  });
+
+  it("per mailbox: each held letter meets its own mailbox's window", async () => {
+    const win = (dormancyDays: number) => ({ baselineAt: BASE.toISOString(), dormancyDays, scope: "window" as const });
+    // The second mailbox's one-day window ends after bea's arrival.
+    const windows = new Map([[at(0), win(60)], [at(1), win(1)]].map(([id, w]) =>
+      [id as string, { ...(w as ReturnType<typeof win>), source: "own" as const, holder: null, asOf: null }]));
+    const server = await cutlineCounts(actx, { windows });
+    const part = consentPartition(await arrivalMirror(), {
+      now: NOW, byMailbox: { [at(0)]: win(60), [at(1)]: win(1) },
+    });
+    expect(server.activeUndecidedSenders).toBe(2);
+    expect(part.activity.get("bea@example.com")).toBe("dormant");
+    expect(part.counts.activeUndecidedSenders).toBe(server.activeUndecidedSenders);
+    expect(part.counts.dormantUndecidedSenders).toBe(server.dormantUndecidedSenders);
   });
 });

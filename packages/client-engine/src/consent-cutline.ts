@@ -91,7 +91,7 @@ export interface ConsentPartition {
    * on History's contents; `placeOf` is the authority on removal.
    */
   readonly placeOf: ReadonlyMap<string, Folder | null>;
-  /** History's contents, newest first. Read mail only, by construction. */
+  /** History's contents, newest first. Read or unread: under a baseline age outranks the read flag. */
   readonly history: readonly EngineMessage[];
   readonly activity: ReadonlyMap<string, SenderActivity>;
   readonly counts: ConsentCounts;
@@ -499,12 +499,18 @@ function claimInside(m: EngineMessage, cutoff: number, imports: ConsentOptions["
   if (by !== "ingest") return storeInstantOf(m) >= cutoff;
   const recorded = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
   if (!Number.isFinite(recorded) || recorded < cutoff) return false;
+  return recordedAfterFirstImport(m, imports);
+}
+
+/** Recorded (`arrivedAt`, `messages.created_at`) after its mailbox's first import finished. */
+function recordedAfterFirstImport(m: EngineMessage, imports: ConsentOptions["firstImportDoneAt"]): boolean {
   // An own key only: the record is the shell's, and an inherited name is no mailbox.
   const done = imports !== undefined && Object.prototype.hasOwnProperty.call(imports, m.mailboxId)
     ? imports[m.mailboxId] : undefined;
   if (done === undefined) return true;
+  const recorded = m.arrivedAt == null ? Number.NaN : Date.parse(m.arrivedAt);
   const doneMs = done === null ? Number.NaN : Date.parse(done);
-  return Number.isFinite(doneMs) && recorded > doneMs;
+  return Number.isFinite(recorded) && Number.isFinite(doneMs) && recorded > doneMs;
 }
 
 function messageMs(m: EngineMessage): number | null {
@@ -666,6 +672,14 @@ export function senderActivity(
     // row the person skip takes ({@link personSkip}).
     if (m.folder === "ohmail/Screener" && m.senderCheck?.reason === "impersonation"
         && claimInside(m, cutoff, opts.firstImportDoneAt) && !(index !== null && personSkip(index, m, key))) {
+      out.set(key, "active");
+      continue;
+    }
+    // A letter held at the gate is dated by its arrival, as the gate dated it: the server's
+    // `heldArrivedInsideSql`, first import excepted. Undecided senders only; read or unread alike.
+    if (m.folder === "ohmail/Screener" && m.sortAt != null && Date.parse(m.sortAt) >= cutoff
+        && recordedAfterFirstImport(m, opts.firstImportDoneAt)
+        && (index === null || decidedDestination(index, m.from.address, m.mailboxId) === null)) {
       out.set(key, "active");
       continue;
     }
@@ -1038,7 +1052,7 @@ export function presentationReader(reader: EntityReader, partition: ConsentParti
   };
 }
 
-/** History's contents. Newest first, read mail only. */
+/** History's contents. Newest first, read or unread. */
 export function historyView(partition: ConsentPartition): readonly EngineMessage[] {
   return partition.history;
 }

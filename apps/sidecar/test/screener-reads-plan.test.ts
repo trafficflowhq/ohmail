@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import type { Tx } from "@trafficflow/db";
 import { makeScreenerService, unscreenedSummary } from "@trafficflow/services/mail";
+import { screenerAutoActPass } from "@trafficflow/worker/screener-auto-act";
+import { screenerAutoSuggestPass } from "@trafficflow/worker/screener-auto-suggest";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
@@ -24,6 +26,7 @@ const NOW = Date.now();
 const DAY = 86_400_000;
 const HELD_ACTIVE = 15;
 const HELD_RETIRED = 45;
+const HELD_SKEWED = 40;
 const OLD_PER_SENDER = 6;
 const OHBOX = 2_500;
 
@@ -40,12 +43,12 @@ beforeAll(async () => {
   accountId = rows(await o.db.execute(sql`insert into accounts (name) values ('plan') returning id`))[0].id;
   const mailboxId = rows(await o.db.execute(sql`insert into mailboxes (account_id, provider, address, organizer_role)
     values (${accountId}, 'imap', 'plan@mail.example', 'organizer') returning id`))[0].id;
-  const insert = async (from: string, folder: string, at: Date, unread: boolean, n: number, tag: string): Promise<void> => {
+  const insert = async (from: string, folder: string, at: Date, unread: boolean, n: number, tag: string, arrived = at): Promise<void> => {
     // One thread per letter, as the store keeps them.
     await o.db.execute(sql`with t as (insert into threads (account_id) select ${accountId} from generate_series(1, ${n}) returning id),
         n as (select id, row_number() over () as g from t)
-      insert into messages (account_id, mailbox_id, thread_id, body_hash, dedup_key, subject, snippet, from_address, date, created_at, unread, to_addresses, cc_addresses, native_locator)
-      select ${accountId}, ${mailboxId}, n.id, 'h', ${tag} || ':' || n.g, 'subject ' || n.g, 'snippet', ${from}, ${at.toISOString()}::timestamptz, ${at.toISOString()}::timestamptz, ${unread},
+      insert into messages (account_id, mailbox_id, thread_id, body_hash, dedup_key, subject, snippet, from_address, date, created_at, arrived_at, unread, to_addresses, cc_addresses, native_locator)
+      select ${accountId}, ${mailboxId}, n.id, 'h', ${tag} || ':' || n.g, 'subject ' || n.g, 'snippet', ${from}, ${at.toISOString()}::timestamptz, ${arrived.toISOString()}::timestamptz, ${arrived.toISOString()}::timestamptz, ${unread},
         '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb
       from n`);
     await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
@@ -57,6 +60,8 @@ beforeAll(async () => {
     await insert(`old${s}@x.test`, "ohmail/Screener", new Date(NOW - 400 * DAY), false, 1, `oh${s}`);
     await insert(`old${s}@x.test`, "INBOX", new Date(NOW - 420 * DAY), false, OLD_PER_SENDER, `oi${s}`);
   }
+  // Quiet senders whose held letter arrived long after its Date, still before the cutline (an imported backlog).
+  for (let s = 0; s < HELD_SKEWED; s++) await insert(`skew${s}@x.test`, "ohmail/Screener", new Date(NOW - 500 * DAY), false, 1, `sk${s}`, new Date(NOW - 200 * DAY));
   // An Ohbox of strangers nobody decided about.
   for (let s = 0; s < 50; s++) await insert(`ohbox${s}@y.test`, "INBOX", new Date(NOW - (s + 2) * DAY), false, OHBOX / 50, `ob${s}`);
   // The search tables' statistics, as the store keeps them; `mailboxes` is left as every store had it.
@@ -149,5 +154,29 @@ describe("the Screener's reads, by plan", () => {
     // Nobody here is marked, so the claim's probe has nobody to ask.
     const claimLoops = all.filter((n) => n.Alias === "hm").reduce((t, n) => t + n["Actual Loops"], 0);
     expect(claimLoops, "the claim probe ran for unmarked senders").toBe(0);
+    // The skewed senders arrived before the cutline: no held-arrival probe runs for them.
+    const arrivalLoops = all.filter((n) => n.Alias === "am").reduce((t, n) => t + n["Actual Loops"], 0);
+    expect(arrivalLoops, "the held-arrival probe ran for quiet senders").toBe(0);
+  });
+
+  it("the worker passes ask no held-arrival probe of quiet senders", async () => {
+    await o.db.execute(sql`insert into account_settings (account_id, auto_suggest_at)
+      values (${accountId}, ${new Date(NOW - 1000 * DAY).toISOString()}::timestamptz)`);
+    const seen = await recorded(async () => {
+      await screenerAutoActPass(o.db as unknown as Tx, {
+        accountId, consent: { stillGiven: async () => true },
+        settings: { screeningBaselineAt: null, dormancyDays: null, screeningScope: "window", screenerAutoActAt: new Date(NOW) },
+      }, new Date(NOW));
+      // No model: the pass stops at its first call, after choosing its candidates.
+      await screenerAutoSuggestPass(o.db as unknown as Tx, {
+        accountId, classifier: {} as never, unmetered: true, now: () => new Date(NOW),
+      }).catch(() => undefined);
+    });
+    const candidates = seen.filter((s) => /row_number\(\) over/.test(s.text) && /"reps"/.test(s.text));
+    expect(candidates.length, "both passes' candidate statements were seen").toBe(2);
+    for (const s of candidates) {
+      const loops = nodes(await plan(s)).filter((n) => n.Alias === "am").reduce((t, n) => t + n["Actual Loops"], 0);
+      expect.soft(loops, "a pass ran the held-arrival probe for quiet senders").toBe(0);
+    }
   });
 });

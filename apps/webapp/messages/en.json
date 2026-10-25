@@ -1591,12 +1591,12 @@
     },
     "dormancy": {
       "title": "When a sender goes quiet",
-      "description": "Days of quiet before a sender you've never decided about waits in History instead of the Screener.",
+      "description": "How far back, before you started screening, the Screener asks about senders you've never decided about. Senders who last wrote before that wait in History.",
       "dayLabel": "{days}",
       "dayLabelDefault": "{days} (default)",
       "allTime": "All time",
       "ariaLabel": "Days before a sender goes quiet",
-      "microcopy": "This only changes who the Screener asks you about. No mail moves, and anything unread always shows.",
+      "microcopy": "This only changes who the Screener asks you about. No mail moves: mail from the senders it doesn't ask about, read or unread, is listed under History.",
       "microcopyWider": "Screening further back adds older senders to the Screener queue. Their mail stays where it is — it moves only when you decide about them.",
       "microcopyAllTime": "The Screener asks about every sender you have never decided about, however long ago they wrote. Nothing moves until you decide.",
       "failed": "Couldn't save that — try again."

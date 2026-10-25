@@ -35,7 +35,7 @@ const LOCAL_ONLY: Record<string, string> = {
 /** The two-argument sites — a total table, so a scanner that stops seeing calls goes red too. */
 const PER_MAILBOX: Record<string, number> = {
   "packages/client-engine/src/consent-cutline.ts|consentIndex": 1,
-  "packages/client-engine/src/consent-cutline.ts|decidedDestination": 3,
+  "packages/client-engine/src/consent-cutline.ts|decidedDestination": 4,
   "packages/client-engine/src/press-forecast.ts|consentIndex": 3,
   "packages/client-engine/src/press-outcome.ts|consentIndex": 1,
   "apps/webapp/app/shell/sender-screening.ts|consentIndex": 1,
