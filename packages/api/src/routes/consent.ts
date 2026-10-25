@@ -11,7 +11,7 @@ import {
   ServiceError, fenceErasedAccount, lockAccountSettingsRow, lockMailboxRows,
 } from "@trafficflow/services/mail";
 import { carryDialect, dialect } from "@trafficflow/db/dialect";
-import type { LedgerTx, Tx } from "@trafficflow/db";
+import { lockAccountRuleKeys, type LedgerTx, type Tx } from "@trafficflow/db";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
@@ -546,6 +546,8 @@ async function applyConsentSettings(
     const named = [...(folderMailboxes ?? []), ...(signatures ?? []), ...(signaturesHtml ?? [])].map(([id]) => id);
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
     await lockAccountSettingsRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId);
+    // Before the mailbox rows: a Screener decision holds this lock, then the counter, then a mailbox row.
+    if (named.length > 0) await lockAccountRuleKeys(tx, ctx.accountId);
     await lockMailboxRows(tx as LedgerTx, dialect(ctx.db), ctx.accountId, named);
     if (hasAuto) {
       const res = await setAutoSuggest(txCtx, auto!);

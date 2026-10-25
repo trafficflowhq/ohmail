@@ -195,6 +195,9 @@ async function state(p: Person) {
     // Rows from the race's address that outlived the erasure: the person's IP with no account on it.
     anonymousRowsAfter: await count(sql`select count(*)::int as n from auth_events where ip = ${scenarioIp} and account_id is null`),
     ipRowsAfter: await count(sql`select count(*)::int as n from auth_events where ip = ${scenarioIp}`),
+    // A late change row brings the account's counter row back with it.
+    changeRows: await count(sql`select count(*)::int as n from change_log where account_id = ${p.accountId}`),
+    counterRows: await count(sql`select count(*)::int as n from account_sync_state where account_id = ${p.accountId}`),
   };
 }
 
@@ -207,7 +210,8 @@ interface Reading {
   writerWaitedOn: string; erasureWaitedOn: string; deadlocks: number; victims: string[];
   /** The writer's transactions that met the stamp: the arm that met it answers, nothing falls through. */
   refusedByFence: number;
-  erased: boolean; users: number; liveSessions: number; anonymousRowsAfter: number; ipRowsAfter: number; retry?: string;
+  erased: boolean; users: number; liveSessions: number; anonymousRowsAfter: number; ipRowsAfter: number;
+  changeRows: number; counterRows: number; retry?: string;
 }
 
 /**
@@ -565,9 +569,10 @@ describe.skipIf(!PG_UP)("DELETE /account parked before DELETE users, against a w
  * until it waits on the writer. While the key's claim read the account row only after the counter,
  * that was a cycle (40P01). The writer now opens on the account row, so the erasure's stamp waits
  * behind it and both commit; with the erasure first, the writer waits at its first statement and is
- * refused 410.
+ * refused 410. A dismiss used to read no erasure stamp there: it wrote a change row and the counter
+ * row back for the erased account, or answered 500.
  */
-interface Held { mailboxId: string; threadIds: [string, string]; folderId: string }
+interface Held { mailboxId: string; threadIds: [string, string]; folderId: string; createdId: string }
 
 async function held(p: Person): Promise<Held> {
   const tag = randomUUID().slice(0, 8);
@@ -590,7 +595,11 @@ async function held(p: Person): Promise<Held> {
     accountId: p.accountId, mailboxId: mb!.id, folderId: f!.id, op: "rename", toFolder: "Elsewhere",
     status: "failed", error: "exists",
   });
-  return { mailboxId: mb!.id, threadIds: [ts[0]!.id, ts[1]!.id], folderId: f!.id };
+  const [c] = await db().insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Fresh" }).returning();
+  await db().insert(folderOps).values({
+    accountId: p.accountId, mailboxId: mb!.id, folderId: c!.id, op: "create", status: "failed", error: "exists",
+  });
+  return { mailboxId: mb!.id, threadIds: [ts[0]!.id, ts[1]!.id], folderId: f!.id, createdId: c!.id };
 }
 
 const KEYED: Array<[string, (h: unknown, p: Person, d: Held) => Promise<unknown>]> = [
@@ -663,4 +672,24 @@ describe.skipIf(!PG_UP)("DELETE /account against a keyed writer that takes the c
       route: "200 erased cancelled", writer: "account_erased", waited: "accounts FOR SHARE", erased: true, victims: [],
     });
   }, 60_000);
+
+  const DISMISS: Array<[string, (h: unknown, p: Person, d: Held) => Promise<unknown>]> = [
+    ["a failed create, no key", (h, p, d) => new FolderOpsService().dismiss(ctxOn(h, { accountId: p.accountId }), d.createdId)],
+    ["a failed rename, keyed", KEYED[1]![1]],
+  ];
+  for (const [label, run] of DISMISS) {
+    it(`folder dismiss of ${label}, the erasure first: refused 410, and nothing of the account comes back`, async () => {
+      const r = await measured(`folder dismiss of ${label}`, async (p) => {
+        const d = await held(p);
+        return (h) => run(h, p, d);
+      }, "writer waits last");
+      expect({
+        route: r.route, writer: r.writerAnswer, waited: r.writerWaitedOn, erased: r.erased, victims: r.victims,
+        changeRows: r.changeRows, counterRows: r.counterRows,
+      }, `reading: ${JSON.stringify(r)}`).toEqual({
+        route: "200 erased cancelled", writer: "account_erased", waited: "accounts FOR SHARE", erased: true, victims: [],
+        changeRows: 0, counterRows: 0,
+      });
+    }, 60_000);
+  }
 });

@@ -3,8 +3,8 @@ import { dialect } from "@trafficflow/db/dialect";
 // `@trafficflow/core/mail`, NOT the default barrel — `folders.ts`'s rule, same reason: this
 // module is imported beside it and must never pull the classifier/drafter graph anywhere.
 import { folderNameError } from "@trafficflow/core/mail";
-import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
-import { bridgeTx, type ServiceContext } from "./context.js";
+import { assertOrganizerRole, claimIdempotencyKey, readIdempotencyKey, folderOps, folderState, lockAccountRuleKeys, mailboxFolders, mailboxes, messages, recordChange, type LedgerTx, type Tx } from "@trafficflow/db";
+import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { lockAccountRow } from "./account-lock.js";
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { fenceErasedMailboxOnly } from "./erasure-fence.js";
@@ -93,6 +93,8 @@ export class FolderOpsService {
          after the mailbox row and the counter it deadlocked a PATCH or an erasure holding it. Not the
          fence: the inventory row is fenced on its mailbox, which the body names and is not proven ours. */
       await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
+      // Before the mailbox row: a Screener decision holds this lock, then the counter, then that row.
+      await lockAccountRuleKeys(tx, ctx.accountId);
       await this.requireCommandableMailbox(tx, ctx, mailboxId);
       /* THE ERASURE FENCE, on the row the line above already took `FOR UPDATE`, so it adds no
          lock. The inventory row this verb inserts hangs off `mailboxes` alone: that key refuses
@@ -144,6 +146,7 @@ export class FolderOpsService {
 
     return asTx(ctx).transaction(async (tx) => {
       await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
+      await lockAccountRuleKeys(tx, ctx.accountId);
       await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
       await recheckIdempotency(tx, ctx, opts.idempotency);
       await this.assertNoOpOverlap(tx, subject.mailboxId, [subject.folder, name]);
@@ -179,6 +182,7 @@ export class FolderOpsService {
 
     return asTx(ctx).transaction(async (tx) => {
       await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
+      await lockAccountRuleKeys(tx, ctx.accountId);
       const mb = await this.requireCommandableMailbox(tx, ctx, subject.mailboxId);
       if (mb.trashFolder === null) {
         throw new ServiceError(
@@ -220,8 +224,8 @@ export class FolderOpsService {
     }
     const wasCreate = subject.op.kind === "create";
 
-    return asTx(ctx).transaction(async (tx) => {
-      await lockAccountRow(tx as LedgerTx, dialect(ctx.db), ctx.accountId, "share");
+    // The account fence, the same first lock: an erasure that came first is refused 410 before any write.
+    return withAccountTx(ctx, async (tx) => {
       await recheckIdempotency(tx, ctx, opts.idempotency);
       if (wasCreate) {
         // CASCADE takes the op row with the inventory row.

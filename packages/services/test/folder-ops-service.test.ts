@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { changeLog, folderOps, folderState, idempotencyKeys, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
+import { accounts, changeLog, folderOps, folderState, idempotencyKeys, mailboxFolders, mailboxes, messages } from "@trafficflow/db";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   FolderOpsService, ServiceError, setFoldersEnabled, userFolderById,
@@ -167,6 +167,18 @@ describe("dismiss", () => {
     expect(await db.select().from(mailboxFolders).where(eq(mailboxFolders.id, dto.id))).toHaveLength(0);
     const log = await db.select().from(changeLog).where(eq(changeLog.accountId, accountId));
     expect(log.filter((r) => r.entityId === dto.id && r.op === "delete")).toHaveLength(1);
+  });
+
+  it("an erased account's dismiss is refused 410 and writes nothing, with or without a key", async () => {
+    const { db, accountId, mailboxId, ctx } = await setup();
+    const { dto } = await svc.create(ctx, { mailboxId, name: "Nie" });
+    await db.update(folderOps).set({ status: "failed", error: "bad_name" }).where(eq(folderOps.folderId, dto.id));
+    const before = await db.select().from(changeLog).where(eq(changeLog.accountId, accountId));
+    await db.insert(accounts).values({ id: accountId, name: "erased", erasedAt: new Date("2026-08-26T00:00:00.000Z") });
+    expect(await code(svc.dismiss(ctx, dto.id))).toBe("account_erased");
+    expect(await code(svc.dismiss(ctx, dto.id, { idempotency: { key: "k", requestHash: "h" } }))).toBe("account_erased");
+    expect(await db.select().from(changeLog).where(eq(changeLog.accountId, accountId))).toEqual(before);
+    expect(await db.select().from(mailboxFolders).where(eq(mailboxFolders.id, dto.id))).toHaveLength(1);
   });
 });
 

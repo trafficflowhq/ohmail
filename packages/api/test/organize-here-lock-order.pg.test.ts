@@ -3,15 +3,16 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  accounts, accountSettings, accountSyncState, changeLog, folderOps, folderState, idempotencyKeys,
-  mailboxCredentials, mailboxFolders, mailboxes, messageStates, messages,
+  accounts, accountSettings, accountSyncState, applyScreenerDecision, changeLog, fencedAccountWrite, folderOps,
+  folderState, idempotencyKeys, mailboxCredentials, mailboxFolders, mailboxes, messageStates, messages, type Tx,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { apiRoutes, type ApiDeps } from "@trafficflow/api";
 import {
-  FolderOpsService, makeMailboxService, makeTestAuthDeps, MessageService, TriageService, type ServiceContext,
+  FolderOpsService, makeMailboxService, makeTestAuthDeps, MessageService, ScreenerService, TriageService,
+  type ServiceContext,
 } from "@trafficflow/services";
 
 /**
@@ -381,8 +382,15 @@ describe.skipIf(!PG_UP)("the Agree press takes the settings row before the mailb
  * counter, each pair below was a 40P01: one press failed with a server error. Every press now reads
  * the account row FOR SHARE first, PATCH holds it shared unless it may re-enable the mailbox, and the
  * settings save locks its mailbox rows before the counter.
+ *
+ * A Screener decision takes the account's rule-key lock, then the counter, then the held letter's
+ * mailbox row: a folder verb or a settings save that took that row before the counter was a 40P01.
+ * Both now take the rule-key lock before their mailbox rows.
  */
-interface Doors { accountId: string; a: string; b: string; addressA: string; letterA: string; letterB: string; trashed: string; folderId: string }
+interface Doors {
+  accountId: string; a: string; b: string; addressA: string; letterA: string; letterB: string; trashed: string; folderId: string;
+  held: string; heldFrom: string;
+}
 
 async function doors(): Promise<Doors> {
   const accountId = randomUUID();
@@ -418,7 +426,16 @@ async function doors(): Promise<Doors> {
     .where(eq(folderState.messageId, trashed));
   await db().update(messages).set({ deletedAt: NOW }).where(eq(messages.id, trashed));
   const [f] = await db().insert(mailboxFolders).values({ mailboxId: a.id, folder: "Projects" }).returning();
-  return { accountId, a: a.id, b: b.id, addressA: a.address, letterA, letterB, trashed, folderId: f!.id };
+  // A first contact held in the Screener of mailbox a, its sender checked.
+  const heldFrom = `new-${tag}@example.test`;
+  const [h] = await db().insert(messages).values({
+    accountId, mailboxId: a.id, bodyHash: `frc-lo-${tag}-4`, dedupKey: `frc-lo:${tag}:4`, subject: "first contact",
+    fromAddress: heldFrom, senderCheck: "none", nativeLocator: { folder: "ohmail/Screener", ref: "1:4" },
+  }).returning();
+  await db().insert(folderState).values({
+    messageId: h!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled",
+  });
+  return { accountId, a: a.id, b: b.id, addressA: a.address, letterA, letterB, trashed, folderId: f!.id, held: h!.id, heldFrom };
 }
 
 const ctxOn = (h: OwnedDb, d: Doors): ServiceContext => ({
@@ -478,6 +495,23 @@ const FOLDER_REMOVE: Door = {
   landed: opOf,
   stored: 200,
 };
+const heldIn = async (d: Doors): Promise<string | undefined> =>
+  (await one(db().select({ f: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, d.held))))?.f;
+const SCREEN: Door = {
+  name: "Screener decision",
+  run: (h, d) => new ScreenerService({}).decide(ctxOn(h, d), d.held, { decision: "no" }, { idempotency: keyOf(d, "Screener decision") }),
+  landed: heldIn,
+  stored: 200,
+};
+/** The request drain's apply: the same decision with no settings row and no key. */
+const DRAIN: Door = {
+  name: "the Screener drain's apply",
+  run: (h, d) => fencedAccountWrite(h.db as unknown as Tx, { accountId: d.accountId }, (tx) => applyScreenerDecision(tx, {
+    accountId: d.accountId, scope: "sender", address: d.heldFrom, appliedFolder: "ohmail/Screened", decision: "no",
+    triggeringActionId: `screener:request:${d.held}`, now: NOW, stampBaseline: false, decidedBy: "person", overExisting: "converge",
+  })),
+  landed: heldIn,
+};
 
 const KP = makeTestAuthDeps().keyProvider;
 const PATCH_NAME: Door = {
@@ -526,6 +560,7 @@ const EFFECT: Record<string, unknown> = {
   "triage": "reply_later", "message delete": true, "message restore": "INBOX", "folder create": "Fresh",
   "folder rename": "rename", "folder remove": "delete", "PATCH {displayName}": "Renamed",
   "the Agree press, already organizing": 120, "an OAuth reconnect": "oauth", "the settings save naming two mailboxes": 2,
+  "Screener decision": "ohmail/Screened", "the Screener drain's apply": "ohmail/Screened",
 };
 
 async function storedStatus(d: Doors, door: Door): Promise<number[]> {
@@ -545,7 +580,7 @@ describe.skipIf(!PG_UP)("a keyed press beside a mailbox change: neither fails", 
   beforeAll(async () => { await runMigrations(PG_TEST_URL); }, 180_000);
   afterAll(async () => { for (const h of open) await h.close().catch(() => {}); });
 
-  /** Both parties settled, both effects landed, the press's key stored with its status. */
+  /** Both parties settled, both effects landed, each keyed party's key stored with its status. */
   async function bothLanded(d: Doors, press: Door, partner: Door, w: Settled<unknown>, p: Settled<unknown>): Promise<void> {
     const READINGS = process.env.FRC_LO_READINGS;
     if (READINGS) appendFileSync(READINGS, `${JSON.stringify({ press: press.name, partner: partner.name,
@@ -554,13 +589,16 @@ describe.skipIf(!PG_UP)("a keyed press beside a mailbox change: neither fails", 
     expect(p.ok ? "committed" : codeOf(p.e), partner.name).toBe("committed");
     expect(await press.landed(d), `${press.name}'s effect`).toEqual(EFFECT[press.name]);
     expect(await partner.landed(d), `${partner.name}'s effect`).toEqual(EFFECT[partner.name]);
-    expect(await storedStatus(d, press), `${press.name}'s stored answer`).toEqual([press.stored]);
+    for (const door of [press, partner]) {
+      if (door.stored !== undefined) expect(await storedStatus(d, door), `${door.name}'s stored answer`).toEqual([door.stored]);
+    }
   }
 
   const PAIRS: Array<[Door, Door]> = [
     [TRIAGE, PATCH_NAME], [DELETE, PATCH_NAME], [RESTORE, PATCH_NAME],
     [FOLDER_CREATE, PATCH_NAME], [FOLDER_RENAME, PATCH_NAME], [FOLDER_REMOVE, PATCH_NAME],
     [TRIAGE, AGREE_AGAIN], [TRIAGE, OAUTH_RECONNECT], [FOLDER_CREATE, AGREE_AGAIN],
+    [SCREEN, FOLDER_CREATE], [SCREEN, FOLDER_RENAME], [SCREEN, FOLDER_REMOVE], [DRAIN, SAVE_TWO],
   ];
   for (const [press, partner] of PAIRS) {
     it(`${press.name} parked holding the counter, then ${partner.name} on its mailbox: both commit`, async () => {
