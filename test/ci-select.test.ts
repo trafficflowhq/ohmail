@@ -500,6 +500,12 @@ describe("the readers of this tree", () => {
     for (const f of ["apps/sidecar/test/engine-closure-no-cli-entry.test.ts", "apps/sidecar/test/phone-engine-substitutes.test.ts"]) expect(b.has(f), f).toBe(true);
   });
 
+  it("select the phone engine's Postgres-only census for a file the phone bundles and for its scanner", () => {
+    for (const p of ["packages/core/src/adapters/drizzle-repo.ts", "packages/db/src/storage.ts", "apps/mobile/scripts/verify-phone-engine-repro.mjs"]) {
+      expect(hit(p).get("apps/mobile/test/no-node-builtins.test.ts"), p).toBe("always");
+    }
+  });
+
   it("select a tree-wide census for a change outside its own package, and a provider shape's corpus tests", () => {
     const account = hit("packages/api/src/routes/account.ts");
     for (const f of ["packages/services/test/organizer-role-census.test.ts", "packages/services/test/away-responder-pass-hosts.test.ts"]) expect(account.has(f), f).toBe(true);

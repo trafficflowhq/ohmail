@@ -33,8 +33,9 @@
  * assertion found five more files. Each names what removes it, because an exception with no expiry
  * is a permission slip.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -42,7 +43,9 @@ import {
   BUNDLE, IMAPFLOW_CLOSE_MARKER, IMAPFLOW_REARM_MARKER, METAFILE, OUT_DIR, nodeSpecifiersIn, externalsIn, REPO,
   builtCopiesIn, selectedExportTargets, workspaceExportTargets,
 } from "../scripts/bundle-engine.mjs";
-import { requiresIn } from "../scripts/verify-phone-engine-repro.mjs";
+import {
+  DIALECT_ANCHORS, DIALECT_FLOOR, dialectHits, loadedSources, requiresIn,
+} from "../scripts/verify-phone-engine-repro.mjs";
 
 interface Metafile {
   inputs: Record<string, { bytes: number; imports?: { path: string; external?: boolean; original?: string }[] }>;
@@ -475,5 +478,29 @@ describe("the phone engine reaches no workspace package's built copy", () => {
   it("REFUSES an export whose phone condition names the built copy", () => {
     const planted = { ".": { types: "./src/index.ts", import: "./" + "dist/index.js", default: "./src/index.ts" } };
     expect(selectedExportTargets("@planted/pkg", planted)).toEqual({ "@planted/pkg": "./" + "dist/index.js" });
+  });
+});
+
+/**
+ * NO CONSTRUCT ONLY THE SERVER'S STORE ACCEPTS, in a file whose bytes ship to a phone (SQLite there).
+ * The same scan the android build runs (`verify-phone-engine-repro.mjs`), here so a pull request whose
+ * android run was cancelled still meets it.
+ */
+describe("the phone engine carries no Postgres-only SQL", () => {
+  const loaded = loadedSources(meta as Parameters<typeof loadedSources>[0]);
+
+  it("scans the files the bundle loads, and none carries a pg-only construct", () => {
+    expect(loaded.length).toBeGreaterThanOrEqual(DIALECT_FLOOR);
+    expect(loaded).toEqual(expect.arrayContaining(DIALECT_ANCHORS));
+    expect(dialectHits(loaded)).toEqual([]);
+  });
+
+  it("REFUSES a planted greatest(), and admits it inside pgOnly", () => {
+    const root = mkdtempSync(join(tmpdir(), "phone-dialect-"));
+    mkdirSync(join(root, "packages/x/src"), { recursive: true });
+    writeFileSync(join(root, "packages/x/src/a.ts"), "export const q = sql`select greatest(a, b) from t`;\n");
+    writeFileSync(join(root, "packages/x/src/b.ts"), "export const q = pgOnly(sql`select greatest(a, b) from t`);\n");
+    expect(dialectHits(["packages/x/src/a.ts", "packages/x/src/b.ts"], root))
+      .toEqual(["packages/x/src/a.ts — pg-only function x1"]);
   });
 });
