@@ -31,6 +31,7 @@ const SHEETS = [
   "packages/tokens/src/faces.css",
   "packages/tokens/src/ohmarchy.css",
   "packages/ui/src/base.css",
+  "packages/ui/src/primitives/avatar.css",
   "packages/ui/src/composites/row.css",
   "packages/ui/src/composites/message.css",
   "packages/ui/src/composites/reader.css",
@@ -263,10 +264,11 @@ async function seam(viewport: number, list: number, face: "ohmarchy" | "paper", 
   const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
   try {
     await page.setContent(split_(viewport, list, face, css("packages/ui/src/composites/list-pane.css") + live));
-    return await page.evaluate((narrowPx) => {
+    return await page.evaluate(async (narrowPx) => {
       const conv = document.querySelector<HTMLElement>(".conv")!;
       const marks = document.querySelector<HTMLElement>(".thread-marks")!;
       if (conv.getBoundingClientRect().width < narrowPx) marks.setAttribute("data-narrow", "");
+      await new Promise((r) => setTimeout(r, 300)); // the slots' 220 ms step to the thin pitch
       const r = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
       const sq = r(".tm-sq");
       const mb = document.querySelector<HTMLElement>(".tm-mb")!;
@@ -436,7 +438,7 @@ describe("the walk over a laid-out thread", () => {
 });
 
 describe("the open row's strip", () => {
-  it("stands under the row inside the list column, the row's own 8px squares step aside, a long thread scrolls sideways", async () => {
+  it("stands under the row inside the list column, the row's own 8px squares step aside", async () => {
     const thirty = Array.from({ length: 30 }, (_, i) => member(`q${i}`, i > 25));
     const strip = renderToStaticMarkup(
       <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
@@ -466,7 +468,6 @@ describe("the open row's strip", () => {
           button: { w: b.width, h: b.height },
           corner: getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius,
           paperCorner: (document.documentElement.removeAttribute("data-face"), getComputedStyle(bar.querySelector(".tm-mb")!).borderTopLeftRadius),
-          sideways: bar.scrollWidth > bar.clientWidth,
           listOverflow: list.scrollWidth - list.clientWidth,
           pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
         };
@@ -475,9 +476,8 @@ describe("the open row's strip", () => {
       expect(m.marks, "the open row draws no 8px squares beside the strip; a row with an empty follower keeps its own").toEqual(["flex"]);
       expect(m.strip.right, "the strip stays in the list column").toBeLessThanOrEqual(m.list.right + 0.5);
       expect(m.button.h, "a square's button").toBe(20);
-      expect(m.button.w).toBeGreaterThanOrEqual(16);
+      expect(m.button.w, "a whole slot").toBe(20);
       expect([m.corner, m.paperCorner], "the strip's hover box: square in ohmarchy, paper's 5").toEqual(["0px", "5px"]);
-      expect(m.sideways, "thirty squares scroll sideways").toBe(true);
       expect(m.listOverflow, "the strip widens the list").toBeLessThanOrEqual(0);
       expect(m.pageOverflow).toBeLessThanOrEqual(0);
     } finally {
@@ -679,6 +679,294 @@ describe("a closed row's own squares: whole, the newest kept, the rest counted",
       await page.close();
     }
   }, 60_000);
+});
+
+/**
+ * A LINE OF SQUARES LONGER THAN ITS ROOM (owner 2026-10-26, the taper demo): the open row's strip and
+ * the reader's rail stand a window over the conversation instead of scrolling. The real
+ * `ThreadMarksBar`, bundled and mounted in Chromium over the real stylesheets: at every place of the
+ * ring every square is drawn whole or not at all, the ringed one whole at full size, nothing scrolls,
+ * "+N" at each edge counts exactly the squares beyond it, the squares at such an edge taper (35, 55,
+ * 75 %), and a keyboard focus on a hidden square pulls the window over to it.
+ */
+describe("a line longer than its room: a window, whole squares, +N and the taper", () => {
+  let barJs = "";
+  beforeAll(async () => {
+    const { build } = await import("esbuild");
+    const out = await build({
+      stdin: {
+        contents: `import { createElement as h } from "react"; import { flushSync } from "react-dom"; import { createRoot } from "react-dom/client";
+          import { NextIntlClientProvider } from "next-intl"; import { ThreadMarksBar, marksKeys } from "./apps/webapp/app/shell/ThreadMarks";
+          import { MessageRow } from "@ohmail/ui";
+          import messages from "./apps/webapp/messages/en.json";
+          const member = (i) => ({ id: "q" + i, from: { name: "Sender " + i, address: "s" + i + "@example.invalid" }, to: [], cc: [],
+            date: "2026-10-22T09:00:00.000Z", snippet: "", unread: i % 3 === 0, hasAttachments: false, attachmentCount: 0, labels: [] });
+          let root = null;
+          window.jumps = [];
+          window.mountBar = (host, axis, n, here) => {
+            const all = Array.from({ length: n }, (_, i) => member(i));
+            root = root || createRoot(host);
+            flushSync(() => root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC" },
+              h(ThreadMarksBar, { axis, messages: all, here: "q" + here, tabStop: "q" + here, onJump: (id) => { window.jumps.push(id); }, onKey: marksKeys(axis, () => {}) }))));
+          };
+          window.mountRow = (host, n, here, lead) => {
+            const all = Array.from({ length: n }, (_, i) => member(i));
+            root = root || createRoot(host);
+            flushSync(() => root.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC" },
+              h(MessageRow, { id: "w", from: "Lena", subject: "Q3 plan", time: "09:12", preview: "the words", unread: true,
+                marks: all.map((m) => (m.unread ? "unread" : "read")), marksLabel: n + " messages", ...(lead ? { avatarInitial: "L", avatarHue: 30 } : {}),
+                follow: h(ThreadMarksBar, { axis: "x", messages: all, here: "q" + here, tabStop: "q" + here, onJump: () => {} }) }))));
+          };`,
+        resolveDir: process.cwd(), loader: "tsx",
+      },
+      bundle: true, write: false, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic",
+      alias: { "next-intl": resolve(process.cwd(), "apps/webapp/test/editor-feel/intl-shim.mjs") },
+      loader: { ".css": "empty", ".svg": "empty", ".json": "json" },
+      banner: { js: "window.process = window.process || { env: {} };" },
+      define: { "process.env.NODE_ENV": '"production"' }, logLevel: "warning",
+    });
+    barJs = out.outputFiles[0]!.text;
+  }, 120_000);
+  const frames = (p: Page) => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  /** The open row's strip in a 400px list, or the rail beside a reader in a 1440 × 900 split view. */
+  async function mount(axis: "x" | "y", face: string, theme: string, n: number, here: number, motion: "reduce" | "no-preference" = "reduce"): Promise<Page> {
+    const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: motion });
+    const body = axis === "x"
+      ? `<div class="list-col" style="width:400px"><div class="row-follow" id="host"></div></div>`
+      : `<section class="view split" style="grid-template-columns:1020px;height:900px;margin-left:420px"><div class="thread-marks" id="host"></div>
+         <div class="read-col"><div class="conv" data-thread-read=""></div></div></section>`;
+    await page.setContent(`<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8"><style>${SHEETS}</style>
+      <style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body>${body}</body></html>`);
+    await page.addScriptTag({ content: barJs });
+    await page.evaluate(([a, k, c]) => (window as unknown as { mountBar: (h: Element, a: string, n: number, c: number) => void }).mountBar(document.getElementById("host")!, a as string, k as number, c as number), [axis, n, here]);
+    await frames(page);
+    return page;
+  }
+  /** Each square as drawn: its size and whether the bar's clip shows it whole, in part or not at all; the counts; the bar's scroll. */
+  const readLine = (page: Page) => page.evaluate(() => {
+    const bar = document.querySelector<HTMLElement>(".tm-strip, .tm-bar")!;
+    const clip = bar.getBoundingClientRect();
+    const sq = [...bar.querySelectorAll<HTMLElement>(".tm-sq")].map((s) => {
+      const r = s.getBoundingClientRect();
+      const w = Math.max(0, Math.min(r.right, clip.right) - Math.max(r.left, clip.left));
+      const hh = Math.max(0, Math.min(r.bottom, clip.bottom) - Math.max(r.top, clip.top));
+      return { size: r.width, drawn: w * hh > 0, whole: r.width > 0 && w >= r.width - 0.01 && hh >= r.height - 0.01, ring: s.parentElement!.getAttribute("aria-current") === "location" };
+    });
+    const more = (side: string) => {
+      const el = bar.querySelector<HTMLElement>(`.tm-more[data-side="${side}"]`);
+      return el && el.hasAttribute("data-on") ? Number((el.textContent ?? "").replace(/^\+/, "")) : 0;
+    };
+    return { sq, old: more("old"), new: more("new"), scrolls: bar.scrollWidth > bar.clientWidth + 0.5 || bar.scrollHeight > bar.clientHeight + 0.5 };
+  });
+  const LINES: ReadonlyArray<["x" | "y", string, "light" | "dark"]> = [["x", "paper", "light"], ["x", "ohmarchy", "dark"], ["y", "paper", "light"], ["y", "ohmarchy", "dark"]];
+  for (const [axis, face, theme] of LINES)
+    it(`${axis === "x" ? "the open row's strip" : "the rail"}, ${face} ${theme}: 40 messages, the ring walked from the first to the last`, async () => {
+      const page = await mount(axis, face, theme, 40, 0);
+      try {
+        const froms: number[] = [];
+        for (const here of [0, 3, 12, 20, 27, 36, 39]) {
+          await page.evaluate((c) => (window as unknown as { mountBar: (h: Element, a: string, n: number, c: number) => void }).mountBar(document.getElementById("host")!, document.querySelector(".tm-bar") ? "y" : "x", 40, c), here);
+          await frames(page);
+          const l = await readLine(page);
+          const shown = l.sq.map((s, i) => (s.whole ? i : -1)).filter((i) => i >= 0);
+          expect(l.sq.filter((s) => s.drawn && !s.whole).length, `ring on ${here}: a square drawn in part`).toBe(0);
+          expect(l.scrolls, "nothing scrolls").toBe(false);
+          expect(l.sq[here]!.whole && l.sq[here]!.size, `ring on ${here}: the ringed square whole at full size`).toBe(10);
+          expect(l.old + shown.length + l.new, `ring on ${here}: the counts and the squares say every message`).toBe(40);
+          expect(shown, "one unbroken run").toEqual(shown.map((_, k) => shown[0]! + k));
+          expect(l.old, "+N before: exactly the squares hidden there").toBe(shown[0]);
+          const sizes = l.sq.filter((s) => s.whole).map((s) => s.size);
+          const taper = face === "ohmarchy" ? [4, 6, 8] : [3.5, 5.5, 7.5];
+          if (l.old > 0) expect(sizes.slice(0, 3), "the old edge tapers").toEqual(taper);
+          if (l.new > 0) expect(sizes.slice(-3).reverse(), "the new edge tapers").toEqual(taper);
+          if (l.old === 0) expect(sizes[0], "no count, no taper").toBe(10);
+          froms.push(shown[0]!);
+        }
+        expect(froms[0], "at the start the first is shown").toBe(0);
+        expect(new Set(froms).size, "the window follows the ring: the start, the middle, the end").toBeGreaterThanOrEqual(3);
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
+  it("a short conversation draws every square and no count", async () => {
+    const page = await mount("x", "paper", "light", 9, 4);
+    try {
+      const l = await readLine(page);
+      expect([l.old, l.new, l.sq.filter((s) => s.whole && s.size === 10).length]).toEqual([0, 0, 9]);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+  it("a keyboard focus on a square beyond the window pulls it over; the steps move as motion", async () => {
+    const page = await mount("x", "paper", "light", 40, 20);
+    try {
+      await page.focus(".tm-mb[data-for='q20']");
+      await page.keyboard.press("Home");
+      await frames(page);
+      const l = await readLine(page);
+      expect([l.old, l.sq[0]!.whole, l.sq[0]!.size], "Home: the first square in view, whole").toEqual([0, true, 10]);
+      await page.keyboard.press("End");
+      await frames(page);
+      const e = await readLine(page);
+      expect([e.new, e.sq[39]!.whole, e.sq[39]!.size], "End: the last").toEqual([0, true, 10]);
+    } finally {
+      await page.close();
+    }
+    const moving = await mount("y", "paper", "light", 40, 20, "no-preference");
+    try {
+      const t = await moving.evaluate(() => [getComputedStyle(document.querySelector(".tm-mb")!).transitionProperty, getComputedStyle(document.querySelector(".tm-sq")!).transitionProperty]);
+      expect(t[0], "a slot grows and folds").toMatch(/height/);
+      expect(t[1], "and its square with it").toMatch(/width/);
+    } finally {
+      await moving.close();
+    }
+  }, 60_000);
+  const remount = (page: Page, n: number, here: number) =>
+    page.evaluate(([k, c]) => (window as unknown as { mountBar: (h: Element, a: string, n: number, c: number) => void }).mountBar(document.getElementById("host")!, document.querySelector(".tm-bar") ? "y" : "x", k!, c!), [n, here]);
+  for (const axis of ["x", "y"] as const)
+    it(`${axis === "x" ? "the strip" : "the rail"}: a mouse press on a tapered square jumps to it, the window stays`, async () => {
+      for (const motion of ["reduce", "no-preference"] as const) {
+        const page = await mount(axis, "paper", "light", 40, 20, motion);
+        try {
+          await page.waitForTimeout(300); // the first window's 220 ms
+          const l = await readLine(page);
+          const tapered = l.sq.map((s, i) => (s.whole && s.size < 10 ? i : -1)).filter((i) => i >= 0);
+          expect(tapered.length, "both edges taper").toBe(6);
+          for (const i of tapered) {
+            await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); (window as unknown as { jumps: string[] }).jumps = []; });
+            const b = (await page.locator(`.tm-mb[data-for='q${i}']`).boundingBox())!;
+            await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+            await page.mouse.down();
+            await page.waitForTimeout(90);
+            await page.mouse.up();
+            expect(await page.evaluate(() => (window as unknown as { jumps: string[] }).jumps), `${motion}: a press on ${i}`).toEqual([`q${i}`]);
+          }
+        } finally {
+          await page.close();
+        }
+      }
+    }, 60_000);
+  for (const axis of ["x", "y"] as const)
+    it(`${axis === "x" ? "the strip" : "the rail"}: after a press on a square, the ring stays whole as the reader moves on`, async () => {
+      const page = await mount(axis, "paper", "light", 40, 5);
+      try {
+        await page.click(".tm-mb[data-for='q5']");
+        for (const here of [10, 15, 20, 25, 30, 35]) {
+          await remount(page, 40, here);
+          await frames(page);
+          const l = await readLine(page);
+          expect([l.sq[here]!.ring, l.sq[here]!.whole, l.sq[here]!.size], `here ${here}: the ringed square whole`).toEqual([true, true, 10]);
+        }
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
+  for (const face of ["paper", "ohmarchy"] as const)
+    it(`the rail, ${face}: a three-digit +N is drawn whole, a short one centred on the rail`, async () => {
+      const page = await mount("y", face, face === "paper" ? "light" : "dark", 140, 0);
+      const count = () => page.evaluate(() => {
+        const el = document.querySelector<HTMLElement>('.tm-more[data-side="new"][data-on]')!;
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const t = range.getBoundingClientRect();
+        const cut: string[] = [];
+        for (let e: HTMLElement | null = el; e && e !== document.body; e = e.parentElement) {
+          if (getComputedStyle(e).overflowX === "visible") continue;
+          const r = e.getBoundingClientRect();
+          if (t.left < r.left - 0.5 || t.right > r.right + 0.5) cut.push(e.className);
+        }
+        const sq = document.querySelector(".tm-sq")!.getBoundingClientRect();
+        return { text: el.textContent, cut, off: (t.left + t.right) / 2 - (sq.left + sq.right) / 2 };
+      });
+      try {
+        const long = await count();
+        expect(long.text, "a long thread's count").toMatch(/^\+\d{3}$/);
+        expect(long.cut, `${long.text}: clipped by`).toEqual([]);
+        await remount(page, 40, 0);
+        await frames(page);
+        const short = await count();
+        expect(Math.abs(short.off), `${short.text}: centred on the rail`).toBeLessThanOrEqual(1);
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
+  for (const axis of ["x", "y"] as const)
+    it(`${axis === "x" ? "the strip" : "the rail"}: mid-conversation the ring stands still while the squares flow past`, async () => {
+      const page = await mount(axis, "paper", "light", 40, 20, "no-preference");
+      const ring = () => page.evaluate((ax) => {
+        const host = document.querySelector('.tm-ring[data-on]') ?? document.querySelector('.tm-mb[aria-current="location"]')!;
+        const r = host.getBoundingClientRect();
+        const cur = document.querySelector('.tm-mb[aria-current="location"]')!;
+        const after = getComputedStyle(cur, "::after");
+        return {
+          at: ax === "x" ? r.left + r.width / 2 : r.top + r.height / 2,
+          rings: (document.querySelector(".tm-ring[data-on]") ? 1 : 0) + (after.display !== "none" && after.opacity === "1" ? 1 : 0),
+        };
+      }, axis);
+      const squareAt = () => page.evaluate((ax) => {
+        const r = document.querySelector('.tm-mb[aria-current="location"] > .tm-sq')!.getBoundingClientRect();
+        return ax === "x" ? r.left + r.width / 2 : r.top + r.height / 2;
+      }, axis);
+      try {
+        await page.waitForTimeout(300);
+        const rest = await squareAt();
+        const first = await ring();
+        expect([first.rings, Math.abs(first.at - rest) <= 1], "one ring, on the current square").toEqual([1, true]);
+        await remount(page, 40, 21);
+        const seen: number[] = [];
+        for (let k = 0; k < 16; k++) {
+          seen.push((await ring()).at);
+          await page.waitForTimeout(16);
+        }
+        await page.waitForTimeout(300);
+        const settled = await squareAt();
+        expect(Math.max(...seen.map((v) => Math.abs(v - settled))), `the ring left its place: ${seen.map((v) => v.toFixed(1)).join(" ")}`).toBeLessThanOrEqual(1);
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
+  /* Owner 2026-10-26: the squares share the subject's left margin, "+N" or not; the room shrinks instead.
+     The count is drawn whole in a wide face too: "+140" in DejaVu Sans (the hosted Linux runners'
+     system-ui) is wider than the stylesheet's 32px slot, and it was cut there. */
+  for (const [face, theme] of [["paper", "light"], ["ohmarchy", "dark"]] as const)
+    for (const lead of [true, false])
+      for (const font of ["system-ui,sans-serif", '"DejaVu Sans",sans-serif'])
+      it(`the open row's strip, ${face} ${theme}, ${lead ? "with" : "without"} a lead circle, in ${font}: it starts at the subject, +N or not, and ends at the row's content edge`, async () => {
+        const page = await browser!.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: "reduce" });
+        try {
+          await page.setContent(`<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}><head><meta charset="utf-8"><style>${SHEETS}</style>
+            <style>body{margin:0;font-family:${font}}</style></head><body><div class="list-col" style="width:400px" id="host"></div></body></html>`);
+          await page.addScriptTag({ content: barJs });
+          for (const [n, here] of [[9, 4], [40, 0], [40, 20], [40, 39], [140, 70], [140, 139]] as const) {
+            await page.evaluate(([k, c, l]) => (window as unknown as { mountRow: (h: Element, n: number, c: number, l: boolean) => void }).mountRow(document.getElementById("host")!, k as number, c as number, l as boolean), [n, here, lead] as const);
+            await frames(page);
+            const m = await page.evaluate(() => {
+              const text = (el: Element): DOMRect => { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect(); };
+              const row = document.querySelector<HTMLElement>(".row")!;
+              const strip = document.querySelector<HTMLElement>(".tm-strip")!;
+              const clip = strip.getBoundingClientRect();
+              const counts = [...strip.querySelectorAll<HTMLElement>(".tm-more[data-on]")].map((el) => ({ side: el.dataset.side!, t: text(el), box: el.getBoundingClientRect() }));
+              const sq = [...strip.querySelectorAll<HTMLElement>(".tm-sq")].map((s) => s.getBoundingClientRect()).filter((r) => r.width > 0 && r.left >= clip.left - 0.01 && r.right <= clip.right + 0.01);
+              const old = counts.find((c) => c.side === "old");
+              const neu = counts.find((c) => c.side === "new");
+              return {
+                subject: text(row.querySelector(".subj")!).left,
+                first: old ? old.t.left : sq[0]!.left,
+                last: neu ? neu.t.right : sq[sq.length - 1]!.right,
+                edge: row.getBoundingClientRect().right - parseFloat(getComputedStyle(row).paddingRight),
+                cut: counts.filter((c) => c.t.left < c.box.left - 0.5 || c.t.right > c.box.right + 0.5).map((c) => c.side),
+                old: old !== undefined,
+              };
+            });
+            const at = `${n} messages, ring on ${here}${m.old ? ", +N on the left" : ""}`;
+            expect(Math.abs(m.first - m.subject), `${at}: the strip's first box at ${m.first.toFixed(1)}, the subject at ${m.subject.toFixed(1)}`).toBeLessThanOrEqual(1);
+            expect(m.last, `${at}: past the row's content edge`).toBeLessThanOrEqual(m.edge + 0.5);
+            expect(m.cut, `${at}: a count cut`).toEqual([]);
+          }
+        } finally {
+          await page.close();
+        }
+      }, 60_000);
 });
 
 /**

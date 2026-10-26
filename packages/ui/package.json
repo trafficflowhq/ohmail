@@ -15,6 +15,12 @@
       "ohmail-source": "./src/format/long-text.ts",
       "node": "./dist/format/long-text.js",
       "default": "./src/format/long-text.ts"
+    },
+    "./squares-window": {
+      "types": "./src/squares-window.ts",
+      "ohmail-source": "./src/squares-window.ts",
+      "node": "./dist/squares-window.js",
+      "default": "./src/squares-window.ts"
     }
   },
   "dependencies": {

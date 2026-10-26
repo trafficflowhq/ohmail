@@ -6053,7 +6053,12 @@ input.set-tag-input {
   left: auto;
   right: 100%;
 }
+/* A line longer than its room never scrolls (owner 2026-10-26): `ThreadMarksBar` stands a window over
+   it (`squaresWindow`). Each slot is --tm-pitch × --s long (0 beyond the window), its square 10px × --s;
+   at an edge that hides more the squares taper and a --tm-more slot holds "+N". */
 .tm-bar {
+  --tm-pitch: 24px;
+  --tm-more: 16px;
   position: absolute;
   left: 0;
   top: 10px;
@@ -6062,11 +6067,10 @@ input.set-tag-input {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  overflow-y: auto;
-  scrollbar-width: none;
+  overflow: hidden;
 }
-.tm-bar::-webkit-scrollbar {
-  display: none;
+.thread-marks[data-narrow] .tm-bar {
+  --tm-pitch: 30px;
 }
 .conv > .thread-marks[data-narrow] > .tm-bar {
   width: 22px;
@@ -6079,10 +6083,14 @@ input.set-tag-input {
 }
 .tm-mb {
   position: relative;
-  flex: 0 1 24px;
-  min-height: 14px;
+  flex: 0 0 auto;
+  height: calc(var(--tm-pitch) * var(--s, 1));
+  height: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
+  min-height: 0;
   width: 100%;
   display: grid;
+  /* one track the slot's size: the 18px ring overflows a tapered slot centred, never sizing it */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   padding: 0;
   border: 0;
@@ -6090,9 +6098,8 @@ input.set-tag-input {
   background: none;
   cursor: pointer;
 }
-.thread-marks[data-narrow] .tm-mb {
-  flex-basis: 30px;
-  min-height: 16px;
+.tm-mb[data-off] {
+  pointer-events: none;
 }
 .tm-mb > .tm-sq,
 .tm-mb::after,
@@ -6101,6 +6108,12 @@ input.set-tag-input {
 }
 .tm-mb:hover {
   background: var(--tint);
+}
+.tm-bar .tm-mb {
+  transition: height .22s var(--swift);
+}
+.tm-strip .tm-mb {
+  transition: width .22s var(--swift);
 }
 .tm-mb:focus-visible {
   outline-offset: -2px;
@@ -6150,14 +6163,19 @@ input.set-tag-input {
 }
 .tm-sq {
   display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: calc(var(--r-ctl) * 3 / 8);
+  width: calc(10px * var(--s, 1));
+  height: calc(10px * var(--s, 1));
+  border-radius: calc(var(--r-ctl) * 3 / 8 * var(--s, 1));
   background: var(--accent);
-  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1);
+  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1), width .22s var(--swift), height .22s var(--swift);
+}
+/* ohmarchy's square corners want whole pixels: 3.5 / 5.5 / 7.5 draw as 4 / 6 / 8 */
+[data-face="ohmarchy"] .tm-sq {
+  width: round(calc(10px * var(--s, 1)), 1px);
+  height: round(calc(10px * var(--s, 1)), 1px);
 }
 .tm-sq.unread {
-  transition-duration: 320ms;
+  transition-duration: 320ms, .22s, .22s;
   transition-delay: 0s;
 }
 .tm-sq.read {
@@ -6165,33 +6183,115 @@ input.set-tag-input {
 }
 .tm-sq.mine {
   background: transparent;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 calc(2px * var(--s, 1)) var(--accent);
   opacity: var(--mark-mine);
 }
 /* THE OPEN CONVERSATION'S ROW carries the same squares under its preview (`ThreadStrip`, in the
-   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring, the first square
-   where the row's own 8px squares stood; past the row's width it scrolls sideways, no bar, so the
-   row grows in height only and no column moves. */
+   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring. Its first box, a
+   square (5px into its slot) or "+N", stands at the subject's left (owner 2026-10-26); a longer
+   line stands a window, so the row grows in height only and no column moves. */
 .tm-strip {
+  --tm-pitch: 20px;
+  --tm-more: 32px;
   position: relative;
   display: flex;
   align-items: center;
   margin: -4px 0 0;
   padding: 0 14px 10px 9px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
+  overflow: hidden;
 }
-.tm-strip::-webkit-scrollbar {
-  display: none;
+/* Under a lead circle the subject starts past it: the 30px `.av` and the row's 11px gap (row.css). */
+.row-slot:has(> .row.srow) > .row-follow > .tm-strip {
+  padding-left: calc(9px + 30px + 11px);
 }
 .tm-strip .tm-mb {
-  flex: 0 1 20px;
-  min-width: 16px;
-  width: auto;
+  width: calc(var(--tm-pitch) * var(--s, 1));
+  width: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
   height: 20px;
-  min-height: 0;
+}
+/* "+N": the squares an edge hides, in the preview's ink, in a slot of its own that folds to 0 */
+.tm-more {
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: calc(11px + var(--type-up));
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  transition: width .22s var(--swift), height .22s var(--swift), opacity .16s var(--swift);
+}
+.tm-more[data-on] {
+  opacity: 1;
+}
+.tm-strip .tm-more {
+  width: 0;
+  line-height: 20px;
+}
+.tm-strip .tm-more[data-on] {
+  width: var(--tm-more);
+}
+.tm-strip .tm-more[data-side="new"] {
+  text-align: right;
+}
+/* The widest count the strip can draw ("+N" for all of them), measured for its slot and never shown */
+.tm-strip .tm-more[data-probe] {
+  position: absolute;
+  width: auto;
+  visibility: hidden;
+}
+/* "+N" starts where a square's face would, 5px into the line, at the subject's left */
+.tm-strip .tm-more[data-side="old"] {
+  text-indent: calc((var(--tm-pitch) - 10px) / 2);
+}
+.tm-bar .tm-more {
+  height: 0;
+  width: 100%;
+  line-height: 16px;
+  font-size: calc(10px + var(--type-up));
+  text-align: center;
+}
+.tm-bar .tm-more[data-on] {
+  height: var(--tm-more);
+}
+/* Beside the reader the count is centred on the rail; a longer one ("+109") runs on into the gap
+   beside it rather than being cut. */
+.view.split > .thread-marks .tm-more {
+  display: grid;
+  grid-template-columns: var(--tm-rail);
+  justify-items: center;
+  justify-items: safe center;
+}
+/* A windowed line's one ring (`ThreadMarksBar`), at the current square's rest place: the squares
+   flow past it. It switches on and off at once, as the button's ring does. */
+.tm-ring {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: calc(var(--r-ctl) * 7 / 8);
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+  pointer-events: none;
+  transition: left .22s var(--swift), top .22s var(--swift);
+}
+.tm-bar > .tm-ring {
+  top: var(--tm-ring);
+  left: 50%;
+  translate: -50% 0;
+}
+.view.split > .thread-marks .tm-ring {
+  left: calc(var(--tm-rail) / 2);
+}
+.tm-strip > .tm-ring {
+  top: 1px;
+  left: var(--tm-ring);
+}
+[data-window] > .tm-mb::after {
+  display: none;
+}
+.row-slot:hover .tm-more,
+.tm-bar:hover .tm-more {
+  color: var(--ink2);
 }
 /* A held finger shows the chip: no callout, no text selection over the squares. */
 .tm-mb {
@@ -6276,7 +6376,10 @@ input.set-tag-input {
   .conv[data-thread-read] > article.pm,
   .reader .msg[data-thread-read],
   .read-col:has(> .msg[data-thread-read]),
-  .tm-sq {
+  .tm-sq,
+  .tm-mb,
+  .tm-more,
+  .tm-ring {
     transition: none;
   }
 }

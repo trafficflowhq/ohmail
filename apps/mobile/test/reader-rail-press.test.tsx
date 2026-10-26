@@ -34,7 +34,7 @@ const native = vi.hoisted(() => ({
 vi.mock("react-native", async () => {
   const React = await import("react");
   const keep = (props: any) => (el: any) => { if (el) el.__props = props; };
-  const View = (props: any) => React.createElement("div", { "data-rn": "View", ref: keep(props) }, props.children);
+  const View = (props: any) => React.createElement("div", { "data-rn": "View", "data-test": props.testID, ref: keep(props) }, props.children);
   return {
     View,
     Text: (props: any) => React.createElement("span", null, props.children),
@@ -159,7 +159,8 @@ const client = require_("react-dom/client") as { createRoot(el: Element): { rend
 const { MessageReader } = await import("../src/ui/MessageReader");
 const { VISIT_HANDOFF_MS, endIdleVisit, resetVisitsForTests } = await import("../src/ui/visit-records");
 const { hitSlopFor } = await import("../src/theme/tokens");
-const { RAIL_TOP, railFit } = await import("../src/ui/reader-marks");
+const { RAIL_MORE, RAIL_PITCH, RAIL_TOP } = await import("../src/ui/reader-marks");
+const { MARK_RING } = await import("../src/ui/MarkSquare");
 const { threadWalk } = await import("@ohmail/client-engine");
 const place = await import("../src/state/thread-place");
 const { forgetPaneScroll } = await import("../src/ui/pane-memory");
@@ -235,44 +236,58 @@ const mountReader = (id: string) => {
 };
 
 type Slop = { top: number; bottom: number; left: number; right: number };
+/** The rail's "+N" at one edge: the squares it hides there (0 where it shows none). */
+const rail = (root: Element, side: "old" | "new"): number => {
+  const el = root.querySelector(`[data-test="more-${side}"]`);
+  return el ? Number((el.textContent ?? "").replace(/^\+/, "")) : 0;
+};
 const slopOf = (p: Record<string, any>): Slop => {
   const s = p.hitSlop ?? hitSlopFor(Number(p.style?.height ?? 0)); // the real Tap's default
   return typeof s === "number" ? { top: s, bottom: s, left: s, right: s } : { top: s.top ?? 0, bottom: s.bottom ?? 0, left: s.left ?? 0, right: s.right ?? 0 };
 };
 
+/** The reader of `n` 180dp members laid out, its rail `room` high. */
+const layOut = (el: HTMLElement, n: number, room: number): void => {
+  lay(all(el).find((x) => String(x.__props?.accessibilityRole) === "toolbar"), { y: 0, height: room });
+  const v = views(el);
+  lay(v.padded, { y: 0, height: 200 * n });
+  lay(v.above, { y: 18, height: 200 * (n - 1) });
+  for (let i = 0; i < n - 1; i++) lay(v.member(`p${i + 1}`).panel, { y: 200 * i, height: 180 });
+  lay(v.opened, { y: 18 + 200 * (n - 1) + 34, height: 180 });
+  native.content = 18 + 200 * (n - 1) + 34 + 180 + 40;
+  lay(v.scroll, { y: 0, height: native.view });
+  act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+};
+
 describe("a press on a rail square reaches that square", () => {
   for (const [n, room] of [[2, 580], [30, 580], [40, 600], [30, 700]] as const) {
-    it(`${n} messages on a ${room}dp rail${railFit(n, room).scrolls ? " (it scrolls)" : ""}: each face, and the jump to its message`, () => {
+    it(`${n} messages on a ${room}dp rail${n * RAIL_PITCH > room - RAIL_TOP ? " (a window)" : ""}: each face, and the jump to its message`, () => {
       const members = Array.from({ length: n - 1 }, (_, i) => ({ ...memberOf(`p${i + 1}`, "Ada"), later: false }));
       world.mail = mailOf(`p${n}`, members);
       const el = mountReader(`p${n}`);
-      const toolbar = all(el).find((x) => String(x.__props?.accessibilityRole) === "toolbar");
-      lay(toolbar, { y: 0, height: room });
-      const v = views(el);
-      lay(v.padded, { y: 0, height: 200 * n });
-      lay(v.above, { y: 18, height: 200 * (n - 1) });
-      for (let i = 0; i < n - 1; i++) lay(v.member(`p${i + 1}`).panel, { y: 200 * i, height: 180 });
-      lay(v.opened, { y: 18 + 200 * (n - 1) + 34, height: 180 });
-      native.content = 18 + 200 * (n - 1) + 34 + 180 + 40;
-      lay(v.scroll, { y: 0, height: native.view });
-      act(() => { native.props!.onContentSizeChange?.(360, native.content); });
+      layOut(el, n, room);
 
       const taps = all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-"));
       expect(taps.map((x) => x.getAttribute("data-test"))).toEqual([...members.map((m) => `rail-${m.id}`), `rail-p${n}`]);
-      const pitch = railFit(n, room).pitch;
-      expect(taps.map((x) => Number(x.__props!.style.height)), "each square is drawn at the fit's pitch").toEqual(taps.map(() => pitch));
+      const pitches = taps.map((x) => Number(x.__props!.style.height));
+      const old = rail(el, "old");
+      const tops = pitches.map((_, i) => RAIL_TOP + (old > 0 ? RAIL_MORE : 0) + pitches.slice(0, i).reduce((a, b) => a + b, 0));
+      const shown = pitches.map((p, i) => (p > 0 ? i : -1)).filter((i) => i >= 0);
+      expect(old + shown.length + rail(el, "new"), "the counts and the squares say every message").toBe(n);
+      expect(tops.at(-1)! + pitches.at(-1)! + (rail(el, "new") > 0 ? RAIL_MORE : 0), "the rail fits its room").toBeLessThanOrEqual(room);
+      expect(pitches[n - 1], "the opened (ringed) one whole").toBe(RAIL_PITCH);
       // Later siblings first; the first rect grown by its slop that holds the point wins.
       const hit = (y: number): number => {
         for (let i = taps.length - 1; i >= 0; i--) {
           const s = slopOf(taps[i]!.__props!);
-          if (y >= RAIL_TOP + i * pitch - s.top && y < RAIL_TOP + (i + 1) * pitch + s.bottom) return i;
+          if (pitches[i]! > 0 && y >= tops[i]! - s.top && y < tops[i]! + pitches[i]! + s.bottom) return i;
         }
         return -1;
       };
       const wrong: string[] = [];
-      for (let i = 0; i < n; i++) {
+      for (const i of shown) {
         for (const at of [0.25, 0.5, 0.75]) {
-          const got = hit(RAIL_TOP + i * pitch + at * pitch);
+          const got = hit(tops[i]! + at * pitches[i]!);
           if (got !== i) wrong.push(`square ${i} at ${at}: ${got}`);
         }
       }
@@ -288,6 +303,69 @@ describe("a press on a rail square reaches that square", () => {
       }
     });
   }
+
+  it("a rail longer than the reader follows the ring: the window centres on a pressed square, both edges counted and tapered", () => {
+    const n = 40;
+    const members = Array.from({ length: n - 1 }, (_, i) => ({ ...memberOf(`p${i + 1}`, "Ada"), later: false }));
+    world.mail = mailOf(`p${n}`, members);
+    const el = mountReader(`p${n}`);
+    layOut(el, n, 600);
+    const pitches = (): number[] => all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-")).map((x) => Number(x.__props!.style.height));
+    expect([rail(el, "old") > 0, rail(el, "new"), pitches().at(-1)], "opened on its newest: the end, the older counted").toEqual([true, 0, RAIL_PITCH]);
+    act(() => { all(el).find((x) => x.getAttribute("data-test") === "rail-p20")!.__props!.onPress(); });
+    for (let i = 0; i < 300; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    const p = pitches();
+    const shown = p.map((x, i) => (x > 0 ? i : -1)).filter((i) => i >= 0);
+    expect(p[19], "the pressed square whole").toBe(RAIL_PITCH);
+    expect([rail(el, "old"), rail(el, "new")], "+N each side, exactly what it hides").toEqual([shown[0], n - 1 - shown.at(-1)!]);
+    expect(p.slice(shown[0], shown[0]! + 3), "the taper from the old edge in").toEqual([11, 17, 23]);
+    expect(p.slice(shown.at(-1)! - 2, shown.at(-1)! + 1), "and to the new edge").toEqual([23, 17, 11]);
+    expect(Math.abs(19 - (shown[0]! + shown.at(-1)!) / 2), "centred on it").toBeLessThanOrEqual(1);
+  });
+
+  it("one ring, at the ringed square's rest place: a step mid-conversation leaves it standing", () => {
+    const n = 40;
+    world.mail = mailOf(`p${n}`, Array.from({ length: n - 1 }, (_, i) => ({ ...memberOf(`p${i + 1}`, "Ada"), later: false })));
+    const el = mountReader(`p${n}`);
+    layOut(el, n, 600);
+    const taps = () => all(el).filter((x) => (x.getAttribute("data-test") ?? "").startsWith("rail-p"));
+    const ring = () => all(el).find((x) => x.getAttribute("data-test") === "ring-rail")?.__props?.style;
+    const rest = (i: number): number => {
+      const p = taps().map((x) => Number(x.__props!.style.height));
+      return RAIL_TOP + (rail(el, "old") > 0 ? RAIL_MORE : 0) + p.slice(0, i).reduce((a, b) => a + b, 0) + p[i]! / 2 - MARK_RING / 2;
+    };
+    const press = (id: string) => {
+      act(() => { all(el).find((x) => x.getAttribute("data-test") === `rail-${id}`)!.__props!.onPress(); });
+      for (let i = 0; i < 300; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    };
+    for (let i = 0; i < 300; i += 16) { flushNative(); act(() => { vi.advanceTimersByTime(16); }); }
+    const ringed = taps().findIndex((x) => x.__props!.accessibilityState?.selected === true);
+    expect([ringed >= 0, ring()?.top], "the ring on the ringed square").toEqual([true, rest(ringed)]);
+    press("p20");
+    const mid = ring()!.top;
+    expect(mid, "on the pressed square").toBe(rest(19));
+    press("p21");
+    expect(ring()!.top, "a step mid-conversation: the squares move, the ring stands").toBe(mid);
+    expect(ring()!.top).toBe(rest(20));
+    expect(taps().map((x) => x.querySelector<El>("[data-rn='View']")!.__props!.style.borderWidth ?? 0), "no square wears a ring of its own")
+      .toEqual(Array(n).fill(0));
+  });
+
+  it("a three-digit +N is never cut to the rail's width: it runs on beside it", () => {
+    const n = 140;
+    world.mail = mailOf(`p${n}`, Array.from({ length: n - 1 }, (_, i) => ({ ...memberOf(`p${i + 1}`, "Ada"), later: false })));
+    const el = mountReader(`p${n}`);
+    layOut(el, n, 600);
+    expect(rail(el, "old"), "the older squares counted").toBeGreaterThanOrEqual(100);
+    const more = all(el).find((x) => x.getAttribute("data-test") === "more-old")!;
+    const box = more.querySelector<El>("[data-rn='View']")!.__props!.style;
+    expect([more.__props!.style.flexDirection, box.position, box.left, box.minWidth, box.width],
+      "a box as wide as the count, from the rail's start, at least the rail wide").toEqual(["row", "absolute", 0, 22, undefined]);
+    const clips: string[] = [];
+    for (let e: El | null = more; e && String(e.__props?.accessibilityRole) !== "toolbar"; e = e.parentElement as El | null)
+      if (e.__props?.style?.overflow === "hidden") clips.push(e.getAttribute("data-test") ?? e.getAttribute("data-rn") ?? "?");
+    expect(clips, "nothing between the count and the rail cuts it").toEqual([]);
+  });
 });
 
 describe("a reader another screen covers reads nothing", () => {
@@ -1007,11 +1085,11 @@ describe("the squares walk the conversation", () => {
     expect(sheet(), "then goes").toBeUndefined();
   });
 
-  it("a held sheet goes at once on a press of another square, a drag of the reader or of the rail", () => {
+  it("a held sheet goes at once on a press of another square, or a drag of the reader", () => {
     world.mail = conversation();
     const el = mountReader("p3");
     layThree(el);
-    lay(all(el).find((x) => String(x.__props?.accessibilityRole) === "toolbar"), { y: 0, height: 40 }); // 3 squares in 40dp: it scrolls
+    lay(all(el).find((x) => String(x.__props?.accessibilityRole) === "toolbar"), { y: 0, height: 200 });
     settle();
     const tap = (mid: string): Record<string, any> => all(el).find((x) => x.getAttribute("data-test") === `rail-${mid}`)!.__props!;
     const sheet = (): El | undefined => all(el).find((x) => x.__props?.testID === "mark-sheet");
@@ -1026,9 +1104,6 @@ describe("the squares walk the conversation", () => {
     holdP2();
     act(() => { native.props!.onScrollBeginDrag(); });
     expect(sheet(), "the reader's drag").toBeUndefined();
-    holdP2();
-    act(() => { all(el).find((x) => x.getAttribute("data-rn") === "RailScroll")!.__props!.onScrollBeginDrag(); });
-    expect(sheet(), "the rail's drag").toBeUndefined();
   });
 
   it("opened on its newest the newest is ringed; the top rings the first, the very end the one-line last", () => {

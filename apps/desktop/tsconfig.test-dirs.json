@@ -69,6 +69,7 @@
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui/long-text": ["../../packages/ui/src/format/long-text.ts"],
+      "@ohmail/ui/squares-window": ["../../packages/ui/src/squares-window.ts"],
       "@ohmail/ui": ["../../packages/ui/src/index.ts"],
       "@trafficflow/worker/sync": ["../worker/src/sync.ts"],
       "@trafficflow/worker/lease": ["../worker/src/lease.ts"],
