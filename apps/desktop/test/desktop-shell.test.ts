@@ -651,7 +651,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these fifty files and no others", () => {
+  it("is these fifty-two files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -790,6 +790,12 @@ describe("the Rust side", () => {
       // is engine-build only.
       "text_scale.rs",
       "text_scale_tests.rs",
+      // A RUN THAT VANISHED IS LOGGED ON THE NEXT START. ALWAYS compiled: a GTK or WebKit crash
+      // leaves no line of its own. It writes, reads and removes one marker file under the app's own
+      // data directory, and its line carries an age and a pid, never a path. On Linux it quits on a
+      // session's end (SIGTERM, SIGHUP) through `updater::quit`.
+      "unclean_exit.rs",
+      "unclean_exit_tests.rs",
       "updater.rs",
       "updater_tests.rs",
       // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that

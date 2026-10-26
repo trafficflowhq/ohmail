@@ -211,6 +211,7 @@ fn offer_relaunch<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
             if relaunch {
                 crate::updater::after_the_engine(&answer, || {
                     crate::inherited_fds::withhold_from_the_restart();
+                    crate::unclean_exit::clear();
                     answer.request_restart();
                 });
             } else {
