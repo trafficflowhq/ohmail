@@ -2281,6 +2281,9 @@ const TABLE = {
   lettersKept: (n: number) => (n === 1
     ? "A letter you were writing when ohmail stopped is in Drafts."
     : `${n} letters you were writing when ohmail stopped are in Drafts.`),
+  lettersKeptChangedElsewhere: (n: number) => (n === 1
+    ? "A letter you were writing when ohmail stopped is in Drafts as a new draft, because its draft was changed on another device. That version is kept too."
+    : `${n} letters you were writing when ohmail stopped are in Drafts as new drafts, because their drafts were changed on another device. Those versions are kept too.`),
   lettersKeptWithout: (n: number, names: string) => (n === 1
     ? `A letter you were writing when ohmail stopped is in Drafts, without ${names}: past what this phone keeps with drafts.`
     : `${n} letters you were writing when ohmail stopped are in Drafts, without ${names}: past what this phone keeps with drafts.`),
@@ -3122,7 +3125,7 @@ const TABLE = {
   pfiSavedByPhone: (when: string) => `Saved ${when} by ohmail on a phone.`,
   pfiSavedBy: (when: string) => `Saved ${when}.`,
   pfiWillDo:
-    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
+    "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
   /* What the organizer files while the card is unanswered (`PlanDeps.importHold`). */
   pfiHeldRouting:
     "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",

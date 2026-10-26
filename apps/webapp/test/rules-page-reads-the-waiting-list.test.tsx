@@ -5,6 +5,17 @@ import {
 } from "./fixtures/live-walk-shell";
 import type { MailboxFacts } from "../app/shell/mail-state";
 import en from "../messages/en.json";
+import * as React from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { NextIntlClientProvider } from "next-intl";
+import { eq } from "drizzle-orm";
+import { mailboxes, mailboxProfileMirror, organizerRequests, rules as rulesTbl } from "@trafficflow/db";
+import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
+import { HttpAdapter, MemoryMirrorStore, OhmailEngine, type FetchLike } from "@ohmail/client-engine";
+import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../../packages/api/test/helpers.js";
+import { withNodeBlobs } from "./fixtures/node-blobs";
+
+const h = React.createElement;
 
 const WHY = en.ohbox.whyRefused;
 
@@ -152,5 +163,80 @@ describe("the shell's Rules page lists what waits on the organizer", () => {
     const el = await rulesPane(reader(), []);
     await tick(50);
     expect(textOf(el.querySelector<HTMLElement>('[data-rule-id="rule_lena"]')!)).not.toContain("waits on");
+  });
+});
+
+describe("a rule made on the organizer is revoked from this page, through the real API", () => {
+  const app = createApp(apiRoutes);
+  let roots: Root[] = [];
+  let container: HTMLElement;
+  afterEach(() => {
+    for (const r of roots) r.unmount();
+    roots = [];
+    container?.remove();
+  });
+  const waitFor = async (p: () => boolean | Promise<boolean>, what: string, timeout = 8000): Promise<void> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+      if (await p()) return;
+      await act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    }
+    throw new Error(`timed out waiting for: ${what}`);
+  };
+
+  it("Revoke sends one rule.delete by its key, writes no rule row, and the row says the removal waits", async () => {
+    const { db, deps } = await withNodeBlobs(() => makeDeps(FIXED_NOW));
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const address = "me@lichtgrat.example";
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId, address });
+    await db.update(mailboxes).set({
+      organizerRole: "reader", organizerState: "held", organizedByKind: "local", organizedByName: "Studio laptop",
+      organizedByCapabilities: "requests,rules",
+    }).where(eq(mailboxes.id, mailboxId));
+    await db.insert(mailboxProfileMirror).values({
+      mailboxId, accountId: s.accountId, readAt: FIXED_NOW,
+      doc: { v: 2, rules: [{ kind: "sender", match: "lena@atelier.example", destination: "ohmail/Receipts", priority: 0, enabled: true }] },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      const headers = new Headers(init?.headers as HeadersInit | undefined);
+      headers.set("authorization", `Bearer ${s.token}`);
+      return app.handle(new Request(url, { ...init, headers }), { ...(deps as ApiDeps), session: null, idempotency: null });
+    };
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = new OhmailEngine({ adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }), store });
+    const roster = [{
+      ...mailbox({ id: mailboxId, address, lastSyncAt: ISO }), organizerRole: "reader",
+      organizedBy: { kind: "local", name: "Studio laptop", since: ISO }, organizerState: "held",
+      organizeConsentedAt: ISO, organizerReleasedAt: null, organizerAcceptsRequests: true,
+    }] as MailboxFacts[];
+    const { AppShell } = await import("../app/shell/AppShell.js");
+    const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    roots.push(root);
+    window.location.hash = "#/settings";
+    await act(async () => {
+      root.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en, timeZone: "UTC",
+        children: h(ThemeProvider, { storageKey: null, children: h(ToastHost, {
+          children: h(AppShell as never, { demo: false, engine, mailboxFacts: async () => roster } as never),
+        }) }),
+      }));
+    });
+    await waitFor(() => [...container.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Rules"), "the settings page");
+    await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Rules")!.click(); });
+    const row = (): HTMLElement | null => container.querySelector<HTMLElement>('[data-rule-id^="held:"]');
+    await waitFor(() => row() !== null, "the organizer's rule on the page");
+    expect(textOf(row()!)).toContain("Files into Receipts");
+    await act(async () => { [...row()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Revoke")!.click(); });
+    await act(async () => { [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Revoke this rule")!.click(); });
+    await waitFor(async () => (await db.select().from(organizerRequests)).length > 0, "the request");
+    expect((await db.select().from(organizerRequests)).map((r) => [r.kind, r.payload])).toEqual([["rule.delete", {
+      key: { kind: "sender", match: "lena@atelier.example", subjectContains: null, bodyContains: null },
+    }]]);
+    expect(await db.select().from(rulesTbl)).toEqual([]);
+    await waitFor(() => row() !== null && textOf(row()!).includes("Removal waits on Studio laptop"), "the waiting line on the row");
   });
 });

@@ -1,5 +1,5 @@
 import {
-  pruneChangeLogForAccount, retentionAccountsAfter, pruneAuditLog, pruneAuthEvents, pruneSignInRecords,
+  pruneChangeLogForAccount, retentionAccountsAfter, pruneAuditLog, pruneAuthEvents, pruneConnectAttempts, pruneSignInRecords,
   RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT, SIGN_IN_RECORD_RETENTION_MS,
   emptySignInRetention, type SignInRetentionOptions, type SignInRetentionResult,
 } from "@trafficflow/db/cloud";
@@ -7,7 +7,7 @@ import type { Tx } from "@trafficflow/db";
 import type { Logger } from "@trafficflow/core/mail";
 
 /**
- * RETENTION (mail 0122) — the pass that ends three tables' unbounded growth. The
+ * RETENTION (mail 0122) — the pass that ends four tables' unbounded growth. The
  * horizons and the deletes live in `@trafficflow/db/cloud`'s `retention.ts` (ONE place); this is
  * the cadence and the rotation. It rides the hourly maintenance block under the leader lock, so
  * exactly one process prunes, visits {@link RETENTION_ACCOUNTS_PER_TICK} accounts per tick
@@ -46,6 +46,7 @@ export async function retentionPrunePass(db: Tx, now: Date, log: Logger): Promis
     for (const [event, prune] of [
       ["retention_prune_audit_log", pruneAuditLog],
       ["retention_prune_auth_events", pruneAuthEvents],
+      ["retention_prune_connect_attempts", pruneConnectAttempts],
     ] as const) {
       try {
         let total = 0;

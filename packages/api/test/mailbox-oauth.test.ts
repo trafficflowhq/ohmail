@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
+import { createApp, apiRoutes, connectAttemptRecorder, type ApiDeps } from "@trafficflow/api";
 import {
-  mailboxes, mailboxCredentials, type Db,
+  mailboxes, mailboxCredentials, type Db, type Tx,
 } from "@trafficflow/db";
 import {
-  mailboxOauthCeremonies, oauthProviderConfig, OAUTH_CEREMONY_TTL_MS,
+  connectAttempts, mailboxOauthCeremonies, oauthProviderConfig, OAUTH_CEREMONY_TTL_MS,
 } from "@trafficflow/db/cloud";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { MS_AUTHORIZE_SCOPES, type FetchLike } from "@trafficflow/core";
@@ -130,7 +130,9 @@ interface World {
   H: (r: Request, over?: Partial<ApiDeps>) => Promise<Response>;
 }
 
-async function world(opts: { registration?: "row" | "env" | "none"; disabled?: boolean } = {}): Promise<World> {
+async function world(
+  opts: { registration?: "row" | "env" | "none"; disabled?: boolean; record?: boolean } = {},
+): Promise<World> {
   const { db, deps } = await makeDeps();
   const s = await seedSession(db, { now: FIXED_NOW });
   const registration = opts.registration ?? "row";
@@ -141,6 +143,8 @@ async function world(opts: { registration?: "row" | "env" | "none"; disabled?: b
     appOrigin: "https://ohmail.app",
     oauthFetch: endpoint.fetch,
     ...(registration === "env" ? { msOAuth: envBootstrap } : {}),
+    // The managed host's recorder (cloud 0054), where a case asks for it.
+    ...(opts.record ? { connectAttempts: connectAttemptRecorder(db as unknown as Tx, deps.now) } : {}),
   };
   return {
     db, deps: base, token: s.token, accountId: s.accountId, endpoint,
@@ -312,7 +316,7 @@ describe("cloud 0009 — GET /mailboxes/oauth/microsoft/callback (the bounce)", 
   });
 
   it("reads NOTHING and WRITES NOTHING — it cannot, and that is the design", async () => {
-    const w = await world();
+    const w = await world({ record: true });
     const { state } = await start(w);
     await w.H(req("GET", `/mailboxes/oauth/microsoft/callback?state=${state}&code=xyz`));
     // The ceremony is UNSPENT after the bounce. If the bounce consumed it, the same browser's
@@ -320,6 +324,9 @@ describe("cloud 0009 — GET /mailboxes/oauth/microsoft/callback (the bounce)", 
     const [row] = await w.db.select().from(mailboxOauthCeremonies)
       .where(eq(mailboxOauthCeremonies.state, state));
     expect(row!.consumedAt).toBeNull();
+    // Nor a connect record (cloud 0054): the one row is the start's, recorded ok.
+    expect(await w.db.select({ door: connectAttempts.door, preset: connectAttempts.preset, outcome: connectAttempts.outcome })
+      .from(connectAttempts)).toEqual([{ door: "oauth_start", preset: "microsoft", outcome: "ok" }]);
   });
 
   it("refuses to reflect a value that could break out of the Location header", async () => {
@@ -610,6 +617,37 @@ describe("cloud 0009 — POST /mailboxes/oauth/microsoft/complete", () => {
     // go red.
     expect(await w.db.select().from(mailboxes)).toHaveLength(0);
     expect(await w.db.select().from(mailboxCredentials)).toHaveLength(0);
+  });
+
+  it("each refusal is recorded by its own word, a completion as ok, and never the address (cloud 0054)", async () => {
+    const w = await world({ record: true });
+    const fresh = async (): Promise<string> => (await start(w)).state;
+    const grant = (body: unknown, ok = true, status = 200): Partial<ApiDeps> =>
+      ({ oauthFetch: fakeTokenEndpoint(() => ({ ok, status, body })).fetch });
+    const other = await seedSession(w.db, { now: FIXED_NOW });
+    await w.H(completeReq(w.token, "n".repeat(43)));
+    await w.H(completeReq(w.token, await fresh()), { now: () => new Date(FIXED_NOW.getTime() + OAUTH_CEREMONY_TTL_MS + 1_000) });
+    await w.H(completeReq(other.token, await fresh()));
+    await w.H(completeReq(w.token, await fresh()), grant({}, false, 503));
+    await w.H(completeReq(w.token, await fresh()), grant({ error: "invalid_grant" }, false, 400));
+    await w.H(completeReq(w.token, await fresh()), grant({ access_token: "A", expires_in: 3600, id_token: idToken({ preferred_username: "x@contoso-com.example" }) }));
+    await w.H(completeReq(w.token, await fresh()), grant({ access_token: "A", refresh_token: "R", expires_in: 3600, id_token: idToken({ preferred_username: "Mila G" }) }));
+    vi.spyOn(ImapAdapter.prototype, "connect").mockRejectedValueOnce(
+      Object.assign(new Error("Invalid credentials"), { authenticationFailed: true }));
+    await w.H(completeReq(w.token, await fresh()));
+    expect((await w.H(completeReq(w.token, await fresh()))).status).toBe(201);
+    const last = await fresh();
+    await w.db.update(oauthProviderConfig).set({ enabled: false });
+    await w.H(completeReq(w.token, last));
+
+    const done: Array<typeof connectAttempts.$inferSelect> =
+      await w.db.select().from(connectAttempts).where(eq(connectAttempts.door, "oauth_complete"));
+    expect(done.map((r) => r.reason).sort()).toEqual([
+      "state_invalid", "state_expired", "account_mismatch", "provider_unavailable", "exchange_failed",
+      "no_refresh_token", "no_address", "auth", null, "oauth_unconfigured",
+    ].sort());
+    expect(done.find((r) => r.reason === "auth")).toMatchObject({ preset: "microsoft", outcome: "refused", transport: "imap" });
+    expect(JSON.stringify(done)).not.toContain("contoso");
   });
 
   it("the probe dials with the FRESH ACCESS TOKEN, not with the refresh token", async () => {

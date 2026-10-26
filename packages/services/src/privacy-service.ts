@@ -1,6 +1,7 @@
 import { and, desc, eq, lt, or } from "drizzle-orm";
-import { accountSettings, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
+import { accountSettings, folderState, messages, messageBodies, trackerEvents, type Tx } from "@trafficflow/db";
 import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
+import { isHeldFolder } from "@trafficflow/core/destinations";
 import { imageDimensions } from "@trafficflow/core/image-dimensions";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -210,19 +211,22 @@ export class PrivacyService {
      * facts: the reader pressed "Show images" for THIS message
      * (`message_bodies.loaded_remote_content`), or the ACCOUNT loads images automatically (mail
      * 0048: `account_settings.block_remote_images_at` NULL; an absent row IS the default). The
-     * second grant authorizes the shipped auto default; an opted-out account's urls are refused
+     * second grant authorizes the shipped auto default and never covers a held letter (its
+     * `folder_state.desired_folder` is the Screener, Screened out or Spam: a sender not let in
+     * learns nothing from an open); an opted-out account's urls are refused
      * whatever a client claims. `TrackerEventDTO.blocked` derives from the same two facts, so a
      * fetched image is never reported "blocked". 403 not 404 (the message is real and owned);
      * `retryable: false` — the remedy is `POST /messages/:id/load-remote`.
      */
-    // scoped-by: requireOwnedMessage(ctx, messageId) above proved the message this account's
     const [body] = await ctx.db
-      .select({ loaded: messageBodies.loadedRemoteContent })
-      .from(messageBodies)
-      .where(eq(messageBodies.messageId, messageId))
+      .select({ loaded: messageBodies.loadedRemoteContent, folder: folderState.desiredFolder })
+      .from(messages)
+      .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
+      .leftJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(eq(messages.id, messageId), eq(messages.accountId, ctx.accountId)))
       .limit(1);
     const grants = await this.imageGrants(ctx);
-    if (body?.loaded !== true && !grants.auto) {
+    if (!imagesGranted(body?.loaded, body?.folder, grants)) {
       throw new ServiceError(
         "remote_content_not_loaded", 403,
         "remote content for this message has not been loaded by the reader",
@@ -539,12 +543,14 @@ export class PrivacyService {
       detectedAt: trackerEvents.detectedAt,
       fromAddress: messages.fromAddress,
       loaded: messageBodies.loadedRemoteContent,
+      folder: folderState.desiredFolder,
     }).from(trackerEvents)
       .innerJoin(messages, and(
         eq(messages.id, trackerEvents.messageId),
         eq(messages.accountId, ctx.accountId),
       ))
       .leftJoin(messageBodies, eq(messageBodies.messageId, trackerEvents.messageId))
+      .leftJoin(folderState, eq(folderState.messageId, trackerEvents.messageId))
       .where(and(...filters))
       .orderBy(desc(trackerEvents.detectedAt), desc(trackerEvents.id))
       .limit(limit + 1);
@@ -591,7 +597,7 @@ const KIND_MAP: Record<string, TrackerEventDTO["kind"]> = {
 
 function toDTO(r: {
   id: string; messageId: string; kind: string; trackerHost: string | null;
-  detectedAt: Date; fromAddress: string; loaded: boolean | null;
+  detectedAt: Date; fromAddress: string; loaded: boolean | null; folder: string | null;
 }, grants: { auto: boolean; pixels: boolean }): TrackerEventDTO {
   return {
     id: r.id,
@@ -604,8 +610,15 @@ function toDTO(r: {
     // this account unless an images grant exists (the press or auto mode) AND the pixel switch
     // is off. `!loaded` alone reported auto-mode fetches as "blocked"; images grants alone
     // would report a pixel the gate refuses pre-fetch as loaded.
-    blocked: !(((r.loaded ?? false) || grants.auto) && grants.pixels),
+    blocked: !(imagesGranted(r.loaded, r.folder, grants) && grants.pixels),
   };
+}
+
+/** The images grant `proxyImage` checks and the feed reports: the press, or auto on a letter not held. */
+function imagesGranted(
+  loaded: boolean | null | undefined, folder: string | null | undefined, grants: { auto: boolean },
+): boolean {
+  return loaded === true || (grants.auto && !isHeldFolder(folder));
 }
 
 /** How long the whole proxied fetch may take, headers and body together. */

@@ -235,3 +235,10 @@ describe("timings from a report and from a job log", { timeout: 30_000 }, () => 
     expect(census(["--root", root, "--check"]).code, "no timings at all").toBe(2);
   });
 });
+
+// A file's first case carries its cold import: 1.4-3.4 s alone, past vitest's 5 s on a loaded runner.
+describe("the suite's own config budget", () => {
+  it("lets a case outlast vitest's 5 s default", async () => {
+    await new Promise((r) => setTimeout(r, 5_200));
+  });
+});

@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
   pressForecast,
+  pressRules,
+  type MailboxProfileEntity,
+  type SyncChange,
   type EngineAdapter,
   type EngineMessage,
   type EngineMutation,
@@ -161,5 +165,63 @@ describe("a decide under a higher-priority domain rule", () => {
     const promoted = engine.read().list<RuleDTO>("rule").find((r) => r.provenance === "promoted");
     expect(promoted?.priority, "the overlay promoted the rule below the domain rule").toBe(5);
     expect(consentPartition(engine.read(), { now: NOW }).placeOf.get("h1")).toBe("INBOX");
+  });
+});
+
+describe("a reader-only press plans over the organizer's copy", () => {
+  /** This device's own rows, the organizer's copy of mailbox `mb`, and the subject's mail. */
+  async function readerOnly(local: RuleDTO[], copy: RuleDTO[], rows: EngineMessage[]): Promise<MemoryMirrorStore> {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const doc: MailboxProfileEntity = {
+      mailboxId: "mb", rules: copy, asOf: NOW.toISOString(), from: { kind: "local", name: "Host", since: null }, updatedAt: NOW.toISOString(), applied: [],
+    };
+    let seq = 0;
+    await store.applyChanges([
+      ...local.map((r) => ({ type: "rule", id: r.id, entity: r })),
+      { type: "mailbox_profile", id: "mb", entity: doc },
+      ...rows.map((m) => ({ type: "message", id: m.id, entity: m })),
+    ].map((c) => ({ ...c, op: "create", seq: ++seq, updatedAt: NOW.toISOString() })) as SyncChange[]);
+    return store;
+  }
+  const over = (store: MemoryMirrorStore) => pressRules(store, { travels: true, queued: [], applied: [], unsettled: [], now: NOW });
+
+  it("the device's stale row says the Ohbox, the copy says News: the press to the Ohbox writes, never 'already'", async () => {
+    const store = await readerOnly(
+      [rule({ id: "local-1", destination: "INBOX" })], [rule({ id: "profile:mb:0", destination: "ohmail/News" })],
+      [mail("m1", { folder: "ohmail/News" })],
+    );
+    const input: PressInput = {
+      reader: store, options: { now: NOW }, subject: store.list<EngineMessage>("message"),
+      scope: "sender", match: ADDR, wanted: "INBOX", makeRule: true, applyRetro: false, now: NOW,
+    };
+    expect(pressForecast(input).keep.writes, "over the device's own row").toEqual([]);
+    expect(pressForecast({ ...input, rules: over(store) }).keep.writes)
+      .toEqual([{ kind: "rule_update", ruleId: "local-1", destination: "INBOX", applyRetro: false }]);
+    expect(pressRules(store, { travels: false, queued: [], applied: [], unsettled: [], now: NOW }).map((r) => r.destination)).toEqual(["INBOX"]);
+  });
+
+  it("this install's unapplied presses lie over the copy: the newest per key, a removal taking its rows", async () => {
+    const store = await readerOnly([], [
+      rule({ id: "profile:mb:0", destination: "ohmail/News" }), rule({ id: "profile:mb:1", kind: "domain", match: DOMAIN, destination: "ohmail/Screened" }),
+    ], []);
+    const key = { kind: "sender", match: ADDR, subjectContains: null, bodyContains: null };
+    const wide = { ...key, kind: "domain", match: DOMAIN };
+    const shown = pressRules(store, { travels: true, queued: [], applied: [], now: NOW, unsettled: [
+      { kind: "rule.update", key, destination: "INBOX" }, { kind: "rule.update", key, destination: "ohmail/Receipts" },
+      { kind: "rule.delete", key: wide, destination: null },
+    ] });
+    expect(shown.map((r) => [r.match, r.destination])).toEqual([[ADDR, "INBOX"]]);
+  });
+
+  it("an address press is lifted over the copy's domain rule, which the device does not hold", async () => {
+    const wide = rule({ id: "profile:mb:0", kind: "domain", match: DOMAIN, destination: "ohmail/Screened", priority: 5 });
+    const store = await readerOnly([], [wide], [mail("m1")]);
+    const input: PressInput = {
+      reader: store, options: { now: NOW }, subject: store.list<EngineMessage>("message"),
+      scope: "sender", match: ADDR, wanted: "INBOX", makeRule: true, applyRetro: false, now: NOW,
+    };
+    expect(pressForecast(input).exception).toBeNull();
+    expect(pressForecast({ ...input, rules: over(store) }).exception).toMatchObject({ rule: { match: DOMAIN }, priority: 5 });
   });
 });

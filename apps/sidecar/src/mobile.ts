@@ -945,6 +945,7 @@ export async function openPhoneStore(
     laneCensus: () => null,
     // The planner statistics are a PGlite concern; the platform's SQLite plans for itself here.
     analyzeSearchIfStale: async () => false,
+    analyzeKnownSetIfNever: async () => "already" as const,
     ingestDb,
     routeDb,
     endIngestPage: () => paged.endPage(),

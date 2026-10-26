@@ -194,9 +194,9 @@ export {
  * module names `auth_events`, which a local install does not have. */
 export {
   changeLogHorizon, pruneChangeLogForAccount, retentionAccountsAfter,
-  pruneAuditLog, pruneAuthEvents, pruneSignInRecords, emptySignInRetention,
+  pruneAuditLog, pruneAuthEvents, pruneConnectAttempts, pruneSignInRecords, emptySignInRetention,
   CHANGE_LOG_RETENTION_GRACE_MS, CHANGE_LOG_HOLDBACK_LIVE_MS,
-  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, SIGN_IN_RECORD_RETENTION_MS,
+  AUDIT_LOG_RETENTION_MS, AUTH_EVENTS_RETENTION_MS, CONNECT_ATTEMPTS_RETENTION_MS, SIGN_IN_RECORD_RETENTION_MS,
   SIGN_IN_SESSION_BATCH, SIGN_IN_RETENTION_DEADLINE_MS,
   type SignInRetentionResult, type SignInRetentionOptions,
   RETENTION_ACCOUNTS_PER_TICK, RETENTION_DELETE_BATCH, RETENTION_BATCHES_PER_ACCOUNT,
@@ -348,6 +348,12 @@ export {
   claimBillingLink, handBackBillingLink, BillingLinkAuditError, BILLING_LINK_CAP, BILLING_LINK_WINDOW_MS,
   type BillingLinkClaim, type BillingLinkClaimInput,
 } from "./billing-link.js";
+
+/** How connecting a mailbox ended (cloud 0054): the closed words and the fenced, capped writer. */
+export {
+  recordConnectAttempt, CONNECT_DOORS, CONNECT_PRESETS, CONNECT_REASONS, CONNECT_ATTEMPTS_PER_DAY,
+  type ConnectAttemptRow, type ConnectDoorWord, type ConnectPreset, type ConnectReason,
+} from "./connect-attempts.js";
 
 /* THE SPEND VOCABULARY IS NOT RE-EXPORTED HERE, and the absence is load-bearing.
  *

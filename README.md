@@ -192,7 +192,7 @@ On a server with a public domain, also set `OHMAIL_BIND=0.0.0.0` in `.env`. Preb
 
 ## Privacy
 
-There is no telemetry and no analytics. In local mode on the desktop, only these leave the machine: the connections to your mail server, the signed update check, pictures in a message you open, one-click unsubscribes, lookups of the keys senders sign mail with, and, if you turn it on, requests to your model provider. [Where your mail is, and what the app talks to →](docs/how-it-works.md#where-your-mail-is-and-what-the-app-talks-to)
+There is no telemetry and no analytics in the apps. ohmail Cloud keeps one record of its own about connecting a mailbox ([ohmail.app/privacy](https://ohmail.app/privacy)); a self-hosted server and the desktop app keep none. In local mode on the desktop, only these leave the machine: the connections to your mail server, the signed update check, pictures in a message you open, one-click unsubscribes, lookups of the keys senders sign mail with, and, if you turn it on, requests to your model provider. [Where your mail is, and what the app talks to →](docs/how-it-works.md#where-your-mail-is-and-what-the-app-talks-to)
 
 ## Community & support
 

@@ -240,26 +240,28 @@ describe("applyScreenerDecision", () => {
     expect(rule?.retroDoneAt, "the declined re-decide left the walk owed").toEqual(later);
   });
 
-  it("no/sender to ohmail/Screened: mark-read fires, no contact added", async () => {
-    const db = await makeTestDb();
-    const { mailboxId, messageId } = await seedHeldMessage(db, { fromAddress: "spammer@example.com", unread: true });
+  for (const appliedFolder of ["ohmail/Screened", "ohmail/Quarantine"]) {
+    it(`no/sender to ${appliedFolder}: files the letter unread, no read intent, no contact added`, async () => {
+      const db = await makeTestDb();
+      const { messageId } = await seedHeldMessage(db, { fromAddress: "spammer@example.com", unread: true });
 
-    await db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
-      accountId: ACCT, scope: "sender", address: "spammer@example.com",
-      appliedFolder: "ohmail/Screened", decision: "no",
-      triggeringActionId: `screener:${messageId}`, now: NOW, decidedBy: "person", overExisting: "converge",
-    }));
+      await db.transaction((tx) => applyScreenerDecision(carryDialect(db, tx), {
+        accountId: ACCT, scope: "sender", address: "spammer@example.com",
+        appliedFolder, decision: "no",
+        triggeringActionId: `screener:${messageId}`, now: NOW, decidedBy: "person", overExisting: "converge",
+      }));
 
-    const [msg] = await db.select().from(messages).where(eq(messages.id, messageId));
-    expect(msg?.unread).toBe(false);
-    expect(msg?.lastReadAt?.getTime()).toBe(NOW.getTime());
+      const [fs] = await db.select().from(folderState).where(eq(folderState.messageId, messageId));
+      expect(fs?.desiredFolder).toBe(appliedFolder);
+      const [msg] = await db.select().from(messages).where(eq(messages.id, messageId));
+      expect(msg?.unread, "a decision is not a reading").toBe(true);
+      expect(msg?.lastReadAt ?? null).toBeNull();
+      expect(await db.select().from(flagState).where(eq(flagState.messageId, messageId))).toEqual([]);
 
-    const [contact] = await db.select().from(contacts).where(eq(contacts.address, "spammer@example.com"));
-    expect(contact).toBeUndefined();
-
-    const [fi] = await db.select().from(flagState).where(eq(flagState.messageId, messageId));
-    expect(fi?.desiredSeen).toBe(true);
-  });
+      const [contact] = await db.select().from(contacts).where(eq(contacts.address, "spammer@example.com"));
+      expect(contact).toBeUndefined();
+    });
+  }
 
   it("domain scope re-routes every held sender at the domain and rules on the domain", async () => {
     const db = await makeTestDb();

@@ -153,6 +153,54 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send whose outgoing server
   }, 120_000);
 });
 
+/**
+ * DELIVERED, THEN THE PHONE'S NETWORK GONE BEFORE THE SENT COPY: the IMAP cable is cut as the
+ * outgoing server takes the end of the message, the app is closed, and it opens again on a network.
+ * Before: the copy was owed only in memory and never filed.
+ */
+describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone letter delivered as its network went away", () => {
+  it("gets its Sent copy at the next launch, once", async () => {
+    const imap = new Cable("reset");
+    await imap.open();
+    cables.push(imap);
+    const sink = new SmtpSink({ auth: () => ({ ok: true, afterMs: 0 }), dataAfterMs: () => { imap.cut(); return 50; } });
+    await sink.open();
+    sinks.push(sink);
+    const user = `owed-${randomUUID()}@trafficflow.test`;
+    const dir = mkdtempSync(join(tmpdir(), "ohmail-phone-owed-"));
+    dirs.push(dir);
+    const phone = await bootPhone({ user, file: join(dir, "engine.db"), cable: imap, smtp: { port: sink.port } });
+    const call = async (path: string, method: string, body?: unknown, key?: string) => phone.engine.handle(new Request(`http://sidecar${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${phone.engine.sessionToken}`, "content-type": "application/json",
+        ...(key ? { "idempotency-key": key } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    const subject = `owed ${randomUUID()}`;
+    const created = await call("/drafts", "POST", { mailboxId: seedMailboxId(phone), subject, body: "On my way.", to: R });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const draftId = (await created.json() as { id: string }).id;
+    const sent = await call(`/drafts/${draftId}/send`, "POST", {}, `owed-${randomUUID()}`);
+    expect(await sent.json(), `events ${eventsSince(phone, 0)}`).toMatchObject({ status: "sent", sentCopy: "pending" });
+    expect(sink.messages).toBe(1);
+    await phone.engine.stop();
+
+    imap.mend();
+    const again = await relaunch(phone);
+    const inSent = (): Promise<number> => withServer(user, async (c) => {
+      const lock = await c.getMailboxLock("Sent").catch(() => null);
+      if (lock === null) return 0;
+      try { const u = await c.search({ subject }, { uid: true }); return Array.isArray(u) ? u.length : 0; } finally { lock.release(); }
+    });
+    let n = 0;
+    for (const t = Date.now(); Date.now() - t < 30_000 && n === 0; await new Promise((r) => setTimeout(r, 500))) n = await inSent();
+    expect(n, `no copy in Sent after the relaunch — events ${eventsSince(again, 0)}`).toBe(1);
+    expect(sink.messages, "sent again").toBe(1);
+  }, 120_000);
+});
+
 /** The photo letter: one 684 KB picture. */
 const PHOTO = { filename: "photo.jpg", contentType: "image/jpeg", contentBase64: Buffer.alloc(684 * 1024, 0x5a).toString("base64") };
 

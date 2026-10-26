@@ -9,6 +9,7 @@ import {
   ProfileUnavailableError, readOrganizerProfile, type ProfileReadResult, type ProfileLocator,
 } from "@trafficflow/core/adapters/organizer-profile";
 import { isImapDoorTimeout, withinDoorBudget } from "../imap-door.js";
+import { imapHostOf, noteConnectAttempt } from "../connect-attempt-note.js";
 import { serviceContext } from "../context.js";
 import { makeImapProbe, makeSmtpProbe } from "../imap-probe.js";
 import { makeOrganizerPeek } from "../organizer-peek.js";
@@ -495,13 +496,22 @@ export const mailboxRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const body = await readBody<Record<string, unknown>>(req);
-      const dto = await mailbox(deps).probeConnection(
-        serviceContext(deps, req), probeInputOf(body),
-        // THE ONE CALL SITE THAT ASKS FOR A FOLDER COUNT. Every other probe in this file is built
-        // without it, so no create and no claim pays a LIST for a number it does not read.
-        { probe: makeImapProbe(deps, { countFolders: true }) },
-      );
-      return jsonResponse(dto);
+      try {
+        const dto = await mailbox(deps).probeConnection(
+          serviceContext(deps, req), probeInputOf(body),
+          // THE ONE CALL SITE THAT ASKS FOR A FOLDER COUNT. Every other probe in this file is built
+          // without it, so no create and no claim pays a LIST for a number it does not read.
+          { probe: makeImapProbe(deps, { countFolders: true }) },
+        );
+        await noteConnectAttempt(deps, {
+          door: "test", imapHost: imapHostOf(body),
+          ...(dto.sending?.state === "refused" ? { smtpRefused: dto.sending.reason } : {}),
+        });
+        return jsonResponse(dto);
+      } catch (err) {
+        await noteConnectAttempt(deps, { door: "test", imapHost: imapHostOf(body), error: err });
+        throw err;
+      }
     },
   },
   {
@@ -522,19 +532,25 @@ export const mailboxRoutes: Route[] = [
     options: { stepUp: true },
     handler: async (req, deps) => {
       const body = await readBody<CreateMailboxBody>(req);
-      // The credentials are tried before they are stored, and the probe is built HERE,
-      // per request, from `deps`. Same seam and same reason as `routes/attachments.ts` building
-      // `makeOpenAdapter(deps)` at its own call site: `packages/services` states what a probe
-      // must answer and never learns how to open a socket, so every service test injects a fake
-      // through this argument. `MailboxService.create` requires it — a create that could omit it
-      // is a create that can store an untried password.
-      const dto = await mailbox(deps).create(serviceContext(deps, req), body, {
-        probe: makeImapProbe(deps),
-        // The SMTP block is tried too — a submission host whose certificate cannot be verified
-        // must refuse HERE, on the form, not at the user's first send. Same seam shape.
-        smtpProbe: makeSmtpProbe(deps),
-      });
-      return jsonResponse(dto, { status: 201 });
+      try {
+        // The credentials are tried before they are stored, and the probe is built HERE,
+        // per request, from `deps`. Same seam and same reason as `routes/attachments.ts` building
+        // `makeOpenAdapter(deps)` at its own call site: `packages/services` states what a probe
+        // must answer and never learns how to open a socket, so every service test injects a fake
+        // through this argument. `MailboxService.create` requires it — a create that could omit it
+        // is a create that can store an untried password.
+        const dto = await mailbox(deps).create(serviceContext(deps, req), body, {
+          probe: makeImapProbe(deps),
+          // The SMTP block is tried too — a submission host whose certificate cannot be verified
+          // must refuse HERE, on the form, not at the user's first send. Same seam shape.
+          smtpProbe: makeSmtpProbe(deps),
+        });
+        await noteConnectAttempt(deps, { door: "connect", imapHost: imapHostOf(body) });
+        return jsonResponse(dto, { status: 201 });
+      } catch (err) {
+        await noteConnectAttempt(deps, { door: "connect", imapHost: imapHostOf(body), error: err });
+        throw err;
+      }
     },
   },
   {

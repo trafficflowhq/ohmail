@@ -44,6 +44,7 @@ import {
 } from "@trafficflow/services";
 import {
   makeProbeHostGuard, apiAlertSinkSummary, API_FAULT_RECORD_BUDGET_MS, staffSigningKeyOf, nodeMailDns,
+  connectAttemptRecorder,
 } from "@trafficflow/api";
 import type { ApiDeps, ApiServices, ChangeWakeHub } from "@trafficflow/api";
 import { waitUntil } from "@vercel/functions";
@@ -822,6 +823,10 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     cronSecret: cfg.cronSecret,
     connectReminder: cfg.connectReminder,
     connectReminderSince: cfg.connectReminderSince,
+    // How connecting a mailbox ended (cloud 0054), composed only on `TF_CONNECT_ATTEMPTS=record`.
+    ...(cfg.connectAttempts === "record"
+      ? { connectAttempts: connectAttemptRecorder(db as unknown as Tx, () => new Date(), hostLogger(cfg)) }
+      : {}),
     alerts: cfg.alerts
       ? {
         secret: cfg.alerts.secret,

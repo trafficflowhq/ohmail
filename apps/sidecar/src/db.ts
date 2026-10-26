@@ -709,6 +709,13 @@ export interface OpenLocalDb {
    */
   analyzeSearchIfStale(): Promise<boolean>;
   /**
+   * The known-set read's planner statistics, taken once when missing ({@link analyzeNeverAnalyzed}):
+   * without them every page of that read sorts the rest of the mailbox. `pending` (the table still
+   * empty, the step refused, the store closed) asks to be called again; never throws. The phone's
+   * store answers `already`.
+   */
+  analyzeKnownSetIfNever(): Promise<KnownSetStatistics>;
+  /**
    * THE DRAIN'S OWN HANDLE, where a store commits a cycle's mail as one page (the phone's). Its
    * transactions are savepoints of a page that {@link endIngestPage} commits; any statement on
    * {@link db} commits the page first, so nothing another caller reads or writes waits on it or
@@ -1053,7 +1060,8 @@ export const PLANNER_STATISTICS_TABLES = ["mailboxes"] as const;
  * search look above names four other tables. Unanalyzed, the Ohbox offer's `organizer` mailbox test
  * read at its default selectivity, so the planner took a whole 74k mailbox for a thousand rows and
  * sorted all of it for every page of the walk (about 130 ms a page; 8 ms analyzed). A table holding
- * rows and never analyzed (`reltuples` -1) is analyzed; one already analyzed costs a catalog read.
+ * rows with no column statistics is analyzed (a rewrite such as mail 0131's sets `reltuples` and
+ * leaves none); one already analyzed costs a catalog read.
  * Returns the tables analyzed; a refusal leaves the planner's defaults and answers nothing.
  */
 export async function analyzeNeverAnalyzed(
@@ -1061,22 +1069,37 @@ export async function analyzeNeverAnalyzed(
 ): Promise<string[]> {
   const done: string[] = [];
   try {
-    for (const t of tables) {
-      const r = await client.query<{ rt: number; held: boolean }>(
-        `SELECT COALESCE((SELECT c.reltuples FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
-                  WHERE ns.nspname = 'public' AND c.relname = '${t}'), 0)::float8 AS rt,
-         EXISTS (SELECT 1 FROM public.${t}) AS held`,
-      );
-      const row = r.rows[0];
-      if (row !== undefined && row.rt < 0 && row.held) {
-        await client.exec(`ANALYZE public.${t}`);
-        done.push(t);
-      }
-    }
+    for (const t of tables) if ((await analyzeTableIfNever(client, t)) === "analyzed") done.push(t);
   } catch {
     // Maintenance: the reads still answer, on the planner's defaults.
   }
   return done;
+}
+
+/** The known-set statistics step's answer: only `pending` is worth asking again. */
+export type KnownSetStatistics = "analyzed" | "already" | "pending";
+
+/** One table of {@link analyzeNeverAnalyzed}; `empty` is no answer yet. Throws what the store throws. */
+async function analyzeTableIfNever(client: PGlite, t: string): Promise<"analyzed" | "already" | "empty"> {
+  const r = await client.query<{ read: boolean; held: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = 'public' AND s.tablename = '${t}') AS read,
+     EXISTS (SELECT 1 FROM public.${t}) AS held`,
+  );
+  const row = r.rows[0];
+  if (row?.read === true) return "already";
+  if (row?.held !== true) return "empty";
+  await client.exec(`ANALYZE public.${t}`);
+  return "analyzed";
+}
+
+/** The known-set read's statistics: `pending` while `message_instances` is empty or the step failed. */
+export async function analyzeKnownSetIfNever(client: PGlite): Promise<KnownSetStatistics> {
+  try {
+    const s = await analyzeTableIfNever(client, "message_instances");
+    return s === "empty" ? "pending" : s;
+  } catch {
+    return "pending";
+  }
 }
 
 /**
@@ -1181,6 +1204,31 @@ export async function reclaimBodyBloat(
       reason: "the bloat check or rewrite failed; the mirror keeps serving and the next launch retries",
     });
     return none;
+  }
+}
+
+/** Below this the owed Sent copies' table is left alone at open: an empty one is a few pages. */
+export const OWED_COPY_RECLAIM_FLOOR_BYTES = 1024 * 1024;
+
+/**
+ * Hand back the space of owed Sent copies deleted without a VACUUM behind them (a mailbox removal,
+ * an account erasure, a quit between the delete and its VACUUM): PGlite has no autovacuum, and the
+ * table holds whole messages, attachments included. One size read on a healthy store; silent, and
+ * the next open tries again. True when it ran.
+ */
+export async function reclaimOwedCopySpace(client: PGlite): Promise<boolean> {
+  try {
+    const r = await client.query<{ bytes: string }>(
+      `SELECT pg_total_relation_size(c.oid)::text AS bytes
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+       WHERE c.relname = 'outbound_sent_copies'`,
+    );
+    if (Number(r.rows[0]?.bytes ?? 0) < OWED_COPY_RECLAIM_FLOOR_BYTES) return false;
+    await client.exec(`VACUUM outbound_sent_copies`);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -2299,6 +2347,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     // the gate that keeps a healthy launch's cost at one catalog read.
     const tCompact = Date.now();
     await reclaimBodyBloat(client, log, opts.onPhase);
+    await reclaimOwedCopySpace(client);
     const compactMs = Date.now() - tCompact;
     // AFTER the migrator (the indexed tables must exist) and BEFORE serving, like the compaction.
     const tSearch = Date.now();
@@ -2438,6 +2487,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
       storeSyncs: () => ({ ...synced }),
       laneCensus: () => lanes.census(),
       analyzeSearchIfStale: () => (closed ? Promise.resolve(false) : analyzeSearchIfStale(client)),
+      analyzeKnownSetIfNever: () => (closed ? Promise.resolve("pending" as const) : analyzeKnownSetIfNever(client)),
       /* ONE CLOSE, SHARED BY EVERY CALLER: refuse new calls, wait for the admitted ones, and only then
          Terminate. The checkpoint chain needs no wait of its own: every statement a checkpoint or fold
          sends is admitted by the door, and one sent after the shut is refused unrun. At the bound it

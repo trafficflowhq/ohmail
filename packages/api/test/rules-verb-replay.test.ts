@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { changeLog, mailboxes as mailboxesTbl, rules as rulesTbl, idempotencyKeys } from "@trafficflow/db";
+import { changeLog, mailboxes as mailboxesTbl, mailboxProfileMirror, organizerRequests, rules as rulesTbl, idempotencyKeys } from "@trafficflow/db";
+import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -354,5 +355,57 @@ describe("a replay answers what the original answered", () => {
     expect(wrong.status).toBe(409);
     expect((await wrong.json()).error.code).toBe("idempotency_replay");
     expect(await db.select().from(rulesTbl).where(eq(rulesTbl.accountId, s.accountId))).toHaveLength(2);
+  });
+});
+
+describe("a published rule changed by its key replays its 202", () => {
+  /** The organizer's copy of the account's one mailbox lists two rules; this install holds none. */
+  async function readerOnly(db: ApiDeps["db"], accountId: string): Promise<void> {
+    const mailboxId = await organizerMailbox(db, accountId);
+    await heldElsewhere(db, accountId, mailboxId);
+    await db.insert(mailboxProfileMirror).values({
+      mailboxId, accountId, readAt: FIXED_NOW,
+      doc: { v: 2, rules: [
+        { kind: "domain", match: "acme.example", destination: "ohmail/News", priority: 0, enabled: true },
+        { kind: "domain", match: "other.example", destination: "INBOX", priority: 0, enabled: true },
+      ] },
+    });
+  }
+  const keyOf = (match: string) => ({ kind: "domain", match, subjectContains: null, bodyContains: null });
+  const delByKey = (token: string, key: unknown, idem: string): Request =>
+    req("DELETE", `/rules/${PUBLISHED_RULE_ID}`, { bearer: token, body: JSON.stringify({ key }), headers: { "idempotency-key": idem } });
+
+  it("DELETE by key answers 202, writes no rule row, and its retry replays the same body", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    await readerOnly(db, s.accountId);
+    const first = await H(delByKey(s.token, keyOf("acme.example"), "key-del"), deps);
+    expect(first.status).toBe(202);
+    const body = await first.json();
+    expect(body.pending).toBe(true);
+    expect(body.rule).toBeUndefined();
+    const retry = await H(delByKey(s.token, keyOf("acme.example"), "key-del"), deps);
+    expect(retry.status).toBe(202);
+    expect(await retry.json()).toEqual(body);
+    expect(await db.select().from(organizerRequests).where(eq(organizerRequests.accountId, s.accountId))).toHaveLength(1);
+    expect(await db.select().from(rulesTbl).where(eq(rulesTbl.accountId, s.accountId))).toEqual([]);
+  });
+
+  it("PATCH by key answers 202 and replays it; the same idempotency key aimed at another rule is 409", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    await readerOnly(db, s.accountId);
+    const first = await H(patch(s.token, PUBLISHED_RULE_ID, { key: keyOf("acme.example"), destination: "INBOX" }, "key-patch"), deps);
+    expect(first.status).toBe(202);
+    const body = await first.json();
+    const retry = await H(patch(s.token, PUBLISHED_RULE_ID, { key: keyOf("acme.example"), destination: "INBOX" }, "key-patch"), deps);
+    expect(retry.status).toBe(202);
+    expect(await retry.json()).toEqual(body);
+    const wrong = await H(patch(s.token, PUBLISHED_RULE_ID, { key: keyOf("other.example"), destination: "INBOX" }, "key-patch"), deps);
+    expect(wrong.status).toBe(409);
+    expect((await wrong.json()).error.code).toBe("idempotency_replay");
+    const wrongDel = await H(delByKey(s.token, keyOf("other.example"), "key-del-2"), deps);
+    expect(wrongDel.status).toBe(202);
+    expect((await H(delByKey(s.token, keyOf("acme.example"), "key-del-2"), deps)).status).toBe(409);
   });
 });

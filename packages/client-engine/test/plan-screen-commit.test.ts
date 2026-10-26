@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore,
+  heldRuleId,
   planScreenCommit,
+  pressRules,
   ruleFingerprint,
   type RuleDTO,
   type ScreenIntent,
@@ -81,5 +83,21 @@ describe("planScreenCommit", () => {
       { kind: "rule_update", ruleId: "bare", destination: "INBOX", applyRetro: false },
       { kind: "rule_delete", ruleId: "term" },
     ]);
+  });
+});
+
+describe("planScreenCommit over the organizer's copy (reader-only)", () => {
+  it("Remove names a shown organizer term rule by its key; over the device's rows it read as changed", async () => {
+    const theirs = { ...term, id: "profile:mb:1" };
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([{
+      type: "mailbox_profile", op: "create", id: "mb", seq: ++seq, updatedAt: term.updatedAt,
+      entity: { mailboxId: "mb", rules: [{ ...bare, id: "profile:mb:0" }, theirs], asOf: term.updatedAt, from: { kind: "local", name: "Host", since: null }, updatedAt: term.updatedAt, applied: [] },
+    }] as SyncChange[]);
+    const shown = intent({ shown: [{ id: theirs.id, fp: ruleFingerprint(theirs) }], makeRule: false });
+    expect(planScreenCommit(store, shown)).toEqual({ writes: [], changed: [theirs.id] });
+    const over = pressRules(store, { travels: true, queued: [], applied: [], unsettled: [], now: new Date("2026-09-25T12:00:00.000Z") });
+    expect(planScreenCommit(store, shown, over)).toEqual({ writes: [{ kind: "rule_delete", ruleId: heldRuleId(term) }], changed: [] });
   });
 });

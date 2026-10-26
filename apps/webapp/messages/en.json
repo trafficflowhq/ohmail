@@ -1603,8 +1603,8 @@
     },
     "images": {
       "title": "Load images in messages",
-      "on": "Pictures in a message load when you open it, through ohmail's proxy.",
-      "onComputer": "Pictures in a message load when you open it, fetched by your computer.",
+      "on": "Pictures in a message load when you open it, through ohmail's proxy. Mail in the Screener asks first.",
+      "onComputer": "Pictures in a message load when you open it, fetched by your computer. Mail in the Screener asks first.",
       "off": "Each message asks first. Press Show images to load them.",
       "microcopy": "Either way, images come through our proxy, so a sender never sees your address. Tracking pixels are a separate switch, below.",
       "microcopyComputer": "Either way, your computer fetches the images, so each sender sees its network address. Tracking pixels are a separate switch, below.",
@@ -3972,7 +3972,6 @@
     "profileBound": "Your other computers receive your newest {max, number} rules; {count, plural, one {1 older one stays} other {# older ones stay}} on this one.",
     "introHeld": "{holder} organizes your mail, and these are the rules it files by. A change you make here goes to {holder}.",
     "introCopy": "These are the rules {holder} last published.",
-    "madeOnHolder": "Made on {holder}; change or revoke it there.",
     "profileBoundHeld": "{holder} sends its newest {max, number} rules; any older ones are not listed here."
   },
   "drafts": {
@@ -4219,7 +4218,7 @@
     "savedByLocal": "Saved {when} by ohmail on another computer.",
     "savedByCloud": "Saved {when} by ohmail Cloud.",
     "savedBy": "Saved {when}.",
-    "willDo": "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say and marked read; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
+    "willDo": "Importing adds them to this account's settings. Mail this ohmail held in the Screener from senders they screen out is filed where they say; nothing else in your mail changes. Until you choose, both stay in the mailbox: these settings beside the ones you make here.",
     "routingWhileOpen": "Until you answer, mail from senders these settings let through stays where it arrived; other new senders are screened as usual.",
     "import": "Import settings",
     "importing": "Importing…",

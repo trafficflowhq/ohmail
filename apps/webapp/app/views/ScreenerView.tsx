@@ -83,7 +83,7 @@ import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
   noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
 } from "../shell/no-suggestion";
-import { autoLoadsImages, type RemoteImagesChrome } from "../shell/remote-images";
+import type { RemoteImagesChrome } from "../shell/remote-images";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { MessageBody } from "../components/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
@@ -1007,8 +1007,10 @@ export function ScreenerView({
     // The arithmetic is {@link heldAnchorTop} — extracted so a guard can drive it directly, because
     // jsdom reports every rect as zero and a mounted assertion cannot tell this formula from a
     // wrong one.
+    // The decision bar is sticky over the column's top: the letter lands below it, not under it.
+    const bar = read.querySelector<HTMLElement>(":scope > .decide");
     read.scrollTop = heldAnchorTop(
-      cssRect(read).top, cssRect(last).top, read.scrollTop,
+      bar ? cssRect(bar).bottom : cssRect(read).top, cssRect(last).top, read.scrollTop,
     );
     // The OBSERVED value, not the target: a browser clamps `scrollTop` to the scrollable range, and
     // a stored target beyond it would never match on the next pass — which reads as "the reader
@@ -2092,8 +2094,8 @@ interface HeldShown {
 }
 
 /**
- * The remote-image consent wiring for ONE held message, resolved exactly as `MessagePane`
- * resolves it: `remoteLoaded` is the OR of the stored flag and this session's consent (the
+ * The remote-image consent wiring for ONE held message, resolved as `MessagePane` resolves a
+ * held letter: `remoteLoaded` is the OR of the stored flag and this session's consent (the
  * body record is not re-fetched on consent, so without the second term the button would write
  * a row and change nothing on screen); the proxy is curried by message id, which is the
  * authorisation, not decoration; and an ABSENT chrome — the demo, a test with no API — offers
@@ -2102,28 +2104,23 @@ interface HeldShown {
 function heldRemoteProps(
   remoteImages: RemoteImagesChrome | undefined,
   h: { id: string; loadedRemoteContent?: boolean },
-  /** The sender's identity fact (`ScreenerSenderDTO.checked`): a claim's pictures wait for a press. */
-  checked: unknown,
 ): {
   remoteLoaded: boolean;
   imageProxy: ((url: string) => string) | null;
   onLoadRemote?: () => void;
   loadTrackingPixels: boolean;
+  resolvedRemoteImages?: ReadonlyMap<string, string>;
+  onRemoteImages?: (urls: string[]) => void;
 } {
   return {
-    // THREE terms, as `MessagePane` has: the stored flag, the ACCOUNT'S auto mode, this session's
-    // press. The middle one was missing here, so a held message kept the per-message button on an
-    // account whose setting said pictures load on open — the Screener was the one surface where
-    // that sentence in Settings was false.
-    remoteLoaded:
-      (h.loadedRemoteContent ?? false) ||
-      autoLoadsImages(remoteImages, { senderCheck: checked }) ||
-      (remoteImages?.consented(h.id) ?? false),
+    // No auto term: a sender not let in waits for the press whatever the setting (`autoLoadsImages`).
+    remoteLoaded: (h.loadedRemoteContent ?? false) || (remoteImages?.consented(h.id) ?? false),
     imageProxy: remoteImages ? remoteImages.proxyFor(h.id) : null,
-    // Withheld in auto mode for the pane's reason: a button over images already showing does nothing.
-    onLoadRemote: remoteImages && !autoLoadsImages(remoteImages, { senderCheck: checked })
-      ? () => remoteImages.consent(h.id) : undefined,
+    onLoadRemote: remoteImages ? () => remoteImages.consent(h.id) : undefined,
     loadTrackingPixels: remoteImages?.loadPixels ?? false,
+    // The pipe door's pictures (the desktop), as `MessagePane` hands them down.
+    resolvedRemoteImages: remoteImages?.resolvedFor(h.id),
+    onRemoteImages: remoteImages ? (urls) => remoteImages.needRemote(h.id, urls) : undefined,
   };
 }
 
@@ -2274,6 +2271,8 @@ export function HeldMail({
   imageProxy,
   onLoadRemote,
   loadTrackingPixels,
+  resolvedRemoteImages,
+  onRemoteImages,
   onRetry,
   unsubscribe: carriedUnsubscribe,
   unsubscribeUrl: carriedUnsubscribeUrl,
@@ -2320,6 +2319,9 @@ export function HeldMail({
   onLoadRemote?: () => void;
   /** The account's pixel switch (mail 0072); absent reads as blocked, matching the pane. */
   loadTrackingPixels?: boolean;
+  /** The pictures a pipe door already fetched, and the ask for the rest; see {@link MessageBody}. */
+  resolvedRemoteImages?: ReadonlyMap<string, string>;
+  onRemoteImages?: (urls: string[]) => void;
   /** Ask for this held message's body again. Rendered only in the `failed` state. */
   onRetry?: () => void;
   /** This message's unsubscribe posture, from its hydrated body. Absent ⇒ no control. */
@@ -2470,8 +2472,8 @@ export function HeldMail({
         </div>
       ) : null}
       {/* THE SAME RENDERER THE READING PANE USES — sanitized html in a sandboxed frame that
-          cannot phone home, remote images under the account's own images mode (auto through the
-          proxy, or per-message consent) — so the surface where a stranger's mail is judged is a
+          cannot phone home, remote images behind Show images in either mode (a sender not let in
+          waits for the press) — so the surface where a stranger's mail is judged is a
           mail client and not a text dump. With no html (a fixture row, or a body not yet
           hydrated to `full`) `MessageBody` renders the text part, which is what this preview
           showed before. */}
@@ -2500,6 +2502,8 @@ export function HeldMail({
           imageProxy={imageProxy}
           onLoadRemote={onLoadRemote}
           loadTrackingPixels={loadTrackingPixels ?? false}
+          resolvedRemoteImages={resolvedRemoteImages}
+          onRemoteImages={onRemoteImages}
           onNotice={setNotice}
           adaptSlot={adaptSlot}
         />
@@ -2985,7 +2989,7 @@ function WaitingPreview({
             dull={sender.dull}
             setSize={sender.held.length}
             posInSet={mounted.from + i + 1}
-            {...heldRemoteProps(remoteImages, h, sender.checked)}
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>
@@ -3097,7 +3101,7 @@ function ScreenedPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
-            {...heldRemoteProps(remoteImages, h, sender.checked)}
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>
@@ -3216,7 +3220,7 @@ function SpamPreview({
             onUnsubscribe={onUnsubscribe ? () => onUnsubscribe(h.id) : undefined}
             trackerNote={h.trackerNote}
             dull
-            {...heldRemoteProps(remoteImages, h, row.sender.checked)}
+            {...heldRemoteProps(remoteImages, h)}
           />
         ))}
       </div>

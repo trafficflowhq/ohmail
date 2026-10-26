@@ -157,6 +157,8 @@ body.reading .shell {
     margin-top: calc(-1 * var(--gap-edge));
     margin-bottom: calc(-1 * var(--gap-edge));
     padding-top: calc(2px + var(--gap-edge));
+    /* ohmarchy: cut on the tiles' ring line, as the thread column is (message.css) */
+    clip-path: inset(calc((var(--gap-edge) - var(--focus-w)) * var(--teach)) 0 0);
   }
 }
 

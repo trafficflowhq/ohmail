@@ -517,6 +517,7 @@ export type StaffAuditAction =
   | "read.overview" | "read.roster" | "read.search" | "read.account" | "read.account.activity"
   | "read.sync_roster" | "read.funnel" | "read.worker" | "read.actions"
   | "read.engagement" | "read.storage" | "read.staff_activity" | "read.staff_list" | "read.alerts_history"
+  | "read.connect_attempts"
   | "read.oauth_provider" | "assert.external" | "write.mailbox.resync" | "write.oauth_provider"
   | "write.billing_link"
   | "staff.signin" | "staff.signin_failed" | "staff.stepup" | "staff.stepup_failed"
@@ -674,6 +675,50 @@ export interface StoragePage {
   measuredAccounts: number;
   rows: StorageRow[];
   nextCursor: string | null;
+}
+
+/** How many attempts in the window ended this way, by door, preset, outcome and reason. */
+export interface ConnectAttemptBucket {
+  door: string;
+  preset: string;
+  outcome: "ok" | "refused";
+  reason: string | null;
+  count: number;
+}
+
+/** One account's attempts in the window: counts and instants, nothing else. */
+export interface ConnectAttemptAccount {
+  accountId: string;
+  attempts: number;
+  refused: number;
+  firstAt: string;
+  lastAt: string;
+  firstOkAt: string | null;
+}
+
+/** One attempt as recorded (cloud 0054): closed words and an instant. */
+export interface ConnectAttemptEntry {
+  at: string;
+  door: string;
+  preset: string;
+  outcome: "ok" | "refused";
+  reason: string | null;
+  transport: "imap" | "smtp" | null;
+}
+
+/**
+ * `GET /admin/connect-attempts?from&to&account&cursor&limit` — how connecting a mailbox ended in the
+ * window: the counts, each account's totals keyset by account id, and with `account=` (which scopes
+ * all three) its newest rows; `rows` is null without it.
+ */
+export interface ConnectAttemptsPage {
+  now: string;
+  window: { from: string; to: string };
+  account: string | null;
+  byOutcome: ConnectAttemptBucket[];
+  accounts: ConnectAttemptAccount[];
+  nextCursor: string | null;
+  rows: ConnectAttemptEntry[] | null;
 }
 
 /** The filters a {@link StaffFeedPage} was read with, after validation; null is "not filtered". */

@@ -1603,8 +1603,8 @@
     },
     "images": {
       "title": "Bilder in Nachrichten laden",
-      "on": "Bilder in einer Nachricht laden beim Öffnen, über den Proxy von ohmail.",
-      "onComputer": "Bilder in einer Nachricht laden beim Öffnen, geholt von deinem Computer.",
+      "on": "Bilder in einer Nachricht laden beim Öffnen, über den Proxy von ohmail. Nachrichten im Screener fragen zuerst.",
+      "onComputer": "Bilder in einer Nachricht laden beim Öffnen, geholt von deinem Computer. Nachrichten im Screener fragen zuerst.",
       "off": "Jede Nachricht fragt zuerst. Drück „Bilder anzeigen“, um sie zu laden.",
       "microcopy": "So oder so kommen Bilder über unseren Proxy, ein Absender sieht deine Adresse also nie. Tracking-Pixel haben unten ihren eigenen Schalter.",
       "microcopyComputer": "So oder so holt dein Computer die Bilder, jeder Absender sieht also dessen Netzwerkadresse. Tracking-Pixel haben unten ihren eigenen Schalter.",
@@ -3972,7 +3972,6 @@
     "profileBound": "Deine anderen Computer bekommen deine neuesten {max, number} Regeln; {count, plural, one {1 ältere bleibt} other {# ältere bleiben}} auf diesem.",
     "introHeld": "{holder} organisiert deine Mails; das sind die Regeln, nach denen dort abgelegt wird. Was du hier änderst, geht an {holder}.",
     "introCopy": "Das sind die Regeln, die {holder} zuletzt veröffentlicht hat.",
-    "madeOnHolder": "Auf {holder} erstellt; dort änderst oder hebst du sie auf.",
     "profileBoundHeld": "Von {holder} kommen die neuesten {max, number} Regeln; ältere sind hier nicht aufgeführt."
   },
   "drafts": {
@@ -4219,7 +4218,7 @@
     "savedByLocal": "Gespeichert {when} von ohmail auf einem anderen Computer.",
     "savedByCloud": "Gespeichert {when} von ohmail Cloud.",
     "savedBy": "Gespeichert {when}.",
-    "willDo": "Der Import fügt sie den Einstellungen dieses Accounts hinzu. Mails, die dieses ohmail im Screener zurückgehalten hat, werden für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen, und als gelesen markiert; sonst ändert sich an deinen Mails nichts. Bis du dich entscheidest, bleiben beide im Postfach: diese Einstellungen neben denen, die du hier festlegst.",
+    "willDo": "Der Import fügt sie den Einstellungen dieses Accounts hinzu. Mails, die dieses ohmail im Screener zurückgehalten hat, werden für Absender, die sie aussortieren, dort abgelegt, wo sie es sagen; sonst ändert sich an deinen Mails nichts. Bis du dich entscheidest, bleiben beide im Postfach: diese Einstellungen neben denen, die du hier festlegst.",
     "routingWhileOpen": "Bis du antwortest, bleibt Mail von Absendern, die diese Einstellungen durchlassen, dort, wo sie angekommen ist; andere neue Absender werden wie gewohnt gescreent.",
     "import": "Einstellungen importieren",
     "importing": "Importiere …",

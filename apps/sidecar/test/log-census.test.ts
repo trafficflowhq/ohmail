@@ -1446,6 +1446,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // every drain — stays silent. Six counters, no draft subject, no recipient, no body.
   send_reconcile_pass: "info",
   send_reconcile_pass_failed: "error",
+  // The owed Sent copies' pass, right after the reconciler and ungated like it: its failure leaves
+  // each copy recorded for the next drain. `err` and a sentence, no message, no recipient.
+  sent_copy_owed_pass_failed: "error",
   // The auto-suggest pass at the drain tail — "suggest for new senders as they arrive", on a door
   // whose only "always" is "while the window is open". Three integers (`examined`, `bought`,
   // `capped`) and emitted only when something was bought, so an install that has not opted in — and

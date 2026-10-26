@@ -1553,7 +1553,11 @@ export type EngineMutation =
    * are consulted when mail ARRIVES, never retroactively — the surface says so before the user
    * commits (see `RulesView`).
    */
-  | { kind: "rule_delete"; ruleId: string }
+  | {
+      kind: "rule_delete"; ruleId: string;
+      /** A rule of the organizer's copy with no row here, by its key: relayed, nothing removed here. */
+      key?: RuleKeyAddress;
+    }
   /**
    * `destination` only, though `PATCH /rules/:id` accepts kind/match/priority/enabled too.
    *
@@ -1567,6 +1571,8 @@ export type EngineMutation =
   | {
       kind: "rule_update";
       ruleId: string;
+      /** A rule of the organizer's copy with no row here, by its key: relayed, nothing written here. */
+      key?: RuleKeyAddress;
       destination: Folder;
       /** Absent keeps the stored priority; set only to lift an address rule over its domain's. */
       priority?: number;
@@ -2029,6 +2035,14 @@ export interface WaitingRequestWire {
   resolvedAt: ISODateTime | null;
   refusedReason: string | null;
   target: WaitingTargetWire;
+}
+
+/** A rule's four-field key as `PATCH|DELETE /rules/<PUBLISHED_RULE_ID>` sends it. */
+export interface RuleKeyAddress {
+  kind: string;
+  match: string;
+  subjectContains: string | null;
+  bodyContains: string | null;
 }
 
 export type WaitingTargetWire =

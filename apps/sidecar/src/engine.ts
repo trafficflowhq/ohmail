@@ -1143,6 +1143,8 @@ function localServices(
     // This process outlives every answer: the Sent copy is retried in memory, and an upload on a
     // slow link may run up to the ceiling, which ends it before a resolver may decide its row.
     sendCopyOutlivesAnswer: true,
+    // And a delivered send's owed Sent copy is kept on disk, so a quit or a crash does not lose it.
+    sendKeepOwedCopy: true,
     sendSubmissionCeilingMs: SEND_SUBMISSION_CEILING_MS,
     // A press offered after it could not end before the store closes is held for the next start.
     sendHoldOffer: holdOffer,
@@ -2208,6 +2210,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     const db = opened.db;
     // The search's planner statistics after a drain took mail — PGlite has no autovacuum.
     const statisticsUpkeep = createStatisticsUpkeep(() => opened.analyzeSearchIfStale());
+    /* The known-set read's statistics, before a drain reads it: without them every page sorts the
+       rest of the mailbox. Kept once answered; an empty table or a refusal is asked again next drain. */
+    let knownSetStatistics: Promise<void> | null = null;
+    const knownSetStatisticsOnce = (): Promise<void> => {
+      if (knownSetStatistics !== null) return knownSetStatistics;
+      const step: Promise<void> = Promise.resolve()
+        .then(() => opened.analyzeKnownSetIfNever())
+        .catch(() => "pending" as const)
+        .then((s) => { if (s === "pending" && knownSetStatistics === step) knownSetStatistics = null; });
+      return (knownSetStatistics = step);
+    };
     /* THE WAIT FOR THE WINDOW'S FIRST PAGE, one spelling for the poll's drain and the launch's
        (`first-page-gate.ts`). TWO LINES, NOT ONE WITH A FIELD: a rig greps for an event, and the
        drain yielded and got its page, or the bound fired and it went anyway. A wait of nothing
@@ -6360,6 +6373,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              * own and a reader's are left for whoever organizes it. */
             mailboxIds: [mb.id],
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+            keepOwedCopy: true,
             now,
           });
           if (r.claimed > 0) {
@@ -6513,6 +6527,36 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         }
       };
 
+      /** `SendService.owedCopiesRecorded` when this mailbox last read none owed; null before its first read. */
+      let noneOwedAt: number | null = null;
+      /**
+       * File the Sent copies this mailbox still owes (`SendService.fileOwedCopies`): a delivered
+       * send's copy that a quit, a crash or an outage left unfiled. Ungated like the reconciler: the
+       * copy is of a letter THIS install delivered, and the pass only files, looking in Sent first.
+       * The store is asked only while one may be owed: at this runtime's first drain, and once this
+       * process records one after a read found none. An idle drain asks nothing here.
+       */
+      const fileOwedSentCopies = async (): Promise<void> => {
+        const recorded = sendService.owedCopiesRecorded(mb.id);
+        if (noneOwedAt === recorded) return;
+        const ctx = { db: db as never, accountId: world.accountId, userId: null, now, requestId: "owed-copies" };
+        try {
+          if (await sendService.owesSentCopies(ctx, mb.id)) {
+            await sendService.fileOwedCopies(
+              ctx, mb.id, { openSendAdapter: openLocalSend, resolveStorageCap: async () => UNMETERED_STORAGE_CAP },
+            );
+            if (await sendService.owesSentCopies(ctx, mb.id)) return;
+          }
+          // Counted before the reads: a copy recorded since moved the count, and the next drain reads again.
+          noneOwedAt = recorded;
+        } catch (err) {
+          log("sent_copy_owed_pass_failed", {
+            err,
+            reason: "no owed Sent copy was filed this drain; each stays recorded and the next drain tries again",
+          });
+        }
+      };
+
       /**
        * The drain itself. Never called from outside this closure, and — since the mailbox-removal design — reached
        * by a READER as well as by an organizer; the `organizing` the GATE handed this pass is what
@@ -6640,6 +6684,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            ever, since no other install holds that reservation. After the sender, because the
            sender is the only thing on this door that creates one. */
         await reconcileStrandedSends();
+        await fileOwedSentCopies();
         let cycles = 0;
         /** Did a cycle report an empty backlog, or did the loop simply run out of cycles? */
         let drained = false;
@@ -6689,6 +6734,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            writes a change row. It is RECORDED at the drain's end as the value read HERE — a route
            that wrote while the drain ran would otherwise be folded into the end reading and drop
            nothing. An unreadable mark is an UNKNOWN and takes the drop path. */
+        await knownSetStatisticsOnce();
         const markAtStart = await changeLogMark();
         if (markAtStart === null || knownSetMark === null || markAtStart !== knownSetMark) {
           knownSet.drop("the store moved outside the drain");
@@ -7839,9 +7885,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              failure, or our own refusal of a replaced connection, closes it. */
           let drainError: unknown;
           /* THE LAUNCH DRAIN WAITS FOR THE WINDOW'S FIRST PAGE TOO: its first cycle reads every
-             locator of the mailbox in one statement whose result blocks the loop (74,003 rows, 4 to
-             6 s on a measured install), and only the poll's drain asked the gate. Bounded by the
-             grace armed at serving; a re-dial after the page, or after the grace, waits nothing and
+             locator of the mailbox (in pages, a turn of the loop each, but the whole mailbox), and
+             only the poll's drain asked the gate. Bounded by the grace armed at serving; a re-dial
+             after the page, or after the grace, waits nothing and
              logs nothing. Only where a door armed it: the phone serves no such page. A stop during
              the wait drains nothing; `detach()` gives the claim back. */
           if (firstPageDoorArmed()) await yieldToFirstPage();

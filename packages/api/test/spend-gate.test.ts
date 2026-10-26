@@ -81,6 +81,8 @@ const UNAUTHENTICATED = [
   // stored bytes), on their siblings' exact terms: ANONYMOUS_PIPELINE, no customer session, the
   // shared secret plus a live staff session.
   "GET /admin/alerts/history",
+  // How connecting a mailbox ended (cloud 0054), on the same terms.
+  "GET /admin/connect-attempts",
   "GET /admin/engagement",
   // The COST BOARD (cloud 0029), on the eight `/admin/*` reads' exact terms: the whole table
   // selects ANONYMOUS_PIPELINE and resolves no customer session, so `withSpendGate` has no
@@ -953,7 +955,9 @@ describe("the route table declares what every handler causes", () => {
     // presses are `work` and join the gated remainder.
     // 256 -> 257: `POST /mailboxes/discover`, a `connection` (it makes this process query DNS about
     // a name the caller chose), so it joins the gated remainder.
-    expect(apiRoutes).toHaveLength(257);
+    // 257 -> 258: `GET /admin/connect-attempts` (cloud 0054), `unauthenticated` like its siblings, so
+    // it joins `UNAUTHENTICATED` and this total together and the gated remainder is unchanged.
+    expect(apiRoutes).toHaveLength(258);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1186,7 +1190,8 @@ describe("the route table declares what every handler causes", () => {
     // 253 -> 256 with the waiting filings: the GET joins `READ`, the two presses grow the
     // remainder by two.
     // 256 -> 257 with the mail-domain lookup, a `connection`: the remainder grows by one.
-    expect(gated.length).toBe(257 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 257 -> 258 with the connect-attempt read, `unauthenticated`: the remainder does not move.
+    expect(gated.length).toBe(258 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

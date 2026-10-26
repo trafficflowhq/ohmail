@@ -35,6 +35,8 @@ const READS: ReadonlyArray<readonly [string, string]> = [
   ["/admin/storage", "read.storage"],
   ["/admin/staff-activity", "read.staff_activity"],
   ["/admin/alerts/history", "read.alerts_history"],
+  ["/admin/connect-attempts", "read.connect_attempts"],
+  [`/admin/connect-attempts?account=${ACCOUNT_ID}`, "read.connect_attempts"],
 ];
 
 async function world(): Promise<{ deps: ApiDeps; staff: Awaited<ReturnType<typeof seedStaff>> }> {
@@ -67,6 +69,16 @@ describe("every staff read is recorded before it is served", () => {
     const search = rows.find((r) => r.action === "read.search")!;
     expect(search.queryHmac).toMatch(/^[0-9a-f]{64}$/);
     expect(JSON.stringify(rows).toLowerCase()).not.toContain("needle-in-the-log");
+  });
+
+  it("the connect-attempt read names a named account as its target, and its detail is the window's length", async () => {
+    const { deps, staff } = await world();
+    await H(get(`/admin/connect-attempts?account=${ACCOUNT_ID}`, staff.token), deps);
+    await H(get("/admin/connect-attempts?from=2026-07-20T12:00:00Z&to=2026-07-27T12:00:00Z", staff.token), deps);
+    const rows = await auditRowsFor(deps, staff.staffId);
+    expect(rows.map((r) => [r.targetAccountId, r.detail]).sort()).toEqual([
+      [ACCOUNT_ID, { windowDays: 30, account: true }], [null, { windowDays: 7, account: false }],
+    ].sort());
   });
 
   it("keeps a caller's uuid request id and replaces anything else", async () => {

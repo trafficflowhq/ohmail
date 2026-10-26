@@ -23,10 +23,10 @@ export const letterSession = (): LetterSession | null => session;
 export type LetterWords = Pick<Letter, "mode" | "messageId" | "mailboxId" | "to" | "cc" | "bcc" | "subject" | "body" | "envelope">;
 
 /** What a keep answered: the row it made or updated, or the key a queued save waits under. */
-export interface KeptRow { draftId: string | null; key: string | null }
+export interface KeptRow { draftId: string | null; key: string | null; revision?: string }
 
 /** What a send press answered, as `SendResult` says it. */
-export interface SendAnswer { outcome: string; key?: string; draftId?: string }
+export interface SendAnswer { outcome: string; key?: string; draftId?: string; revision?: string }
 
 export interface LetterKeeper {
   readonly id: string;
@@ -38,7 +38,7 @@ export interface LetterKeeper {
   addFile(file: { filename: string; contentType: string; contentBase64: string; sizeBytes: number }): string;
   removeFile(fileId: string): void;
   /** A draft opened from Drafts saved itself: `savedAs` is what the row now holds. */
-  saved(draftId: string, savedAs: string): void;
+  saved(draftId: string, savedAs: string, revision: string | null): void;
   forwardKept(ids: string[] | null): void;
   /** The files that would not fit beside the files already kept with drafts. */
   overKeepLimit(): LetterFile[];
@@ -66,6 +66,8 @@ export interface KeeperOptions {
   /** A composer opened from Drafts: its row, the words that row holds, the files kept with it. */
   draftId?: string | null;
   savedAs?: string | null;
+  /** That row's version as opened. */
+  revision?: string | null;
   files?: LetterFile[];
   now?: () => Date;
   timers?: { set: (f: () => void, ms: number) => unknown; clear: (t: unknown) => void };
@@ -75,9 +77,11 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
   const now = o.now ?? (() => new Date());
   const timers = o.timers ?? { set: (f: () => void, ms: number) => setTimeout(f, ms), clear: (t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout>) };
   const stored = o.door.letter(o.id);
-  let letter: Letter = stored ?? {
+  // Opened from Drafts: the row as opened is what the words are based on, whatever an older keep wrote.
+  const opened = o.draftId != null ? { draftId: o.draftId, savedAs: o.savedAs ?? null, revision: o.revision ?? null } : null;
+  let letter: Letter = stored ? { ...stored, ...opened } : {
     v: 1, id: o.id, ...o.words, files: o.files ?? [], forwardKept: null,
-    draftId: o.draftId ?? null, savedAs: o.savedAs ?? null, keep: null, send: null, updatedAt: now().toISOString(),
+    draftId: o.draftId ?? null, savedAs: o.savedAs ?? null, revision: o.revision ?? null, keep: null, send: null, updatedAt: now().toISOString(),
   };
   /** What the disk holds of this letter, compared before every write. */
   let onDisk: string | null = stored ? JSON.stringify(stored) : JSON.stringify(letter);
@@ -99,8 +103,9 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
     timer = timers.set(() => { timer = null; write(); }, LETTER_WRITE_MS);
   };
   const set = (patch: Partial<Letter>): void => { letter = { ...letter, ...patch }; };
-  const bound = (draftId: string, savedAs = wordsOf(letter)): void => {
-    set({ draftId, savedAs, keep: null, send: null });
+  /** A version named by the answer, else the base while the row is the same one. */
+  const bound = (draftId: string, savedAs = wordsOf(letter), revision?: string | null): void => {
+    set({ draftId, savedAs, revision: revision ?? (draftId === letter.draftId ? letter.revision ?? null : null), keep: null, send: null });
     if (!rowHoldsLetter(letter) || savedAs !== wordsOf(letter)) { write(); return; }
     // A row that holds the whole letter needs nothing here: the server holds the words until the next edit.
     if (timer !== null) { timers.clear(timer); timer = null; }
@@ -118,14 +123,14 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
   const sendAnswered = (r: SendAnswer): void => {
     if (r.outcome === "sent" || r.outcome === "superseded") { drop(); return; }
     // The server holds an unverified send in its row: the letter is that row, its files with it.
-    if (r.outcome === "unverified" && r.draftId) { bound(r.draftId); return; }
+    if (r.outcome === "unverified" && r.draftId) { bound(r.draftId, undefined, r.revision); return; }
     if (r.outcome === "queued" || r.outcome === "unverified") {
       set({ send: { ...letter.send, at: letter.send?.at ?? now().toISOString(), key: r.key ?? letter.send?.key ?? null } });
       write();
       return;
     }
     // Refused: the row it left holds the words, and the files stay with it.
-    if (r.draftId) { bound(r.draftId); return; }
+    if (r.draftId) { bound(r.draftId, undefined, r.revision); return; }
     set({ send: null });
     write();
   };
@@ -150,7 +155,7 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
       write();
       o.door.dropFile(fileId);
     },
-    saved: (draftId, savedAs) => bound(draftId, savedAs),
+    saved: (draftId, savedAs, revision) => bound(draftId, savedAs, revision),
     forwardKept: (ids) => { set({ forwardKept: ids }); soon(); },
     overKeepLimit: () => keptFit(letter.files, o.door.keptBytes(o.id)).over,
     dropOverLimit: () => {
@@ -163,7 +168,7 @@ export function openLetterKeeper(o: KeeperOptions): LetterKeeper {
     markKeep: () => { set({ keep: { at: now().toISOString(), key: null } }); write(); },
     keepAnswered: (row) => {
       if (row === null) { set({ keep: null }); write(); return; }
-      if (row.draftId !== null) { bound(row.draftId); return; }
+      if (row.draftId !== null) { bound(row.draftId, undefined, row.revision); return; }
       set({ keep: { at: letter.keep?.at ?? now().toISOString(), key: row.key } });
       write();
     },

@@ -1336,7 +1336,7 @@ export function ComposeSheet({
         mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body,
         envelope: w.actions.keepEnvelope(mode, m?.id ?? null),
       },
-      draftId: draft?.id ?? null, savedAs: saved.current,
+      draftId: draft?.id ?? null, savedAs: saved.current, revision: draft?.revision ?? null,
     });
   });
   const letterWords = { mode, messageId: m?.id ?? null, mailboxId, to, cc: copies.cc, bcc: copies.bcc, subject, body };
@@ -1455,7 +1455,7 @@ export function ComposeSheet({
       mailboxId, to: keptRecipients(to), ...copiesToKeep(copies), subject, body, files: 0, draftId, quiet: true, ...keptOnRow,
       revision: baseFor(base.current, draftId), waited: waitedFor(base.current, draftId), forked: () => setForked(true),
       rebind: setDraftId, row: (r) => { if (r.draftId !== null) row = r.draftId; rebase(r); },
-    })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot); }).catch(() => undefined).finally(() => {
+    })).then(() => { if (saved.current === snapshot) keeper?.saved(row, snapshot, baseFor(base.current, row)); }).catch(() => undefined).finally(() => {
       if (savingFor.current === snapshot) savingFor.current = null;
     });
   };

@@ -162,11 +162,12 @@ describe("startCloudWake", () => {
 
   it("a CLEAN server close reconnects — the stream cycles on a lifetime by design", async () => {
     const bodies = [sseBody(), sseBody()];
+    const paths: string[] = [];
     let dials = 0;
     let wakes = 0;
     const wake = startCloudWake({
       auth: {
-        authedFetch: async () => new Response(bodies[dials++]!.stream, { status: 200 }),
+        authedFetch: async (p) => { paths.push(p); return new Response(bodies[dials++]!.stream, { status: 200 }); },
       },
       onWake: () => { wakes += 1; },
       recycleDelayMs: 100,
@@ -180,6 +181,8 @@ describe("startCloudWake", () => {
     await vi.advanceTimersByTimeAsync(150);        // …and the recycle delay
     await flush();
     expect(dials, "the cycled stream never reconnected").toBe(2);
+    // The redial names the stream it left, so the server ends that one and frees its slot.
+    expect(paths).toEqual(["/events?stream=cloud-door", "/events?stream=cloud-door"]);
 
     bodies[1]!.send("event: sync\n\n");
     await flush();

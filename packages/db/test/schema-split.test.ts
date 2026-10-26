@@ -136,7 +136,8 @@ describe("the schema split matches the journal split", () => {
     // that stores the message builds and searches it. Per-table justification in `MAIL_TABLES`.
     // 56 → 57 for mail 0150's `list_addresses` — read by every store's own gate, MAIL. Per-table
     // justification in `MAIL_TABLES`.
-    expect(declaredTables("schema-mail.ts").size).toBe(57);
+    // 57 → 58 for mail 0170's `outbound_sent_copies` — a delivered send's owed Sent copy, MAIL.
+    expect(declaredTables("schema-mail.ts").size).toBe(58);
     // 25 since cloud 0009 put `mailbox_oauth_ceremonies` and `oauth_provider_config` on the
     // private half — the OAuth ceremony store and the one Entra registration this deployment
     // signs with. Both are Cloud-only by construction: the ceremony is a ninety-second row in
@@ -210,7 +211,8 @@ describe("the schema split matches the journal split", () => {
     // staff audit; per-table justification in `journal-split.test.ts`'s CLOUD_TABLES.
     // 30 → 31: `alert_driver_gaps` (cloud 0048) — the alert drivers' gap history, as above.
     // 31 → 32: `alert_drills` (cloud 0051) — alert drills and their acknowledgements, as above.
-    expect(declaredTables("schema-cloud.ts").size).toBe(32);
+    // 32 → 33: `connect_attempts` (cloud 0054) — how connecting a mailbox ended, as above.
+    expect(declaredTables("schema-cloud.ts").size).toBe(33);
   });
 
   /**

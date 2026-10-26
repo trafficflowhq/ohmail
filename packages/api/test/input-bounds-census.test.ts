@@ -31,6 +31,7 @@ import { PUSH_ENDPOINT_MAX_LEN } from "../../core/src/net/push-endpoint.js";
 import {
   ADMIN_BATCH_MAX, ADMIN_MAX_PAGE_SIZE, ADMIN_SEARCH_LIMIT, ADMIN_STAFF_ACTIVITY_PAGE, ADMIN_SYNC_ROSTER_MAX,
   ADMIN_FUNNEL_WINDOW_MAX_DAYS, ADMIN_STORAGE_MAX, ADMIN_RESOLVED_ALERTS_MAX, ADMIN_RESOLVED_ALERTS_MAX_DAYS,
+  ADMIN_CONNECT_ATTEMPTS_MAX, ADMIN_CONNECT_ATTEMPTS_MAX_DAYS,
 } from "../../services/src/admin-service.js";
 import { STAFF_ASSERTION_MAX_REQUESTS } from "../src/staff-assertion.js";
 import { BODIES_BYTE_BUDGET, BODIES_MAX_LIMIT } from "../../services/src/message-service.js";
@@ -278,7 +279,6 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "DELETE /pair/:id",
   "GET /pair",
   "POST /sync/pull",
-  "GET /events",
   "GET /push/vapid-key",
   "DELETE /push/subscriptions/:id",
   "GET /mailboxes/:id",
@@ -424,6 +424,7 @@ const INPUT_VIA_HELPER: Readonly<Record<string, HelperRead>> = {
   "GET /admin/storage": { via: "adminRoute (a factory) → storageQueryOf", reader: "storageQueryOf" },
   "GET /admin/staff-activity": { via: "adminRoute (a factory) → staffFeedQueryOf", reader: "staffFeedQueryOf" },
   "GET /admin/alerts/history": { via: "adminRoute (a factory) → resolvedWindowOf → windowBoundsOf", reader: "windowBoundsOf" },
+  "GET /admin/connect-attempts": { via: "adminRoute (a factory) → connectAttemptsQueryOf → windowBoundsOf", reader: "connectAttemptsQueryOf" },
   // A POST read: no body is read, the session rides in the header like every adminRoute read.
   "POST /admin/staff/list": { via: "adminRoute (a factory); reads no body and no query string", reader: null },
   // `qp(req)` — the contacts module's own query reader, shared by the contact list and both note
@@ -606,6 +607,7 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
 
   // `?counts=1` alone: a closed-set switch that turns on the sender counts, nothing a caller sizes.
   "GET /consent": { scalarsOnly: true },
+  "GET /events": { scalarsOnly: true },
 
   // ── mailboxes ───────────────────────────────────────────────────────────────────────────
   "GET /mailboxes": { scalarsOnly: true },
@@ -654,15 +656,19 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
   // ── rules ───────────────────────────────────────────────────────────────────────────────
   // The DELETE reads the raw body only to HASH it for `Idempotency-Key`, never to interpret it;
   // nothing iterates it and nothing stores it, so its cost is one sha256 over what the door let
-  // in. It reads the query string for the same hash, through `canonicalQuery`.
-  "DELETE /rules/:id": { door: "the body is read once to compute the idempotency request hash" },
+  // in. It reads the query string for the same hash, through `canonicalQuery`. At the published
+  // rule's address it also reads `key`, compared with the organizer's copy and never stored.
+  "DELETE /rules/:id": {
+    bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
+    door: "the body is read once to compute the idempotency request hash, and at the published rule's address for its key",
+  },
   "POST /rules": {
     bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
     door: "`match` is stored on one column and compared for equality at routing time",
   },
   "PATCH /rules/:id": {
     bounds: [MAX_SUBJECT_CONTAINS_CHARS, MAX_BODY_CONTAINS_CHARS],
-    door: "`match` is stored on one column and compared for equality at routing time",
+    door: "`match` is stored on one column and compared for equality at routing time; a published rule's `key` is compared with the organizer's copy, never stored",
   },
 
   // ── messages ────────────────────────────────────────────────────────────────────────────
@@ -873,6 +879,8 @@ const HELPER_CENSUS: Readonly<Record<string, Disposition>> = {
   // A fixed page; every filter is a uuid, a closed-set word or an instant, dropped otherwise.
   "GET /admin/staff-activity": { bounds: [ADMIN_STAFF_ACTIVITY_PAGE] },
   "GET /admin/alerts/history": { bounds: [ADMIN_RESOLVED_ALERTS_MAX, ADMIN_RESOLVED_ALERTS_MAX_DAYS] },
+  // The window clamped to 31 days, the page to 500 accounts; `account` and `cursor` uuids or dropped.
+  "GET /admin/connect-attempts": { bounds: [ADMIN_CONNECT_ATTEMPTS_MAX, ADMIN_CONNECT_ATTEMPTS_MAX_DAYS] },
   "POST /admin/staff/list": { scalarsOnly: true },
   "GET /contacts": { bounds: [CONTACTS_QUERY_MAX_CHARS, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT] },
   // The note lists share `qp` and so read `?q=` too; the notes services ignore it, so only the
@@ -1160,10 +1168,13 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   // The Junk body's mailbox, the organize decision's and the waiting count's: three routes, each one identifier.
   "routes/screener.ts#mailboxId": 3,
   // Cloud 0047: the sync roster's keyset cursor and an account's activity cursor, two readers;
-  // then the storage read's keyset cursor and the staff feed's `<iso>,<uuid>`, four.
-  "routes/admin.ts#cursor": 4,
-  // The sync roster's and the storage read's, each through `pagingNumber`.
-  "routes/admin.ts#limit": 2,
+  // then the storage read's keyset cursor and the staff feed's `<iso>,<uuid>`, four; the connect
+  // attempts' account keyset (cloud 0054), five.
+  "routes/admin.ts#cursor": 5,
+  // The sync roster's, the storage read's and the connect attempts', each through `pagingNumber`.
+  "routes/admin.ts#limit": 3,
+  // The staff feed's filter and the connect attempts' (cloud 0054), each a uuid or dropped.
+  "routes/admin.ts#account": 2,
   // The rest are TWO ROUTES in one file sharing a parameter name. They used to be something
   // else as well — the same value read twice by one handler, a presence test and a conversion —
   // and the paging seam removed that second read: `pagingNumber` takes the raw read and decides
@@ -1209,6 +1220,7 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/attachments.ts#q": "request-line",
   "routes/attachments.ts#type": "closed-set",
   "routes/consent.ts#counts": "closed-set",
+  "routes/events.ts#stream": "identifier",
   // The lifecycle sweep's keyset position and the erase door's account: canonical uuids or a 400.
   "routes/internal.ts#after": "identifier",
   // A drill's ack token (cloud 0051): 43 base64url characters or the fixed 404, read by the page

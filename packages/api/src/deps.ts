@@ -51,6 +51,20 @@ export interface ImapAdmissionPort {
   release(db: Db, mailboxId: string, now: Date): Promise<void>;
 }
 
+/** The four doors whose ending {@link ApiDeps.connectAttempts} records. */
+export type ConnectDoor = "test" | "connect" | "oauth_start" | "oauth_complete";
+
+/**
+ * What a door hands the recorder: the host typed (for its preset only), the refusal it threw, or a
+ * refused sending leg's reason. The recorder stores closed words, never these values.
+ */
+export interface ConnectAttemptFacts {
+  door: ConnectDoor;
+  imapHost?: string;
+  error?: unknown;
+  smtpRefused?: string;
+}
+
 /** What a mint hands the browser: a ticket id and the exact way to put bytes at it. */
 export interface StagedUploadGrantWire {
   /** The ticket id — what a later send references in place of the bytes. */
@@ -323,6 +337,8 @@ export interface ApiServices {
    * waited for briefly and then retried in memory (`SendDeps.copyOutlivesAnswer`). Absent on Cloud.
    */
   sendCopyOutlivesAnswer?: boolean;
+  /** The local engine keeps a delivered send's owed Sent copy on disk until filed (`SendDeps.keepOwedCopy`). */
+  sendKeepOwedCopy?: boolean;
   /** The upload ceiling of a host that keeps running (`SendDeps.submissionCeilingMs`); absent elsewhere. */
   sendSubmissionCeilingMs?: number;
   /** The local engine leaving: a press whose transport opens too late is held (`SendDeps.holdOffer`). */
@@ -803,6 +819,11 @@ export interface ApiDeps {
    * and nobody when it is absent or not an ISO instant (the pass judges it).
    */
   connectReminderSince?: string | null;
+  /**
+   * How connecting a mailbox ended (cloud 0054), as a port: only the managed host composes it, and
+   * only while `TF_CONNECT_ATTEMPTS=record`. Absent, nothing is recorded. `noteConnectAttempt` calls it.
+   */
+  connectAttempts?: (accountId: string, facts: ConnectAttemptFacts) => Promise<void>;
   /**
    * On a `credentialSubject` route, the account the presented CREDENTIAL resolved to — set through
    * `ServiceContext.noteCredentialAccount` by the seam that minted or rotated the session, and

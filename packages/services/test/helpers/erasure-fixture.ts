@@ -55,6 +55,7 @@ import {
   organizerRequests,
   mailboxProfileMirror,
   outboundSendFingerprints,
+  outboundSentCopies,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -89,6 +90,7 @@ import {
   pushSubscriptions,
   recoveryCodes,
   accountLifecycleNotices,
+  connectAttempts,
   screenerSuggestOwed,
   totpSecrets,
   waitlist,
@@ -504,6 +506,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   // mark's reason one block up: the seed IS the oracle, and an unseeded table reads 0 -> 0 over
   // any deleter, green whether or not erasure touched it.
   await db.insert(accountLifecycleNotices).values({ accountId, kind: "closed", anchor: NOW });
+  // How connecting a mailbox ended (cloud 0054), keyed by the account alone.
+  await db.insert(connectAttempts).values({
+    accountId, at: NOW, door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap",
+  });
 
   // THE OTHER ELEVEN: each of these had a deleter and no seed, so both sweeps counted
   // 0 -> 0 over them — a wrong predicate in any of those deletes was invisible. One row each;
@@ -519,6 +525,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(messageTags).values({ accountId, messageId, tagId: tag!.id });
   await db.insert(outboundSendFingerprints).values({
     accountId, mailboxId, fingerprint: "ab".repeat(32), sendId: send!.id,
+  });
+  // A delivered message's owed Sent copy (mail 0170): its bytes, deleted by the account and the mailbox.
+  await db.insert(outboundSentCopies).values({
+    sendId: send!.id, accountId, mailboxId, rawB64: Buffer.from("Subject: owed\r\n\r\nwords").toString("base64"),
   });
   const [unsubRecord] = await db.insert(unsubscribeRecords).values({
     accountId, mailboxId, listKey: `list-${u}`, state: "sent", httpStatus: 202, messageId,

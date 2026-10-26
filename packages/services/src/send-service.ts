@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   attachments, CERT_CODES, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
-  outboundSendFingerprints, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
+  outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
   threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
@@ -27,7 +27,7 @@ import { ServiceError, SettleFailed, TransientDialRefusal } from "./errors.js";
 import { requireUuid } from "./ids.js";
 import { htmlToPlainText, sanitizeOutboundHtml } from "./outbound-html.js";
 import { forwardedDate } from "./reader-clock.js";
-import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect, dialectOf } from "@trafficflow/db/dialect";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -189,6 +189,12 @@ export interface SendDeps {
    */
   copyOutlivesAnswer?: boolean;
   /**
+   * KEEP THE OWED COPY ON DISK (the local engine): a delivered send's bytes are recorded before the
+   * first APPEND and deleted once the copy is in Sent, so a quit, a crash or a long outage leaves it
+   * for {@link SendService.fileOwedCopies}. Absent (Cloud, self-host): the copy is owed in memory only.
+   */
+  keepOwedCopy?: boolean;
+  /**
    * How long after the reservation an upload may still end, on a host that keeps running (the
    * local engine sets {@link SEND_SUBMISSION_CEILING_MS}). Past it an upload is stopped before its
    * end-of-data mark and the send fails. Absent: no ceiling beyond the socket deadlines.
@@ -218,6 +224,19 @@ export const SEND_COPY_RETRY_WAITS_MS: readonly number[] = [0, 5_000, 30_000, 12
 export const SEND_COPY_TIMING: SendCopyTiming = {
   graceMs: SEND_COPY_GRACE_MS, deadlineMs: SEND_COPY_DEADLINE_MS, waitsMs: SEND_COPY_RETRY_WAITS_MS,
 };
+/** Owed copies filed per {@link SendService.fileOwedCopies} call: each is a whole message's bytes. */
+export const SEND_COPY_OWED_BATCH = 2;
+/** The wait after the n-th failed late filing (the last repeats): 1 min, 10 min, 1 h, 6 h, 24 h. */
+export const SEND_COPY_OWED_WAITS_MS: readonly number[] = [60_000, 600_000, 3_600_000, 21_600_000, 86_400_000];
+/** Failed late filings before an owed copy is given up: about three days against a refusing server. */
+export const SEND_COPY_OWED_MAX_ATTEMPTS = 8;
+/** The owed bytes are written and read in pieces of this many base64 characters, one row each: the
+ *  desktop's store (PGlite) fails one value of about 17 MB in a single message, and the failure ends
+ *  the store. A multiple of 4, so each piece decodes on its own. */
+export const SEND_COPY_OWED_PIECE_CHARS = 4 * 1024 * 1024;
+
+/** What {@link SendService.fileOwedCopies} did with the copies it took. */
+export interface OwedCopiesResult { filed: number; dropped: number; failed: number }
 
 /**
  * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases — the split is the point. `declare` is
@@ -1389,6 +1408,19 @@ type HeldAttempt = typeof outboundSends.$inferSelect;
  * id: FOUND ⇒ `sent`, NOT FOUND ⇒ `unverified`; NEVER resend on ambiguity. Every transition emits a
  * `draft` change; a cross-account draft id is a 404.
  */
+/** The late pass's connection: it files a copy and never submits (`send` throws, naming the rule). */
+function fileOnly(real: SendAdapter): SendAdapter {
+  return {
+    send: () => {
+      throw new Error("owed Sent copies: this pass may never submit — the message was delivered; only its copy is filed");
+    },
+    messageInSent: (messageId: string) => real.messageInSent(messageId),
+    ...(real.fileSentCopy ? { fileSentCopy: (raw: Buffer, id: string, o?: { look?: boolean }) => real.fileSentCopy!(raw, id, o) } : {}),
+    close: () => real.close(),
+    ...(real.forceClose ? { forceClose: () => real.forceClose!() } : {}),
+  };
+}
+
 export class SendService {
   /**
    * The reservations whose submission is still running in this process (every host holds one
@@ -1396,6 +1428,10 @@ export class SendService {
    * settles its row meanwhile.
    */
   private readonly liveAttempts = new Set<string>();
+  /** The sends whose Sent copy is being filed in this process; the late pass leaves them alone. */
+  private readonly filingCopies = new Set<string>();
+  /** Per mailbox, the owed copies this process has recorded ({@link owedCopiesRecorded}). */
+  private readonly owedRecorded = new Map<string, number>();
 
   /**
    * WHAT HAPPENED UNDER THIS KEY — a READ a staged retry makes BEFORE it re-uploads anything, so
@@ -1715,7 +1751,7 @@ export class SendService {
        * client learns it from `/sync`. On a serverless host the invocation ends and the
        * reservation is left for verify-by-Sent. Neither host resends.
        */
-      const submitting = (async (): Promise<{ result: SendResult; copy?: Promise<"filed" | "missing"> }> => {
+      const submitting = (async (): Promise<{ result: SendResult; copy?: Promise<"filed" | "pending" | "missing"> }> => {
         let handedOff = false;
         try {
           let providerMessageId: string;
@@ -1798,7 +1834,7 @@ export class SendService {
           // ── 4. THE SENT COPY, filed by the caller: it owns the connection from here.
           if (unfiled !== undefined) {
             handedOff = true;
-            return { result, copy: this.fileCopy(ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId) };
+            return { result, copy: this.fileCopy(ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId, sendId) };
           }
 
           // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
@@ -1861,49 +1897,226 @@ export class SendService {
    * FILE THE SENT COPY OF A DELIVERED SEND, exactly once. First on the submission's own connection;
    * a connection-class failure closes it, waits out the back-off and dials again, and every retry
    * looks in Sent by Message-ID before it appends. Cloud stops at {@link SEND_COPY_DEADLINE_MS}; a
-   * host that outlives the answer keeps retrying in memory. Never rejects: the message has left.
+   * host that outlives the answer keeps retrying in memory. With `keepOwedCopy` the bytes are
+   * recorded first, and a copy the ladder gives up on is `pending` for {@link fileOwedCopies}.
+   * Never rejects: the message has left.
    */
   private async fileCopy(
     ctx: ServiceContext, deps: SendDeps, lease: SendAdapter, mailboxId: string,
-    raw: Buffer, messageId: string, draftId: string,
-  ): Promise<"filed" | "missing"> {
-    const timing = this.copyTiming(deps);
-    const log = deps.log ?? defaultLog;
-    const until = deps.copyOutlivesAnswer === true ? null : Date.now() + timing.deadlineMs;
-    let current: SendAdapter | null = lease;
-    let attempt = 0;
-    let lastErr: unknown = null;
-    for (;;) {
-      if (current !== null) {
+    raw: Buffer, messageId: string, draftId: string, sendId: string,
+  ): Promise<"filed" | "pending" | "missing"> {
+    this.filingCopies.add(sendId);
+    try {
+      const timing = this.copyTiming(deps);
+      const log = deps.log ?? defaultLog;
+      // After the finalize committed and outside it: the window between the accept and the finalize stays as it was.
+      const owed = deps.keepOwedCopy === true && await this.recordOwedCopy(ctx, log, sendId, mailboxId, raw, draftId);
+      const until = deps.copyOutlivesAnswer === true ? null : Date.now() + timing.deadlineMs;
+      let current: SendAdapter | null = lease;
+      let attempt = 0;
+      let lastErr: unknown = null;
+      for (;;) {
+        if (current !== null) {
+          try {
+            if (typeof current.fileSentCopy !== "function") throw new Error("this connection cannot file a Sent copy");
+            const at = await current.fileSentCopy(raw, messageId, { look: current !== lease });
+            await current.close().catch(() => { /* the connection is already broken */ });
+            if (at !== null) await this.projectSentCopy(ctx, mailboxId, at, deps);
+            if (owed) await this.dropOwedCopy(ctx, sendId).then(() => this.reclaimOwedSpace(ctx), () => { /* the late pass looks first and finds it */ });
+            if (attempt > 0) log.info("send_sent_copy_filed_on_retry", { draftId, accountId: ctx.accountId, attempt });
+            return "filed";
+          } catch (err) {
+            lastErr = err;
+            await current.close().catch(() => { /* the connection is already broken */ });
+          }
+        }
+        current = null;
+        const wait = timing.waitsMs[attempt];
+        const kind = mailServerRefusalOf(lastErr);
+        const retryable = kind === "unreachable" || kind === "timeout" || kind === "busy"
+          || (lastErr as { code?: unknown } | null)?.code === "EIMAPBOUND";
+        if (!retryable || wait === undefined || (until !== null && Date.now() + wait >= until)) {
+          if (owed) {
+            log.warn("send_sent_copy_owed", { draftId, accountId: ctx.accountId, sendId, attempts: attempt + 1, err: lastErr });
+            return "pending";
+          }
+          log.warn("send_sent_copy_missing", { draftId, accountId: ctx.accountId, attempts: attempt + 1, err: lastErr });
+          return "missing";
+        }
+        attempt += 1;
+        if (wait > 0) await delay(wait);
         try {
-          if (typeof current.fileSentCopy !== "function") throw new Error("this connection cannot file a Sent copy");
-          const at = await current.fileSentCopy(raw, messageId, { look: current !== lease });
-          await current.close().catch(() => { /* the connection is already broken */ });
-          if (at !== null) await this.projectSentCopy(ctx, mailboxId, at, deps);
-          if (attempt > 0) log.info("send_sent_copy_filed_on_retry", { draftId, accountId: ctx.accountId, attempt });
-          return "filed";
+          current = await deps.openSendAdapter(mailboxId);
         } catch (err) {
+          // The dial failed: counted as this attempt, and the next wait follows.
           lastErr = err;
-          await current.close().catch(() => { /* the connection is already broken */ });
         }
       }
-      current = null;
-      const wait = timing.waitsMs[attempt];
-      const kind = mailServerRefusalOf(lastErr);
-      const retryable = kind === "unreachable" || kind === "timeout" || kind === "busy"
-        || (lastErr as { code?: unknown } | null)?.code === "EIMAPBOUND";
-      if (!retryable || wait === undefined || (until !== null && Date.now() + wait >= until)) {
-        log.warn("send_sent_copy_missing", { draftId, accountId: ctx.accountId, attempts: attempt + 1, err: lastErr });
-        return "missing";
+    } finally {
+      this.filingCopies.delete(sendId);
+    }
+  }
+
+  /** Record a delivered send's copy as owed; false (logged) when the store refused, and the copy is owed in memory only. */
+  private async recordOwedCopy(
+    ctx: ServiceContext, log: Logger, sendId: string, mailboxId: string, raw: Buffer, draftId: string,
+  ): Promise<boolean> {
+    const b64 = raw.toString("base64");
+    const piece = SEND_COPY_OWED_PIECE_CHARS;
+    try {
+      await withAccountTx(ctx, async (tx) => {
+        const row = (seq: number) => ({
+          sendId, seq, accountId: ctx.accountId, mailboxId, rawB64: b64.slice(seq * piece, (seq + 1) * piece), nextAttemptAt: ctx.now(),
+        });
+        // scoped-by: row() takes account_id from ctx.accountId; the (send_id, account_id) key to outbound_sends pins it
+        const made = await tx.insert(outboundSentCopies).values(row(0)).onConflictDoNothing()
+          .returning({ sendId: outboundSentCopies.sendId });
+        // One row per piece: appending to one value rewrites all of it, and PGlite never vacuums.
+        for (let seq = 1; made.length > 0 && seq * piece < b64.length; seq += 1) {
+          // scoped-by: row() as above, ctx.accountId under the same (send_id, account_id) key
+          await tx.insert(outboundSentCopies).values(row(seq));
+        }
+      }, { mailboxId });
+      // After the commit, so a drain that read none owed before it reads again (`owedCopiesRecorded`).
+      this.owedRecorded.set(mailboxId, this.owedCopiesRecorded(mailboxId) + 1);
+      return true;
+    } catch (err) {
+      log.warn("send_sent_copy_unrecorded", { draftId, accountId: ctx.accountId, sendId, err });
+      return false;
+    }
+  }
+
+  /** An owed copy's bytes, read one piece ({@link SEND_COPY_OWED_PIECE_CHARS}) per statement; null once it is gone. */
+  private async readOwedCopy(ctx: ServiceContext, sendId: string): Promise<Buffer | null> {
+    const pieces: string[] = [];
+    for (let seq = 0; ; seq += 1) {
+      const [p] = await asTx(ctx).select({ s: outboundSentCopies.rawB64 }).from(outboundSentCopies)
+        .where(and(
+          eq(outboundSentCopies.sendId, sendId), eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.seq, seq),
+        )).limit(1);
+      if (!p) break;
+      pieces.push(p.s);
+    }
+    return pieces.length === 0 ? null : Buffer.from(pieces.join(""), "base64");
+  }
+
+  private async dropOwedCopy(ctx: ServiceContext, sendId: string): Promise<void> {
+    await asTx(ctx).delete(outboundSentCopies)
+      .where(and(eq(outboundSentCopies.sendId, sendId), eq(outboundSentCopies.accountId, ctx.accountId)));
+  }
+
+  /**
+   * Hand the deleted bytes' space back. The desktop's store (PGlite) runs no autovacuum, so without
+   * this every sent attachment stays in its files; SQLite reuses freed pages and needs nothing. Only
+   * a host that keeps owed copies (the local engine) ever deletes one. Outside any transaction.
+   */
+  private async reclaimOwedSpace(ctx: ServiceContext): Promise<void> {
+    if (dialectOf(ctx.db) !== "pg") return;
+    await dialect(ctx.db).exec(ctx.db, sql`VACUUM outbound_sent_copies`)
+      .catch(() => { /* the store's open reclaims it */ });
+  }
+
+  /**
+   * How many owed copies this process has recorded for the mailbox, each counted once its rows are
+   * committed. It only grows: a drain that read none owed under one count reads again once it moves.
+   */
+  owedCopiesRecorded(mailboxId: string): number {
+    return this.owedRecorded.get(mailboxId) ?? 0;
+  }
+
+  /** Whether the mailbox owes any Sent copy, due or waiting out a failed filing: one read. */
+  async owesSentCopies(ctx: ServiceContext, mailboxId: string): Promise<boolean> {
+    const [row] = await asTx(ctx).select({ sendId: outboundSentCopies.sendId }).from(outboundSentCopies)
+      .where(and(eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId)))
+      .limit(1);
+    return row !== undefined;
+  }
+
+  /**
+   * FILE THE SENT COPIES THIS MAILBOX STILL OWES — the local engine's drain, while one may be owed
+   * ({@link owesSentCopies}, {@link owedCopiesRecorded}). At most {@link SEND_COPY_OWED_BATCH} due
+   * copies, oldest first, on one dial that can only file: each looks in Sent first, is filed only for
+   * a send recorded `sent` under this account, and its row is deleted only once the copy is there. A
+   * copy still being filed in this process is left alone. Never submits mail. A failed dial costs no
+   * attempt; a failed filing waits out {@link SEND_COPY_OWED_WAITS_MS} and ends the call.
+   */
+  async fileOwedCopies(
+    ctx: ServiceContext, mailboxId: string, deps: Pick<SendDeps, "openSendAdapter" | "resolveStorageCap" | "log">,
+  ): Promise<OwedCopiesResult> {
+    const log = deps.log ?? defaultLog;
+    const out: OwedCopiesResult = { filed: 0, dropped: 0, failed: 0 };
+    const db = asTx(ctx);
+    const due = await db.select({ sendId: outboundSentCopies.sendId, attempts: outboundSentCopies.attempts })
+      .from(outboundSentCopies)
+      .where(and(
+        eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId),
+        eq(outboundSentCopies.seq, 0), lte(outboundSentCopies.nextAttemptAt, ctx.now()),
+      ))
+      .orderBy(asc(outboundSentCopies.createdAt))
+      .limit(SEND_COPY_OWED_BATCH + this.filingCopies.size);
+    const rows = due.filter((r) => !this.filingCopies.has(r.sendId)).slice(0, SEND_COPY_OWED_BATCH);
+    let adapter: SendAdapter | null = null;
+    let freed = false;
+    try {
+      for (const row of rows) {
+        if (this.filingCopies.has(row.sendId)) continue;
+        this.filingCopies.add(row.sendId);
+        try {
+          const [send] = await db.select({ status: outboundSends.status, providerMessageId: outboundSends.providerMessageId })
+            .from(outboundSends)
+            .where(and(eq(outboundSends.id, row.sendId), eq(outboundSends.accountId, ctx.accountId))).limit(1);
+          // A Sent copy is what verify-by-Sent reads as delivered: only a send recorded `sent` gets one.
+          if (send?.status !== "sent" || !send.providerMessageId) {
+            await this.dropOwedCopy(ctx, row.sendId);
+            freed = true;
+            log.warn("send_sent_copy_owed_dropped", { accountId: ctx.accountId, sendId: row.sendId, status: send?.status ?? null });
+            out.dropped += 1;
+            continue;
+          }
+          if (adapter === null) {
+            try {
+              adapter = fileOnly(await deps.openSendAdapter(mailboxId));
+            } catch (err) {
+              log.warn("send_sent_copy_owed_unreachable", { accountId: ctx.accountId, mailboxId, err });
+              return out;
+            }
+          }
+          const raw = await this.readOwedCopy(ctx, row.sendId);
+          if (raw === null) continue;
+          try {
+            if (typeof adapter.fileSentCopy !== "function") throw new Error("this connection cannot file a Sent copy");
+            const at = await adapter.fileSentCopy(raw, send.providerMessageId, { look: true });
+            if (at !== null) await this.projectSentCopy(ctx, mailboxId, at, deps);
+            await this.dropOwedCopy(ctx, row.sendId);
+            freed = true;
+            log.info("send_sent_copy_filed_late", { accountId: ctx.accountId, sendId: row.sendId, attempts: row.attempts });
+            out.filed += 1;
+          } catch (err) {
+            const attempts = row.attempts + 1;
+            if (attempts >= SEND_COPY_OWED_MAX_ATTEMPTS) {
+              await this.dropOwedCopy(ctx, row.sendId);
+              freed = true;
+              log.warn("send_sent_copy_missing", { accountId: ctx.accountId, sendId: row.sendId, attempts, err });
+            } else {
+              const wait = SEND_COPY_OWED_WAITS_MS[Math.min(attempts, SEND_COPY_OWED_WAITS_MS.length) - 1]!;
+              await db.update(outboundSentCopies)
+                .set({ attempts, nextAttemptAt: new Date(ctx.now().getTime() + wait) })
+                .where(and(
+                  eq(outboundSentCopies.sendId, row.sendId), eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.seq, 0),
+                ));
+              log.warn("send_sent_copy_owed_failed", { accountId: ctx.accountId, sendId: row.sendId, attempts, err });
+            }
+            out.failed += 1;
+            return out;
+          }
+        } finally {
+          this.filingCopies.delete(row.sendId);
+        }
       }
-      attempt += 1;
-      if (wait > 0) await delay(wait);
-      try {
-        current = await deps.openSendAdapter(mailboxId);
-      } catch (err) {
-        // The dial failed: counted as this attempt, and the next wait follows.
-        lastErr = err;
-      }
+      return out;
+    } finally {
+      if (adapter !== null) await adapter.close().catch(() => { /* the connection is already broken */ });
+      if (freed) await this.reclaimOwedSpace(ctx);
     }
   }
 
@@ -2039,7 +2252,7 @@ export class SendService {
     ctx: ServiceContext,
     mailboxId: string,
     appended: AppendedSent | undefined,
-    deps: SendDeps,
+    deps: Pick<SendDeps, "resolveStorageCap" | "log">,
   ): Promise<void> {
     // No append to project. Not a failure and not logged: a spy adapter is the ordinary case in
     // tests, and an adapter that cannot say what it appended is covered by the Sent-folder watch.

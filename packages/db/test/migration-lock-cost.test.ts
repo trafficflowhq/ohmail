@@ -50,7 +50,7 @@ const MAIL_GROWTH_TABLES: readonly string[] = [
   "unsubscribe_examined", "unsubscribe_records", "workflow_runs",
 ];
 const CLOUD_GROWTH_TABLES: readonly string[] = [
-  "api_faults", "attachment_staging", "auth_events", "login_tokens", "platform_signals",
+  "api_faults", "attachment_staging", "auth_events", "connect_attempts", "login_tokens", "platform_signals",
   "staff_audit_log",
 ];
 // Either journal may ALTER a shared table (the cloud one references mail tables), so both

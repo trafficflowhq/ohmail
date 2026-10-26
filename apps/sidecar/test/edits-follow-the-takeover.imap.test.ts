@@ -7,7 +7,7 @@ import type { ImapConfig } from "@trafficflow/core/adapters/imap";
 import {
   isMalformedProfile, parseProfileMessage, type OrganizerProfileDoc,
 } from "@trafficflow/core/adapters/organizer-profile";
-import { accountSettings, mailboxes, organizerRequests } from "@trafficflow/db";
+import { accountSettings, mailboxes, organizerRequests, rules } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { grantOrganizeConsent } from "./_consent.js";
 import { freshDataDir } from "./_datadir.js";
@@ -150,6 +150,12 @@ describe("an edit during a takeover is written through the new holder", () => {
         const cfg = server.config();
         // W-old's document is minutes old, too fresh for the tidy's ten minutes: only the answer removes it.
         const w = await takenOver(cfg);
+        // A row this install kept from its reader-only days, of a rule W-old removed long before it published:
+        // after Not now this install organizes with it, so the later Import keeps it.
+        const [dead] = await w.fresh.db.insert(rules).values({
+          accountId: w.fresh.world.accountId, kind: "sender", match: "gone@b.test", destination: "INBOX",
+          priority: 0, enabled: true, provenance: "manual", updatedAt: new Date(Date.now() - HOUR),
+        }).returning();
         const asked = await (await call(w.fresh, "GET", `/mailboxes/${w.fresh.world.mailboxId}/profile-import`)).json() as {
           state: string; fingerprint?: string;
         };
@@ -165,7 +171,8 @@ describe("an edit during a takeover is written through the new holder", () => {
         await w.fresh.syncUntilQuiet();
         const docs = await settingsDocs(cfg);
         expect({ count: docs.length, rules: docs.flatMap((d) => d.doc.rules.map((r) => r.match)).sort() })
-          .toEqual({ count: 1, rules: ["after@b.test", "new@b.test", "old@b.test"] });
+          .toEqual({ count: 1, rules: ["after@b.test", "gone@b.test", "new@b.test", "old@b.test"] });
+        expect(await w.fresh.db.select().from(rules).where(eq(rules.id, dead!.id)), "an Import after Not now removed a row organized with").toHaveLength(1);
       });
 
       it("THE OVERLAP: both holders editing and syncing at once never leave more than own + held + one copy", async () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, consentIndex, consentPartition, decidedDestination, mailboxProfiles,
-  presentationReader, rulesAsRun, rulesInPlay, rulesList, rulesShown, screenerSegments, senderKey,
+  heldRuleId, heldRuleKey, presentationReader, rulesAsRun, rulesInPlay, rulesList, rulesShown, screenerSegments, senderKey,
   type EngineMessage, type Folder, type MailboxProfileEntity, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
 import { placedRule } from "../src/consent-cutline.js";
@@ -135,23 +135,71 @@ describe("a reader-only install's rules, from the organizer's copy", () => {
     const s = shown(store);
     expect(s.source).toBe("published");
     expect(s.rules.map((x) => `${x.id}->${x.destination}`)).toEqual(["local-1->ohmail/Receipts"]);
-    expect(s.doorless.size).toBe(0);
     expect(s.holder).toBe("Host");
   });
 
-  it("copies that differ under one key stay twins; a rule only the organizer has is doorless", async () => {
+  it("copies that differ under one key stay twins; a rule only the organizer has is named by its key", async () => {
     const elsewhere = rule(`profile:${OTHER}:0`, B, "INBOX");
     const onlyThere = rule(`profile:${READ}:1`, "c@sender.test", "ohmail/News");
     const store = await mirror([p(profile(READ, [theirs(READ, 0), onlyThere])), p(profile(OTHER, [elsewhere]))]);
     const s = shown(store);
     expect(s.rules.filter((x) => x.match === B).map((x) => x.destination).sort()).toEqual(["INBOX", "ohmail/Receipts"]);
     expect(new Set(s.rules.map((x) => x.id)).size, "two rows share an id").toBe(s.rules.length);
-    expect(s.rules.every((x) => s.doorless.has(x.id))).toBe(true);
+    expect(heldRuleKey(s.rules.find((x) => x.match === "c@sender.test")!.id)).toEqual({
+      kind: "sender", match: "c@sender.test", subjectContains: null, bodyContains: null,
+    });
+    // A twin's id is listed, never an address a press can send.
+    expect(s.rules.filter((x) => x.match === B).map((x) => heldRuleKey(x.id) === null).sort()).toEqual([false, true]);
+  });
+
+  it("heldRuleKey reads exactly what heldRuleId wrote, terms included, and nothing else", () => {
+    const term = { ...rule("x", "Ann@Sender.test", "INBOX"), subjectContains: "Invoice", bodyContains: "pay \"now\"" };
+    expect(heldRuleKey(heldRuleId(term))).toEqual({ kind: "sender", match: "ann@sender.test", subjectContains: "Invoice", bodyContains: "pay \"now\"" });
+    for (const id of ["local-1", `${heldRuleId(term)}#1`, `held:${JSON.stringify(["sender", "Ann@x.test", null, null])}`, "held:[1,2,3,4]"]) {
+      expect(heldRuleKey(id), id).toBeNull();
+    }
+  });
+
+  describe("an applied press of a key with no row here", () => {
+    const C = "c@sender.test";
+    const key = { kind: "sender", match: C, subjectContains: null, bodyContains: null };
+    const press = (kind: string, destination?: string, requestId = "req-1") => ({
+      requestId, kind, mailboxId: READ, decidedAt: "2026-09-26T07:30:00.000Z", resolvedAt: "2026-09-26T07:31:00.000Z",
+      target: { rule: key, ...(destination === undefined ? {} : { destination }) },
+    });
+    const copy = (applied: string[] | null, destination: Folder = "ohmail/News") =>
+      ({ ...profile(READ, [rule(`profile:${READ}:0`, C, destination)]), applied });
+    const at = (store: MemoryMirrorStore, applied: ReturnType<typeof press>[], now = NOW) =>
+      rulesShown(store, { readerOnly: true, queued: [], applied, now }).rules.map((x) => `${x.id}->${x.destination}`);
+
+    it("a change shows the row at its new place, a removal shows none, until the copy names the request", async () => {
+      const store = await mirror([p(copy([]))]);
+      expect(at(store, [press("rule.update", "INBOX")])).toEqual([`${heldRuleId(key)}->INBOX`]);
+      expect(at(store, [press("rule.delete")])).toEqual([]);
+      const named = await mirror([p(copy(["req-1"]))]);
+      expect(at(named, [press("rule.update", "INBOX")])).toEqual([`${heldRuleId(key)}->ohmail/News`]);
+    });
+
+    it("the newest press of the key decides", async () => {
+      const store = await mirror([p(copy([]))]);
+      const older = { ...press("rule.delete", undefined, "req-0"), decidedAt: "2026-09-26T07:00:00.000Z" };
+      expect(at(store, [older, press("rule.update", "INBOX")])).toEqual([`${heldRuleId(key)}->INBOX`]);
+    });
+
+    it("an older organizer's copy is held while it disagrees with the press, and never past the horizon", async () => {
+      const stale = await mirror([p(copy(null))]);
+      expect(at(stale, [press("rule.update", "INBOX")])).toEqual([`${heldRuleId(key)}->INBOX`]);
+      expect(at(stale, [press("rule.delete")])).toEqual([]);
+      const agrees = await mirror([p(copy(null, "INBOX"))]);
+      expect(at(agrees, [press("rule.update", "INBOX")])).toEqual([`${heldRuleId(key)}->INBOX`]);
+      expect(at(stale, [press("rule.update", "INBOX")], new Date(Date.parse(NOW.toISOString()) + 24 * 3600_000)))
+        .toEqual([`${heldRuleId(key)}->ohmail/News`]);
+    });
   });
 
   it("CONTROLS: an organizer, and a reader with no copy, list rulesAsRun", async () => {
     const withCopy = await mirror([r(staleLocal), p(profile(READ, [theirs(READ, 0)]))]);
-    expect(shown(withCopy, false)).toEqual({ source: "local", rules: rulesAsRun(withCopy, []), doorless: new Set(), holder: null });
+    expect(shown(withCopy, false)).toEqual({ source: "local", rules: rulesAsRun(withCopy, []), holder: null });
     const noCopy = await mirror([r(staleLocal)]);
     expect(shown(noCopy).rules).toEqual(rulesAsRun(noCopy, []));
     expect(shown(noCopy).source).toBe("local");

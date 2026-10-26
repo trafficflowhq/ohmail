@@ -129,6 +129,13 @@ export const RULE_PRIORITY_MAX = 1000;
 export const MAX_SUBJECT_CONTAINS_CHARS = 200;
 export const MAX_BODY_CONTAINS_CHARS = 200;
 
+/**
+ * THE ADDRESS OF A PUBLISHED RULE: `PATCH|DELETE /rules/<this>` with the rule's four-field key in
+ * the body names a rule of the organizer's copy that has no row here (a reader-only install). The
+ * nil UUID names no row, and the key stays out of the path, so no address reaches an access log.
+ */
+export const PUBLISHED_RULE_ID = "00000000-0000-0000-0000-000000000000";
+
 /** `priority` is `integer NOT NULL`, but a non-finite value would poison the comparator. */
 function finitePriority(p: number): number {
   return Number.isFinite(p) ? p : 0;

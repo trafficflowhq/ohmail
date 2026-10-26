@@ -465,7 +465,7 @@ describe("a waiting send in Drafts", () => {
     expect(await s.actions.draftDiscard(row)).toBe("discarded");
     expect(listed(s), "Drafts did not read empty").toEqual([]);
     const p = await s.relaunch();
-    expect(await p.restore(), "the restore kept the discarded letter again").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+    expect(await p.restore(), "the restore kept the discarded letter again").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] });
     expect(listed(p), "the discarded letter came back in Drafts").toEqual([]);
     s.net.set("online");
     await flushQueued(p.engine, p.actions.releaseConfirmed);
@@ -532,7 +532,7 @@ describe("a waiting send in Drafts", () => {
       .toEqual([[row, "open", "Second thoughts"]]);
     expect(s.letters.filesOf(row).map((f) => f.filename), "the file left the row that holds the words").toEqual(["plan.pdf"]);
     const p = await s.relaunch();
-    expect(await p.restore(), "the restore kept the cancelled letter a second time").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+    expect(await p.restore(), "the restore kept the cancelled letter a second time").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] });
     expect(listed(p)).toEqual([["Second thoughts", "open"]]);
     s.net.set("online");
     await flushQueued(p.engine, p.actions.releaseConfirmed);

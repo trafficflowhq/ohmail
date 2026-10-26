@@ -1,7 +1,25 @@
 /** @vitest-environment jsdom */
-import { describe, expect, it } from "vitest";
-import { frameCsp, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as React from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
 import { DEFERRED_SRC_ATTR } from "../../webapp/app/components/proxied-images";
+import { autoLoadsImages, imageProxyUrl, useRemoteImages } from "../../webapp/app/shell/remote-images";
+import { localImageWire, localLoadRemote } from "../src/local-images.js";
+
+/* The names the pane's hook reads, as the desktop bundle has them (`vite.config.ts` aliases the
+   module to `src/no-api-client.ts`): no Cloud base, and the Cloud press and its sentence refuse. */
+vi.mock("../../webapp/app/api-client", async () => {
+  const real = await vi.importActual<typeof import("../../webapp/app/api-client")>("../../webapp/app/api-client");
+  const desktop = await import("../src/no-api-client");
+  return {
+    ...real,
+    API_BASE: desktop.API_BASE,
+    apiConfigured: desktop.apiConfigured,
+    messageOf: desktop.messageOf,
+    privacy: desktop.privacy,
+  };
+});
 
 /**
  * THE DESKTOP CANNOT SHOW A PICTURE, AND THIS IS THE FRAME SAYING SO.
@@ -184,5 +202,150 @@ describe("a picture the desktop already holds the bytes of", () => {
     const doc = new DOMParser().parseFromString(out.html, "text/html");
     const blanked = [...doc.querySelectorAll("img[data-ohmail-blocked]")];
     expect(blanked.length, "an unresolved picture was not left as a blanked box").toBe(2);
+  });
+});
+
+/**
+ * ── A HELD LETTER'S SHOW IMAGES, DOWN THE PIPE ──────────────────────────────────────────────
+ *
+ * `MessagePane`'s wiring over the desktop's own api-client and its two image wires, driven through
+ * a stand-in shell. A sender not let in loads nothing on open, so the press is the one road to its
+ * pictures, on both window origins: `http://tauri.localhost` (WebView2, Windows) and
+ * `tauri://localhost` (WebKit, macOS and Linux), where the proxy has no source a frame could name.
+ */
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+const h = React.createElement;
+const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
+
+const PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+const PNG = `data:image/png;base64,${PNG_B64}`;
+const HELD = { id: "22222222-2222-4222-8222-222222222222", folder: "ohmail/Screened" };
+const ONE_PICTURE = `<table width="600"><tr><td><p>hello</p><img src="${PICTURE}" width="600" height="200"></td></tr></table>`;
+
+type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;
+const desktop = globalThis as { __TAURI_INTERNALS__?: { invoke: Invoke } };
+
+/** An answer in the shell's frame: [4-byte length][metadata JSON][body]. */
+function frame(status: number, body: Uint8Array, type: string): Uint8Array {
+  const meta = new TextEncoder().encode(JSON.stringify({ status, statusText: "", h: [["content-type", type]] }));
+  const out = new Uint8Array(4 + meta.byteLength + body.byteLength);
+  new DataView(out.buffer).setUint32(0, meta.byteLength, false);
+  out.set(meta, 4);
+  out.set(body, 4 + meta.byteLength);
+  return out;
+}
+const said = (status: number, message: string): Uint8Array =>
+  frame(status, new TextEncoder().encode(JSON.stringify({ error: { code: "refused", message } })), "application/json");
+
+/** The engine behind the pipe: `/img` serves a letter only once its press is stored; `refuse` fails the press. */
+function engineBehindThePipe(refuse: string | null = null): string[] {
+  const asked: string[] = [];
+  const pressed = new Set<string>();
+  desktop.__TAURI_INTERNALS__ = {
+    invoke: async (command, payload) => {
+      if (command !== "engine_request") throw new Error(`unexpected shell command: ${command}`);
+      const { method, url } = payload as { method: string; url: string };
+      asked.push(`${method} ${url}`);
+      const press = /^\/messages\/([^/?]+)\/load-remote$/.exec(url);
+      if (method === "POST" && press) {
+        if (refuse) return said(403, refuse);
+        pressed.add(decodeURIComponent(press[1]!));
+        return frame(200, new TextEncoder().encode('{"remoteContent":"loaded"}'), "application/json");
+      }
+      const img = new URL(url, "http://engine.invalid");
+      if (method === "GET" && img.pathname === "/img") {
+        if (!pressed.has(img.searchParams.get("mid") ?? "")) return said(403, "not loaded by the reader");
+        return frame(200, Uint8Array.from(atob(PNG_B64), (c) => c.charCodeAt(0)), "image/png");
+      }
+      throw new Error(`unexpected engine request: ${method} ${url}`);
+    },
+  };
+  return asked;
+}
+
+/** What `proxyFor` mints on a `tauri://localhost` window: the real url builder, that origin. */
+const tauriProxies = new Map<string, (url: string) => string>();
+function tauriProxyFor(id: string): (url: string) => string {
+  if (!tauriProxies.has(id)) tauriProxies.set(id, (url) => imageProxyUrl("", "tauri://localhost", id, url));
+  return tauriProxies.get(id)!;
+}
+
+/** `MessagePane`'s lines for one held letter, over the desktop's wires. */
+function Pane({ tauri, failed }: { tauri: boolean; failed: string[] }) {
+  const real = useRemoteImages({
+    onFailed: (sentence) => { failed.push(sentence); }, mode: "auto", loadPixels: false,
+    fetchImage: localImageWire, recordRemote: localLoadRemote,
+  });
+  const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
+  const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);
+  return h(MessageBody, {
+    messageId: HELD.id, text: "plain", html: ONE_PICTURE,
+    remoteLoaded: autoLoadsImages(chrome, HELD) || (chrome?.consented(HELD.id) ?? false),
+    imageProxy: chrome ? chrome.proxyFor(HELD.id) : null,
+    onLoadRemote: chrome && !autoLoadsImages(chrome, HELD) ? () => chrome.consent(HELD.id) : undefined,
+    loadTrackingPixels: chrome?.loadPixels ?? false,
+    resolvedRemoteImages: chrome?.resolvedFor(HELD.id),
+    onRemoteImages,
+  });
+}
+
+let root: Root | null = null;
+let mounted: HTMLDivElement | null = null;
+afterEach(async () => {
+  if (root) { const r = root; await act(async () => { r.unmount(); }); root = null; }
+  mounted?.remove();
+  mounted = null;
+  delete desktop.__TAURI_INTERNALS__;
+});
+
+/** One round: the pipe's answers land, then React renders and runs the effects they cause. */
+async function rounds(n: number): Promise<void> {
+  for (let i = 0; i < n; i += 1) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 2)); });
+    await act(async () => { for (let j = 0; j < 12; j += 1) await Promise.resolve(); });
+  }
+}
+
+async function openHeld(tauri: boolean, failed: string[]) {
+  mounted = document.createElement("div");
+  document.body.appendChild(mounted);
+  root = createRoot(mounted);
+  await act(async () => { root!.render(h(Pane, { tauri, failed })); });
+  await rounds(3);
+  return {
+    show: () => [...mounted!.querySelectorAll("button")].find((b) => b.textContent === COPY.show) ?? null,
+    drawn: () => [...new DOMParser().parseFromString(mounted!.querySelector("iframe")?.getAttribute("srcdoc") ?? "", "text/html")
+      .querySelectorAll("img")].filter((i) => i.getAttribute("src") === PNG).length,
+  };
+}
+
+describe("a held letter's Show images on the desktop", () => {
+  for (const [door, tauri] of [["http://tauri.localhost (Windows)", false], ["tauri://localhost (macOS, Linux)", true]] as const) {
+    it(`${door}: nothing on open; the press is stored down the pipe, then the picture arrives`, async () => {
+      const asked = engineBehindThePipe();
+      const failed: string[] = [];
+      const pane = await openHeld(tauri, failed);
+      expect(asked, "a held sender's picture was asked for on open").toEqual([]);
+      expect(pane.show(), "the held letter offers no Show images").not.toBeNull();
+      await act(async () => { pane.show()!.click(); });
+      await rounds(6);
+      expect(asked).toEqual([
+        `POST /messages/${HELD.id}/load-remote`,
+        `GET /img?mid=${HELD.id}&u=${encodeURIComponent(PICTURE)}`,
+      ]);
+      expect(pane.drawn(), "the picture never reached the frame").toBe(1);
+      expect(failed).toEqual([]);
+    });
+  }
+
+  it("a refused press says the engine's sentence and loads nothing", async () => {
+    const asked = engineBehindThePipe("ohmail could not record that just now.");
+    const failed: string[] = [];
+    const pane = await openHeld(false, failed);
+    await act(async () => { pane.show()!.click(); });
+    await rounds(4);
+    expect(failed).toEqual(["ohmail could not record that just now."]);
+    expect(asked).toEqual([`POST /messages/${HELD.id}/load-remote`]);
+    expect(pane.drawn()).toBe(0);
   });
 });

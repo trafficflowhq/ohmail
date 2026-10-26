@@ -30,6 +30,7 @@ import {
 import { conversationKeyOf, isOwnSent, ohboxView, oneSourceReader, rulesList, sendingMailboxId, senderKey, winningStates } from "./selectors.js";
 import { OHBOX_VISIT_ID, ohboxVisitMark, type OhboxVisitMeta } from "./ohbox-where.js";
 import { outrankCoveringDomains } from "./address-rank.js";
+import { heldRuleKey } from "./rule-twins.js";
 import { canonicalDestination } from "@trafficflow/core/folder-name";
 import { ruleMatchKey } from "@trafficflow/core/rule-order";
 import { consentIndex, decidedDestination, namedByBodyTerm, warmBodyTermNames } from "./consent-cutline.js";
@@ -92,6 +93,7 @@ import {
   type WithheldMarker,
   type HeldReleaseGroupDTO,
   type RuleDTO,
+  type RuleKeyAddress,
   type WaitingRequestWire,
   type WaitingTargetWire,
   type UnscreenedGroupDTO,
@@ -187,7 +189,7 @@ export interface MutationResult {
    * that one, but the durable send record has to name it or a reload cannot
    * tell the row in Drafts is the message it is waiting on. A rolled-back
    * result carries it too when the refusal knows the row — see
-   * {@link MutationRejectedError.entityId} (an `unverified` send's row).
+   * {@link MutationRejectedError.entityId} (an `unverified` send's row, a withdrawn one's).
    */
   entityId?: string;
   /**
@@ -259,6 +261,14 @@ export interface AppliedRuleRequest {
   decidedAt: ISODateTime;
   resolvedAt: ISODateTime | null;
   target: WaitingTargetWire;
+}
+
+/** One row of {@link OhmailEngine.unsettledRulePresses}: a rule press of this install not applied yet. */
+export interface UnsettledRulePress {
+  key: RuleKeyAddress;
+  kind: "rule.create" | "rule.update" | "rule.delete";
+  /** The place an update or a create asked for; `null` for a removal. */
+  destination: string | null;
 }
 
 /** One row of {@link OhmailEngine.waitingOnOrganizer} — what a surface lists as waiting. */
@@ -657,11 +667,17 @@ export function targetOf(m: EngineMutation): string | null {
 /** Replay order is user order: the stamp minted at `mutate()`, then its sequence. */
 const byAtN = (a: PendingMutation, b: PendingMutation): number => (a.at - b.at) || (a.n - b.n);
 
-/** The answer a verb cancelled from another window settles with: the code a surface says nothing for. */
+/**
+ * The answer a withdrawn verb settles with, here or from another window: the code a surface says nothing
+ * for, and a send's row (the one it named, or made for a press that named none), so its words stay in it.
+ */
 function withdrawnResult(p: PendingMutation): MutationResult {
+  const row = p.mutation.kind === "mail_send" ? p.createdRow?.id ?? p.mutation.draftId ?? null : null;
   return {
-    id: p.id, key: p.key, status: "rolled_back", seq: null,
-    error: new MutationRejectedError("withdrawn before it was sent", { code: OUTBOX_WITHDRAWN_CODE, retryable: false }),
+    id: p.id, key: p.key, status: "rolled_back", seq: null, ...(row ? { entityId: row } : {}),
+    error: new MutationRejectedError("withdrawn before it was sent", {
+      code: OUTBOX_WITHDRAWN_CODE, retryable: false, ...(row ? { entityId: row } : {}),
+    }),
   };
 }
 
@@ -5081,6 +5097,43 @@ export class OhmailEngine {
   }
 
   /**
+   * THIS INSTALL'S RULE PRESSES NOT APPLIED YET, newest first: the outbox and the wire (pressed
+   * last), then the requests this session holds, then the server's pending and sent ones. A press
+   * planned over a published copy reads these, which the copy cannot show yet.
+   */
+  unsettledRulePresses(): UnsettledRulePress[] {
+    const out: UnsettledRulePress[] = [];
+    const ofMutation = (m: EngineMutation): UnsettledRulePress | null => {
+      if (m.kind === "rule_create") {
+        return { kind: "rule.create", destination: m.destination, key: {
+          kind: m.ruleKind, match: m.match, subjectContains: m.subjectContains ?? null, bodyContains: m.bodyContains ?? null,
+        } };
+      }
+      if (m.kind !== "rule_update" && m.kind !== "rule_delete") return null;
+      const row = m.key ?? heldRuleKey(m.ruleId) ?? this.storeTruth.get<RuleDTO>("rule", m.ruleId);
+      if (!row) return null;
+      const key = { kind: row.kind, match: row.match, subjectContains: row.subjectContains ?? null, bodyContains: row.bodyContains ?? null };
+      return m.kind === "rule_delete"
+        ? { kind: "rule.delete", key, destination: null }
+        : { kind: "rule.update", key, destination: m.destination };
+    };
+    const local = [...this.queue, ...this.inFlight.values()].sort((a, b) => b.at - a.at || b.n - a.n);
+    for (const p of local) { const u = ofMutation(p.mutation); if (u) out.push(u); }
+    const held = [...this.organizerQueue.values()].sort((a, b) => b.at - a.at);
+    const heldIds = new Set(held.flatMap((r) => r.requestIds));
+    for (const r of held) { const u = ofMutation(r.mutation); if (u) out.push(u); }
+    const server = (this.waitingServer ?? [])
+      .filter((w) => (w.state === "pending" || w.state === "sent") && !heldIds.has(w.id))
+      .sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
+    for (const w of server) {
+      const t = w.target as { rule?: RuleKeyAddress; destination?: string };
+      if (!t.rule || (w.kind !== "rule.create" && w.kind !== "rule.update" && w.kind !== "rule.delete")) continue;
+      out.push({ kind: w.kind, key: t.rule, destination: w.kind === "rule.delete" ? null : t.destination ?? null });
+    }
+    return out;
+  }
+
+  /**
    * ASK THE SERVER WHAT WAITS, coalesced: one read in flight at a time, a second ask during it runs
    * once more after it. A request the answer lists as over (applied, expired or refused) leaves the
    * in-session queue: the server row is the settle of record when no change says so. Never throws.
@@ -7120,6 +7173,11 @@ export class OhmailEngine {
         m = rest as EngineMutation;
       }
     }
+    // A published rule with no row here is named by its key, parsed from its id and nothing else.
+    if ((m.kind === "rule_update" || m.kind === "rule_delete") && m.key === undefined) {
+      const key = heldRuleKey(m.ruleId);
+      if (key !== null) m = { ...m, key };
+    }
     // An address rule is written at a priority no rule on its domain filing elsewhere outranks.
     if (m.kind === "rule_create" || m.kind === "rule_update") return outrankCoveringDomains(rulesList(this.read()), m);
     if (m.kind === "tag_assign" && m.labels === undefined) {
@@ -7483,6 +7541,10 @@ export class OhmailEngine {
 
   /** Does this verb name message rows by id, none of which the mirror or a page holds? */
   private namesOnlyUnheldRows(m: EngineMutation): boolean {
+    // A published rule by its key: sent with nothing painted, the organizer's to apply.
+    if ((m.kind === "rule_update" || m.kind === "rule_delete") && m.key !== undefined) {
+      return this.store.record("rule", m.ruleId) === undefined;
+    }
     // A queue row from a page past the first: the mirror never held it, and only the server can
     // resolve the representative, so the decision is sent with nothing to paint.
     if (m.kind === "screener_decide") {
@@ -8739,12 +8801,7 @@ export class OhmailEngine {
       this.notify();
       this.sayEnded(p, "withdrawn");
       await this.dropOutbox(p.id);
-      return {
-        id: p.id, key: p.key, status: "rolled_back", seq: null,
-        error: new MutationRejectedError("withdrawn before it was sent", {
-          code: OUTBOX_WITHDRAWN_CODE, retryable: false,
-        }),
-      };
+      return withdrawnResult(p);
     }
     try {
       // A claim the disk could not answer sends nothing this round: the row may carry a Cancel.

@@ -282,7 +282,9 @@ describe("the baseline cutoff is frozen", () => {
     // on an existing table and a backfill of its earlier rows, adopting nothing.
     // `- 32` → `- 33`: cloud 0053_connect_reminder_notices — ONE entry above the cutoff, a CHECK
     // redefined on an existing table, adopting nothing.
-    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 33);
+    // `- 33` → `- 34`: cloud 0054_connect_attempts — ONE entry above the cutoff, a NEW table, empty,
+    // and a role-guarded grant on it, adopting nothing.
+    expect(baselineEntries(CLOUD).length).toBe(readJournalOf(CLOUD).length - 34);
 
     // And the entries above the cutoff are REAL migrations that must run, not an empty set.
     // Listed by TAG rather than counted, so a new one has to be named here on purpose — this
@@ -898,6 +900,8 @@ describe("the baseline cutoff is frozen", () => {
       // Where a hand-back's gap window starts, and how far back its clock allowance reaches: two
       // nullable ADD COLUMN IF NOT EXISTS on mailboxes. No data. Safe over any history.
       "0169_mailboxes_organized_through",
+      // A delivered send's owed Sent copy: one CREATE TABLE IF NOT EXISTS, no data. Safe over any history.
+      "0170_outbound_sent_copies",
     ]);
 
     // The cloud half of the same set. Listed by TAG for the same reason — an adopting
@@ -1019,6 +1023,9 @@ describe("the baseline cutoff is frozen", () => {
       // The connect reminder's notice kind: the kind CHECK dropped IF EXISTS and added again NOT VALID,
       // a superset of 0050's. Safe over any history.
       "0053_connect_reminder_notices",
+      // How connecting a mailbox ended: a new table, IF NOT EXISTS, empty, and the staff role's grant
+      // on it only where `ohmail_admin` exists. Safe over any history.
+      "0054_connect_attempts",
     ]);
 
     // …and the moment an entry is added above the cutoff it is NOT adoptable. Simulated by

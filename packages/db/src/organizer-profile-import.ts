@@ -262,6 +262,8 @@ export async function recordProfileImportResolution(
 export interface ProfileImportResult {
   imported: { screener: number; rules: number; notifyRules: number; tags: number; awayResponder: boolean };
   skippedRules: number;
+  /** Local rule rows the import retired (`applyOrganizerProfile`); absent from an older row. */
+  retiredRules?: number;
 }
 
 /**

@@ -38,6 +38,7 @@ import {
   notifyRules,
   organizerRequests,
   outboundSendFingerprints,
+  outboundSentCopies,
   outboundSends,
   pairingTokens,
   refreshTokens,
@@ -64,6 +65,7 @@ import {
   accountLifecycleNotices,
   attachmentStaging,
   authEvents,
+  connectAttempts,
   creditRefundObligations,
   authThrottle,
   credentials,
@@ -282,6 +284,11 @@ export async function deleteAccount(
     // is going to grow a per-table list), and the explicit delete is what makes this service's
     // ruling on the table READABLE — the erasure census asks for a written ruling per table, and
     // "it happens to cascade from the row below" is not one somebody auditing this can see.
+    // The owed Sent copies (a delivered message's bytes) go the same way, and first.
+    await drop(
+      "outbound_sent_copies",
+      tx.delete(outboundSentCopies).where(eq(outboundSentCopies.accountId, accountId)),
+    );
     await drop(
       "outbound_send_fingerprints",
       tx.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.accountId, accountId)),
@@ -437,7 +444,7 @@ export async function deleteAccount(
     // global order every settings writer takes (see the note at the top).
 
     // ── 6b. The HOSTED-ONLY account-scoped rows ─────────────────────────────────
-    // Six Cloud tables key off `accounts`, which erasure does NOT delete — so none of these
+    // Seven Cloud tables key off `accounts`, which erasure does NOT delete — so none of these
     // raises a foreign-key error and none of them was ever visible as a failure. They are the
     // quiet half of this fix and they are all personal data.
     //
@@ -498,6 +505,8 @@ export async function deleteAccount(
         ? [or(ne(accountLifecycleNotices.kind, "erasure_week"), ne(accountLifecycleNotices.anchor, warnedFor))]
         : []),
     )));
+    // How connecting a mailbox ended (cloud 0054): the managed API's record, written through the fence.
+    await drop("connect_attempts", tx.delete(connectAttempts).where(eq(connectAttempts.accountId, accountId)));
 
     // ── 7. Sessions, devices, and every credential the user holds ───────────────
     // THE SESSION ROWS, FOR UPDATE, in id order, before anything here reads or deletes a token: every

@@ -1,14 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import net from "node:net";
 import { Duplex } from "node:stream";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { mailboxes, drafts, outboundSends, messages, threads } from "@trafficflow/db";
+import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
-import { SendService, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE } from "../src/index.js";
+import {
+  SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
+} from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 const svc = new SendService();
@@ -450,9 +452,9 @@ describe("SendService — reply threading (RFC 5322 §3.6.4)", () => {
  * message waits for `beforeRelease`, the IMAP leg dialled before SMTP idles out while the 250 is
  * slow (its `isLive` reads false and every command throws `NoConnection`), and a fresh dial works.
  */
-function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean } = {}) {
+function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean; bodyBytes?: number } = {}) {
   const sentFolder: string[] = [];
-  const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0 };
+  const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0, raws: [] as Buffer[], filed: [] as Buffer[] };
   const dead = () => Object.assign(new Error("Connection not available"), { code: "NoConnection" });
   const factory: OpenSendAdapter = async () => {
     state.dials += 1;
@@ -470,7 +472,10 @@ function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostR
         if (o.copyDiesOnFirst || o.lostReply) live = false;   // the IMAP leg idled out under the slow 250
         if (o.lostReply) throw Object.assign(new Error("Timeout"), { code: "ETIMEDOUT" });
         state.delivered += 1;
-        const raw = Buffer.from(`Message-ID: ${msg.messageId!}\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n`);
+        // The padding is incompressible, like an attachment: the store's size readings depend on it.
+        const pad = randomBytes(Math.ceil(((o.bodyBytes ?? 0) * 3) / 4)).toString("base64").slice(0, o.bodyBytes ?? 0);
+        const raw = Buffer.from(`Message-ID: ${msg.messageId!}\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n${pad}`);
+        state.raws.push(raw);
         return opts?.copy === "caller" ? { providerMessageId: msg.messageId!, unfiledCopy: raw } : { providerMessageId: msg.messageId! };
       },
       async fileSentCopy(raw: Buffer, id: string, look?: { look?: boolean }) {
@@ -478,6 +483,7 @@ function slowSmtp(o: { copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostR
         state.looks.push(look?.look === true);
         if (look?.look === true && sentFolder.includes(id)) return null;
         sentFolder.push(id);
+        state.filed.push(raw);
         return { locator: { folder: "Sent", ref: `9:${sentFolder.length}` }, raw };
       },
       // The old adapter's answer on a dead connection: "not there".
@@ -616,6 +622,167 @@ describe("a slow submission: the Sent copy follows every accepted send exactly o
     const [row] = await db.select().from(outboundSends).where(eq(outboundSends.draftId, draftId));
     expect({ status: row!.status, offerState: row!.offerState }).toEqual({ status: "pending", offerState: "complete" });
   });
+});
+
+/**
+ * THE OWED COPY ON DISK: a delivered send whose copy cannot land is recorded, answered `pending`,
+ * and filed once by the late pass of a later engine (a new `SendService` stands in for the restart).
+ */
+describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
+  const cap = async () => UNMETERED_STORAGE_CAP;
+  const owedRows = async (db: Awaited<ReturnType<typeof setup>>["db"]) => db.select().from(outboundSentCopies);
+  /** Delivered, its copy dead on the lease and the re-dial refused: answered, the copy owed. */
+  async function owedSend(more: Record<string, unknown> = { keepOwedCopy: true, copyOutlivesAnswer: true }, bodyBytes = 0) {
+    const w = await setup();
+    const draftId = await w.newDraft();
+    const opts = { copyDiesOnFirst: true, reopenUnreachable: true, bodyBytes };
+    const smtp = slowSmtp(opts);
+    const res = await svc.send(w.ctx, draftId, `owed-${randomUUID()}`, {
+      openSendAdapter: smtp.factory, resolveStorageCap: cap, copyTiming: { graceMs: 2_000, deadlineMs: 2_000, waitsMs: [0] }, ...more,
+    });
+    return { ...w, draftId, smtp, res, reachable: () => { opts.reopenUnreachable = false; } };
+  }
+
+  it("is answered `pending`, and a later engine files it once with the delivered bytes, projected", async () => {
+    const o = await owedSend();
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "pending" });
+    expect(await owedRows(o.db)).toHaveLength(1);
+    o.reachable();
+    const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect(out).toEqual({ filed: 1, dropped: 0, failed: 0 });
+    expect(o.smtp.state.looks, "the late filing looks in Sent first").toEqual([true]);
+    expect(o.smtp.sentFolder).toEqual([o.res.providerMessageId]);
+    expect(o.smtp.state.filed[0]!.equals(o.smtp.state.raws[0]!), "the filed bytes are the delivered bytes").toBe(true);
+    expect(o.smtp.state.released, "the pass never submits").toBe(1);
+    const mirrored = await o.db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.messageIdHeader, o.res.providerMessageId!.replace(/[<>]/g, "")));
+    expect(mirrored, "the copy is projected").toHaveLength(1);
+    expect(await owedRows(o.db)).toEqual([]);
+    const again = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect({ again, dials: o.smtp.state.dials, folder: o.smtp.sentFolder.length }).toEqual({ again: { filed: 0, dropped: 0, failed: 0 }, dials: 3, folder: 1 });
+  });
+
+  it("a 14 MB message's copy is kept and filed byte for byte (the desktop store refuses one 17 MB value)", async () => {
+    const o = await owedSend(undefined, 14 * 1024 * 1024);
+    expect(o.res.sentCopy).toBe("pending");
+    o.reachable();
+    const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect(out.filed).toBe(1);
+    expect(o.smtp.state.filed[0]!.equals(o.smtp.state.raws[0]!), "the filed bytes are the delivered bytes").toBe(true);
+    expect(await o.db.select({ id: outboundSentCopies.sendId }).from(outboundSentCopies)).toEqual([]);
+  }, 60_000);
+
+  it("a copy whose APPEND landed before the engine went is found in Sent, and nothing is appended", async () => {
+    const o = await owedSend();
+    o.smtp.sentFolder.push(o.res.providerMessageId!);
+    o.reachable();
+    const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect(out.filed).toBe(1);
+    expect(o.smtp.sentFolder, "a second copy").toEqual([o.res.providerMessageId]);
+    expect(await owedRows(o.db)).toEqual([]);
+  });
+
+  it("a copy still in its in-memory back-off is left to it: one copy in the end", async () => {
+    const w = await setup();
+    const draftId = await w.newDraft();
+    const opts = { copyDiesOnFirst: true, reopenUnreachable: true };
+    const smtp = slowSmtp(opts);
+    const res = await svc.send(w.ctx, draftId, "owed-backoff", {
+      openSendAdapter: smtp.factory, resolveStorageCap: cap, keepOwedCopy: true, copyOutlivesAnswer: true,
+      copyTiming: { graceMs: 0, deadlineMs: 0, waitsMs: [0, 300] },
+    });
+    expect(res.sentCopy).toBe("pending");
+    for (let i = 0; i < 100 && (smtp.state.dials < 2 || (await owedRows(w.db)).length === 0); i += 1) await new Promise((r) => { setTimeout(r, 5); });
+    opts.reopenUnreachable = false;
+    const out = await svc.fileOwedCopies(w.ctx, w.mailboxId, { openSendAdapter: smtp.factory, resolveStorageCap: cap });
+    expect(out, "the pass took a copy this process is filing").toEqual({ filed: 0, dropped: 0, failed: 0 });
+    for (let i = 0; i < 100 && smtp.sentFolder.length === 0; i += 1) await new Promise((r) => { setTimeout(r, 10); });
+    expect(smtp.sentFolder).toEqual([res.providerMessageId]);
+    for (let i = 0; i < 100 && (await owedRows(w.db)).length > 0; i += 1) await new Promise((r) => { setTimeout(r, 10); });
+    expect(await owedRows(w.db)).toEqual([]);
+  });
+
+  it("files nothing for a send no longer recorded `sent`, or gone, and drops the row", async () => {
+    const o = await owedSend();
+    o.reachable();
+    await o.db.update(outboundSends).set({ status: "unverified" }).where(eq(outboundSends.draftId, o.draftId));
+    const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect({ out, folder: o.smtp.sentFolder, rows: await owedRows(o.db) }).toEqual({ out: { filed: 0, dropped: 1, failed: 0 }, folder: [], rows: [] });
+    const p = await owedSend();
+    p.reachable();
+    await p.db.delete(outboundSends).where(eq(outboundSends.draftId, p.draftId));
+    await new SendService().fileOwedCopies(p.ctx, p.mailboxId, { openSendAdapter: p.smtp.factory, resolveStorageCap: cap });
+    expect({ folder: p.smtp.sentFolder, rows: await owedRows(p.db) }).toEqual({ folder: [], rows: [] });
+  });
+
+  it("a refusing server: each failure waits its turn, a failed dial costs nothing, and the eighth gives up", async () => {
+    const o = await owedSend();
+    let clock = NOW.getTime();
+    const ctx = { ...o.ctx, now: () => new Date(clock) };
+    const tries = { dials: 0, files: 0, sends: 0, dial: "ok" as "ok" | "refused" };
+    const refusing: OpenSendAdapter = async () => {
+      tries.dials += 1;
+      if (tries.dial === "refused") throw Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+      return {
+        async send() { tries.sends += 1; return { providerMessageId: "x" }; },
+        async fileSentCopy() { tries.files += 1; throw new Error("NO [OVERQUOTA] mailbox full"); },
+        async messageInSent() { return false; },
+        async close() { /* nothing held */ },
+      };
+    };
+    const pass = () => new SendService().fileOwedCopies(ctx, o.mailboxId, { openSendAdapter: refusing, resolveStorageCap: cap });
+    tries.dial = "refused";
+    expect(await pass()).toEqual({ filed: 0, dropped: 0, failed: 0 });
+    expect((await owedRows(o.db))[0]!.attempts, "a failed dial is no attempt").toBe(0);
+    tries.dial = "ok";
+    for (let n = 1; n < SEND_COPY_OWED_MAX_ATTEMPTS; n += 1) {
+      expect(await pass()).toEqual({ filed: 0, dropped: 0, failed: 1 });
+      const [row] = await owedRows(o.db);
+      const wait = SEND_COPY_OWED_WAITS_MS[Math.min(n, SEND_COPY_OWED_WAITS_MS.length) - 1]!;
+      expect({ attempts: row!.attempts, next: row!.nextAttemptAt.getTime() }).toEqual({ attempts: n, next: clock + wait });
+      clock += wait - 1;
+      expect(await pass(), "retried before its time").toEqual({ filed: 0, dropped: 0, failed: 0 });
+      clock += 1;
+    }
+    expect(await pass()).toEqual({ filed: 0, dropped: 0, failed: 1 });
+    expect(await owedRows(o.db), "given up at the eighth failure").toEqual([]);
+    expect({ files: tries.files, sends: tries.sends }).toEqual({ files: SEND_COPY_OWED_MAX_ATTEMPTS, sends: 0 });
+  });
+
+  it("on Cloud's deps nothing is recorded and a copy that cannot land is `missing`", async () => {
+    const o = await owedSend({});
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy }).toEqual({ status: "sent", sentCopy: "missing" });
+    expect(await owedRows(o.db)).toEqual([]);
+  });
+
+  // The desktop's store (PGlite) has no autovacuum; SQLite reuses freed pages on its own.
+  const tableBytes = async (db: Awaited<ReturnType<typeof setup>>["db"]) => Number(((await db.execute(
+    sql`select pg_total_relation_size('outbound_sent_copies')::text as n`)) as unknown as { rows: { n: string }[] }).rows[0]!.n);
+  const MB = 1024 * 1024;
+
+  it.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")("a healthy 10 MB send leaves none of its bytes in the store once its copy is filed", async () => {
+    const w = await setup();
+    const empty = await tableBytes(w.db);
+    const smtp = slowSmtp({ bodyBytes: 10 * MB });
+    const res = await svc.send(w.ctx, await w.newDraft(), "owed-healthy", {
+      openSendAdapter: smtp.factory, resolveStorageCap: cap, keepOwedCopy: true, copyOutlivesAnswer: true,
+      copyTiming: { graceMs: 30_000, deadlineMs: 30_000, waitsMs: [0] },
+    });
+    expect(res.sentCopy).toBe("filed");
+    expect(await owedRows(w.db)).toEqual([]);
+    // The indexes keep their emptied pages for reuse (about 0.3 MB here); the 13 MB of bytes go.
+    expect(await tableBytes(w.db) - empty, "dead space left behind").toBeLessThan(MB);
+  }, 60_000);
+
+  it.skipIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")("an owed 10 MB copy takes about its encoded size, and none once filed late", async () => {
+    const o = await owedSend(undefined, 10 * MB);
+    expect(o.res.sentCopy).toBe("pending");
+    expect(await tableBytes(o.db), "bytes on disk for one owed copy").toBeLessThan(1.6 * o.smtp.state.raws[0]!.length);
+    o.reachable();
+    const out = await new SendService().fileOwedCopies(o.ctx, o.mailboxId, { openSendAdapter: o.smtp.factory, resolveStorageCap: cap });
+    expect(out.filed).toBe(1);
+    expect(await tableBytes(o.db), "dead space left behind").toBeLessThan(MB);
+  }, 60_000);
 });
 
 /**

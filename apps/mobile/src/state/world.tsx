@@ -74,6 +74,8 @@ import {
   keptRecipients,
   liveActions,
   planHeldRouting,
+  phonePressRules,
+  phoneRulesTravel,
   presentedOptions,
   routingReversal,
   sayRoutingReplay,
@@ -1351,7 +1353,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     openRoutingSession({
       windowMs: UNDO_MS,
       journal,
-      plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed)),
+      plan: (intent) => planHeldRouting(engine.read(), intent, (changed) => noteScreenChanged(intent.id, changed),
+        phonePressRules(engine, phoneRulesTravel(mailboxesNow.current ?? []), new Date())),
       dispatch: (mutations, intent) => dispatchHeldRouting(engine, mutations, intent, {
         // A sheet press reads its list back itself, and says the refusal with it.
         answered: (answers) => answerScreenPress(intent.id, mutations, answers),
@@ -1397,6 +1400,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         locale: () => activeLocale(),
         ownAddresses: () => addressesNow.current,
         /* A READER ROW ON THIS ROSTER: piles and tags there wait for the server's answer. */
+        rulesTravel: () => phoneRulesTravel(mailboxesNow.current ?? []),
         readsOnly: (mailboxId) => {
           const row = mailboxesNow.current?.find((m) => m.id === mailboxId);
           return row?.organizerRole === "reader"
@@ -1437,6 +1441,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
       : null),
     [engine, showToast, zone, letters],
   );
+  /** The restores waiting on this session's next reconnect flush (`RestoreDeps.afterFlush`). */
+  const flushWaiters = useMemo((): (() => void)[] => [], [engine]);
   /** What a letter restore reads and writes this session: the launch's, and a flush's ({@link settleLetters}). */
   const restoreDeps = useMemo(() => (engine && acts && letters ? {
     door: letters,
@@ -1445,8 +1451,9 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     hasMessage: (id: string) => engine.read().get("message", id) !== undefined,
     drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
     firstSync: () => engine.syncOnce().then(() => undefined),
+    afterFlush: () => new Promise<void>((r) => { flushWaiters.push(r); }),
     parse: keptRecipients,
-  } : null), [engine, acts, letters]);
+  } : null), [engine, acts, letters, flushWaiters]);
   /* THE LETTERS A HARD STOP LEFT become drafts, once per session, and are said once; never sent. */
   useEffect(() => {
     if (!restoreDeps) return;
@@ -1536,6 +1543,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         // to the session on screen, and this one's is gone.
         if (backendEngineRef.current !== flushed) return;
         const loose = letters ? settleLetters(letters, ownedLetters(), settled) : [];
+        for (const go of flushWaiters.splice(0)) go();
         /* A LETTER LET GO OF OVER A ROW CHANGED ELSEWHERE: no composer holds its words, so they are
            kept as a new draft now, and said once that is known. */
         if (restoreDeps && loose.length > 0) {

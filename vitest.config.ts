@@ -277,6 +277,9 @@ export default defineConfig({
     // silenced the check written to notice. With both runs declaring an expectation, an absent one
     // is a failure rather than a skip, and the pairing is checked from the run that always happens.
     env: { OHMAIL_EXPECT_DIALECT: "pg" },
+    // 15 s, not vitest's 5 s: a file's first case pays its cold import and transform (1.4-3.4 s alone),
+    // which a loaded runner stretched past 5 s. A hang still fails, at 15 s.
+    testTimeout: 15_000,
     // The "Testing bar" invariant ("the suite performs zero external requests") is enforced here, for every
     // file, rather than asserted by the two files that happened to think of it. Loopback
     // stays open because the *.pg.test.ts files use a local docker Postgres and the

@@ -47,6 +47,8 @@ export interface Letter {
   /** The draft row this letter is, once known, and the words that row holds. */
   draftId: string | null;
   savedAs: string | null;
+  /** That row's version (`contentRevision`) these words are based on; absent on letters kept before it was written. */
+  revision?: string | null;
   keep: LetterMark | null;
   send: LetterMark | null;
   updatedAt: string;

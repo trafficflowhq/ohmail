@@ -23,6 +23,7 @@ import {
   LANDING_HOLD_MS,
   createLandingHold,
   createRoutingWindow,
+  outrankCoveringDomains,
   planScreenCommit,
   routingIntentsKey,
   routingSubject,
@@ -34,6 +35,7 @@ import {
   type MutationRejectedError,
   type MutationStatus,
   type ReleaseIntent,
+  type RuleDTO,
   type RoutingIntent,
   type RoutingOpen,
   type ScreenDest,
@@ -165,6 +167,8 @@ export interface RoutingUndo {
   restart: (subject: string) => boolean;
   /** Where held presses are showing their mail — composed into the presentation reader. */
   places: ReadonlyMap<string, Folder>;
+  /** The rules a commit plans over (`pressRules`), set by the shell's verbs; unset, the local rows. */
+  planOver: { current: ((reader: EntityReader) => readonly RuleDTO[]) | null };
 }
 
 export interface RoutingUndoDeps {
@@ -228,6 +232,10 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
   const landingHold = useMemo(() => createLandingHold(), []);
   const openPlaces = useRef<ReadonlyMap<string, Folder>>(NO_PLACES);
   const clock = (): number => (latest.current.now ?? Date.now)();
+  const planOver = useRef<((reader: EntityReader) => readonly RuleDTO[]) | null>(null);
+  /** A commit's rule writes, lifted over the list it planned over, as the engine lifts over its own rows. */
+  const liftedOver = (over: readonly RuleDTO[] | undefined, writes: readonly EngineMutation[]): EngineMutation[] =>
+    over ? writes.map((w) => outrankCoveringDomains(over, w)) : [...writes];
   const recompute = useCallback((): void => {
     const held = landingHold.size() === 0 ? null : landingHold.placesFor(latest.current.read(), clock()).places;
     let next: ReadonlyMap<string, Folder> = openPlaces.current;
@@ -266,18 +274,20 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
       if (i.v === 4) return releaseCommit(latest.current.read(), i);
       /* A SENDER-SHEET PRESS RE-PLANS THROUGH THE ONE COMMIT PLANNER, its answers riding the
          intent: the ladder, and a shown rule removed only while it is as shown. */
+      const read = latest.current.read();
+      const over = planOver.current?.(read);
       if (i.v === 2) {
-        const out = planScreenCommit(latest.current.read(), i);
+        const out = planScreenCommit(read, i, over);
         screens.current.set(i.id, { ...screens.current.get(i.id), changed: out.changed });
-        return out.writes;
+        return liftedOver(over, out.writes);
       }
       /* SENDER SCOPE AND NO RETRO — `planMoveToPlace`'s own arguments, because this IS that
          press, asked again of the mirror as it now is. */
-      const sender = senderScreening(latest.current.read(), i.seedId, i.address);
+      const sender = senderScreening(read, i.seedId, i.address, undefined, over);
       if (!sender) { built.current.set(i.id, null); return []; }
       const plan = planScreeningChange(sender, i.dest, "sender", true, false);
       built.current.set(i.id, plan);
-      return plan.ruleMutations;
+      return liftedOver(over, plan.ruleMutations);
     },
 
     dispatch: async (mutations, i) => {
@@ -383,6 +393,7 @@ export function useRoutingUndo(deps: RoutingUndoDeps): RoutingUndo {
 
   return {
     places,
+    planOver,
     subjectOf: useCallback((address: string) => routingSubject({ scope: "sender", address }), []),
     holdScreen: useCallback((press: ScreenPressInput): RoutingOpen => {
       const intent: ScreenIntent = {

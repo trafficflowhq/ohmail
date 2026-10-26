@@ -236,6 +236,8 @@ export function senderScreening(
   address?: string,
   /** The shell's consent partition: where each message is SHOWN. Absent, the filed folder. */
   placeOf?: ReadonlyMap<string, Folder | null>,
+  /** The rules a press plans over (`pressRules`); absent, the local rows. */
+  over?: readonly RuleDTO[],
 ): SenderScreening | null {
   const seed = reader.get<EngineMessage>("message", messageId);
   if (!seed) return null;
@@ -257,7 +259,7 @@ export function senderScreening(
   mine.sort(byDateDesc);
   theirs.sort(byDateDesc);
 
-  const rules = rulesList(reader).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress));
+  const rules = (over ?? rulesList(reader)).filter((r) => r.enabled && ruleMatchesSender(r, subjectAddress));
   // Per mailbox, as the lists judge it: a mailbox this install reads is decided by its organizer.
   const index = consentIndex(rulesList(reader), mailboxProfiles(reader));
   const sender = subjectOf(mine, placeOf, decidedDestination(index, subjectAddress, seed.mailboxId));

@@ -17,8 +17,10 @@
  * password and nothing here asserts on one.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { mailboxes, mailboxCredentials } from "@trafficflow/db";
+import { eq } from "drizzle-orm";
+import { createApp, apiRoutes, connectAttemptRecorder, type ApiDeps } from "@trafficflow/api";
+import { accounts, mailboxes, mailboxCredentials, type Tx } from "@trafficflow/db";
+import { connectAttempts } from "@trafficflow/db/cloud";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 
@@ -246,5 +248,81 @@ describe("the plaintext consent on Test connection", () => {
 
     const second = await H(post(token, { imap: { ...home, allowInsecure: true } }), deps);
     expect(second.status, "the ticked consent never reached the probe").toBe(200);
+  });
+});
+
+describe("how a test ended is recorded on the managed host (cloud 0054)", () => {
+  async function recording(): Promise<{ db: Awaited<ReturnType<typeof makeDeps>>["db"]; deps: ApiDeps; token: string; accountId: string }> {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    return { db, deps: { ...deps, connectAttempts: connectAttemptRecorder(db as unknown as Tx, deps.now) }, token: s.token, accountId: s.accountId };
+  }
+  const refusedLogin = (): Promise<void> => Promise.reject(imapError({ serverResponseCode: "AUTHENTICATIONFAILED" }));
+
+  it("an ok test is one row of closed words, holding nothing the person typed", async () => {
+    const { db, deps, token, accountId } = await recording();
+    spyDial(ok);
+    expect((await H(post(token), deps)).status).toBe(200);
+    expect(await db.select().from(connectAttempts)).toEqual([{
+      accountId, at: FIXED_NOW, id: expect.any(String),
+      door: "test", preset: "imap", outcome: "ok", reason: null, transport: null,
+    }]);
+  });
+
+  it("Google's named refusal is recorded by its word, against the gmail preset", async () => {
+    const { db, deps, token } = await recording();
+    spyDial(() => Promise.reject(imapError({
+      serverResponseCode: "ALERT", responseText: "Application-specific password required: https://support.google.com/accounts/answer/185833 (Failure)",
+    })));
+    const res = await H(post(token, { imap: { ...IMAP, host: "IMAP.Gmail.com" } }), deps);
+    expect((await res.json()).error.details.authHint).toBe("app_password_required");
+    expect(await db.select().from(connectAttempts)).toMatchObject([{
+      door: "test", preset: "gmail", outcome: "refused", reason: "auth_app_password_required", transport: "imap",
+    }]);
+  });
+
+  it("a refused sending leg in the answer is recorded as refused on smtp", async () => {
+    const { db, deps, token } = await recording();
+    vi.spyOn(deps.services!.mailbox, "probeConnection").mockResolvedValue({
+      ok: true, host: IMAP.host, user: IMAP.user, folders: 3,
+      sending: { state: "refused", host: "smtp.example.invalid", reason: "tls" },
+    });
+    expect((await H(post(token), deps)).status).toBe(200);
+    expect(await db.select().from(connectAttempts)).toMatchObject([{ outcome: "refused", reason: "tls", transport: "smtp" }]);
+  });
+
+  it("a recorder that throws, or none at all, changes neither the status nor the body", async () => {
+    const { db, deps, token } = await recording();
+    const answer = async (d: ApiDeps): Promise<[number, string]> => {
+      const res = await H(post(token), d);
+      return [res.status, await res.text()];
+    };
+    for (const connect of [ok, refusedLogin]) {
+      spyDial(connect);
+      const recorded = await answer(deps);
+      expect(await answer({ ...deps, connectAttempts: async () => { throw new Error("the record failed"); } })).toEqual(recorded);
+      expect(await answer({ ...deps, connectAttempts: undefined })).toEqual(recorded);
+    }
+    expect((await db.select().from(connectAttempts)).map((r) => r.outcome)).toEqual(["ok", "refused"]);
+  });
+
+  it("an erasure that lands during the dial records nothing, and the answer is the ordinary one", async () => {
+    const { db, deps, token, accountId } = await recording();
+    spyDial(async () => { await db.update(accounts).set({ erasedAt: FIXED_NOW }).where(eq(accounts.id, accountId)); });
+    const res = await H(post(token), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, host: IMAP.host, user: IMAP.user, folders: 3 });
+    expect(await db.select().from(connectAttempts)).toEqual([]);
+  });
+
+  it("past 200 attempts in 24 hours the next one is not recorded", async () => {
+    const { db, deps, token, accountId } = await recording();
+    const minutesAgo = (m: number): Date => new Date(FIXED_NOW.getTime() - m * 60_000);
+    // 199 in the day and one just outside it: the next press is the 200th of the day.
+    await db.insert(connectAttempts).values([...Array.from({ length: 199 }, (_, i) => minutesAgo(i + 1)), minutesAgo(25 * 60)]
+      .map((at) => ({ accountId, at, door: "test", preset: "imap", outcome: "ok" })));
+    spyDial(ok);
+    for (let i = 0; i < 2; i++) expect((await H(post(token), deps)).status).toBe(200);
+    expect(await db.select().from(connectAttempts)).toHaveLength(201);
   });
 });

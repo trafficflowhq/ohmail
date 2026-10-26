@@ -45,6 +45,19 @@ import { sendFingerprint } from "../send-fingerprint.js";
 import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { ORGANIZER_REQUESTS_PATH, waitingRequestsOf } from "../organizer-requests-wire.js";
+import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
+
+/**
+ * Where a rule verb goes: a row's id, or a published rule's address with its key in the body. A
+ * `held:` id that carries no key names nothing the server holds and is refused here, unsent.
+ */
+function ruleAddress(m: { ruleId: string; key?: unknown }): string {
+  if (m.key !== undefined) return PUBLISHED_RULE_ID;
+  if (m.ruleId.startsWith("held:")) {
+    throw new MutationRejectedError("a published rule is changed by its key", { status: 400, code: "validation_failed" });
+  }
+  return m.ruleId;
+}
 
 /** The store's facets, read defensively; `null` when the answer carried none (the page part). */
 function facetsOf(wire: unknown): ServerSearchFacets | null {
@@ -1950,7 +1963,8 @@ export class HttpAdapter implements EngineAdapter {
        * not, the last because the rule may well still be there.
        */
       case "rule_delete": {
-        const res = await this.request("DELETE", `/rules/${encodeURIComponent(m.ruleId)}`, {
+        const res = await this.request("DELETE", `/rules/${encodeURIComponent(ruleAddress(m))}`, {
+          ...(m.key === undefined ? {} : { body: { key: m.key } }),
           idempotencyKey: opts.idempotencyKey, ...sig,
         });
         if (res.status === 404) return { changes: [], seq: null };
@@ -1965,8 +1979,9 @@ export class HttpAdapter implements EngineAdapter {
       }
 
       case "rule_update": {
-        const res = await this.request("PATCH", `/rules/${encodeURIComponent(m.ruleId)}`, {
+        const res = await this.request("PATCH", `/rules/${encodeURIComponent(ruleAddress(m))}`, {
           body: {
+            ...(m.key === undefined ? {} : { key: m.key }),
             destination: m.destination,
             // Omitted unless an address rule is lifted over its domain's (`address-rank.ts`).
             ...(m.priority === undefined ? {} : { priority: m.priority }),

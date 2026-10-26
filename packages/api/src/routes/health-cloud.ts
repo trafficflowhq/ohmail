@@ -220,6 +220,10 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // refused `audit_failed`. The trigger body is probed below.
   ["staff_role_grants", "revoked_at"],
   ["staff_audit_events", "target_account_id"],
+  // cloud 0054_connect_attempts — `transport`, the table's last column; one migration runs in one
+  // transaction, so its presence implies the key, the CHECKs and the grant. The SWALLOWED kind: the
+  // recorder never fails a request, so an API ahead of the migration would record nothing, silently.
+  ["connect_attempts", "transport"],
 ] as const;
 
 /**

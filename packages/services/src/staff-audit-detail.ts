@@ -13,6 +13,7 @@ export const STAFF_AUDIT_ACTIONS = [
   "read.overview", "read.roster", "read.search", "read.account", "read.account.activity",
   "read.sync_roster", "read.funnel", "read.worker", "read.actions",
   "read.engagement", "read.storage", "read.staff_activity", "read.staff_list", "read.alerts_history",
+  "read.connect_attempts",
   "read.oauth_provider", "assert.external", "write.mailbox.resync", "write.oauth_provider",
   "write.billing_link", "staff.signin", "staff.signin_failed", "staff.stepup", "staff.stepup_failed",
   "staff.signout", "staff.role_grant", "staff.role_revoke", "staff.totp_reset",
@@ -55,6 +56,8 @@ const DETAIL: Record<StaffAuditAction, Readonly<Record<string, Check>>> = {
   "read.staff_activity": { reads: flag },
   "read.staff_list": {},
   "read.alerts_history": {},
+  // The window's length, and whether one account was named (its id rides as the row's target).
+  "read.connect_attempts": { windowDays: count, account: flag },
   "assert.external": {
     method: oneOf("GET", "POST", "PUT", "PATCH", "DELETE"), path, scope: oneOf("read", "write"),
     tier: (v) => v === 0 || v === 1 || v === 2, index: count,

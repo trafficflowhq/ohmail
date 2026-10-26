@@ -40,6 +40,8 @@ import {
   presentsUnread,
   oneRowPerKey,
   pressOverTwins,
+  pressRules,
+  outrankCoveringDomains,
   readsPartition,
   receiptsByDay,
   rulesList,
@@ -2503,12 +2505,37 @@ export interface PhoneScreenPress {
  */
 export function planHeldRouting(
   reader: EntityReader, intent: AnyRoutingIntent, onChanged?: (changed: readonly string[]) => void,
+  /** The rules the press plans over where a change here travels to the organizer ({@link phonePressRules}). */
+  over?: readonly RuleDTO[],
 ): EngineMutation[] {
-  if (intent.v === 3) return planDecideCommit(reader, intent);
+  if (intent.v === 3) return liftedOver(over, planDecideCommit(reader, intent, over));
   if (intent.v !== 2) return planPhoneRouting(reader, intent);
-  const out = planScreenCommit(reader, intent);
+  const out = planScreenCommit(reader, intent, over);
   onChanged?.(out.changed);
-  return out.writes;
+  return liftedOver(over, out.writes);
+}
+
+/**
+ * A RULE CHANGE MADE HERE TRAVELS TO THE ORGANIZER: every mailbox on the roster is read here and its
+ * holder is live (the web's posture `pending`). Then a press plans over the organizer's copy.
+ */
+export function phoneRulesTravel(mailboxes: readonly {
+  organizerRole: string | null; organizedBy: { kind: string | null; name: string | null } | null; organizerState: "held" | "stopped" | null;
+}[]): boolean {
+  return mailboxes.length > 0
+    && mailboxes.every((m) => m.organizerRole === "reader" && holderIsLive({ by: m.organizedBy, state: m.organizerState }));
+}
+
+/** The organizer's copy as the press list (`pressRules`) where a change here travels to it, else `undefined`. */
+export function phonePressRules(engine: OhmailEngine, travels: boolean, now: Date): RuleDTO[] | undefined {
+  return travels
+    ? pressRules(engine.read(), { travels, queued: engine.queuedRuleWrites(), applied: engine.appliedRuleRequests(), unsettled: engine.unsettledRulePresses(), now })
+    : undefined;
+}
+
+/** Rule writes lifted over the press list: the engine's own lift reads only the local rows. */
+function liftedOver(over: readonly RuleDTO[] | undefined, writes: readonly EngineMutation[]): EngineMutation[] {
+  return over ? writes.map((w) => outrankCoveringDomains(over, w)) : [...writes];
 }
 
 /**
@@ -2603,7 +2630,7 @@ function reachRows(row: ScreenerRow, peers: readonly ScreenerRow[]): Array<{ add
  * `screener_decide`; one past the gate is ruled through the twins ladder. Neither reaches mail
  * already filed elsewhere: the card's INBOX letters move by id. A let-in's "&read" batch rides behind.
  */
-export function planDecideCommit(reader: EntityReader, intent: DecideIntent): EngineMutation[] {
+export function planDecideCommit(reader: EntityReader, intent: DecideIntent, over?: readonly RuleDTO[]): EngineMutation[] {
   const rep = reader.get<EngineMessage>("message", intent.seedId);
   const decision = decisionOf(intent.dest);
   const address = intent.address.trim().toLowerCase();
@@ -2615,7 +2642,7 @@ export function planDecideCommit(reader: EntityReader, intent: DecideIntent): En
       ...(decision === "yes" ? { read: intent.read } : {}), scope: intent.scope, applyRetro: false,
     }]
     : pressOverTwins(
-      rulesList(reader), intent.scope, intent.scope === "domain" ? domainOf(address).toLowerCase() : address,
+      over ?? rulesList(reader), intent.scope, intent.scope === "domain" ? domainOf(address).toLowerCase() : address,
       FOLDER_OF_VIEW[intent.dest], false,
     ).writes;
   out.push(...cardInboxMoves(reader, [...intent.messageIds, ...alsoStill(reader, intent.alsoIds ?? [], intent.id)], intent.dest));
@@ -3367,6 +3394,8 @@ export interface LiveDeps {
     organizedBy: { kind: string | null; name: string | null } | null;
     organizerState: "held" | "stopped" | null;
   } | null;
+  /** Whether a rule change made here travels to the organizer ({@link phoneRulesTravel}); absent ⇒ no. */
+  rulesTravel?: () => boolean;
   /**
    * A DECIDE ON A ROW ONLY THE STORE BACKS, FROM THE PRESS TO ITS ANSWER: the holder of the cached
    * queue keeps the sender off the shelf until the returned release, which the press calls once
@@ -5848,15 +5877,22 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
    * or a decide, so the backlog is the server pass's and this press moves none of it
    * (THE-CLIENTS-FIFTY): only the pass sees a reply or a hand filing. Raw mirror reads.
    */
+  /** The rules a press plans over: the organizer's copy where a change here travels to it. */
+  const planOver = (raw: EntityReader): RuleDTO[] | undefined => (deps.rulesTravel?.()
+    ? pressRules(raw, { travels: true, queued: engine.queuedRuleWrites(), applied: engine.appliedRuleRequests(), unsettled: engine.unsettledRulePresses(), now: now() })
+    : undefined);
   /** The press's forecast over the raw mirror and the lists' own options (`presentedOptions`). */
   const forecastOf = (
     raw: EntityReader, subject: readonly EngineMessage[], scope: Scope, match: string, wanted: Folder,
     applyRetro: boolean, decide?: Extract<EngineMutation, { kind: "screener_decide" }>, seedId?: string,
-  ): PressForecast => pressForecast({
-    reader: raw, options: deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.()),
-    subject, scope, match, wanted, makeRule: true, applyRetro, now: now(), ...(decide ? { decide } : {}),
-    ...(seedId === undefined ? {} : { seedId }),
-  });
+  ): PressForecast => {
+    const over = planOver(raw);
+    return pressForecast({
+      reader: raw, options: deps.presentedOptions?.() ?? presentedOptions(now(), false, SCREENING_UNSUPPLIED, deps.ownAddresses?.()),
+      subject, scope, match, wanted, makeRule: true, applyRetro, now: now(), ...(decide ? { decide } : {}),
+      ...(seedId === undefined ? {} : { seedId }), ...(over === undefined ? {} : { rules: over }),
+    });
+  };
 
   /** The subject a press is about, read as `screenSender` reads it. */
   const subjectFor = (messageId: string, scope: Scope) => {
@@ -6035,7 +6071,8 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     // Already sent by the window (its record refused after a flush): the follow-up reads it back.
     if (opened.sent) return true;
     if (!opened.held) {
-      const writes = planScreenCommit(raw, intent).writes;
+      const over = planOver(raw);
+      const writes = liftedOver(over, planScreenCommit(raw, intent, over).writes);
       const answers = await Promise.all(writes.map((w) => engine.mutate(w).catch((): MutationResult | null => null)));
       await Promise.allSettled(settled);
       return readBack({ mutations: writes, answers, changed: [] });
@@ -6147,8 +6184,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       /* THE WEB SHEET'S LADDER, ONE FUNCTION: every twin elsewhere is retargeted, each one already
          at the destination re-armed when the past-mail answer is yes (off, a habit-click writes
          nothing), and one rule written when there is none. */
-      const { writes } = pressOverTwins(rulesList(raw), scope, match, wanted, applyRetro);
-      ruled = Promise.all([...writes, ...removals].map((w) => watched(engine.mutate(w))));
+      const over = planOver(raw);
+      const { writes } = pressOverTwins(over ?? rulesList(raw), scope, match, wanted, applyRetro);
+      ruled = Promise.all(liftedOver(over, [...writes, ...removals]).map((w) => watched(engine.mutate(w))));
     }
     /* …AND THE LETTER PRESSED ON IS FILED BY THE PRESS, after the rule writes (the web's domain
        path). Under a decide only once the decision stands, and never a letter in its bag. */

@@ -1276,6 +1276,22 @@ export async function settleReaderRuleRows(
   return { settled: true, lastSeq: out.lastSeq };
 }
 
+/**
+ * THE KEYS A CREATE WAS PRESSED UNDER AT OR AFTER `since`, on any mailbox and whatever came of it.
+ * Every instant THE PRESS STAMP holds is the `decidedAt` of one of these (until an erasure drops
+ * its mailbox's legs), so a caller asking "did the belt settle a press on this row since then?"
+ * asks this and never reads the stamp, which keeps its one reader, the belt's order above. A
+ * payload the belt cannot read is left out: the belt settles nothing on it.
+ */
+export async function createPressKeysSince(tx: Tx, accountId: string, since: Date): Promise<RuleKey[]> {
+  const rows = await tx.select({ kind: organizerRequests.kind, payload: organizerRequests.payload }).from(organizerRequests)
+    .where(and(
+      eq(organizerRequests.accountId, accountId), eq(organizerRequests.kind, "rule.create"),
+      gte(organizerRequests.decidedAt, since),
+    ));
+  return rows.flatMap((r) => { const v = validateRulePayload(r.kind, r.payload); return v === null ? [] : [v.key]; });
+}
+
 /** What one leave asked of the belt: distinct presses asked, settled, the last delta's seq, the skips. */
 export interface LeavingSettle {
   asked: number;

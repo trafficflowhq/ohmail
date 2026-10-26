@@ -79,8 +79,10 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 const SNIPPET_PX = 100;
 /** The same entry once its body has landed. The ratio is what makes the defect visible. */
 const FULL_PX = 600;
-/** The component's own breathing room above the anchored entry. */
+/** The component's own breathing room above the anchored entry, under the sticky decision bar. */
 const ANCHOR_SLACK = 14;
+/** The decision bar's height: the anchored letter lands below it, never under it (a tester, 0.30.8). */
+const BAR_PX = 90;
 
 // ── the layout model ────────────────────────────────────────────────────────────────────────
 
@@ -152,13 +154,15 @@ Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: E
 
   const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
   if (this === read) return rect(0, 800);
+  // The decision bar: first in the column's flow and sticky at its top, so always at 0.
+  if (this.parentElement === read && (this as HTMLElement).classList.contains("decide")) return rect(0, BAR_PX);
   if (!(this as HTMLElement).classList?.contains("hmail")) return rect(0, 0);
 
-  // The entry's offset inside the scroller is the sum of the heights of its predecessors; a
+  // The entry's offset inside the scroller is the bar plus the heights of its predecessors; a
   // browser reports that MINUS the scroller's current scrollTop, which is what makes the
   // component's `+ read.scrollTop` term correct rather than decorative.
   const entries = [...(read?.querySelectorAll<HTMLElement>(".hmail") ?? [])];
-  let offset = 0;
+  let offset = read?.querySelector(":scope > .decide") ? BAR_PX : 0;
   for (const e of entries) {
     if (e === this) break;
     offset += heightOf(e);

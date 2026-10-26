@@ -19,6 +19,7 @@ import {
   listStuckSends,
   DEFAULT_ALERT_THRESHOLDS,
   accountLifecycleNotices,
+  connectAttempts,
   creditRefundObligations,
   staffAuditEvents,
   STAFF_ROLES,
@@ -36,6 +37,7 @@ import type {
   FunnelSnapshot, FunnelStage, FunnelWindow, MailboxHealth, SecurityEvent,
   StaleSend, WorkerInstanceHealth, WorkerSnapshot,
   AlertResolvedPage, EngagementSnapshot, StaffAuditAction, StaffAuditOutcome, StaffFeedPage, StoragePage,
+  ConnectAttemptsPage,
 } from "./admin-dto.js";
 
 /**
@@ -1255,6 +1257,75 @@ export async function adminLatestResolvedAlerts(
       count: r.count,
     })),
     truncated: rows.length > ADMIN_RESOLVED_ALERTS_MAX,
+  };
+}
+
+/** The connect-attempt read's page size, its rows for one account, and its window in days. */
+export const ADMIN_CONNECT_ATTEMPTS_MAX = 500;
+export const ADMIN_CONNECT_ATTEMPTS_ROWS = 50;
+export const ADMIN_CONNECT_ATTEMPTS_DEFAULT_DAYS = 30;
+export const ADMIN_CONNECT_ATTEMPTS_MAX_DAYS = 31;
+
+/** What the connect-attempt read is asked for, validated by the route; `account` null is every account. */
+export interface ConnectAttemptsQuery {
+  window: { from: Date; to: Date };
+  account: string | null;
+  cursor: string | null;
+  limit: number;
+}
+
+/**
+ * `GET /admin/connect-attempts` — how connecting a mailbox ended (cloud 0054) in `[from, to)`, read
+ * from the seven granted columns only: the counts, each account's totals keyset by account id, and
+ * with an account named its newest rows. Sequential reads on the `max: 1` blind pool.
+ */
+export async function adminConnectAttempts(
+  db: AdminDb, now: Date, q: ConnectAttemptsQuery,
+): Promise<ConnectAttemptsPage> {
+  const size = Math.min(ADMIN_CONNECT_ATTEMPTS_MAX, Math.max(1, Math.trunc(q.limit) || ADMIN_CONNECT_ATTEMPTS_MAX));
+  const account = q.account && UUID_RE.test(q.account) ? q.account.toLowerCase() : null;
+  const after = q.cursor && UUID_RE.test(q.cursor) ? q.cursor.toLowerCase() : null;
+  const t = connectAttempts;
+  const inWindow = and(
+    gte(t.at, q.window.from), lt(t.at, q.window.to),
+    account === null ? undefined : eq(t.accountId, account),
+  );
+  const buckets = await db
+    .select({ door: t.door, preset: t.preset, outcome: t.outcome, reason: t.reason, count: sql<number>`count(*)::int` })
+    .from(t).where(inWindow)
+    .groupBy(t.door, t.preset, t.outcome, t.reason)
+    .orderBy(t.door, t.preset, t.outcome, t.reason);
+  const perAccount = await db
+    .select({
+      accountId: t.accountId,
+      attempts: sql<number>`count(*)::int`,
+      refused: sql<number>`count(*) filter (where ${t.outcome} = 'refused')::int`,
+      firstAt: sql<Date | string>`min(${t.at})`,
+      lastAt: sql<Date | string>`max(${t.at})`,
+      firstOkAt: sql<Date | string | null>`min(${t.at}) filter (where ${t.outcome} = 'ok')`,
+    })
+    .from(t).where(and(inWindow, after === null ? undefined : sql`${t.accountId} > ${after}::uuid`))
+    .groupBy(t.accountId).orderBy(t.accountId).limit(size);
+  const rows = account === null ? null : await db
+    .select({ at: t.at, door: t.door, preset: t.preset, outcome: t.outcome, reason: t.reason, transport: t.transport })
+    .from(t).where(inWindow).orderBy(desc(t.at)).limit(ADMIN_CONNECT_ATTEMPTS_ROWS);
+  const outcomeOf = (o: string): "ok" | "refused" => (o === "ok" ? "ok" : "refused");
+  return {
+    now: now.toISOString(),
+    window: { from: q.window.from.toISOString(), to: q.window.to.toISOString() },
+    account,
+    byOutcome: buckets.map((b) => ({
+      door: b.door, preset: b.preset, outcome: outcomeOf(b.outcome), reason: b.reason, count: int(b.count),
+    })),
+    accounts: perAccount.map((a) => ({
+      accountId: a.accountId, attempts: int(a.attempts), refused: int(a.refused),
+      firstAt: asDate(a.firstAt).toISOString(), lastAt: asDate(a.lastAt).toISOString(), firstOkAt: iso(a.firstOkAt),
+    })),
+    nextCursor: perAccount.length === size ? perAccount[perAccount.length - 1]!.accountId : null,
+    rows: rows === null ? null : rows.map((r) => ({
+      at: asDate(r.at).toISOString(), door: r.door, preset: r.preset, outcome: outcomeOf(r.outcome), reason: r.reason,
+      transport: r.transport === "imap" || r.transport === "smtp" ? r.transport : null,
+    })),
   };
 }
 

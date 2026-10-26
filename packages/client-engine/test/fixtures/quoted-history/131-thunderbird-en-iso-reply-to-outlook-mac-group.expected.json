@@ -1,0 +1,46 @@
+{
+  "id": "131",
+  "file": "131-thunderbird-en-iso-reply-to-outlook-mac-group.eml",
+  "shape": "thunderbird-en-iso-reply-to-outlook-mac-group",
+  "description": "Thunderbird, English UI, ISO attribution 'On 2026-10-20 07:44, ... wrote:' over a quoted Outlook for Mac reply to a group: a short answer, then Von/Datum/An/Cc/Betreff blocks whose An: line runs past 400 characters (12 recipients), the older hops below",
+  "client": "thunderbird",
+  "ui_language": "en",
+  "parts": [
+    "text/plain",
+    "text/html"
+  ],
+  "charset": "utf-8",
+  "transfer_encoding": {
+    "text/plain": "8bit",
+    "text/html": "8bit"
+  },
+  "historyKind": "reply",
+  "levels": 4,
+  "authorsInHistory": [
+    "Dana Example",
+    "Ben Sample",
+    "Elif Testa",
+    "Finn Beispiel"
+  ],
+  "expect": {
+    "fold": "trailing",
+    "mustNotFold": false,
+    "onlyHistory": false,
+    "text": {
+      "visibleFirstLine": "Hallo zusammen,",
+      "visibleLastLine": "Clara",
+      "historyStartLine": "On 2026-10-20 07:44, Dana Example wrote:",
+      "historyStartLineNormalized": "On 2026-10-20 07:44, Dana Example wrote:"
+    },
+    "html": {
+      "historyStartSelector": "div.moz-cite-prefix",
+      "attributionBefore": null,
+      "historyStartText": "On 2026-10-20 07:44, Dana Example wrote:",
+      "visibleFirstText": "Hallo zusammen,",
+      "visibleLastText": "Clara"
+    },
+    "inlineAnswers": [],
+    "trailingTail": null
+  },
+  "notes": ""
+}

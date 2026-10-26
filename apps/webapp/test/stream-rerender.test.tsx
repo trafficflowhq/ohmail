@@ -217,6 +217,17 @@ describe("the reading stream skips cards whose inputs did not change", () => {
     expect(counter.streamCards).toBe(1);
   });
 
+  it("a card whose filed folder changed re-renders, though where it is shown did not", async () => {
+    // A let-in letter shown in place is filed later: only `physicalFolder` moves, and its pictures follow it.
+    const msgs = Array.from({ length: N }, (_, i) => message(i));
+    (msgs[5] as unknown as { physicalFolder?: string }).physicalFolder = "ohmail/Screener";
+    await mount(<Harness msgs={msgs} />);
+    counter.streamCards = 0;
+    delete (msgs[5] as unknown as { physicalFolder?: string }).physicalFolder;
+    await act(() => bump());
+    expect(counter.streamCards).toBe(1);
+  });
+
   it("a card the lookahead reports re-renders alone — `viewer` is in the comparator", async () => {
     /* Deep in the pile (a jump moves the window there), the mounted cards are not near; the one
        the lookahead reports flips `viewer` and is the one card that draws again. Mutation: leave
