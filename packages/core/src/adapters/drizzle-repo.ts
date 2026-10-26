@@ -930,6 +930,12 @@ const RENAME_CHANGE_CHUNK = 2000;
 const MESSAGE_ROWS_CHUNK = 100;
 
 /**
+ * Rows per page of `listKnownLocators`. PGlite parses a result on one turn of the loop, so a
+ * mailbox read whole held the engine for its whole length (74,003 rows: 0.6 s and more).
+ */
+export const KNOWN_LOCATOR_PAGE_ROWS = 5_000;
+
+/**
  * An INBOX instance recorded beside a row that still stands on its Sent copy — what the ingest
  * wrote for a letter to yourself before `dedup.ts`'s `received_copy`. Kept out of the known-set,
  * so the next pass fetches that copy with its flags and the arm gives it the row. A row whose
@@ -3674,30 +3680,51 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * the logical message — `correlateMoves` pairs on it.
    */
   async listKnownLocators(mailboxId: string): Promise<KnownLocator[]> {
-    const rows = await this.db.select({
-      folder: messageInstances.folder,
-      uid: messageInstances.uid,
-      uidvalidity: messageInstances.uidvalidity,
-      messageIdHeader: messages.messageIdHeader,
-      // The seen baseline, for the adapter's no-CONDSTORE flag fallback (see `KnownLocator.seen`).
-      // `observed_seen` is what the server was last SEEN holding; `!unread` is what ingest
-      // derived from the server's flags before any flag row existed. Both are observations of
-      // the server, which is what a diff against the server needs — `desired_seen` is not, and
-      // using it would report the user's own pending write back as an external change.
-      observedSeen: flagState.observedSeen,
-      unread: messages.unread,
-    }).from(messageInstances)
-      .innerJoin(messages, eq(messages.id, messageInstances.messageId))
-      .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
-      .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
-      .where(and(eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow()})`));
-    return rows.map((r) => ({
-      folder: r.folder,
-      uid: r.uid,
-      uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
-      messageId: r.messageIdHeader ?? null,
-      seen: r.observedSeen ?? !r.unread,
-    }));
+    const out: KnownLocator[] = [];
+    // Below every stored key, so every page is one statement text (`pglite-plans.ts` pins it).
+    let after: { folder: string; uidvalidity: bigint; uid: number } = { folder: "", uidvalidity: -1n, uid: -1 };
+    for (;;) {
+      const rows = await this.db.select({
+        folder: messageInstances.folder,
+        uid: messageInstances.uid,
+        uidvalidity: messageInstances.uidvalidity,
+        messageIdHeader: messages.messageIdHeader,
+        // The seen baseline, for the adapter's no-CONDSTORE flag fallback (see `KnownLocator.seen`).
+        // `observed_seen` is what the server was last SEEN holding; `!unread` is what ingest
+        // derived from the server's flags before any flag row existed. Both are observations of
+        // the server, which is what a diff against the server needs — `desired_seen` is not, and
+        // using it would report the user's own pending write back as an external change.
+        observedSeen: flagState.observedSeen,
+        unread: messages.unread,
+      }).from(messageInstances)
+        .innerJoin(messages, eq(messages.id, messageInstances.messageId))
+        .leftJoin(flagState, eq(flagState.messageId, messageInstances.messageId))
+        .leftJoin(folderState, eq(folderState.messageId, messageInstances.messageId))
+        .where(and(
+          eq(messageInstances.mailboxId, mailboxId), sql`not (${inboxCopyOfSentRow()})`,
+          // The locator's unique key, so a page edge can neither skip nor repeat a row. Each value
+          // is bound through its column: the device's SQLite binding refuses a raw bigint.
+          sql`(${messageInstances.folder}, ${messageInstances.uidvalidity}, ${messageInstances.uid}) > (${
+            sql.param(after.folder, messageInstances.folder)}, ${sql.param(after.uidvalidity, messageInstances.uidvalidity)}, ${
+            sql.param(after.uid, messageInstances.uid)})`,
+        ))
+        .orderBy(asc(messageInstances.folder), asc(messageInstances.uidvalidity), asc(messageInstances.uid))
+        .limit(KNOWN_LOCATOR_PAGE_ROWS);
+      for (const r of rows) {
+        out.push({
+          folder: r.folder,
+          uid: r.uid,
+          uidValidity: r.uidvalidity != null ? String(r.uidvalidity) : "0",
+          messageId: r.messageIdHeader ?? null,
+          seen: r.observedSeen ?? !r.unread,
+        });
+      }
+      if (rows.length < KNOWN_LOCATOR_PAGE_ROWS) return out;
+      const last = rows[rows.length - 1]!;
+      after = { folder: last.folder, uidvalidity: last.uidvalidity, uid: last.uid };
+      // A macrotask, not `setImmediate`: the phone's is a microtask shim and gives no turn.
+      await new Promise<void>((r) => setTimeout(r, 0));
+    }
   }
 
   async listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]> {

@@ -1,5 +1,7 @@
 import { rmSync } from "node:fs";
+import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { openLocalDb } from "../src/db.js";
 import { freshDataDir } from "./_datadir.js";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
@@ -185,5 +187,100 @@ describe("the launch drain and the window's first page", () => {
     expect(cycles()).toBeGreaterThan(0);
     expect(Date.now() - t, "the launch waited a grace no door armed").toBeLessThan(FIRST_PAGE_GRACE_MS);
     expect(lines.filter((l) => l.startsWith("first_page_"))).toEqual([]);
+  }, 120_000);
+
+  /* The first page read of a store whose locators were never analyzed would sort the rest of the
+     mailbox on every page: the drain takes the statistics first, once. */
+  it("a drain over a reopened store with locators analyzes them before its first page read", async () => {
+    const dataDir = await freshDataDir("ohmail-launch-locator-stats-");
+    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
+    const config = {
+      dataDir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      address: "owner@trafficflow.test", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+      searchBackfillTiming: { waitMs: 60 * 60 * 1000 }, log: () => {},
+    };
+    const first = await createSidecar({ ...config, adapterFactory: countingMailbox().factory });
+    await first.start();
+    await first.stop();
+    const store = await openLocalDb(dataDir);
+    const c = (store.db as unknown as { $client: PGlite }).$client;
+    const mb = (await c.query<{ id: string; account_id: string }>("select id, account_id from mailboxes")).rows[0]!;
+    const m = (await c.query<{ id: string }>(`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator)
+      values ('${mb.account_id}', '${mb.id}', 'h', 'stats:1', 's', 'x@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb) returning id`)).rows[0]!.id;
+    await c.exec(`insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid, is_primary)
+      select '${mb.account_id}', '${mb.id}', '${m}', 'Archive', 7, g, false from generate_series(1, 200) g`);
+    await store.close();
+    const seen: string[] = [];
+    for (const name of ["query", "exec"] as const) {
+      const orig = PGlite.prototype[name];
+      vi.spyOn(PGlite.prototype, name).mockImplementation(function (this: PGlite, text: unknown, ...rest: unknown[]) {
+        seen.push(String(text));
+        return (orig as any).call(this, text, ...rest);
+      } as any);
+    }
+    cleanups.push(() => { vi.restoreAllMocks(); });
+    const again = await createSidecar({ ...config, adapterFactory: countingMailbox().factory });
+    cleanups.push(async () => { await again.stop(); });
+    await again.start();
+    const analyzed = seen.findIndex((s) => /^ANALYZE public\.message_instances$/.test(s));
+    const page = seen.findIndex((s) => /^select "message_instances"\."folder"/.test(s));
+    expect(page, "the drain never read the known set").toBeGreaterThan(-1);
+    expect(analyzed, "the locators were never analyzed").toBeGreaterThan(-1);
+    expect(analyzed).toBeLessThan(page);
+    expect(seen.filter((s) => /^ANALYZE public\.message_instances$/.test(s)), "analyzed more than once").toHaveLength(1);
+  }, 120_000);
+
+  /* A fresh store's launch drain finds no locators: that is no answer, and the drain after the
+     import must still take the statistics before its first page. */
+  it("a fresh store that gains locators analyzes them before the next drain's first page read", async () => {
+    const dataDir = await freshDataDir("ohmail-fresh-locator-stats-");
+    const base = countingMailbox().factory;
+    let serve = 0;
+    const factory = (cfg: ImapConfig, ctx: AdapterDialContext): MailboxAdapter & { leaseIo(): LeaseIo } => ({
+      ...base(cfg, ctx),
+      async changesSince(): Promise<ChangeBatch> {
+        const creates = Array.from({ length: serve }, (_, i) => ({
+          type: "create" as const, locator: { folder: "INBOX", ref: `1:${i + 1}` }, seen: false,
+          raw: Buffer.from([`Message-ID: <fresh-${i}@x>`, `From: s${i}@x.test`, "To: owner@trafficflow.test",
+            `Subject: fresh ${i}`, "Content-Type: text/plain", "", `body ${i}`].join("\r\n")),
+        }));
+        serve = 0;
+        return { ...EMPTY, creates };
+      },
+    });
+    const seen: string[] = [];
+    for (const name of ["query", "exec"] as const) {
+      const orig = PGlite.prototype[name];
+      vi.spyOn(PGlite.prototype, name).mockImplementation(function (this: PGlite, text: unknown, ...rest: unknown[]) {
+        seen.push(String(text));
+        return (orig as any).call(this, text, ...rest);
+      } as any);
+    }
+    cleanups.push(() => { vi.restoreAllMocks(); });
+    const sidecar = await createSidecar({
+      dataDir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      address: "owner@trafficflow.test", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+      searchBackfillTiming: { waitMs: 60 * 60 * 1000 }, adapterFactory: factory, log: () => {},
+    });
+    cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+    const isAnalyze = (s: string): boolean => /^ANALYZE public\.message_instances$/.test(s);
+    const isPage = (s: string): boolean => /^select "message_instances"\."folder"/.test(s);
+    await sidecar.start();
+    expect(seen.some(isPage), "the launch drain never read the known set").toBe(true);
+    serve = 30;
+    await sidecar.syncUntilQuiet();
+    const held = Number((await (sidecar.db as unknown as { $client: PGlite }).$client
+      .query<{ n: number }>("select count(*)::int as n from message_instances")).rows[0]!.n);
+    expect(held, "the import wrote no locators").toBeGreaterThan(0);
+    const from = seen.length;
+    await sidecar.syncUntilQuiet();
+    const after = seen.slice(from);
+    const analyzed = after.findIndex(isAnalyze);
+    expect(analyzed, "the locators the import wrote were never analyzed").toBeGreaterThan(-1);
+    const page = after.findIndex(isPage);
+    if (page > -1) expect(analyzed).toBeLessThan(page);
+    expect(seen.filter(isAnalyze), "analyzed more than once").toHaveLength(1);
   }, 120_000);
 });

@@ -392,6 +392,9 @@ export class KnownSetCache {
   private retainedBytes = 0;
   private bytesSaved = 0;
   private droppedBy: string | null = null;
+  /** Bumped by every drop and every insert or move the memo is told of, warm or cold: a read the
+      count moved under predates a write, so it is handed back and never kept. */
+  private writes = 0;
   private cycleReads = 0;
   private cycleHits = 0;
   /**
@@ -482,6 +485,7 @@ export class KnownSetCache {
    * never fetched again); and a read while a group is open takes the drop path.
    */
   noteInserted(locator: KnownLocator): void {
+    this.writes += 1;
     if (this.entries === null) return;              // cold: the next read is the truth
     if (this.writeDepth > 0) { this.pending.push(locator); return; }
     this.append(locator);
@@ -497,6 +501,7 @@ export class KnownSetCache {
    * find at `from` is a set that has stopped describing the mailbox, and that takes the drop.
    */
   noteMoved(from: KnownLocator | { folder: string; ref: string }, to: KnownLocator): void {
+    this.writes += 1;
     if (this.entries === null) return;
     if (this.writeDepth > 0) { this.pendingMoves.push([from, to]); return; }
     this.moveOne(from, to);
@@ -588,6 +593,7 @@ export class KnownSetCache {
    * which is the moment the drop actually cost something.
    */
   drop(why: string): void {
+    this.writes += 1;
     if (this.entries !== null) { this.droppedBy = why; this.gen += 1; }
     this.entries = null;
     this.tupleIndex = null;
@@ -649,7 +655,17 @@ export class KnownSetCache {
       // that hands out its own array makes any future caller's mutation permanent and invisible.
       return [...this.entries];
     }
+    const writesAtRead = this.writes;
     const rows = await read(mailboxId);
+    this.lastRows = rows.length;
+    this.lastBytes = estimateWireBytes(rows);
+    this.cycleReads++;
+    if (this.writes !== writesAtRead) {
+      // The read spans turns of the loop (it reads in pages), and a drop or a write landed
+      // meanwhile: these rows may predate it. Served, never kept.
+      this.droppedBy = "a write while the read was out";
+      return rows;
+    }
     const wants = estimateRetainedBytes(rows);
     if (this.budget.offer(this, wants)) {
       this.entries = [...rows];
@@ -664,9 +680,6 @@ export class KnownSetCache {
     this.tupleIndex = null;
     this.shape = null;
     this.gen += 1;
-    this.lastRows = rows.length;
-    this.lastBytes = estimateWireBytes(rows);
-    this.cycleReads++;
     return rows;
   }
 
