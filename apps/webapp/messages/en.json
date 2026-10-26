@@ -3219,6 +3219,7 @@
     "agreeCountSoFar": "ohmail is still reading this window. So far {letters, plural, one {# letter} other {# letters}} from {senders, plural, one {# sender} other {# senders}} you have not decided about would wait in the Screener; mail it reads after you agree goes to the Screener too.",
     "agreeCountReading": "ohmail is still reading this window and has not found a letter from a sender you have not decided about yet; mail it reads after you agree goes to the Screener too.",
     "windowCheckingHolder": "Checking whether another computer organizes this mailbox…",
+    "holderCheckSlow": "ohmail could not check yet whether another computer organizes this mailbox, so nothing was stored. Try again in a moment.",
     "windowStepUp": "Agreeing needs your second factor again — the check expires a few minutes after the last one. Nothing was stored.",
     "mailboxStepUp": "Testing and connecting a mailbox need your second factor again — the check expires a few minutes after the last one. Nothing was stored.",
     "windowGone": "That mailbox is no longer connected, so nothing was saved. Close setup, connect it again, and run setup from there.",

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -259,6 +259,33 @@ describe("the requests that leave this window", () => {
     await act(async () => { await made.organize(id, {}); });
     expect(asked.at(-1)!.url).toBe(`/local/mailboxes/${id}/organize`);
     expect(JSON.parse(asked.at(-1)!.body)).toEqual({});
+  });
+
+  /* THE DOOR LOOKS BEFORE IT ADMITS A JOIN: a look that could not land is 503, which the stage says,
+     and the press waits as long as that look may take. */
+  it("a door that could not look answers 503: the press is `unchecked`, not a failure of the call", async () => {
+    answer = { status: 503, body: JSON.stringify({ error: { code: "organizer_unreadable", message: "could not be read" } }) };
+    const made = (await makeHost())!;
+    let outcome: unknown;
+    await act(async () => { outcome = await made.organize(id, { intent: "join" }); });
+    expect(outcome).toBe("unchecked");
+  });
+
+  it("the press outlasts the bridge's one minute, as the door's look may", async () => {
+    const made = (await makeHost())!;
+    vi.useFakeTimers();
+    try {
+      shellHost.__TAURI_INTERNALS__ = {
+        invoke: (command) => (command === "engine_request"
+          ? new Promise((resolve) => setTimeout(() => resolve(encode(200, JSON.stringify({ outcome: "authorized" }))), 90_000))
+          : Promise.resolve({})),
+      };
+      const verdict = made.organize(id, { intent: "join" }).then((o) => o, (err: Error) => err.name);
+      await vi.advanceTimersByTimeAsync(90_001);
+      expect(await verdict).toBe("stored");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("the decide step's count asks the shared route for THIS mailbox and answers its number (R20-03)", async () => {

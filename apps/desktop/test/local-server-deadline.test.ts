@@ -126,6 +126,9 @@ function probingRoutes(code: string): { routes: Route[]; elsewhere: string[] } {
     }
     if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)
       && (n.expression.text === "makeImapProbe" || n.expression.text === "makeSmtpProbe")) probes.push(n);
+    /* A look at the claim folder waits on the mail server too, under the peek read's own minute. */
+    if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)
+      && n.expression.name.text === "peekOrganizer") probes.push(n);
   });
   const inside = (x: ts.Node, h: ts.Node): boolean => x.getStart(sf) >= h.getStart(sf) && x.end <= h.end;
   const routes: Route[] = [];
@@ -243,6 +246,7 @@ const UNRESOLVED: Readonly<Record<string, string>> = {
 /** Probes the engine builds outside a `/local/*` route handler — none a bridge call can reach. */
 const ELSEWHERE: Readonly<Record<string, string>> = {
   probeSubmission: "the phone's settings check of an outgoing server, a method of the engine object, not a route",
+  peekOrganizer: "the phone's consent door looks through this method of the engine object, not a route",
 };
 
 /** The verdicts: a probing call without the constant, a deadline on a call that does not probe. */
@@ -271,6 +275,8 @@ describe("the census — every bridge call to a route that probes rides the loca
       { method: "POST", pattern: "/local/mailboxes/probe" },
       { method: "POST", pattern: "/local/mailboxes" },
       { method: "PATCH", pattern: "/local/mailboxes/:id" },
+      // Agree: a join the row cannot place is looked at on the mail server first.
+      { method: "POST", pattern: "/local/mailboxes/:id/organize" },
     ]));
     expect(engine.elsewhere, "a probe built outside a /local route is named, or it is a route this census misses").toEqual(Object.keys(ELSEWHERE).sort());
   });

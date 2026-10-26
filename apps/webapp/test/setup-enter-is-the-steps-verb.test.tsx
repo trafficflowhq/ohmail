@@ -222,19 +222,21 @@ describe("R33-01: ↵ on every setup step does what the step's ↵ button does",
     expect(s.counts.left).toBe(1);
   });
 
-  it("while the holder check shuts Agree, focus waits on the step itself, never Cancel; then it moves to the choice", async () => {
+  it("while the holder check holds the consent step, focus waits on the step itself, never Cancel; then it moves to the step's verb", async () => {
     const s = await mount({
       facts: { ...FIRST_RUN, mailbox: { ...FIRST_RUN.mailbox!, organizerChecked: false } },
     });
-    await enter();
-    expect(s.heading()).toBe(t.windowTitle);
-    expect(s.button(t.agree).disabled, "the check is not pending").toBe(true);
-    expect(focusWord(), "focus took the foot's Cancel while Agree was shut").toBe("FORM");
+    expect(s.heading()).toBe(t.resumeCheckingTitle);
+    expect(s.button(t.continue).disabled, "the check is not pending").toBe(true);
+    expect(focusWord(), "focus took the foot's Cancel while the step was shut").toBe("FORM");
     await enter();
     expect(s.el.textContent, "↵ asked to cancel setup").not.toContain(t.cancelConfirm);
-    expect(s.counts.organized).toBe(0);
+    expect(s.heading(), "↵ walked past the check").toBe(t.resumeCheckingTitle);
     await s.set((f) => ({ ...f, mailbox: { ...f.mailbox!, organizerChecked: true } }));
-    expect(focusWord(), "the check answered and focus stayed put").toBe("input radio 365 (checked)");
+    expect(s.heading()).toBe(t.consentTitle);
+    expect(focusWord(), "the check answered and focus stayed put").toBe(`BUTTON "${t.continue}↵"`);
+    await enter();
+    expect(focusWord()).toBe("input radio 365 (checked)");
     await enter();
     expect(s.counts.organized, "↵ did not agree once the check answered").toBe(1);
   });

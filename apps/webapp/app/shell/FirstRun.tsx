@@ -127,11 +127,14 @@ const SETTLE_MS = 4_000;
 const COUNT_REREAD_MS = 5_000;
 
 /**
- * HOW LONG AGREE WAITS FOR THE DOOR'S FIRST LOOK AT WHO HOLDS THE MAILBOX. A look that fails
- * answers too (unreadable), so this bounds only an engine that never reaches its first pass;
- * past it Agree is offered and the press is a join, which yields to a live claim at the fence.
+ * HOW LONG SETUP READS AGAIN WHILE IT WAITS FOR THE DOOR'S FIRST LOOK AT WHO HOLDS THE MAILBOX.
+ * Past it the wait says it is slow and offers one more read; it never offers consent or Agree
+ * over a look that has not answered.
  */
 export const HOLDER_CHECK_MS = 60_000;
+
+/** How often setup reads the facts again while it waits for that look. */
+export const HOLDER_REREAD_MS = 2_000;
 
 /**
  * TESTS A SERVER ON THIS COMPUTER IS STILL HOLDING, on the long-wait door: kept outside the form,
@@ -630,8 +633,10 @@ export function FirstRun({
   const decidedUnder = useRef<{ mailboxId: string | null; again: () => void } | null>(null);
   /** The sender whose decision went to the holder that kept the mailbox, once it did. */
   const [reasked, setReasked] = useState<string | null>(null);
-  /** The mailbox whose first look outlasted {@link HOLDER_CHECK_MS}; Agree is offered for it. */
-  const [checkExpiredFor, setCheckExpiredFor] = useState<string | null>(null);
+  /** The mailbox whose Agree the door refused over a holder these facts do not name yet. */
+  const [heldPressFor, setHeldPressFor] = useState<string | null>(null);
+  /** The mailbox whose wait for the door's look outlasted {@link HOLDER_CHECK_MS}. */
+  const [slowFor, setSlowFor] = useState<string | null>(null);
   /** A press the door's second-factor check refused: the prompt is open, and a verified code presses it once more. */
   const [stepUp, setStepUp] = useState<{ press: StepUpPress; mailboxId: string | null; on: OnboardingStep | null } | null>(null);
   /** The sentence on screen is a refused Forget's: Start over's confirm carries it, not the step. */
@@ -687,15 +692,43 @@ export function FirstRun({
       return floor === ask.floor ? ask : { ...ask, floor };
     });
   }, [seenStamp, mailboxId]);
-  /* AGREE WAITS FOR THE LOOK. Until the door has read who holds the mailbox, a live holder may be
-     one read away, and the guard below moves this run to the claim question when it lands. */
-  const answered = holderAnswered(facts.mailbox);
-  const checking = !answered && checkExpiredFor !== mailboxId;
+  /* CONSENT AND AGREE WAIT FOR THE LOOK. Until the door has read who holds the mailbox a live
+     holder may be one read away, and so may the name of one the door refused a press over; the
+     guard in `firstRunStep` moves the run to the claim question when it lands. */
+  const awaitingLook = mailboxId !== null && (step === "consent" || step === "window")
+    && claimAnsweredFor !== mailboxId
+    && (!holderAnswered(facts.mailbox)
+      || (heldPressFor === mailboxId && holderVerdict(facts.mailbox) !== "somebody"));
+  const lookSlow = awaitingLook && slowFor === mailboxId;
+  /* A ref: the shell passes a fresh closure each render, and the wait reads on a timer. */
+  const refreshRef = useRef(onRefresh);
+  refreshRef.current = onRefresh;
   useEffect(() => {
-    if (step !== "window" || answered || mailboxId === null) return;
-    const timer = setTimeout(() => setCheckExpiredFor(mailboxId), HOLDER_CHECK_MS);
-    return () => clearTimeout(timer);
-  }, [step, answered, mailboxId]);
+    if (!awaitingLook || mailboxId === null || slowFor === mailboxId) return;
+    let reading = false;
+    const again = setInterval(() => {
+      if (reading) return;
+      reading = true;
+      void Promise.resolve().then(() => refreshRef.current()).catch(() => { /* the next tick */ })
+        .finally(() => { reading = false; });
+    }, HOLDER_REREAD_MS);
+    const bound = setTimeout(() => setSlowFor(mailboxId), HOLDER_CHECK_MS);
+    return () => { clearInterval(again); clearTimeout(bound); };
+  }, [awaitingLook, mailboxId, slowFor]);
+  /* A wait that ended starts from nothing next time, and a named holder spends the refused press. */
+  useEffect(() => {
+    if (!awaitingLook && slowFor !== null) setSlowFor(null);
+    if (heldPressFor !== null && heldPressFor === mailboxId && holderVerdict(facts.mailbox) === "somebody") {
+      setHeldPressFor(null);
+    }
+  }, [awaitingLook, slowFor, heldPressFor, mailboxId, facts.mailbox]);
+  /** Try again, past the bound: one read, no timer. */
+  const [retrying, setRetrying] = useState(false);
+  const retryLook = (): void => {
+    setRetrying(true);
+    void Promise.resolve().then(() => onRefresh()).catch(() => { /* still waiting */ })
+      .finally(() => setRetrying(false));
+  };
   const takeover = takeoverState(
     facts.mailbox,
     takeoverAsk !== null && takeoverAsk.mailboxId === mailboxId
@@ -806,7 +839,7 @@ export function FirstRun({
    * press once more (`retried`). A refusal stays here with its sentence, never a silent step back.
    */
   const agree = (retried: boolean) => {
-    if (!mailboxId || checking) return;
+    if (!mailboxId || awaitingLook) return;
     /* A TAKEOVER ONLY BY NAME: the person chose "Organize here instead" in this run.
        Every other Agree is a join, which yields to a live claim it has not been shown. */
     const intent = claimAnsweredFor === mailboxId && elsewhereChoice === "here" ? "takeover" : "join";
@@ -829,9 +862,14 @@ export function FirstRun({
         }
         throw err;
       }
-      /* Refused over a live holder: nothing stored, and the re-read lands on the claim
-         question. */
-      if (outcome === "held") return;
+      /* Refused over a live holder: nothing stored, and the run waits until a read names the
+         holder, then asks the claim question. */
+      if (outcome === "held") {
+        setHeldPressFor(mailboxId);
+        return;
+      }
+      /* The door could not look: nothing stored, and the screen says so. */
+      if (outcome === "unchecked") throw new Error(t("holderCheckSlow"));
       /* ── A PRESS THAT STORED NOTHING MAY NOT LOOK LIKE ONE THAT WORKED ───────────
        *
        * Every reply to this call is a 200, including the one for a mailbox that is no
@@ -1401,6 +1439,16 @@ export function FirstRun({
     </Button>
   );
 
+  /* THE WAIT FOR THE DOOR'S LOOK, in words: checking, or past the bound, slow and one more read. */
+  const holderWait = lookSlow ? (
+    <>
+      <SettingsVerdict state="bad" headline={t("holderCheckSlow")} />
+      <SettingsActions>
+        <Button type="button" onClick={retryLook} disabled={retrying}>{t("resumeRetry")}</Button>
+      </SettingsActions>
+    </>
+  ) : <SettingsVerdict state="wait" headline={t("windowCheckingHolder")} />;
+
   /**
    * A STEP'S BODY IS A FORM so ↵ submits it — the keyboard-first law applied to a flow whose
    * every screen has exactly one forward verb. `onSubmit` is the same closure the primary
@@ -1821,7 +1869,15 @@ export function FirstRun({
           ),
         ) : null}
 
-        {step === "consent" ? screen(forward, (
+        {step === "consent" ? screen(awaitingLook ? () => { /* nothing to press while it waits */ } : forward, awaitingLook ? (
+          /* THE STATEMENT WAITS FOR THE LOOK: until the door has read who holds the mailbox, what is
+             agreed to here may be about a mailbox another install organizes. */
+          <>
+            <h1 id={`${ids}-title`}>{t("resumeCheckingTitle")}</h1>
+            {holderWait}
+            {foot({ back: true, primary: next(t("continue"), { disabled: true }) })}
+          </>
+        ) : (
           <>
             <h1 id={`${ids}-title`}>{t("consentTitle")}</h1>
             {/* THE CONSENT STATEMENT, and the two sentences under it are not decoration. The
@@ -1844,7 +1900,7 @@ export function FirstRun({
               <p className="sub">{t("windowLead")}</p>
               <SettingsChoice
                 name={`${ids}-window`} ariaLabel={t("windowTitle")} value={win}
-                onChange={setWin} disabled={busy || checking}
+                onChange={setWin} disabled={busy || awaitingLook}
                 options={[
                   { id: "90" as const, label: t("win90") },
                   { id: "180" as const, label: t("win180") },
@@ -1862,9 +1918,9 @@ export function FirstRun({
               ) : null}
               {reconnecting ? <SettingsVerdict state="wait" headline={t("windowReconnecting")} /> : null}
               <p className="ob-consent ob-window-recap">{firstSentence(t("consentBody"))}</p>
-              {checking ? <SettingsVerdict state="wait" headline={t("windowCheckingHolder")} /> : null}
+              {awaitingLook ? holderWait : null}
               {stepProblem ? <SettingsVerdict state="bad" headline={stepProblem} /> : null}
-              {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree"), { disabled: checking }) })}
+              {foot({ back: true, primary: next(busy ? t("agreeing") : t("agree"), { disabled: awaitingLook }) })}
             </>
           ),
         ) : null}
