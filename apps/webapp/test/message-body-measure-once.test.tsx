@@ -3,6 +3,7 @@ import { Activity } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { ThemeProvider } from "@ohmail/ui";
 import { MessageBody } from "../app/components/MessageBody";
 
 /**
@@ -124,5 +125,40 @@ describe("the frame is probed once per load", () => {
     await report(() => [0, 0]);
     expect(probes(), "the reveal probed a frame whose document and column had not moved").toBe(1);
     expect(reads(), "the reveal read the layout of a frame nothing had moved").toBe(0);
+  });
+});
+
+describe("the frame's document is touched only once it has loaded", () => {
+  /* A mount used to write the dark attribute into the empty document every new frame starts
+     with, before its own one loaded: a read of each frame's document per mount, for nothing.
+     Mutation watched red: the dark effect back on `[dark, loadedKey, mail]` without the load check. */
+  it("mounting reads no frame document before its load, and a flip still reaches the loaded one", async () => {
+    const own = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentDocument")!;
+    let reads = 0;
+    let beforeLoad = -1;
+    Object.defineProperty(HTMLIFrameElement.prototype, "contentDocument", {
+      configurable: true,
+      get(this: HTMLIFrameElement) { reads += 1; return own.get!.call(this); },
+    });
+    host!.addEventListener("load", () => { if (beforeLoad < 0) beforeLoad = reads; }, true);
+    try {
+      await act(async () => {
+        root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h(MessageBody, { text: "copy", html: HTML }) }));
+      });
+      await settle();
+      expect(beforeLoad, "control: the frame loaded").toBeGreaterThanOrEqual(0);
+      expect(beforeLoad, "the frame's empty first document was read before its own loaded").toBe(0);
+      const live = () => host!.querySelector("iframe")!.contentDocument!.documentElement.hasAttribute("data-ohmail-dark");
+      const flip = async () => {
+        const b = [...host!.querySelectorAll("button")].find((x) => /^(Original|Adapt)/.test(x.textContent ?? ""))!;
+        await act(async () => { b.click(); });
+      };
+      await flip();
+      expect(live(), "Original left the loaded document dark").toBe(false);
+      await flip();
+      expect(live(), "Adapt did not reach the loaded document").toBe(true);
+    } finally {
+      Object.defineProperty(HTMLIFrameElement.prototype, "contentDocument", own);
+    }
   });
 });
