@@ -619,8 +619,8 @@ export function rowStamp(
 }
 
 /**
- * One recipient, WRITTEN OUT — a chip under the header (viewer redesign). `me` marks the reader's own address so the
- * card can swap the ACCOUNT's identity onto the face; the flag is computed here, on the STORED form, and the name the
+ * One recipient — a chip under the header. `me` marks the reader's own address so the card can say `you` and put
+ * the ACCOUNT's identity on its title; the flag is computed here, on the STORED form, and the name the
  * account goes by is deliberately not — that answer belongs to `GET /mailboxes` and reaches the card through the
  * chrome (`ownNameOf`), not through a pure function every mount shares. `address` is the wire form, untouched: every
  * action a chip offers (copy, write, screening) acts on it, and only the FACE decodes (`displayAddress`, at the
@@ -669,7 +669,12 @@ export function recipientRows(
     name: r.name || null,
     address: r.address,
   });
-  return { to: to.map(chip), cc: cc.map(chip), empty: false };
+  // The reader first in its field, everyone else in header order.
+  const meFirst = (rs: EmailAddress[]): RecipientRowChip[] => {
+    const all = rs.map(chip);
+    return [...all.filter((r) => r.me), ...all.filter((r) => !r.me)];
+  };
+  return { to: meFirst(to), cc: meFirst(cc), empty: false };
 }
 
 /** Tag lookup helpers over the mirror's tag entities. */

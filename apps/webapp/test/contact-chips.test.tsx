@@ -11,8 +11,8 @@ import { setActiveFormatZone } from "../app/shell/locale";
 /**
  * ═══ VIEWER CONTACT CHIPS AND THEIR POPOVER ═══════════════════════════════════════════
  *
- * The recipients under a message header are WRITTEN OUT — To and Cc in full, each recipient a
- * focusable <button> chip — and pressing a chip opens a small popover with exactly four verbs:
+ * The recipients under a message header are NAMED — each recipient a focusable <button> chip, a
+ * field of more than three folded to three names and a count — and pressing a chip opens a small popover with exactly four verbs:
  * Copy address · Everything from and to this address · Write · Screener settings. The three
  * claims this file holds, each of which has a specific way of silently shipping wrong:
  *
@@ -196,15 +196,35 @@ afterEach(async () => {
 
 /* ══ THE BLOCK — To and Cc written out, every recipient a chip ═════════════════════════════ */
 
-describe("the recipients block writes To and Cc out in full", () => {
-  it("renders one chip per recipient — no fold, no +N, no count standing in for a person", async () => {
+describe("the recipients block: names, folded when the letter went to many", () => {
+  it("a small letter names everyone — no count stands in for a person", async () => {
     await mountHeader(msg());
     const block = host!.querySelector(".msg-rcpts");
     expect(block, "no recipients block rendered").toBeTruthy();
     expect(chips()).toHaveLength(3);
-    // Nothing summarises: the old folded vocabulary is gone in every form.
-    expect(host!.querySelector(".msg-rcpt-line")).toBeNull();
-    expect(block!.textContent).not.toContain("+1");
+    expect(block!.textContent).not.toMatch(/other/);
+  });
+
+  it("a letter to 34 people folds To to one line of three names and a count, Cc likewise", async () => {
+    const people = (n: number, tag: string): Addr[] =>
+      Array.from({ length: n }, (_, i) => ({ name: `${tag} Person${i + 1}`, address: `${tag.toLowerCase()}${i + 1}@example.com` }));
+    ownAddresses = ["to5@example.com"];
+    await mountHeader(msg({ to: people(34, "To"), cc: people(4, "Cc") }));
+    const rows = [...host!.querySelectorAll<HTMLElement>(".rcpt-row")];
+    expect(rows).toHaveLength(2);
+    // The reader's own address comes first in its field, as "you".
+    expect([...rows[0]!.querySelectorAll(".rcpt-chip")].map((c) => c.textContent))
+      .toEqual(["you", "To Person1", "To Person2"]);
+    expect(rows[0]!.querySelector(".msg-rcpt-more")!.textContent).toContain("and 31 others");
+    expect(rows[1]!.querySelectorAll(".rcpt-chip")).toHaveLength(3);
+    expect(rows[1]!.querySelector(".msg-rcpt-more")!.textContent).toContain("and 1 other");
+    // Expanding names all 38, and the press becomes the collapse.
+    await click(rows[0]!.querySelector(".msg-rcpt-more"));
+    expect(chips()).toHaveLength(38);
+    expect(host!.querySelector(".msg-rcpt-more")!.getAttribute("aria-expanded")).toBe("true");
+    expect(host!.querySelector(".msg-rcpt-full"), "the details opened with the names").toBeTruthy();
+    await click(host!.querySelector(".msg-rcpt-more"));
+    expect(chips()).toHaveLength(6);
   });
 
   it("labels the rows To and Cc, with the Cc person under the Cc label", async () => {
@@ -216,9 +236,11 @@ describe("the recipients block writes To and Cc out in full", () => {
     expect(rows[1]!.textContent).toContain("Cy Cole");
   });
 
-  it("a named recipient reads `Name – address`; a no-name one prints the bare address ONCE", async () => {
+  it("a named chip reads the name alone, its address on the title; a no-name one prints the address once", async () => {
     await mountHeader(msg());
-    expect(chipByText("Anna Roth")!.textContent).toBe("Anna Roth – anna@x.invalid");
+    const anna = chipByText("Anna Roth")!;
+    expect(anna.textContent).toBe("Anna Roth");
+    expect(anna.title).toBe("anna@x.invalid");
     const bare = chipByText("bare@x.invalid")!;
     expect(bare.textContent).toBe("bare@x.invalid");
   });
@@ -372,32 +394,33 @@ describe("inert chrome: the branch production desktop and every bare harness tak
 
 /* ══ THE "ME" CHIP — the account's own identity, from GET /mailboxes ═══════════════════════ */
 
-describe("the reader's own address renders as the account's identity", () => {
-  it("shows the account's real name and address, and its popover works", async () => {
+describe("the reader's own address reads as you", () => {
+  it("reads `you`, first in its field, with the account's name and address on its title", async () => {
     ownAddresses = ["bare@x.invalid"];
     ownName = "Mila Brändli";
     await mountHeader(msg());
-    const me = chipByText("Mila Brändli")!;
-    expect(me.textContent).toBe("Mila Brändli – bare@x.invalid");
+    const me = chips()[0]!;
+    expect(me.textContent).toBe("you");
+    expect(me.title).toBe("Mila Brändli <bare@x.invalid>");
     await click(me);
-    expect(popover()).toBeTruthy();
+    expect(popover()!.textContent).toContain("Mila Brändli");
     await click(itemByText("Copy address"));
     expect(copied).toEqual(["bare@x.invalid"]);
   });
 
-  it("falls back to the bare address when the mailbox carries no display name — never invents", async () => {
+  it("with no display name the title is the bare address — never invented", async () => {
     ownAddresses = ["bare@x.invalid"];
     ownName = null;
     await mountHeader(msg());
-    const me = chipByText("bare@x.invalid")!;
-    expect(me.textContent).toBe("bare@x.invalid");
+    expect(chips()[0]!.textContent).toBe("you");
+    expect(chips()[0]!.title).toBe("bare@x.invalid");
   });
 
   it("the account name never replaces a STRANGER'S name — only the me-fold reads it", async () => {
     ownAddresses = ["bare@x.invalid"];
     ownName = "Mila Brändli";
     await mountHeader(msg());
-    expect(chipByText("Anna Roth")!.textContent).toBe("Anna Roth – anna@x.invalid");
+    expect(chipByText("Anna Roth")!.textContent).toBe("Anna Roth");
   });
 });
 

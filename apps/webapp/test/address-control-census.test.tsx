@@ -195,7 +195,7 @@ describe("each surface's address, classified by the hit test it is actually unde
     await mount(h(MessageRecipients, { message: m }));
     const chip = host!.querySelector<HTMLButtonElement>(".rcpt-chip");
     expect(chip, "the chip rendered").not.toBeNull();
-    expect(chip!.textContent).toContain(ADDRESS);
+    expect(chip!.title).toBe(ADDRESS);
     expect(senderHitOf(chip)).toBeNull();
     // The chip is a control already — it opens the contact popover — so the view is a verb in it.
     expect(host!.querySelector('a[href^="#/address/"]')).toBeNull();

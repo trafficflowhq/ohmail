@@ -39,6 +39,9 @@ import { MoreMenu, type MoreMenuItem } from "./MoreMenu";
 import { useSenderCheckWords } from "./sender-check";
 import { autoLoadsImages } from "./remote-images";
 
+/** Names per recipients field before the rest folds into "and N others" (`MessageRecipients`). */
+const READER_RECIPIENT_NAMES = 3;
+
 /**
  * The header — who it is from, what it is called, when, and who else it went to. Reads `ownAddresses` and
  * `openSenderMenu` off the chrome rather than as props (the pane is mounted twice and holds no engine hook);
@@ -275,7 +278,7 @@ export function MessageHeader({
         {checkLine ? <p className="msg-from-check" data-reason={checkLine.reason}><Icon name="shield" size={12} /><span>{checkLine.text}</span></p> : null}
       </div>
       {subjectLine}
-      <MessageRecipients message={message} notice={notice} />
+      <MessageRecipients message={message} max={READER_RECIPIENT_NAMES} notice={notice} />
       {/* WHICH ADDRESS OF YOURS THIS ARRIVED AT, above one mailbox. Its own node under the
           recipients block rather than a row inside it: that block reads the To/Cc headers, which
           are silent on a Bcc and name the list on list mail; this is the delivery mailbox

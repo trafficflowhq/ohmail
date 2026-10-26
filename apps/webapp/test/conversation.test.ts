@@ -752,26 +752,25 @@ describe("the header", () => {
     expect(host!.querySelector(".msg-rcpts")).toBeNull();
   });
 
-  it("a recipient who IS the reader wears the ACCOUNT'S identity — and never a stranger's chip", async () => {
-    // the "me" fold no longer prints a translated "me" — the chip wears the account's real
-    // name and address (`chrome.ownNameOf`, from GET /mailboxes). `contact-chips.test.tsx`
-    // holds the fallback ladder; this holds the fold's two sides on the thread surface.
+  it("a recipient who IS the reader reads `you` — and never a stranger's chip", async () => {
+    // The account's name and address ride the chip's title (`contact-chips.test.tsx`); this
+    // holds the fold's two sides on the thread surface.
     const withMe = msg({
       id: "r", subject: "Hi", threadId: null, date: "2026-08-01T09:00:00.000Z",
       to: [{ name: null, address: "owner@example.invalid" }, { name: "Anna Roth", address: "anna@x.invalid" }],
     });
 
-    // Known own address, named mailbox → the account's identity on the chip.
+    // Known own address → `you`.
     ownAddresses = ["owner@example.invalid"];
     ownName = "Own Er";
     await mountPane(withMe);
     const faces = () => [...host!.querySelectorAll(".rcpt-chip")].map((c) => c.textContent);
-    expect(faces()).toEqual(["Own Er – owner@example.invalid", "Anna Roth – anna@x.invalid"]);
+    expect(faces()).toEqual(["you", "Anna Roth"]);
 
     // NOT known → the bare address, never the account's name. The explicit degradation branch.
     ownAddresses = [];
     await mountPane(withMe);
-    expect(faces()).toEqual(["owner@example.invalid", "Anna Roth – anna@x.invalid"]);
+    expect(faces()).toEqual(["owner@example.invalid", "Anna Roth"]);
   });
 
   it("writes every Cc out as chips — `details` keeps only the exact date and the folder", async () => {
@@ -786,8 +785,8 @@ describe("the header", () => {
     await mountPane(many);
     // nobody is behind a press any more — every Cc person is ON screen, a chip each.
     const block = host!.querySelector(".msg-rcpts")!;
-    expect(block.textContent).toContain("bo@x.invalid");
-    expect(block.textContent).toContain("cy@x.invalid");
+    expect(block.textContent).toContain("Bo");
+    expect(block.textContent).toContain("Cy");
     expect(block.textContent).not.toContain("cc 2");
     // What remains behind `details` is what the chips do not say: the exact instant.
     expect(host!.querySelector(".msg-rcpt-full")).toBeNull();

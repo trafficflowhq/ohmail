@@ -10,6 +10,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { KeymapProvider } from "../app/shell/keymap";
 import { MessageRecipients } from "../app/shell/MessageRecipients";
+import { MessageChromeProvider } from "../app/shell/message-chrome";
 import { ReadsView } from "../app/views/ReadsView";
 
 /**
@@ -112,7 +113,7 @@ async function mountReads(m: EngineMessage, locale: "en" | "de" = "en"): Promise
  * are still type-valid, and `slice` treats a negative as "from the end", so the component is
  * asked directly rather than through a mount that cannot express the question.
  */
-async function mountRaw(m: EngineMessage, max: number, locale: "en" | "de" = "en"): Promise<void> {
+async function mountRaw(m: EngineMessage, max: number, locale: "en" | "de" = "en", own: string[] = []): Promise<void> {
   host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
@@ -120,7 +121,9 @@ async function mountRaw(m: EngineMessage, max: number, locale: "en" | "de" = "en
   await act(() => {
     root.render(
       <NextIntlClientProvider locale={locale} messages={locale === "de" ? de : en} now={new Date(ISO)} timeZone="UTC">
-        <MessageRecipients message={m} max={max} />
+        <MessageChromeProvider value={{ ownAddresses: own } as never}>
+          <MessageRecipients message={m} max={max} />
+        </MessageChromeProvider>
       </NextIntlClientProvider>,
     );
   });
@@ -178,27 +181,22 @@ describe("a Reads card with several recipients names them in its header", () => 
 
   it("names the first two and folds the rest into a count — not a name dropped in silence", async () => {
     await mountReads(message(three));
-    expect(chips().map((c) => c.textContent)).toEqual([
-      "Anna Roth – anna@x.invalid",
-      "Bo Lind – bo@x.invalid",
-    ]);
-    expect(fold()!.textContent).toContain("+1 more");
+    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
+    expect(fold()!.textContent).toContain("and 1 other");
   });
 
-  it("the count covers Cc as well as To — everyone not drawn is in the number", async () => {
-    await mountReads(message(three, [{ name: "Di Falk", address: "di@x.invalid" }]));
-    expect(chips()).toHaveLength(2);
-    expect(fold()!.textContent).toContain("+2 more");
+  it("each field folds on its own line — Cc keeps its own names and its own count", async () => {
+    await mountReads(message(three, [...three].reverse()));
+    const rows = [...host!.querySelectorAll<HTMLElement>(".rcpt-row")];
+    expect(rows.map((r) => r.querySelectorAll(".rcpt-chip").length)).toEqual([2, 2]);
+    expect(rows[1]!.querySelector(".rcpt-k")!.textContent).toBe("Cc");
+    expect(rows[1]!.querySelector(".msg-rcpt-more")!.textContent).toContain("and 1 other");
   });
 
   it("pressing the count names everyone, and the control goes back to being `details`", async () => {
     await mountReads(message(three));
     await click(fold());
-    expect(chips().map((c) => c.textContent)).toEqual([
-      "Anna Roth – anna@x.invalid",
-      "Bo Lind – bo@x.invalid",
-      "Cy Cole – cy@x.invalid",
-    ]);
+    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
     expect(fold()!.textContent).toContain("details");
     expect(fold()!.getAttribute("aria-expanded")).toBe("true");
     // The disclosure's older half is still behind the same press.
@@ -207,8 +205,14 @@ describe("a Reads card with several recipients names them in its header", () => 
 
   it("the German face carries its own count, not the English one", async () => {
     await mountReads(message(three), "de");
-    expect(fold()!.textContent).toContain("+1 weitere");
+    expect(fold()!.textContent).toContain("und 1 weitere");
     expect(block()!.querySelector(".rcpt-k")!.textContent).toBe("An");
+  });
+
+  it("the German face calls the reader `dich`", async () => {
+    await mountRaw(message([{ name: null, address: "me@x.invalid" }, ...three]), 2, "de", ["me@x.invalid"]);
+    expect(chips().map((c) => c.textContent)).toEqual(["dich", "Anna Roth"]);
+    expect(fold()!.textContent).toContain("und 2 weitere");
   });
 });
 
@@ -232,7 +236,7 @@ describe("a card with one recipient is the header it was", () => {
   it("exactly two recipients draws both and NO count — the cap is not a `+0`", async () => {
     await mountReads(message(three.slice(0, 2)));
     expect(chips()).toHaveLength(2);
-    expect(fold()!.textContent).not.toContain("+");
+    expect(fold()!.textContent).not.toContain("other");
     expect(fold()!.textContent).toContain("details");
   });
 });
@@ -313,19 +317,6 @@ describe("the block is mounted, never re-spelled", () => {
     expect(code('const u = "https://x.invalid/a"; // note')).toContain("https://x.invalid/a");
   });
 
-  it("the reading pane mounts it UNCAPPED — the pane names everyone", () => {
-    const pane = code(readFileSync(repoFile("app/shell/MessageCard.tsx"), "utf8"));
-    // The rule is "no cap", not "exactly these props": this mount also passes `notice` now that
-    // the blocking sentence is printed by the disclosure in this block, and `max` is the one prop
-    // it may never pass — a cap would fold the pane's recipients into a count.
-    const mount = /<MessageRecipients\s([^>]*?)\/>/.exec(pane);
-    expect(mount, "the reading pane does not mount MessageRecipients").not.toBeNull();
-    const props = mount ? mount[1] : "";
-    expect(/\bmessage=\{message\}/.test(props), "the pane's mount does not pass the message").toBe(true);
-    expect(/\bmax=/.test(props),
-      "the reading pane's mount passes a cap — it must name every recipient").toBe(false);
-  });
-
   it("the card's cap is stated once, as a named constant", () => {
     const stream = code(readFileSync(repoFile("app/shell/StreamCardMemo.tsx"), "utf8"));
     expect(stream).toMatch(/const CARD_RECIPIENT_CHIPS = \d+;/);
@@ -336,26 +327,64 @@ describe("the block is mounted, never re-spelled", () => {
 /* ══ THE CAP IS NORMALISED AT THE BOUNDARY ═════════════════════════════════════════════════ */
 
 describe("a nonsense cap cannot produce a plausible-looking block", () => {
-  it("a NEGATIVE cap does not slice from the end — it caps at zero", async () => {
+  it("a NEGATIVE cap does not slice from the end — a field still shows its first name", async () => {
     // `slice(0, -1)` keeps everything but the LAST recipient, which is the inverse of "the
     // first N" and renders a block that looks entirely reasonable. Nothing in the product
     // passes a negative; that is exactly why it would never have been noticed.
     await mountRaw(message(three), -1);
-    expect(chips(), "a negative cap sliced from the end").toHaveLength(0);
-    expect(fold()!.textContent).toContain("+3 more");
+    expect(chips().map((c) => c.textContent), "a negative cap sliced from the end").toEqual(["Anna Roth"]);
+    expect(fold()!.textContent).toContain("and 2 others");
   });
 
-  it("a cap of zero puts every name behind the count, and draws no empty row", async () => {
+  it("a cap of zero still names one person per field — never a label with only a count", async () => {
     await mountRaw(message(three), 0);
-    expect(chips()).toHaveLength(0);
-    expect(document.querySelectorAll(".rcpt-row"), "an empty label row was drawn").toHaveLength(0);
-    expect(fold()!.textContent).toContain("+3 more");
+    expect(chips()).toHaveLength(1);
+    expect(fold()!.textContent).toContain("and 2 others");
   });
 
   it("a fractional cap is truncated, so the count agrees with the chips drawn", async () => {
     await mountRaw(message(three), 2.7);
     expect(chips()).toHaveLength(2);
-    expect(fold()!.textContent).toContain("+1 more");
+    expect(fold()!.textContent).toContain("and 1 other");
+  });
+});
+
+/* ══ A FOLDED FIELD IS ONE LINE — a name that does not fit goes to the count ═══════════════ */
+
+describe("a folded field hands a cut name to the count", () => {
+  /* jsdom lays nothing out: a chip reads as cut while its line holds more than `fits` names. */
+  const cutWhileMoreThan = (fits: number): (() => void) => {
+    const sw = Object.getOwnPropertyDescriptor(Element.prototype, "scrollWidth")!;
+    Object.defineProperty(Element.prototype, "scrollWidth", {
+      configurable: true,
+      get(this: Element) {
+        const line = this.classList.contains("rcpt-chip") ? this.parentElement! : null;
+        return line && line.querySelectorAll(".rcpt-chip").length > fits ? 100 : 0;
+      },
+    });
+    return () => Object.defineProperty(Element.prototype, "scrollWidth", sw);
+  };
+  const five: Addr[] = [...three, { name: "Di Falk", address: "di@x.invalid" }, { name: "Ed Holm", address: "ed@x.invalid" }];
+
+  it("drops names until the rest fit whole, and the count grows to match", async () => {
+    const restore = cutWhileMoreThan(2);
+    try {
+      await mountRaw(message(five), 3);
+      expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind"]);
+      expect(fold()!.textContent).toContain("and 3 others");
+    } finally { restore(); }
+  });
+
+  it("never drops the last name — a lone long name stays, the count beside it", async () => {
+    const restore = cutWhileMoreThan(0);
+    try {
+      await mountRaw(message(five), 3);
+      expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth"]);
+      expect(fold()!.textContent).toContain("and 4 others");
+      // Expanded, every name is back: the measure only ever trims the fold.
+      await click(fold());
+      expect(chips()).toHaveLength(5);
+    } finally { restore(); }
   });
 });
 
@@ -488,16 +517,16 @@ describe("the disclosure names only what it will actually reveal", () => {
 
   it("folded, and neither optional field: it claims the recipients alone", async () => {
     await mountRaw(without(message(three), { date: true, folder: true }), 2);
-    expect(ariaOf()).toBe("Show every recipient");
-    expect(fold()!.textContent).toContain("+1 more");
+    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient");
+    expect(fold()!.textContent).toContain("and 1 other");
   });
 
   it("folded with a date only, and with a folder only", async () => {
     await mountRaw(without(message(three), { folder: true }), 2);
-    expect(ariaOf()).toBe("Show every recipient and the exact date");
+    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and the exact date");
     await unmountAll();
     await mountRaw(without(message(three), { date: true }), 2);
-    expect(ariaOf()).toBe("Show every recipient and where this message sits");
+    expect(ariaOf()).toBe("To Anna Roth, Bo Lind and 1 other. Show every recipient and where this message sits");
   });
 
   it("nothing behind the press at all: there is no press", async () => {
@@ -511,5 +540,50 @@ describe("the disclosure names only what it will actually reveal", () => {
   it("the German face makes the same distinctions", async () => {
     await mountRaw(without(message(three), { folder: true }), Number.POSITIVE_INFINITY, "de");
     expect(ariaOf()).toBe("Das genaue Datum anzeigen");
+  });
+});
+
+/* ══ THE FOLD IS ONE DISCLOSURE FOR THE KEYBOARD AND THE SCREEN READER ═════════════════════ */
+
+describe("the count keeps focus, always folds back, and says what it counts", () => {
+  const six: Addr[] = [...three, { name: "Di Falk", address: "di@x.invalid" },
+    { name: "Ed Holm", address: "ed@x.invalid" }, { name: "Fe Berg", address: "fe@x.invalid" }];
+
+  it("a keyboard press on the count leaves focus on the expanded control, and back", async () => {
+    await mountRaw(message(six), 3);
+    fold()!.focus();
+    await click(document.activeElement);
+    expect(document.activeElement, "focus fell to the page").not.toBe(document.body);
+    expect(document.activeElement!.getAttribute("aria-expanded")).toBe("true");
+    await click(document.activeElement);
+    expect(chips()).toHaveLength(3);
+    expect(document.activeElement).toBe(fold());
+    expect(fold()!.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("a letter with no date and no folder still folds back after it was expanded", async () => {
+    await mountRaw(without(message(six), { date: true, folder: true }), 3);
+    await click(fold());
+    expect(chips()).toHaveLength(6);
+    expect(fold(), "no control left to fold the list back").toBeTruthy();
+    expect(fold()!.getAttribute("aria-expanded")).toBe("true");
+    await click(fold());
+    expect(chips().map((c) => c.textContent)).toEqual(["Anna Roth", "Bo Lind", "Cy Cole"]);
+    expect(fold()!.textContent).toContain("and 3 others");
+  });
+
+  it("the count's accessible name carries the field, the names and the count", async () => {
+    await mountRaw(message([{ name: null, address: "me@x.invalid" }, ...six], six), 3, "en", ["me@x.invalid"]);
+    const [toCount, ccCount] = [...host!.querySelectorAll<HTMLButtonElement>(".msg-rcpt-more")];
+    expect(toCount!.getAttribute("aria-label")).toBe(
+      "To you, Anna Roth, Bo Lind and 4 others. Show every recipient, the exact date and where this message sits");
+    expect(ccCount!.getAttribute("aria-label")).toBe(
+      "Cc Anna Roth, Bo Lind, Cy Cole and 3 others. Show every recipient, the exact date and where this message sits");
+  });
+
+  it("the German count says it in German", async () => {
+    await mountRaw(without(message(six), { folder: true }), 3, "de");
+    expect(fold()!.getAttribute("aria-label")).toBe(
+      "An Anna Roth, Bo Lind, Cy Cole und 3 weitere. Alle Empfänger und das genaue Datum anzeigen");
   });
 });

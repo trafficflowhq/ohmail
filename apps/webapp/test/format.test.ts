@@ -77,14 +77,15 @@ describe("recipientRows", () => {
     ]);
   });
 
-  it("Cc is written out too — never a count — and a Cc'd reader folds the same way", () => {
+  it("a Cc'd reader folds the same way, and comes first in the field", () => {
     const s = recipientRows(
-      msg({ to: [addr("a@x.invalid", "A")], cc: [addr("c@x.invalid"), addr("me@example.invalid")] }),
+      msg({ to: [addr("a@x.invalid", "A")], cc: [addr("c@x.invalid"), addr("d@x.invalid"), addr("me@example.invalid")] }),
       ["me@example.invalid"],
     );
     expect(s.cc).toEqual([
-      { me: false, name: null, address: "c@x.invalid" },
       { me: true, name: null, address: "me@example.invalid" },
+      { me: false, name: null, address: "c@x.invalid" },
+      { me: false, name: null, address: "d@x.invalid" },
     ]);
   });
 

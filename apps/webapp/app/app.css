@@ -6344,11 +6344,12 @@ input.set-tag-input {
   to   { opacity: 1; transform: none; }
 }
 
-/* ── THE RECIPIENTS, WRITTEN OUT (viewer redesign) — who else it went to, under the header ─────────
-   To and Cc in full, one chip per person, LEFT-ALIGNED to the body text: the block is a direct
-   child of the panel flow with NO left indent of its own, so its edge IS the prose's edge. The
-   quiet "details" press keeps only what the chips do not say — the exact date and where the
-   message physically sits. */
+/* ── THE RECIPIENTS — who else it went to, under the header ───────────────────────────────────
+   To and Cc each on one line of names, LEFT-ALIGNED to the body text: the block is a direct
+   child of the panel flow with NO left indent of its own, so its edge IS the prose's edge. A
+   field of many folds to its first names and "and N others"; opened, the names wrap inside a
+   bounded, scrolling group so the body stays reachable. The quiet "details" press keeps what the
+   chips do not say — the exact date and where the message physically sits. */
 .msg-rcpts {
   display: flex;
   flex-direction: column;
@@ -6364,28 +6365,66 @@ input.set-tag-input {
 .msg-delivered {
   margin: 6px 0 0;
 }
+.rcpt-groups {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: stretch;
+  gap: 3px;
+  min-width: 0;
+  /* About eight lines, the ninth peeking; a letter to hundreds scrolls here, not the pane. */
+  max-height: 15.3em;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
 .rcpt-row {
   display: flex;
   align-items: baseline;
-  gap: 2px 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+/* The names wrap under each other, never back under the label. */
+.rcpt-names {
+  display: flex;
+  align-items: baseline;
   flex-wrap: wrap;
+  row-gap: 2px;
   min-width: 0;
 }
 .rcpt-k {
   flex: none;
   min-width: 18px;
+  margin-right: 3px;
   color: var(--ink2);
   font-weight: 600;
 }
-/* A chip is a real button wearing line-of-text clothes: the person's name with their readable
-   address beside it, and a hover that says it is pressable. The horizontal padding is carved
+/* Folded, a field is ONE line: a name that does not fit goes to the count (`MessageRecipients`
+   measures the cut); a lone long name gives way, its title still whole. The count never shrinks. */
+.msg-rcpts.is-folded .rcpt-names {
+  flex-wrap: nowrap;
+}
+.msg-rcpts.is-folded .rcpt-chip {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rcpt-comma::after {
+  content: ",";
+}
+.rcpt-names .msg-rcpt-more {
+  margin-left: 3px;
+}
+/* A chip is a real button wearing line-of-text clothes: the person's name (the address on its
+   title and in its popover), and a hover that says it is pressable. The horizontal padding is carved
    out of the gap, not the block edge — the ROW starts with the label, so the block's left
    alignment never depends on chip chrome. */
 .rcpt-chip {
   border: 0;
   border-radius:calc(var(--r-ctl) * 7 / 8);
   background: none;
-  padding: 1px 5px;
+  padding: 1px 3px;
   font: inherit;
   color: var(--ink3);
   cursor: pointer;

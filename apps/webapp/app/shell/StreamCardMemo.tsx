@@ -33,14 +33,12 @@ import { COPY as BODY_COPY } from "./BodyText";
 const moreLabel = (percent: number): string => BODY_COPY.more(String(percent));
 
 /**
- * HOW MANY RECIPIENTS A CARD NAMES BEFORE THE REST BECOMES A COUNT.
+ * HOW MANY RECIPIENTS PER FIELD A CARD NAMES BEFORE THE REST BECOMES A COUNT.
  *
- * The reading pane names everyone; a card is a summary and has one head's worth of room. Two
- * is what a `To` label plus two `Name – address` chips occupy without the row becoming the
- * tallest thing in the head at 390px, which is the width most of this view is read at
- * (`scripts/fit-render.mjs` measures the block at 390 and 1440). Above it the block folds to
- * `+N more`, behind the same press that already reveals the exact date and the message's
- * physical folder — see `MessageRecipients`.
+ * The reading pane folds at three; a card is a summary and has one head's worth of room, which
+ * at 390px (`scripts/fit-render.mjs` measures the block at 390 and 1440) is a label and two
+ * names. Above it each field folds to "and N others", behind the same press that already
+ * reveals the exact date and the message's physical folder — see `MessageRecipients`.
  */
 const CARD_RECIPIENT_CHIPS = 2;
 
