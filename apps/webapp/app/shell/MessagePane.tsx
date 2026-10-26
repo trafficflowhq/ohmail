@@ -34,6 +34,7 @@ import { useFocusFollows } from "./focus-follows";
 import { scrollProgrammatically } from "./programmatic-scroll";
 import { useThreadRead, type ThreadReadWiring } from "./reader-seen";
 import { ThreadMarks } from "./ThreadMarks";
+import type { ThreadWalkChannel } from "./thread-walk-channel";
 import { autoLoadsImages } from "./remote-images";
 import "./action-bar.css";
 
@@ -1402,6 +1403,8 @@ export function MessageGone({ openTrash }: MessageGoneProps) {
   );
 }
 
+const noop = (): void => {};
+
 export function MessagePane({
   message,
   tags,
@@ -1413,6 +1416,7 @@ export function MessagePane({
   readSet,
   scroller,
   threadRead,
+  stream,
 }: {
   message: EngineMessage;
   tags: TagDTO[];
@@ -1429,7 +1433,14 @@ export function MessagePane({
   threadRead?: ThreadReadWiring;
   onEnterReader?: () => void;
   onAction: (action: MessageAction) => void;
-  onAddTag: (messageId: string, anchor: HTMLElement | null) => void;
+  /** Absent: the bar offers no Tag (the reading streams' verb set). */
+  onAddTag?: (messageId: string, anchor: HTMLElement | null) => void;
+  /**
+   * A LETTER ANSWERED IN ITS READING STREAM (`stream-in-place.tsx`): always panels, so the paper
+   * keeps its place when the reply joins; the squares without the read rule on `walk`; nothing
+   * here scrolls the stream; the editor focuses only on `arriving`. Absent everywhere else.
+   */
+  stream?: { walk: ThreadWalkChannel; arriving: boolean };
   /**
    * THIS MESSAGE IS IN TRASH — forwarded to {@link ActionBar}, whose own block carries the
    * argument. Absent everywhere else, so every existing mount of this pane is byte-identical.
@@ -1490,6 +1501,9 @@ export function MessagePane({
    * This slice changed what the SCREEN shows and nothing else.
    */
   const showConversation = conversation.length > 0;
+  /* The stream's panels: the lone letter is one panel of its own. */
+  const panels = conversation.length > 0 ? conversation : [message];
+  const inStream = stream !== undefined;
 
   /**
    * Ask for the whole conversation's bodies, once, in one request — this is what makes the panels honest. Every
@@ -1530,7 +1544,7 @@ export function MessagePane({
    */
   const anchorRelease = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
-    if (!showConversation) return;
+    if (!showConversation || inStream) return;
     const conv = convRef.current;
     if (!conv) return;
 
@@ -1614,7 +1628,7 @@ export function MessagePane({
     timer = window.setTimeout(release, 6000);
     for (const ev of HANDOVER) window.addEventListener(ev, release, true);
     return release;
-  }, [message.id, showConversation]);
+  }, [message.id, showConversation, inStream]);
 
   /**
    * A SINGLE MESSAGE OPENS AT ITS OWN TOP, its sender line — never at the offset the conversation
@@ -1624,7 +1638,7 @@ export function MessagePane({
    */
   const singleRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (showConversation) return;
+    if (showConversation || inStream) return;
     let sc: HTMLElement | null = singleRef.current?.parentElement ?? null;
     while (sc) {
       const oy = getComputedStyle(sc).overflowY;
@@ -1632,7 +1646,7 @@ export function MessagePane({
       sc = sc.parentElement;
     }
     if (sc && sc.scrollTop !== 0) scrollProgrammatically(sc, 0);
-  }, [message.id, showConversation]);
+  }, [message.id, showConversation, inStream]);
 
   /* THE THREAD-READ RULE over every panel, the opened one included — one adapter per record
      (`reader-seen.ts`). Mounted only where the shell wires it (the Ohbox's column and its sheet). */
@@ -1984,7 +1998,7 @@ export function MessagePane({
       onPanel={setPanel}
       onAction={onAction}
       onScreen={(anchor) => chrome.openSenderMenu(message.id, anchor)}
-      onTag={(anchor) => onAddTag(message.id, anchor)}
+      onTag={onAddTag ? (anchor) => onAddTag(message.id, anchor) : undefined}
       trash={trash}
       forwardTarget={forwardTarget}
       readSet={readSet}
@@ -2073,6 +2087,9 @@ export function MessagePane({
          would place generated reply text into the forward's note. The offer returns with the
          reply editor; `placeDraft` flips the mode back for an arriving draft. */
       draftReply={(chrome.replyMode ?? "reply") === "forward" ? undefined : chrome.draftReply}
+      /* In a stream the arrival is the stream's (`StreamHandle.reveal`). */
+      land={stream ? false : undefined}
+      focusOnOpen={stream ? stream.arriving : undefined}
     />
   ) : undefined;
 
@@ -2086,7 +2103,7 @@ export function MessagePane({
    * ABOUT the message rather than part of it: the body-state note, the action bar and the
    * reply slot.
    */
-  if (!showConversation) {
+  if (!showConversation && !stream) {
     return (
       <ReadingPane
         bodyNote={bodyNote}
@@ -2121,7 +2138,14 @@ export function MessagePane({
    * for one part of one view.
    */
   return (
-    <div className="conv" role="group" aria-label={tc("conversationAria")} ref={convRef} data-thread-read={threadRead ? "" : undefined}>
+    <div
+      className="conv"
+      role="group"
+      aria-label={tc("conversationAria")}
+      ref={convRef}
+      data-thread-read={threadRead ? "" : undefined}
+      data-stream={stream ? "" : undefined}
+    >
       {threadRead ? (
         <ThreadMarks
           messages={conversation.map((m) => (m.id === message.id ? message : m))}
@@ -2132,9 +2156,19 @@ export function MessagePane({
           walk={threadRead.walk}
           releaseAnchor={() => anchorRelease.current?.()}
         />
+      ) : stream && panels.length > 1 ? (
+        /* The squares, without the read rule: entering marks nothing. */
+        <ThreadMarks
+          messages={panels.map((m) => (m.id === message.id ? message : m))}
+          scroller={scroller}
+          conv={convRef}
+          onEnter={noop}
+          openedId={message.id}
+          walk={stream.walk}
+        />
       ) : null}
       <ConversationPanels
-        messages={conversation}
+        messages={panels}
         focusedId={message.id}
         now={now}
         wiring={threadRead}

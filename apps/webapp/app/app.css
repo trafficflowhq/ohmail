@@ -437,6 +437,109 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   content-visibility: visible;
 }
 
+/* A LETTER ANSWERED IN PLACE (`stream-in-place.tsx`): the card's element holds the Ohbox's
+   conversation — no card skin, and the item takes the stream's left padding (12px, stream.css; both
+   sides from 1024, below), so at 1440 the paper stands where the Ohbox's does (x692, 736 wide, the
+   688 measure) and the squares' room is reserved from the start: the paper never moves when the
+   reply joins. */
+.view-reads .stream .scast.in-place,
+.view-receipts .stream .scast.in-place {
+  max-width: none;
+  margin: 0 0 20px -12px;
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  content-visibility: visible;
+}
+.view-reads .stream .conv[data-stream],
+.view-receipts .stream .conv[data-stream] {
+  padding-left: 22px;
+}
+.view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
+.view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
+  width: 22px;
+}
+@media (max-width: 699.98px) {
+  .view-reads .stream .scast.in-place,
+  .view-receipts .stream .scast.in-place {
+    margin: 0 0 20px -6px;
+  }
+}
+@media (min-width: 1024px) {
+  .view-reads .stream .scast.in-place,
+  .view-receipts .stream .scast.in-place {
+    margin-right: -12px;
+  }
+  /* The split's seam: list | 12 | 18 rail | 12 | paper. */
+  .view-reads .stream .conv[data-stream],
+  .view-receipts .stream .conv[data-stream] {
+    padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
+  }
+  .view-reads .stream .conv[data-stream] > .thread-marks,
+  .view-receipts .stream .conv[data-stream] > .thread-marks {
+    top: var(--gap-edge);
+  }
+  .view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
+  .view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
+    width: calc(var(--tm-rail) + var(--gap-rail));
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb,
+  .view-receipts .stream .conv[data-stream] .tm-mb {
+    grid-template-columns: var(--tm-rail) minmax(0, 1fr);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb::before {
+    content: "";
+    align-self: stretch;
+    justify-self: stretch;
+    pointer-events: none;
+    border-radius: calc(var(--r-ctl) * 5 / 8);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:hover,
+  .view-receipts .stream .conv[data-stream] .tm-mb:hover {
+    background: none;
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:hover::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb:hover::before {
+    background: var(--tint);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible,
+  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible {
+    outline: none;
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible::before {
+    outline: var(--focus-w) solid var(--accent);
+    outline-offset: -2px;
+  }
+  /* The squares stand a little left of the stream's box and the paper's ring at its right edge, as
+     in the reading column (message.css): while a letter is in place the stream takes the frame on
+     both sides (its content box does not move) and fades the left strip up to the squares. */
+  .view-reads .stream:has(> .scast.in-place),
+  .view-receipts .stream:has(> .scast.in-place) {
+    margin-left: calc(-1 * var(--gap-edge));
+    margin-right: calc(-1 * var(--gap-edge));
+    padding-left: calc(12px + var(--gap-edge));
+    padding-right: calc(12px + var(--gap-edge));
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 calc(var(--gap-edge) + min(0px, var(--gap-rail) - var(--gap-tile))));
+    mask-image: linear-gradient(to right, transparent, #000 calc(var(--gap-edge) + min(0px, var(--gap-rail) - var(--gap-tile))));
+  }
+}
+/* The Ohbox's dock: sticky at the stream's foot where the reading column's is (reader.css). */
+@media (min-width: 1024px) and (min-height: 640px) {
+  .view-reads .stream .scast.in-place .reply-dock,
+  .view-receipts .stream .scast.in-place .reply-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding: 10px 0 12px;
+  }
+  .view-reads .stream .scast.in-place .reply-dock > .reply,
+  .view-receipts .stream .scast.in-place .reply-dock > .reply {
+    margin-top: 0;
+  }
+}
+
 /* ================= the sent-mail seed review ================= */
 /* One column, scrollable, on the panel — the same furniture the gate cards use, sized for a
    list that may hold four hundred people. Nothing here is a modal: the screen replaces the

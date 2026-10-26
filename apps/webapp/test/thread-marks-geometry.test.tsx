@@ -1016,3 +1016,102 @@ describe("under ohmarchy's light themes an unread message sits on a surface tone
     }
   }, 60_000);
 });
+
+/**
+ * A LETTER ANSWERED IN ITS READING STREAM (`stream-in-place.tsx`): the card's element holds the
+ * Ohbox's conversation, the squares in it on the split's seam (list | 12 | 18 | 12 | paper at the
+ * desktop widths), the paper where it stands with one panel and with two, nothing clipped, and the
+ * stream's other cards where they were. RED CONTROL: without the stream's reclaim the ring and the
+ * paper's right edge are cut by the stream's own box.
+ */
+const NO_RECLAIM = ".view-reads .stream:has(> .scast.in-place){margin-left:0;margin-right:0;padding-left:12px;padding-right:12px;-webkit-mask-image:none;mask-image:none}";
+/** Viewport, the list column (none on a phone) and where the view starts (past the nav rail). */
+const STREAM_CASES: ReadonlyArray<[viewport: number, list: number, left: number]> = [[1440, 400, 250], [1024, 400, 250], [390, 0, 10]];
+const card = (id: string): string =>
+  `<article class="scast" data-sid="${id}"><div class="sc-head"><div class="sc-line"><b>Sender ${id}</b></div><h3>Issue ${id}</h3></div>` +
+  `<div class="sc-clip"><p class="sc-body">${"A line of the letter. ".repeat(12)}</p></div></article>`;
+const stream_ = (viewport: number, list: number, left: number, theme: "light" | "dark", panels: number, placed: boolean, extra = ""): string => {
+  const members = MEMBERS.slice(0, panels);
+  const bar = panels > 1 ? renderToStaticMarkup(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+      <ThreadMarksBar messages={members} here={null} tabStop={members.at(-1)!.id} onJump={() => {}} />
+    </NextIntlClientProvider>,
+  ) : "";
+  const inPlace = `<article class="scast in-place" data-sid="L"><div class="conv" data-stream="">` +
+    (bar ? `<div class="thread-marks">${bar}</div>` : "") +
+    `${members.map((m) => panel(m.id)).join("")}<div class="msg-actions"></div></div></article>`;
+  return `<!doctype html><html data-theme="${theme}" data-face="ohmarchy"><head><meta charset="utf-8">
+   <style>${SHEETS}${css("packages/ui/src/composites/stream.css")}${css("packages/ui/src/composites/list-pane.css")}${extra}</style>
+   <style>body{margin:0;font-family:system-ui,sans-serif}</style></head>
+   <body><section class="view split view-reads" style="grid-template-columns:${list ? `${list}px ` : ""}minmax(0,1fr);height:800px;margin-left:${left}px;width:${viewport - 2 * left + (list ? left - 12 : 0)}px">
+   ${list ? '<div class="list-col"></div>' : ""}<div class="stream">${card("a")}${placed ? inPlace : card("L")}${card("b")}</div></section></body></html>`;
+};
+
+async function streamRead(viewport: number, list: number, left: number, theme: "light" | "dark", panels: number, placed = true, extra = "") {
+  const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
+  try {
+    await page.setContent(stream_(viewport, list, left, theme, panels, placed, extra));
+    return await page.evaluate((narrowPx) => {
+      // The component's own rule for its thin form, by the conversation's width.
+      const conv = document.querySelector<HTMLElement>(".in-place .conv");
+      const marks = document.querySelector<HTMLElement>(".in-place .thread-marks");
+      if (conv && marks && conv.getBoundingClientRect().width < narrowPx) marks.setAttribute("data-narrow", "");
+      const box = (el: Element | null): Box | null => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+      };
+      const stream = document.querySelector<HTMLElement>(".stream")!;
+      const sq = document.querySelector(".tm-sq");
+      const ring = sq ? sq.getBoundingClientRect().left + sq.getBoundingClientRect().width / 2 - 9 : null;
+      return {
+        stream: box(stream)!,
+        list: box(document.querySelector(".list-col")),
+        squares: [...document.querySelectorAll(".tm-mb")].map((b) => box(b)!),
+        ring,
+        panels: [...document.querySelectorAll(".in-place article.pm")].map((p) => box(p)!),
+        resting: box(document.querySelector(".scast[data-sid='b']"))!,
+        overflow: stream.scrollWidth - stream.clientWidth,
+        pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+      };
+    }, 560);
+  } finally {
+    await page.close();
+  }
+}
+
+describe("a letter answered in its reading stream", () => {
+  for (const [viewport, list, left] of STREAM_CASES)
+    for (const theme of ["light", "dark"] as const)
+      it(`${viewport}px, ${theme}: the squares beside the panels, the ring whole, the paper still, the cards unmoved`, async () => {
+        const two = await streamRead(viewport, list, left, theme, 2);
+        const one = await streamRead(viewport, list, left, theme, 1);
+        const rest = await streamRead(viewport, list, left, theme, 1, false);
+        expect(two.squares, "the conversation drew no squares").toHaveLength(2);
+        const hits = two.squares.flatMap((s, i) => two.panels.filter((p) => overlap(s, p)).map((_, j) => `square ${i} × panel ${j}`));
+        expect(hits, "a square is drawn over a message").toEqual([]);
+        expect(two.ring!, "the ring is cut by the stream's box").toBeGreaterThanOrEqual(two.stream.left - 0.5);
+        expect(two.panels[0]!.right + 2, "the paper's ring is cut at the stream's right edge").toBeLessThanOrEqual(two.stream.right + 0.5);
+        expect(two.panels[0]!.left, "the paper moved when the reply joined").toBeCloseTo(one.panels[0]!.left, 1);
+        expect([two.resting.left, two.resting.right], "a resting card moved sideways").toEqual([rest.resting.left, rest.resting.right]);
+        expect(two.overflow, "the stream scrolls sideways").toBeLessThanOrEqual(0);
+        expect(two.pageOverflow, "the page scrolls sideways").toBeLessThanOrEqual(0);
+        if (viewport >= 1024) {
+          // o9's seam, the Ohbox's: 10 from the list's ring and from the paper's to the 18px rail.
+          expect(two.ring! - two.list!.right - 2, "list ring → rail").toBeCloseTo(10, 1);
+          expect(two.panels[0]!.left - 2 - (two.ring! + 18), "rail → paper ring").toBeCloseTo(10, 1);
+        }
+      }, 60_000);
+
+  it("at 1440 the paper stands where the Ohbox's does (x692, 736 wide), the cards where they stood (x736)", async () => {
+    const r = await streamRead(1440, 400, 250, "light", 2);
+    expect([r.panels[0]!.left, r.panels[0]!.right - r.panels[0]!.left], "the Ohbox's paper box").toEqual([692, 736]);
+    expect(r.resting.left, "a resting card at today's x").toBe(736);
+  }, 60_000);
+
+  it("RED CONTROL: without the stream's reclaim the ring and the paper's edge are cut, and the measurement says so", async () => {
+    const r = await streamRead(1440, 400, 250, "light", 2, true, NO_RECLAIM);
+    expect(r.ring!, "the control found the ring whole: the measurement proves nothing").toBeLessThan(r.stream.left - 0.5);
+    expect(r.panels[0]!.right + 2, "the control found the paper's ring whole").toBeGreaterThan(r.stream.right + 0.5);
+  }, 60_000);
+});

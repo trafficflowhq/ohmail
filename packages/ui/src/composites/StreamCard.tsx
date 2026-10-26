@@ -155,6 +155,13 @@ export interface StreamCardProps {
    * node passed here behaves as it does everywhere else in the product.
    */
   actions?: ReactNode;
+  /**
+   * WHAT STANDS IN THE CARD'S PLACE WHILE THE LETTER IS ANSWERED IN THE STREAM — the app's
+   * conversation, drawn inside this same `<article>` so its `data-sid`, its `data-unseen` and its
+   * place in the stream stay, and its open state survives for the card that comes back.
+   * Default-absent: the card is drawn.
+   */
+  inPlace?: ReactNode;
 }
 
 /**
@@ -192,6 +199,7 @@ export function StreamCard({
   mailboxTitle,
   estWidthPx,
   actions,
+  inPlace,
 }: StreamCardProps) {
   /* A message with no text part pages as an empty one: `pageEnds` and the slice below read its length. */
   const body = bodyIn ?? "";
@@ -204,6 +212,7 @@ export function StreamCard({
   const shownEnd = ends[ends.length - 1] ?? 0;
   const shown = body.slice(0, shownEnd);
   const clipRef = useRef<HTMLDivElement | null>(null);
+  const placed = inPlace != null;
   const cardRef = useRef<HTMLElement | null>(null);
 
   /**
@@ -261,7 +270,8 @@ export function StreamCard({
      * took the viewer branch above and unclamps in CSS instead.)
      */
     if (open) clip.style.maxHeight = `${clip.scrollHeight}px`;
-  }, [clampHeight, shown, open, showViewer]);
+    // A card back from its in-place conversation has a new clip, measured again.
+  }, [clampHeight, shown, open, showViewer, placed]);
 
   useLayoutEffect(() => {
     const clip = clipRef.current;
@@ -274,7 +284,7 @@ export function StreamCard({
     const ro = new ResizeObserver(read);
     for (const el of clip.children) ro.observe(el);
     return () => ro.disconnect();
-  }, [showViewer, clampHeight]);
+  }, [showViewer, clampHeight, placed]);
 
   /**
    * THE BODY IS NOT (YET) THE WHOLE MESSAGE.
@@ -395,6 +405,7 @@ export function StreamCard({
     open ? "open" : null,
     showViewer ? "viewer" : null,
     current ? "cur" : null,
+    placed ? "in-place" : null,
   ]
     .filter(Boolean)
     .join(" ");
@@ -413,9 +424,10 @@ export function StreamCard({
       data-unseen={unread ? "1" : undefined}
       onClick={() => {
         onSelect?.(id);
-        expandOnClick();
+        if (!placed) expandOnClick();
       }}
     >
+      {placed ? inPlace : (<>
       <div className="sc-head">
         <div className="sc-line">
           <b>{from}</b>
@@ -526,6 +538,7 @@ export function StreamCard({
           {actions}
         </div>
       ) : null}
+      </>)}
     </article>
   );
 }

@@ -104,13 +104,15 @@ export interface StreamCardMemoProps {
   onToggle: (id: string, open: boolean) => void;
   /** Stable — the shared verbs. Absent ⇒ no bar (demo, or a surface with no mutations). */
   onAction?: (action: MessageAction, m: EngineMessage) => void;
+  /** The letter answered in place: its conversation stands in the card's element (`stream-in-place.tsx`). */
+  inPlace?: ReactNode;
 }
 
 function StreamCardMemoInner({
   m, now, current, expanded, viewer, unread,
   bodyText, bodyState, bodyHtml, bodyLoadedRemote, remoteImages, cidImages, needCidImages,
   loadingLabel, failedLabel, withheldKey, onReask,
-  mailboxLabel, onSelect, onToggle, onAction,
+  mailboxLabel, onSelect, onToggle, onAction, inPlace,
 }: StreamCardMemoProps) {
   /* The card's two toggle words. `StreamCard` has none of its own — see `copy-census`. */
   const tm = useTranslations("message");
@@ -239,6 +241,7 @@ function StreamCardMemoInner({
           <MessageActionBar message={m} now={now} onAction={(a) => onAction(a, m)} />
         ) : undefined
       }
+      inPlace={inPlace}
     />
   );
 }
@@ -278,7 +281,8 @@ function areEqual(a: StreamCardMemoProps, b: StreamCardMemoProps): boolean {
     a.mailboxLabel === b.mailboxLabel &&
     a.onSelect === b.onSelect &&
     a.onToggle === b.onToggle &&
-    a.onAction === b.onAction
+    a.onAction === b.onAction &&
+    a.inPlace === b.inPlace
   );
 }
 

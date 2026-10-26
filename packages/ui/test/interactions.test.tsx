@@ -236,6 +236,40 @@ describe("StreamCard", () => {
     expect(clip.style.maxHeight).toBe("");
     expect(container.querySelector(".sc-viewer .probe")).not.toBeNull();
   });
+
+  it("an in-place node stands in the same article, which keeps its marks and its open state", () => {
+    const m = reads[1];
+    const onSelect = vi.fn();
+    const base = { id: m.id, from: m.from.name, time: m.time, subject: m.subject, body: m.body!, unread: true, onSelect };
+    const { container, getByRole, rerender } = render(<StreamCard expandLabel="Expand" collapseLabel="Collapse" {...base} />);
+    const card = container.querySelector<HTMLElement>(".scast")!;
+    fireEvent.click(getByRole("button", { name: /Expand/ }));
+    rerender(<StreamCard expandLabel="Expand" collapseLabel="Collapse" {...base} inPlace={<div className="probe">answered</div>} />);
+    expect(container.querySelector(".scast"), "the same element, not a new one").toBe(card);
+    expect(card.classList.contains("in-place")).toBe(true);
+    expect(card.getAttribute("data-sid")).toBe(m.id);
+    expect(card.getAttribute("data-unseen")).toBe("1");
+    expect(card.querySelector(".sc-head"), "the card's own head is not drawn beside it").toBeNull();
+    fireEvent.click(card.querySelector(".probe")!);
+    expect(onSelect).toHaveBeenCalledWith(m.id);
+    rerender(<StreamCard expandLabel="Expand" collapseLabel="Collapse" {...base} />);
+    expect(card.classList.contains("in-place")).toBe(false);
+    expect(card.classList.contains("open"), "the card comes back as it stood").toBe(true);
+    expect(getByRole("button", { name: /Collapse/ }).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("a press on an in-place node selects the letter and opens no card", () => {
+    const m = reads[1];
+    const onToggle = vi.fn();
+    const base = { id: m.id, from: m.from.name, time: m.time, subject: m.subject, body: m.body!, onToggle };
+    const { container, getByRole, rerender } = render(
+      <StreamCard expandLabel="Expand" collapseLabel="Collapse" {...base} inPlace={<div className="probe">answered</div>} />,
+    );
+    fireEvent.click(container.querySelector(".probe")!);
+    expect(onToggle).not.toHaveBeenCalled();
+    rerender(<StreamCard expandLabel="Expand" collapseLabel="Collapse" {...base} />);
+    expect(getByRole("button", { name: /Expand/ }).getAttribute("aria-expanded")).toBe("false");
+  });
 });
 
 describe("ThemeProvider", () => {

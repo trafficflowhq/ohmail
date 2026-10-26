@@ -9,9 +9,11 @@
  * Seven views render the row. Rather than seven `useTranslations("message")` calls and seven chances to word it
  * differently, they take the words from here.
  */
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslations } from "next-intl";
+import type { EngineMessage } from "@ohmail/client-engine";
 import type { MessageRowSpoken } from "@ohmail/ui";
+import { sentAvatarOf, sentRowRecipient } from "./format";
 
 export interface RowBadgeCopy {
   /** The shield capsule's word. Pass it only when the row IS protected. */
@@ -50,4 +52,29 @@ export function useRowBadgeCopy(): RowBadgeCopy {
     }),
     [t],
   );
+}
+
+/** An own-sent row's label and circle: what the row says in place of the writer's own name. */
+export interface SentLabel {
+  label: string;
+  avatar: { avatarInitial: string; avatarHue: number };
+}
+
+/**
+ * OWN-SENT ROWS NAME THE RECIPIENT — "Me → Nora Lindt", never the writer's own identity: the first
+ * To recipient's name (their address where there is none), "+N" for the rest, and the circle is
+ * the recipient's. `null` keeps the ordinary sender display: a received row, or a sent row whose
+ * mirror predates recipients on the wire (empty `to`) — never "Me →" with nothing after the arrow.
+ * The Ohbox's rows and a reading stream's answered letter read it alike.
+ */
+export function useSentLabel(): (m: EngineMessage) => SentLabel | null {
+  const t = useTranslations("ohbox");
+  return useCallback((m: EngineMessage) => {
+    const r = sentRowRecipient(m);
+    if (!r) return null;
+    const label = r.extra > 0
+      ? t("rowSentToMore", { name: r.name, count: r.extra })
+      : t("rowSentTo", { name: r.name });
+    return { label, avatar: sentAvatarOf(r) };
+  }, [t]);
 }
