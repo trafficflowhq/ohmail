@@ -228,7 +228,8 @@ export function ReadsView({
    * the final screen — the contiguous run the reader scrolled through, including the last
    * screenful the exit-through-the-top observer can structurally never reach. Bounded by
    * the viewport, never the pile: what was below the final screen was not displayed and is
-   * not flipped. Refs, because this fires while the view is unmounting.
+   * not flipped, nor is a card a keyboard scroll in a letter carried past (`flownPast`). Refs,
+   * because this fires while the view is unmounting.
    */
   const onStreamLeave = useCallback((s: StreamLeaveState) => {
     const fn = onLeaveSeenRef.current;
@@ -240,7 +241,7 @@ export function ReadsView({
     const end = b >= a ? b : a;
     fn({
       upToId: s.newestSeenId,
-      messageIds: order.slice(a, end + 1).filter((m) => m.unread).map((m) => m.id),
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread && !s.flownPast?.(m.id)).map((m) => m.id),
     });
   }, []);
   /**

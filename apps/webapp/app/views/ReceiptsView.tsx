@@ -188,7 +188,7 @@ export function ReceiptsView({
     const end = b >= a ? b : a;
     fn({
       upToId: s.newestSeenId,
-      messageIds: order.slice(a, end + 1).filter((m) => m.unread).map((m) => m.id),
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread && !s.flownPast?.(m.id)).map((m) => m.id),
     });
   }, []);
   /** Where the line sits in the flat list; everything is fresh until the shell says otherwise. */
