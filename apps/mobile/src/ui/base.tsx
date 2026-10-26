@@ -31,7 +31,7 @@ import { useAppWindow, usePosture } from "./posture";
 import { listNavClearance, scaffoldPlan, screenFillsWindow, screenHingeClearance, screenRailClearance, screenSideInsets } from "./scaffold/plan";
 import { useInPane } from "./pane-chrome";
 import { useNavDrawn } from "./nav-drawn";
-import { topPad } from "./safe-area";
+import { cardSides, topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
 import { MIN_SLOP, hitSlopFor } from "../theme/tokens";
 import { Icon, type IconName } from "./Icon";
@@ -74,6 +74,13 @@ export function Txt({ variant = "body", tone = "ink", tabular, style, ...rest }:
  */
 export function useTopPad(gap: number): number {
   return topPad(useSafeAreaInsets().top, gap);
+}
+
+/** {@link cardSides} over the live side insets and the drawn rail — what an account notice's margins read. */
+export function useCardSides(gap: number): { marginLeft: number; marginRight: number } {
+  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
+  const rail = listNavClearance(plan, 0, useNavDrawn());
+  return cardSides(useSafeAreaInsets(), rail, gap);
 }
 
 /**

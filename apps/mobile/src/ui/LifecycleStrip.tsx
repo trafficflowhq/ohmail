@@ -15,7 +15,7 @@ import { Copy } from "../copy";
 import { useLocale } from "../i18n/LocaleProvider";
 import { useTheme } from "../theme";
 import { appLifecycle } from "./AccountWall";
-import { Button, Panel, Txt, useTopPad } from "./base";
+import { Button, Panel, Txt, useCardSides, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
 import {
   QUIET_RETURN_MS, dismissKey, remember, settlesTheStrip, stripNotice, stripPress,
@@ -45,6 +45,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
      screen, outside the chrome that pays this everywhere else. Measured on a device with a fixed
      8: the first line sat against the clock and the panel's top corners were cut off. */
   const top = useTopPad(8);
+  const sides = useCardSides(16);
 
   const notice = stripNotice(entry, session?.ownerKey ?? null, hidden, Date.now());
   useEffect(() => { drawn.current = notice !== null; });
@@ -102,7 +103,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
 
   if (notice.kind === "caughtUp") {
     return (
-      <Panel style={{ marginHorizontal: 16, marginTop: top, padding: 14, gap: 8 }}>
+      <Panel style={{ ...sides, marginTop: top, padding: 14, gap: 8 }}>
         <Txt variant="body" accessibilityRole="summary">
           {Copy.stripCaughtUp(dayStamp(notice.since, locale))}
         </Txt>
@@ -119,7 +120,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
   return (
     <Panel
       style={{
-        marginHorizontal: 16,
+        ...sides,
         marginTop: top,
         padding: 14,
         gap: 8,

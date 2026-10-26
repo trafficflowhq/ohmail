@@ -24,7 +24,8 @@ vi.mock("../src/ui/base", () => {
 });
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
 vi.mock("../src/ui/BodyPages", () => ({ BodyPages: (p: { text: string }) => createElement("span", null, p.text) }));
-vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
+const nav = vi.hoisted(() => ({ focused: true, pushed: [] as unknown[] }));
+vi.mock("expo-router", () => ({ router: { push: (p: unknown) => nav.pushed.push(p) }, useIsFocused: () => nav.focused }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "offline" }));
 
 const said: string[] = [];
@@ -62,7 +63,7 @@ const press = async (el: HTMLElement, label: string) => {
   await settle();
 };
 
-afterEach(() => { said.length = 0; vi.clearAllMocks(); });
+afterEach(() => { said.length = 0; nav.focused = true; nav.pushed.length = 0; vi.clearAllMocks(); });
 
 describe("DraftReader over a waiting send", () => {
   it("says it waits for the network, offers Cancel send, and no Edit", () => {
@@ -142,5 +143,41 @@ describe("DraftReader over a waiting send", () => {
     await press(el, Copy.draftsDiscardConfirm);
     expect([said, onClose.mock.calls.length]).toEqual([["replyCancelUnreachable"], 1]);
     unmount();
+  });
+});
+
+describe("DraftReader after its Edit sent the draft", () => {
+  const editable = (): WorldDraft => ({
+    ...waitingRow(), state: "open", waiting: null,
+    edit: { to: "Bo", cc: "", bcc: "", subject: "Offline", mailboxId: "mb-1", forwardOf: null, forwardParts: null, revision: null },
+  });
+
+  it("leaves once its screen is shown again, never while the composer stands over it", async () => {
+    world.drafts = [editable()];
+    const onClose = vi.fn();
+    const m = mount(createElement(DraftReader, { id: "d-1", onClose }));
+    await press(m.el, Copy.draftsEdit);
+    expect(nav.pushed).toEqual([{ pathname: "/compose", params: { draft: "d-1" } }]);
+    // The composer is over the card and its send takes the row out of Drafts.
+    nav.focused = false;
+    world.drafts = [];
+    m.render(createElement(DraftReader, { id: "d-1", onClose }));
+    expect(onClose, "the card closed under the composer").not.toHaveBeenCalled();
+    // The composer closes: the card is shown again over a row that left with the send.
+    nav.focused = true;
+    m.render(createElement(DraftReader, { id: "d-1", onClose }));
+    expect(onClose, "the card stayed on a draft that was sent").toHaveBeenCalledTimes(1);
+    m.unmount();
+  });
+
+  it("the control: a row that left without an Edit from here keeps its sentence", () => {
+    world.drafts = [editable()];
+    const onClose = vi.fn();
+    const m = mount(createElement(DraftReader, { id: "d-1", onClose }));
+    world.drafts = [];
+    m.render(createElement(DraftReader, { id: "d-1", onClose }));
+    expect(texts(m.el)).toEqual([Copy.draftsRowGone]);
+    expect(onClose).not.toHaveBeenCalled();
+    m.unmount();
   });
 });
