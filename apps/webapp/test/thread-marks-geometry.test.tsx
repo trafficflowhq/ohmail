@@ -70,6 +70,7 @@ const page_ = (viewport: number, col: number, theme: "light" | "dark", extra: st
 
 type Box = { left: number; right: number; top: number; bottom: number };
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+type Page = Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newPage"]>>;
 beforeAll(async () => { browser = await chromium.launch(); }, 120_000);
 afterAll(async () => { await browser?.close(); });
 
@@ -445,6 +446,156 @@ describe("the open row's strip", () => {
         await page.close();
       }
     }, 60_000);
+});
+
+/**
+ * A CLOSED ROW'S OWN SQUARES ARE WHOLE (tester round 30: a 30-message conversation drew a 2-3px
+ * sliver then 27 squares at the desktop's 400px list, and hid 4 without a sign on the web at
+ * 1440px). The real `MessageRow`, bundled and mounted, so its own measurement runs: every square
+ * is drawn whole or not at all, the newest are the ones kept, and the older ones that gave way are
+ * counted by a quiet `+N` at the strip's start, in the preview's ink at the row's small size.
+ */
+describe("a closed row's own squares: whole, the newest kept, the rest counted", () => {
+  let rowJs = "";
+  beforeAll(async () => {
+    const { build } = await import("esbuild");
+    const out = await build({
+      stdin: {
+        contents: `import { createElement } from "react"; import { flushSync } from "react-dom"; import { createRoot } from "react-dom/client";
+          import { MessageRow } from "@ohmail/ui";
+          window.mountRows = (host, all) => flushSync(() => createRoot(host).render(all.map((marks, i) => createElement(MessageRow, {
+            key: i, id: "r" + i, from: "Lena", subject: "Q3 plan", time: "09:12", preview: "Perfekt, danke dir!",
+            avatarInitial: "L", avatarHue: 20, marks, marksLabel: marks.length + " messages" }))));`,
+        resolveDir: process.cwd(), loader: "tsx",
+      },
+      bundle: true, write: false, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic",
+      loader: { ".css": "empty", ".svg": "empty" }, define: { "process.env.NODE_ENV": '"production"' }, logLevel: "warning",
+    });
+    rowJs = out.outputFiles[0]!.text;
+  }, 120_000);
+  const frames = (p: Page) => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  async function mount(viewport: number, face: string, theme: string, counts: number[], zoom = 1): Promise<Page> {
+    const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
+    // The web door's Text size stamp (text-size.ts): `zoom` and `--ui-zoom` on <html>.
+    const stamp = zoom === 1 ? "" : ` style="zoom:${zoom};--ui-zoom:${zoom}"`;
+    await page.setContent(`<!doctype html><html data-theme="${theme}"${face === "ohmarchy" ? ' data-face="ohmarchy"' : ""}${stamp}><head><meta charset="utf-8"><style>${SHEETS}</style>
+      <style>body{margin:0;font-family:system-ui,sans-serif}</style></head><body><section class="view split view-ohbox" style="height:800px">
+      <div class="list-col"><div role="listbox" id="rows"></div></div><div class="read-col"></div></section></body></html>`);
+    await page.addScriptTag({ content: rowJs });
+    await page.evaluate((all) => (window as unknown as { mountRows: (h: Element, a: string[][]) => void }).mountRows(document.getElementById("rows")!, all), counts.map(kindsOf));
+    await frames(page);
+    return page;
+  }
+  const kindsOf = (n: number) => Array.from({ length: n }, (_, i) => (["read", "unread", "mine"] as const)[((i * i + 3 * i) % 7) % 3]!);
+  const COUNTS = [7, 30, 100];
+  const FACES: ReadonlyArray<[string, "light" | "dark"]> = [["ohmarchy", "dark"], ["paper", "light"]];
+  /** Every row's squares, the count and its ink, in the window's px (each read is the same space). */
+  const readRows = (page: Page) => page.evaluate(() => [...document.querySelectorAll<HTMLElement>(".row")].map((row) => {
+      const strip = row.querySelector<HTMLElement>(".row-marks")!;
+      const squares = [...strip.querySelectorAll<HTMLElement>(".rm-sq")];
+      const clip = { l: -1e9, r: 1e9, t: -1e9, b: 1e9 };
+      for (let e = squares[0]!.parentElement; e && e !== row; e = e.parentElement) {
+        const cs = getComputedStyle(e);
+        const r = e.getBoundingClientRect();
+        if (cs.overflowX !== "visible") { clip.l = Math.max(clip.l, r.left); clip.r = Math.min(clip.r, r.right); }
+        if (cs.overflowY !== "visible") { clip.t = Math.max(clip.t, r.top); clip.b = Math.min(clip.b, r.bottom); }
+      }
+      const seen = squares.map((s) => {
+        const r = s.getBoundingClientRect();
+        const w = Math.max(0, Math.min(r.right, clip.r) - Math.max(r.left, clip.l));
+        const h = Math.max(0, Math.min(r.bottom, clip.b) - Math.max(r.top, clip.t));
+        return { left: r.left, kind: s.classList[1]!, drawn: w * h, whole: w >= r.width - 0.01 && h >= r.height - 0.01 };
+      });
+      const shown = seen.filter((s) => s.whole).sort((a, b) => a.left - b.left);
+      const more = strip.querySelector<HTMLElement>(".rm-more");
+      const box = more?.getBoundingClientRect();
+      return {
+        partial: seen.filter((s) => s.drawn > 0 && !s.whole).length,
+        shown: shown.map((s) => s.kind),
+        firstLeft: shown[0]?.left ?? 0,
+        stripLeft: strip.getBoundingClientRect().left,
+        more: more && box ? {
+          text: more.textContent, left: box.left, right: box.right, cut: more.scrollWidth > more.clientWidth + 0.5,
+          ink: getComputedStyle(more).color, size: getComputedStyle(more).fontSize,
+        } : null,
+        prevInk: getComputedStyle(row.querySelector(".prev")!).color,
+        smallSize: getComputedStyle(row.querySelector(".row-top .t")!).fontSize,
+        stripHeight: strip.getBoundingClientRect().height,
+      };
+    }));
+  /** Whole squares, the newest kept, the +N counting the rest; px scale with the stamped zoom. */
+  async function expectWhole(page: Page, counts: number[], zoom = 1): Promise<void> {
+    const rows = await readRows(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), "the squares widen the page").toBeLessThanOrEqual(0);
+    rows.forEach((r, i) => {
+      const n = counts[i]!;
+      const hidden = r.more ? Number(r.more.text!.replace(/^\+/, "")) : 0;
+      expect(r.partial, `${n}: a square drawn in part`).toBe(0);
+      expect(r.shown.length + hidden, `${n}: the shown squares and the +N count every message`).toBe(n);
+      expect(r.shown, `${n}: the newest are the ones kept`).toEqual(kindsOf(n).slice(hidden));
+      expect(r.stripHeight, `${n}: the count does not grow the row`).toBeLessThanOrEqual(12.5 * zoom);
+      if (n === 7) expect(r.more, "seven fit: no count").toBeNull();
+      if (n === 100) expect(hidden, "a hundred never fit").toBeGreaterThan(0);
+      if (r.more) {
+        expect(r.more.text, `${n}: +N`).toMatch(/^\+\d+$/);
+        expect(r.more.cut, "the count is whole").toBe(false);
+        expect(r.more.left, "the count stands at the strip's start").toBeGreaterThanOrEqual(r.stripLeft - 0.5);
+        expect(r.more.right, "the count before the oldest square shown").toBeLessThan(r.firstLeft - 1);
+        expect(r.firstLeft - r.more.right, `${n}: room for one more square left unused`).toBeLessThan(15 * zoom);
+        expect([r.more.ink, r.more.size], "the preview's ink at the row's small size").toEqual([r.prevInk, r.smallSize]);
+      }
+    });
+  }
+  for (const [face, theme] of FACES)
+    for (const viewport of [390, 900, 1440])
+      it(`${face} ${theme}, a ${viewport}px window: ${COUNTS.join(", ")} messages`, async () => {
+        const page = await mount(viewport, face, theme, COUNTS);
+        try {
+          await expectWhole(page, COUNTS);
+        } finally {
+          await page.close();
+        }
+      }, 60_000);
+  /*
+   * Under Settings → Text size the window's px are 1.25 of the page's: a conversation a few squares
+   * longer than the strip (in CSS px) still overflows it, and the count says so.
+   */
+  for (const viewport of [900, 1440])
+    it(`at a 125% text size, a ${viewport}px window: a conversation just past the strip is counted`, async () => {
+      const probe = await mount(viewport, "paper", "light", [100], 1.25);
+      const fit = await probe.evaluate(() => {
+        const run = document.querySelector<HTMLElement>(".row-marks-in")!;
+        const gap = parseFloat(getComputedStyle(run).columnGap) || 0;
+        return Math.floor((run.parentElement!.clientWidth + gap) / ((run.lastElementChild as HTMLElement).offsetWidth + gap));
+      });
+      await probe.close();
+      const counts = [7, fit + 1, fit + 3, Math.floor(fit * 1.15), 100];
+      const page = await mount(viewport, "paper", "light", counts, 1.25);
+      try {
+        await expectWhole(page, counts, 1.25);
+      } finally {
+        await page.close();
+      }
+    }, 60_000);
+  it("a resize recounts: a list wide enough for all hundred draws no count, narrowed again it counts", async () => {
+    const page = await mount(1440, "paper", "light", [100]);
+    const read = () => page.evaluate(() => ({
+      more: document.querySelector(".rm-more")?.textContent ?? null,
+      whole: [...document.querySelectorAll(".rm-sq")].filter((s) => s.getBoundingClientRect().top < document.querySelector(".row-marks-in")!.getBoundingClientRect().bottom).length,
+    }));
+    try {
+      const narrow = await read();
+      await page.evaluate(() => document.querySelector<HTMLElement>(".view")!.style.setProperty("--split-user", "1300px 1fr"));
+      await frames(page);
+      await expect.poll(read, { timeout: 2000 }).toEqual({ more: null, whole: 100 });
+      await page.evaluate(() => document.querySelector<HTMLElement>(".view")!.style.removeProperty("--split-user"));
+      await frames(page);
+      await expect.poll(read, { timeout: 2000 }).toEqual(narrow);
+      expect(narrow.more, "the 400px list counts the oldest").toMatch(/^\+\d+$/);
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
 });
 
 /**
