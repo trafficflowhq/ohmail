@@ -258,7 +258,8 @@ export const POOLED_IDLE_TIMEOUT_S = 20;
  * server: it was pipelined, and {@link guardAcquire} does not cancel, so it normally executes and
  * its result is discarded. Retry safety for a mutation is therefore not asserted: the 503 marks
  * itself retryable only for a safe method or an `Idempotency-Key`. A refused TRANSACTION writes
- * nothing: {@link beginWithin} rolls it back before its callback runs.
+ * nothing: {@link beginWithin} rolls it back before its callback runs. Also thrown when the pooler
+ * refused a statement it never forwarded.
  */
 export class DbAcquireTimeoutError extends Error {
   readonly code = "db_acquire_timeout";
@@ -318,10 +319,30 @@ function connectionCapOf(err: unknown): "pooler" | "server" | null {
   return null;
 }
 
-/** `err`, or the cap refusal it is. */
-function asConnectionCap(err: unknown): unknown {
+/**
+ * The pooler's checkout refusal as it goes on the wire (its error code in front). Anchored: its other
+ * XX000 FATALs, such as a DbHandler exit, come after the statement was forwarded.
+ */
+const POOLER_CHECKOUT_REFUSED = /^\(ECHECKOUTTIMEOUT\) unable to check out connection from the pool after \d+ms in (?:Transaction|Session) mode$/;
+
+/** The pooler closed the connection saying it never handed the statement to a backend. */
+function poolerRefused(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown; serverError?: { code?: unknown; message?: unknown } } | null;
+  // An open connection's head carries it on the close; a cold dial's statement gets it bare.
+  const s = e?.code === "CONNECTION_CLOSED" ? e.serverError : e;
+  if (!s || typeof s.message !== "string") return false;
+  return (s.code === "XX000" && POOLER_CHECKOUT_REFUSED.test(s.message))
+    || (s.code === "08P01" && s.message === "query_wait_timeout");
+}
+
+/**
+ * `err`, or the busy refusal it is: a pooler or server cap on a new connection, or the pooler's refusal
+ * of a statement it never forwarded (the acquire ceiling's class, `started` when the wait began).
+ */
+function asBusyRefusal(err: unknown, started: number, what?: "transaction"): unknown {
   const cap = connectionCapOf(err);
-  return cap === null ? err : new DbConnectionCapError(cap);
+  if (cap !== null) return new DbConnectionCapError(cap);
+  return poolerRefused(err) ? new DbAcquireTimeoutError(Date.now() - started, what) : err;
 }
 
 /** What one fresh connection said: it opened and answered in `ms`, or the code it was refused with. */
@@ -385,7 +406,8 @@ interface PooledQuery {
    * hits the socket — measured, not read. The hole, named: `active` is set on the head BEFORE the
    * write, so behind a transaction-mode pooler still waiting for a backend, the head is `active`
    * with no statement running and this ceiling is disabled. Deliberate: bounding an EXECUTING
-   * query would make a second statement timeout; the pooler's wait ceiling is its configuration.
+   * query would make a second statement timeout. A one-flush head's first reply byte comes with
+   * its completion, so silence cannot tell waiting from running: the bound is the pooler's refusal.
    * Every follower behind the head — the measured population — is covered.
    */
   active: boolean;
@@ -406,6 +428,7 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
   const q = query as unknown as PooledQuery;
   let raced: Promise<unknown> | null = null;
   const arm = (): Promise<unknown> => (raced ??= new Promise((resolve, reject) => {
+    const started = Date.now();
     const timer = setTimeout(() => {
       // The backend is running THIS statement: the server-side ceilings own it from here, and
       // killing work that is legitimately in progress is not this ceiling's job.
@@ -432,7 +455,7 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
     // this must stay the only place the underlying promise is consumed.
     q.then(
       (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(asConnectionCap(err)); },
+      (err) => { clearTimeout(timer); reject(asBusyRefusal(err, started)); },
     );
   }));
 
@@ -508,6 +531,7 @@ function beginWithin(client: ReturnType<typeof postgres>, args: unknown[], ms: n
   const fn = args[args.length - 1];
   if (typeof fn !== "function") return Reflect.apply(open, client, args) as Promise<unknown>;
   let refused = false;
+  const started = Date.now();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       refused = true;
@@ -521,7 +545,7 @@ function beginWithin(client: ReturnType<typeof postgres>, args: unknown[], ms: n
     };
     Promise.resolve(Reflect.apply(open, client, [...args.slice(0, -1), begun])).then(
       (value) => { clearTimeout(timer); if (!refused) resolve(value); },
-      (err: unknown) => { clearTimeout(timer); if (!refused) reject(asConnectionCap(err)); },
+      (err: unknown) => { clearTimeout(timer); if (!refused) reject(asBusyRefusal(err, started, "transaction")); },
     );
   });
 }
