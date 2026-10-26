@@ -727,10 +727,12 @@ export async function materializeTags(
  * publishes `messageIds` in that order and derives `unreadCount` and `folder` from it. Both
  * readers below hand it the same shape, which is the point of it being a function.
  */
+export type ThreadMember = Pick<typeof messages.$inferSelect, "id" | "unread" | "nativeLocator">;
+
 export function threadRowsToDTO(
   t: typeof threads.$inferSelect,
-  msgs: readonly (typeof messages.$inferSelect)[],
-  firstFolderState: typeof folderState.$inferSelect | undefined,
+  msgs: readonly ThreadMember[],
+  firstFolderState: Pick<typeof folderState.$inferSelect, "desiredFolder"> | undefined,
 ): ThreadDTO {
   let folder: Folder = "INBOX";
   const first = msgs[0];
@@ -793,12 +795,15 @@ export async function materializeThreads(
   if (tRows.length === 0) return out;
 
   const owned = tRows.map((t) => t.id);
-  // Live letters only — the per-id reader's predicate, so the two cannot disagree.
-  const mRows = await db.select().from(messages)
+  // Live letters only — the per-id reader's predicate, so the two cannot disagree. Only the
+  // columns the DTO reads, so a long conversation does not read every member's subject and snippet.
+  const mRows = await db.select({
+    id: messages.id, threadId: messages.threadId, unread: messages.unread, nativeLocator: messages.nativeLocator,
+  }).from(messages)
     .where(and(eq(messages.accountId, accountId), inArray(messages.threadId, owned), isNull(messages.deletedAt)))
     .orderBy(asc(messages.date));
 
-  const msgsBy = new Map<string, (typeof messages.$inferSelect)[]>();
+  const msgsBy = new Map<string, typeof mRows>();
   for (const m of mRows) {
     const key = m.threadId!;
     const list = msgsBy.get(key);

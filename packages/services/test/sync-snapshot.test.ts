@@ -410,19 +410,40 @@ describe("a snapshot page costs a constant number of queries", () => {
    * assertion would be a flake; CONSTANCY is the property that actually prevents it, so that is
    * what is measured. Modelled on the identical guard over `getChanges` in `sync-service.test.ts`.
    */
-  function counting(db: Db): { db: Db; selects: () => number } {
+  function counting(db: Db): { db: Db; selects: () => number; bytes: () => number } {
     let n = 0;
+    let bytes = 0;
+    const big = (_k: string, v: unknown) => (typeof v === "bigint" ? v.toString() : v);
+    // Follows a select's builder chain to its `then`, and tallies the rows it resolves to.
+    const tally = <T extends object>(obj: T): T => new Proxy(obj, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (typeof value !== "function" || prop === "constructor") return value;
+        if (prop === "then") {
+          return (ok?: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+            (value as (a: unknown, b: unknown) => unknown).call(target, (rows: unknown) => {
+              bytes += Buffer.byteLength(JSON.stringify(rows, big) ?? "");
+              return ok ? ok(rows) : rows;
+            }, ko);
+        }
+        return (...args: unknown[]) => {
+          const out = (value as (...a: unknown[]) => unknown).apply(target, args);
+          if (out === target) return receiver;
+          return out !== null && typeof out === "object" && ("then" in out || "from" in out) ? tally(out) : out;
+        };
+      },
+    });
     const proxy = new Proxy(db as object, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver);
         if (prop !== "select" || typeof value !== "function") return value;
         return (...args: unknown[]) => {
           n += 1;
-          return (value as (...a: unknown[]) => unknown).apply(target, args);
+          return tally((value as (...a: unknown[]) => object).apply(target, args));
         };
       },
     }) as Db;
-    return { db: proxy, selects: () => n };
+    return { db: proxy, selects: () => n, bytes: () => bytes };
   }
 
   async function costOf(messageCount: number, threadCount: number): Promise<number> {
@@ -458,6 +479,32 @@ describe("a snapshot page costs a constant number of queries", () => {
     // message ids) = 17. Every batched read is once per PAGE and never once per row, which is the
     // property this test defends: forty messages in twenty threads cost what one in one costs.
     expect(one).toBe(17);
+  }, 120_000);
+
+  /** The bytes a limit-1 page reads when its one message sits in a 60-letter conversation. */
+  async function bytesNaming(payload: number): Promise<number> {
+    const { db, accountId, mailboxId, ctx } = await setup();
+    const [t] = await db.insert(threads).values({ accountId, subject: "the long one" }).returning();
+    for (let i = 0; i < 60; i += 1) {
+      await db.insert(messages).values({
+        accountId, mailboxId, bodyHash: "h", dedupKey: randomUUID(), threadId: t!.id,
+        subject: "s".repeat(payload), snippet: "p".repeat(payload), fromAddress: "f@x.example",
+        date: new Date(NOW.getTime() - i * 60_000), unread: i % 2 === 0,
+      });
+    }
+    const counted = counting(db);
+    const res = await svc.getSnapshot({ ...ctx, db: counted.db }, { limit: 1 });
+    expect(idsOf(res, "message")).toHaveLength(1);
+    const thread = res.changes.find((c) => c.type === "thread")?.entity as { messageIds: string[] };
+    expect(thread.messageIds).toHaveLength(60);
+    return counted.bytes();
+  }
+
+  it("a page naming a long conversation reads its members' ids, not their mail", async () => {
+    const plain = await bytesNaming(10);
+    const heavy = await bytesNaming(2_000);
+    // Only the page's own message carries its subject and snippet; the other 59 letters may not.
+    expect(heavy - plain).toBeLessThan(12_000);
   }, 120_000);
 });
 
