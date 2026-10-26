@@ -11,8 +11,8 @@
 
 import { csrfToken as readCsrfToken } from "./csrf";
 import {
-  REFRESH_ENDPOINT, isRecoverable, mayRefreshFor, otherTabRenewalSettled, refreshInFlight, refreshSettled, resumeSession,
-  retryAfterMsOf, sessionMints, withSessionCookieLock,
+  REFRESH_ENDPOINT, isRecoverable, jarMark, mayRefreshFor, otherTabRenewalSettled, refreshInFlight, refreshSettled,
+  resumeSession, retryAfterMsOf, sessionMints, withSessionCookieLock,
 } from "./session-refresh";
 import { sessionEndedResponse } from "@ohmail/client-engine";
 import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
@@ -607,6 +607,7 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
   }
 
   const mintsAtSend = sessionMints();
+  const jarAtSend = jarMark();
   try {
     const seen: { account?: string | null } = {};
     const answer = await hearing<T>(path, opts, seen, ticket);
@@ -630,10 +631,12 @@ async function admitted<T>(path: string, opts: RequestOptions, ticket: LaneTicke
      * then: a request this client may no longer make gets no recovery attempt on somebody else's credential.
      */
     mustHold();
-    // Renewed since this left (`sessionMints`): the new jar is the remedy, not another rotation. The
-    // same question rides into the lock: its wait is long enough for another account to sign in.
+    // Renewed since this left (`sessionMints`; another tab's past the jar it left on, `staleJar`): the new
+    // jar is the remedy, not another rotation. The same question rides into the lock: its wait is long
+    // enough for another account to sign in.
     const whose = (): OwnerVerdict => apiOwnerVerdict(path, opts.ceremony === true ? { ceremony: true } : {});
-    const resumed = sessionMints() !== mintsAtSend ? "resumed" : await resumeSession({ mayProceed: () => whose() === "holds" });
+    const resumed = sessionMints() !== mintsAtSend
+      ? "resumed" : await resumeSession({ mayProceed: () => whose() === "holds", staleJar: jarAtSend });
     if (resumed === "unavailable") throw sessionUncheckedError();
     if (resumed !== "resumed") throw whose() === "mismatch" ? ownerRefusal("mismatch") : err;
     // The refresh rewrites the whole jar, so the question has to be asked again before the
@@ -772,6 +775,7 @@ async function transported(
     }
   }
   const mintsAtSend = sessionMints();
+  const jarAtSend = jarMark();
   let first: Response;
   try {
     first = await fetch(url, waited ? withFreshCsrf(init) : init);
@@ -786,7 +790,7 @@ async function transported(
   if (!apiOwnerHolds(path)) return refusedForAnotherAccount(first, path, press);
   // Asked again inside the lock, as `api()` asks: another account can sign in while it waits.
   const resumed = sessionMints() !== mintsAtSend
-    ? "resumed" : await resumeSession({ mayProceed: () => apiOwnerHolds(path) });
+    ? "resumed" : await resumeSession({ mayProceed: () => apiOwnerHolds(path), staleJar: jarAtSend });
   if (resumed === "unavailable") {
     void first.body?.cancel().catch(() => undefined);
     return renewalUnavailableResponse();

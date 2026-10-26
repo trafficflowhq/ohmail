@@ -1,4 +1,4 @@
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { open, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -17,11 +17,21 @@ function tempFor(path: string): string {
   return `${path}.${process.pid}.tmp`;
 }
 
-/** The synchronous form — the seal and the LAN door's identity. Throws what the write throws. */
+/**
+ * The synchronous form — the seal and the LAN door's identity. Throws what the write throws.
+ * Flushed as {@link writeAtomicFileSynced} is: a power cut that undid an unflushed seal brought back
+ * a token pair the server had already rotated, and the next launch was swept as a thief.
+ */
 export function writeAtomic(path: string, contents: string, mode: number): void {
   const tmp = tempFor(path);
-  writeFileSync(tmp, contents, { encoding: "utf8", mode });
   try {
+    const fd = openSync(tmp, "w", mode);
+    try {
+      writeFileSync(fd, contents, "utf8");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmp, path);
   } catch (err) {
     // The target is untouched — a refused rename is the whole point — so all that is owed is the
@@ -29,6 +39,7 @@ export function writeAtomic(path: string, contents: string, mode: number): void 
     try { unlinkSync(tmp); } catch { /* nothing to clean up */ }
     throw err;
   }
+  syncDirectorySync(dirname(path));
 }
 
 /** The same, on the promises API, for a caller already inside an async write path. */
@@ -93,5 +104,19 @@ async function syncDirectory(dir: string): Promise<void> {
     if (code !== "EINVAL" && code !== "ENOTSUP") throw err;
   } finally {
     await handle.close();
+  }
+}
+
+/** {@link syncDirectory}, synchronously, on the same terms. */
+function syncDirectorySync(dir: string): void {
+  if (process.platform === "win32") return;
+  const fd = openSync(dir, "r");
+  try {
+    fsyncSync(fd);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== "EINVAL" && code !== "ENOTSUP") throw err;
+  } finally {
+    closeSync(fd);
   }
 }

@@ -402,7 +402,7 @@ describe("a late renewal answer, repaired by the live tab", () => {
 });
 
 describe("the cross-tab lock serializes two tabs' refreshes", () => {
-  it("(17) two tabs refresh at once, the answer 300 ms late: the second presents the rotated token", async () => {
+  it("(17) two tabs refresh at once, the answer 300 ms late: the second takes the first's answer and presents nothing", async () => {
     latencyMs = 300;
     const a = await openTab();
     const b = await openTab();
@@ -411,6 +411,26 @@ describe("the cross-tab lock serializes two tabs' refreshes", () => {
     await advance(2_000);
     expect(await ra).toBe("resumed");
     expect(await rb).toBe("resumed");
-    expect(sent.map((s) => s.csrf), "both tabs presented one token").toEqual(["c0", "c1"]);
+    // Not ["c0", "c1"]: a second rotation of a jar just renewed is one more step a crash can take it back.
+    expect(sent.map((s) => s.csrf), "the second tab rotated the jar the first had just renewed").toEqual(["c0"]);
+  });
+});
+
+describe("a jar another tab renewed, taken without presenting it", () => {
+  it("(18) taking it leaves a renewal name still owed for that jar: its retry replays, nothing is swept", async () => {
+    const a = await openTab();
+    const staleJar = a.refresh.jarMark();
+    const b = await openTab();
+    expect(await b.refresh.resumeSession()).toBe("resumed");
+    // A third tab presents the renewed jar and its answer is lost: that name is owed for this jar.
+    const c = await openTab();
+    loseNext = true;
+    expect(await c.refresh.resumeSession()).toBe("unavailable");
+    expect(await a.refresh.resumeSession({ staleJar }), "the caller that judged the old jar takes the new one").toBe("resumed");
+    expect(sent.map((s) => s.answer)).toEqual(["204", "lost"]);
+    await advance(2 * MIN);
+    expect(await b.refresh.resumeSession(), "the next renewal of the taken jar was swept").toBe("resumed");
+    expect(sent[2], "the owed name was dropped: past the grace, a new name is swept").toEqual(
+      { name: sent[1]!.name, csrf: "c1", answer: "204" });
   });
 });

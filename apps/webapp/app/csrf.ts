@@ -10,6 +10,8 @@
 
 import { cookieFromJar } from "./shell/cookie-jar";
 
+export const CSRF_COOKIE = "tf_csrf";
+
 /**
  * Read the double-submit CSRF token.
  *
@@ -20,6 +22,17 @@ import { cookieFromJar } from "./shell/cookie-jar";
  */
 export function csrfToken(): string | null {
   if (typeof document === "undefined") return null;
-  const raw = cookieFromJar(document.cookie, "tf_csrf");
+  const raw = cookieFromJar(document.cookie, CSRF_COOKIE);
   return raw === null ? null : decodeURIComponent(raw);
+}
+
+/**
+ * Enough of `tf_csrf` to tell that the jar moved on, and never the value itself; `""` for none. Pure,
+ * so the resume page marks the jar its navigation carried as the browser marks the jar it holds.
+ */
+export function csrfMark(csrf: string | null): string {
+  if (csrf === null) return "";
+  let h = 0x811c9dc5;
+  for (let i = 0; i < csrf.length; i += 1) h = Math.imul(h ^ csrf.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, "0");
 }

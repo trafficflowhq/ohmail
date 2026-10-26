@@ -10,7 +10,7 @@
  */
 
 import { CREDENTIAL_REFUSED, isSessionRefusal } from "@ohmail/client-engine";
-import { csrfToken } from "./csrf";
+import { csrfMark, csrfToken } from "./csrf";
 import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
 import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
 import { readOwner, readOwnerMarker } from "./shell/owner-cookie";
@@ -422,6 +422,12 @@ export interface ResumeOptions {
    * that answer instead of presenting the same token again ({@link SPLASH_PRESENTATION_KEY}).
    */
   landing?: boolean;
+  /**
+   * THE JAR THE CALLER FOUND STALE, as {@link jarMark} read it when its refused request left, or as
+   * the edge saw it for the splash (`resume/page.tsx`); the jar at the call when absent. A jar another
+   * live page has renewed past it, for the same account, is taken inside the lock and nothing is presented.
+   */
+  staleJar?: string;
 }
 
 /**
@@ -481,12 +487,9 @@ interface PendingAttempt {
 /** This page's copy, for a jar that refuses storage. */
 let attemptHere: PendingAttempt | null = null;
 
-/** Enough of `tf_csrf` to tell that the jar moved on, and never the value itself. */
-function csrfMark(csrf: string | null): string {
-  if (csrf === null) return "";
-  let h = 0x811c9dc5;
-  for (let i = 0; i < csrf.length; i += 1) h = Math.imul(h ^ csrf.charCodeAt(i), 0x01000193);
-  return (h >>> 0).toString(16).padStart(8, "0");
+/** The jar's mark as it stands, `""` when it holds no `tf_csrf`. Never the value. */
+export function jarMark(): string {
+  return csrfMark(csrfToken());
 }
 
 function owedAttempt(): PendingAttempt | null {
@@ -547,6 +550,8 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
   }
   if (inFlight) return inFlight;
   const asked = { refused: false };
+  // The jar this caller judged stale, and whose: read before the lock's wait, which a renewal elsewhere can end.
+  const judged = { mark: opts.staleJar ?? jarMark(), owner: readOwner() };
   inFlight = withCrossTabLock(async () => {
     /*
      * Still the same browser? Asked INSIDE the lock, not before it. A refresh rotates whatever
@@ -583,6 +588,9 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
         asked.refused = true;
         return "refused";
       }
+      // ANOTHER PAGE RENEWED PAST THE JAR THIS CALLER JUDGED STALE (same account, an answer a live page
+      // recorded): taken, nothing presented. Each rotation is one more step a crash can take the jar back.
+      if (opts.attemptId === undefined && jarMovedPast(judged)) return takeLandedJar();
       // A RELOADED SPLASH: the previous page's presentation of this jar is still out. Its answer is
       // waited for; the wait gives the jar time to change hands, so the caller's question is asked again.
       if (opts.landing === true && opts.attemptId === undefined) {
@@ -594,7 +602,11 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
             asked.refused = true;
             return "refused";
           }
-          if (landed) return landedFromThePreviousPage();
+          if (landed) {
+            // That presentation's name is answered.
+            settleAttempt();
+            return takeLandedJar();
+          }
         }
         durableSessionSet(SPLASH_PRESENTATION_KEY,
           JSON.stringify({ at: Date.now(), mark: csrfMark(csrfToken()), owner: readOwner() }), "session-splash");
@@ -718,14 +730,23 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
   return started;
 }
 
-/** The previous page's answer is this session: settled as this page's own 204 would be, nothing presented. */
-function landedFromThePreviousPage(): "resumed" {
-  settleAttempt();
+/**
+ * Another page's answer is this session: taken as this page's own 204 would be, nothing presented.
+ * It settles no renewal name: one still owed is owed for this jar, and a new name past the grace is swept.
+ */
+function takeLandedJar(): "resumed" {
   durableSessionRemove(SPLASH_PRESENTATION_KEY, "session-splash");
   recordRefresh({ outcome: "minted", status: 204, code: null, errorClass: null, retryAfterMs: null });
   noteSessionMinted();
   markSessionAlive();
   return "resumed";
+}
+
+/** The jar moved off `judged` to an answer a live page recorded, and still names the same account. */
+function jarMovedPast(judged: { mark: string; owner: string | null }): boolean {
+  const mark = jarMark();
+  return judged.owner !== null && readOwner() === judged.owner && mark !== "" && mark !== judged.mark
+    && answerRecorded(mark);
 }
 
 /** Sign-out's door for the splash's note. Answers what could not be removed. */
