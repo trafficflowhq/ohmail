@@ -343,6 +343,59 @@ describe("the seam under the desktop feed's live gaps stays even", () => {
     }, 60_000);
 });
 
+/**
+ * THE FOCUSED READER'S RING CLEARS THE RAIL (owner 2026-10-26, ohmarchy dark: "threaded message panel
+ * and focus panel probably coliding, generating overlapping lines"). With the reader zone focused, the
+ * thread's ring frames the paper: on the left it lies over the paper's own ring, as far past the rail
+ * as the rail stands from the list's ring, and no line of it crosses the seam list | rail | paper. Read from the painted pixels (the ring in a
+ * marker colour), whatever draws it.
+ */
+describe("the focused reader's ring clears the rail", () => {
+  const FOCUSED = css("apps/webapp/app/shell/zone-cursor.css") + "html[data-face][data-theme]{--focus:#f0f}";
+  async function ringRows(viewport: number, list: number, face: "ohmarchy" | "paper") {
+    const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
+    try {
+      await page.setContent(split_(viewport, list, face, css("packages/ui/src/composites/list-pane.css") + FOCUSED)
+        .replace('data-theme="light"', 'data-theme="dark" data-zone="reader"').replace("margin:0 var(--gap-edge)", "margin:var(--gap-edge)"));
+      const m = await page.evaluate(() => {
+        const r = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+        const sq = [...document.querySelectorAll(".thread-marks .tm-sq")].map((el) => el.getBoundingClientRect());
+        return { listRight: r(".list-col").right, railLeft: sq[0]!.left + 5 - 9, railRight: sq[0]!.left + 5 + 9, paper: r("article.pm").left,
+          top: r(".view.split").top, squareY: sq[1]!.top + sq[1]!.height / 2 };
+      });
+      // The marker colour's columns on one painted row (the screenshot decoded in the engine).
+      const marked = async (y: number): Promise<number[]> => {
+        const png = (await page.screenshot({ clip: { x: 0, y: Math.floor(y), width: viewport, height: 1 } })).toString("base64");
+        return page.evaluate(async (b64) => {
+          const img = await createImageBitmap(await (await fetch(`data:image/png;base64,${b64}`)).blob());
+          const g = new OffscreenCanvas(img.width, 1).getContext("2d")!;
+          g.drawImage(img, 0, 0);
+          const d = g.getImageData(0, 0, img.width, 1).data;
+          return [...Array(img.width).keys()].filter((x) => d[4 * x]! > 200 && d[4 * x + 1]! < 80 && d[4 * x + 2]! > 200);
+        }, png);
+      };
+      return { ...m, squares: await marked(m.squareY), topLine: await marked(m.top - 1) };
+    } finally {
+      await page.close();
+    }
+  }
+  for (const [viewport, list] of SPLITS)
+    it(`ohmarchy dark at ${viewport}px: the ring lies over the paper's, clear of the rail, nothing on the seam`, async () => {
+      const m = await ringRows(viewport, list, "ohmarchy");
+      const ringLeft = Math.round(m.paper) - 2;
+      expect(m.squares.length, "the focused reader wears a ring").toBeGreaterThan(0);
+      expect(m.squares.filter((x) => x >= m.listRight && x < ringLeft), "a ring line on the seam beside the squares").toEqual([]);
+      expect(m.squares[0], "the ring's left line lies over the paper's ring").toBe(ringLeft);
+      expect(ringLeft - m.railRight, "rail → the ring, as list ring → rail").toBeCloseTo(m.railLeft - m.listRight - 2, 0);
+      expect(m.topLine.length, "the ring's top line").toBeGreaterThan(0);
+      expect(m.topLine[0], "the top line starts at the paper, never over the rail's column").toBe(ringLeft);
+    }, 60_000);
+  it("paper: the reader zone paints no ring", async () => {
+    const m = await ringRows(1440, 634, "paper");
+    expect([...m.squares, ...m.topLine]).toEqual([]);
+  }, 60_000);
+});
+
 describe("the walk over a laid-out thread", () => {
   it("measured in the engine: the first at the top, the one-line last at the end, never a step back, a press lands on the line", async () => {
     const page = await browser!.newPage({ viewport: { width: 1440, height: 800 } });
