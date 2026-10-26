@@ -74,12 +74,89 @@ export class GroupedSweepLedger {
    * offset chain is incomplete is not passed — never a guess in the read-marking direction.
    */
   passed(line: number): string[] {
+    return this.frames().filter((f) => f.bottom <= line).map((f) => f.id);
+  }
+
+  /** A row whose cell left the list: its frame is no longer kept current. */
+  drop(id: string): void {
+    this.rows.delete(id);
+  }
+
+  /** Every fully measured row's frame in scroll-content coordinates. */
+  frames(): SweepFrame[] {
     if (this.panelY === null) return [];
-    const out: string[] = [];
+    const out: SweepFrame[] = [];
     for (const [id, row] of this.rows) {
       const g = this.groups.get(row.group);
       if (!g || g.y === null || g.itemsY === null) continue;
-      if (this.panelY + g.y + g.itemsY + row.y + row.h <= line) out.push(id);
+      const top = this.panelY + g.y + g.itemsY + row.y;
+      out.push({ id, top, bottom: top + row.h });
+    }
+    return out;
+  }
+}
+
+/** A row's frame in scroll-content coordinates. */
+export interface SweepFrame {
+  id: string;
+  top: number;
+  bottom: number;
+}
+
+/** Where the list stands: its offset and its own height. */
+export interface SweepView {
+  y: number;
+  height: number;
+}
+
+/**
+ * A STREAM'S SEEN RUN (Reads, Receipts): a row is passed only once a look the person drove has had
+ * it on screen above the read line, and its foot has cleared the line. The looks are the reports
+ * while the finger moves the list, the screen where it lifts, and the screen a fling comes to rest
+ * on. The fling's glide, the list holding its place while mail arrives above, a place coming back
+ * and every other scroll the app makes are not looked at. A visit starts from nothing (`restart`).
+ */
+export class SeenRun {
+  private shown = new Set<string>();
+  private by: "app" | "finger" | "lifted" | "glide" = "app";
+
+  constructor(private readonly readLine: number) {}
+
+  restart(): void {
+    this.shown.clear();
+    this.by = "app";
+  }
+
+  drag(): void {
+    this.by = "finger";
+  }
+
+  scroll(v: SweepView, frames: Iterable<SweepFrame>): string[] {
+    return this.by === "finger" ? this.look(v, frames) : [];
+  }
+
+  lift(v: SweepView, frames: Iterable<SweepFrame>): string[] {
+    if (this.by !== "finger") return [];
+    this.by = "lifted";
+    return this.look(v, frames);
+  }
+
+  glide(): void {
+    if (this.by === "lifted") this.by = "glide";
+  }
+
+  land(v: SweepView, frames: Iterable<SweepFrame>): string[] {
+    if (this.by !== "glide") return [];
+    this.by = "app";
+    return this.look(v, frames);
+  }
+
+  private look(v: SweepView, frames: Iterable<SweepFrame>): string[] {
+    const line = v.y + v.height * this.readLine;
+    const out: string[] = [];
+    for (const f of frames) {
+      if (f.top < line && f.bottom > v.y) this.shown.add(f.id);
+      if (f.bottom <= line && this.shown.has(f.id)) out.push(f.id);
     }
     return out;
   }

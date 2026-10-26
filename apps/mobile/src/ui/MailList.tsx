@@ -75,9 +75,16 @@ export interface MailListProps<T> {
   rowInset?: number;
   refresh?: PullRefresh;
   onScroll?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  /** The person's own gesture: the finger down and up, and the glide a fling starts. */
+  onScrollBeginDrag?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onScrollEndDrag?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onMomentumScrollBegin?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onMomentumScrollEnd?: (e: NativeSyntheticEvent<NativeScrollEvent>) => void;
   scrollEventThrottle?: number;
   /** A row's frame in scroll-content coordinates, as its cell lays out — the sweeps' geometry. */
   onRowFrame?: (row: T, frame: RowFrame) => void;
+  /** A row's cell left the list (the window moved on): its last frame is no longer kept current. */
+  onRowGone?: (row: T) => void;
   /** Filled with a scroll to a content offset — History's year strip jumps with it. */
   scrollTo?: { current: ((y: number) => void) | null };
   /**
@@ -96,9 +103,10 @@ export interface MailListProps<T> {
 interface CellRules {
   rowInset: number;
   onRowFrame: ((row: unknown, frame: RowFrame) => void) | null;
+  onRowGone: ((row: unknown) => void) | null;
 }
 
-const CellRulesContext = createContext<CellRules>({ rowInset: 0, onRowFrame: null });
+const CellRulesContext = createContext<CellRules>({ rowInset: 0, onRowFrame: null, onRowGone: null });
 
 /**
  * Every cell, rows and section headers alike. Module-scope on purpose: a new component identity
@@ -107,12 +115,22 @@ const CellRulesContext = createContext<CellRules>({ rowInset: 0, onRowFrame: nul
  * in the scroll content, so `y` is already in the coordinates the read-line sweeps compare.
  */
 function Cell({ children, onLayout, style, item, onFocusCapture }: CellRendererProps<unknown>) {
-  const { rowInset, onRowFrame } = useContext(CellRulesContext);
+  const { rowInset, onRowFrame, onRowGone } = useContext(CellRulesContext);
   const row = !isSection(item);
+  const live = useRef({ onRowFrame, onRowGone, item, frame: null as RowFrame | null });
+  live.current = { ...live.current, onRowFrame, onRowGone, item };
+  useEffect(() => {
+    if (!row) return;
+    const at = live.current;
+    if (at.frame !== null) at.onRowFrame?.(at.item, at.frame);
+    return () => live.current.onRowGone?.(live.current.item);
+  }, [row]);
   const measure = (e: LayoutChangeEvent) => {
     onLayout?.(e);
     if (row && onRowFrame !== null) {
-      onRowFrame(item, { y: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height });
+      const frame = { y: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height };
+      live.current.frame = frame;
+      onRowFrame(item, frame);
     }
   };
   return (
@@ -154,8 +172,13 @@ export function MailList<T>({
   rowInset = 0,
   refresh,
   onScroll,
+  onScrollBeginDrag,
+  onScrollEndDrag,
+  onMomentumScrollBegin,
+  onMomentumScrollEnd,
   scrollEventThrottle,
   onRowFrame,
+  onRowGone,
   scrollTo,
   rowLayout,
   topFor,
@@ -186,8 +209,9 @@ export function MailList<T>({
     () => ({
       rowInset,
       onRowFrame: onRowFrame ? (row, frame) => onRowFrame(row as T, frame) : null,
+      onRowGone: onRowGone ? (row) => onRowGone(row as T) : null,
     }),
-    [rowInset, onRowFrame],
+    [rowInset, onRowFrame, onRowGone],
   );
 
   const renderItem = useCallback(
@@ -270,6 +294,10 @@ export function MailList<T>({
         showsVerticalScrollIndicator={false}
         refreshControl={pullRefreshControl(t, refresh)}
         onScroll={onScroll}
+        onScrollBeginDrag={onScrollBeginDrag}
+        onScrollEndDrag={onScrollEndDrag}
+        onMomentumScrollBegin={onMomentumScrollBegin}
+        onMomentumScrollEnd={onMomentumScrollEnd}
         scrollEventThrottle={scrollEventThrottle}
         /* The head is the anchor at the top: the hold skips only the children that precede it, and
            the surface is one of them only once it has mounted. Handed `1` before that, the first
