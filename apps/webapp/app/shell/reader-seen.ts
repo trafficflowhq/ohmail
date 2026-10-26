@@ -12,14 +12,14 @@ import type { ThreadWalkChannel } from "./thread-walk-channel";
  * THE THREAD-READ RULE IN THE READER — the DOM adapter over the engine's `createThreadRead`. Each
  * panel is a `[data-conv-id]` element: its sender line is `.msg-from`, its first lines the top of its
  * body block (`.msg-body`, `.pm-body`; a framed body's frame) down about `THREAD_TOP_LINES` lines of
- * the body's own line height, or to the body's end (`[data-own-end]`, the block's foot) where it is
- * shorter; it is ready while it carries `data-body-ready`, unread while it carries `data-unseen`. The
- * view is the scroller's box above the sticky bar or the reply dock. One observe per frame, on
- * scroll, resize, a panel's size or attributes changing, the window coming back, and when a dwell
- * under way is due. The rule (the engine's header): "A message turns read once its sender line has
- * been fully on screen (a preview counts) and its first lines have stayed on screen for 0.7 s, in
- * either order. Reaching the end is not needed. Nothing that was never on screen turns read; Mark
- * unread starts it over."
+ * the body's own line height, or to the body's end where it is shorter, and the end of its text is that
+ * end (a framed body's frame foot, else `[data-own-end]`, else the block's foot); it is ready while it
+ * carries `data-body-ready`, unread while it carries `data-unseen`. The view is the scroller's box above
+ * the sticky bar or the reply dock. One observe per frame, on scroll, resize, a panel's size or
+ * attributes changing, the window coming back, and when a dwell under way is due. The rule (the
+ * engine's header): "A message turns read once its first lines have stayed on screen for 0.7 s and its
+ * sender line has been fully on screen or the end of its text has been on screen (a preview counts), in
+ * either order. Nothing that was never on screen turns read; Mark unread starts it over."
  *
  * A look counts only while the person can be reading: the tab visible, and the window focused or
  * scrolled by the person's own hand within the evidence window (a wheel over a window beside another
@@ -130,22 +130,25 @@ export function panelsOf(scroller: HTMLElement): ThreadPanel[] {
   return [...scroller.querySelectorAll<HTMLElement>("[data-conv-id]")].map((el) => {
     const from = el.querySelector(".msg-from");
     const first = from && cssRect(from).height > 0 ? box(from) : null;
-    const end = el.querySelector("[data-own-end]");
+    const mark = el.querySelector("[data-own-end]");
     const frame = el.querySelector("iframe.mb-frame");
     // A frame draws its end marker only once measured (until then its foot is the 150px default);
     // a body still standing in for its frame says so.
-    const unmeasured = (!end && frame !== null) || el.querySelector("[data-body-pending]") !== null;
+    const unmeasured = (!mark && frame !== null) || el.querySelector("[data-body-pending]") !== null;
     const block = el.querySelector(".msg-body, .pm-body");
     let lead: LineBox | null = null;
+    let end: LineBox | null = null;
     if (block) {
       // THE FIRST LINES: from the body's top (a framed body's, the frame's) about three lines down, or
       // to its end where it is shorter — the whole of a short body is its top.
       const b = cssRect(block);
       const f = frame ? cssRect(frame) : null;
       const top = f ? f.top : b.top;
-      const foot = f ? f.bottom : end ? cssRect(end).top : b.bottom;
+      const foot = f ? f.bottom : mark ? cssRect(mark).top : b.bottom;
       const lines = THREAD_TOP_LINES * lineHeightOf(block);
       lead = { top, bottom: Math.max(top, Math.min(top + lines, foot)) };
+      const at = Math.max(top, foot);
+      end = { top: at, bottom: at };
     }
     return {
       id: el.dataset.convId!,
@@ -153,6 +156,7 @@ export function panelsOf(scroller: HTMLElement): ThreadPanel[] {
       height: cssRect(el).height,
       first,
       lead,
+      end,
     };
   });
 }

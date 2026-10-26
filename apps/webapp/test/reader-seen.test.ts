@@ -121,28 +121,31 @@ afterEach(() => {
 });
 
 describe("a message's top comes from the marker elements", () => {
-  it("the sender line and the body's first three lines, the panel's readiness and height", () => {
+  it("the sender line, the body's first three lines and the end of its text, the panel's readiness and height", () => {
     panel("a", 100, 400);
     expect(panelsOf(scroller)).toEqual([{
       id: "a", ready: true, height: 330, first: { top: 100, bottom: 140 }, lead: { top: 150, bottom: 150 + LEAD },
+      end: { top: 400, bottom: 400 },
     }]);
   });
   it("a body shorter than three lines is its own top, to its end marker", () => {
     panel("a", 100, 180);
     expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 180 });
   });
-  it("without a marker the body block's foot ends a short body", () => {
+  it("without a marker the body block's foot ends a short body, and its text", () => {
     panel("a", 100, 160, { marker: false });
     expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 170 });
+    expect(panelsOf(scroller)[0]!.end).toEqual({ top: 170, bottom: 170 });
   });
   it("a line is the body's own line height", () => {
     const el = panel("a", 100, 900);
     el.querySelector<HTMLElement>(".pm-body")!.style.lineHeight = "30px";
     expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 150, bottom: 240 });
   });
-  it("a framed body's first lines are the top of its frame", () => {
+  it("a framed body's first lines are the top of its frame, the end of its text the frame's foot", () => {
     panel("a", 100, 3000, { framed: { top: 210, bottom: 2990 } });
     expect(panelsOf(scroller)[0]!.lead).toEqual({ top: 210, bottom: 210 + LEAD });
+    expect(panelsOf(scroller)[0]!.end).toEqual({ top: 2990, bottom: 2990 });
   });
   it("the view ends at the sticky bar's top", () => {
     bar(700);

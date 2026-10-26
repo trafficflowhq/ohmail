@@ -4,16 +4,17 @@
  * view in one coordinate system, at a moment, and gets back the ids that turned read.
  *
  * The rule, for every message on web, desktop, Cloud and the phone: "A message turns read once its
- * sender line has been fully on screen (a preview counts) and its first lines have stayed on screen for
- * 0.7 s, in either order. Reaching the end is not needed. Nothing that was never on screen turns read;
- * Mark unread starts it over." (The end: owner ruling 2026-10-23.)
+ * first lines have stayed on screen for 0.7 s and its sender line has been fully on screen or the end of
+ * its text has been on screen (a preview counts), in either order. Nothing that was never on screen
+ * turns read; Mark unread starts it over." (Once the sender line was seen the end is not needed: owner
+ * ruling 2026-10-23.)
  *
  * In this code: the sender line counts once it is wholly inside the view at a look someone could see
- * (a preview's look too); the first lines of the body (about `THREAD_TOP_LINES` lines, or the whole body
- * when it is shorter; a framed body's top, about the same height) count once they are wholly inside the
- * view, without a break, for `THREAD_READ_HOLD_MS` of a visit the person ENTERED (an open, a press or a
- * hand scroll in the reader). Each is kept separately for the visit, for every message, whether or not
- * the two fit in the view together.
+ * (a preview's look too), and so does the end of the text (`end`) once the body is ready; the first
+ * lines of the body (about `THREAD_TOP_LINES` lines, or the whole body when it is shorter; a framed
+ * body's top, about the same height) count once they are wholly inside the view, without a break, for
+ * `THREAD_READ_HOLD_MS` of a visit the person ENTERED (an open, a press or a hand scroll in the reader).
+ * Each is kept separately for the visit, for every message, whether or not they fit in the view together.
  * One dwell for every message, the newest and a reply that arrives into the open visit included, and the
  * id is returned once, at the first look that has both. Never counted: a dwell in a preview (before
  * `enter`), a look nobody can see (`view` null: the tab hidden, the window away — every dwell starts
@@ -53,6 +54,8 @@ export interface ThreadPanel {
    * is laid out.
    */
   lead: LineBox | null;
+  /** Where its own text ends, as a line of no height; `null` where nothing is laid out. */
+  end: LineBox | null;
 }
 
 /** The visible part of the scroller, `bottom` already above the sticky bar or the reply dock. */
@@ -72,8 +75,8 @@ export interface ThreadRead {
   /** A deliberate read: the keep is let go. */
   release(id: string): void;
   /**
-   * One look at `now`: the ids whose top has now been seen (the sender line, and the first lines for
-   * the whole dwell), each once, in panel order. `view` null is a look nobody can see: every dwell
+   * One look at `now`: the ids now read (the first lines for the whole dwell, and the sender line or
+   * the end of the text), each once, in panel order. `view` null is a look nobody can see: every dwell
    * under way starts over.
    */
   observe(panels: readonly ThreadPanel[], view: ThreadView | null, unreadNow: ReadonlySet<string>, now: number): string[];
@@ -99,8 +102,8 @@ export function createThreadRead(): ThreadRead {
   const heights = new Map<string, number>();
   /** Each id's read state at the last observe: a turn to unread is kept. */
   const wasUnread = new Map<string, boolean>();
-  /** Sender lines seen wholly in view at a look someone could see, this visit. */
-  const firstSeen = new Set<string>();
+  /** Sender lines, or ends of a ready body, seen wholly in view at a look someone could see, this visit. */
+  const edgeSeen = new Set<string>();
   /** First lines that held in view for a whole dwell of the entered visit. */
   const leadHeld = new Set<string>();
 
@@ -117,7 +120,7 @@ export function createThreadRead(): ThreadRead {
     keepUnread(id) {
       kept.add(id);
       since.delete(id);
-      firstSeen.delete(id);
+      edgeSeen.delete(id);
       leadHeld.delete(id);
     },
     release(id) {
@@ -136,7 +139,7 @@ export function createThreadRead(): ThreadRead {
         heights.set(p.id, p.height);
         if (h !== undefined && Math.abs(p.height - h) > HEIGHT_SLACK) since.delete(p.id);
         const open = unread && !kept.has(p.id) && !returned.has(p.id);
-        if (view !== null && open && inside(p.first, view)) firstSeen.add(p.id);
+        if (view !== null && open && (inside(p.first, view) || (p.ready && inside(p.end, view)))) edgeSeen.add(p.id);
         const counts = view !== null && entered && p.ready && open;
         if (!counts || !inside(p.lead, view)) {
           since.delete(p.id);
@@ -148,7 +151,7 @@ export function createThreadRead(): ThreadRead {
             leadHeld.add(p.id);
           }
         }
-        if (counts && leadHeld.has(p.id) && firstSeen.has(p.id)) {
+        if (counts && leadHeld.has(p.id) && edgeSeen.has(p.id)) {
           returned.add(p.id);
           out.push(p.id);
         }

@@ -196,6 +196,51 @@ describe("a message turns read once its top has been in view for the dwell", () 
 });
 
 /**
+ * FIFTEEN MESSAGES, THE LAST THREE UNREAD, landed at the end: m1..m14 above the opened m15, 400dp each
+ * but m13 (900) and m14 (580); the opened message from 6560, the content 6800, the view on its last 800.
+ */
+describe("a sender row cut at the top: the end of the text counts for it", () => {
+  it("m14's header cut, its first lines and end in view: read with m15; m13 reads once its first lines hold, its end seen on the way up", () => {
+    opened = "m15";
+    unread = new Set(["m13", "m14", "m15"]);
+    const c = core();
+    c.viewport(800);
+    c.chrome(0);
+    c.offset("padded", 0);
+    c.offset("above", 0);
+    let y = 0;
+    for (let i = 1; i <= 14; i++) {
+      const h = i === 13 ? 900 : i === 14 ? 580 : 400;
+      member(c, `m${i}`, y, h, "above");
+      y += h + 20;
+    }
+    c.offset("opened", y);
+    c.openedFrom(0, 40);
+    c.openedBody(100);
+    c.openedEnd(200);
+    c.content(y + 240);
+    c.onScroll(y + 240 - 800);
+    expect(c.topOf("m14")! - (y + 240 - 800), "m14's header row cut at the top").toBe(-40);
+    pass(5 * HOLD);
+    expect(reads).toEqual([["m14", "m15"]]);
+    c.onScroll(5500); // up: m13's end in view, its first lines above it
+    pass(5 * HOLD);
+    expect(reads, "only m13's tail was in view").toEqual([["m14", "m15"]]);
+    c.onScroll(5070); // its first lines in view, its header row cut by 12
+    pass(HOLD + 1);
+    expect(reads).toEqual([["m14", "m15"], ["m13"]]);
+  });
+
+  it("the opened message seen from a place that cuts its sender row, its first lines and end in view: read", () => {
+    const c = core();
+    laidOut(c);
+    c.onScroll(10); // the first look: the sender row at 0..40, the view from 10
+    pass(HOLD + 1);
+    expect(reads).toEqual([["open", "m1"]]);
+  });
+});
+
+/**
  * THE WALK (o9): the ring is the LAST message whose top has crossed a reading line 30 % down the
  * view; at the top only the first, at the very end the last even when it is one line, never a step
  * back on a one-way scroll. Time order: m1 and m2 (900dp each) above the opened message, which is

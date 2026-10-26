@@ -2,13 +2,13 @@
  * THE REPORTED CASE ON THE PHONE (OHBOX-THREAD-OPEN-LEAVES-ITS-NEW-MESSAGES-UNREAD): a conversation
  * of several unread replies opened from the Ohbox left them unread and showed no state. Now the
  * open holds the row and reads nothing by itself; the reader's thread-read rule reads each message
- * once its top — its sender line and first lines — has been on screen for the 0.7 s dwell (owner
- * ruling 2026-10-23), one glance per look; the reader and its rail run in time order, oldest
- * first, as the row's squares; a member's ⋯ offers Mark unread on a read message that is not the
- * account's own and keeps it unread for the visit; a reply that syncs into the open reader is asked
- * its text and read like any message. Outside the Ohbox (Reads) the open still reads. Through the
- * real engine over a loopback mail server; the reader's layout reports and its clock are driven by
- * hand, as `MessageReader` makes them.
+ * once its first lines have been on screen for the 0.7 s dwell and its sender line, or the end of its
+ * text, has been on screen (owner ruling 2026-10-23), one glance per look; the reader and its rail
+ * run in time order, oldest first, as the row's squares; a member's ⋯ offers Mark unread on a read
+ * message that is not the account's own and keeps it unread for the visit; a reply that syncs into
+ * the open reader is asked its text and read like any message. Outside the Ohbox (Reads) the open
+ * still reads. Through the real engine over a loopback mail server; the reader's layout reports and
+ * its clock are driven by hand, as `MessageReader` makes them.
  */
 import { describe, expect, it } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
@@ -132,19 +132,20 @@ describe("the reported case: an unread conversation opened from the Ohbox", () =
       expect(reads, "the write waits for the dwell").toEqual([]);
       r.pass(dwell);
       expect(reads, "the opened message, its top on screen").toEqual([["p4"]]);
-      // p3's top brought in and held: read, its end not needed. p2's sender line cut at the top: not.
+      // p3's top brought in and held: read, its end not needed. p2's header cut at the top, its first lines and end in view: read.
       core.onScroll(800);
       r.pass(dwell);
       expect(reads).toEqual([["p4"], ["p3"]]);
       core.onScroll(440);
       r.pass(5 * dwell);
-      expect(reads, "p2's top was never wholly on screen").toEqual([["p4"], ["p3"]]);
+      expect(reads, "p2's whole text was on screen").toEqual([["p4"], ["p3"], ["p2"]]);
       await settleWire(s.boot.engine);
       expect(s.fake.message("p4")?.unread).toBe(false);
       expect(s.fake.message("p3")?.unread).toBe(false);
-      expect(s.fake.message("p2")?.unread, "p2's top was never read").toBe(true);
+      expect(s.fake.message("p2")?.unread).toBe(false);
+      expect(s.fake.message("p1")?.unread, "p1 was never on screen").toBe(true);
 
-      // Leaving files the conversation at the top of Earlier only once nothing is unread; p1, p2 keep it in New.
+      // Leaving files the conversation at the top of Earlier only once nothing is unread; p1 keeps it in New.
       s.actions.leaveMessage("p4");
       expect(s.box().fresh.map((r) => r.rowKey)).toContain("T");
     } finally {

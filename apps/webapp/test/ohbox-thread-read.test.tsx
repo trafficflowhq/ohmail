@@ -7,10 +7,10 @@ import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js
 /**
  * THE REPORTED CASE (OHBOX-THREAD-OPEN-LEAVES-ITS-NEW-MESSAGES-UNREAD), through the shipped shell:
  * a conversation of several unread replies opened from the Ohbox showed no state and left them
- * unread. Now every message in a conversation the person ENTERED turns read once its TOP — its
- * sender line and its first lines — has been on screen for the 0.7 s dwell (owner ruling
- * 2026-10-23: "having seen the top part of a message should be sufficient to mark it read"); its
- * end is not needed, and the write goes out after the dwell, never before. The column of squares and
+ * unread. Now every message in a conversation the person ENTERED turns read once its first lines
+ * have been on screen for the 0.7 s dwell and its sender line, or the end of its text, has been on
+ * screen (owner ruling 2026-10-23: "having seen the top part of a message should be sufficient to mark
+ * it read"), and the write goes out after the dwell, never before. The column of squares and
  * the tint say which are new; a j/k preview reads nothing; Mark unread sits in each message's ⋯
  * beside Reply and Forward. The reader has a laid-out geometry here (`thread-layout.ts`): an 800px
  * viewport, the bar at 740, panels 400px tall and 20 apart, a sender line 20px down and the first
@@ -77,7 +77,7 @@ describe("the reported case: a conversation of unread replies, opened with ↵",
     expect(unseen("p4")).toBe(false);
   }, 30_000);
 
-  it("scrolling up reads each earlier message whose top stays in view; a pass or a cut top reads nothing", async () => {
+  it("scrolling up reads each earlier message whose top stays in view, a cut sender line over its whole text too; a pass reads nothing", async () => {
     bodies(["p1", "p2", "p3", "p4"]);
     await mountThread(four());
     await key("j");
@@ -95,14 +95,14 @@ describe("the reported case: a conversation of unread replies, opened with ↵",
     await settle();
     await dwell();
     expect(glances()).toEqual([["p4"], ["p3"]]);
-    // p2's first lines in view, its sender line scrolled off the top: its top was not seen.
+    // p2's sender line scrolled off the top by 10px, its first lines and the end of its text in view.
     await layout.handScroll(layout.topOf("p2") + 30);
     await settle();
     await dwell();
-    expect(glances(), "a cut top reads nothing").toEqual([["p4"], ["p3"]]);
-    expect(squares()).toEqual(["unread", "unread", "read", "read"]);
+    expect(glances(), "its whole text was on screen").toEqual([["p4"], ["p3"], ["p2"]]);
+    expect(squares()).toEqual(["unread", "read", "read", "read"]);
     await click(readSlot(col()), "Mark read");
-    expect(deliberate(), "the rest of the conversation in one request").toEqual([{ ids: ["p1", "p2"], unread: false, openRead: true }]);
+    expect(deliberate(), "the rest of the conversation in one request").toEqual([{ ids: ["p1"], unread: false, openRead: true }]);
   }, 30_000);
 
   it("leaving before the dwell is done writes nothing for the newest (the write is after the dwell, not before)", async () => {
@@ -179,6 +179,52 @@ describe("a To list taller than the view: the latest of two, opened and read dow
     expect(glances(), "its sender line alone").toEqual([]);
     await readDown(layout.topOf("s1") + 2400 - layout.barTop);
     expect(glances()).toEqual([["s1"]]);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot").toBe(false);
+  }, 60_000);
+});
+
+/**
+ * FIFTEEN MESSAGES, THE LAST THREE UNREAD, opened by a click on the row: the reader lands at the end.
+ * m14's sender line sits just above the view while its first lines and the end of its text stand on
+ * screen: it turns read with m15. m13, off screen or only its tail on screen, stays unread with the
+ * row's dot and its dark square until its first lines have held on screen.
+ */
+describe("fifteen messages, the last three unread, opened at the end", () => {
+  const fifteen = async (heights: Record<string, number>): Promise<HTMLElement> => {
+    layout.restore();
+    layout = stubThreadLayout({ heights });
+    const ids = Array.from({ length: 15 }, (_, i) => `m${i + 1}`);
+    bodies(ids);
+    const host = await mountThread(ids.map((id, i) => msg(id, i * 10, i < 12 ? { unread: false } : {})));
+    await click(theRow(host), "the conversation's row");
+    return host;
+  };
+  /** Where a message's top stands in the view. */
+  const inView = (id: string): number => layout.topOf(id) - layout.scroller().scrollTop;
+
+  it("m14's sender line cut, its first lines and its end on screen: read with m15; m13 off screen keeps the row's dot", async () => {
+    const host = await fifteen({ m14: 500, m15: 230 });
+    expect(inView("m14"), "m14's sender line cut at the top").toBe(-50);
+    expect(inView("m13") + 400, "m13 wholly above the view").toBeLessThan(0);
+    await dwell();
+    await dwell();
+    expect(glances()).toEqual([["m14", "m15"]]);
+    expect(squares().slice(-3)).toEqual(["unread", "read", "read"]);
+    expect(unseen("m13")).toBe(true);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot, for m13").toBe(true);
+  }, 60_000);
+
+  it("m13 with only its tail on screen stays unread; its first lines held, its sender line cut, read it", async () => {
+    const host = await fifteen({ m13: 600, m14: 300, m15: 230 });
+    expect(inView("m13") + 600, "m13's tail on screen").toBeGreaterThan(0);
+    for (let i = 0; i < 3; i++) await dwell();
+    expect(glances()).toEqual([["m14", "m15"]]);
+    expect(unseen("m13"), "only its tail was on screen").toBe(true);
+    expect(theRow(host)?.hasAttribute("data-unseen")).toBe(true);
+    await layout.handScroll(layout.topOf("m13") + 50);
+    await settle();
+    await dwell();
+    expect(glances()).toEqual([["m14", "m15"], ["m13"]]);
     expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot").toBe(false);
   }, 60_000);
 });

@@ -14,11 +14,12 @@ export { clock, fullDateTime, weekdayDateClock, zonedDayNumber, zonedFields } fr
  * group drawn above or below the opened message, its header row, where its body starts and its end
  * marker, the enclosing offsets, the scroll view's height, what of the bottom chrome stands over it,
  * and every scroll. The rule, the same as on web, desktop and Cloud: "A message turns read once its
- * sender line has been fully on screen (a preview counts) and its first lines have stayed on screen for
- * 0.7 s, in either order. Reaching the end is not needed. Nothing that was never on screen turns read;
- * Mark unread starts it over." Here the sender line is the sender row and the first lines are
- * `THREAD_TOP_LINES` of the body (`lines(id)` px, or the body to its end where it is shorter); each
- * counts on its own, so a fling past the sender row still counts it. One look per
+ * first lines have stayed on screen for 0.7 s and its sender line has been fully on screen or the end of
+ * its text has been on screen (a preview counts), in either order. Nothing that was never on screen
+ * turns read; Mark unread starts it over." Here the sender line is the sender row, the first lines are
+ * `THREAD_TOP_LINES` of the body (`lines(id)` px, or the body to its end where it is shorter) and the
+ * end of the text is its end marker, above a folded history; each counts on its own, so a fling past
+ * the sender row still counts it. One look per
  * frame, and one when a dwell under way is due; what turned read goes out at once (`onRead`). The
  * record is entered at the reader's mount: a phone reader is an open. Nothing is looked at while the
  * app is not in the foreground, and every dwell starts over then.
@@ -147,6 +148,8 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
     bodyY !== null && endY !== null
       ? { top: top + bodyY, bottom: top + Math.max(bodyY, Math.min(bodyY + lines(id), endY)) }
       : null;
+  /** Where its own text ends (its end marker, above a folded history), a line of no height. */
+  const endOf = (top: number, endY: number | null) => (endY === null ? null : { top: top + endY, bottom: top + endY });
   const listed = (group: PhoneGroup) =>
     [...members].filter(([, m]) => m.group === group).sort((a, b) => a[1].y - b[1].y);
   /** The panels in the order they are drawn: the members above, the opened message, the members below. */
@@ -161,6 +164,7 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
           height: m.h,
           first: m.fromY !== null && m.fromH > 0 ? { top: top + m.fromY, bottom: top + m.fromY + m.fromH } : null,
           lead: leadOf(id, top, m.bodyY, m.endY),
+          end: endOf(top, m.endY),
         },
         top,
         bottom: top + m.h,
@@ -177,6 +181,7 @@ export function createPhoneThreadRead(o: PhoneThreadReadOptions): PhoneThreadRea
           height: end ?? 0,
           first: from ? { top: top + from.y, bottom: top + from.y + from.h } : null,
           lead: leadOf(opened, top, body, end),
+          end: endOf(top, end),
         },
         top,
         bottom: top + (end ?? 0),

@@ -12,22 +12,24 @@ import {
 /**
  * THE THREAD-READ RULE the web, the desktop and the phone share (owner ruling 2026-10-23: "having
  * seen the top part of a message should be sufficient to mark it read"). An unread message in a
- * conversation the person entered turns read once its TOP has been seen: its sender line wholly in
- * view, and the first lines of its body wholly in view, without a break, for the dwell (0.7 s) —
- * together where they fit, one after the other where a tall header keeps them apart. Its last line is
- * not needed; a pass shorter than the dwell, a preview, a look nobody can see and a moving layout read
- * nothing. Each deciding line is mutated once and a case below turns red: the entered gate, the dwell's
- * length, the break that starts it over, the keep, the ready check, the height restart, the view
- * nobody sees, the sender line's sighting and what Mark unread forgets.
+ * conversation the person entered turns read once the first lines of its body have been wholly in view,
+ * without a break, for the dwell (0.7 s), and its sender line or the end of its text has been wholly in
+ * view — together where they fit, one after the other where a tall header keeps them apart or the
+ * sender line is cut at the top. Its last line is not needed once its sender line was seen; a pass
+ * shorter than the dwell, a preview, a look nobody can see and a moving layout read nothing. Each
+ * deciding line is mutated once and a case below turns red: the entered gate, the dwell's length, the
+ * break that starts it over, the keep, the ready check, the height restart, the view nobody sees, the
+ * sender line's sighting, the end's sighting and its ready check, and what Mark unread forgets.
  */
 
 const HOLD = THREAD_READ_HOLD_MS;
 const view = { top: 0, bottom: 800 };
-/** A panel at `top`: its sender line its first 40px, its first lines the 72px from 60px down. */
+/** A panel at `top`: its sender line its first 40px, its first lines the 72px from 60px down, its text's end 20px above its foot. */
 const panel = (id: string, top: number, height: number, over: Partial<ThreadPanel> = {}): ThreadPanel => ({
   id, ready: true, height,
   first: { top, bottom: top + 40 },
   lead: { top: top + 60, bottom: top + 132 },
+  end: { top: top + height - 20, bottom: top + height - 20 },
   ...over,
 });
 const unread = (...ids: string[]): ReadonlySet<string> => new Set(ids);
@@ -88,11 +90,11 @@ describe("a message turns read once its top has been in view for the dwell", () 
     expect(r.observe([panel("a", 668, 300)], view, unread("a"), 4 * HOLD), "at 800 they are in").toEqual(["a"]);
   });
 
-  it("the first lines alone do not count: a sender line cut by 1px at the top", () => {
+  it("the first lines alone do not count: a sender line cut by 1px at the top, its end below the view", () => {
     const r = createThreadRead();
     r.enter(0);
-    r.observe([panel("a", -1, 300)], view, unread("a"), 0);
-    expect(r.observe([panel("a", -1, 300)], view, unread("a"), 2 * HOLD)).toEqual([]);
+    r.observe([panel("a", -1, 3000)], view, unread("a"), 0);
+    expect(r.observe([panel("a", -1, 3000)], view, unread("a"), 2 * HOLD)).toEqual([]);
   });
 
   it("a read panel is never returned", () => {
@@ -209,8 +211,8 @@ describe("what is not counted", () => {
   it("a panel with no sender line or no first lines laid out", () => {
     const r = createThreadRead();
     r.enter(0);
-    r.observe([panel("a", 100, 300, { first: null })], view, unread("a"), 0);
-    expect(r.observe([panel("a", 100, 300, { first: null })], view, unread("a"), HOLD)).toEqual([]);
+    r.observe([panel("a", 100, 300, { first: null, end: null })], view, unread("a"), 0);
+    expect(r.observe([panel("a", 100, 300, { first: null, end: null })], view, unread("a"), HOLD)).toEqual([]);
     const s = createThreadRead();
     s.enter(0);
     s.observe([panel("a", 100, 300, { lead: null })], view, unread("a"), 0);
@@ -258,6 +260,7 @@ describe("a header taller than the view (a To list of 34): the sender line, then
   /** The sender line 40px down, the first lines 1100px down: never in the 800px view together. */
   const tall = (y: number): ThreadPanel => ({
     id: "a", ready: true, height: 3000, first: { top: y + 40, bottom: y + 72 }, lead: { top: y + 1100, bottom: y + 1172 },
+    end: { top: y + 2900, bottom: y + 2900 },
   });
 
   it("opened at its sender line and read down: read once its first lines have held for the dwell", () => {
@@ -324,5 +327,41 @@ describe("a header taller than the view (a To list of 34): the sender line, then
     s.keepUnread("a");
     s.release("a");
     expect(s.observe([tall(0)], view, unread("a"), 2 * HOLD), "the first lines held before the keep").toEqual([]);
+  });
+});
+
+describe("a sender line cut at the top (a conversation opened at its end): the end of the text counts for it", () => {
+  it("its first lines held and its end on screen read it, its sender line never wholly in view", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([panel("a", -50, 300)], view, unread("a"), 0);
+    expect(r.observe([panel("a", -50, 300)], view, unread("a"), HOLD)).toEqual(["a"]);
+  });
+
+  it("only its tail on screen reads nothing; its first lines held later read it, the end seen before", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([panel("a", -900, 1000)], view, unread("a"), 0);
+    expect(r.observe([panel("a", -900, 1000)], view, unread("a"), 10 * HOLD), "only its tail").toEqual([]);
+    r.observe([panel("a", -50, 1000)], view, unread("a"), 11 * HOLD);
+    expect(r.observe([panel("a", -50, 1000)], view, unread("a"), 12 * HOLD), "its end now below the view").toEqual(["a"]);
+  });
+
+  it("an end seen before the body was ready does not count", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([panel("a", -900, 1000, { ready: false })], view, unread("a"), 0);
+    r.observe([panel("a", -50, 1000)], view, unread("a"), 100);
+    expect(r.observe([panel("a", -50, 1000)], view, unread("a"), 100 + 10 * HOLD)).toEqual([]);
+  });
+
+  it("Mark unread forgets an end seen before it", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([panel("a", -900, 1000)], view, unread("a"), 0);
+    r.keepUnread("a");
+    r.release("a");
+    r.observe([panel("a", -50, 1000)], view, unread("a"), 100);
+    expect(r.observe([panel("a", -50, 1000)], view, unread("a"), 100 + HOLD)).toEqual([]);
   });
 });
