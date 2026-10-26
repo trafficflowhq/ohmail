@@ -2040,6 +2040,7 @@ export const DE: Deck = {
     `${n} ${n === 1 ? "Nachricht" : "Nachrichten"}, seit das wieder aufgetaucht ist`,
   mailRowMarksAria: (count: number, unread: number) =>
     `${count} Nachrichten, älteste zuerst: ${unread === 0 ? "alle gelesen" : `${unread} ungelesen`}`,
+  rowMarksMore: (n: number) => `+${n}`,
   readerMarksAria: "Nachrichten in diesem Gespräch",
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
     `Nachricht ${position} von ${count}, von ${sender}, ${unread ? "ungelesen" : "gelesen"}`,

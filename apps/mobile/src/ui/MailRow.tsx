@@ -284,34 +284,48 @@ export function MailRow({
 
 /**
  * THE CONVERSATION'S SQUARES under the preview, oldest left: solid accent unread, dimmed read,
- * hollow the account's own. Where the row is too narrow the oldest give way and the newest stay.
+ * hollow the account's own. Where the row is too narrow the oldest give way, never in part, and a
+ * quiet "+N" at the line's start counts them; the newest stay.
  */
 function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] }) {
   const t = useTheme();
-  const [room, setRoom] = useState<number | null>(null);
-  const shown = marksShown(marks, room);
+  const [line, setLine] = useState<number | null>(null);
+  const [room, setRoom] = useState<{ w: number; more: boolean } | null>(null);
+  const all = line === null || marksShown(marks, line).length === marks.length;
+  // Until the box beside the count is measured, the count's room is guessed on the generous side.
+  const shown = all ? marks
+    : marksShown(marks, Math.max(0, room?.more ? room.w : line - 4 - 8 * (String(marks.length).length + 1)));
+  const hidden = marks.length - shown.length;
   return (
     <View
-      style={{ flexDirection: "row", gap: 3, marginTop: 6, overflow: "hidden" }}
-      onLayout={(e) => setRoom(e.nativeEvent.layout.width)}
+      style={{ flexDirection: "row", alignItems: "center", gap: 4, height: 8, marginTop: 6 }}
+      onLayout={(e) => setLine(e.nativeEvent.layout.width)}
       importantForAccessibility="no-hide-descendants"
       accessibilityElementsHidden
-      testID="row-marks"
     >
-      {shown.map((k, i) => (
-        <View
-          key={i}
-          style={{
-            width: 8,
-            height: 8,
-            backgroundColor: k === "mine" ? "transparent" : t.c.accent,
-            borderWidth: k === "mine" ? 1.5 : 0,
-            borderColor: t.c.accent,
-            borderRadius: rowSquareRadius(t.radius.focus),
-            opacity: k === "unread" ? 1 : k === "mine" ? t.c.markMine : t.c.markRead,
-          }}
-        />
-      ))}
+      {hidden > 0 ? (
+        <Txt variant="caption" tone="ink3" tabular>{Copy.rowMarksMore(hidden)}</Txt>
+      ) : null}
+      <View
+        style={{ flex: 1, flexDirection: "row", gap: 3, overflow: "hidden" }}
+        onLayout={(e) => setRoom({ w: e.nativeEvent.layout.width, more: hidden > 0 })}
+        testID="row-marks"
+      >
+        {shown.map((k, i) => (
+          <View
+            key={i}
+            style={{
+              width: 8,
+              height: 8,
+              backgroundColor: k === "mine" ? "transparent" : t.c.accent,
+              borderWidth: k === "mine" ? 1.5 : 0,
+              borderColor: t.c.accent,
+              borderRadius: rowSquareRadius(t.radius.focus),
+              opacity: k === "unread" ? 1 : k === "mine" ? t.c.markMine : t.c.markRead,
+            }}
+          />
+        ))}
+      </View>
     </View>
   );
 }
@@ -319,8 +333,8 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
 /**
  * THE READER'S SQUARES ON THE ROW — the rail's own, oldest first, the current one ringed, each a
  * press that scrolls the reader to its message. A long conversation scrolls sideways, keeping the
- * ringed square in view. Spoken as the rail's squares are. A finger held on one shows its sheet
- * under the strip and presses nothing.
+ * ringed square in view, and a reply that arrives whole beside it where both fit. Spoken as the
+ * rail's squares are. A finger held on one shows its sheet under the strip and presses nothing.
  */
 function RowStrip({ items, here, onPress }: RowStripFacts) {
   const t = useTheme();
@@ -330,9 +344,13 @@ function RowStrip({ items, here, onPress }: RowStripFacts) {
   const [room, setRoom] = useState(0);
   const n = items.length;
   const at = items.findIndex((it) => it.id === here);
+  const lastN = useRef(n);
   useEffect(() => {
-    if (at < 0 || room <= 0) return;
-    list.current?.scrollTo({ x: stripOffsetFor(at, n, room), animated: false });
+    if (room <= 0) return;
+    const arrived = n > lastN.current;
+    lastN.current = n;
+    if (at < 0 && !arrived) return;
+    list.current?.scrollTo({ x: stripOffsetFor(at < 0 ? n - 1 : at, n, room, arrived), animated: false });
   }, [at, n, room]);
   return (
     <View>

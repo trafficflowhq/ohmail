@@ -2959,6 +2959,8 @@ const TABLE = {
   /** The row's squares, said: how many messages, and how many of them unread. */
   mailRowMarksAria: (count: number, unread: number) =>
     `${count} messages, oldest first: ${unread === 0 ? "all read" : `${unread} unread`}`,
+  /** The older squares a narrow row does not draw; never read aloud (the row says the count). */
+  rowMarksMore: (n: number) => `+${n}`,
   /* THE READER'S SQUARES AND ⋯ — `ui/MessageReader.tsx`. */
   readerMarksAria: "Messages in this conversation",
   readerMarkFrom: (position: number, count: number, sender: string, unread: boolean) =>
