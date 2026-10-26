@@ -1738,7 +1738,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setPickerIds, setPreviewFor, setRailOpen, setReaderFor, setReaderOffMirror, setReadsCur,
     setReceiptsCur, setRibbonGone, setScnSel, setScreenerFull, setSearchQuery, setSenderAudit,
     setSenderMenu, setShortcutsOpen, setSubjectRule, sheetMessage, shortcutsOpen, startFR,
-    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead,
+    subjectRule, toggleAbsoluteTime, forwardTargetFor, ownFaceFor, pileSetFor, selectOhboxRow, ohboxThreadRead, setOhboxThreadRead, ohboxEnter, setOhboxEnter,
   } = useShellOpenState({
     engine, reader, derived, route, t, toast, mutateAndReport, mailState, screener,
     allOhbox, consentView, folders, parked, partition, piles, presented, receipts, setReplyTo,
@@ -2648,6 +2648,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
 
                    It is `enterReader` and no longer `setReaderFor` — see the gate above. */
                 onEnterReader={enterReader}
+                enterId={ohboxEnter}
+                onEntered={() => setOhboxEnter(null)}
                 onMarkSeen={markSeen}
                 /* The row being read, held in New by the engine; the visit's wiring for the sheet. */
                 onHoldRow={holdOhboxRow}
@@ -2721,6 +2723,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 remoteImages={remoteImages}
                 attachments={attachments}
                 jumpTo={jump?.view === "reads" ? jump.id : null}
+                jumpEnters={jump?.view === "reads" && jump.enters === true}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
@@ -2768,6 +2771,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 remoteImages={remoteImages}
                 attachments={attachments}
                 jumpTo={jump?.view === "receipts" ? jump.id : null}
+                jumpEnters={jump?.view === "receipts" && jump.enters === true}
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
@@ -3033,7 +3037,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   beginSearch();
                   setSearchQuery(q);
                 }}
-                onOpen={(hit: SearchHit) => openMessage(hit.message)}
+                onOpen={(hit: SearchHit) => openMessage(hit.message, { enter: true })}
                 /* The chip on a hit answers "where do I go to find this again?", and for a
                    History message the folder and the place are different answers. The INDEX is
                    deliberately not projected — mail in History must stay searchable. */
@@ -3077,7 +3081,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                    corner for (a blank address is an answered question, not a pending one), which
                    is why it is written rather than asserted away with a `!`. */
                 address={route.address ?? ""}
-                onOpen={(hit: SearchHit) => openMessage(hit.message)}
+                onOpen={(hit: SearchHit) => openMessage(hit.message, { enter: true })}
                 /* The same map Search labels a hit's chip from — "where do I go to find this
                    again?", which for a History message is not the folder. */
                 placeOf={consentView?.placeOf}

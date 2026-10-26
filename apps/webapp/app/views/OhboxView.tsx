@@ -193,6 +193,8 @@ export function OhboxView({
   lastActed,
   onSelect,
   onEnterReader,
+  enterId = null,
+  onEntered,
   onMarkSeen,
   onHoldRow,
   onThreadRead,
@@ -319,6 +321,10 @@ export function OhboxView({
    * previously selected message.
    */
   onEnterReader: (messageId: string) => void;
+  /** A hit the person opened (Search, an address page): entered once its row is shown, as ↵ enters. */
+  enterId?: string | null;
+  /** The request is spent: entered, or the selection moved on before it was. */
+  onEntered?: () => void;
   /**
    * The shell's `mark_seen` mutation — the one read-state writer.
    *
@@ -956,12 +962,12 @@ export function OhboxView({
   }, [hold]);
 
   /**
-   * ENTER THE CONVERSATION — ↵, a click or tap on its row, → into the column, or a press, a hand
-   * scroll or a square inside it. A row still waiting (an unread message, or an unread letter
-   * anywhere in its conversation: it opens on its newest, read or not) takes its hold at once and
+   * ENTER THE CONVERSATION — ↵, a click or tap on its row or on a search hit (`enterId`), → into the
+   * column, or a press, a hand scroll or a square inside it. A row still waiting (an unread message,
+   * or an unread letter anywhere in its conversation: it opens on its newest, read or not) takes its hold at once and
    * nothing is written: what turns read is the rule's (`reader-seen.ts`). A read conversation holds
-   * nothing, as before. A preview never comes through here — j/k, the after-verb advance, a URL or search
-   * landing, an Undo — and nothing is read in one.
+   * nothing, as before. A preview never comes through here — j/k, the after-verb advance, a URL landing,
+   * an Undo — and nothing is read in one.
    */
   const waitingRef = useRef((_m: EngineMessage): boolean => false);
   waitingRef.current = (x) => navRows[rowIndexOf(x.id)]?.members.some((y) => y.unread && !isOwnSent(y)) ?? false;
@@ -1026,6 +1032,18 @@ export function OhboxView({
   const engage = useCallback((m: EngineMessage) => {
     enter(m);
   }, [enter]);
+
+  /* A hit's open enters once its row is shown; a selection that moved on first drops it. Only
+     `enter`: the row was not pressed, so its Forward target and Move seed stay the landing's. */
+  const onEnteredRef = useRef(onEntered);
+  onEnteredRef.current = onEntered;
+  const enterSel = selected?.id === enterId ? selected : null;
+  useEffect(() => {
+    if (enterId == null) return;
+    if (enterSel) enter(enterSel);
+    else if (selectedId === enterId) return; // the row is not shown yet
+    onEnteredRef.current?.();
+  }, [enterId, enterSel?.id, selectedId, enter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * The selection taken away from outside is a departure. The URL carries the open message, so

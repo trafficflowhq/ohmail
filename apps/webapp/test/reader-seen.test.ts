@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead } from "@ohmail/client-engine";
 import { EVIDENCE_WINDOW_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, panelsOf, pressEnters, viewOf } from "../app/shell/reader-seen";
 import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
+import { readLandedCard } from "../app/shell/stream-landing-read";
 
 /**
  * THE THREAD-READ ADAPTER over the DOM (owner ruling 2026-10-23: the top of a message read is the
@@ -463,5 +464,109 @@ describe("a framed body is ready once its frame was measured", () => {
     expect(panelsOf(scroller)[0]!.ready).toBe(false);
     pending.remove();
     expect(panelsOf(scroller)[0]!.ready).toBe(true);
+  });
+});
+
+describe("a stream card opened from a search hit (readLandedCard)", () => {
+  let stopLanded: (() => void) | null = null;
+  let landedReads: string[] = [];
+  /** A stream card: its sender line at [top+16, top+36], its clip (the text) at [top+70, top+270]. */
+  function card(topY: number, opts: { unseen?: boolean; pend?: boolean } = {}): HTMLElement {
+    const el = document.createElement("article");
+    el.className = opts.pend ? "scast pend" : "scast";
+    el.dataset.sid = "n1";
+    if (opts.unseen ?? true) el.setAttribute("data-unseen", "1");
+    at.n1 = { top: topY, bottom: topY + 300 };
+    el.getBoundingClientRect = rect("n1");
+    for (const [cls, dy, h] of [["sc-line", 16, 20], ["sc-clip", 70, 200]] as const) {
+      const part = document.createElement("div");
+      part.className = cls;
+      at[`n1:${cls}`] = { top: topY + dy, bottom: topY + dy + h };
+      part.getBoundingClientRect = rect(`n1:${cls}`);
+      el.appendChild(part);
+    }
+    scroller.appendChild(el);
+    return el;
+  }
+  function land(): void {
+    stopLanded = readLandedCard({
+      scroller, id: "n1", onRead: (id) => landedReads.push(id),
+      visible: () => shown, documentFocused: () => focused, now: () => Date.now(),
+      frame: (run) => { frames.push(run); return () => { frames = frames.filter((f) => f !== run); }; },
+    });
+    flush();
+  }
+  beforeEach(() => { landedReads = []; });
+  afterEach(() => { stopLanded?.(); stopLanded = null; });
+
+  it("its head on screen for the dwell: read once", () => {
+    card(100);
+    land();
+    pass(THREAD_READ_HOLD_MS - 50);
+    expect(landedReads).toEqual([]);
+    pass(51);
+    expect(landedReads).toEqual(["n1"]);
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual(["n1"]);
+  });
+  it("scrolled off before the dwell: nothing; back on screen, the dwell starts over", () => {
+    card(100);
+    land();
+    pass(THREAD_READ_HOLD_MS - 300);
+    scrollBy(900);
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
+    scrollBy(-900);
+    flush();
+    pass(THREAD_READ_HOLD_MS - 300);
+    expect(landedReads, "the dwell counts from its return").toEqual([]);
+    dwell();
+    expect(landedReads).toEqual(["n1"]);
+  });
+  it("a window not focused, or a hidden tab, reads nothing", () => {
+    card(100);
+    focused = false;
+    land();
+    pass(5 * THREAD_READ_HOLD_MS);
+    shown = false;
+    focused = true;
+    window.dispatchEvent(new Event("focus"));
+    flush();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
+  });
+  it("a card already read, or one whose body is still on its way, reads nothing", () => {
+    card(100, { unseen: false });
+    land();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
+    stopLanded?.();
+    scroller.replaceChildren();
+    card(100, { pend: true });
+    land();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
+  });
+  it("a card whose body comes after the landing, with no scroll: read once it is in and the dwell has passed", async () => {
+    const el = card(100, { pend: true });
+    land();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
+    el.classList.remove("pend");
+    await Promise.resolve();
+    flush();
+    pass(THREAD_READ_HOLD_MS - 50);
+    expect(landedReads, "the dwell counts from the body's arrival").toEqual([]);
+    dwell();
+    expect(landedReads).toEqual(["n1"]);
+  });
+  it("stopped before the dwell is done: nothing", () => {
+    card(100);
+    land();
+    pass(THREAD_READ_HOLD_MS - 300);
+    stopLanded?.();
+    pass(5 * THREAD_READ_HOLD_MS);
+    expect(landedReads).toEqual([]);
   });
 });
