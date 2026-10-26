@@ -43,9 +43,10 @@ import { OUTBOX_TYPE, type EngineMutation, type WithdrawOutcome } from "@ohmail/
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { flushQueued, liveActions, liveDrafts, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
+import { flushQueued, keptRecipients, liveActions, liveDrafts, sendIntentOf, sendWireDiffers, type LiveWorldActions } from "../src/state/live";
 import { keepAct } from "../src/ui/compose-keep";
-import { openLetterKeeper } from "../src/compose/letter-keeper";
+import { openLetterKeeper, ownedLetters } from "../src/compose/letter-keeper";
+import { restoreLetters, settleLetters } from "../src/compose/letter-restore";
 import { letterDoor } from "../src/compose/letter-store";
 import {
   afterWithdraw, cancelAct, cancelledSay, cancelSendOffered, cancelSendPress, keptSay, type CloseRoad, type SendVerdict, type WithdrawAnswer,
@@ -170,8 +171,18 @@ async function relaunch(live: Awaited<ReturnType<typeof scene>>) {
   live.store.close();
   const again = await bootEngine(live.deps, { origin: live.origin, token: "tok-1", accountId: "acct-1" });
   if (again.kind !== "ready") throw new Error("boot refused");
-  const actions = liveActions({ engine: again.engine, toast: (m) => live.toasts.push(sayArg(m)), uuid, zone: "UTC" });
-  return { ...again, actions };
+  const letters = letterDoor(again.store);
+  const actions = liveActions({ engine: again.engine, toast: (m) => live.toasts.push(sayArg(m)), uuid, zone: "UTC", letters });
+  const { engine } = again;
+  /** `world.tsx`'s restore of the letters the last session left. */
+  const restore = () => restoreLetters({
+    door: letters, owned: ownedLetters(), keep: (k) => actions.draftKeep(k), parse: keptRecipients,
+    outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+    hasMessage: (id) => engine.read().get("message", id) !== undefined,
+    drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+    firstSync: () => engine.syncOnce().then(() => undefined),
+  });
+  return { ...again, actions, letters, restore };
 }
 
 /** Airplane mode as the phone reads it: the network door says offline (the tunnel cuts the wire). */
@@ -507,23 +518,60 @@ describe("a message the person cancelled is never sent, and never sent twice", (
       const net = airplane();
       live.tunnel(true);
       const words = "Second thoughts from Drafts.";
-      const first = kind === "reply"
-        ? await live.actions.sendReply("m-1", words, false, null)
-        : await live.actions.sendNew("mb-1", [{ name: "Bo", address: "bo@fake.test" }], "Offline subject", words);
+      const letter = openLetterKeeper({ door: live.letters, id: uuid(), newFileId: uuid, words: {
+        mode: kind, messageId: kind === "reply" ? "m-1" : null, mailboxId: "mb-1", to: kind === "new" ? "bo@fake.test" : "", cc: "", bcc: "",
+        subject: kind === "new" ? "Offline subject" : "", body: words, envelope: null,
+      } });
+      const first = await letter.sendVia(() => (kind === "reply"
+        ? live.actions.sendReply("m-1", words, false, null)
+        : live.actions.sendNew("mb-1", [{ name: "Bo", address: "bo@fake.test" }], "Offline subject", words)));
+      live.actions.leaveSend(first.key!);
+      letter.release();
       expect(live.engine.waitingSends().map((w) => w.draftId)).toEqual([null]);
       expect(await live.actions.cancelWaitingSend(first.key!)).toEqual({ said: "unknown", kept: "kept" });
       const listed = liveDrafts(live.engine.read(), { now: new Date(), zone: "UTC", locale: "en" } as never, live.engine.waitingSends());
       expect(listed.map((d) => d.body), "the words left Drafts").toEqual([words]);
       live.tunnel(false);
       net.set("online");
-      await flushQueued(live.engine, live.actions.releaseConfirmed);
+      // `world.tsx`'s reconnect flush: the letters settled by key.
+      settleLetters(live.letters, ownedLetters(), await flushQueued(live.engine, live.actions.releaseConfirmed));
       expect(live.fake.deliveries(), "a cancelled send went").toEqual([]);
-      const drafts = live.fake.draftRows().map((d) => [(d as { status?: string }).status ?? "draft", (d as { body?: string }).body]);
-      expect(drafts, "Cancel send from Drafts lost the words").toEqual([["draft", words]]);
-      live.store.close();
+      const drafts = () => live.fake.draftRows().map((d) => [(d as { status?: string }).status ?? "draft", (d as { body?: string }).body]);
+      expect(drafts(), "Cancel send from Drafts lost the words").toEqual([["draft", words]]);
+      expect(await live.letters.landed()).toBe("stored");
+      const again = await relaunch(live);
+      await again.restore();
+      await flushQueued(again.engine, again.actions.releaseConfirmed);
+      expect(drafts(), "a relaunch kept the cancelled words a second time").toEqual([["draft", words]]);
+      again.store.close();
       live.fake.server.close();
     }, 60_000);
   }
+
+  it("CONTROL 12d — Discard from Drafts of a send no row holds, with no network: no relaunch brings the words back", async () => {
+    const live = await scene();
+    const net = airplane();
+    live.tunnel(true);
+    const words = { mode: "new" as const, messageId: null, mailboxId: "mb-1", to: "bo@fake.test", cc: "", bcc: "", subject: "Offline subject", body: "Not this one.", envelope: null };
+    const letter = openLetterKeeper({ door: live.letters, id: uuid(), newFileId: uuid, words });
+    const first = await letter.sendVia(() => live.actions.sendNew("mb-1", [{ name: "Bo", address: "bo@fake.test" }], "Offline subject", "Not this one."));
+    live.actions.leaveSend(first.key!);
+    letter.release();
+    const w = live.engine.waitingSends()[0]!;
+    expect(w.draftId).toBeNull();
+    expect(await live.actions.draftDiscard(w.id)).toBe("cancelUnknown");
+    live.tunnel(false);
+    net.set("online");
+    settleLetters(live.letters, ownedLetters(), await flushQueued(live.engine, live.actions.releaseConfirmed));
+    expect(await live.letters.landed()).toBe("stored");
+    const again = await relaunch(live);
+    await again.restore();
+    await flushQueued(again.engine, again.actions.releaseConfirmed);
+    expect(live.fake.draftRows(), "a discarded letter came back as a draft").toEqual([]);
+    expect(live.fake.deliveries(), "a discarded send went").toEqual([]);
+    again.store.close();
+    live.fake.server.close();
+  }, 60_000);
 
   it("CONTROL 12b — a withdrawn Cancel send whose write-back is refused says the words were not kept", async () => {
     const live = await scene();

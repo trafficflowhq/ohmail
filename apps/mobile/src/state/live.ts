@@ -152,6 +152,8 @@ import { blobToBase64 } from "../mail/blob-base64";
 import { logAttachmentRefusal, logLaunchReplay } from "../engine/engine-log";
 import { refuse, type Refusal, type RefusalArg } from "../refusal";
 import type { LetterDoor } from "../compose/letter-store";
+import { ownedLetters } from "../compose/letter-keeper";
+import { settleWithdrawn } from "../compose/letter-restore";
 import {
   mailboxProfiles, planScreenCommit, PRESS_VISIBLE_ROWS, pressForecast, pressOutcome, ruleFingerprint, rulesInPlay, stayVerdict,
   type AnyRoutingIntent, type ConsentOptions, type PressForecast, type PressResolution, type RulesInPlay,
@@ -5255,10 +5257,19 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
 
   const leaveSend = (key: string): void => { sendsLeftOf(engine).add(key); };
 
+  /** A waiting send's letter goes where its words now are (`settleWithdrawn`), on the disk before the next step. */
+  const settleLetterOf = async (key: string, into: Parameters<typeof settleWithdrawn>[3]): Promise<void> => {
+    if (!deps.letters) return;
+    settleWithdrawn(deps.letters, ownedLetters(), key, into);
+    await deps.letters.landed();
+  };
+
   const cancelWaitingSend = async (key: string): Promise<WaitingCancel> => {
     const w = engine.waitingSends().find((x) => x.key === key);
     // Read before the withdrawal takes the paint off: a reply's envelope is derived there.
     const paint = w?.paintId == null ? undefined : engine.read().get<EngineDraft & { html?: string | null }>("draft", w.paintId);
+    // The row holds the words whatever the answer: the letter goes with it before the mark is asked.
+    if (w?.draftId) await settleLetterOf(key, w.draftId);
     const answer = await engine.withdrawQueued(key);
     if (w === undefined) return { said: answer, kept: null };
     /* NO ROW HOLDS THESE WORDS, so they are written back whenever this device will not send them:
@@ -5268,13 +5279,16 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       const mailboxId = paint?.mailboxId ?? m.mailboxId;
       const notKept = refuse(answer === "withdrawn" ? "sendCancelledNotKept" : "replyCancelUnreachableNotKept");
       if (!mailboxId) { toast(notKept); return { said: answer, kept: "notKept" }; }
-      const v = await engine.mutate({
+      const r = await engine.mutate({
         kind: "draft_save", draftId: null, mailboxId, threadId: paint?.threadId ?? m.threadId ?? null,
         inReplyToMessageId: m.inReplyTo, ...(m.forwardOf ? { forwardOfMessageId: m.forwardOf } : {}),
         subject: paint?.subject ?? m.subject ?? "", body: m.body, ...(m.html !== undefined ? { html: m.html } : {}),
         to: paint?.to ?? m.to ?? [], cc: paint?.cc ?? m.cc ?? [], bcc: paint?.bcc ?? m.bcc ?? [],
-      }).then(pressVerdict, () => PRESS_THREW);
-      return { said: answer, kept: said(v, null, notKept) ? "kept" : "notKept" };
+      }).catch(() => null);
+      const v = r === null ? PRESS_THREW : pressVerdict(r);
+      const kept = said(v, null, notKept);
+      if (kept && r !== null && v.kind !== "silent") await settleLetterOf(key, v.kind === "applied" && r.entityId ? r.entityId : { keep: r.key });
+      return { said: answer, kept: kept ? "kept" : "notKept" };
     }
     if (answer === "withdrawn" && w.draftId !== null && !engine.read().get("draft", w.draftId)) {
       await engine.syncOnce().catch(() => undefined);
@@ -5394,8 +5408,11 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const sends = engine.waitingSends().filter((w) => w.draftId === draftId || (w.draftId === null && w.id === draftId));
     let withdrew = false;
     for (const w of sends) {
+      if (w.draftId !== null) await settleLetterOf(w.key, w.draftId);
       const said = await engine.withdrawQueued(w.key);
       if (said === "on_the_wire") return "alreadySent";
+      // No row holds these words: the discard takes them.
+      if (w.draftId === null && (said === "withdrawn" || said === "unknown")) await settleLetterOf(w.key, "discarded");
       if (said === "unknown") return "cancelUnknown";
       if (said === "withdrawn") withdrew = true;
     }

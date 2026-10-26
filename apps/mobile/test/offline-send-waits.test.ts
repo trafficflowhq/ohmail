@@ -15,7 +15,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { bootEngine, LOCAL_ENGINE_ORIGIN, type LocalEngineDoor, type MobileEngineDeps } from "../src/engine/boot";
 import { queuedCaptionKey, sendWaitsForNetwork } from "../src/engine/send-waits";
 import { installNetworkReader, networkNow, type NetworkReader } from "../src/net/network-door";
-import { answersWaiting, confirmedSendSay, flushQueued, liveActions, liveDrafts } from "../src/state/live";
+import { answersWaiting, confirmedSendSay, flushQueued, keptRecipients, liveActions, liveDrafts } from "../src/state/live";
+import { openLetterKeeper, ownedLetters } from "../src/compose/letter-keeper";
+import { restoreLetters } from "../src/compose/letter-restore";
+import { letterDoor, type LetterFile } from "../src/compose/letter-store";
 import { cancelAct, cancelSendPress, keptSay, type CloseRoad, type SendVerdict } from "../src/ui/send-cancel";
 import { Copy } from "../src/copy";
 import { sayArg } from "../src/refusal";
@@ -88,14 +91,26 @@ async function scene() {
     const boot = await bootEngine(deps, config);
     if (boot.kind !== "ready") throw new Error("boot refused");
     await boot.engine.start();
-    const actions = liveActions({ engine: boot.engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC" });
-    return { engine: boot.engine, store: boot.store, actions };
+    const { engine } = boot;
+    const letters = letterDoor(boot.store);
+    const actions = liveActions({ engine, toast: (m) => toasts.push(sayArg(m)), uuid, zone: "UTC", letters });
+    /** `world.tsx`'s restore of the letters the last session left. */
+    const restore = () => restoreLetters({
+      door: letters, owned: ownedLetters(), keep: (k) => actions.draftKeep(k), parse: keptRecipients,
+      outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
+      hasMessage: (id) => engine.read().get("message", id) !== undefined,
+      drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
+      firstSync: () => engine.syncOnce().then(() => undefined),
+    });
+    return { engine, store: boot.store, actions, letters, restore };
   };
   const first = await launch();
+  let current = first;
   /** The app killed and launched again over the same device store. */
   const relaunch = async () => {
-    first.store.close();
-    return launch();
+    current.store.close();
+    current = await launch();
+    return current;
   };
   return { fake, net, ...first, toasts, sendAnswers, relaunch, slow };
 }
@@ -427,6 +442,40 @@ describe("a waiting send in Drafts", () => {
     liveDrafts(p.engine.read(), { now, zone: "UTC", locale: "en" } as unknown as Parameters<typeof liveDrafts>[1], p.engine.waitingSends())
       .map((d) => [d.subject, d.state]);
   const rowOf = (p: Phone, key: string) => p.engine.waitingSends().find((w) => w.key === key)!.draftId!;
+  const PLAN = { filename: "plan.pdf", contentType: "application/pdf", contentBase64: Buffer.alloc(16, 5).toString("base64") };
+  /** The sheet's road: its letter on the phone's disk, Send with no network, the sheet closed over the waiting send. */
+  const leftWaiting = async (s: Awaited<ReturnType<typeof scene>>, file?: Omit<LetterFile, "fileId" | "sizeBytes"> & { contentBase64: string }) => {
+    const letter = openLetterKeeper({ door: s.letters, id: uuid(), newFileId: uuid, words: {
+      mode: "new", messageId: null, mailboxId: "mb-1", to: "bo@fake.test", cc: "", bcc: "", subject: "Second thoughts", body: "Maybe not.", envelope: null,
+    } });
+    if (file) letter.addFile({ ...file, sizeBytes: 16 });
+    const res = await letter.sendVia(() => s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.", null, null, file ? [file] : []));
+    s.actions.leaveSend(res.key!);
+    letter.release();
+    return res.key!;
+  };
+
+  it("Cancel send, then Discard, with no network: no relaunch brings it back, before or after the network returns", async () => {
+    const s = await scene();
+    s.fake.stampDrafts();
+    s.net.set("offline");
+    const key = await leftWaiting(s);
+    const row = rowOf(s, key);
+    expect((await s.actions.cancelWaitingSend(key)).said).toBe("withdrawn");
+    expect(await s.actions.draftDiscard(row)).toBe("discarded");
+    expect(listed(s), "Drafts did not read empty").toEqual([]);
+    const p = await s.relaunch();
+    expect(await p.restore(), "the restore kept the discarded letter again").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+    expect(listed(p), "the discarded letter came back in Drafts").toEqual([]);
+    s.net.set("online");
+    await flushQueued(p.engine, p.actions.releaseConfirmed);
+    const q = await s.relaunch();
+    await q.restore();
+    expect(listed(q)).toEqual([]);
+    expect(s.fake.draftRows(), "a row outlived the discard").toEqual([]);
+    expect(sendsOf(s.fake), "a discarded send went").toHaveLength(0);
+    q.store.close();
+  }, 60_000);
 
   it("a new mail and a reply are listed at once as waiting, once each, and never as interrupted", async () => {
     const s = await scene();
@@ -447,11 +496,15 @@ describe("a waiting send in Drafts", () => {
       const s = await scene();
       s.fake.stampDrafts();
       s.net.set("offline");
-      const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.");
-      const p = relaunched ? await s.relaunch() : s;
-      expect(await p.actions.draftDiscard(rowOf(p, res.key!))).toBe("discarded");
+      const key = await leftWaiting(s);
+      const res = { key };
+      const before = relaunched ? await s.relaunch() : s;
+      expect(await before.actions.draftDiscard(rowOf(before, res.key!))).toBe("discarded");
       expect(s.toasts.at(-1)).toBe(Copy.draftsDiscardedNotSent);
-      expect(listed(p)).toEqual([]);
+      expect(listed(before)).toEqual([]);
+      const p = await s.relaunch();
+      await p.restore();
+      expect(listed(p), "a relaunch brought the discarded letter back").toEqual([]);
       s.net.set("online");
       const settled = await flushQueued(p.engine, p.actions.releaseConfirmed);
       expect(settled.get(res.key!), "the cancelled send was said to fail").toBeUndefined();
@@ -467,7 +520,7 @@ describe("a waiting send in Drafts", () => {
     const s = await scene();
     s.fake.stampDrafts();
     s.net.set("offline");
-    const res = await s.actions.sendNew("mb-1", TO, "Second thoughts", "Maybe not.");
+    const res = { key: await leftWaiting(s, PLAN) };
     const row = rowOf(s, res.key!);
     const end = await cancelSendPress({
       asking: { current: false }, withdraw: async () => (await s.actions.cancelWaitingSend(res.key!)).said, verdict: () => "unknown",
@@ -477,10 +530,14 @@ describe("a waiting send in Drafts", () => {
     const drafts = liveDrafts(s.engine.read(), { now: new Date(), zone: "UTC", locale: "en" } as never, s.engine.waitingSends());
     expect(drafts.map((d) => [d.id, d.state, d.subject]), "the words did not come back as the same draft")
       .toEqual([[row, "open", "Second thoughts"]]);
+    expect(s.letters.filesOf(row).map((f) => f.filename), "the file left the row that holds the words").toEqual(["plan.pdf"]);
+    const p = await s.relaunch();
+    expect(await p.restore(), "the restore kept the cancelled letter a second time").toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+    expect(listed(p)).toEqual([["Second thoughts", "open"]]);
     s.net.set("online");
-    await flushQueued(s.engine, s.actions.releaseConfirmed);
+    await flushQueued(p.engine, p.actions.releaseConfirmed);
     expect(sendsOf(s.fake), "a cancelled send went on the return").toHaveLength(0);
-    s.store.close();
+    p.store.close();
   }, 60_000);
 
   it("Discard over a send already on the wire deletes nothing and says it is on its way; it is sent", async () => {

@@ -264,3 +264,21 @@ export function sweepLetters(door: LetterDoor, owned: ReadonlySet<string>, left:
     if (left(l.draftId) !== null) door.drop(l.id);
   }
 }
+
+/** A withdrawn send's letter follows its words (a row, a queued keep, or the discard), so no launch keeps it again. */
+export function settleWithdrawn(
+  door: LetterDoor, owned: ReadonlySet<string>, key: string,
+  into: string | { keep: string } | "discarded", now: () => Date = () => new Date(),
+): void {
+  for (const l of door.letters()) {
+    if (owned.has(l.id) || l.send?.key !== key) continue;
+    const at = now().toISOString();
+    if (into === "discarded") door.drop(l.id);
+    else if (typeof into !== "string") door.put({ ...l, send: null, keep: { at, key: into.keep }, updatedAt: at });
+    else {
+      const next = { ...l, draftId: into, savedAs: wordsOf(l), send: null };
+      if (rowHoldsLetter(next)) door.drop(l.id);
+      else door.put({ ...next, updatedAt: at });
+    }
+  }
+}
