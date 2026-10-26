@@ -112,7 +112,9 @@ async function race(stale: boolean, writer: (p: Person, caller: string, h: Db) =
   expect(ids.length, "at least three live web sessions").toBeGreaterThanOrEqual(3);
   const [lo, hi] = ids as [string, string];
   const caller = ids[ids.length - 1]!;
-  if (stale) await client`update sessions set last_seen_at = now() - interval '61 days' where id in (${lo}, ${hi})`;
+  // Idle 61 days: the cookie window was written 61 days ago, in lockstep with last_seen_at.
+  if (stale) await client`update sessions set last_seen_at = now() - interval '61 days',
+    refresh_expires_at = now() + interval '29 days' where id in (${lo}, ${hi})`;
   const scan = async () => (await client`select id::text as id from sessions where id in (${lo}, ${hi}) order by ctid`)
     .map((r) => (r as unknown as { id: string }).id);
   // A new version can take a freed slot ahead of `hi`, so the move is repeated until it lands after.
