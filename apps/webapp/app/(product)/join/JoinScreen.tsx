@@ -28,8 +28,10 @@ import { Button, Icon } from "@ohmail/ui";
 import {
   ApiError, account, apiConfigured, auth, codeOf, createPasskey, mailboxes,
   messageOf, webauthnAvailable,
-  type MailboxDTO,
+  type AccountAccess, type MailboxDTO,
 } from "../../api-client";
+import { neverStarted } from "../../access-verdict";
+import { markSessionAlive, sessionIsDead } from "../../shell/session-truth";
 import { displayAddress } from "../../shell/idn";
 import { QrCode } from "../../shell/QrCode";
 import { addressSuggestion } from "./address-hint";
@@ -42,6 +44,7 @@ import { readOwnerMarker } from "../../shell/owner-cookie";
 import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
 import { registerRefusal, totpRefusal } from "./signup-refusals";
 import { MailboxStep, useMailboxForm } from "./MailboxStep";
+import { awaitHandoff } from "./handoff";
 
 type Step = "invite" | "account" | "sent" | "factor" | "codes" | "verify" | "plan" | "mailbox" | "done";
 
@@ -88,9 +91,16 @@ const RAIL_OPEN: Step[] = SELF_HOST_BUILD
  * Bounded and then given up on: if the webhook is genuinely late the user is told to reload,
  * which is true, rather than spun forever.
  */
-/** The bounded wait after a return, before the screen says "not yet". */
-const ACCESS_POLL_ATTEMPTS = 10;
-const ACCESS_POLL_MS = 1_500;
+/** The bounded wait after a return, before the screen says "not yet": about two minutes, its reads
+ *  1.5 s apart at first and further apart each time, to a 15 s gap. */
+const RETURN_WAIT_MS = 120_000;
+const RETURN_FIRST_GAP_MS = 1_500;
+const RETURN_GAP_GROWTH = 1.5;
+const RETURN_MAX_GAP_MS = 15_000;
+const RETURN_MAX_READS = 16;
+
+/** Trial words only where the service says this account never started a trial (`neverStarted`). */
+const offersTrial = (a: AccountAccess): boolean => a.metered === true && neverStarted(a.lifecycle);
 
 export function JoinScreen({ initialCode, billingReturn, publicSignup = false, planHint, signedIn = false }: {
   initialCode: string;
@@ -176,6 +186,15 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
    */
   const wizardOwner = useRef<string | null>(null);
   const [codesSaved, setCodesSaved] = useState(false);
+  /** The read before a generate said this account already has codes (another tab made them): none are made here. */
+  const [codesElsewhere, setCodesElsewhere] = useState(false);
+  /** The confirming page granted this "Check your email" tab the setup: a failed read is then said, not swallowed. */
+  const handedOver = useRef(false);
+  const [continuing, setContinuing] = useState(false);
+  /** Trial words on the plan step: `null` until an access answer was read, then `offersTrial`. */
+  const [trialOffer, setTrialOffer] = useState<boolean | null>(null);
+  /** The bounded wait after a return from the account page is running. */
+  const [waiting, setWaiting] = useState(false);
   /** Has this tab asked for another verification link? Copy only; never a claim it landed. */
   const [resent, setResent] = useState(false);
 
@@ -240,6 +259,12 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   const bootstrap = useCallback(async () => {
     if (!apiConfigured()) return;
     try {
+      /* After a grant this tab may still hold its session as ended: its first read ran before the confirming page
+         minted one, and that hold refuses every read below. The front door's read is let out; its answer lifts it. */
+      if (handedOver.current && sessionIsDead()) {
+        await auth.session({ ceremony: true });
+        markSessionAlive();
+      }
       const s = await auth.session();
       /*
        * ── THE FIRST READ FIXES THE OWNER; A LATER ONE IS COMPARED, NEVER APPLIED ────────────
@@ -291,8 +316,10 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       // PLAN BEFORE MAILBOX. `POST /mailboxes` is refused until the account is entitled to
       // one, so asking for a mailbox first is asking for something the server will not give.
       // The port's own verdict is the question — `canAddMailbox`, not a row somewhere.
-      const may = await account.access({ fresh: true }).then((a) => !a.metered || a.canAddMailbox)
-        .catch(() => null);
+      const may = await account.access({ fresh: true }).then((a) => {
+        setTrialOffer(offersTrial(a));
+        return !a.metered || a.canAddMailbox;
+      }).catch(() => null);
       /* UNREADABLE FAILS OPEN, like every other unknown in this funnel: sending somebody to an
          account page they may not need is worse than letting the mailbox step's own refusal
          speak. `false` is the only answer that routes to the plan step. */
@@ -302,7 +329,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       await landEntitled();
     } catch (err) {
       // No session (401) is the normal first visit and the form is right; any other fault leaves the step unknown.
-      if (signedIn && !(err instanceof ApiError && err.status === 401)) setUnreachable(true);
+      // After a grant there IS a session to read, so its absence is the expired screen, never the form.
+      const noSession = err instanceof ApiError && err.status === 401;
+      if (handedOver.current && noSession) {
+        setFatal(tRef.current("expiredOpen"));
+        setFatalAction("signIn");
+      } else if ((signedIn || handedOver.current) && !noSession) {
+        setUnreachable(true);
+      }
     } finally {
       setResolving(false);
     }
@@ -341,10 +375,16 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   useEffect(() => {
     if (step !== "plan") return;
     let cancelled = false;
-    let attempts = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const returning = billingReturn === "success";
+    const until = Date.now() + RETURN_WAIT_MS;
+    let gap = RETURN_FIRST_GAP_MS;
+    let reads = 0;
+    if (returning) setWaiting(true);
 
     const tick = async (): Promise<void> => {
       if (cancelled) return;
+      reads += 1;
       /**
        * A POLL IS A READ, AND A READ IS AN ACTION HERE: Every button on this wizard asks whose browser this is before
        * it acts. This loop did not, and it is the one thing on the screen that runs WITHOUT a press — repeatedly, for
@@ -358,14 +398,20 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       /**
        * A refusal ENDS the loop rather than retrying: `sameAccount` has already put the account-changed sentence on
        * screen, and a poll that kept running behind it would eventually overwrite that with a plan state for whoever
-       * is signed in now.
+       * is signed in now. A check that could not be asked reads nothing this time (it fails closed) and the wait goes on.
        */
-      if (!await sameAccount()) return;
+      const same = await sameAccount().catch(() => null);
       if (cancelled) return;
-      const may = await account.access({ fresh: true }).then((a) => !a.metered || a.canAddMailbox)
-        .catch(() => null);
+      if (same === false) { setWaiting(false); setTrialOffer((v) => v ?? false); return; }
+      const may = same === null ? null : await account.access({ fresh: true }).then((a) => {
+        if (!cancelled) setTrialOffer(offersTrial(a));
+        return !a.metered || a.canAddMailbox;
+      }).catch(() => null);
       if (cancelled) return;
+      // No answer read names no trial: the screen shows the account page's own button.
+      if (may === null) setTrialOffer((v) => v ?? false);
       if (may === true) {
+        setWaiting(false);
         forgetPlanHint(); // the trial started: the site's choice has done its job
         // An account that already has a mailbox is set up, not asked to connect one.
         await landEntitled(() => !cancelled).catch(() => { if (!cancelled) setStep("mailbox"); });
@@ -373,20 +419,24 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       }
       /* KEEP POLLING ONLY ON A RETURN. On a first arrival there is nothing in flight to wait
          for, so one read is the whole of it and the screen shows the link. */
-      if (billingReturn !== "success" || ++attempts >= ACCESS_POLL_ATTEMPTS) {
-        if (billingReturn === "success") setError(t("planPending"));
+      if (!returning) return;
+      const left = until - Date.now();
+      if (left <= 0 || reads >= RETURN_MAX_READS) {
+        setWaiting(false);
+        setError(t("planPending"));
         return;
       }
-      setTimeout(() => { void tick(); }, ACCESS_POLL_MS);
+      timer = setTimeout(() => { void tick(); }, Math.min(gap, left));
+      gap = Math.min(gap * RETURN_GAP_GROWTH, RETURN_MAX_GAP_MS);
     };
 
     // A return from Checkout asks the service to apply the payment first — once, bounded — and the
     // poll below then reads the answer rather than waiting on the program's webhook.
-    if (billingReturn === "success") {
+    if (returning) {
       // The return's query as it arrived: the mount took the session id out of the address bar.
       void confirmAccountReturn(returnSearch.current).finally(() => { void tick(); });
     } else void tick();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); setWaiting(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, billingReturn]);
 
@@ -545,7 +595,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   };
 
   const enrollPasskey = () => void run(async () => {
-    if (!await sameAccount()) return;
+    if (!await enrolling()) return;
     const { options } = await auth.webauthnRegisterOptions();
     const credential = await createPasskey(options);
     await auth.webauthnRegisterVerify({ credential, label: deviceLabel() });
@@ -554,14 +604,14 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   });
 
   const startTotp = () => void run(async () => {
-    if (!await sameAccount()) return;
+    if (!await enrolling()) return;
     setTotp(await auth.totpEnroll());
   });
 
   const activateTotp = (e: React.FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      if (!await sameAccount()) return;
+      if (!await enrolling()) return;
       await auth.totpActivate({ code: totpCode.trim() });
       setTotpCode("");
       setStep("codes");
@@ -608,15 +658,35 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
    * an expected account on the write itself — the same thing `AF-RESPONSE-NOT-OWNER-BOUND` is
    * waiting for. Stated rather than implied.
    */
-  const sameAccount = async (): Promise<boolean> => {
+  const sessionIfSame = async (): Promise<Awaited<ReturnType<typeof auth.session>> | null> => {
     const now = await auth.session();
-    if (wizardOwner.current !== null && now.user.accountId === wizardOwner.current) return true;
+    if (wizardOwner.current !== null && now.user.accountId === wizardOwner.current) return now;
     setError(t("accountChanged", { email: now.user.email }));
+    return null;
+  };
+  const sameAccount = async (): Promise<boolean> => (await sessionIfSame()) !== null;
+
+  /**
+   * The factor step's own question: is this still the enrolment session? A second wizard in this browser
+   * (a second /join, a reload, the tab the confirming page continued in) may have added the first factor
+   * since; then this press adds no second one, the wizard re-reads where the account is instead.
+   */
+  const enrolling = async (): Promise<boolean> => {
+    const now = await sessionIfSame();
+    if (now === null) return false;
+    if (now.scope === "enrollment") return true;
+    await bootstrap();
     return false;
   };
 
+  /**
+   * Every generate deletes the account's set, so the read just before it decides: codes that exist were
+   * made by another wizard in this browser, or by a generate whose answer was lost, and none are made here.
+   */
   const fetchCodes = () => void run(async () => {
-    if (!await sameAccount()) return;
+    const now = await sessionIfSame();
+    if (now === null) return;
+    if (now.user.twofaEnrolled.recoveryCodes) { setCodesElsewhere(true); return; }
     const { codes } = await auth.recoveryCodes();
     setRecovery(codes);
   });
@@ -639,6 +709,19 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     if (step === "codes" && recovery === null && !busy) fetchCodes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  /**
+   * "Check your email" waits for the page that confirms the address to hand the setup over (`handoff.ts`).
+   * Only that page's grant moves this tab on, and then it asks the server where the setup stands.
+   */
+  useEffect(() => {
+    if (step !== "sent") return;
+    return awaitHandoff(() => {
+      handedOver.current = true;
+      setContinuing(true);
+      void bootstrap().finally(() => setContinuing(false));
+    });
+  }, [step, bootstrap]);
 
   const suggestedAddress = step === "account" ? addressSuggestion(email.trim()) : null;
 
@@ -732,6 +815,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
     <Shell
       title={t(decisionAhead ? "step_connected_title" : `step_${step}_title`)} step={step}
       rail={needsInvite ? RAIL_BASE : step === "verify" ? RAIL_OPEN_LATE_VERIFY : RAIL_OPEN}
+      organized={step === "done" && connected !== null && !decisionAhead}
     >
       {error && step !== "mailbox" && !totpOpen && <p className="join-error" role="alert">{error}</p>}
       {/* A sign-out this browser asked for that ended unconfirmed here, and Sign out to ask again. */}
@@ -842,6 +926,7 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
               re-open in the UI exactly what the constant 202 closed on the wire. */}
           <p className="sub">{t("step_sent_lead", { email: email.trim() })}</p>
           <p className="join-note">{t("sentNote")}</p>
+          {continuing ? <p className="join-hint" role="status">{t("sentContinuing")}</p> : null}
           <div className="join-actions">
             {/* A typo in the address is mended here: back to the form, the address kept to correct. */}
             <button type="button" className="join-alt" onClick={() => { setError(null); setStep("account"); }}>
@@ -926,7 +1011,16 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
       {step === "codes" && (
         <>
           <p className="sub">{t("step_codes_lead")}</p>
-          {recovery ? (
+          {codesElsewhere ? (
+            <>
+              <p className="join-note" role="status">{t("codesElsewhere")}</p>
+              <div className="join-actions">
+                <Button variant="primary" onClick={() => { setCodesElsewhere(false); void bootstrap(); }}>
+                  {t("continue")}
+                </Button>
+              </div>
+            </>
+          ) : recovery ? (
             <>
               <ul className="join-codes">
                 {recovery.map((c) => <li key={c}><code>{c}</code></li>)}
@@ -958,6 +1052,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
                 </Button>
               </div>
             </>
+          ) : error && !busy ? (
+            /* The generate failed or was refused; Try again asks the same guarded way. */
+            <div className="join-actions">
+              <Button variant="primary" onClick={fetchCodes}>{t("codesRetry")}</Button>
+            </div>
           ) : (
             <p className="join-hint">{t("working")}</p>
           )}
@@ -971,17 +1070,25 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
         />
       )}
 
-      {step === "plan" && (
+      {step === "plan" && trialOffer === null && <p className="join-hint">{t("planLoading")}</p>}
+
+      {step === "plan" && trialOffer !== null && (
         <>
-          <p className="sub">{t("step_plan_lead")}</p>
+          {/* The trial is named only where the service says one was never started (`offersTrial`): an
+              account whose trial ended, or that has paid before, is asked to pay on the account page. */}
+          <p className="sub">{t(trialOffer ? "step_plan_lead" : "planLeadNoTrial")}</p>
           {/* What the site promised, and the plan picked there; never a price (the account page owns prices). */}
-          <p className="join-note" data-testid="join-plan-trial">
-            {hint.plan
-              ? `${t(hint.interval === "year" ? "planChosenYear" : hint.interval === "month" ? "planChosenMonth" : "planChosen",
-                { plan: PLAN_NAMES[hint.plan] })} `
-              : null}
-            {t("planTrial")}
-          </p>
+          {hint.plan || trialOffer ? (
+            <p className="join-note" data-testid="join-plan-trial">
+              {hint.plan
+                ? t(hint.interval === "year" ? "planChosenYear" : hint.interval === "month" ? "planChosenMonth" : "planChosen",
+                  { plan: PLAN_NAMES[hint.plan] })
+                : null}
+              {hint.plan && trialOffer ? " " : null}
+              {trialOffer ? t("planTrial") : null}
+            </p>
+          ) : null}
+          {waiting ? <p className="join-hint" role="status">{t(trialOffer ? "planStarting" : "planWaiting")}</p> : null}
           {/* ONE STEP, ONE CONTROL. The plan cards, the prices, the interval toggle and the
               trial figure were all this app quoting a catalogue it does not own; they live on
               the account page the service operator serves, which is also where the card is
@@ -993,11 +1100,11 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
           {manageUrl ? (
             <>
               <div className="join-actions">
-                <a className="btn primary" href={manageUrl}>{t("planContinue")}</a>
+                <a className="btn primary" href={manageUrl}>{t(trialOffer ? "planStartTrial" : "planContinue")}</a>
                 {/* The app's front door offers the trial again (the wall's never-started state). */}
                 <Link className="join-alt" href="/">{t("planLater")}</Link>
               </div>
-              <p className="join-hint">{t("planLaterHint")}</p>
+              {trialOffer ? <p className="join-hint">{t("planLaterHint")}</p> : null}
             </>
           ) : planLinkFailed ? (
             /* NOWHERE TO SEND THEM, and two different deployments arrive here: one that operates
@@ -1045,8 +1152,8 @@ export function JoinScreen({ initialCode, billingReturn, publicSignup = false, p
   );
 }
 
-function Shell({ title, step, rail = RAIL_BASE, children }: {
-  title: string; step?: Step; rail?: Step[]; children: React.ReactNode;
+function Shell({ title, step, rail = RAIL_BASE, organized = false, children }: {
+  title: string; step?: Step; rail?: Step[]; organized?: boolean; children: React.ReactNode;
 }) {
   const t = useTranslations("join");
   return (
@@ -1073,6 +1180,12 @@ function Shell({ title, step, rail = RAIL_BASE, children }: {
                 );
               });
             })()}
+            {/* What the wizard hands on to: the organize decision at `#/first-run`. Never this screen's
+                station; done only once organizing a connected mailbox is agreed. */}
+            <li data-state={organized ? "done" : "todo"}>
+              <span className="join-rail-dot" aria-hidden="true" />
+              <span className="join-rail-label">{t("rail_organize")}</span>
+            </li>
           </ol>
         )}
         <h1>{title}</h1>

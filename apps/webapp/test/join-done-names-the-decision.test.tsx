@@ -10,6 +10,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import de from "../messages/de.json";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
@@ -70,7 +71,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mountJoin(publicSignup = false): Promise<HTMLElement> {
+async function mountJoin(publicSignup = false, catalog: typeof messages = messages): Promise<HTMLElement> {
   const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -78,7 +79,7 @@ async function mountJoin(publicSignup = false): Promise<HTMLElement> {
   await act(async () => {
     root!.render(
       h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
+        locale: catalog === de ? "de" : "en", messages: catalog, timeZone: "UTC",
         children: h(JoinScreen, { initialCode: "", publicSignup }),
       }),
     );
@@ -105,6 +106,19 @@ describe("the join wizard's last screen and the organize decision", () => {
     expect(link?.getAttribute("href")).toBe("/#/first-run");
     expect([...c.querySelectorAll("a")].some((a) => a.textContent === messages.join.openOhmail)).toBe(false);
   });
+
+  /* The rail's last stop is Organize, so a count of the steps left is the rail's to show, and the lead had
+     it as "One step left" while the decision screen asks several questions. */
+  for (const catalog of [messages, de]) {
+    it(`${catalog === de ? "de" : "en"}: the lead names what comes next and counts no steps`, async () => {
+      answers["/api/auth/session"] = { status: 200, body: sessionUser() };
+      answers["/api/mailboxes"] = { status: 200, body: { items: [box()] } };
+      const c = await mountJoin(false, catalog);
+      const lead = c.querySelector(".sub")?.textContent ?? "";
+      expect(lead).toBe(catalog.join.step_connected_lead);
+      expect(lead).not.toMatch(/\b(one|two|three|\d+)\s+steps?\b|\b(ein|zwei|drei|\d+)\s+schritte?\b/i);
+    });
+  }
 
   it("CONTROL: a mailbox somebody already agreed to keeps \"You're set up\" and \"Open ohmail\"", async () => {
     answers["/api/auth/session"] = { status: 200, body: sessionUser() };

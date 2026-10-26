@@ -116,7 +116,7 @@ async function render(screen: "join" | "verify", props: Record<string, unknown> 
 describe("the rail on the open path", () => {
   it("Email is the second station, and the current one says so", async () => {
     const ui = await render("join");
-    expect(ui.rail().map((s) => s.label)).toEqual(["Account", "Email", "Passkey", "Recovery", "Plan", "Mailbox"]);
+    expect(ui.rail().map((s) => s.label)).toEqual(["Account", "Email", "Passkey", "Recovery", "Plan", "Mailbox", "Organize"]);
     expect(ui.rail()[0]).toEqual({ label: "Account", state: "now", current: "step" });
     expect(ui.rail().filter((s) => s.current === "step")).toHaveLength(1);
   });
@@ -140,6 +140,38 @@ describe("the rail on the open path", () => {
     session = { status: 200, body: { user: user(), scope: "enrollment" } };
     const ui = await render("join");
     expect(ui.rail().slice(0, 3).map((s) => s.state)).toEqual(["done", "done", "now"]);
+  });
+});
+
+describe("the rail ends with what follows the setup", () => {
+  const connected = (organizeConsentedAt: string | null) => {
+    session = { status: 200, body: { user: user({ twofaEnrolled: { webauthn: true, totp: false, recoveryCodes: true } }), scope: "full" } };
+    answers["/account/access"] = { status: 200, body: { access: "open", metered: true, canAddMailbox: true, mailboxes: 1 } };
+    answers["/mailboxes"] = { status: 200, body: { items: [{
+      id: "mb-1", address: "box@family.example", provider: "other", status: "connected", organizerRole: "reader",
+      organizeConsentedAt,
+    }] } };
+  };
+
+  it("Organize closes it, and it is never the station the person is on", async () => {
+    const ui = await render("join");
+    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
+    expect(ui.rail().filter((s) => s.current === "step").map((s) => s.label)).toEqual(["Account"]);
+  });
+
+  it("the mailbox connected and nothing agreed: every setup station is done, Organize is still ahead", async () => {
+    connected(null);
+    const ui = await render("join");
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_connected_title);
+    expect(ui.rail().slice(0, -1).every((s) => s.state === "done")).toBe(true);
+    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "todo", current: null });
+  });
+
+  it("organizing already agreed: Organize is done too", async () => {
+    connected("2026-10-09T10:00:00.000Z");
+    const ui = await render("join");
+    expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_done_title);
+    expect(ui.rail().at(-1)).toEqual({ label: en.join.rail_organize, state: "done", current: null });
   });
 });
 

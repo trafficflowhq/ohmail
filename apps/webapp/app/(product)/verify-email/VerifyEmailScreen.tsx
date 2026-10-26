@@ -31,6 +31,7 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf } from "../../api-client";
 import { readOwnerMarker } from "../../shell/owner-cookie";
+import { offerHandoff } from "../join/handoff";
 import { verifyRefusal } from "../join/signup-refusals";
 import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
 
@@ -45,6 +46,15 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  /** A tab waiting on "Check your email" took the setup over: this page opens no second wizard. */
+  const [handedOff, setHandedOff] = useState(false);
+  /** Aborted when the page goes away: an offer still open then ends, and nothing is opened. */
+  const leaving = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const gone = new AbortController();
+    leaving.current = gone;
+    return () => gone.abort();
+  }, []);
 
   /**
    * SCRUB THE TOKEN OUT OF THE URL once it is in component state.
@@ -93,7 +103,12 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
         if (out.status === "enrollment") {
           // Zero enrolled factors, so the server handed back the same enrollment session the
           // re-entry login gives — onboarding continues at the passkey step. `/join` derives
-          // that from `GET /auth/session`, so there is nothing to pass along.
+          // that from `GET /auth/session`, so there is nothing to pass along. A tab still on
+          // "Check your email" is offered it first; this page opens /join only if none takes it.
+          const signal = leaving.current?.signal;
+          const taken = await offerHandoff(signal);
+          if (signal?.aborted) return;
+          if (taken) { setHandedOff(true); return; }
           router.push("/join");
           return;
         }
@@ -117,6 +132,15 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
     return (
       <Shell title={t("unavailableTitle")}>
         <p className="sub">{t("unavailableBody")}</p>
+      </Shell>
+    );
+  }
+
+  if (handedOff) {
+    // No control here: the setup goes on in the other tab, and a second one would start a second wizard.
+    return (
+      <Shell title={t("doneTitle")}>
+        <p className="sub" role="status">{t("handedOff")}</p>
       </Shell>
     );
   }

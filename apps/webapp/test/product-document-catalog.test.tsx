@@ -81,8 +81,11 @@ type Tree = { type?: unknown; props?: { children?: unknown; [k: string]: unknown
  *  for a sign-in that came back unconnected, and its ways out (join, carried whole).
  *  Raised 2026-10-25 (both): the account step's sign-in link (join, carried whole).
  *  Raised 2026-10-26 (both): the reader's folded To and Cc say "and N others", "you", and the
- *  fold's spoken label (message, carried whole). */
-const INLINE_CEILING_BYTES = { en: 38_990, de: 44_480 } as const;
+ *  fold's spoken label (message, carried whole).
+ *  Raised 2026-10-26 (both): the setup names a trial only where one never started, says it is waiting
+ *  after a return, continues in the tab already waiting, says codes were made elsewhere, and its rail
+ *  ends with Organize (join, verify; both carried whole). */
+const INLINE_CEILING_BYTES = { en: 39_690, de: 45_330 } as const;
 
 const bytes = (v: unknown): number => Buffer.byteLength(JSON.stringify(v), "utf8");
 const leafCount = (m: Messages): number =>
