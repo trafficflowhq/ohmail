@@ -189,7 +189,7 @@ export interface AuthAuditEvent {
     // raw session rows). Either a stolen token was replayed or a client's rotation is broken;
     // both are worth a row. The `device` field carries `family=<id> session=<id>` — the
     // machine-readable half an investigation starts from — instead of a user agent, which the
-    // reuse presentation does not reliably have.
+    // reuse presentation does not reliably have. Then `depth=<n> tail_age_s=<s>`, evidence only.
     | "refresh_reuse_revoked"
     // The LOST-RESPONSE RECOVERY in `rotateRefresh` re-admitted a stale cookie presentation:
     // a consumed token was re-presented outside the concurrency grace, but its family's tail
@@ -213,10 +213,13 @@ export interface AuthAuditEvent {
     // had killed the row (`cause=superseded`), the late answer a jar kept. Counted so a sign-out
     // nobody revoked is visible; `device` carries `family=<id> session=<id> cause=<cause>`.
     | "refresh_expired"
+    // The maintenance reaper revoked a device-less session unseen past its idle limit; `device`
+    // carries `family=<id> session=<id> idle_d=<days>`, and the row has no ip.
+    | "session_reaped"
     // A family SWEPT because a row the replay arm killed, under one attempt's name, came back
     // under another: a captured renewal request was replayed, or a late answer landed over the
     // replay's line. Its own name so the reuse alert, which reads event names only, can tell it
-    // from a stolen token; `device` carries `family=<id> session=<id> cause=attempt_mismatch`.
+    // from a stolen token; `device` carries the reuse row's keys, then `cause=attempt_mismatch`.
     | "refresh_attempt_revoked"
     // The password was changed from a stepped-up session (`POST /auth/password`), and every other
     // session family went with the old one; `password_change_refused` is a wrong current password

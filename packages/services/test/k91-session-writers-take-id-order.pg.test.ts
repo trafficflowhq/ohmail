@@ -6,7 +6,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { generateSync } from "otplib";
 import { accounts, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { authEvents, schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
@@ -95,15 +95,16 @@ async function state(accountId: string) {
     sessions: (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.accountId, accountId))).length,
     tokens: (await db.select({ id: refreshTokens.id }).from(refreshTokens).where(eq(refreshTokens.accountId, accountId))).length,
     users: (await db.select({ id: users.id }).from(users).where(eq(users.accountId, accountId))).length,
+    events: (await db.select({ id: authEvents.id }).from(authEvents).where(eq(authEvents.accountId, accountId))).length,
   };
 }
 
 /**
  * Live web sessions; the two lowest ids are the pair, put in REVERSE scan order by a non-HOT update
  * of the lower one (an indexed column changes, so every scan meets it after the higher); the
- * highest is the caller a mass sign-out spares. `writer` runs once the erasure waits.
+ * highest is the caller a mass sign-out spares. `writer` runs once the erasure waits, or first.
  */
-async function race(stale: boolean, writer: (p: Person, caller: string, h: Db) => Promise<unknown>) {
+async function race(stale: boolean, writer: (p: Person, caller: string, h: Db) => Promise<unknown>, writerFirst = false) {
   const svc = new AuthService(makeTestAuthDeps());
   const p = await establish(svc);
   for (const offset of [30_000, 90_000, 150_000]) await signIn(svc, p, offset);
@@ -137,18 +138,20 @@ async function race(stale: boolean, writer: (p: Person, caller: string, h: Db) =
   await isLocked;
   const E = `k91-erasure-${randomUUID().slice(0, 8)}`;
   const W = `k91-writer-${randomUUID().slice(0, 8)}`;
-  const erasure = settle(deleteAccount({
+  const erase = () => settle(deleteAccount({
     db: handle(E) as never, accountId: p.accountId, userId: p.userId, now: () => new Date(), requestId: `erase-${randomUUID()}`,
   }));
-  expect(await waitsOnALock(E), "the erasure queues on the held row").toBe(true);
-  const write = settle(writer(p, caller, handle(W)));
-  expect(await waitsOnALock(W), "the writer queues too").toBe(true);
+  const first = writerFirst ? settle(writer(p, caller, handle(W))) : erase();
+  expect(await waitsOnALock(writerFirst ? W : E), "the first party queues on the held row").toBe(true);
+  const second = writerFirst ? erase() : settle(writer(p, caller, handle(W)));
+  expect(await waitsOnALock(writerFirst ? E : W), "the second queues too").toBe(true);
+  const [erasure, write] = writerFirst ? [second, first] : [first, second];
   release();
   await holding;
   const [er, wr] = await Promise.all([erasure, write]);
   expect({ erasure: codeOf(er), writer: codeOf(wr) }, "one lock order: no deadlock victim (40P01) on either side")
     .toEqual({ erasure: "ok", writer: "ok" });
-  expect(await state(p.accountId)).toEqual({ erased: true, sessions: 0, tokens: 0, users: 0 });
+  expect(await state(p.accountId)).toEqual({ erased: true, sessions: 0, tokens: 0, users: 0, events: 0 });
 }
 
 describe.skipIf(!PG_UP)("an erasure against every writer of several session rows", () => {
@@ -164,6 +167,12 @@ describe.skipIf(!PG_UP)("an erasure against every writer of several session rows
 
   it("the reaper, over two stale web sessions", async () => {
     await race(true, (_p, _caller, h) => reapStaleWebSessions(h as unknown as Tx, new Date()));
+  }, 60_000);
+
+  it("the reaper first: its rows land under the session locks and the erasure takes them", async () => {
+    await race(true, async (_p, _caller, h) => {
+      expect((await reapStaleWebSessions(h as unknown as Tx, new Date())).reaped).toBe(2);
+    }, true);
   }, 60_000);
 
   it("signing out every other web session", async () => {
