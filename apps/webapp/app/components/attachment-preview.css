@@ -12,13 +12,13 @@ body.ap-lock { overflow: hidden; }
   display: grid;
   place-items: center;
   background: var(--scrim);
-  padding: 4vh 16px;
+  padding: calc(4vh / var(--ui-zoom, 1)) 16px;
   animation: ap-fade .18s var(--swift);
 }
 
 .ap-panel {
-  width: min(1040px, 96vw);
-  height: min(92vh, 900px);
+  width: min(1040px, calc(96vw / var(--ui-zoom, 1)));
+  height: min(calc(92vh / var(--ui-zoom, 1)), 900px);
   display: flex;
   flex-direction: column;
   background: var(--float);
@@ -97,6 +97,9 @@ body.ap-lock { overflow: hidden; }
   width: 100%; min-height: 100%;
   margin: auto;
 }
+/* A picture never scrolls: a min-height gives its max-height no box to resolve against, so the
+   content takes the stage's height and the picture is fitted whole inside it. */
+.ap-content:has(> .ap-img) { height: 100%; }
 
 .ap-nav {
   position: absolute; top: 50%; translate: 0 -50%;
