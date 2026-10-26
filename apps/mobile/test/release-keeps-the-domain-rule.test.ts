@@ -62,6 +62,9 @@ async function scene(rules: RuleDTO[], extra: ReturnType<typeof dto>[] = []) {
 }
 
 const ruleWire = (fake: Fake) => fake.seen.filter((r) => r.url.startsWith("/rules") && r.method !== "GET");
+/** The letters' moves on the wire, each with whether it went as the rule's (`pressRule`): such a letter decides no place of its own. */
+const moveWire = (fake: Fake) => fake.seen.filter((r) => r.method === "POST" && r.url.endsWith("/move"))
+  .map((r) => `${r.url} ${JSON.parse(r.body).folder}${JSON.parse(r.body).pressRule === true ? " pressRule" : ""}`);
 const spamAddresses = (s: Awaited<ReturnType<typeof scene>>) =>
   liveScreener(presentedOf(s.engine.read(), view.now), view).spam.map((r) => r.address).sort();
 const spamRow = (s: Awaited<ReturnType<typeof scene>>) => {
@@ -83,6 +86,7 @@ describe("Not spam on the phone", () => {
       expect(wire.map((r) => `${r.method} ${r.url}`)).toEqual(["POST /rules"]);
       expect(JSON.parse(wire[0]!.body)).toMatchObject({ kind: "sender", match: PRESSED.address, destination: "INBOX" });
       expect(s.fake.rule("r-dom")?.destination, "the domain rule was rewritten").toBe(QUARANTINE);
+      expect(moveWire(s.fake)).toEqual(["/messages/q1/move INBOX pressRule"]);
       await s.engine.syncOnce();
       expect(spamAddresses(s), "another sender at the domain left Spam").toEqual([OTHER.address]);
       expect(s.toasts).toContain(Copy.liveReleasedAddress(1, destDone("ohbox"), DOMAIN));
@@ -94,6 +98,7 @@ describe("Not spam on the phone", () => {
     try {
       expect(await s.actions.release(spamRow(s), "ohbox", "spam")).toBe(true);
       expect(ruleWire(s.fake).map((r) => `${r.method} ${r.url}`)).toEqual(["PATCH /rules/r-own"]);
+      expect(moveWire(s.fake)).toEqual(["/messages/q1/move INBOX pressRule"]);
       expect(s.toasts).toContain(Copy.liveReleasedRuled(1, destDone("ohbox")));
     } finally { s.store.close(); s.fake.server.close(); }
   });
@@ -215,8 +220,9 @@ describe("Not spam inside the routing window", () => {
       undo!();
       await tick(200);
       expect(ruleWire(s.fake), "Undo let a rule out").toEqual([]);
-      const back = s.fake.seen.filter((r) => r.method === "POST" && r.url.endsWith("/move"));
-      expect(back.length, "the letter's move and its way back").toBe(2);
+      expect(moveWire(s.fake), "the letter's move and its way back, both the release's own").toEqual([
+        "/messages/q1/move INBOX pressRule", `/messages/q1/move ${QUARANTINE} pressRule`,
+      ]);
     } finally { s.store.close(); s.fake.server.close(); }
   });
 

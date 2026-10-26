@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { REFILE_HOLD_MS } from "@trafficflow/core/mail";
 import {
   accounts, applyRuleRequest, approvals, changeLog, drafts, folderState, mailboxes, messageStates, messages, rules, threads,
   type LedgerTx, type Tx,
 } from "@trafficflow/db";
+import { MessageService, RulesService, type ServiceContext } from "@trafficflow/services";
 import { ruleRetroPass } from "../src/rule-retro.js";
 import {
   REFILE_FIXTURE, REFILE_FROM, REFILE_MOVES, REFILE_TO,
@@ -214,5 +215,98 @@ describe("with a mailbox only read here, a later Change re-files from where the 
     expect(second.moved, "the second walk re-filed from News, where none of the rule's mail is").toBe(1);
     expect([await at(ours), await at(theirs)]).toEqual([SCREENED, NEWS]);
     expect(toldAfterWalk, "the walk ended the origin and told no client").toBe(told + 1);
+  });
+});
+
+/* A SENDER DECISION'S OWN LETTER IS THE DECISION'S: the sheet files the letter it was pressed on
+   itself (`pressRule`), the walk files the rest, and the next decision takes all of them along. */
+describe("the letter a sender decision was made on follows the next decision", () => {
+  const PIA = "pia.grove@pantry.example";
+  async function sheet(n: number, decided: ReadonlyMap<number, Date> = new Map()) {
+    const db = await makeTestDb();
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: `press-${accountId.slice(0, 8)}` });
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`,
+    }).returning();
+    let now = new Date("2026-10-26T10:48:00Z");
+    const ctx: ServiceContext = { db: db as never, accountId, userId: null, now: () => now, requestId: "press" };
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const dedup = `mid:${randomUUID()}`;
+      const [m] = await db.insert(messages).values({
+        accountId, mailboxId: mb!.id, messageIdHeader: dedup, bodyHash: randomUUID(), dedupKey: dedup,
+        subject: `Review pantry thistle ${875 + i}`, fromAddress: PIA, nativeLocator: { folder: OHBOX, ref: `1:${i + 1}` },
+      }).returning();
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "us",
+        reconcileStatus: "reconciled", conflict: false, decidedAt: decided.get(i) ?? null,
+      });
+      ids.push(m!.id);
+    }
+    const mail = new MessageService();
+    const ruleSvc = new RulesService();
+    let ruleId: string | null = null;
+    const step = () => { now = new Date(now.getTime() + 60_000); };
+    /** The sheet's press on `seed` with past mail on: its move now, the rule as the window closes, the walk. */
+    const press = async (seed: string, to: string) => {
+      await mail.move(ctx, seed, { folder: to, pressRule: true });
+      step();
+      if (ruleId === null) {
+        ruleId = ((await ruleSvc.create(ctx, { kind: "sender", match: PIA, destination: to, applyRetro: true })) as { rule: { id: string } }).rule.id;
+      } else await ruleSvc.update(ctx, ruleId, { destination: to, applyRetro: true });
+      step();
+      await ruleRetroPass(db as never, { accountId, trustedAuthservIdsFor: NONE }, now);
+    };
+    const count = async (folder: string) => (await db.select({ d: folderState.desiredFolder }).from(folderState)
+      .where(inArray(folderState.messageId, ids))).filter((r) => r.d === folder).length;
+    const at = async (id: string) => (await db.select({ d: folderState.desiredFolder }).from(folderState)
+      .where(eq(folderState.messageId, id)))[0]!.d;
+    /** A release off a shelf: the letters there move as the rule's, the rule is retargeted, the walk. */
+    const release = async (from: string, to: string) => {
+      for (const id of ids) if ((await at(id)) === from) await mail.move(ctx, id, { folder: to, pressRule: true });
+      step();
+      await ruleSvc.update(ctx, ruleId!, { destination: to, applyRetro: true });
+      step();
+      await ruleRetroPass(db as never, { accountId, trustedAuthservIdsFor: NONE }, now);
+    };
+    return { ctx, ids, mail, press, release, count, at };
+  }
+
+  it("to News and back to the Ohbox, past mail on both times: all 23 come back", async () => {
+    const w = await sheet(23);
+    await w.press(w.ids[0]!, NEWS);
+    expect(await w.count(NEWS)).toBe(23);
+    await w.press(w.ids[5]!, OHBOX);
+    expect([await w.count(OHBOX), await w.count(NEWS)], "the first press's letter came back too").toEqual([23, 0]);
+  });
+
+  it("screened out, released to the Ohbox, then to News: every letter goes to News", async () => {
+    const w = await sheet(6);
+    await w.press(w.ids[0]!, SCREENED);
+    await w.release(SCREENED, OHBOX);
+    expect(await w.count(OHBOX)).toBe(6);
+    await w.press(w.ids[1]!, NEWS);
+    expect([await w.count(NEWS), await w.count(OHBOX)], "the released letters stayed behind").toEqual([6, 0]);
+  });
+
+  it("CONTROL: a letter moved by hand stays where it was put", async () => {
+    const w = await sheet(3);
+    await w.mail.move(w.ctx, w.ids[2]!, { folder: "ohmail/Receipts" });
+    await w.press(w.ids[0]!, NEWS);
+    expect([await w.at(w.ids[1]!), await w.at(w.ids[2]!)]).toEqual([NEWS, "ohmail/Receipts"]);
+  });
+
+  it("Undo of the press leaves each letter's own decision as it was", async () => {
+    const answered = new Date("2026-10-20T08:00:00Z");
+    const w = await sheet(3, new Map([[1, answered]]));
+    for (const seed of [w.ids[0]!, w.ids[1]!]) {
+      await w.mail.move(w.ctx, seed, { folder: NEWS, pressRule: true });
+      const back = await w.mail.move(w.ctx, seed, { folder: OHBOX, pressRule: true });
+      expect("dto" in back && back.dto.placeDecided === true, seed === w.ids[1] ? "the answer" : "the undecided letter").toBe(seed === w.ids[1]);
+    }
+    // A screen-out with past mail moves the undecided letter and leaves the admitted answer.
+    await w.press(w.ids[2]!, SCREENED);
+    expect([await w.at(w.ids[0]!), await w.at(w.ids[1]!)]).toEqual([SCREENED, OHBOX]);
   });
 });

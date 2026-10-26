@@ -1,6 +1,6 @@
 import { describe, it } from "vitest";
 import {
-  beltArm, claimedUndoArm, oneOverrideArm, patchArm, pauseArm, undoArm, unmarkedDemotes, world,
+  beltArm, claimedUndoArm, decidedArm, oneOverrideArm, patchArm, pauseArm, undoArm, unmarkedDemotes, world,
 } from "./_press-seed-move-route.js";
 
 /**
@@ -16,4 +16,5 @@ describe("a sheet press's seed move is not an override of the route it rewrites"
   it("an older client's PATCH naming a place switches the demoted row back on", async () => { await beltArm(await world()); });
   it("CONTROL: with one override only the rule stays on and moves", async () => { await oneOverrideArm(await world()); });
   it("CONTROL: a person's pause stays off under a destination PATCH", async () => { await pauseArm(await world()); });
+  it("a marked move decides no place of its own; a hand move does", async () => { await decidedArm(await world()); });
 });

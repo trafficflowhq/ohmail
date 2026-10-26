@@ -243,7 +243,7 @@ export interface MoveBody {
   folder: string;
   /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
   from?: string;
-  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites. */
+  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites, nor a place decided on its own. */
   pressRule?: boolean;
 }
 
@@ -1431,7 +1431,8 @@ export class MessageService {
       filed = msg.mailboxId;
       // `null` — see the `patch` arm above and `upsertDesired`'s parameter block: a move CLEARS
       // the delete origin, which is what makes a second delete from a new folder honest.
-      await this.upsertDesired(tx, id, observed, folder, ctx.now(), null, decisionInstant(floor, ctx.now()));
+      // A rule press's own letter is filed the way the walk files the rest: no decision of its own.
+      await this.upsertDesired(tx, id, observed, folder, ctx.now(), null, body.pressRule === true ? "rule" : decisionInstant(floor, ctx.now()));
       // The auto-apply pass's sixth exclusion: a message put back is never filed automatically again.
       if (opts.putBackAutoFiling === true) {
         // scoped-by: the message row was read above under eq(messages.accountId, ctx.accountId)
@@ -1860,21 +1861,25 @@ export class MessageService {
      * caller cannot write the desired folder without saying what this becomes.
      */
     trashedFrom: string | null,
-    /** When this decision was placed (`decided_at`): the press's floor, else `now`. Required. */
-    decidedAt: Date,
+    /**
+     * When this decision was placed (`decided_at`): the press's floor, else `now`. Required. `"rule"`
+     * writes none and keeps an existing row's, as the walk's own writer does (`null` would read as "clear").
+     */
+    decidedAt: Date | "rule",
   ): Promise<void> {
+    const decided = decidedAt === "rule" ? {} : { decidedAt };
 
     // scoped-by: every caller passes an id it loaded by (id, accountId) in this transaction
     await tx.insert(folderState).values({
       messageId: id, desiredFolder: folder, observedFolder: observed,
-      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom, decidedAt,
+      lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom, ...decided,
     }).onConflictDoUpdate({
       target: folderState.messageId,
       // observedFolder deliberately omitted → preserved (worker owns it).
       // `trashedFrom` is deliberately NOT omitted: it is written on every conflict, which is
       // what makes "every non-trash write clears it" true of an existing row and not only of a
       // fresh one. See the parameter's own block.
-      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom, decidedAt },
+      set: { desiredFolder: folder, lastSetBy: "us", reconcileStatus: "pending", conflict: false, updatedAt: now, trashedFrom, ...decided },
     });
   }
 
