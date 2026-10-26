@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from "vitest";
 import { frameCsp, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
+import { DEFERRED_SRC_ATTR } from "../../webapp/app/components/proxied-images";
 
 /**
  * THE DESKTOP CANNOT SHOW A PICTURE, AND THIS IS THE FRAME SAYING SO.
@@ -33,7 +34,8 @@ const HTML =
 function namedInFrame(html: string): string[] {
   const doc = new DOMParser().parseFromString(html, "text/html");
   return [...doc.querySelectorAll("img")]
-    .map((n) => n.getAttribute("src") ?? "")
+    // A proxied picture is parked in `DEFERRED_SRC_ATTR` until the frame loads, then fetched.
+    .map((n) => n.getAttribute(DEFERRED_SRC_ATTR) ?? n.getAttribute("src") ?? "")
     .filter((s) => s.length > 0 && !s.startsWith("data:"));
 }
 

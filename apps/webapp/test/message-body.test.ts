@@ -476,7 +476,8 @@ describe("remote content is blocked, and blocked means not named", () => {
     });
     expect(html).not.toContain("u=https%3A%2F%2Furl8792.mail.wolkenmail.example");
     // The four real images DID go through it, so this is not "the proxy is broken".
-    expect(html.match(/\/api\/img\?mid=m1/g) ?? []).toHaveLength(4);
+    // Distinct: a parked css url is named by its live style and by the queue's list.
+    expect(new Set(html.match(/\/api\/img\?mid=m1&amp;u=[^"&\s)]+/g) ?? []).size).toBe(4);
   });
 });
 

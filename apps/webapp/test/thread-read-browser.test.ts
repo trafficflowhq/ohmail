@@ -78,14 +78,25 @@ afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-async function open(browser: Browser): Promise<Page> {
+/** The proxy's requests: how many were asked (each url how often), and the most at once; a `held` url is answered on `release`. */
+interface Proxied { asked: number; now: number; most: number; urls?: Map<string, number>; release?: Promise<void> }
+async function open(browser: Browser, proxied: Proxied = { asked: 0, now: 0, most: 0 }, lateMs = 400): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1024, height: 1000 } });
   const page = await context.newPage();
   await page.route(`${ORIGIN}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/rig.js") return route.fulfill({ contentType: "application/javascript", body: bundle });
     if (path === "/api/img") {
-      await new Promise((r) => setTimeout(r, 400)); // the proxy's picture, late
+      const u = new URL(route.request().url()).searchParams.get("u") ?? "";
+      const held = u.includes("-held");
+      if (!held) proxied.asked += 1;
+      proxied.urls?.set(u, (proxied.urls.get(u) ?? 0) + 1);
+      proxied.most = Math.max(proxied.most, ++proxied.now);
+      if (held) await proxied.release;
+      else await new Promise((r) => setTimeout(r, lateMs)); // the proxy's picture, late
+      proxied.now -= 1;
+      // A refusal, as `/img` answers an SVG (415) or an upstream failure: no cache lifetime.
+      if (u.includes("-refused")) return route.fulfill({ status: 415, contentType: "application/json", body: "{}" });
       return route.fulfill({ contentType: "image/png", body: PNG });
     }
     return route.fulfill({
@@ -128,6 +139,55 @@ for (const [name, engine] of ENGINES) {
           await page.context().close();
         }
       }, 90_000);
+
+    // 2026-10-26: one tab's Screener drew 27 letters of 40 pictures at once, 1,080 GET /img in 6 s.
+    it("three letters of 20 pictures draw every picture, never more than 6 asked of the proxy at once; a width-only picture waits flat", async () => {
+      let release = (): void => {};
+      const proxied: Proxied = { asked: 0, now: 0, most: 0, release: new Promise((r) => { release = r; }) };
+      const page = await open(browser!, proxied, 120);
+      try {
+        const r = await page.evaluate(() => (window as unknown as { rig: { pictures: (n: number) => Promise<{ total: number; drawn: number; parked: unknown }> } }).rig.pictures(20));
+        expect({ total: r.total, drawn: r.drawn }, "a picture never drew").toEqual({ total: 63, drawn: 60 });
+        expect(proxied.asked, "a picture was asked twice, or not at all").toBe(60);
+        expect(proxied.most, "the proxy was asked for more than 6 pictures at once").toBeLessThanOrEqual(6);
+        // A parked picture with no declared height stands as an in-flight one does, not as a square of its width.
+        expect(r.parked, "a width-only picture waits as a blank square").toEqual({ w: 564, h: 0 });
+      } finally {
+        release();
+        await page.context().close();
+      }
+    }, 90_000);
+
+    it("three letters of 20 background-image cells, inline and in a sheet, never ask more than 6 at once, each url once", async () => {
+      const proxied: Proxied = { asked: 0, now: 0, most: 0, urls: new Map() };
+      const page = await open(browser!, proxied, 120);
+      try {
+        const r = await page.evaluate(() => (window as unknown as { rig: { backgrounds: (n: number) => Promise<{ cells: number; shown: number; parked: number }> } }).rig.backgrounds(10));
+        expect(r, "a cell never showed its background").toEqual({ cells: 60, shown: 60, parked: 0 });
+        await new Promise((d) => setTimeout(d, 500)); // a second ask after the swap would land here
+        expect(proxied.most, "the proxy was asked for more than 6 backgrounds at once").toBeLessThanOrEqual(6);
+        expect(proxied.urls!.size, "a background was never asked").toBe(60);
+        expect([...proxied.urls!.values()].every((n) => n === 1), "a background was asked twice").toBe(true);
+      } finally {
+        await page.context().close();
+      }
+    }, 90_000);
+
+    // A refused url carries no cache lifetime: the live css swapped in asked for it again, outside the queue.
+    it("background urls the proxy refuses, inline and in a sheet, are asked once each, never more than 6 at once; the rest still show", async () => {
+      const proxied: Proxied = { asked: 0, now: 0, most: 0, urls: new Map() };
+      const page = await open(browser!, proxied, 120);
+      try {
+        const r = await page.evaluate(() => (window as unknown as { rig: { backgrounds: (n: number, refused: number) => Promise<{ cells: number; shown: number; parked: number }> } }).rig.backgrounds(10, 4));
+        expect.soft(r, "a cell never showed its background, or a refused one did").toEqual({ cells: 60, shown: 36, parked: 0 });
+        await new Promise((d) => setTimeout(d, 500)); // a second ask after the swap would land here
+        expect(proxied.most, "the proxy was asked for more than 6 backgrounds at once").toBeLessThanOrEqual(6);
+        expect(proxied.urls!.size, "a background was never asked").toBe(60);
+        expect([...proxied.urls!].filter(([, n]) => n !== 1), "a background was asked twice").toEqual([]);
+      } finally {
+        await page.context().close();
+      }
+    }, 90_000);
 
     it("a letter whose top the person scrolled away from before the dwell is not read until its top is back for it", async () => {
       const page = await open(browser!);

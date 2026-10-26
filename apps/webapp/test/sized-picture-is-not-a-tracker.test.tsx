@@ -13,6 +13,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { COPY, MessageBody } from "../app/components/MessageBody";
 import type { BlockNotice } from "../app/components/BlockNotice";
+import { DEFERRED_SRC_ATTR } from "../app/components/proxied-images";
 import { useRemoteImages } from "../app/shell/remote-images";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -88,10 +89,10 @@ function frameDoc(el: HTMLDivElement): Document {
   return new DOMParser().parseFromString(frame!.getAttribute("srcdoc") ?? "", "text/html");
 }
 
-/** The sender urls the frame will fetch through the proxy on open — read from the `src`s. */
+/** The sender urls the frame will fetch through the proxy once it loads (parked, `proxied-images.ts`). */
 function proxiedOnOpen(el: HTMLDivElement): string[] {
   return [...frameDoc(el).querySelectorAll("img")]
-    .map((img) => img.getAttribute("src") ?? "")
+    .map((img) => img.getAttribute(DEFERRED_SRC_ATTR) ?? img.getAttribute("src") ?? "")
     .filter((s) => /^https?:\/\//i.test(s))
     .map((s) => new URL(s).searchParams.get("u") ?? s);
 }

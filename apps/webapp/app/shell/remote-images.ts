@@ -216,6 +216,8 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
       // there is no honest image to show for an account this window does not belong to, and a
       // broken-image icon would be a claim about the mail rather than about the session.
       if (!mayNowRef.current()) return "";
+      // What the proxy refuses on sight is never asked for.
+      if (url.length > PROXY_URL_MAX_CHARS || !/^https?:\/\//i.test(url)) return "";
       return imageProxyUrl(API_BASE ?? "", window.location.origin, messageId, url);
     };
     proxies.current.set(messageId, proxy);
@@ -342,6 +344,9 @@ export function useRemoteImages(opts: RemoteImagesOptions): RemoteImagesChrome |
 
 /** One identity for "this message has no fetched pictures", never mutated. */
 const EMPTY: ReadonlyMap<string, string> = new Map();
+
+/** The longest `u` `GET /img` takes: `PROXY_URL_MAX_CHARS` in `privacy-service.ts`. */
+export const PROXY_URL_MAX_CHARS = 8192;
 
 /** How many messages keep their proxy function before the cache is cleared whole. */
 const PROXY_CACHE_MAX = 256;
