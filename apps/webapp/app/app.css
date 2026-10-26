@@ -6021,9 +6021,11 @@ input.set-tag-input {
 }
 .view.split {
   --tm-rail: 18px;
+  /* the reading track's start to the paper: the rail's room (zone-cursor.css rings the paper past it) */
+  --tm-gutter: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
 }
 .view.split > .read-col > .conv[data-thread-read] {
-  padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
+  padding-left: var(--tm-gutter);
 }
 .conv:has(> .thread-marks[data-narrow]) {
   padding-left: 22px;
