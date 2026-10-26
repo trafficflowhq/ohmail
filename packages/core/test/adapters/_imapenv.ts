@@ -179,8 +179,11 @@ function imapPostLoginCapabilities(
   });
 }
 
+/** Dovecot holds every login from an address it refused one from for 4 s, up to 15 s after several. */
+const AUTH_PENALTY_WAIT_MS = 20_000;
+
 export async function probeCondstore(
-  host: string = CONDSTORE_HOST, port: number = CONDSTORE_PORT, timeoutMs = 2000,
+  host: string = CONDSTORE_HOST, port: number = CONDSTORE_PORT, timeoutMs?: number,
 ): Promise<CondstoreProbe> {
   // FORCE-ON. An operator who says the server is there outranks a probe that cannot reach it.
   if (process.env.IMAP_CONDSTORE) return { ok: true };
@@ -191,7 +194,8 @@ export async function probeCondstore(
   const absent = serviceUp("dovecot", at);
   if (!absent.up) return { ok: false, why: `${absent.why} — ${remedy}` };
   const listening = probedService("dovecot", at)?.up === true;
-  const answer = await imapPostLoginCapabilities(host, port, timeoutMs);
+  // CI's test connections all reach Dovecot from one address, so another file's refused login delays ours.
+  const answer = await imapPostLoginCapabilities(host, port, timeoutMs ?? (listening ? AUTH_PENALTY_WAIT_MS : 2000));
   if ("error" in answer) {
     const why = `no IMAP server answered on ${at} (${answer.error})`;
     if (listening) throw new Error(`Dovecot listens at ${at}, but ${why}`);
