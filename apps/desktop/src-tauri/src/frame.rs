@@ -113,7 +113,7 @@ pub const TILING_SOCKETS: [(&str, &str); 3] = [
 /// Is this session Wayland? `XDG_SESSION_TYPE` is the answer the session manager writes; a live
 /// `WAYLAND_DISPLAY` is the answer the compositor writes, and either alone is enough — a
 /// compositor started from a tty often sets the second and nothing sets the first.
-fn wayland(look: &impl Fn(&str) -> Option<String>) -> bool {
+pub(crate) fn wayland(look: &impl Fn(&str) -> Option<String>) -> bool {
     if look("XDG_SESSION_TYPE").is_some_and(|t| t.eq_ignore_ascii_case("wayland")) {
         return true;
     }
