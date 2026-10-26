@@ -63,7 +63,7 @@ function declaredProps(css: string): string[] {
 /** The slots this slice adds; everything else at :root belongs to tokens.css. */
 const NEW_SLOTS = [
   "--r-ctl", "--r-card", "--r-overlay", "--r-pill", "--r-avatar",
-  "--teach", "--focus-w", "--focus-offset", "--gap-tile", "--gap-edge",
+  "--teach", "--focus-w", "--focus-offset", "--gap-tile", "--gap-edge", "--gap-rail",
   "--font-ui", "--font-size-base",
   "--type-up", "--input-floor",
 ];

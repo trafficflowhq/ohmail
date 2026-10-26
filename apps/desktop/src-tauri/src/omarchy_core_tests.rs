@@ -137,6 +137,20 @@ fn a_hyprland_gaps_toggle_alone_is_a_change() {
 }
 
 #[test]
+fn a_hyprland_gaps_change_alone_is_a_change() {
+    // `hyprctl keyword general:gaps_out 0`, `hyprctl eval` or a reloaded config: no file under
+    // the state dir moves, only Hyprland's own answer does.
+    let dir = staged("hypr");
+    let answer = |out: &str| Some(format!("{{\"option\": \"general:gaps_out\", \"css\": \"{out}\", \"set\": true }}"));
+    let mut debounce = Debounce::new(sample(&dir).with_hypr(answer("10 10 10 10")));
+    assert!(!debounce.step(sample(&dir).with_hypr(answer("10 10 10 10"))), "the same gaps: no change");
+    let changed = sample(&dir).with_hypr(answer("0 0 0 0"));
+    assert!(!debounce.step(changed.clone()));
+    assert!(debounce.step(changed), "gaps_out changed live, no file touched: must fire");
+    clean(&dir);
+}
+
+#[test]
 fn detection_is_the_staged_theme_directory_itself() {
     // state_dir() reads the process environment, which tests must not mutate (they run in
     // one process); the DETECTOR's rule is exercised on the same shape it checks: the

@@ -300,8 +300,9 @@ describe("the push — omarchy theme set, heard live", () => {
     const rule = styleText()!;
     expect(rule).toContain("--font-size-base: 14px !important;");
     expect(rule).toContain("--font-ui: 'JetBrainsMono Nerd Font','JetBrainsMono NF',");
-    expect(rule).toContain("--gap-tile: 10px !important;");
-    expect(rule).toContain("--gap-edge: 10px !important;");
+    // 10 between and around the 3px rings, which stand outside the tiles' boxes.
+    expect(rule).toContain("--gap-tile: 16px !important;");
+    expect(rule).toContain("--gap-edge: 13px !important;");
     expect(rule).toContain("--focus-w: 3px !important;");
     expect(rule).toContain("--lift-3: 0 0 0 3px #7aa2f7 !important;");
   });

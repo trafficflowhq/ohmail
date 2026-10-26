@@ -237,11 +237,11 @@ describe("the column of squares stands beside the panels, over nothing", () => {
 
 /**
  * THE EVEN SEAM (owner 2026-10-24, o9): "the gap must be more even between the list and the viewer
- * column". The column of squares is an 18px rail standing one tile gap from the list's edge and one
- * from the paper — 10 | 18 | 10 in ohmarchy, 16 | 18 | 16 in paper — at every split width, its
- * press area starting at the reading track (the gap beside the list is the column handle's), its
- * corners from the radius tokens (square in ohmarchy). Measured over a real split: the list column,
- * the column of squares where `ThreadMarks` puts it, and the reading column.
+ * column". The column of squares is an 18px rail standing the same gap from the list and from the
+ * paper — 10 | 18 | 10 from ring to rail in ohmarchy (12 box to box: one ring and the tile's 10),
+ * 16 | 18 | 16 in paper — at every split width, its press area starting at the rail, its corners
+ * from the radius tokens (square in ohmarchy). Measured over a real split: the list column, the
+ * column of squares where `ThreadMarks` puts it, and the reading column.
  */
 const SPLITS: ReadonlyArray<[viewport: number, list: number]> = [[1440, 634], [1100, 634], [900, 334]];
 const split_ = (viewport: number, list: number, face: "ohmarchy" | "paper", extra = "", members = MEMBERS): string => {
@@ -257,10 +257,11 @@ const split_ = (viewport: number, list: number, face: "ohmarchy" | "paper", extr
    <div class="conv" data-thread-read="">${members.map((m) => panel(m.id)).join("")}</div></div></section></body></html>`;
 };
 
-async function seam(viewport: number, list: number, face: "ohmarchy" | "paper") {
+/** The list pane's own sheet (its ring) and, for a live case, the desktop feed's rule. */
+async function seam(viewport: number, list: number, face: "ohmarchy" | "paper", live = "") {
   const page = await browser!.newPage({ viewport: { width: viewport, height: 800 } });
   try {
-    await page.setContent(split_(viewport, list, face));
+    await page.setContent(split_(viewport, list, face, css("packages/ui/src/composites/list-pane.css") + live));
     return await page.evaluate((narrowPx) => {
       const conv = document.querySelector<HTMLElement>(".conv")!;
       const marks = document.querySelector<HTMLElement>(".thread-marks")!;
@@ -268,7 +269,12 @@ async function seam(viewport: number, list: number, face: "ohmarchy" | "paper") 
       const r = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
       const sq = r(".tm-sq");
       const mb = document.querySelector<HTMLElement>(".tm-mb")!;
+      // A tile's ring: the widest outer spread-only shadow (an inset one is no ring).
+      const ring = (sel: string) => Math.max(0, ...getComputedStyle(document.querySelector(sel)!).boxShadow.split(/,(?![^(]*\))/)
+        .filter((sh) => !sh.includes("inset")).map((sh) => Number(/0px 0px 0px ([\d.]+)px/.exec(sh)?.[1] ?? 0)));
       return {
+        listRing: ring(".list-col"),
+        paperRing: ring("article.pm"),
         narrow: marks.hasAttribute("data-narrow"),
         gap: parseFloat(getComputedStyle(document.querySelector(".view.split")!).columnGap),
         listRight: r(".list-col").right,
@@ -294,14 +300,22 @@ describe("the seam: list | gap | 18px rail | gap | paper, even in both faces", (
     for (const [viewport, list] of SPLITS)
       it(`${face} at ${viewport}px: the rail stands one gap from the list and one from the paper`, async () => {
         const m = await seam(viewport, list, face);
-        expect(m.gap, "the face's tile gap").toBe(face === "ohmarchy" ? 10 : 16);
+        // ohmarchy's box gap: 10 between the two 2px rings that stand in it.
+        expect(m.gap, "the face's tile gap").toBe(face === "ohmarchy" ? 14 : 16);
         expect(m.narrow, "the conversation's form at this width").toBe(viewport !== 1440);
         expect(m.rail, "the rail is as wide as the ring").toBe(18);
         const railLeft = m.centre - 9;
         const railRight = m.centre + 9;
-        expect(railLeft - m.listRight, "list edge → rail").toBeCloseTo(m.gap, 1);
-        expect(m.paper - railRight, "rail → paper").toBeCloseTo(m.gap, 1);
-        expect(m.barLeft, "the press area covers the column handle's gap").toBeGreaterThanOrEqual(m.listRight + m.gap - 0.5);
+        if (face === "ohmarchy") {
+          // o9: the list's ring to the rail and the rail to the paper's ring, the tile gap's 10.
+          expect([m.listRing, m.paperRing], "the tiles' rings").toEqual([2, 2]);
+          expect(railLeft - m.listRight - m.listRing, "list ring → rail").toBeCloseTo(10, 1);
+          expect(m.paper - m.paperRing - railRight, "rail → paper ring").toBeCloseTo(10, 1);
+        } else {
+          expect(railLeft - m.listRight, "list edge → rail").toBeCloseTo(16, 1);
+          expect(m.paper - railRight, "rail → paper").toBeCloseTo(16, 1);
+        }
+        expect(m.barLeft, "the press area starts at the rail, off the list's ring").toBeCloseTo(railLeft, 1);
         expect(m.barRight, "the press area ends at the paper").toBeLessThanOrEqual(m.paper + 0.5);
         expect(m.slot, "a slot's pitch").toBe(m.narrow ? 30 : 24);
         // Paper's soft squares (owner 2026-10-24, o10 v1): 3 on the 10px square, the ring concentric at 7.
@@ -310,6 +324,22 @@ describe("the seam: list | gap | 18px rail | gap | paper, even in both faces", (
         expect(m.hoverCorner, "the rail's hover box").toBe(face === "ohmarchy" ? "0px" : "5px");
         expect(m.pageOverflow).toBeLessThanOrEqual(0);
       }, 60_000);
+});
+
+describe("the seam under the desktop feed's live gaps stays even", () => {
+  const GRUVBOX = readFileSync(resolve(process.cwd(), "packages/tokens/omarchy/fixtures/raw/gruvbox.colors.toml"), "utf8");
+  const hypr = (option: string, v: string) => `{"option": "general:${option}", ${v}, "set": true }`;
+  for (const [gapsIn, border, even] of [[5, 2, 10], [8, 3, 16], [0, 4, 10]] as const)
+    it(`gaps_in ${gapsIn}, border ${border}: ${even} from each ring to the rail`, async () => {
+      const mapped = mapOmarchyThemePair({
+        colorsToml: GRUVBOX, hyprGapsOut: hypr("gaps_out", '"css": "20 20 20 20"'),
+        hyprGapsIn: hypr("gaps_in", `"css": "${gapsIn} ${gapsIn} ${gapsIn} ${gapsIn}"`), hyprBorderSize: hypr("border_size", `"int": ${border}`),
+      })!;
+      const m = await seam(1440, 634, "ohmarchy", omarchyRuleText(mapped.native.tokens, mapped.mode, mapped.counterpart?.tokens ?? null));
+      expect([m.listRing, m.paperRing]).toEqual([border, border]);
+      expect(m.centre - 9 - m.listRight - m.listRing, "list ring → rail").toBeCloseTo(even, 1);
+      expect(m.paper - m.paperRing - (m.centre + 9), "rail → paper ring").toBeCloseTo(even, 1);
+    }, 60_000);
 });
 
 describe("the walk over a laid-out thread", () => {

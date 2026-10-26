@@ -43,11 +43,15 @@
       },
       "--gap-tile": {
         "paper": "16px",
-        "note": "gap between layout tiles (Zero layout); Omarchy gaps_in 5 doubles to 10"
+        "note": "gap between layout tile boxes (Zero layout); Omarchy gaps_in 5 doubles to 10 between the 2px rings, which stand outside the boxes: 14"
       },
       "--gap-edge": {
         "paper": "16px",
-        "note": "gap to the viewport edge; Omarchy gaps_out 10"
+        "note": "gap from the viewport edge to a tile box; Omarchy gaps_out 10 to the 2px ring's outer edge: 12"
+      },
+      "--gap-rail": {
+        "paper": "16px",
+        "note": "gap from a tile box to a ringless rail standing beside it (the thread squares between list and paper); Omarchy the tile gap's 10 to the rail from the 2px ring's outer edge: 12"
       },
       "--font-ui": {
         "paper": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
@@ -137,8 +141,9 @@
     "--r-avatar": "0",
     "--focus-w": "2px",
     "--focus-offset": "0px",
-    "--gap-tile": "10px",
-    "--gap-edge": "10px",
+    "--gap-tile": "14px",
+    "--gap-edge": "12px",
+    "--gap-rail": "12px",
     "--font-ui": "'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
     "--font-size-base": "12px",
     "color-scheme": "dark"
@@ -201,8 +206,9 @@
     "--r-avatar": "0",
     "--focus-w": "2px",
     "--focus-offset": "0px",
-    "--gap-tile": "10px",
-    "--gap-edge": "10px",
+    "--gap-tile": "14px",
+    "--gap-edge": "12px",
+    "--gap-rail": "12px",
     "--font-ui": "'JetBrainsMono Nerd Font','JetBrains Mono',ui-monospace,'Cascadia Mono',Menlo,Consolas,monospace",
     "--font-size-base": "12px",
     "color-scheme": "light"

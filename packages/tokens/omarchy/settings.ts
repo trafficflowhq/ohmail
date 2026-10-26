@@ -184,8 +184,11 @@ const MAPPED_RING_PX = 2;
  *
  *   --font-ui         the live fc-match families, then the same static tail
  *   --font-size-base  shell.toml base-size
- *   --gap-tile        gaps_in × 2   (5 between two tiles is 10 of rhythm), never under the design gap
- *   --gap-edge        gaps_out, never narrower than the design edge, the tile gap nor the tile ring
+ *   --gap-tile        gaps_in × 2   (5 between two tiles is 10 of rhythm), never under the design gap,
+ *                     plus the two rings that stand in it
+ *   --gap-edge        gaps_out, never narrower than the design edge nor the tile gap, plus one ring
+ *                     (Hyprland measures both gaps to the border's outer edge; the slots are box gaps)
+ *   --gap-rail        the tile gap plus one ring (a tile beside a ringless rail)
  *   --focus-w         border_size   (the focus cursor is the active-window border)
  *   --lift-1/2/3      ring width rewritten to border_size (lift-0 stays 1px — that is
  *                     shell.toml's own control border, not the window border)
@@ -202,13 +205,17 @@ export function applySettings(
     out["--font-ui"] = settings.fontFamilies.map((f) => `'${f}'`).join(",") + "," + FONT_TAIL;
   }
   if (settings.fontSizePx !== null) out["--font-size-base"] = `${settings.fontSizePx}px`;
-  if (settings.gapsOutPx !== null || settings.gapsInPx !== null) {
+  if (settings.gapsOutPx !== null || settings.gapsInPx !== null || settings.borderPx !== null) {
     /* The design gap is the floor: live gaps only widen it (Omarchy's no-gaps toggle reads 0).
-       The edge never sits under the ring, which stands outside each tile's box. */
-    const tile = Math.max(px(tokens["--gap-tile"]) ?? 0, (settings.gapsInPx ?? 0) * 2);
+       The mapped slots carry the mapped ring; the gaps are counted without it, then the drawn
+       ring is added back, once at the edge and twice between two tiles. */
     const ring = settings.borderPx !== null && settings.borderPx >= 1 ? settings.borderPx : MAPPED_RING_PX;
-    out["--gap-tile"] = `${tile}px`;
-    out["--gap-edge"] = `${Math.max(px(tokens["--gap-edge"]) ?? 0, settings.gapsOutPx ?? 0, tile, ring)}px`;
+    const designTile = Math.max(0, (px(tokens["--gap-tile"]) ?? 0) - 2 * MAPPED_RING_PX);
+    const designEdge = Math.max(0, (px(tokens["--gap-edge"]) ?? 0) - MAPPED_RING_PX);
+    const tile = Math.max(designTile, (settings.gapsInPx ?? 0) * 2);
+    out["--gap-tile"] = `${tile + 2 * ring}px`;
+    out["--gap-edge"] = `${Math.max(designEdge, settings.gapsOutPx ?? 0, tile) + ring}px`;
+    out["--gap-rail"] = `${tile + ring}px`;
   }
   if (settings.borderPx !== null && settings.borderPx >= 1) {
     out["--focus-w"] = `${settings.borderPx}px`;

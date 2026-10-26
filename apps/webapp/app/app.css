@@ -5981,10 +5981,11 @@ input.set-tag-input {
 /* The column of squares: the reading column's sibling, laid over the conversation's own left
    padding (the column's grid area is the conversation's box), so it never covers a panel and no
    scroll moves it. Sticky inside the scroller, WebKitGTK drew it a frame apart from the scroll.
-   THE EVEN SEAM (owner 2026-10-24): in the split view the squares stand on an 18px rail (the ring's
-   width), one tile gap from the list's edge and one from the paper — 10 | 18 | 10 in ohmarchy,
-   16 | 18 | 16 in paper — at every width; the conversation's padding is the rail and one gap. The
-   press area is that padding (rail and gap): the gap beside the list is the column handle's.
+   THE EVEN SEAM (owner 2026-10-24, o9): in the split view the squares stand on an 18px rail (the
+   ring's width), --gap-rail from the list's box and from the paper's — 12 | 18 | 12 in ohmarchy (10
+   from each ring, the tile gap's 10), 16 | 18 | 16 in paper — at every width. The column of squares
+   starts that far past the list, so the conversation's padding is the rail and the two rail gaps
+   less the column gap before it. The press area is the rail and the gap to the paper.
    A conversation under 560px only packs its slots closer (30, from 24). The reader sheet keeps its
    34px (22px thin) bar. */
 .conv[data-thread-read] {
@@ -5994,7 +5995,7 @@ input.set-tag-input {
   --tm-rail: 18px;
 }
 .view.split > .read-col > .conv[data-thread-read] {
-  padding-left: calc(var(--tm-rail) + var(--gap-tile));
+  padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
 }
 .conv:has(> .thread-marks[data-narrow]) {
   padding-left: 22px;
@@ -6041,8 +6042,11 @@ input.set-tag-input {
 .conv > .thread-marks[data-narrow] > .tm-bar {
   width: 22px;
 }
+.view.split > .thread-marks {
+  left: calc(var(--gap-rail) - var(--gap-tile));
+}
 .view.split > .thread-marks > .tm-bar {
-  width: calc(var(--tm-rail) + var(--gap-tile));
+  width: calc(var(--tm-rail) + var(--gap-rail));
 }
 .tm-mb {
   position: relative;
