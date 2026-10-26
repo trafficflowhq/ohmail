@@ -62,6 +62,7 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden, watchNarrow } from "../shell/narrow";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "../shell/list-window";
+import { HELD_ANCHOR_PAD_PX, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
 import { linkHref, useRenderedLinks } from "../shell/rendered-links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
@@ -138,36 +139,8 @@ function pileList(dests: DecisionDestination[], t: (k: string, v?: Record<string
 const FILTER_ORDER = [...APPLY_PILE_ORDER, "none"] as const;
 type ScreenerFilterId = DecisionDestination | "none";
 
-/** Breathing room above the anchored message, so its own header is not flush with the column edge. */
-export const HELD_ANCHOR_PAD_PX = 14;
-
-/**
- * Where the read column must scroll to put the last held message at the top (held mail renders
- * oldest→newest; the decision is about the newest). All three terms are load-bearing: `lastTop -
- * readTop` is a viewport offset (alone it scrolls by a delta after the first selection); `+
- * scrollTop` converts it to a content offset — the term a plausible rewrite drops; `- pad`, clamped
- * at 0. Pure over numbers: jsdom reports every rect as zero. It re-anchors as bodies grow (a
- * derived row's body is a snippet on every selection; ~100px snippets hydrate to ~600px): the
- * caller remembers the position it last WROTE ({@link ANCHOR_TOLERANCE_PX}) and re-anchors only
- * while the scroller is still there (`test/screener-latest-anchor.test.tsx` models the growth).
- */
-export function heldAnchorTop(
-  readTop: number, lastTop: number, scrollTop: number, pad = HELD_ANCHOR_PAD_PX,
-): number {
-  return Math.max(0, lastTop - readTop + scrollTop - pad);
-}
-
-/**
- * How far the read column may have drifted from where the latest-message anchor last put it and
- * still count as "the reader has not touched it".
- *
- * Two pixels rather than zero because a browser reports a FRACTIONAL `scrollTop` under a fractional
- * device pixel ratio, and clamps it to the scrollable range — so an exact comparison would read the
- * anchor's own write as somebody else's scroll on the very next pass and stop re-anchoring, which is
- * the defect this tolerance exists inside the fix for. Small enough that any deliberate scroll (a
- * wheel notch is tens of pixels) is outside it.
- */
-const ANCHOR_TOLERANCE_PX = 2;
+/* The anchor's arithmetic lives beside the held window, which writes the same offset. */
+export { HELD_ANCHOR_PAD_PX, heldAnchorTop };
 
 /**
  * Which chip a waiting row belongs to.
@@ -1018,6 +991,44 @@ export function ScreenerView({
   const heldOfCurrent = current === null
     ? []
     : "pinned" in current ? current.sender.held : current.held;
+  const readRef = useRef<HTMLDivElement>(null);
+  const anchorKey = `${segment}::${activeId ?? ""}`;
+  const anchoredFor = useRef<string | null>(null);
+  const anchoredAt = useRef<number | null>(null);
+  /** Put the newest mounted letter at the top of the read column, and remember where that was. */
+  const placeAnchor = (read: HTMLElement) => {
+    const entries = read.querySelectorAll<HTMLElement>(".hmail");
+    const last = entries[entries.length - 1];
+    if (!last) {
+      read.scrollTo({ top: 0 });
+      anchoredAt.current = null;
+      return;
+    }
+    // The arithmetic is {@link heldAnchorTop} — extracted so a guard can drive it directly, because
+    // jsdom reports every rect as zero and a mounted assertion cannot tell this formula from a
+    // wrong one.
+    read.scrollTop = heldAnchorTop(
+      cssRect(read).top, cssRect(last).top, read.scrollTop,
+    );
+    // The OBSERVED value, not the target: a browser clamps `scrollTop` to the scrollable range, and
+    // a stored target beyond it would never match on the next pass — which reads as "the reader
+    // scrolled" and stops the re-anchoring this effect exists to do.
+    anchoredAt.current = read.scrollTop;
+  };
+  /**
+   * THE MOUNTED LETTERS (`held-window.ts`): the newest few on entry, older ones as the reader
+   * scrolls up to them. Counts, captions and decisions read the whole bag; what is drawn, asked
+   * for and anchored reads `shownHeld`.
+   */
+  const heldWin = useHeldWindow({
+    count: heldOfCurrent.length,
+    resetKey: anchorKey,
+    read: () => readRef.current,
+    anchoredAt,
+    reanchor: () => { if (readRef.current) placeAnchor(readRef.current); },
+  });
+  const shownHeld = heldWin.from > 0 ? heldOfCurrent.slice(heldWin.from) : heldOfCurrent;
+  const heldShown: HeldShown = { shown: shownHeld, from: heldWin.from, busy: heldWin.busy };
   /**
    * The BODY STATES of the selected sender's held mail, as one string.
    *
@@ -1027,7 +1038,7 @@ export function ScreenerView({
    * precisely why keying the anchor on them left it computed against collapsed snippets for ever.
    * Read through the reader's door: the queue's own copy does not move when a body lands.
    */
-  const heldBodyKey = useDrawnStates(heldOfCurrent.map(drawnTarget));
+  const heldBodyKey = useDrawnStates(shownHeld.map(drawnTarget));
 
   useEffect(() => {
     setChoosing(null);
@@ -1091,48 +1102,23 @@ export function ScreenerView({
   /**
    * The original concern is still honoured, without a scroll listener: a reader who scrolls
    * deliberately must not be dragged back. Answered by remembering the position we last WROTE
-   * ({@link ANCHOR_TOLERANCE_PX}) — if the scroller has moved away from it, the reader owns the
+   * (`ANCHOR_TOLERANCE_PX`, `held-window.ts`) — if the scroller has moved away from it, the reader owns the
    * column and this effect returns; no window in which our own write is mistaken for theirs. The
    * OBSERVED value is stored rather than the computed target, because a browser clamps
    * `scrollTop` to the scrollable range and a target beyond it would never match on the next
    * pass. `anchoredFor` distinguishes a FRESH selection (always anchor, forget the remembered
    * position) from a re-run caused by a body landing.
    */
-  const anchorKey = `${segment}::${activeId ?? ""}`;
-  const anchoredFor = useRef<string | null>(null);
-  const anchoredAt = useRef<number | null>(null);
   useEffect(() => {
     const fresh = anchoredFor.current !== anchorKey;
     if (fresh) {
       anchoredFor.current = anchorKey;
       anchoredAt.current = null;
     }
-    const read = document.querySelector<HTMLElement>(".view-screener .scn-read");
+    const read = readRef.current;
     if (!read) return;
-    if (
-      !fresh
-      && anchoredAt.current !== null
-      && Math.abs(read.scrollTop - anchoredAt.current) > ANCHOR_TOLERANCE_PX
-    ) {
-      return;
-    }
-    const entries = read.querySelectorAll<HTMLElement>(".hmail");
-    const last = entries[entries.length - 1];
-    if (!last) {
-      read.scrollTo({ top: 0 });
-      anchoredAt.current = null;
-      return;
-    }
-    // The arithmetic is {@link heldAnchorTop} — extracted so a guard can drive it directly, because
-    // jsdom reports every rect as zero and a mounted assertion cannot tell this formula from a
-    // wrong one.
-    read.scrollTop = heldAnchorTop(
-      cssRect(read).top, cssRect(last).top, read.scrollTop,
-    );
-    // The OBSERVED value, not the target: a browser clamps `scrollTop` to the scrollable range, and
-    // a stored target beyond it would never match on the next pass — which reads as "the reader
-    // scrolled" and stops the re-anchoring this effect exists to do.
-    anchoredAt.current = read.scrollTop;
+    if (!fresh && anchoredAt.current !== null && !heldAnchored(anchoredAt.current, read.scrollTop)) return;
+    placeAnchor(read);
   }, [anchorKey, heldBodyKey]);
 
   /* `scn-full-open` used to be set on <body> here, and the one rule that read it hid the
@@ -1157,9 +1143,9 @@ export function ScreenerView({
    * It is the only thing selection does: no `mark_seen`, no dwell timer, no waterline — `hydrateBody` is a GET
    * writing a client-local record, and the ⇧-twins exist precisely because plain filing does not mark held mail read.
    */
-  // `heldOfCurrent` is resolved once, up beside the anchor, so the two effects that read this
-  // sender's held mail cannot disagree about which rows they mean.
-  const heldKey = heldOfCurrent.map((h) => h.id).join(",");
+  // `shownHeld` is resolved once, up beside the anchor, so the two effects that read this
+  // sender's held mail cannot disagree about which rows they mean. Only mounted letters are asked for.
+  const heldKey = shownHeld.map((h) => h.id).join(",");
   /* THE HELD BODIES ASK AS ONE URGENT REQUEST (`hydrateBodies`): a person is reading them, so they
      do not queue behind background work, and one request for the whole list is not the burst
      urgency for each of forty would be. */
@@ -1980,7 +1966,7 @@ export function ScreenerView({
         ) : null}
       </ListPane>
 
-      <div className="read-col scn-read">
+      <div className="read-col scn-read" ref={readRef}>
         {junkCurrent ? (
           // The live window's preview; a selected shelf row falls through to the Spam preview.
           <JunkPreview item={junkCurrent} junk={junk!} onBack={() => onFull(false)} />
@@ -2002,6 +1988,7 @@ export function ScreenerView({
         ) : segment === "waiting" ? (
           <WaitingPreview
             sender={current as ScreenerSenderDTO}
+            mounted={heldShown}
             scope={scopeOf(current as ScreenerSenderDTO)}
             onScopeChange={(scope) => {
               const id = (current as ScreenerSenderDTO).id;
@@ -2026,6 +2013,7 @@ export function ScreenerView({
         ) : segment === "screened" ? (
           <ScreenedPreview
             sender={current as ScreenerSenderDTO}
+            mounted={heldShown}
             choosing={choosing === "allow"}
             onChoose={() => setChoosing("allow")}
             onCancel={() => setChoosing(null)}
@@ -2044,6 +2032,7 @@ export function ScreenerView({
         ) : (
           <SpamPreview
             row={current as SpamRow}
+            mounted={heldShown}
             choosing={choosing === "notspam"}
             onChoose={() => setChoosing("notspam")}
             onCancel={() => setChoosing(null)}
@@ -2091,6 +2080,13 @@ function newestHeld(w: ScreenerSenderDTO) {
  */
 function drawnTarget(h: ScreenerHeldMail): BodyTarget | null {
   return h.bodyState === undefined ? null : { id: h.id, snippet: h.snippet ?? h.body };
+}
+
+/** The mounted slice of the selected sender's held letters (`held-window.ts`); `from` is its first index in the bag. */
+interface HeldShown {
+  shown: readonly ScreenerHeldMail[];
+  from: number;
+  busy: boolean;
 }
 
 /**
@@ -2282,6 +2278,8 @@ export function HeldMail({
   onUnsubscribe,
   trackerNote,
   dull,
+  setSize,
+  posInSet,
 }: {
   /**
    * Which held message this is — carried for {@link useBodyStalled}'s key and nothing else.
@@ -2330,6 +2328,9 @@ export function HeldMail({
   onUnsubscribe?: () => Promise<UnsubscribeResult | null>;
   trackerNote?: string;
   dull?: boolean;
+  /** The sender's whole bag, and this letter's place in it: spoken in the feed, which mounts a slice. */
+  setSize?: number;
+  posInSet?: number;
 }) {
   const t = useTranslations("body");
   const ts = useTranslations("screening");
@@ -2440,7 +2441,12 @@ export function HeldMail({
        card, so the sheet is reached here, by a press on the sender — handled by the stage's one
        hit test (`sender-hit.ts`), as on a row. Only over a mirror message, which the sheet can
        resolve; a fixture or junk card keeps the plain line. */
-    <article className={dull ? "hmail dull" : "hmail"} data-sid={message && messageId ? messageId : undefined}>
+    <article
+      className={dull ? "hmail dull" : "hmail"}
+      data-sid={message && messageId ? messageId : undefined}
+      aria-setsize={setSize}
+      aria-posinset={posInSet}
+    >
       <div className="hm-line">
         {message && messageId ? (
           <button type="button" className="hm-who" aria-label={ts("openFor", { sender: address || from })}>
@@ -2484,6 +2490,7 @@ export function HeldMail({
       {message ? <MessageEvents messageId={message.id} /> : null}
       <div className="hm-body">
         <MessageBody
+          {...(message ? { messageId: message.id } : {})}
           text={body}
           html={html}
           subject={subject}
@@ -2681,6 +2688,7 @@ function PendingNote({ name }: { name: string | null }) {
 
 function WaitingPreview({
   sender,
+  mounted,
   scope,
   onScopeChange,
   onDecide,
@@ -2698,6 +2706,8 @@ function WaitingPreview({
   unsub,
 }: {
   sender: ScreenerSenderDTO;
+  /** The held letters on screen; the captions and the decision read `sender.held`, the whole bag. */
+  mounted: HeldShown;
   scope: DecisionScope;
   onScopeChange: (scope: DecisionScope) => void;
   onDecide: Parameters<typeof DecisionBar>[0]["onDecide"];
@@ -2806,7 +2816,7 @@ function WaitingPreview({
           ) : null}
         </>
       )}
-      <div className="scn-mails">
+      <div className="scn-mails" role="feed" aria-busy={mounted.busy}>
         {/* WHICH OF YOUR ADDRESSES THIS STRANGER WROTE TO. Above the mail and under the bar,
             because it is evidence for the decision the bar takes: the rule the press writes
             covers the whole account, and on an account holding more than one address the reader
@@ -2955,7 +2965,7 @@ function WaitingPreview({
               : t("heldCaption", { count: sender.held.length, time: firstContact })}
           </div>
         ) : null}
-        {sender.held.map((h) => (
+        {mounted.shown.map((h, i) => (
           <HeldMail
             key={h.id}
             messageId={h.id}
@@ -2971,6 +2981,8 @@ function WaitingPreview({
             bodyStall={bodyStall(h.id)}
             trackerNote={h.trackerNote}
             dull={sender.dull}
+            setSize={sender.held.length}
+            posInSet={mounted.from + i + 1}
             {...heldRemoteProps(remoteImages, h, sender.checked)}
           />
         ))}
@@ -2981,6 +2993,7 @@ function WaitingPreview({
 
 function ScreenedPreview({
   sender,
+  mounted,
   choosing,
   onChoose,
   onCancel,
@@ -2994,6 +3007,8 @@ function ScreenedPreview({
   reader,
 }: {
   sender: ScreenerSenderDTO;
+  /** See {@link WaitingPreview}'s prop of the same name. */
+  mounted: HeldShown;
   choosing: boolean;
   onChoose: () => void;
   onCancel: () => void;
@@ -3048,8 +3063,8 @@ function ScreenedPreview({
           </span>
         </div>
       </div>
-      {/* NO-COLLAPSE: every held message renders, oldest first. */}
-      <div className="scn-mails">
+      {/* NO-COLLAPSE: every held message renders, oldest first, the older ones as the reader scrolls up to them. */}
+      <div className="scn-mails" role="feed" aria-busy={mounted.busy}>
         {/* The same statement the waiting sheet makes, for the same reason: releasing this
             sender writes a rule over the whole account. Null on a one-mailbox account. */}
         {mailboxLabel ? (
@@ -3059,8 +3074,10 @@ function ScreenedPreview({
           {t("heldCaptionAll", { count: sender.held.length })}
         </div>
         {/* Name AND address, matching the waiting preview — see the screened row. */}
-        {sender.held.map((h) => (
+        {mounted.shown.map((h, i) => (
           <HeldMail
+            setSize={sender.held.length}
+            posInSet={mounted.from + i + 1}
             key={h.id}
             messageId={h.id}
             message={drawnTarget(h)}
@@ -3088,6 +3105,7 @@ function ScreenedPreview({
 
 function SpamPreview({
   row,
+  mounted,
   choosing,
   onChoose,
   onCancel,
@@ -3102,6 +3120,8 @@ function SpamPreview({
   reader,
 }: {
   row: SpamRow;
+  /** See {@link WaitingPreview}'s prop of the same name. */
+  mounted: HeldShown;
   choosing: boolean;
   onChoose: () => void;
   onCancel: () => void;
@@ -3166,14 +3186,17 @@ function SpamPreview({
           <span className="d-note">{t("spamNote")}</span>
         </div>
       </div>
-      {/* NO-COLLAPSE: spam is held viewable — all of it, not the newest of it. */}
-      <div className="scn-mails">
+      {/* NO-COLLAPSE: spam is held viewable — all of it, not the newest of it; the older letters
+          arrive as the reader scrolls up to them. */}
+      <div className="scn-mails" role="feed" aria-busy={mounted.busy}>
         {detection ? <div className="scn-caption">{detection}</div> : null}
         {held.length > 1 ? (
           <div className="scn-caption num">{t("heldCaptionAll", { count: held.length })}</div>
         ) : null}
-        {held.map((h) => (
+        {mounted.shown.map((h, i) => (
           <HeldMail
+            setSize={held.length}
+            posInSet={mounted.from + i + 1}
             key={h.id}
             messageId={h.id}
             message={drawnTarget(h)}

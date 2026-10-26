@@ -353,6 +353,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-receipts .stream {
   overflow-anchor: none;
 }
+/* The Screener's read column holds its own anchor too (`held-window.ts`): older held letters are
+   mounted above the reader, and the window moves `scrollTop` by exactly what it inserted. */
+.view-screener .scn-read {
+  overflow-anchor: none;
+}
 
 /* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
    Reads and Receipts mount an opening run of cards that grows toward the reader and never

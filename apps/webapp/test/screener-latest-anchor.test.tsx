@@ -103,8 +103,48 @@ let hydrated = new Set<string>();
 const FULL_BODY_MARK = "the whole of";
 
 function heightOf(el: Element): number {
+  const sid = (el as HTMLElement).dataset?.sid;
+  const set = sid === undefined ? undefined : grown.get(sid);
+  if (set !== undefined) return set;
   return (el.textContent ?? "").includes(FULL_BODY_MARK) ? FULL_PX : SNIPPET_PX;
 }
+
+/** A letter's height set by the test — a picture that loaded, a frame that sized — by message id. */
+const grown = new Map<string, number>();
+
+/**
+ * THE RESIZE OBSERVER, STUBBED AS LAYOUT DRIVES IT: one callback per `resized` call, carrying every
+ * element the test says changed size. An element's first report is not made on `observe` but rides
+ * the next callback, as a browser's does after layout, so a frame sized in between is already grown.
+ */
+const observers = new Set<{ cb: ResizeObserverCallback; els: Set<Element>; first: Set<Element> }>();
+const priorResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+class StubResizeObserver {
+  private readonly o: { cb: ResizeObserverCallback; els: Set<Element>; first: Set<Element> };
+  constructor(cb: ResizeObserverCallback) {
+    this.o = { cb, els: new Set(), first: new Set() };
+    observers.add(this.o);
+  }
+  observe(el: Element): void {
+    this.o.els.add(el);
+    this.o.first.add(el);
+  }
+  unobserve(el: Element): void { this.o.els.delete(el); this.o.first.delete(el); }
+  disconnect(): void { observers.delete(this.o); }
+}
+async function resized(...els: Element[]): Promise<void> {
+  await act(async () => {
+    for (const o of observers) {
+      const mine = new Set([...o.first, ...els.filter((e) => o.els.has(e))]);
+      o.first.clear();
+      if (mine.size > 0) o.cb([...mine].map((target) => ({ target }) as ResizeObserverEntry), null as never);
+    }
+  });
+}
+/** The bodies' landing, reported as layout reports it: every mounted letter changed size. */
+const landed = (): Promise<void> => resized(...document.querySelectorAll(".view-screener .scn-read .hmail"));
+const card = (sid: string): HTMLElement =>
+  document.querySelector<HTMLElement>(`.view-screener .scn-read .hmail[data-sid="${sid}"]`)!;
 
 Element.prototype.getBoundingClientRect = function getBoundingClientRect(this: Element): DOMRect {
   const rect = (top: number, height: number): DOMRect =>
@@ -255,7 +295,9 @@ async function flush(): Promise<void> {
 beforeEach(() => {
   hydrated = new Set();
   bodyGate = null;
+  grown.clear();
   globalThis.fetch = (async () => json({})) as typeof fetch;
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = StubResizeObserver;
 });
 
 afterEach(async () => {
@@ -263,6 +305,8 @@ afterEach(async () => {
   host?.remove();
   root = null;
   host = null;
+  observers.clear();
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = priorResizeObserver;
 });
 
 /** One sender, three held messages — the ordinary multi-message shape at the gate. */
@@ -328,5 +372,78 @@ describe("the Screener opens on the sender's LATEST held message", () => {
     bodyGate?.();
     await flush();
     expect(scrollerTop()).toBe(0);
+  });
+});
+
+/**
+ * THE COLUMN HOLDS ITS READER WHILE LETTERS CHANGE SIZE AND OLDER ONES ARRIVE (`held-window.ts`).
+ * A picture loading or a frame sizing is not a body landing, so only the resize observer sees it;
+ * and older letters mount above the reader as they scroll up, which must not move what they read.
+ */
+describe("the read column holds its letter while the letters around it change", () => {
+  it("an older letter that grows keeps the newest at the anchor while the reader has not scrolled", async () => {
+    await mount(await engineWith(THREE()));
+    bodyGate?.();
+    await flush();
+    await landed();
+    expect(scrollerTop(), "premise: anchored on the newest").toBe(FULL_PX * 2 - ANCHOR_SLACK);
+    grown.set("oldest", FULL_PX + 300);
+    await resized(card("oldest"));
+    expect(scrollerTop()).toBe(FULL_PX * 2 + 300 - ANCHOR_SLACK);
+  });
+
+  it("once the reader scrolls, growth wholly above the port moves the column by that growth, and nothing else does", async () => {
+    await mount(await engineWith(THREE()));
+    bodyGate?.();
+    await flush();
+    await landed();
+    const read = document.querySelector<HTMLElement>(".view-screener .scn-read")!;
+    read.scrollTop = 700; // the reader's own scroll: the oldest letter (0–600) is above the port
+    grown.set("oldest", 900);
+    await resized(card("oldest"));
+    expect(scrollerTop(), "the letter being read was pushed down by the growth above it").toBe(1000);
+    grown.set("middle", 700); // the letter at the port top, read in place: no correction
+    await resized(card("middle"));
+    expect(scrollerTop()).toBe(1000);
+  });
+
+  it("older letters mounted above the reader leave the letter they read in place, while their bodies land", async () => {
+    const six = ["c1", "c2", "c3", "c4", "c5", "c6"].map((id, i) => msg(id, "stranger@example.com", 6 + i));
+    await mount(await engineWith(six));
+    bodyGate?.();
+    await flush();
+    await landed();
+    const read = document.querySelector<HTMLElement>(".view-screener .scn-read")!;
+    Object.defineProperty(read, "clientHeight", { configurable: true, get: () => 800 });
+    expect(read.querySelectorAll(".hmail"), "premise: the newest three are mounted").toHaveLength(3);
+    const topOf = (el: Element) => el.getBoundingClientRect().top;
+    read.scrollTop = 100; // the reader scrolls up, into the first mounted letter
+    const before = topOf(card("c4"));
+    await act(async () => { read.dispatchEvent(new Event("scroll")); });
+    for (let i = 0; i < 3; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    await flush();
+    expect(read.querySelectorAll(".hmail"), "nothing older was mounted").toHaveLength(6);
+    expect(card("c1").getBoundingClientRect().height, "premise: grown before its first report").toBe(FULL_PX);
+    await resized(card("c1"), card("c2"), card("c3"));
+    expect(topOf(card("c4")), "the letter being read moved").toBe(before);
+  });
+
+  it("the keep, hold and step arithmetic", async () => {
+    const { heldKeepTop, heldHoldShift, heldWantsMore, heldAnchored } = await import("../app/shell/held-window.js");
+    // Keep: a card 300px further down after the prepend moves the column 300px with it.
+    expect(heldKeepTop(100, -100, 200)).toBe(400);
+    expect(heldKeepTop(0, 0, 0)).toBe(0);
+    // Hold: only growth that was wholly above the port top counts, each card's own and the ones above it.
+    expect(heldHoldShift(0, [{ bottom: 200, delta: 500 }])).toBe(500);
+    expect(heldHoldShift(0, [{ bottom: 200, delta: 500 }, { bottom: 800, delta: 500 }, { bottom: 1400, delta: 500 }])).toBe(1500);
+    expect(heldHoldShift(0, [{ bottom: 600, delta: 100 }]), "a card straddling the port top").toBe(0);
+    expect(heldHoldShift(100, [{ bottom: 50, delta: -40 }]), "a card that shrank above the port").toBe(-40);
+    // Step: near the slice top, and either scrolled or unable to scroll higher; never before layout.
+    expect(heldWantsMore({ sliceTop: -100, port: 800, scrollTop: 100, scrolled: true })).toBe(true);
+    expect(heldWantsMore({ sliceTop: -900, port: 800, scrollTop: 900, scrolled: true })).toBe(false);
+    expect(heldWantsMore({ sliceTop: -186, port: 800, scrollTop: 186, scrolled: false }), "the anchor's own offset").toBe(false);
+    expect(heldWantsMore({ sliceTop: 0, port: 800, scrollTop: 0, scrolled: false }), "a column with room to spare").toBe(true);
+    expect(heldWantsMore({ sliceTop: 0, port: 0, scrollTop: 0, scrolled: true })).toBe(false);
+    expect([heldAnchored(186, 187.5), heldAnchored(186, 200), heldAnchored(null, 0)]).toEqual([true, false, false]);
   });
 });
