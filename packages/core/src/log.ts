@@ -510,6 +510,10 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // chosen by the emitter (`process` / `unavailable_in_this_runtime`); it names no mailbox, no
   // address, no path and nothing a person wrote.
   "memoryReading",
+  // The engine's turns and the store's own fsyncs (`engine_vitals`, `sync_drain`,
+  // `local_db_checkpointed`): counts, milliseconds and a 0-1 share, plus `loopReading`, one of
+  // three literals (`drains` / `no_drain` / `not_measured`). They name no mailbox, path or statement.
+  "loopDelayP99Ms", "loopDelayMaxMs", "loopReading", "loopUtilization", "storeFsyncs", "storeFsyncMs", "fsyncs",
   // ── retry, failure and circuit accounting ──
   "attempt", "attempts", "consecutiveFailures", "maxSyncFailures", "consecutiveFaults",
   "opens", "open", "threshold", "circuit", "cooldownMs", "retryAt", "retryInMs",

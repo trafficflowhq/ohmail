@@ -1,4 +1,10 @@
 import type { Diagnostic } from "./log.js";
+import type { LoopDelaySample } from "./loop-delay.js";
+import type { StoreSyncCount } from "./pglite-transport.js";
+
+/** Node's `performance.eventLoopUtilization`, absent on the phone's runtime. */
+interface Elu { idle: number; active: number; utilization: number }
+type EluReader = (a?: Elu, b?: Elu) => Elu;
 
 /**
  * The engine's own memory. Why a module and not three lines in `log.ts`: `log.ts` is the ONE file
@@ -68,6 +74,14 @@ export function startEngineVitals(
      * before they start this, so an optional reader would only be a branch nobody can reach.
      */
     storeBytes: () => number;
+    /** The store's cumulative fsyncs (`OpenLocalDb.storeSyncs`); absent or `null` where it has none. */
+    storeSyncs?: () => StoreSyncCount | null;
+    /**
+     * The drains' longest turns since the last call, `null` when no drain ran (`createDrainTurns`).
+     * Absent where the engine measures none. Never a monitor of its own: its timer would wake an
+     * idle engine a hundred times a second for a line written every five minutes.
+     */
+    drainTurns?: () => LoopDelaySample | null;
     intervalMs?: number;
   },
 ): () => void {
@@ -77,6 +91,12 @@ export function startEngineVitals(
      whose axis can run backwards cannot answer "is memory climbing?", which is the only question
      the sampler exists for. `performance.now()` is monotonic from process start. */
   const bootedAt = performance.now();
+  // Busy share of the loop between lines: libuv's own idle clock, no timer.
+  const eluOf = (performance as { eventLoopUtilization?: EluReader }).eventLoopUtilization;
+  const elu = typeof eluOf === "function" ? eluOf.bind(performance) : null;
+  let eluAt: Elu | null = null;
+  // From the store's open, so the boot line carries the open's own syncs.
+  let syncedBefore = { n: 0, ms: 0 };
   const emit = (): void => {
     /**
      * A runtime may not have a memory reading, and this is the one thing at boot that assumed one.
@@ -89,6 +109,12 @@ export function startEngineVitals(
      * `memoryReading` names why, a state a reader can act on rather than three misleading zeroes.
      */
     const m = typeof process.memoryUsage === "function" ? process.memoryUsage() : null;
+    const turns = opts.drainTurns?.() ?? null;
+    const eluNow = elu?.() ?? null;
+    const busy = elu && eluNow ? (eluAt ? elu(eluNow, eluAt) : eluNow).utilization : null;
+    eluAt = eluNow;
+    const s = opts.storeSyncs?.() ?? null;
+    const synced = s ? { n: s.files + s.directories, ms: s.ms } : null;
     log("engine_vitals", {
       // NULL-SAFE because `m` is null on a runtime with no `memoryUsage` — the line above makes
       // it so, and a non-optional read here would not compile.
@@ -110,12 +136,21 @@ export function startEngineVitals(
       // Named, never spread: the field census reads this object's keys, and a conditional spread
       // makes the whole call site unreadable to it.
       storeBytes: opts.storeBytes(),
+      /* The drains' longest turns since the last line, and the store's fsyncs in the same interval:
+         the engine's synchronous store I/O is what held its turns during a first sync. */
+      loopDelayP99Ms: turns?.p99Ms ?? null,
+      loopDelayMaxMs: turns?.maxMs ?? null,
+      loopReading: opts.drainTurns === undefined ? "not_measured" : turns ? "drains" : "no_drain",
+      loopUtilization: busy !== null && Number.isFinite(busy) ? Math.round(busy * 1000) / 1000 : null,
+      storeFsyncs: synced ? synced.n - syncedBefore.n : null,
+      storeFsyncMs: synced ? Math.round(synced.ms - syncedBefore.ms) : null,
       // WHICH READING THIS IS, in the only unit that lets a log be read as a series. Without it a
       // sequence of memory readings has no x-axis and cannot answer the drift question at all.
       uptimeMs: Math.round(performance.now() - bootedAt),
       reason: "the engine's memory, sampled on a timer; no threshold is attached and none " +
         "should be until the shipped build has been measured against real mailboxes",
     });
+    if (synced) syncedBefore = synced;
   };
   // ONE AT BOOT, so a launch that is killed before the first interval still leaves a floor on the
   // record — and so the series has a zero point to measure the drift FROM.
@@ -123,4 +158,24 @@ export function startEngineVitals(
   const timer = setInterval(emit, opts.intervalMs ?? ENGINE_VITALS_INTERVAL_MS);
   timer.unref?.();
   return () => clearInterval(timer);
+}
+
+/**
+ * What `engine_vitals` carries of the loop: each drain folds its monitor's reading in, and the
+ * vitals line takes the largest since its last one.
+ */
+export function createDrainTurns(): { fold(sample: LoopDelaySample): void; take(): LoopDelaySample | null } {
+  let held: LoopDelaySample | null = null;
+  return {
+    fold(sample) {
+      held = held
+        ? { p99Ms: Math.max(held.p99Ms, sample.p99Ms), maxMs: Math.max(held.maxMs, sample.maxMs) }
+        : { ...sample };
+    },
+    take() {
+      const out = held;
+      held = null;
+      return out;
+    },
+  };
 }

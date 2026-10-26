@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { freshDataDir } from "./_datadir.js";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
@@ -10,6 +10,7 @@ import type {
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { openLocalDb } from "../src/db.js";
+import { nodeLoopDelay } from "../src/loop-delay.js";
 import { INGEST_FOLD_WAL_BYTES } from "@trafficflow/db/dialect";
 
 /**
@@ -284,6 +285,45 @@ describe("the drain folds its own write-ahead log in", () => {
       .not.toBe(before);
   }, 180_000);
 
+  /* A loop monitor's 10 ms timer wakes the engine, so one runs only while a drain does; the vitals
+     line carries the drains' reading and holds none of its own. */
+  it("holds a loop monitor only while a drain runs, and the vitals line carries the drain's reading", async () => {
+    let enables = 0;
+    let stops = 0;
+    const vitals: Record<string, unknown>[] = [];
+    const dataDir = await freshDataDir("ohmail-drain-loop-");
+    const sidecar = await createSidecar({
+      dataDir,
+      imap: {
+        host: "imap.invalid", port: 993, secure: true,
+        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+      },
+      address: "owner@trafficflow.test",
+      pollIntervalMs: 60 * 60 * 1000,
+      leaseStaleAfterMs: 60_000,
+      vitalsIntervalMs: 30,
+      adapterFactory: backloggedMailbox(20, 10),
+      loopDelay: () => {
+        enables += 1;
+        return { read: () => ({ p99Ms: 7, maxMs: 42 }), stop: () => { stops += 1; } };
+      },
+      log: (event, fields) => { if (event === "engine_vitals") vitals.push(fields as Record<string, unknown>); },
+    });
+    cleanups.push(async () => {
+      await sidecar.stop();
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+    expect(enables, "a loop monitor runs with no drain").toBe(0);
+    await sidecar.start();
+    await sidecar.syncUntilQuiet();
+    expect(enables, "no drain read the loop").toBeGreaterThan(0);
+    expect(stops, "a loop monitor outlived its drain").toBe(enables);
+    await vi.waitFor(() => expect(vitals.at(-1)!.loopReading).toBe("no_drain"), { timeout: 5_000, interval: 20 });
+    expect(vitals.filter((l) => l.loopReading === "drains").map((l) => [l.loopDelayP99Ms, l.loopDelayMaxMs]),
+      "the drain's reading never reached the vitals line").toContainEqual([7, 42]);
+    expect(vitals.at(-1)!.loopDelayMaxMs, "a line with no drain behind it repeats an old reading").toBeNull();
+  }, 180_000);
+
   /**
    * ── AND A DRAIN OVER A QUIET MAILBOX DOES NOT ───────────────────────────────────────────────
    *
@@ -354,6 +394,7 @@ describe("the drain folds its own write-ahead log in", () => {
     const drains: number[] = [];
     /** …and what that same line counted as folds — the SHIPPED counter, not this test's. */
     const folded: number[] = [];
+    const drainLines: Record<string, unknown>[] = [];
     const dataDir = await freshDataDir("ohmail-drain-ckpt-loop-");
     const sidecar = await createSidecar({
       dataDir,
@@ -366,10 +407,12 @@ describe("the drain folds its own write-ahead log in", () => {
       leaseStaleAfterMs: 60_000,
       adapterFactory: backloggedMailbox(TOTAL, BATCH),
       store: (dir, opts) => openLocalDb(dir, { ...opts, ingestFoldWalBytes: WINDOW }),
+      loopDelay: nodeLoopDelay,
       log: (event, fields) => {
         if (event !== "sync_drain") return;
         drains.push((fields as { cycles: number }).cycles);
         folded.push((fields as { checkpoints: number }).checkpoints);
+        drainLines.push(fields as Record<string, unknown>);
       },
     });
     cleanups.push(async () => {
@@ -429,6 +472,11 @@ describe("the drain folds its own write-ahead log in", () => {
       took,
       `sync_drain counted ${took} folds over ${cycles} cycles for ${earned} windows of log`,
     ).toBeLessThanOrEqual(2);
+    /* …with what the store's own disk work cost the engine's turns over the drain. */
+    const big = drainLines.find((l) => l.cycles === cycles)!;
+    expect(big.storeFsyncs as number, "the drain's line counts none of the store's fsyncs").toBeGreaterThan(0);
+    expect(typeof big.storeFsyncMs).toBe("number");
+    expect(typeof big.loopDelayMaxMs).toBe("number");
   }, 300_000);
 
   /**

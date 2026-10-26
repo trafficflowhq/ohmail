@@ -635,6 +635,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // store past CHECKPOINT_SLOW_MS, with its `kind`, a segment count and a duration.
   local_db_checkpointed: "info",
   local_db_checkpoint_failed: "error",
+  // db.ts — a log performance setting read back otherwise at the open; `count` + `reason`, and
+  // the store serves.
+  local_db_log_settings_differ: "info",
   // db.ts — the timed log flush (the walwriter PGlite lacks) failed one write; it is tried again
   // at the next deadline.
   local_db_flush_failed: "error",

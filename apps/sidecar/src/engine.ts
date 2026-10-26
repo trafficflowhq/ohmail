@@ -282,7 +282,8 @@ import { SEARCH_INDEX_ROUTE, createSearchIndexDoor } from "./search-index-door.j
 import { createSearchLanes } from "./search-lanes.js";
 import { createFirstSyncReporter, createFirstSyncTracker } from "./first-sync.js";
 import type { Diagnostic } from "./log.js";
-import { startEngineVitals } from "./vitals.js";
+import { createDrainTurns, startEngineVitals } from "./vitals.js";
+import type { LoopDelayReader, LoopDelaySample } from "./loop-delay.js";
 
 /**
  * THE LOCAL ENGINE — `createApp` over `localRoutes` on on-disk PGlite (the host door, when armed,
@@ -365,6 +366,11 @@ export interface SidecarConfig {
    * import would put a filesystem reader it never runs into its artifact.
    */
   hostPower?: () => PowerVerdict;
+  /**
+   * A loop-delay monitor, one per drain (`sync_drain`, folded into `engine_vitals`). The desktop
+   * entry supplies `nodeLoopDelay`; injected for `hostPower`'s reason (the phone's `perf_hooks` refuses).
+   */
+  loopDelay?: () => LoopDelayReader;
   /**
    * How long a connection has to answer an IMAP NOOP before it is treated as dead. Absent means
    * {@link DEFAULT_HEARTBEAT_TIMEOUT_MS}; a value that is not a positive number refuses the boot.
@@ -2123,6 +2129,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
   const wallNow = config.now ? (): number => now().getTime() : (): number => Date.now();
   const cadenceClocks: CadenceClocks = { wall: wallNow, mono: monotonic };
   const address = config.address ?? config.imap.auth.user;
+  // The drains' loop readings since the last `engine_vitals` line.
+  const drainTurns = createDrainTurns();
   /* THE SENDER-SIGNATURE CHECK, once for the install, over the lookup the composition chose; `null`
      where it chose none (the phone). Its one-click half is resolved per drain (`screeningNow`). */
   const signatureCheck = config.dkimKeys == null ? null : makeSignatureCheck({ keys: config.dkimKeys, now });
@@ -6534,7 +6542,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
 
       const drain = async (
-        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
+        maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean, turns: LoopDelayReader | null,
       ): Promise<number> => {
         // The marker-surfacing preflight, at the top of the drain both doors share. Routing no
         // longer depends on it (`importHoldNow` re-evaluates each cycle) but the confirm
@@ -6625,6 +6633,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // injected `now()`: a test may freeze that clock, and a frozen clock would report every
         // cycle as 0 ms.
         const cycleMs: number[] = [];
+        /* What the store's own fsyncs cost this drain: on PGlite they run on the engine's thread. */
+        const syncsAtStart = opened.storeSyncs();
         /* WHAT THIS DRAIN DID, counted — the reading behind the idle-cost gates below. `census`
            is the shared loop's own (mailbox-sized derivations, the rows they walked, and what the
            adapter handed over); `checkpoints` is this file's. Both are folded into `sync_drain`,
@@ -6808,15 +6818,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            spread of the summary object: the log census refuses a call site whose field set it
            cannot read statically. See `summarizeDrain`. */
         let drainLineWritten = false;
+        const turnsRead = (): LoopDelaySample | null => {
+          const t = turns?.read() ?? null;
+          if (t) drainTurns.fold(t);
+          return t;
+        };
         const writeDrainLine = (): void => {
           if (drainLineWritten || cycles === 0) return;
           drainLineWritten = true;
           const shape = summarizeDrain(cycleMs);
+          const syncsAtEnd = opened.storeSyncs();
+          const fsynced = syncsAtStart && syncsAtEnd ? {
+            n: syncsAtEnd.files + syncsAtEnd.directories - syncsAtStart.files - syncsAtStart.directories,
+            ms: Math.round(syncsAtEnd.ms - syncsAtStart.ms),
+          } : null;
           log("sync_drain", {
             cycles: shape.cycles, totalMs: shape.totalMs, slowestMs: shape.slowestMs, drained,
             observed: census.observed, cursorBuilds: census.cursorBuilds,
             locatorReads: census.locatorReads, locatorRows: census.locatorRows,
             cursorFolders: census.cursorFolders, checkpoints,
+            storeFsyncs: fsynced?.n ?? null, storeFsyncMs: fsynced?.ms ?? null,
+            loopDelayMaxMs: turnsRead()?.maxMs ?? null,
           });
         };
         /* AND THE TAIL SAYS SO WHILE IT RUNS. Everything below is written after the last cycle and
@@ -7002,13 +7024,20 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       const settledDrain = async (
         maxCycles: number, gen: number, conn: MailboxAdapter, organizing: boolean,
       ): Promise<number> => {
+        // One loop monitor per drain, stopped whatever the drain did.
+        const turns = config.loopDelay?.() ?? null;
         try {
-          const cycles = await drain(maxCycles, gen, conn, organizing);
+          const cycles = await drain(maxCycles, gen, conn, organizing, turns);
           deadLetters.settleStoreFault(undefined);
           return cycles;
         } catch (err) {
           deadLetters.settleStoreFault(err);
           throw err;
+        } finally {
+          if (turns) {
+            drainTurns.fold(turns.read());
+            turns.stop();
+          }
         }
       };
 
@@ -9170,6 +9199,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       // The store's own heap, so a rise in `rss` can be attributed to the database or to the
       // engine instead of argued about. Read per sample from the live handle, never captured.
       storeBytes: () => opened.storeBytes(),
+      storeSyncs: () => opened.storeSyncs(),
+      ...(config.loopDelay ? { drainTurns: () => drainTurns.take() } : {}),
     });
     /* ONE PER PROCESS, because the "have I already said this import is running" half is per
        launch — see `first-sync.ts`. Built here rather than inside the drain, which runs per pass. */
