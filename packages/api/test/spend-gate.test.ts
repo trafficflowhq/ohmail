@@ -5,7 +5,7 @@ import {
   createApp, apiRoutes, UNVERIFIED_MAY_REACH, unverifiedMayReach,
   type ApiDeps, type CostClass, type Route,
 } from "@trafficflow/api";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, req, sweepPath, FIXED_NOW } from "./helpers.js";
 
 /**
  * the "An unverified account must not be able to generate meaningful cost" invariant — **AN UNVERIFIED ACCOUNT MUST NOT BE ABLE TO GENERATE MEANINGFUL COST.**
@@ -1248,7 +1248,7 @@ describe("the gate, over HTTP, on every route it governs", () => {
     expect(gated.length, "the sweep is not vacuous").toBeGreaterThan(50);
 
     for (const route of gated) {
-      const path = route.pattern.split("/").map((p) => (p.startsWith(":") ? id : p)).join("/");
+      const path = sweepPath(route, id);
       const res = await H(req(route.method, path, { bearer: s.token }), deps);
       expect(res.status, `${route.method} ${path} (${route.cost})`).toBe(403);
       const body = await res.json() as { error: { code: string } };
@@ -1266,7 +1266,7 @@ describe("the gate, over HTTP, on every route it governs", () => {
     const id = randomUUID();
 
     for (const route of apiRoutes.filter((r) => !unverifiedMayReach(r.cost))) {
-      const path = route.pattern.split("/").map((p) => (p.startsWith(":") ? id : p)).join("/");
+      const path = sweepPath(route, id);
       const res = await H(req(route.method, path, { bearer: s.token }), deps);
       if (res.status !== 403) continue;
       const body = await res.json().catch(() => ({})) as { error?: { code?: string } };

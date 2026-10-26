@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql as raw } from "drizzle-orm";
 import {
-  closePooledDbs, makePooledDb, POOLED_ACQUIRE_TIMEOUT_MS, POOLED_MAX_CONNECTIONS,
-  SESSION_ACQUIRE_TIMEOUT_MS,
+  API_MAX_DURATION_MS, closePooledDbs, makePooledDb, POOLED_ACQUIRE_TIMEOUT_MS, POOLED_IDLE_TIMEOUT_S,
+  POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { resetHostState } from "../src/config.js";
+import { EVENTS_MAX_DURATION_S, PROD_SSE_LIFETIME_MS, resetHostState } from "../src/config.js";
 import { resetServices } from "../src/deps.js";
-import { handleApiRequest } from "../src/handler.js";
+import { handleApiRequest, QUIET_HOLD_MS } from "../src/handler.js";
 import { API_FAULT_RECORD_BUDGET_MS } from "@trafficflow/api";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 import { FIXTURE_SHAPES, stripeTestKey } from "../../../test/support/fixture-credentials.js";
@@ -125,6 +125,8 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
     const body = await res.json();
     expect(body).toMatchObject({ ok: true, version: "test-sha", schemaOk: true });
     expect(typeof body.dbLatencyMs).toBe("number");
+    // The host also opened a fresh connection of its own, and it was admitted.
+    expect(typeof body.dbFreshConnectMs).toBe("number");
     expect(body.kek).toEqual({ active: 1, count: 1, fingerprint: expect.any(String) });
   });
 
@@ -442,5 +444,93 @@ describe.skipIf(!PG_UP)("apps/api-vercel — the retired webhook door, and the c
     expect(body.detail).toContain("STRIPE_SECRET_KEY");
     expect(body.detail).not.toContain(STRIPE_KEY);   // variables, never values
     expect(body.detail).not.toContain(STRIPE_KEY.slice(STRIPE_KEY.lastIndexOf("_") + 1));
+  });
+});
+
+/**
+ * THE QUIET HOLD. A suspended instance keeps its idle pooled connections open at the pooler until
+ * it wakes, and on 2026-10-26 ~160 cold instances' held connections filled the pooler's client cap.
+ * Every answer hands the platform a hold that ends `QUIET_HOLD_MS` after its body is done, so the
+ * pool's idle close runs first; a later answer releases the earlier one. The platform is its
+ * request context and a fake clock (`entitlements-refresh-behind.test.ts`); no route asked here
+ * touches the database.
+ */
+describe("every answer keeps its instance awake past the pool's idle close", () => {
+  const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
+  const IDLE_MS = POOLED_IDLE_TIMEOUT_S * 1000;
+  let holds: Array<{ settled: boolean }> = [];
+  beforeEach(() => {
+    install(envFor());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    holds = [];
+    (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT] = {
+      get: () => ({
+        waitUntil: (p: Promise<unknown>) => {
+          const hold = { settled: false };
+          holds.push(hold);
+          void p.then(() => { hold.settled = true; });
+        },
+      }),
+    };
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    delete (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT];
+  });
+
+  it("an answer hands one hold: still pending at the idle close, settled once QUIET_HOLD_MS is up", async () => {
+    const res = await handleApiRequest(at("/apiary"));
+    expect(res.status).toBe(404);
+    expect(holds).toHaveLength(1);
+    await res.text();
+    await vi.advanceTimersByTimeAsync(IDLE_MS);
+    expect(holds[0]!.settled, "released before the pool closed its idle connections").toBe(false);
+    await vi.advanceTimersByTimeAsync(QUIET_HOLD_MS - IDLE_MS);
+    expect(holds[0]!.settled).toBe(true);
+  });
+
+  it("every exit hands one, and an answer with no body (HEAD) starts its quiet at once", async () => {
+    await (await handleApiRequest(at("/messages/%ZZ/move", { method: "POST" }))).text();   // the host's own 400
+    install(envFor({ DATABASE_URL_POOLED: undefined }));
+    await (await handleApiRequest(at("/health"))).text();                                // a misconfigured host
+    install(envFor());
+    const head = await handleApiRequest(at("/apiary", { method: "HEAD" }));
+    expect(holds).toHaveLength(3);
+    expect(head.body).toBeNull();
+    await vi.advanceTimersByTimeAsync(QUIET_HOLD_MS);
+    expect(holds.map((h) => h.settled)).toEqual([true, true, true]);
+  });
+
+  it("a later answer releases the earlier one, so one invocation lingers", async () => {
+    const first = await handleApiRequest(at("/apiary"));
+    const second = await handleApiRequest(at("/apiary"));
+    await first.text();
+    await second.text();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(holds.map((h) => h.settled)).toEqual([true, false]);
+  });
+
+  it("a body holds until it is read to its end or cancelled", async () => {
+    const res = await handleApiRequest(at("/apiary"));
+    await vi.advanceTimersByTimeAsync(QUIET_HOLD_MS + 10_000);
+    expect(holds[0]!.settled, "a body still being sent is not quiet").toBe(false);
+    await res.body!.cancel();
+    await vi.advanceTimersByTimeAsync(QUIET_HOLD_MS);
+    expect(holds[0]!.settled).toBe(true);
+  });
+
+  it("a body done late is held no longer than the invocation's own ceiling", async () => {
+    const res = await handleApiRequest(at("/apiary"));
+    await vi.advanceTimersByTimeAsync(50_000);
+    await res.text();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(holds[0]!.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(API_MAX_DURATION_MS - 50_000 - 1);
+    expect(holds[0]!.settled, "past the catch-all's maxDuration the platform kills the invocation").toBe(true);
+  });
+
+  it("the hold outlasts the idle close and fits after a whole /events stream", () => {
+    expect(QUIET_HOLD_MS).toBeGreaterThanOrEqual((POOLED_IDLE_TIMEOUT_S + 1) * 1000);
+    expect(QUIET_HOLD_MS).toBeLessThanOrEqual(EVENTS_MAX_DURATION_S * 1000 - PROD_SSE_LIFETIME_MS - 5_000);
   });
 });

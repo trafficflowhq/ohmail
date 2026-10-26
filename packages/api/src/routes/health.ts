@@ -509,6 +509,26 @@ export const healthRoutes: Route[] = [
         });
       }
 
+      // A FRESH CONNECTION (`HealthConfig.freshConnect`), asked only now the probe answered on
+      // Postgres: the probe rode a held connection, and a pooler at its cap refuses only new ones.
+      let fresh: { ok: boolean; ms: number; code: string | null } | null = null;
+      if (injected?.freshConnect) {
+        try {
+          fresh = await injected.freshConnect();
+        } catch {
+          // Contracted not to throw; a throw anyway is no reading, never a darkened host.
+          fresh = null;
+        }
+      }
+      if (fresh && !fresh.ok) {
+        return healthResponse(503, {
+          ok: false, version, buildSource, ...artifact, dbLatencyMs: probe.dbLatencyMs,
+          error: "database_refusing_new_connections",
+          errorCode: staffChannelWord("api_health.error_code", fresh.code),
+          kek, dbProvider, ...transport, entitlements, aiPricing, ...pager, ...staffFaults,
+        });
+      }
+
       // The counts this host is held to, read only now that the probe was a Postgres one.
       const through = fullCensus?.through ?? mailTierMarkers().through;
       const expectedMarkers = fullCensus?.expected ?? mailTierMarkers().expected;
@@ -535,6 +555,7 @@ export const healthRoutes: Route[] = [
         buildSource,
         ...artifact,
         dbLatencyMs: probe.dbLatencyMs,
+        ...(fresh ? { dbFreshConnectMs: fresh.ms } : {}),
         pgTrgm: probe.pgTrgm,
         schemaOk: probe.schemaOk,
         schemaMarkers: {

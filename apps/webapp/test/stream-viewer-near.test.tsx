@@ -24,7 +24,7 @@ import { NEAR_SEED } from "../app/shell/stream-near";
  * jsdom has no layout; the window is moved through the same reads a browser answers (as
  * `stream-mount-window.test.tsx` does) and the lookahead is a stubbed IntersectionObserver whose
  * callback the test calls. Mutations watched red: render the viewer whatever `viewer` says (the
- * deep-window row); fetch on `onApproach` (the Receipts row); fire `onNear` again for an id it
+ * deep-window row); let the pump take a card while the stream flies (the flight row); fetch on `onApproach` (the Receipts row); fire `onNear` again for an id it
  * already reported (the Reads row); seed the near set with the whole opening slice, or let the
  * pump add more than one per frame (the per-frame row); grow the lookahead before the cards are
  * drawn (the lookahead row).
@@ -210,6 +210,40 @@ for (const [name, view] of [["News", reads], ["Receipts", receipts]] as const) {
       const first = steps.find((n) => n > 0);
       expect(first, `the cards' first commit carried the lookahead (${steps.join(",")})`).toBe(openingCount(window.innerHeight));
       expect(Math.max(...steps), "control: the lookahead grew").toBeGreaterThan(openingCount(window.innerHeight));
+    });
+
+    it("no viewer joins while the stream flies, and the queue moves again where it stops", async () => {
+      vi.useFakeTimers();
+      vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function (this: Element) {
+        return (this.classList.contains("stream") ? [{}] : []) as unknown as DOMRectList;
+      });
+      const frame = () => act(async () => { vi.advanceTimersByTime(17); });
+      try {
+        const host = await mount(view());
+        const scroller = armGeometry(host, 800);
+        await frame(); // the window samples the resting stream once
+        await frame();
+        const before = viewers(host);
+        expect(before.length, "control: the opening slice is still joining").toBeLessThan(openingCount(window.innerHeight));
+        let top = 0;
+        for (let s = 1; s <= 8; s += 1) {
+          top += 7000;
+          await act(async () => {
+            scroller.scrollTop = top;
+            scroller.dispatchEvent(new Event("scroll"));
+            vi.advanceTimersByTime(17);
+          });
+          expect(viewers(host), `a viewer joined or left at frame ${s} of the flight`).toEqual(before);
+        }
+        for (let i = 0; i < 3; i += 1) await frame();
+        const rest = Math.floor(top / STREAM_CARD_ESTIMATE_PX);
+        expect(mounted(host), "control: the window landed where the scroll stopped").toContain(`m${rest}`);
+        await approach(host, [`m${rest}`, `m${rest + 1}`]);
+        for (let i = 0; i < 4; i += 1) await frame();
+        expect(viewers(host)).toEqual([`m${rest}`, `m${rest + 1}`]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("deep in the pile a mounted card shows its text until the lookahead reports it", async () => {

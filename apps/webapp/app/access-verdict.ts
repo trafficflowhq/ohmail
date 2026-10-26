@@ -1,4 +1,4 @@
-import type { AccessRefusedFacts, AccountAccess } from "./api-client";
+import type { AccessRefusedFacts, AccountAccess, AccountLifecycle } from "./api-client";
 import type { StoredVerdict } from "./shell/wall-lift";
 
 /**
@@ -28,4 +28,16 @@ export function refusedFactsOf(a: AccountAccess): AccessRefusedFacts | null {
 /** The one predicate a wall lifts on: the service's own `access: "open"`, and nothing else. */
 export function opensTheWall(a: AccountAccess): boolean {
   return a.metered === true && a.access === "open";
+}
+
+/**
+ * AN ACCOUNT THAT NEVER STARTED its trial: closed with no reason, no closing date, no erasure clock
+ * and nothing ever paid — the service's answer for an account that signed up and has not chosen a
+ * plan yet. A closure the service could not attribute still carries its erasure date (nothing to
+ * erase is the never-started half). The one predicate for trial words: the lock screen offers the
+ * trial on it, and /join's plan step names the trial on it and on nothing else.
+ */
+export function neverStarted(lifecycle: AccountLifecycle | undefined): boolean {
+  return lifecycle !== undefined && lifecycle.state === "closed" && lifecycle.closedReason === null
+    && !lifecycle.closedAt && !lifecycle.erasureAt && lifecycle.formerlyPaid !== true;
 }

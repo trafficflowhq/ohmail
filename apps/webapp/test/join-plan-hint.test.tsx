@@ -25,16 +25,25 @@ const FULL = {
 };
 const read = (p: string): string => readFileSync(resolve(process.cwd(), p), "utf8");
 
+/** What the plane's lifecycle says of an account that never started a trial: closed, nothing to depart from. */
+const NEVER_STARTED = {
+  state: "closed", closedReason: null, trialEndsAt: null, graceUntil: null, closedAt: null,
+  erasureAt: null, erasedAt: null, formerlyPaid: false, lifecycleEpoch: "2026-09-22T00:00:00.000Z",
+};
+
 let unmount: (() => Promise<void>) | null = null;
 let originalFetch: typeof globalThis.fetch;
 /** Each mint's body, as the API would read it. */
 let mints: Array<Record<string, unknown>> = [];
 /** What `/account/access` answers: refused until the test says the trial started. */
 let entitled = false;
+/** The lifecycle a refused answer carries; `undefined` leaves the block out. */
+let lifecycle: unknown = NEVER_STARTED;
 
 beforeEach(() => {
   mints = [];
   entitled = false;
+  lifecycle = NEVER_STARTED;
   localStorage.clear();
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -45,7 +54,7 @@ beforeEach(() => {
     if (url.includes("/account/access")) {
       return json(200, entitled
         ? { access: "ok", metered: true, canAddMailbox: true, mailboxes: 0 }
-        : { access: "refused", metered: true, canAddMailbox: false, mailboxes: 0 });
+        : { access: "refused", metered: true, canAddMailbox: false, mailboxes: 0, ...(lifecycle === undefined ? {} : { lifecycle }) });
     }
     if (url.includes("/account/manage-link")) {
       mints.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
@@ -174,4 +183,53 @@ describe("the choice survives the verification mail's round trip", () => {
     expect(host.querySelector("h1")?.textContent).not.toBe(en.join.step_plan_title);
     expect(localStorage.getItem(KEY)).toBeNull();
   });
+});
+
+/**
+ * THE TRIAL IS NAMED ONLY WHERE THERE IS ONE TO START. Every account on the plan step was told its trial
+ * starts on the account page, "14 days free, no card." and that the trial waits, including one whose trial
+ * ended or that has paid before, which the account page then asks to pay. The words follow the one
+ * predicate the lock screen's never-started state uses, read from the service's own lifecycle.
+ */
+describe("the plan step names a trial only for an account that never started one", () => {
+  const ENDED = { ...NEVER_STARTED, closedReason: "trial_ended", closedAt: "2026-10-20T10:00:00.000Z", erasureAt: "2026-11-19T10:00:00.000Z" };
+  const NO_TRIAL: Array<[string, unknown]> = [
+    ["a trial that ended", ENDED],
+    ["an account that paid before", { ...ENDED, closedReason: "canceled", erasureAt: "2027-01-18T10:00:00.000Z", formerlyPaid: true }],
+    ["a suspended account", { ...NEVER_STARTED, closedReason: "suspended", closedAt: "2026-10-20T10:00:00.000Z" }],
+    ["a paused subscription paid before", { ...NEVER_STARTED, closedAt: "2026-10-20T10:00:00.000Z", formerlyPaid: true }],
+    ["no lifecycle at all", undefined],
+    ["a state this build does not know", { ...NEVER_STARTED, state: "hibernating" }],
+    ["a reason this build does not know", { ...NEVER_STARTED, closedReason: "chargeback" }],
+  ];
+  const button = (host: HTMLElement): string | null =>
+    [...host.querySelectorAll("a.btn.primary")].map((a) => a.textContent ?? "")[0] ?? null;
+
+  for (const messages of [en, de]) {
+    const lang = messages === de ? "de" : "en";
+
+    it(`${lang}: never started: the trial, its button and the hint that it waits`, async () => {
+      const { host, trial } = await join(messages);
+      expect(host.querySelector(".sub")?.textContent).toBe(messages.join.step_plan_lead);
+      expect(trial()).toBe(messages.join.planTrial);
+      expect(button(host)).toBe(messages.join.planStartTrial);
+      expect(host.textContent).toContain(messages.join.planLaterHint);
+    });
+
+    for (const [what, block] of NO_TRIAL) {
+      it(`${lang}: ${what}: no trial words, the account page is opened as it is`, async () => {
+        lifecycle = block;
+        const { host, trial } = await join(messages, { planHint: { plan: "pro", interval: "year" } });
+        expect(host.querySelector("h1")?.textContent).toBe(messages.join.step_plan_title);
+        expect(host.querySelector(".sub")?.textContent).toBe(messages.join.planLeadNoTrial);
+        expect(trial(), "the site's choice is still named, without a trial").toBe(
+          lang === "de" ? "Du hast Pro gewählt, mit jährlicher Abrechnung." : "You chose Pro, billed yearly.",
+        );
+        expect(button(host)).toBe(messages.join.planContinue);
+        expect(host.textContent).not.toContain(messages.join.planTrial);
+        expect(host.textContent).not.toContain(messages.join.planLaterHint);
+        expect(host.textContent).not.toMatch(/\b14\b/);
+      });
+    }
+  }
 });

@@ -7,6 +7,8 @@
  * IMAP server. A programmatic scroll produces no input event, so it cannot
  * reach the commit path. Ambiguous events (pointerdown, the app's j/k) stay
  * out of `arm`: a false mark writes to the server; a missed one leaves bold.
+ * A judged scroll (the reader's own keys, unheard in a letter) arms too; an
+ * `own()` scroll is never judged.
  */
 import { useCallback, useEffect, useRef, type RefObject } from "react";
 import { cssRect, type CssRect } from "../ui-zoom.js";
@@ -54,7 +56,7 @@ export const READ_HOLD_MS = 700;
 const FIRST_LINES_PX = 140;
 
 /** Are `el`'s first lines wholly inside `view`, half a pixel either way? */
-function firstLinesIn(el: Element, view: CssRect): boolean {
+function firstLinesIn(el: Element, view: Pick<CssRect, "top" | "bottom">): boolean {
   const r = cssRect(el);
   return r.height > 0 && r.top >= view.top - 0.5 && r.top + Math.min(r.height, FIRST_LINES_PX) <= view.bottom + 0.5;
 }
@@ -79,6 +81,16 @@ export interface UseSeenOnScrollOptions {
   onLanded?: () => void;
   /** A scroll this hook judged (see `judging`) has ended: it rested, or a hand joined it. */
   onJudged?: () => void;
+  /**
+   * For a scroller that holds its anchor by hand (a stream): the px it is about to scroll by to put back content
+   * that moved under it, 0 when none waits. The read rule judges a letter where that scroll will show it, and an
+   * observer report handed over meanwhile shows a frame nobody reads: it is neither read nor taken as shown, and
+   * the next frame reports its target again.
+   */
+  pendingShift?: () => number;
+  /** Was an observer report recorded at `time` (its entry's) on a frame the scroller has put back since? Such a
+   *  report is asked for again the same way. */
+  putBack?: (time: number) => boolean;
 }
 
 export interface SeenObserver {
@@ -117,6 +129,8 @@ export function useSeenOnScroll({
   rootMargin = "0px 0px -67% 0px",
   onLanded,
   onJudged,
+  pendingShift,
+  putBack,
 }: UseSeenOnScrollOptions): SeenObserver {
   const ioRef = useRef<IntersectionObserver | null>(null);
   const shownRef = useRef<WeakSet<Element>>(new WeakSet());
@@ -129,10 +143,16 @@ export function useSeenOnScroll({
   onLandedRef.current = onLanded;
   const onJudgedRef = useRef(onJudged);
   onJudgedRef.current = onJudged;
+  const pendingShiftRef = useRef(pendingShift);
+  pendingShiftRef.current = pendingShift;
+  const putBackRef = useRef(putBack);
+  putBackRef.current = putBack;
   /** The app's own scroll (`own`): running now, its scroll event heard while it ran, the offset it left. */
   const owningRef = useRef(false);
   const ownSeenRef = useRef(false);
   const ownTopRef = useRef(NaN);
+  /** The read rule's look while the scroller's effect is mounted (see `observe`). */
+  const lookRef = useRef<(start: boolean) => void>(() => {});
 
   useEffect(() => {
     const el = root.current;
@@ -161,9 +181,10 @@ export function useSeenOnScroll({
     // answered in place), nor one a handler already took.
     const armOnScrollKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || !SCROLL_KEYS.has(e.key)) return;
-      const t = e.target instanceof Element ? e.target : null;
-      if (t?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
-      if (t instanceof HTMLElement && t.isContentEditable) return;
+      // Duck-typed: a letter's nodes belong to its own realm, where `instanceof Element` is false.
+      const t = e.target as (Element & { isContentEditable?: boolean }) | null;
+      if (typeof t?.closest === "function" && t.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")) return;
+      if (t?.isContentEditable) return;
       userDrove.current = true;
     };
     // Both listeners sit on the scroller, so they only ever see input aimed at
@@ -172,6 +193,18 @@ export function useSeenOnScroll({
     el.addEventListener("wheel", arm, { passive: true });
     el.addEventListener("touchmove", arm, { passive: true });
     el.addEventListener("keydown", armOnScrollKey);
+    /* With nothing focused a key targets the body, and the browser scrolls the pane last pressed. */
+    const doc0 = el.ownerDocument;
+    let pressedHere = false;
+    const onPress = (e: Event) => {
+      pressedHere = e.target instanceof Node && el.contains(e.target);
+    };
+    // On the window, after the app's own key map (the document's): a key it took is not a scroll.
+    const armOnFreeKey = (e: KeyboardEvent) => {
+      if (pressedHere && (e.target === doc0.body || e.target === doc0.documentElement)) armOnScrollKey(e);
+    };
+    doc0.addEventListener("pointerdown", onPress, true);
+    window.addEventListener("keydown", armOnFreeKey);
 
     // What this observer has seen in its band since it mounted (= this visit) or last restarted.
     shownRef.current = new WeakSet();
@@ -179,9 +212,38 @@ export function useSeenOnScroll({
     judgingRef.current = false;
     /** What the band marks while a scroll is judged, kept until it ends: read if a hand joins it, dropped at rest. */
     let held: Set<string> | null = null;
+    /** Targets reported on a frame the scroller puts back (`pendingShift`, `putBack`), observed afresh on the next frame. */
+    let again = new Set<Element>();
+    let againFrame = 0;
+    /** The reports recorded on frames the reader saw; the others are asked for again. */
+    const settledOf = (entries: IntersectionObserverEntry[]): IntersectionObserverEntry[] => {
+      const moving = (pendingShiftRef.current?.() ?? 0) !== 0;
+      const back = putBackRef.current;
+      if (!moving && !back) return entries;
+      const now = performance.now();
+      const kept = entries.filter((en) => {
+        if (!moving && !back?.(Number.isFinite(en.time) ? en.time : now)) return true;
+        again.add(en.target);
+        return false;
+      });
+      if (again.size > 0 && !againFrame) {
+        againFrame = requestAnimationFrame(() => {
+          againFrame = 0;
+          const targets = again;
+          again = new Set();
+          for (const t of targets) {
+            if (!t.isConnected || !el.contains(t) || !t.matches(selector)) continue;
+            io.unobserve(t);
+            io.observe(t);
+          }
+        });
+      }
+      return kept;
+    };
     const io = new IntersectionObserver(
-      (entries) => {
+      (reported) => {
         if (landingRef.current) return;
+        const entries = settledOf(reported);
         const shown = shownRef.current;
         for (const en of entries) if (en.isIntersecting) shown.add(en.target);
         if (!userDrove.current) return;
@@ -248,7 +310,10 @@ export function useSeenOnScroll({
     const look = (start: boolean) => {
       window.clearTimeout(tick);
       const now = Date.now();
-      const view = cssRect(el);
+      // Where the scroller's waiting correction will show each letter, not where a moved frame does.
+      const shift = pendingShiftRef.current?.() ?? 0;
+      const r = cssRect(el);
+      const view = { top: r.top + shift, bottom: r.bottom + shift };
       const next = new Map<HTMLElement, number>();
       let due = Infinity;
       for (const n of el.querySelectorAll<HTMLElement>(selector)) {
@@ -265,6 +330,7 @@ export function useSeenOnScroll({
       clocks = next;
       if (due < Infinity) tick = window.setTimeout(() => look(false), due - now);
     };
+    lookRef.current = look;
 
     /* A key typed in a letter reaches the letter's own document, never this one, so the jump keys are
        heard on each letter's document too, from its load. WebKit runs no listener in a letter
@@ -277,6 +343,9 @@ export function useSeenOnScroll({
       const was = letters.get(f);
       if (doc && was === doc) return true;
       was?.removeEventListener("keydown", land, true);
+      was?.removeEventListener("keydown", armOnScrollKey);
+      was?.removeEventListener("wheel", arm);
+      was?.removeEventListener("touchmove", arm);
       letters.delete(f);
       if (!doc) return false; // another origin: its keys never reach us
       const kind = f.getAttribute("sandbox");
@@ -297,6 +366,10 @@ export function useSeenOnScroll({
       }
       if (ok) {
         doc.addEventListener("keydown", land, true);
+        // A letter scrolls nothing of its own: its keys, wheel and touch scroll this pane.
+        doc.addEventListener("keydown", armOnScrollKey);
+        doc.addEventListener("wheel", arm, { passive: true });
+        doc.addEventListener("touchmove", arm, { passive: true });
         letters.set(f, doc);
       }
       return false;
@@ -328,6 +401,8 @@ export function useSeenOnScroll({
         } else if (judgingRef.current || (!byHand && unheard())) {
           if (!judgingRef.current) held = new Set();
           judgingRef.current = true;
+          // The reader's own keys in their letter moved it: the visit is driven, and the read rule judges it.
+          userDrove.current = true;
           hold();
           look(true);
           return;
@@ -346,14 +421,24 @@ export function useSeenOnScroll({
       el.removeEventListener("scroll", onScroll);
       el.removeEventListener("load", onLoad, true);
       doc.removeEventListener("keydown", land, true);
+      doc0.removeEventListener("pointerdown", onPress, true);
+      window.removeEventListener("keydown", armOnFreeKey);
       // A letter that left the pane took its listener with its document; these are still here.
-      for (const f of el.querySelectorAll("iframe")) letters.get(f)?.removeEventListener("keydown", land, true);
+      for (const f of el.querySelectorAll("iframe")) {
+        const d = letters.get(f);
+        d?.removeEventListener("keydown", land, true);
+        d?.removeEventListener("keydown", armOnScrollKey);
+        d?.removeEventListener("wheel", arm);
+        d?.removeEventListener("touchmove", arm);
+      }
       window.clearTimeout(quiet);
       window.clearTimeout(tick);
+      if (againFrame) cancelAnimationFrame(againFrame);
       landingRef.current = false;
       judgingRef.current = false;
       io.disconnect();
       ioRef.current = null;
+      lookRef.current = () => {};
     };
   }, [root, selector, rootMargin]);
 
@@ -363,6 +448,8 @@ export function useSeenOnScroll({
     if (!el || !io) return;
     io.disconnect();
     for (const n of el.querySelectorAll(selector)) io.observe(n);
+    // Cards a window mounted under a judged scroll (one that held still while it flew) start their clocks here.
+    if (judgingRef.current) lookRef.current(true);
   }, [root, selector]);
 
   const userHasDriven = useCallback(() => userDrove.current, []);

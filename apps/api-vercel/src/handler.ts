@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { waitUntil } from "@vercel/functions";
 import {
   createApp, apiRoutes, BodyOverCeilingError, isDbBusy, dbBusyResponse, MalformedPathError,
 } from "@trafficflow/api";
-import { hostState } from "./config.js";
+import { API_MAX_DURATION_MS, POOLED_IDLE_TIMEOUT_S } from "@trafficflow/db/cloud";
+import { EVENTS_MAX_DURATION_S, hostState } from "./config.js";
 import { buildDeps } from "./deps.js";
 import { normalizeRequest } from "./normalize.js";
 
@@ -19,7 +21,85 @@ import { normalizeRequest } from "./normalize.js";
 
 const app = createApp(apiRoutes);
 
+/**
+ * HOW LONG AN INSTANCE STAYS AWAKE AFTER ITS LAST ANSWER: past the pool's idle close, so its idle
+ * connections end before the platform suspends it. A suspended instance keeps its client
+ * connections open at the pooler until it wakes; on 2026-10-26 those of ~160 cold instances filled
+ * the pooler's client cap and every route failed for six minutes.
+ */
+export const QUIET_HOLD_MS = (POOLED_IDLE_TIMEOUT_S + 2) * 1000;
+
+/** How far inside its invocation's `maxDuration` a hold ends at the latest. */
+const HOLD_MARGIN_MS = 5_000;
+
+/** The hold that ended last. The next one to end releases it, so one invocation lingers per instance. */
+let lingering: (() => void) | null = null;
+
+/**
+ * Hand the platform a hold for this request and return its end. Once ended it lasts
+ * {@link QUIET_HOLD_MS}, less if a later hold ends or the invocation's ceiling is near: past
+ * `maxDuration` the platform kills the invocation. Outside a request context `waitUntil` does nothing.
+ */
+function quietHold(url: string): () => void {
+  let ceilingMs = API_MAX_DURATION_MS;
+  try {
+    // `/events` is the one route module with its own `maxDuration`.
+    if (new URL(url).pathname === "/events") ceilingMs = EVENTS_MAX_DURATION_S * 1000;
+  } catch { /* the catch-all's ceiling */ }
+  const deadline = Date.now() + ceilingMs - HOLD_MARGIN_MS;
+  let release!: () => void;
+  waitUntil(new Promise<void>((resolve) => { release = resolve; }));
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    lingering?.();
+    const timer = setTimeout(release, Math.max(0, Math.min(QUIET_HOLD_MS, deadline - Date.now())));
+    (timer as { unref?: () => void }).unref?.();
+    lingering = () => { clearTimeout(timer); release(); };
+  };
+}
+
+/** `res`, with `end` called when its body is read to its end, cancelled or fails; at once with no body. */
+function heldUntilSent(res: Response, end: () => void): Response {
+  if (res.body === null) {
+    end();
+    return res;
+  }
+  const reader = res.body.getReader();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          end();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (err) {
+        end();
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      end();
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
+/** Every answer, and every exit, goes through the quiet hold. */
 export async function handleApiRequest(req: Request): Promise<Response> {
+  const end = quietHold(req.url);
+  try {
+    return heldUntilSent(await answer(req), end);
+  } catch (err) {
+    end();
+    throw err;
+  }
+}
+
+async function answer(req: Request): Promise<Response> {
   // One id per request, minted HERE rather than by `withRequestId`, because the failures this
   // function handles happen before any middleware runs and were previously untraceable.
   const requestId = randomUUID();
@@ -91,7 +171,7 @@ export async function handleApiRequest(req: Request): Promise<Response> {
       // no-store`, no `X-Request-Id` — so the one response a client is most likely to be handed
       // repeatedly under load would be the one an intermediary may cache and the one an operator
       // cannot correlate to a log line. Caught by the guard below rather than by review.
-      const res = noStore(dbBusyResponse(forRouter), requestId);
+      const res = noStore(dbBusyResponse(forRouter, {}, err), requestId);
       if (!isHead) return res;
       await res.body?.cancel().catch(() => { /* nothing to release */ });
       return new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers });

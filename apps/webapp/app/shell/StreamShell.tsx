@@ -21,7 +21,9 @@ import {
 } from "react";
 /* Every rect here meets `scrollTop`, so every rect is read in CSS px (`ui-zoom.ts`). */
 import { cssRect, useSeenOnScroll } from "@ohmail/ui";
+import { createThreadRead } from "@ohmail/client-engine";
 import { useVisit } from "./visit";
+import { readStreamCards, type StreamRead } from "./stream-landing-read";
 
 /**
  * THE COLUMN WIDTH THE MOUNTED CARDS SHARE, measured once per stream.
@@ -52,6 +54,8 @@ export interface StreamHandle {
    */
   scrollTo: (id: string, onLanded?: () => void) => void;
   element: () => HTMLDivElement | null;
+  /** The reader opened a card by keyboard (↵): the visit is entered, as a press in the stream enters it. */
+  enter: () => void;
   /** Does this card reach into the port right now? `false` for a card that is not mounted. */
   onScreen: (id: string) => boolean;
   /**
@@ -131,9 +135,8 @@ export interface StreamLeaveState {
   newestSeenId: string | null;
   bottomVisibleId: string | null;
   /**
-   * A card in that range a scroll judged by the read rule carried past (`SeenObserver.judging`): never on a
-   * screen the stream rested on or read through, and never marked. The commit leaves it unread. Absent
-   * when the visit had no such scroll.
+   * After a scroll judged by the read rule (`SeenObserver.judging`), a card in that range the visit did not
+   * read: the commit leaves it unread. Absent when the visit had no such scroll.
    */
   flownPast?: (id: string) => boolean;
 }
@@ -264,12 +267,29 @@ export const StreamShell = forwardRef<
 
   /** A far landing in flight: what it passes or flashes is not displayed, so nothing is tracked or marked. */
   const landingRef = useRef(false);
-  /** This visit's cards marked seen, and those on a screen measured outside a judged scroll (`flownPast`). */
+  /** This visit's cards marked seen: all a visit with a judged scroll commits (`flownPast`). */
   const markedRef = useRef<Set<string>>(new Set());
-  const displayedRef = useRef<Set<string>>(new Set());
+  /** The read rule over the visit's cards (`readStreamCards`). */
+  const readRef = useRef<StreamRead | null>(null);
   /** A judged scroll ran this visit; one is in flight, and the next measure bridges what it skipped. */
   const flewRef = useRef(false);
   const bridgeRef = useRef(false);
+  /** Content moved under the held anchor since the anchoring loop last ran (a letter's body landed above): the
+   *  px the loop, about to run, scrolls by to put that frame back on the next one, so nobody reads it. 0 for none. */
+  const pendingShift = (): number => {
+    const el = divRef.current;
+    const anchor = holdRef.current;
+    if (!el || !anchor || jumpRef.current || !holdRafRef.current) return 0;
+    const ac = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(anchor.sid)}"]`);
+    if (!ac) return 0;
+    const drift = cssRect(ac).top - cssRect(el).top - (anchor.offset - (el.scrollTop - anchor.scrollTop));
+    return Math.abs(drift + holdAccRef.current) > 0.5 ? drift + holdAccRef.current : 0;
+  };
+  /** When the anchoring loop last put such a frame back: its frame's timestamp, and `performance.now()` as it did. */
+  const correctedRef = useRef({ frame: -Infinity, now: -Infinity });
+  /** Was an observer report recorded at `time` before that? WebKit and Firefox stamp a report with its frame's
+   *  timestamp, which the loop's frame shares; Chromium with the moment it is recorded, after the loop ran. */
+  const putBack = (time: number): boolean => time < correctedRef.current.now && time !== correctedRef.current.frame;
   const seenUnlessLanding = useCallback((id: string) => {
     if (landingRef.current) return;
     markedRef.current.add(id);
@@ -284,6 +304,9 @@ export const StreamShell = forwardRef<
   };
   /** The scroll-spy's reading: run from the scroll handler's frame, and once a jump to an end rests. */
   const spyRef = useRef<() => void>(() => {});
+  /** The spy's last reading found a screen a held window had not mounted yet; `respyRef` reads it again. */
+  const owedRef = useRef(false);
+  const respyRef = useRef<() => void>(() => {});
   /** The screen before a jump to an end, taken by its first measure; `undefined` outside one. */
   const endFromRef = useRef<Screen | null | undefined>(undefined);
   const onEndLanded = () => {
@@ -309,10 +332,29 @@ export const StreamShell = forwardRef<
     rootMargin: "0px 0px -62% 0px",
     onLanded: onEndLanded,
     onJudged,
+    pendingShift,
+    putBack,
   });
   // Read inside the []-deps scroll effect, so it must reach the LATEST observer by ref.
   const observerRef = useRef(observer);
   observerRef.current = observer;
+
+  /* The read rule over every card on screen, once the reader scrolled, pressed or opened a card here; a
+     record per visit (an Activity hide runs this cleanup). Nothing counts during a flight, and a frame the
+     anchoring loop is about to put back is looked at again on the next one. */
+  useEffect(() => {
+    const el = divRef.current;
+    if (!el) return;
+    const read = readStreamCards({
+      scroller: el,
+      record: createThreadRead(),
+      driven: () => observerRef.current.userHasDriven(),
+      hold: () => (landingRef.current || observerRef.current.landing() ? "blind" : pendingShift() !== 0 ? "again" : null),
+      onRead: (ids) => { for (const id of ids) seenUnlessLanding(id); },
+    });
+    readRef.current = read;
+    return () => { readRef.current = null; read.stop(); };
+  }, []);
 
   /**
    * THE VISIBLE RANGE, TRACKED — the leave-commit's data (see {@link StreamLeaveState}).
@@ -344,6 +386,7 @@ export const StreamShell = forwardRef<
     if (cards.length === 0) return;
     const rootRect = cssRect(el);
     if (rootRect.height <= 0) return; // detached or unlaid-out: keep what we know
+    if (pendingShift() !== 0) return; // a frame the anchoring loop has not corrected yet
     let topVisible: string | null = null;
     let bottomVisible: string | null = null;
     for (const c of cards) {
@@ -351,7 +394,6 @@ export const StreamShell = forwardRef<
       if (r.bottom <= rootRect.top || r.top >= rootRect.bottom) continue;
       if (topVisible === null) topVisible = c.dataset.sid!;
       bottomVisible = c.dataset.sid!;
-      displayedRef.current.add(bottomVisible);
     }
     if (topVisible === null) return;
     const last = shownRef.current;
@@ -405,12 +447,12 @@ export const StreamShell = forwardRef<
       rangeRef.current = { newestSeenId: null, bottomVisibleId: null };
       shownRef.current = null;
       markedRef.current = new Set();
-      displayedRef.current = new Set();
       flewRef.current = false;
       bridgeRef.current = false;
       landingRef.current = false;
       curRef.current = null;
       jumpRef.current = null;
+      owedRef.current = false;
       const el = divRef.current;
       // `behavior` explicit: `.stream` scrolls smoothly by default (see `scrollTo` below). The
       // scroll-spy takes its reading off this scroll and announces nothing (`quietRef`).
@@ -425,6 +467,8 @@ export const StreamShell = forwardRef<
   // Re-scan only when the mounted cards change: a re-observe re-reports every card.
   useEffect(() => {
     observerRef.current.observe();
+    // The cards a held reading waited for: read a frame later, after any jump this commit carries has begun.
+    if (owedRef.current) respyRef.current();
   }, [contentKey]);
   useEffect(() => {
     measureRef.current();
@@ -449,9 +493,8 @@ export const StreamShell = forwardRef<
       newestSeenId: rangeRef.current.newestSeenId,
       bottomVisibleId: rangeRef.current.bottomVisibleId,
     };
-    const shown = displayedRef.current;
     const marked = markedRef.current;
-    if (flewRef.current) state.flownPast = (id) => !shown.has(id) && !marked.has(id);
+    if (flewRef.current) state.flownPast = (id) => !marked.has(id);
     return state;
   };
 
@@ -614,7 +657,7 @@ export const StreamShell = forwardRef<
      */
     let activeUntil = 0;
     const hidden = () => typeof document !== "undefined" && document.hidden;
-    const frame = () => {
+    const frame = (ts: number) => {
       if (hidden() || Date.now() > activeUntil) { holdRafRef.current = 0; return; }
       holdRafRef.current = requestAnimationFrame(frame);
       const rootRect = cssRect(el);
@@ -640,9 +683,13 @@ export const StreamShell = forwardRef<
        */
       holdAccRef.current += drift;
       if (Math.abs(holdAccRef.current) > 0.5 && !jumpRef.current) {
-        // The stream's own correction: it neither starts nor extends a landing (`useSeenOnScroll`).
-        observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + holdAccRef.current, behavior: "instant" }));
+        const by = holdAccRef.current;
+        // Taken in before the scroll, so anything read while it runs has nothing left to put back.
+        holdRef.current = { ...held, offset: held.offset + drift };
         holdAccRef.current = 0;
+        correctedRef.current = { frame: ts, now: performance.now() };
+        // The stream's own correction: it neither starts nor extends a landing (`useSeenOnScroll`).
+        observerRef.current.own(() => el.scrollTo({ top: el.scrollTop + by, behavior: "instant" }));
       }
       if (opened) {
         const oc = el.querySelector<HTMLElement>(`.scast[data-sid="${CSS.escape(opened.sid)}"]`);
@@ -761,6 +808,12 @@ export const StreamShell = forwardRef<
         }
       }
       if (!current) current = cards[0]!;
+      // A window held while the scroll flew (`stream-window.ts`) has not mounted this screen: the cursor
+      // waits for the commit that does, never a card off the screen.
+      const port = cssRect(el);
+      const box = cssRect(current);
+      owedRef.current = port.height > 0 && (box.bottom <= port.top || box.top >= port.bottom);
+      if (owedRef.current) return;
       const id = current.dataset.sid!;
       if (quietRef.current) {
         quietRef.current = false;
@@ -801,9 +854,11 @@ export const StreamShell = forwardRef<
         spy();
       });
     };
+    respyRef.current = onScroll;
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       spyRef.current = () => {};
+      respyRef.current = () => {};
       el.removeEventListener("scroll", onScroll);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
@@ -821,6 +876,7 @@ export const StreamShell = forwardRef<
       if (land && cssRect(item).top < cssRect(el).top - 0.5) observerRef.current.own(() => this.scrollTo(id));
     },
     element: () => divRef.current,
+    enter: () => readRef.current?.enter(),
     onScreen: inPort,
     whenOffScreen: (id: string, cb: () => void) => {
       offScreenRef.current.set(id, cb);
@@ -843,6 +899,7 @@ export const StreamShell = forwardRef<
       // `ensure`) and scroll after the commit, so this is the "it left the pile" case.
       if (!card) return;
       curRef.current = id;
+      owedRef.current = false; // the jump sets the cursor
       // One landing at a time: a second jump while the first is still correcting must not have
       // two loops fighting over `scrollTop`.
       if (anchorRef.current) cancelAnimationFrame(anchorRef.current);

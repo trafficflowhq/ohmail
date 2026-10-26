@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLAIM_PROTOCOL,
   DEFAULT_STALE_AFTER_MS,
+  JOIN_SETTLE_READS_MAX,
   LeaseUnavailableError,
   META_FOLDER,
   META_FOLDER_IS_UNWATCHED,
@@ -761,9 +762,10 @@ describe("runLeaseGate — read, decide, then write", () => {
     return io;
   };
   const claimsIn = (io: FakeIo): OrganizerClaim[] => io.messages.map((m) => parseClaim(m.raw, m.ref) as OrganizerClaim);
+  const tick = (): Promise<void> => new Promise((r) => { setTimeout(r, 1); });
   const pressOn = (io: LeaseIo, installId: string, intent: OrganizerIntent, pressed: Date, now: Date = NOW) => runLeaseGate({
     capabilities: [], io, self: self({ installId, displayName: installId }), now, newNonce: () => `n-${installId}`,
-    takeover: { authorizedAt: pressed, intent },
+    takeover: { authorizedAt: pressed, intent }, sleep: tick,
   });
 
   it("a join whose first read missed a live holder yields at the confirm, and the holder keeps organizing", async () => {
@@ -872,6 +874,124 @@ describe("runLeaseGate — read, decide, then write", () => {
       expect({ earlier: re.verdict.verdict, later: rl.verdict.verdict }, "both presses stood down, or both organize")
         .toEqual({ earlier: "organize", later: "stand_down" });
       expect(rl.verdict).toMatchObject({ by: { installId: earlier } });
+      expect(claimsIn(folder).map((c) => c.installId)).toEqual([earlier]);
+    });
+
+  /* TWO JOINS, ONE CONFIRMING BEFORE THE OTHER'S CLAIM LANDS: the join whose claim lands second
+     sees the first one's in its confirm read, so it waits for that join to press or withdraw. */
+  const signal = () => { let fire!: () => void; const p = new Promise<void>((r) => { fire = r; }); return { fire, p }; };
+  type Hooks = { [K in "beforeRead" | "afterRead" | "beforeAppend"]?: (n: number) => Promise<void> | void };
+  const joinOn = (folder: FakeIo, installId: string, now: Date, hooks: Hooks = {}) => {
+    const seen = { reads: 0, appends: 0, sleeps: 0, events: [] as string[] };
+    const io: LeaseIo = {
+      uidValidity: () => folder.uidValidity(),
+      ensureMetaFolder: () => folder.ensureMetaFolder(),
+      listClaims: async () => {
+        seen.reads += 1;
+        await hooks.beforeRead?.(seen.reads);
+        const snapshot = await folder.listClaims();
+        await hooks.afterRead?.(seen.reads);
+        return snapshot;
+      },
+      appendClaim: async (raw) => { seen.appends += 1; await hooks.beforeAppend?.(seen.appends); await folder.appendClaim(raw); },
+      removeClaims: (refs) => folder.removeClaims(refs),
+    };
+    let minted = 0;
+    const run = runLeaseGate({
+      capabilities: [], io, self: self({ installId, displayName: installId }), now, newNonce: () => `n-${installId}-${++minted}`,
+      takeover: { authorizedAt: new Date(now.getTime() - 500), intent: "join" },
+      sleep: async () => { seen.sleeps += 1; await tick(); }, log: (event) => { seen.events.push(event); },
+    });
+    return { run, seen };
+  };
+
+  it.each([["b", "a"], ["a", "b"]] as const)(
+    "a join (%s) that confirmed before the other's claim landed keeps the mailbox; the later lander (%s) waits and names it",
+    async (lander, waiter) => {
+      const folder = new FakeIo();
+      const waiterRead = signal(); const landerConfirmed = signal(); const waiterConfirmed = signal();
+      /* The waiter starts first (the earlier tenure), reads the empty folder and stalls until the
+         lander has confirmed over its own claim alone; the lander's press waits for the waiter's confirm. */
+      const w = joinOn(folder, waiter, NOW, {
+        afterRead: async (n) => { if (n === 1) { waiterRead.fire(); await landerConfirmed.p; } if (n === 2) waiterConfirmed.fire(); },
+      });
+      await waiterRead.p;
+      const l = joinOn(folder, lander, new Date(NOW.getTime() + 1_000), {
+        afterRead: (n) => { if (n === 2) landerConfirmed.fire(); },
+        beforeAppend: async (n) => { if (n === 2) await waiterConfirmed.p; },
+      });
+      const [rw, rl] = await Promise.all([w.run, l.run]);
+      expect({ [lander]: rl.verdict.verdict, [waiter]: rw.verdict.verdict }, "both joins organize")
+        .toEqual({ [lander]: "organize", [waiter]: "stand_down" });
+      expect(rw.verdict).toMatchObject({ by: { installId: lander } });
+      expect(claimsIn(folder).map((c) => c.installId)).toEqual([lander]);
+      expect(w.seen.sleeps, "the later lander did not wait for the other join").toBeGreaterThan(0);
+      expect(w.seen.events).toContain("lease_join_waited");
+    });
+
+  it("a join whose press is refused organizes unpressed; the later lander yields to it at the bound", async () => {
+    const folder = new FakeIo();
+    const waiterRead = signal(); const landerConfirmed = signal(); const waiterConfirmed = signal();
+    const w = joinOn(folder, "b", NOW, {
+      afterRead: async (n) => { if (n === 1) { waiterRead.fire(); await landerConfirmed.p; } if (n === 2) waiterConfirmed.fire(); },
+    });
+    await waiterRead.p;
+    const l = joinOn(folder, "a", new Date(NOW.getTime() + 1_000), {
+      afterRead: (n) => { if (n === 2) landerConfirmed.fire(); },
+      beforeAppend: async (n) => { if (n === 2) { await waiterConfirmed.p; throw new Error("NO"); } },
+    });
+    const [rw, rl] = await Promise.all([w.run, l.run]);
+    expect({ a: rl.verdict.verdict, b: rw.verdict.verdict }).toEqual({ a: "organize", b: "stand_down" });
+    expect(rw.verdict).toMatchObject({ by: { installId: "a" } });
+    expect(w.seen.reads, "election, confirm, then every settle read").toBe(JOIN_SETTLE_READS_MAX + 2);
+    expect(claimsIn(folder).map((c) => c.installId)).toEqual(["a"]);
+  });
+
+  /** Both read the empty folder; the first lander's claim lands, then the second's, then both confirm. */
+  const landInOrder = (folder: FakeIo, first: [string, Date], second: [string, Date]) => {
+    const secondRead = signal(); const firstLanded = signal(); const secondLanded = signal();
+    const f = joinOn(folder, first[0], first[1], {
+      afterRead: async (n) => { if (n === 1) await secondRead.p; },
+      beforeRead: async (n) => { if (n === 2) { firstLanded.fire(); await secondLanded.p; } },
+    });
+    const s = joinOn(folder, second[0], second[1], {
+      afterRead: (n) => { if (n === 1) secondRead.fire(); },
+      beforeAppend: async (n) => { if (n === 1) await firstLanded.p; },
+      beforeRead: (n) => { if (n === 2) secondLanded.fire(); },
+    });
+    return { f, s };
+  };
+
+  it("CONTROL: the earlier lander does not wait on a later join it outranks", async () => {
+    const folder = new FakeIo();
+    const { f, s } = landInOrder(folder, ["b", ago(1_000)], ["a", NOW]);
+    const [rf, rs] = await Promise.all([f.run, s.run]);
+    expect({ b: rf.verdict.verdict, a: rs.verdict.verdict }).toEqual({ b: "organize", a: "stand_down" });
+    expect({ b: f.seen.sleeps, a: s.seen.sleeps }).toEqual({ b: 0, a: 0 });
+    expect(claimsIn(folder).map((c) => c.installId)).toEqual(["b"]);
+  });
+
+  it("CONTROL: an earlier lander that is outranked stands down; the other waits once, then organizes", async () => {
+    const folder = new FakeIo();
+    const { f, s } = landInOrder(folder, ["a", NOW], ["b", ago(1_000)]);
+    const [rf, rs] = await Promise.all([f.run, s.run]);
+    expect({ a: rf.verdict.verdict, b: rs.verdict.verdict }).toEqual({ a: "stand_down", b: "organize" });
+    expect({ a: f.seen.sleeps, b: s.seen.sleeps }).toEqual({ a: 0, b: 1 });
+    expect(claimsIn(folder).map((c) => c.installId)).toEqual(["b"]);
+  });
+
+  it.each([["a", "b"], ["b", "a"]] as const)(
+    "CONTROL: refs nobody can order: exactly one organizes and nothing waits for ever (%s the earlier press)",
+    async (earlier, later) => {
+      const folder = new FakeIo();
+      let uid = 0;
+      folder.appendClaim = async (raw: string): Promise<void> => { folder.messages.push({ ref: `uid-${++uid}`, raw }); };
+      const io = lockstep(folder);
+      const [re, rl] = await Promise.all([
+        pressOn(io(earlier), earlier, "join", ago(5_000), ago(4_900)),
+        pressOn(io(later), later, "join", ago(2_000), ago(1_900)),
+      ]);
+      expect({ earlier: re.verdict.verdict, later: rl.verdict.verdict }).toEqual({ earlier: "organize", later: "stand_down" });
       expect(claimsIn(folder).map((c) => c.installId)).toEqual([earlier]);
     });
 

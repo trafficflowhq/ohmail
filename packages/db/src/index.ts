@@ -392,7 +392,7 @@ export {
 /** The staff-visible free-text channels: one closed set each, a write door and a read-side word. */
 export {
   STAFF_CHANNELS, STAFF_CHANNEL_OTHER, AUDIT_LOG_ACTIONS, API_HEALTH_ERROR_CODES,
-  DB_ACQUIRE_TIMEOUT_CODE, isAuditLogAction, isApiHealthErrorCode, auditAction,
+  DB_ACQUIRE_TIMEOUT_CODE, DB_CONNECTION_CAP_CODE, isAuditLogAction, isApiHealthErrorCode, auditAction,
   staffChannel, staffChannelValue, staffChannelWord, StaffChannelViolation, type StaffChannel,
 } from "./staff-channels.js";
 

@@ -303,6 +303,9 @@ function rowsOf<T>(result: unknown): T[] {
  */
 const markerWritten = new WeakMap<object, Set<string>>();
 const MARKER_MEMO_MAX = 10_000;
+/** The backfill's progress as this handle last read it, per account: a count reads it again after this. */
+const progressRead = new WeakMap<object, Map<string, { at: number; p: { done: number; total: number } }>>();
+const INDEX_PROGRESS_FRESH_MS = 30_000;
 
 // pg_trgm presence is a property of the physical database, not the request: asked once per
 // handle, and a "no" asked again after a while (`storeProbe`), so a later install is seen.
@@ -1101,7 +1104,17 @@ export class SearchService {
   /** This account's search documents while something is still building them, else nothing. */
   private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
     if (store.built || !this.opts.indexFills) return undefined;
-    const p = await searchIndexProgress(db as never, ctx.accountId);
+    const handle = ctx.db as unknown as object;
+    const memo = progressRead.get(handle) ?? new Map<string, { at: number; p: { done: number; total: number } }>();
+    progressRead.set(handle, memo);
+    const now = ctx.now().getTime();
+    const seen = memo.get(ctx.accountId);
+    let p = seen !== undefined && now >= seen.at && now - seen.at < INDEX_PROGRESS_FRESH_MS ? seen.p : null;
+    if (p === null) {
+      p = await searchIndexProgress(db as never, ctx.accountId);
+      if (memo.size >= MARKER_MEMO_MAX) memo.clear();
+      memo.set(ctx.accountId, { at: now, p });
+    }
     return p.done < p.total ? p : undefined;
   }
 

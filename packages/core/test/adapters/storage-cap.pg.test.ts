@@ -269,7 +269,9 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
        where m.account_id = ${w.accountId} and b.withheld_reason is null and octet_length(b.text) > 0
          and coalesce(m.date, m.created_at) < ${facts.keptFrom}::date - interval '1 month'`) as unknown as Array<{ n: string }>;
     expect(Number(early!.n), "kept_from is past letters that keep their text by more than its own month").toBe(0);
-  });
+    // 20 s: 2.4-3.4 s alone; over the default 5 s only in loaded 300-file whole-run shards (three reds on
+    // unrelated pull requests, 2026-10-26/27). The bound is on the machine, not on what this case proves.
+  }, 20_000);
 
   it("the recount writes the real bytes and count, the month text is kept from, and what had drifted", async () => {
     const w = await world();

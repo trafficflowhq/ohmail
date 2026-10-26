@@ -728,4 +728,25 @@ describe("GET /internal/platform-signals/run — the outcome reaches the caller 
     expect(res.status).toBe(200);
     expect((await res.json()).outcome).toBe("unconfigured");
   });
+
+  it("a poll that wrote the newest bucket and ran out of time for the older ones answers 200", async () => {
+    const { deps } = await makeDeps();
+    let calls = 0;
+    const res = await H(poll(SECRET), {
+      ...deps,
+      alerts: { secret: SECRET, sinks: [] },
+      services: {
+        ...(deps as { services?: object }).services,
+        platformSignals: {
+          projects: ["ohmail-api"],
+          async fetch(w: { start: Date }) {
+            return calls++ > 0 ? { failed: "deadline_before_first_page" } : { rows: [{ provider: "vercel",
+              project: "ohmail-api", windowStart: w.start, requests: 600, errors5xx: 0, truncated: true, sampleCause: "page_budget" }] };
+          },
+        },
+      },
+    } as unknown as ApiDeps);
+    expect(res.status, "a deadline deferring older buckets is not a failed poll").toBe(200);
+    expect(await res.json()).toMatchObject({ outcome: "written", rows: 1, deferred: 2 });
+  });
 });

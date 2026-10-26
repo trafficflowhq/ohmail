@@ -1,4 +1,5 @@
 import { describe, it, expect, afterAll } from "vitest";
+import net from "node:net";
 import { sql as raw } from "drizzle-orm";
 import postgres from "postgres";
 import {
@@ -216,4 +217,154 @@ describe.skipIf(!AVAILABLE)("a transaction's wait to begin", () => {
       await direct.end({ timeout: 5 });
     }
   }, 60_000);
+});
+
+/** A transaction-mode pooler stand-in: it holds a statement (a checkout that waits), forwards it, or refuses it unforwarded. */
+async function fakePooler(target: string) {
+  const to = new globalThis.URL(target);
+  const pairs: Array<{ client: net.Socket; server: net.Socket; held: Buffer[] }> = [];
+  let mode: "pass" | "hold" | "hold-queries" = "pass";
+  const server = net.createServer((client) => {
+    const pair = { client, server: net.connect(Number(to.port), to.hostname), held: [] as Buffer[] };
+    pairs.push(pair);
+    pair.server.on("data", (d) => client.write(d));
+    client.on("data", (d: Buffer) => {
+      const query = d[0] === 0x50 || d[0] === 0x51;   // Parse or Query: anything past startup
+      if (mode === "hold" || pair.held.length > 0 || (mode === "hold-queries" && query)) pair.held.push(d);
+      else pair.server.write(d);
+    });
+    for (const s of [client, pair.server]) { s.on("error", () => {}); s.on("close", () => { client.destroy(); pair.server.destroy(); }); }
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+  const url = new globalThis.URL(target);
+  url.hostname = "127.0.0.1";
+  url.port = String((server.address() as net.AddressInfo).port);
+  return {
+    url: url.toString(),
+    hold: (queriesOnly = false) => { mode = queriesOnly ? "hold-queries" : "hold"; },
+    release: () => { mode = "pass"; for (const p of pairs) { for (const b of p.held.splice(0)) p.server.write(b); } },
+    /** Refuse every held statement the way the pooler does: one FATAL, then the close, nothing forwarded. */
+    refuse: (code: string, message: string) => {
+      mode = "pass";
+      const body = Buffer.from(`SFATAL\0VFATAL\0C${code}\0M${message}\0\0`);
+      const frame = Buffer.concat([Buffer.from("E"), Buffer.alloc(4), body]);
+      frame.writeInt32BE(body.length + 4, 1);
+      for (const p of pairs.filter((x) => x.held.length > 0)) { p.held = []; p.client.end(frame); p.server.destroy(); }
+    },
+    close: () => { server.close(); for (const p of pairs) { p.client.destroy(); p.server.destroy(); } },
+  };
+}
+
+// The pooler's wire text: its error code in front of the message.
+const CHECKOUT_REFUSED = ["XX000", "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 300ms in Transaction mode"] as const;
+
+/*
+ * A HEAD WAITING AT A TRANSACTION-MODE POOLER is the pooler's to refuse, never the client's: a
+ * one-flush statement's first reply byte comes with its completion, so a silent head may already
+ * be running a write. The pooler's own refusal says it never handed the statement on: busy.
+ */
+describe.skipIf(!AVAILABLE)("a head the pooler holds", () => {
+  const direct = postgres(URL, { max: 1, onnotice: () => {} });
+  const ran = async (id: number): Promise<boolean> =>
+    (await direct`select 1 from tf_pooled_head_probe where id = ${id}`).length === 1;
+  afterAll(async () => {
+    await closePooledDbs();
+    await direct`drop table if exists tf_pooled_head_probe`.catch(() => {});
+    await direct.end({ timeout: 5 });
+  });
+
+  async function scene(ceiling: number) {
+    await closePooledDbs();
+    await direct`create table if not exists tf_pooled_head_probe (id int primary key)`;
+    const pooler = await fakePooler(URL);
+    return { pooler, db: makePooledDb(pooler.url, { acquireTimeoutMs: ceiling, max: 1 }) };
+  }
+
+  it("is refused as busy when the pooler gives up on it, and the write never ran", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      const started = Date.now();
+      const out = db.execute(raw`insert into tf_pooled_head_probe (id) values (${1})`).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(...CHECKOUT_REFUSED), 300);
+      expect(isDbAcquireTimeout(await out), "the pooler's refusal is db_busy, not a closed connection").toBe(true);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(await ran(1)).toBe(false);
+      await expect(db.execute(raw`select 2`), "the pool dials again").resolves.toBeDefined();
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it("a query_wait_timeout refusal of a cold dial's first statement is busy too", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      pooler.hold(true);
+      const cold = db.execute(raw`insert into tf_pooled_head_probe (id) values (${2})`).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse("08P01", "query_wait_timeout"), 300);
+      expect(isDbAcquireTimeout(await cold)).toBe(true);
+      expect(await ran(2)).toBe(false);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it("a transaction whose BEGIN the pooler refuses is busy, and its callback never runs", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      let called = false;
+      const out = db.transaction(async (tx) => { called = true; await tx.execute(raw`insert into tf_pooled_head_probe (id) values (${3})`); })
+        .then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(...CHECKOUT_REFUSED), 300);
+      expect(isDbAcquireTimeout(await out)).toBe(true);
+      expect(called).toBe(false);
+      expect(await ran(3)).toBe(false);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it("is never refused by the client while the pooler holds it: forwarded, the write runs and answers", async () => {
+    const { pooler, db } = await scene(300);
+    try {
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      let settled = "pending";
+      const out = db.execute(raw`insert into tf_pooled_head_probe (id) values (${4})`)
+        .then(() => { settled = "ran"; }, (e: unknown) => { settled = (e as Error).name; });
+      await new Promise((r) => setTimeout(r, 900));
+      expect(settled, "three ceilings later the head still waits").toBe("pending");
+      pooler.release();
+      await out;
+      expect(settled).toBe("ran");
+      expect(await ran(4)).toBe(true);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  it("a session-mode checkout refusal is busy too", async () => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      const out = db.execute(raw`insert into tf_pooled_head_probe (id) values (${5})`).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse("XX000", "(ECHECKOUTTIMEOUT) unable to check out connection from the pool after 15000ms in Session mode"), 300);
+      expect(isDbAcquireTimeout(await out)).toBe(true);
+      expect(await ran(5)).toBe(false);
+    } finally { pooler.close(); }
+  }, 30_000);
+
+  // A DbHandler exit comes after the statement was forwarded (it may have committed); the other
+  // two texts are not what a pooler that keeps pipelined replies in order sends.
+  it.each([
+    ["57P01", "terminating connection due to administrator command"],
+    ["XX000", "(EDBHANDLEREXITED) DbHandler exited. Check logs for more information"],
+    ["XX000", "unable to check out connection from the pool after 300ms in Transaction mode"],
+    ["XX000", "Unable to check out connection from the pool due to timeout"],
+  ])("any other FATAL that closes the connection stays a closed connection: %s %s", async (code, message) => {
+    const { pooler, db } = await scene(5_000);
+    try {
+      await db.execute(raw`select 1`);
+      pooler.hold();
+      const out = db.execute(raw`select 3`).then(() => null, (e: unknown) => e);
+      setTimeout(() => pooler.refuse(code, message), 300);
+      expect(await out).toMatchObject({ code: "CONNECTION_CLOSED" });
+    } finally { pooler.close(); }
+  }, 30_000);
 });

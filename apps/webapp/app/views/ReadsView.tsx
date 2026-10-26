@@ -324,7 +324,7 @@ export function ReadsView({
    */
   const cardsShown = useRef(false);
   /* Viewers near the screen only, one more per frame — `stream-near.ts`. */
-  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null);
+  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null, stream.inFlight);
   const arming = useRef<() => void>(() => {});
   useVisit(
     () => {
@@ -639,13 +639,15 @@ export function ReadsView({
          so `AppShell.placeCursor` can answer) and says that the next press expands it. */
       ...(current == null ? ({ disabledReason: "no_cursor" } as const) : {}),
       when: (e) => (e.target as HTMLElement).tagName !== "BUTTON",
-      run: () =>
-        current &&
+      run: () => {
+        if (!current) return;
+        streamRef.current?.enter();
         document
           .querySelector<HTMLButtonElement>(
             `.view-reads .scast[data-sid="${CSS.escape(current)}"] .sc-x`,
           )
-          ?.click(),
+          ?.click();
+      },
     },
   ];
   useKeyBindings(keys);

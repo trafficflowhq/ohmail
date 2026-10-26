@@ -242,12 +242,14 @@ export const SESSION_ACQUIRE_TIMEOUT_MS = 5_000;
 export const POOLED_MAX_CONNECTIONS = 4;
 
 /**
- * How long, in seconds, a pooled connection may sit idle before the client closes it. At 20 s a
- * person's next search after a pause dialled the pooler again (startup and auth): 134-178 ms against
- * 66-72 ms warm on a 10 ms round trip. In transaction mode an idle client connection holds no server
- * connection, so the longer window costs pooler client slots only: at most four per warm instance.
+ * How long, in seconds, a pooled connection may sit idle before the client closes it. Inside the
+ * hosted API's quiet hold (`QUIET_HOLD_MS` in `apps/api-vercel/src/handler.ts`), so an instance's
+ * idle connections close before the platform suspends it: a suspended instance holds its pooler
+ * client slots until it wakes, and at 120 s ~160 cold instances filled the pooler's client cap
+ * (2026-10-26). The cost: the first request after 20 s of quiet dials again, measured 134-178 ms
+ * against 66-72 ms warm on a 10 ms round trip.
  */
-export const POOLED_IDLE_TIMEOUT_S = 120;
+export const POOLED_IDLE_TIMEOUT_S = 20;
 
 /**
  * Thrown when a statement or a transaction spent its ceiling on the pooled handle without the
@@ -256,7 +258,8 @@ export const POOLED_IDLE_TIMEOUT_S = 120;
  * server: it was pipelined, and {@link guardAcquire} does not cancel, so it normally executes and
  * its result is discarded. Retry safety for a mutation is therefore not asserted: the 503 marks
  * itself retryable only for a safe method or an `Idempotency-Key`. A refused TRANSACTION writes
- * nothing: {@link beginWithin} rolls it back before its callback runs.
+ * nothing: {@link beginWithin} rolls it back before its callback runs. Also thrown when the pooler
+ * refused a statement it never forwarded.
  */
 export class DbAcquireTimeoutError extends Error {
   readonly code = "db_acquire_timeout";
@@ -281,6 +284,119 @@ export function isDbAcquireTimeout(err: unknown): err is DbAcquireTimeoutError {
     && (err as { name?: unknown }).name === "DbAcquireTimeoutError";
 }
 
+const CONNECTION_CAP_CODE = "db_connection_cap";
+
+/**
+ * Thrown when the pooler (`EMAXCONN`) or the server (`53300`) refused a NEW connection
+ * at its client cap, so the statement never began: busy, like {@link DbAcquireTimeoutError}, and
+ * answered 503 the same way. 2026-10-26: cold instances' held connections filled the pooler's 200
+ * and every route answered 500 for six minutes. Fixed text and no `cause`: a postgres.js error
+ * carries the query and its parameters.
+ */
+export class DbConnectionCapError extends Error {
+  readonly code = CONNECTION_CAP_CODE;
+  constructor(readonly cap: "pooler" | "server") {
+    super(cap === "pooler"
+      ? "the connection pooler refused a new connection at its client limit"
+      : "the database refused a new connection at its connection limit");
+    this.name = "DbConnectionCapError";
+  }
+}
+
+/** By name, for {@link isDbAcquireTimeout}'s reason. */
+export function isDbConnectionCap(err: unknown): err is DbConnectionCapError {
+  return typeof err === "object" && err !== null
+    && (err as { name?: unknown }).name === "DbConnectionCapError";
+}
+
+/** The cap a driver refusal names, or null. The message is read to classify and is never kept. */
+function connectionCapOf(err: unknown): "pooler" | "server" | null {
+  if (typeof err !== "object" || err === null) return null;
+  const e = err as { name?: unknown; code?: unknown; message?: unknown };
+  if (e.name !== "PostgresError") return null;
+  if (e.code === "53300") return "server";
+  if (e.code === "XX000" && typeof e.message === "string" && e.message.startsWith("(EMAXCONN)")) return "pooler";
+  return null;
+}
+
+/**
+ * The pooler's checkout refusal as it goes on the wire (its error code in front). Anchored: its other
+ * XX000 FATALs, such as a DbHandler exit, come after the statement was forwarded.
+ */
+const POOLER_CHECKOUT_REFUSED = /^\(ECHECKOUTTIMEOUT\) unable to check out connection from the pool after \d+ms in (?:Transaction|Session) mode$/;
+
+/** The pooler closed the connection saying it never handed the statement to a backend. */
+function poolerRefused(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown; serverError?: { code?: unknown; message?: unknown } } | null;
+  // An open connection's head carries it on the close; a cold dial's statement gets it bare.
+  const s = e?.code === "CONNECTION_CLOSED" ? e.serverError : e;
+  if (!s || typeof s.message !== "string") return false;
+  return (s.code === "XX000" && POOLER_CHECKOUT_REFUSED.test(s.message))
+    || (s.code === "08P01" && s.message === "query_wait_timeout");
+}
+
+/**
+ * `err`, or the busy refusal it is: a pooler or server cap on a new connection, or the pooler's refusal
+ * of a statement it never forwarded (the acquire ceiling's class, `started` when the wait began).
+ */
+function asBusyRefusal(err: unknown, started: number, what?: "transaction"): unknown {
+  const cap = connectionCapOf(err);
+  if (cap !== null) return new DbConnectionCapError(cap);
+  return poolerRefused(err) ? new DbAcquireTimeoutError(Date.now() - started, what) : err;
+}
+
+/** What one fresh connection said: it opened and answered in `ms`, or the code it was refused with. */
+export interface FreshConnectReading { ok: boolean; ms: number; code: string | null }
+
+/**
+ * CAN THIS INSTANCE OPEN A NEW CONNECTION? `/health`'s probe rides one the pool already holds, so on
+ * 2026-10-26 it read healthy on warm instances while the pooler refused every new client. One
+ * unpooled client, `select 1`, ended at once. Single-flight and kept `memoMs`, so an instance dials
+ * at most once a window; never throws. A cap reads `db_connection_cap`, the deadline
+ * `CONNECT_TIMEOUT`, anything else the driver's code.
+ */
+export function freshConnectProbe(
+  url: string, opts: { timeoutMs?: number; memoMs?: number } = {},
+): () => Promise<FreshConnectReading> {
+  const timeoutMs = opts.timeoutMs ?? 3_000;
+  const memoMs = opts.memoMs ?? 10_000;
+  let kept: { at: number; settled: boolean; reading: Promise<FreshConnectReading> } | null = null;
+  return () => {
+    if (kept && (!kept.settled || Date.now() - kept.at < memoMs)) return kept.reading;
+    const next = { at: Date.now(), settled: false, reading: freshConnect(url, timeoutMs) };
+    void next.reading.then(() => { next.settled = true; });
+    kept = next;
+    return next.reading;
+  };
+}
+
+async function freshConnect(url: string, timeoutMs: number): Promise<FreshConnectReading> {
+  const started = Date.now();
+  let client: ReturnType<typeof postgres> | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    client = postgres(url, withPgSocket({
+      ...pgTlsOptions(url), max: 1, prepare: false, fetch_types: false,
+      connect_timeout: timeoutMs / 1000, onnotice: onNotice,
+    }));
+    const deadline = new Promise<string>((resolve) => {
+      timer = setTimeout(() => resolve("CONNECT_TIMEOUT"), timeoutMs);
+      (timer as { unref?: () => void }).unref?.();
+    });
+    const code = await Promise.race([client`select 1`.then(() => null), deadline]);
+    return { ok: code === null, ms: Date.now() - started, code };
+  } catch (err) {
+    const code = (err as { code?: unknown } | null)?.code;
+    return {
+      ok: false, ms: Date.now() - started,
+      code: connectionCapOf(err) !== null ? CONNECTION_CAP_CODE : typeof code === "string" ? code : null,
+    };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    await client?.end({ timeout: 0 }).catch(() => undefined);
+  }
+}
+
 /** The half of postgres.js' `Query` this ceiling reads. See {@link guardAcquire}. */
 interface PooledQuery {
   /**
@@ -290,7 +406,8 @@ interface PooledQuery {
    * hits the socket — measured, not read. The hole, named: `active` is set on the head BEFORE the
    * write, so behind a transaction-mode pooler still waiting for a backend, the head is `active`
    * with no statement running and this ceiling is disabled. Deliberate: bounding an EXECUTING
-   * query would make a second statement timeout; the pooler's wait ceiling is its configuration.
+   * query would make a second statement timeout. A one-flush head's first reply byte comes with
+   * its completion, so silence cannot tell waiting from running: the bound is the pooler's refusal.
    * Every follower behind the head — the measured population — is covered.
    */
   active: boolean;
@@ -311,6 +428,7 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
   const q = query as unknown as PooledQuery;
   let raced: Promise<unknown> | null = null;
   const arm = (): Promise<unknown> => (raced ??= new Promise((resolve, reject) => {
+    const started = Date.now();
     const timer = setTimeout(() => {
       // The backend is running THIS statement: the server-side ceilings own it from here, and
       // killing work that is legitimately in progress is not this ceiling's job.
@@ -337,7 +455,7 @@ function guardAcquire<Q extends object>(query: Q, ms: number): Q {
     // this must stay the only place the underlying promise is consumed.
     q.then(
       (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); },
+      (err) => { clearTimeout(timer); reject(asBusyRefusal(err, started)); },
     );
   }));
 
@@ -413,6 +531,7 @@ function beginWithin(client: ReturnType<typeof postgres>, args: unknown[], ms: n
   const fn = args[args.length - 1];
   if (typeof fn !== "function") return Reflect.apply(open, client, args) as Promise<unknown>;
   let refused = false;
+  const started = Date.now();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       refused = true;
@@ -426,7 +545,7 @@ function beginWithin(client: ReturnType<typeof postgres>, args: unknown[], ms: n
     };
     Promise.resolve(Reflect.apply(open, client, [...args.slice(0, -1), begun])).then(
       (value) => { clearTimeout(timer); if (!refused) resolve(value); },
-      (err: unknown) => { clearTimeout(timer); if (!refused) reject(err); },
+      (err: unknown) => { clearTimeout(timer); if (!refused) reject(asBusyRefusal(err, started, "transaction")); },
     );
   });
 }
@@ -565,7 +684,7 @@ function withOneFlush(client: ReturnType<typeof postgres>): ReturnType<typeof po
 // upstream pooler under concurrency). `prepare: false` is REQUIRED behind a transaction-mode
 // pooler (see `session-url.ts`): cached prepared statements collide across pooled backends — pass
 // the POOLED connection string here, not the direct one. A small `max` keeps each instance's
-// footprint tiny; `POOLED_IDLE_TIMEOUT_S` keeps a searching person's connection between searches. `connection: POOLED_TIMEOUTS` reaches the backend ONLY on a
+// footprint tiny; `POOLED_IDLE_TIMEOUT_S` closes an idle one before its instance is suspended. `connection: POOLED_TIMEOUTS` reaches the backend ONLY on a
 // direct connection (self-host) — measured inert through a transaction-mode pooler; the mechanism
 // for a pooled deployment is ROLE_DEFAULT_TIMEOUTS. The wait for a connection is bounded
 // client-side by POOLED_ACQUIRE_TIMEOUT_MS, because every server ceiling bounds a statement that

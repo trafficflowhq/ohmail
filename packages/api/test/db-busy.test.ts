@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  createApp, jsonResponse, dbBusyResponse, isOrganizerRefusal, type Route,
+  createApp, jsonResponse, dbBusyResponse, isDbBusy, isOrganizerRefusal, type Route,
 } from "@trafficflow/api";
-import { DbAcquireTimeoutError } from "@trafficflow/db/cloud";
+import { DbAcquireTimeoutError, DbConnectionCapError } from "@trafficflow/db/cloud";
 /* IMPORTED HERE AND NOWHERE IN `src` — that asymmetry IS the pin. The middleware may not name
    this entry point (it ships inside the desktop engine's closure); a test may, and that is what
    lets the name it matches on be checked against the real classes. */
@@ -298,6 +298,53 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
     return get.json().then((body: unknown) => {
       expect((body as { error: { retryable?: boolean } }).error.retryable).toBe(true);
     });
+  });
+
+  /**
+   * A POOLER AT ITS CLIENT CAP IS BUSY TOO. On 2026-10-26 the pooler refused new client connections
+   * (EMAXCONN) for six minutes and every route answered 500: the statement never began, exactly as
+   * under the acquire ceiling, so it is the same answer, and the message names the cap.
+   */
+  it("a connection refused at the cap answers 503 db_busy naming it, with Retry-After", async () => {
+    const capped: Route[] = [{
+      method: "GET", pattern: "/capped", cost: "read", relay: false, options: { public: true },
+      handler: async () => { throw new DbConnectionCapError("pooler"); },
+    }];
+    const { deps } = await makeDeps();
+    const res = await createApp(capped).handle(req("GET", "/capped"), deps);
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("5");
+    const body = await res.json() as { error: { code: string; retryable?: boolean; message: string } };
+    expect(body.error).toMatchObject({ code: "db_busy", retryable: true });
+    expect(body.error.message).toMatch(/connection limit/);
+    expect(isDbBusy(new DbConnectionCapError("server"))).toBe(true);
+    // The host's backstop has no route in hand; given the error, it names the cap as well.
+    const backstop = await dbBusyResponse(new Request("https://api.ohmail.app/x"), {}, new DbConnectionCapError("pooler")).json();
+    expect((backstop as { error: { message: string } }).error.message).toMatch(/connection limit/);
+  });
+
+  /**
+   * AT THE CAP THE REFUSED STATEMENT NEVER REACHED THE SERVER, so a write whose replay reaches the
+   * same state (`state`, `guarded`) or is deduplicated by its handler stays retryable once its
+   * session resolved: `false` makes the engine drop the queued verb. The acquire ceiling keeps its
+   * rule, because its statement may still run.
+   */
+  it("at the cap, a protected write whose replay converges stays retryable after its session", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const retryable = async (replay: Route["replay"], err: Error): Promise<unknown> => {
+      const write: Route = {
+        method: "PATCH", pattern: "/capped-write", cost: "work", relay: false, replay,
+        handler: async () => { throw err; },
+      };
+      const res = await createApp([write]).handle(req("PATCH", "/capped-write", { bearer: s.token }), deps);
+      expect(res.status).toBe(503);
+      return ((await res.json()) as { error: { retryable?: boolean } }).error.retryable;
+    };
+    const cap = new DbConnectionCapError("pooler");
+    for (const replay of ["state", "guarded", "handler"] as const) expect(await retryable(replay, cap), replay).toBe(true);
+    for (const replay of [undefined, "ephemeral", "mints"] as const) expect(await retryable(replay, cap), `${replay}`).toBe(false);
+    expect(await retryable("state", new DbAcquireTimeoutError(15_000)), "acquire ceiling").toBe(false);
   });
 
   it("leaves a healthy response untouched", async () => {

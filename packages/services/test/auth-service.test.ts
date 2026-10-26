@@ -1007,6 +1007,29 @@ describe("AuthService — sessions & refresh reuse", () => {
     expect(fam.every((row) => row.revokedAt !== null)).toBe(true);
   });
 
+  it("the reuse row says how many renewals behind the token was and how long since the last one", async () => {
+    const sweptAfter = async (renewals: number, everyMs: number, laterMs: number, opts?: typeof GRACE) => {
+      const h = await harness();
+      const first = await establishRefresh(h);
+      let held = first;
+      for (let i = 0; i < renewals; i++) {
+        if (i > 0) h.clock.advance(everyMs);
+        held = (await h.svc.refresh(h.ctxFor(), { refreshToken: held }, opts)).tokens!.refreshToken;
+      }
+      h.clock.advance(laterMs);
+      await expect(h.svc.refresh(h.ctxFor(), { refreshToken: first }, opts)).rejects.toMatchObject({ code: "refresh_revoked" });
+      const rows = await h.db.select().from(authEvents).where(eq(authEvents.event, "refresh_reuse_revoked"));
+      return rows.map((r) => r.device!.replace(/^family=\S+ session=\S+ /, ""));
+    };
+    // Named by the requests only: the row is the same whichever holder sent the renewals.
+    // Two renewals, then the first token 18 h after the last.
+    expect(await sweptAfter(2, 0, 18 * 3_600_000, GRACE)).toEqual(["depth=2 tail_age_s=64800"]);
+    // Five renewals a quarter hour apart, then the first token 10 s after the last.
+    expect(await sweptAfter(5, 15 * 60_000, 10_000, GRACE)).toEqual(["depth=5 tail_age_s=10"]);
+    // One renewal without the grace, then the first token a second later.
+    expect(await sweptAfter(1, 0, 1_000)).toEqual(["depth=1 tail_age_s=1"]);
+  });
+
   it("a failed audit record NEVER vetoes the sweep — the family dies either way", async () => {
     // Both failure directions were reviewed (see the branch's comment): sequential autocommit
     // loses the record permanently; a bare transaction rolls the SWEEP back — and on the

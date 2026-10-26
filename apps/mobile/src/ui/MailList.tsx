@@ -12,6 +12,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +39,7 @@ import {
   FIRST_GROUP_TOP,
   LIST_WINDOW,
   PANEL_FOOT,
+  PlaceKeeper,
   TOP_HOLD,
   isSection,
   planSections,
@@ -53,6 +55,12 @@ export type { ListGroup } from "./mail-list-plan";
 export interface RowFrame {
   y: number;
   height: number;
+}
+
+/** A list that keeps the reader's place by its row (`PlaceKeeper`), told when its screen goes behind and comes back. */
+export interface ListPlace {
+  leave(): void;
+  back(): void;
 }
 
 export interface MailListProps<T> {
@@ -98,7 +106,15 @@ export interface MailListProps<T> {
    * line and the newest matches stood above the view.
    */
   topFor?: string;
+  /**
+   * Keep the reader's place by its row (Android, where the native hold alone lost it): filled with
+   * the keeper the screen tells when it goes behind another and comes back.
+   */
+  place?: { current: ListPlace | null };
 }
+
+type ScrollEv = NativeSyntheticEvent<NativeScrollEvent>;
+const viewOf = (e: ScrollEv) => ({ y: e.nativeEvent.contentOffset.y, height: e.nativeEvent.layoutMeasurement.height });
 
 interface CellRules {
   rowInset: number;
@@ -144,15 +160,25 @@ function Cell({ children, onLayout, style, item, onFocusCapture }: CellRendererP
   );
 }
 
-/** The scroll view with the panel surface as its content's FIRST child — behind every cell. */
+/**
+ * The scroll view with the panel surface as its content's FIRST child — behind every cell. The
+ * native hold starts at the first cell after the head (`anchorFrom` children in), whatever index
+ * the list keys its own window by.
+ */
 function SurfacedScroll({
   ref,
   surface,
   children,
+  maintainVisibleContentPosition: hold,
   ...rest
 }: ScrollViewProps & { ref?: Ref<ScrollView>; surface: ReactNode }) {
+  const anchorFrom = (surface !== null ? 1 : 0) + 1;
   return (
-    <ScrollView ref={ref} {...rest}>
+    <ScrollView
+      ref={ref}
+      {...rest}
+      maintainVisibleContentPosition={hold ? { ...hold, minIndexForVisible: anchorFrom } : hold}
+    >
       {surface}
       {children}
     </ScrollView>
@@ -182,10 +208,34 @@ export function MailList<T>({
   scrollTo,
   rowLayout,
   topFor,
+  place,
 }: MailListProps<T>) {
   const t = useTheme();
   const listRef = useRef<SectionList<T, PlannedSection<T>>>(null);
-  if (scrollTo) scrollTo.current = (y) => listRef.current?.getScrollResponder()?.scrollTo({ y, animated: false });
+  const toY = (y: number) => listRef.current?.getScrollResponder()?.scrollTo({ y, animated: false });
+  if (scrollTo) scrollTo.current = toY;
+  const keeper = useRef<PlaceKeeper | null>(null);
+  if (place && Platform.OS === "android") {
+    keeper.current ??= new PlaceKeeper((y) => toY(y));
+    place.current = keeper.current;
+  }
+  useLayoutEffect(() => keeper.current?.committed());
+  const keyOf = useRef(rowKey);
+  keyOf.current = rowKey;
+  const own = useRef({ onScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd });
+  own.current = { onScroll, onScrollBeginDrag, onScrollEndDrag, onMomentumScrollBegin, onMomentumScrollEnd };
+  const keeping = keeper.current !== null;
+  const gestures = useMemo(() => {
+    const k = keeper.current;
+    if (k === null) return null;
+    return {
+      onScroll: (e: ScrollEv) => { k.scroll(viewOf(e)); own.current.onScroll?.(e); },
+      onScrollBeginDrag: (e: ScrollEv) => { k.drag(); own.current.onScrollBeginDrag?.(e); },
+      onScrollEndDrag: (e: ScrollEv) => { k.lift(viewOf(e)); own.current.onScrollEndDrag?.(e); },
+      onMomentumScrollBegin: (e: ScrollEv) => { k.glide(); own.current.onMomentumScrollBegin?.(e); },
+      onMomentumScrollEnd: (e: ScrollEv) => { k.land(viewOf(e)); own.current.onMomentumScrollEnd?.(e); },
+    };
+  }, [keeping]);
   const insets = useListInsets();
   const sections = useMemo(() => planSections(groups), [groups]);
   useEffect(() => {
@@ -205,14 +255,20 @@ export function MailList<T>({
     [sections, rowLayout, headH],
   );
 
-  const rules = useMemo<CellRules>(
-    () => ({
+  const rules = useMemo<CellRules>(() => {
+    const k = keeper.current;
+    return {
       rowInset,
-      onRowFrame: onRowFrame ? (row, frame) => onRowFrame(row as T, frame) : null,
-      onRowGone: onRowGone ? (row) => onRowGone(row as T) : null,
-    }),
-    [rowInset, onRowFrame, onRowGone],
-  );
+      onRowFrame: onRowFrame || k ? (row, frame) => {
+        k?.frame(keyOf.current(row as T), frame.y, frame.height);
+        onRowFrame?.(row as T, frame);
+      } : null,
+      onRowGone: onRowGone || k ? (row) => {
+        k?.gone(keyOf.current(row as T));
+        onRowGone?.(row as T);
+      } : null,
+    };
+  }, [rowInset, onRowFrame, onRowGone, keeping]);
 
   const renderItem = useCallback(
     ({ item }: SectionListRenderItemInfo<T, PlannedSection<T>>) => renderRow(item),
@@ -293,18 +349,19 @@ export function MailList<T>({
         stickySectionHeadersEnabled={false}
         showsVerticalScrollIndicator={false}
         refreshControl={pullRefreshControl(t, refresh)}
-        onScroll={onScroll}
-        onScrollBeginDrag={onScrollBeginDrag}
-        onScrollEndDrag={onScrollEndDrag}
-        onMomentumScrollBegin={onMomentumScrollBegin}
-        onMomentumScrollEnd={onMomentumScrollEnd}
+        onScroll={gestures?.onScroll ?? onScroll}
+        onScrollBeginDrag={gestures?.onScrollBeginDrag ?? onScrollBeginDrag}
+        onScrollEndDrag={gestures?.onScrollEndDrag ?? onScrollEndDrag}
+        onMomentumScrollBegin={gestures?.onMomentumScrollBegin ?? onMomentumScrollBegin}
+        onMomentumScrollEnd={gestures?.onMomentumScrollEnd ?? onMomentumScrollEnd}
         scrollEventThrottle={scrollEventThrottle}
-        /* The head is the anchor at the top: the hold skips only the children that precede it, and
-           the surface is one of them only once it has mounted. Handed `1` before that, the first
-           ROW anchored and the head's later growth (the doorbell arriving) scrolled the title off
-           on the fold AVD. Within TOP_HOLD of the top a change scrolls back to 0 as the belt. */
+        /* The list keys its window by the first ROW (the first group is never empty), so rows arriving
+           above move the window with them; keyed by the group's header it stayed put, and at the end
+           of News the rows on screen left it. The native hold starts at the first cell
+           (`SurfacedScroll`): a first ROW there let the head's growth (the doorbell arriving) scroll
+           the title off on the fold AVD. Within TOP_HOLD of the top a change scrolls back to 0. */
         maintainVisibleContentPosition={topFor !== undefined ? undefined : {
-          minIndexForVisible: surfaceNode !== null ? 1 : 0,
+          minIndexForVisible: 1,
           autoscrollToTopThreshold: TOP_HOLD,
         }}
         /* Android detaches clipped rows; a list placed by its caller's ledger and jumped by offset

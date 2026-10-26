@@ -45,5 +45,9 @@
     "@ohmail/client-engine": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "13.3.3",
+    "react-test-renderer": "19.2.3"
   }
 }

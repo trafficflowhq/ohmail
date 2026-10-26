@@ -79,8 +79,9 @@ export type AlertKind =
    */
   | "api_fault_rate"
   /**
-   * The pooled-acquire ceiling has REFUSED more than the threshold inside the window: the
-   * database connection is saturated and requests are being declined rather than served.
+   * The pooled-acquire ceiling, or the pooler's client cap, has REFUSED more than the threshold
+   * inside the window: the database connection is saturated and requests are being declined
+   * rather than served.
    *
    * Deployment-wide and not per route — a saturated pooler refuses whoever asked next. It is a
    * COUNT of refusals and deliberately not a wait p95: nothing records how long an acquire

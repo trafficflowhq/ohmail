@@ -212,7 +212,7 @@ export async function searchIndexProgress(db: Tx, accountId: string): Promise<{ 
   const d = dialect(db);
   const rows = await d.exec(db, sql`
     select ${d.castInt(sql`count(*)`)} as total, ${d.castInt(sql`count(s.message_id)`)} as done
-    from messages m left join message_search s on s.message_id = m.id
+    from messages m left join message_search s on s.message_id = m.id and s.account_id = ${accountId}
     where m.account_id = ${accountId} and m.deleted_at is null`);
   return { total: Number(rows[0]?.[0] ?? 0), done: Number(rows[0]?.[1] ?? 0) };
 }

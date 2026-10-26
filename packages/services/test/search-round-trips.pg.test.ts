@@ -8,7 +8,7 @@ import { accountSettings, folderState, mailboxes, messageBodies, messages, messa
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
-import { upsertMessageSearch } from "@trafficflow/core/mail";
+import { searchIndexBackfillPass, upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService, materializeMessages } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 
@@ -31,7 +31,9 @@ const svc = new SearchService();
 const NOW = new Date("2026-09-24T12:00:00.000Z");
 const A = randomUUID();
 const B = randomUUID();
-const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set() };
+/** Mail and no search document or marker yet: an account the backfill is still building. */
+const C = randomUUID();
+const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set(), [C]: new Set() };
 const PAGE = 4;
 
 function ctx(accountId: string): ServiceContext {
@@ -44,7 +46,7 @@ async function counted<T>(run: () => Promise<T>): Promise<{ value: T; statements
   return { value, statements: [...statements] };
 }
 
-async function seed(accountId: string, n: number, tagId: string): Promise<void> {
+async function seed(accountId: string, n: number, tagId: string, built = true): Promise<void> {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId.slice(0, 8)}@rt.example` }).returning();
   for (let i = 0; i < n; i++) {
     const [m] = await db.insert(messages).values({
@@ -56,12 +58,13 @@ async function seed(accountId: string, n: number, tagId: string): Promise<void> 
     await db.insert(messageBodies).values({ messageId: m!.id, text: `a heron by the lake, note ${i}` });
     await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
     if (i % 2 === 0) await db.insert(messageTags).values({ accountId, messageId: m!.id, tagId });
-    await upsertMessageSearch(db as never, m!.id, {
+    if (built) await upsertMessageSearch(db as never, m!.id, {
       accountId, subject: `heron sighting ${i}`, from: { name: null, address: `watcher${i % 3}@rt.example` }, to: [], cc: [],
       attachmentNames: [], bodyText: `a heron by the lake, note ${i}`, source: "text",
     });
     own[accountId]!.add(m!.id);
   }
+  if (!built) return;
   await db.insert(accountSettings).values({ accountId, searchIndexBuiltAt: NOW })
     .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
 }
@@ -72,16 +75,16 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
   beforeAll(async () => {
     await runMigrations(PG_URL);
     await ensureSearchExtensions(db, { concurrently: false });
-    for (const acct of [A, B]) {
+    for (const acct of [A, B, C]) {
       const [t] = await db.insert(tags).values({ accountId: acct, name: "birds", hue: "moss" }).returning();
-      await seed(acct, acct === A ? 9 : 6, t!.id);
+      await seed(acct, acct === B ? 6 : 9, t!.id, acct !== C);
     }
     // Warm the per-handle extension probe, which is once per handle and not per answer.
     await svc.search(ctx(A), { q: "heron", parts: "page", limit: PAGE });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
-    for (const a of [A, B]) {
+    for (const a of [A, B, C]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from message_tags where account_id = ${a}`);
       await db.execute(sql`delete from tags where account_id = ${a}`);
@@ -125,6 +128,22 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
       expect(r.statements.length, `${parts}: ${r.statements.map((s) => s.slice(0, 60)).join(" | ")}`).toBeLessThanOrEqual(4);
       expect(r.statements.filter((s) => !isTx(s)).length, parts).toBeLessThanOrEqual(2);
     }
+  });
+
+  it("while the backfill builds, the count reads its progress once, and again after 30 s", async () => {
+    const first = await svc.search(ctx(C), { q: "heron", parts: "estimate", limit: PAGE });
+    expect(first.indexed).toEqual({ done: 0, total: 9 });
+    for (const parts of ["estimate", "summary"] as const) {
+      const r = await counted(() => svc.search(ctx(C), { q: "heron", parts, limit: PAGE }));
+      expect(r.value.total, parts).toBe(9);
+      expect(r.value.indexed, parts).toEqual({ done: 0, total: 9 });
+      expect(r.statements.length, `${parts}: ${r.statements.map((s) => s.slice(0, 60)).join(" | ")}`).toBeLessThanOrEqual(4);
+      expect(r.statements.filter((s) => !isTx(s)).length, parts).toBeLessThanOrEqual(2);
+    }
+    await searchIndexBackfillPass({ db: db as never, accountId: C, batch: 2, rounds: 1, now: () => NOW });
+    const later = new Date(NOW.getTime() + 31_000);
+    const after = await svc.search({ ...ctx(C), now: () => later }, { q: "heron", parts: "estimate", limit: PAGE });
+    expect(after.indexed).toEqual({ done: 2, total: 9 });
   });
 
   it("an empty exact tier asks the typo tier in the SAME transaction", async () => {

@@ -15,7 +15,7 @@ import { AccountSection } from "./AccountSection";
 import { PasswordSection } from "./PasswordSection";
 import { leaveForManagePage } from "./SubscriptionSection";
 import { useWallLift } from "../../shell/wall-lift";
-import { opensTheWall } from "../../access-verdict";
+import { neverStarted, opensTheWall } from "../../access-verdict";
 
 /**
  * The wall — what an account the service has refused sees instead of its mail. Three things it
@@ -27,19 +27,8 @@ import { opensTheWall } from "../../access-verdict";
  * It lifts itself only on the service's fresh `access: "open"` (`useWallLift`), via `onLifted`.
  */
 
-/**
- * AN ACCOUNT THAT NEVER STARTED its trial: closed with no reason, no closing date, no erasure clock
- * and nothing ever paid — the service's answer for an account that signed up and has not chosen a
- * plan yet. A closure the service could not attribute still carries its erasure date (nothing to
- * erase is the never-started half). Nothing stopped, so this screen offers the trial and says
- * nothing about stopping or erasure.
- */
-export function neverStarted(lifecycle: AccountLifecycle | undefined): boolean {
-  return lifecycle !== undefined && lifecycle.state === "closed" && lifecycle.closedReason === null
-    && !lifecycle.closedAt && !lifecycle.erasureAt && lifecycle.formerlyPaid !== true;
-}
-
-/** What the headline says, and the date it carries. `null` = the undated sentence. */
+/** What the headline says, and the date it carries. `null` = the undated sentence. A never-started
+ *  account (`neverStarted`) stopped nothing, so it is offered the trial and told nothing about erasure. */
 function headlineOf(
   lifecycle: AccountLifecycle | undefined,
   suspended: boolean,
