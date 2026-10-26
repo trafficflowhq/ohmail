@@ -97,8 +97,9 @@ xcrun simctl boot "iPhone 17 Pro" && open -a Simulator
 ### Android, from source
 
 `.github/workflows/android.yml` builds the APK in this repository's own
-Actions on every push (and attaches a signed one to `android-v*` releases —
-see below). To build locally you need JDK 17 and the Android SDK, then:
+Actions every night and on the pull requests that build every platform (and
+attaches a signed one to `android-v*` releases — see below). To build locally
+you need JDK 17 and the Android SDK, then:
 
 ```bash
 cd apps/mobile
@@ -445,8 +446,9 @@ one minification run and one deobfuscation mapping retraces either.
 
 `.github/workflows/android.yml` has two lanes:
 
-- **Build check** — every push builds both. The bundle is read for its
-  structure and its code is compared to the APK's, dex for dex, so the scans
+- **Build check** — the nightly, a manual run and the pull requests that
+  build every platform (a fork's among them) build both. The bundle is read
+  for its structure and its code is compared to the APK's, dex for dex, so the scans
   that clear the APK say something about the bundle too. The APK (signed with
   the generated debug keystore, installable for smoke-testing) and its mapping
   are kept as short-lived workflow artifacts. Pull requests build the same way

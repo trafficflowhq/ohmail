@@ -3,9 +3,10 @@
 # Three jobs build (a fourth, `changes`, only tells `apk` whether a pull request needs it), and
 # the split between the last two is the whole security posture:
 #
-#   · apk — every push to main (and every pull request that changes what the phone's build
-#     reads; see `changes` below) runs the whole native build:
-#     workspace install, `expo prebuild`, Gradle release assembly. The APK it produces is
+#   · apk — the nightly, a dispatch and a full-build pull request that changes what the phone's
+#     build reads (the batch, the release bump, a fork's or a bot's; see `changes` below) run the
+#     whole native build: workspace install, `expo prebuild`, Gradle release assembly. A
+#     maintainer's other pull requests and a push to main build no APK. The APK it produces is
 #     signed with the locally generated DEBUG keystore — installable for smoke-testing, never
 #     attached to a release — and is kept briefly as a workflow artifact. Pull requests never
 #     see a signing secret; there is nothing to leak and nothing to protect but minutes.
@@ -93,35 +94,39 @@ name: android
 
 on:
   push:
-    branches: [main]
     tags: ["android-v*"]
   pull_request:
-  # When `main` takes pull requests through a merge queue, the queue's merge group builds the APK too.
+  # Kept beside build.yml's for when `main` takes a merge queue; a merge group builds no APK.
   merge_group:
   workflow_dispatch:
+  # The nightly APK build of main (00:41 UTC), beside build.yml's platforms.
+  schedule:
+    - cron: "41 0 * * *"
 
 permissions:
   contents: read
 
-# A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces. A run
-# on a tag, on a merge group or by dispatch has a group of its own — the commit — so it is never
-# cancelled, nor dropped while pending behind another.
+# A pull request's superseded run is cancelled (the block is build.yml's, whose main runs are superseded
+# too). A run on a tag, on a merge group, by dispatch or by the nightly has a group of its own — the
+# commit — so it is never cancelled, nor dropped while pending behind another.
 concurrency:
   group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
 
 jobs:
   # ── which pull requests need the APK ────────────────────────────────────────────────────
-  # On a pull request, and only there, the APK is built when the pull request changes something the
-  # phone's build reads: apps/mobile, the engine it bundles and that engine's packages, the install,
-  # the patches, the build scripts, this workflow and the scripts it runs. Which paths those are is
-  # `.github/scripts/pr-build-scope.sh`'s to say (build.yml asks it the same question for the desktop).
-  # A push to main, a merge group and a dispatch skip this job and build the APK as before. `apk`
-  # starts with `!cancelled()` because a job that needs a skipped job is skipped with it unless its
-  # condition says otherwise, and builds whenever this job did not succeed.
+  # A maintainer's pull request builds no APK: GitHub's hosted runners are the organisation's one pool
+  # (build.yml's `changes` says who counts as a maintainer, and why). On a FULL-BUILD pull request (the
+  # batch `pr/batch-*`, the release bump `pr/release-<NNNN>-bump`, a fork's or a bot's) the APK is built
+  # when the pull request changes something the phone's build reads: apps/mobile, the engine it bundles
+  # and that engine's packages, the install, the patches, the build scripts, this workflow and the
+  # scripts it runs. Which paths those are is `.github/scripts/pr-build-scope.sh`'s to say. The nightly
+  # and a dispatch skip this job and build the APK; a merge group builds none. `apk` starts with
+  # `!cancelled()` because a job that needs a skipped job is skipped with it unless its condition says
+  # otherwise, and on a pull request builds whenever this job ran and did not succeed.
   changes:
     name: android · changes · does this pull request need the APK
-    if: github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request'
+    if: ${{ github.repository == 'trafficflowhq/ohmail' && github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -141,7 +146,7 @@ jobs:
   apk:
     name: android · prebuild · gradle · debug-signed APK
     needs: changes
-    if: ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && !startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.android == 'true') }}
+    if: ${{ !cancelled() && github.repository == 'trafficflowhq/ohmail' && !startsWith(github.ref, 'refs/tags/') && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.android == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     defaults:

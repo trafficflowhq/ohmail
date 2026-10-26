@@ -8,17 +8,23 @@
 # commit. The release's own check is ghcr-images.yml's gate-boot, which runs the same script over the
 # images it staged, before anything is promoted.
 #
-# PULL REQUESTS AND DISPATCH ONLY, on GitHub's hosted runners: the recipes refuse the legacy builder, and
-# the stack needs the compose plugin and buildx. One job, no matrix, no cache, no secret, no registry
-# login; a newer push cancels the older run. It is not a required check. `changes` skips it on a pull
-# request that touches nothing the three images build from (.github/scripts/pr-build-scope.sh, the
-# recipes' dockerignores); a dispatch runs it whatever changed, e.g. `gh workflow run selfhost-smoke.yml --ref main`.
+# FULL-BUILD PULL REQUESTS, THE NIGHTLY AND DISPATCH, on GitHub's hosted runners: the recipes refuse the
+# legacy builder, and the stack needs the compose plugin and buildx. One job, no matrix, no cache, no
+# secret, no registry login; a newer push cancels the older run. It is not a required check. A
+# maintainer's pull request skips `changes` and the smoke with it (build.yml's `changes` says who counts,
+# and why); on the batch, the release bump, a fork's or a bot's, `changes` skips the smoke when the pull
+# request touches nothing the three images build from (.github/scripts/pr-build-scope.sh, the recipes'
+# dockerignores). The nightly and a dispatch run it whatever changed, e.g.
+# `gh workflow run selfhost-smoke.yml --ref main`.
 
 name: selfhost-smoke
 
 on:
   pull_request:
   workflow_dispatch:
+  # The nightly smoke of main (00:41 UTC), beside build.yml's platforms.
+  schedule:
+    - cron: "41 0 * * *"
 
 permissions:
   contents: read
@@ -30,7 +36,7 @@ concurrency:
 jobs:
   changes:
     name: changes · does this pull request change what the self-host images build from
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -50,7 +56,7 @@ jobs:
   boot-smoke:
     name: self-host · images from this tree · boot smoke
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.selfhost == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.selfhost == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

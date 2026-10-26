@@ -64,6 +64,7 @@ const KEPT: Run[] = [
   { label: "a merge group", event: "merge_group", ref: `refs/heads/gh-readonly-queue/main/pr-7-${SHA_A}`, sha: SHA_A },
   { label: "a dispatch on a tag", event: "workflow_dispatch", ref: "refs/tags/v1.2.3", sha: SHA_A },
   { label: "a dispatch on main", event: "workflow_dispatch", ref: "refs/heads/main", sha: SHA_A },
+  { label: "the nightly", event: "schedule", ref: "refs/heads/main", sha: SHA_A },
 ];
 
 /** A workflow value as the runner reads it: a whole `${{ }}` is its value, a bare true or false that
@@ -136,9 +137,9 @@ export function evaluate(expr: string, ctx: Record<string, string | null>): unkn
 describe("the workflows of a main that takes pull requests", () => {
   const build = WF("build"), android = WF("android"), feeds = WF("release-feeds");
 
-  it("build and android run on the merge queue's groups, beside their old triggers", () => {
-    expect(triggersOf(build)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch"]);
-    expect(triggersOf(android)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch"]);
+  it("build and android run on the merge queue's groups and nightly, beside their old triggers", () => {
+    expect(triggersOf(build)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch", "schedule"]);
+    expect(triggersOf(android)).toEqual(["push", "pull_request", "merge_group", "workflow_dispatch", "schedule"]);
   });
 
   it("concurrency cancels a pull request's and main's superseded run, never a tag's", () => {
@@ -152,6 +153,7 @@ describe("the workflows of a main that takes pull requests", () => {
     expect(valueOf(group, at("push", "refs/heads/main"))).toBe("build-refs/heads/main-main");
     expect(valueOf(group, at("push", "refs/tags/v1.2.3"))).toBe(`build-refs/tags/v1.2.3-${SHA_A}`);
     expect(valueOf(group, at("workflow_dispatch", "refs/heads/main"))).toBe(`build-refs/heads/main-${SHA_A}`);
+    expect(valueOf(group, at("schedule", "refs/heads/main")), "the nightly is keyed by its commit, never main's group").toBe(`build-refs/heads/main-${SHA_A}`);
   });
 
   it("every job holding a signing secret runs in the release environment", () => {

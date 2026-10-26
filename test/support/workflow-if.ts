@@ -145,3 +145,113 @@ export function runJobs(
   for (const id of Object.keys(jobs)) resultOf(id);
   return out;
 }
+
+/** One event as `hostedJobs` reads it: the trigger, its ref, a schedule's cadence, and every context the files read. */
+export type RunEvent = { event: string; action?: string; ref: string; cron?: "daily" | "weekly"; ctx: IfContext };
+
+/** The filters each trigger may carry here; any other (a path filter included) refuses. */
+const FILTERS: Record<string, string[]> = {
+  push: ["branches", "tags"], pull_request: ["types"], pull_request_target: ["types"], release: ["types"],
+  merge_group: ["types"], workflow_dispatch: ["inputs"],
+};
+
+/** A branch or tag filter: `*` within one path segment, `**` across them, anything else as written. */
+function globMatch(patterns: unknown, name: string): boolean {
+  return [patterns].flat().some((p) => {
+    if (/[?+[\]!]/.test(String(p))) throw new Error(`a filter pattern this does not read: ${String(p)}`);
+    const re = String(p).replace(/[.^${}()|\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\0/g, ".*");
+    return new RegExp(`^${re}$`).test(name);
+  });
+}
+
+/** A cron's cadence: daily, weekly (a day of week), or other. */
+const cadence = (cron: string) => {
+  const f = cron.trim().split(/\s+/);
+  return f[2] !== "*" || f[3] !== "*" ? "other" : f[4] === "*" ? "daily" : "weekly";
+};
+
+/**
+ * Whether a workflow's `on:` starts a run for the event: a push by its branch and tag globs (a push filtered on
+ * one kind of ref starts nothing for the other), a pull request or a release by its `types` (a pull request's
+ * default three when none), a schedule by its cadence.
+ */
+export function startsOn(on: unknown, ev: RunEvent): boolean {
+  const triggers = (typeof on === "string" ? { [on]: null } : Array.isArray(on) ? Object.fromEntries(on.map((k) => [String(k), null])) : on ?? {}) as Record<string, unknown>;
+  if (!(ev.event in triggers)) return false;
+  if (ev.event === "schedule") return [triggers.schedule].flat().some((c) => cadence(String((c as { cron?: unknown } | null)?.cron ?? "")) === ev.cron);
+  const f = (triggers[ev.event] ?? {}) as Record<string, unknown>;
+  for (const k of Object.keys(f)) if (!(FILTERS[ev.event] ?? []).includes(k)) throw new Error(`${ev.event}: a filter this does not read (${k})`);
+  if (ev.event === "push") {
+    const kind = ev.ref.startsWith("refs/tags/") ? "tags" : "branches";
+    if (f.branches === undefined && f.tags === undefined) return true;
+    return f[kind] !== undefined && globMatch(f[kind], ev.ref.replace(/^refs\/(heads|tags)\//, ""));
+  }
+  const types = f.types as string[] | undefined;
+  if (ev.event.startsWith("pull_request")) return (types ?? ["opened", "synchronize", "reopened"]).includes(ev.action ?? "synchronize");
+  return types === undefined || types.includes(ev.action ?? "");
+}
+
+/** A matrix value written `${{ fromJSON(needs.<job>.outputs.<name>) }}`, read from ctx; any other as written. */
+function fromNeeds(v: unknown, ctx: IfContext): unknown {
+  if (typeof v !== "string" || !v.includes("${{")) return v;
+  const m = /^\$\{\{\s*fromJSON\((needs\.[\w-]+\.outputs\.[\w-]+)\)\s*\}\}$/.exec(v.trim());
+  if (!m) throw new Error(`a matrix value this does not read: ${v}`);
+  if (!(m[1] in ctx)) throw new Error(`no value given for the context ${m[1]}`);
+  return JSON.parse(String(ctx[m[1]]));
+}
+
+/**
+ * A job's matrix combinations as GitHub expands them: the axes crossed, then each `include` entry added to every
+ * crossed combination whose axis values it keeps, or appended as one of its own when it fits none.
+ */
+export function matrixOf(strategy: unknown, ctx: IfContext): Array<Record<string, unknown>> {
+  const raw = (strategy as { matrix?: unknown } | undefined)?.matrix;
+  if (raw === undefined) return [{}];
+  const { include, exclude, ...axes } = fromNeeds(raw, ctx) as Record<string, unknown>;
+  if (exclude !== undefined) throw new Error("a matrix exclude this does not read");
+  let out: Array<Record<string, unknown>> = Object.keys(axes).length ? [{}] : [];
+  for (const [k, vs] of Object.entries(axes)) out = out.flatMap((c) => (fromNeeds(vs, ctx) as unknown[]).map((v) => ({ ...c, [k]: v })));
+  const crossed = out.length;
+  for (const e of (fromNeeds(include, ctx) as Array<Record<string, unknown>> | undefined) ?? []) {
+    const fit = out.slice(0, crossed).filter((c) => Object.entries(e).every(([k, v]) => !(k in axes) || c[k] === v));
+    if (fit.length) for (const c of fit) Object.assign(c, e);
+    else out.push({ ...e });
+  }
+  return out;
+}
+
+/** A job's runner labels: a label or a list as written, or the value of the one expression it is. */
+function labelsOf(runsOn: unknown, ctx: IfContext): string[] {
+  const v = typeof runsOn === "string" && /^\s*\$\{\{[\s\S]*\}\}\s*$/.test(runsOn) ? evalValue(runsOn, ctx) : runsOn;
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v as string[];
+  throw new Error(`a runs-on this does not read: ${JSON.stringify(runsOn)}`);
+}
+
+/**
+ * Every job one event starts on GitHub's hosted runners, one line per job and matrix combination:
+ * `<file>: <job>[ (<matrix values>)] @<labels>`. A workflow starts as `startsOn` reads its `on:`, its jobs as
+ * `runJobs` reads them, and a job is hosted when its `runs-on:`, read with the combination's `matrix.*`, names no
+ * `self-hosted` label. `workflows` maps each file name to its parsed YAML.
+ */
+export function hostedJobs(workflows: Record<string, unknown>, ev: RunEvent): string[] {
+  const out: string[] = [];
+  for (const [file, parsed] of Object.entries(workflows)) {
+    const wf = parsed as { on?: unknown; jobs?: Record<string, JobShape & { "runs-on"?: unknown; strategy?: unknown }> };
+    if (!startsOn(wf.on, ev)) continue;
+    const jobs = wf.jobs ?? {};
+    const ended = runJobs(jobs, ev.ctx);
+    for (const [id, job] of Object.entries(jobs)) {
+      if (ended[id] !== "success") continue;
+      for (const combo of matrixOf(job.strategy, ev.ctx)) {
+        const ctx: IfContext = { ...ev.ctx };
+        for (const [k, v] of Object.entries(combo)) ctx[`matrix.${k}`] = String(v);
+        const labels = labelsOf(job["runs-on"], ctx);
+        if (labels.some((l) => l.toLowerCase() === "self-hosted")) continue;
+        const values = Object.values(combo);
+        out.push(`${file}: ${id}${values.length ? ` (${values.join(", ")})` : ""} @${labels.join(",")}`);
+      }
+    }
+  }
+  return out;
+}

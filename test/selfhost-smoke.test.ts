@@ -18,7 +18,8 @@ import { concurrencyFindings, concurrencyOf, concurrencyRuns } from "./workflows
  * whatever image of that name is local, and pulls the published one when none is, so a plain `up -d` boots the last
  * release and reads green on any tree. What must hold:
  *
- *   · the workflow runs on pull requests and by dispatch only, read-only, on hosted runners, superseded runs cancelled;
+ *   · the workflow runs on a full-build pull request, nightly and by dispatch, read-only, on hosted runners,
+ *     superseded runs cancelled; a maintainer's ordinary pull request skips it;
  *   · the script builds (or requires) exactly the run's tag, starts with --no-build --pull never, and checks that the
  *     running containers are those images and that /health names the commit, before and after the smoke;
  *   · it refuses a published tag, an image that is neither ours nor pinned by digest, and never prints what it mints;
@@ -46,7 +47,7 @@ export function workflowFindings(text: string): string[] {
   const out: string[] = [];
   const wf = load(text);
   const triggers = Object.keys(wf.on ?? {});
-  if (JSON.stringify(triggers) !== JSON.stringify(["pull_request", "workflow_dispatch"])) out.push(`triggers: ${triggers.join(", ")}`);
+  if (JSON.stringify(triggers) !== JSON.stringify(["pull_request", "workflow_dispatch", "schedule"])) out.push(`triggers: ${triggers.join(", ")}`);
   for (const [k, v] of Object.entries(wf.on ?? {})) if (v && typeof v === "object" && ("paths" in v || "paths-ignore" in v)) out.push(`${k} is path-filtered`);
   if (JSON.stringify(wf.permissions) !== JSON.stringify({ contents: "read" })) out.push(`permissions: ${JSON.stringify(wf.permissions)}`);
   for (const [id, j] of Object.entries(wf.jobs ?? {})) {
@@ -61,6 +62,8 @@ export function workflowFindings(text: string): string[] {
   const gate = wf.jobs?.[GATE];
   if (!gate) return [...out, `no ${GATE} job`];
   const runs = (c: IfContext, cancelled = false) => evalIf(String(gate.if ?? "true"), c, { cancelled });
+  if (runs(ctx("pull_request", "skipped", ""))) out.push("runs on a maintainer's ordinary pull request (changes skipped)");
+  if (!runs(ctx("schedule", "skipped", ""))) out.push("skips the nightly");
   if (runs(ctx("pull_request", "success", "false"))) out.push("runs on a pull request that changes nothing the images read");
   if (!runs(ctx("pull_request", "success", "true"))) out.push("skips a pull request that changes the images");
   if (!runs(ctx("pull_request", "failure", ""))) out.push("skips when changes failed");
@@ -77,7 +80,7 @@ export function workflowFindings(text: string): string[] {
   return out;
 }
 
-describe("selfhost-smoke.yml: pull requests and dispatch, read-only, hosted, bounded", () => {
+describe("selfhost-smoke.yml: full-build pull requests, the nightly and dispatch, read-only, hosted, bounded", () => {
   it("holds its shape", () => {
     expect(workflowFindings(WF_TEXT)).toEqual([]);
   });
@@ -88,8 +91,10 @@ describe("selfhost-smoke.yml: pull requests and dispatch, read-only, hosted, bou
   });
 
   it("is watched failing on pull_request_target, a dropped !cancelled(), a self-hosted runner, a secret and a matrix", () => {
-    expect(workflowFindings(WF_TEXT.replace(/^ {2}pull_request:$/m, "  pull_request_target:"))).toContain("triggers: pull_request_target, workflow_dispatch");
+    expect(workflowFindings(WF_TEXT.replace(/^ {2}pull_request:$/m, "  pull_request_target:"))).toContain("triggers: pull_request_target, workflow_dispatch, schedule");
     expect(workflowFindings(WF_TEXT.replace("!cancelled() && ", ""))).toContain("runs on a cancelled run");
+    expect(workflowFindings(WF_TEXT.replace("needs.changes.result != 'skipped' && ", ""))).toContain("runs on a maintainer's ordinary pull request (changes skipped)");
+    expect(workflowFindings(WF_TEXT.replace("github.event_name == 'schedule' || ", ""))).toContain("skips the nightly");
     const boot = /\n {2}boot-smoke:\n(?: {4}.*\n)*? {4}runs-on: ubuntu-latest\n/;
     expect(boot.test(WF_TEXT), "the planting found no runs-on in boot-smoke").toBe(true);
     const hosted = WF_TEXT.replace(boot, (m) => m.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]"));

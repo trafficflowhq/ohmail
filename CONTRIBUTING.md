@@ -58,8 +58,14 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   files a release bump writes. A pull request that changes only tests, docs or other workflows
   skips them, and they show as skipped. `.github/scripts/pr-build-scope.sh`
   decides, and its `changes` job prints why. The engine job and the
-  engine-bearing UI smoke run on every pull request, and a push to `main`, a
-  release tag and a manual run build every platform.
+  engine-bearing UI smoke run on every pull request and every push to `main`,
+  and a release tag, the nightly and a manual run build every platform.
+- GitHub's hosted runners are one pool for the whole organisation, so the
+  maintainers' own pull requests build no platform, no APK and no self-host
+  smoke: they run the test suite and the engine jobs on the maintainers' own
+  runners and the dco and guard checks on GitHub's. Their changes are built on
+  every platform by the batch branch that lands them (`pr/batch-*`), by the
+  release bump (`pr/release-<NNNN>-bump`) and by the nightly.
 - The workflows under `.github/`, the tools under `scripts/` they run and the
   push gate's baseline under `.gate/` are changed by the maintainers. The
   **guard** check fails a pull request from a fork that changes them. If you

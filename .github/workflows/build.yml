@@ -147,6 +147,9 @@ on:
   # engine-bearing UI) must report on the queue's merge group, or the queue waits until it gives up.
   merge_group:
   workflow_dispatch:
+  # The nightly platform build of main (00:41 UTC); a push to main builds the engine pair alone.
+  schedule:
+    - cron: "41 0 * * *"
 
 permissions:
   contents: read
@@ -167,8 +170,8 @@ env:
   RUST_TOOLCHAIN: "1.99.0"
 
 # A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces: the
-# newest one proves what landed. A run on a tag, on a merge group or by dispatch has a group of its own —
-# the commit — so it is never cancelled, nor dropped while pending behind another: a release's
+# newest one proves what landed. A run on a tag, on a merge group, by dispatch or by the nightly has a group
+# of its own — the commit — so it is never cancelled, nor dropped while pending behind another: a release's
 # installers come from the tag's run.
 concurrency:
   group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
@@ -177,28 +180,35 @@ concurrency:
 jobs:
   # ── WHICH PLATFORM BUILDS A PULL REQUEST NEEDS ─────────────────────────────
   #
-  # The six platform jobs below are an hour of runners each, and the free pool
-  # is shared by every open pull request and by the release: on 2026-10-16 the
-  # release's own bump and tag runs queued for over thirty minutes behind pull
-  # requests that changed tests and docs. So on a PULL REQUEST, and only there,
-  # they run when the pull request changes something a build reads; which paths
-  # those are is `.github/scripts/pr-build-scope.sh`'s to say. A push to main, a
-  # `v*` tag, a merge group and a dispatch skip this job and build everything:
-  # the release takes its installers from the tag run, and main's run is the
-  # whole proof of what landed.
+  # The six platform jobs below are an hour of runners each, and GitHub's hosted
+  # runners are one pool for the whole organisation, shared with its other
+  # repositories and with the release: on 2026-10-16 the release's own bump and
+  # tag runs queued for over thirty minutes behind pull requests that changed
+  # tests and docs, and on 2026-10-26 the other repositories' runs queued behind
+  # ours. So a maintainer's pull request (a `pr/` branch of this repository,
+  # opened by a User who is OWNER, MEMBER or COLLABORATOR, no bot in the run)
+  # builds no platform: it skips this job, and every gated job with it. The
+  # FULL-BUILD pull requests run it: the batch (`pr/batch-*`), the release bump
+  # (`pr/release-<NNNN>-bump`), a fork's and a bot's. On those the platform jobs
+  # run when the pull request changes something a build reads; which paths
+  # those are is `.github/scripts/pr-build-scope.sh`'s to say. A `v*` tag, the
+  # nightly and a dispatch skip this job and build everything: the release
+  # takes its installers from the tag run. A push to main and a merge group
+  # build no platform: the engine pair is main's proof of what landed, the
+  # nightly the platforms'.
   #
   # `engine` and `engine-bearing UI` are REQUIRED contexts and never wait on
   # this: a required context has to report on every pull request. Each gated job
   # starts with `!cancelled()`, because a job that needs a skipped job is skipped
-  # with it unless its condition says otherwise; and it builds whenever this job
-  # did not succeed, so a decision that could not be read never skips a build.
-  # So does every job after one of them (linux-rpm-install, macos-sign,
-  # macos-signed-check), beside how the job it needs ended: GitHub reads an `if:`
-  # naming no status function as `success()`, which asks the whole needs chain,
-  # this job included.
+  # with it unless its condition says otherwise; and on a pull request it builds
+  # whenever this job ran and did not succeed, so a decision that could not be
+  # read never skips a build. So does every job after one of them
+  # (linux-rpm-install, macos-sign, macos-signed-check), beside how the job it
+  # needs ended: GitHub reads an `if:` naming no status function as `success()`,
+  # which asks the whole needs chain, this job included.
   changes:
     name: changes · which platform builds this pull request needs
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -218,7 +228,7 @@ jobs:
   macos:
     name: macOS · smoke · engine · universal app · dmg
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
     runs-on: macos-15
     timeout-minutes: 60
     # NO ENVIRONMENT AND NO SECRET, ON EVERY RUN, the release tag's included: this job runs the
@@ -1289,7 +1299,7 @@ jobs:
   windows:
     name: Windows · smoke · engine · nsis setup
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -1645,7 +1655,7 @@ jobs:
   linux:
     name: Linux · smoke · engine · appimage + deb + rpm
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
     runs-on: ubuntu-latest
     # Seventy-five and not sixty since the perf smoke joined this job: importing five thousand
     # messages and letting the process group settle is minutes on top of three packaged artifacts.
@@ -2825,7 +2835,7 @@ jobs:
   linux-arm64:
     name: Linux arm64 · smoke · engine · appimage + deb + rpm
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
     # GitHub's hosted arm64 Linux runner, free for public repositories. It is a
     # NATIVE machine, not emulation: everything below compiles and runs as
     # aarch64, which is what makes the checks worth running here rather than
@@ -3876,7 +3886,7 @@ jobs:
   linux-flatpak:
     name: Linux · flatpak builds offline
     needs: changes
-    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:

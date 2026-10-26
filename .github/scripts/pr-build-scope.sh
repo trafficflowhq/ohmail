@@ -7,8 +7,8 @@
 # Prints `desktop=<true|false>`, `android=<true|false>` and `selfhost=<true|false>` on stdout, and appends the
 # same three lines to $GITHUB_OUTPUT when it is set. build.yml's platform jobs (macOS, Windows, Linux x64 and
 # arm64, the rpm install, the flatpak), android.yml's APK build and selfhost-smoke.yml's boot smoke read them on
-# a pull request, and only there: a push to main, a tag, a merge group and a dispatch build every platform
-# without asking this.
+# a full-build pull request (the batch, the release bump, a fork's or a bot's), and only there: a tag, the
+# nightly and a dispatch build without asking this, and a maintainer's other pull requests build none.
 #
 # A SCOPE IS THE TREE ITS BUILD READS. The desktop app bundles the engine (apps/sidecar, which imports
 # apps/worker and every package) and renders a window made of apps/webapp's views and catalogues; the phone

@@ -72,11 +72,15 @@ migrations, a deleted module), in shards, each on the root install with its own 
 pull request runs only the test files its diff can reach (`.github/scripts/ci-select.mjs`: vitest's module graph, the
 files that read a changed path or a module whose imports reach it, or scan its app or package or the whole tree, root `test/`), in as few jobs as their measured time needs; the plan job's summary says
 which run it is and why, and `main` is proven whole by the batch and the nightly. Its desktop job runs
-`ci-shards.mjs --desktop`'s files on both installs, on every run. `build.yml` runs on pull requests
-and on `main`: on macOS, Windows and Linux it typechecks the window, builds the UI bundle and smokes it, runs the Rust tests in both configurations,
-packages the app and opens what it built; its engine job bundles the engine on its own. `android.yml` builds the
-phone app. On a pull request the platform jobs and the phone build run only when it changes what they build
-(`.github/scripts/pr-build-scope.sh`); the engine jobs always run. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
+`ci-shards.mjs --desktop`'s files on both installs, on every run. `build.yml`'s platform jobs, on macOS, Windows
+and Linux, typecheck the window, build the UI bundle and smoke it, run the Rust tests in both configurations,
+package the app and open what they built; its engine jobs bundle the engine on their own, on every pull request and
+every push to `main`. `android.yml` builds the phone app and `selfhost-smoke.yml` boots the self-host images built
+from the tree. GitHub's hosted runners are one pool for the whole organisation, so a maintainer's pull request runs
+`ci.yml` and the engine jobs on the maintainers' own runners (where `ci.yml`'s header says) and `dco.yml` and
+`guard.yml` on GitHub's, and nothing else. The platform jobs, the phone build and the self-host smoke run on a batch
+branch, the release bump (`pr/release-<NNNN>-bump`), a fork's or a bot's pull request (only when it changes what they
+build, `.github/scripts/pr-build-scope.sh`), a tag, the nightly and a dispatch. `dco.yml` checks sign-offs and `guard.yml` refuses a fork's change to the workflows,
 their tools or the push gate's baseline. `contributor.yml` (weekly, and by dispatch; no pull request) runs the marked
 blocks of the READMEs and CONTRIBUTING.md on a fresh clone on Linux, macOS and Windows. A fork's pull request runs every job on GitHub's runners. Tests sit beside the code they cover: `apps/desktop/test`, and the
 `*_tests.rs` files in `apps/desktop/src-tauri/src`. Add or extend a test for behaviour you change.

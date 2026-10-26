@@ -214,6 +214,8 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
+      # Three of six at a time: the hosted runners are the organisation's one pool, the tag's build on it too.
+      max-parallel: 3
       matrix:
         image: [ohmail-server, ohmail-worker, ohmail-web]
         arch: [amd64, arm64]
@@ -331,6 +333,7 @@ jobs:
       # Both arches are reported. Stopping the arm64 boot because amd64 failed would hide
       # which half is broken, and the promotion is blocked by either failing regardless.
       fail-fast: false
+      max-parallel: 2
       matrix:
         include:
           - arch: amd64

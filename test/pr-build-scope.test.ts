@@ -18,11 +18,15 @@ import { evalIf, namesStatusCheck, runJobs, type IfContext, type JobResult } fro
  *
  *   · the two contexts the ruleset requires from build.yml run on every pull request, never behind the
  *     answer, and no trigger is path-filtered (a required context that never reports blocks the merge);
- *   · a push to main, a `v*` tag, a merge group and a dispatch run every platform job, whatever `changes`
- *     did, and every job after one — a release takes its installers from the tag run. Read as GitHub starts
- *     jobs (`runJobs`): an `if:` naming no status-check function is `success()` over the whole needs chain,
- *     so `changes`, skipped there, would skip any job below it that does not say `!cancelled()`;
- *   · on a pull request a platform job runs when the answer says so, and when `changes` did not succeed;
+ *   · a `v*` tag, the nightly and a dispatch run every platform job, whatever `changes` did, and every job
+ *     after one — a release takes its installers from the tag run. Read as GitHub starts jobs (`runJobs`):
+ *     an `if:` naming no status-check function is `success()` over the whole needs chain, so `changes`,
+ *     skipped there, would skip any job below it that does not say `!cancelled()`. A push to main and a
+ *     merge group build no platform: the engine pair is main's proof, the nightly the platforms';
+ *   · `changes` runs on a full-build pull request alone (the batch, the release bump, a fork's or a bot's).
+ *     A maintainer's other pull requests skip it and every platform job with it: the hosted runners are the
+ *     organisation's one pool. On a full-build pull request a platform job runs when the answer says so, and
+ *     when `changes` did not succeed;
  *   · the script answers the paths the builds read, and every script a workflow runs is in its own scope.
  */
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
@@ -39,23 +43,36 @@ const REQUIRED = { engine: "engine · typecheck · build", "engine-ui-smoke": "e
 const DESKTOP_GATED = ["macos", "windows", "linux", "linux-arm64", "linux-flatpak"];
 const needsOf = (j: Job) => (Array.isArray(j.needs) ? j.needs : j.needs === undefined ? [] : [j.needs]);
 
+/** The maintainer door's contexts, all null: a run that is no maintainer's pull request (a fork's reads so too). */
+const NO_DOOR: IfContext = {
+  "github.event.pull_request.head.repo.full_name": null, "github.head_ref": null, "github.event.pull_request.user.type": null,
+  "github.event.pull_request.author_association": null, "github.actor": null, "github.triggering_actor": null,
+};
+/** A maintainer's own pull request from a branch of this repository. */
+const LANE = (head = "pr/lane-x"): IfContext => ({
+  "github.event.pull_request.head.repo.full_name": "trafficflowhq/ohmail", "github.head_ref": head, "github.event.pull_request.user.type": "User",
+  "github.event.pull_request.author_association": "OWNER", "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer",
+});
+
 /** A run as the expressions see it. `scope` is the answer `changes` printed, `result` how `changes` ended. */
 function run(event: string, ref: string, result: string, scope: string, extra: IfContext = {}): IfContext {
   return {
     "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail",
     "needs.changes.result": result, "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope,
-    "needs.linux.result": "success", ...extra,
+    "needs.linux.result": "success", ...NO_DOOR, ...extra,
   };
 }
+/** A full-build pull request, as a fork's reads; a maintainer's ordinary one skips `changes`. */
 const PR = (result: string, scope: string) => run("pull_request", "refs/pull/7/merge", result, scope);
-/** Every run that is not a pull request: `changes` is skipped there, so its answer is empty. */
-const NOT_PR_RUNS: Array<[string, string, string]> = [
-  ["push to main", "push", "refs/heads/main"],
-  ["v* tag", "push", "refs/tags/v1.2.3"],
-  ["merge group", "merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc"],
-  ["dispatch", "workflow_dispatch", "refs/heads/main"],
+/** Every run that is not a pull request (`changes` is skipped there, so its answer is empty), and whether it builds the platforms. */
+const NOT_PR_RUNS: Array<[string, string, string, boolean]> = [
+  ["push to main", "push", "refs/heads/main", false],
+  ["v* tag", "push", "refs/tags/v1.2.3", true],
+  ["merge group", "merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc", false],
+  ["dispatch", "workflow_dispatch", "refs/heads/main", true],
+  ["nightly", "schedule", "refs/heads/main", true],
 ];
-const NOT_PR: Array<[string, IfContext]> = NOT_PR_RUNS.map(([label, event, ref]) => [label, run(event, ref, "skipped", "")]);
+const NOT_PR: Array<[string, IfContext, boolean]> = NOT_PR_RUNS.map(([label, event, ref, builds]) => [label, run(event, ref, "skipped", ""), builds]);
 /**
  * A job's own condition, for a reader that evaluates it alone. For a job that needs another, an `if:` naming no
  * status-check function is not its own answer: GitHub reads it as `success()` over the whole needs chain, so such a
@@ -69,7 +86,7 @@ const ifOf = (j: Job | undefined) => {
 /** A run as runJobs takes it: what no job decides, the event and the answer `changes` printed; it works out the rest. */
 const graphRun = (event: string, ref: string, scope: string): IfContext => ({
   "github.event_name": event, "github.ref": ref, "github.repository": "trafficflowhq/ohmail",
-  "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope,
+  "needs.changes.outputs.desktop": scope, "needs.changes.outputs.android": scope, ...NO_DOOR,
 });
 const ran = (r: Record<string, JobResult>) => Object.keys(r).filter((id) => r[id] === "success").sort();
 /** The script runs with nothing of the caller's run: under CI it would otherwise write to the job's own output. */
@@ -110,28 +127,34 @@ describe("the required contexts report on every pull request", () => {
 describe("the platform builds are gated on a pull request and nowhere else", () => {
   const build = load(BUILD).jobs ?? {}, android = load(ANDROID).jobs ?? {};
 
-  it("each workflow's `changes` runs on a pull request only and hands on the script's answer", () => {
+  it("each workflow's `changes` runs on a full-build pull request only and hands on the script's answer", () => {
     for (const [jobs, key] of [[build, "desktop"], [android, "android"], [load(SELFHOST).jobs ?? {}, "selfhost"]] as const) {
       const c = jobs.changes;
       expect(c, "there is no changes job").toBeDefined();
       expect(c!.outputs?.[key]).toBe(`\${{ steps.scope.outputs.${key} }}`);
       const step = (c!.steps ?? []).find((s) => s.id === "scope");
       expect(String(step?.run ?? "")).toBe("bash .github/scripts/pr-build-scope.sh --base HEAD^1 --head HEAD");
-      expect(evalIf(ifOf(c), PR("", ""))).toBe(true);
+      expect(evalIf(ifOf(c), PR("", "")), "a fork's").toBe(true);
+      for (const head of ["pr/batch-0307", "pr/release-0307-bump"]) expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(head) }), head).toBe(true);
+      expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(), "github.event.pull_request.user.type": "Bot" }), "a bot's").toBe(true);
+      for (const head of ["pr/lane-x", "pr/release-run-on-vms", "pr/batch", "pr/release-0307-bump-fix"]) {
+        expect(evalIf(ifOf(c), { ...PR("", ""), ...LANE(head) }), `a maintainer's ${head}`).toBe(false);
+      }
       for (const [label, ctx] of NOT_PR) expect(evalIf(ifOf(c), ctx), label).toBe(false);
     }
   });
 
-  it("the desktop platform jobs: built when the answer is true or unread, skipped when it is false", () => {
+  it("the desktop platform jobs: built when the answer is true or unread, skipped when it is false or `changes` skipped", () => {
     for (const id of DESKTOP_GATED) {
       const j = build[id];
       expect(j, id).toBeDefined();
       expect(needsOf(j!), id).toEqual(["changes"]);
+      expect(evalIf(ifOf(j), PR("skipped", "")), `${id} on a maintainer's ordinary pull request`).toBe(false);
       expect(evalIf(ifOf(j), PR("success", "false")), `${id} on a pull request that needs no build`).toBe(false);
       expect(evalIf(ifOf(j), PR("success", "true")), `${id} on a pull request that needs it`).toBe(true);
       expect(evalIf(ifOf(j), PR("failure", "")), `${id} when changes failed`).toBe(true);
       expect(evalIf(ifOf(j), PR("success", "true"), { cancelled: true }), `${id} on a cancelled run`).toBe(false);
-      for (const [label, ctx] of NOT_PR) expect(evalIf(ifOf(j), ctx), `${id} on a ${label}`).toBe(true);
+      for (const [label, ctx, builds] of NOT_PR) expect(evalIf(ifOf(j), ctx), `${id} on a ${label}`).toBe(builds);
     }
   });
 
@@ -145,18 +168,21 @@ describe("the platform builds are gated on a pull request and nowhere else", () 
     }
   });
 
-  it("the APK: gated the same way on a pull request, built on main, never on a tag as before", () => {
+  it("the APK: gated the same way on a pull request, built nightly and by dispatch, never on main or a tag", () => {
     const j = android.apk;
     expect(needsOf(j!)).toEqual(["changes"]);
+    expect(evalIf(ifOf(j), PR("skipped", ""))).toBe(false);
     expect(evalIf(ifOf(j), PR("success", "false"))).toBe(false);
     expect(evalIf(ifOf(j), PR("success", "true"))).toBe(true);
     expect(evalIf(ifOf(j), PR("failure", ""))).toBe(true);
-    const [main, tag, group, dispatch] = NOT_PR.map(([, c]) => c);
-    expect(evalIf(ifOf(j), main!)).toBe(true);
-    expect(evalIf(ifOf(j), group!)).toBe(true);
+    const [main, tag, group, dispatch, nightly] = NOT_PR.map(([, c]) => c);
+    expect(evalIf(ifOf(j), main!)).toBe(false);
+    expect(evalIf(ifOf(j), group!)).toBe(false);
     expect(evalIf(ifOf(j), dispatch!)).toBe(true);
+    expect(evalIf(ifOf(j), nightly!)).toBe(true);
     expect(evalIf(ifOf(j), tag!)).toBe(false);
-    expect(evalIf(ifOf(j), { ...main!, "github.repository": "someone/ohmail" }), "a fork's own push").toBe(false);
+    expect(evalIf(ifOf(j), { ...nightly!, "github.repository": "someone/ohmail" }), "a fork's own nightly").toBe(false);
+    expect(load(ANDROID).on?.push, "a push to main starts no android run").toEqual({ tags: ["android-v*"] });
   });
 
   it("android's tag jobs do not ask `changes`", () => {
@@ -180,16 +206,17 @@ describe("every job after a platform build follows it, read as GitHub reads the 
   const TAG_ONLY = ["macos-signed-check"];
   const PR_RUN = (scope: string, ended: Record<string, JobResult> = {}) => runJobs(build, graphRun("pull_request", "refs/pull/7/merge", scope), { ended });
 
-  it("a push to main, a v* tag, a merge group and a dispatch run every job but `changes`, the check job on the tag alone", () => {
+  it("a v* tag, the nightly and a dispatch run every job but `changes`, the check job on the tag alone; main and a merge group the engine pair", () => {
     expect(ALL, "the parser read the signing jobs").toEqual(expect.arrayContaining(["macos", "macos-sign", "macos-signed-check", "linux-rpm-install"]));
-    for (const [label, event, ref] of NOT_PR_RUNS) {
+    for (const [label, event, ref, builds] of NOT_PR_RUNS) {
       const r = runJobs(build, graphRun(event, ref, ""));
       expect(r.changes, label).toBe("skipped");
-      expect(ran(r), label).toEqual(ALL.filter((id) => id !== "changes" && (ref.startsWith("refs/tags/v") || !TAG_ONLY.includes(id))));
+      expect(ran(r), label).toEqual(builds ? ALL.filter((id) => id !== "changes" && (ref.startsWith("refs/tags/v") || !TAG_ONLY.includes(id))) : ["engine", "engine-ui-smoke"]);
     }
   });
 
   it("on a pull request the signing job follows the macOS build, and the check job waits for a tag", () => {
+    expect(ran(runJobs(build, { ...graphRun("pull_request", "refs/pull/7/merge", "true"), ...LANE() })), "a maintainer's ordinary pull request").toEqual(["engine", "engine-ui-smoke"]);
     expect(ran(PR_RUN("true")), "a pull request that builds the desktop").toEqual(ALL.filter((id) => !TAG_ONLY.includes(id)));
     expect(ran(PR_RUN("false")), "a pull request that builds nothing").toEqual(["changes", "engine", "engine-ui-smoke"]);
     expect(ran(PR_RUN("", { changes: "failure" })), "an answer that could not be read").toEqual(ALL.filter((id) => id !== "changes" && !TAG_ONLY.includes(id)));
@@ -206,7 +233,7 @@ describe("every job after a platform build follows it, read as GitHub reads the 
       "macos-sign": { ...build["macos-sign"], if: undefined },
       "macos-signed-check": { ...build["macos-signed-check"], if: "${{ startsWith(github.ref, 'refs/tags/v') }}" },
     };
-    for (const [label, event, ref] of NOT_PR_RUNS) {
+    for (const [label, event, ref] of NOT_PR_RUNS.filter(([, , , builds]) => builds)) {
       const r = runJobs(head, graphRun(event, ref, ""));
       expect([r.macos, r["macos-sign"], r["macos-signed-check"]], label).toEqual(["success", "skipped", "skipped"]);
     }

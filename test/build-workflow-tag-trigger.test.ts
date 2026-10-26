@@ -29,10 +29,12 @@ const wf = yaml.load(readFileSync(WORKFLOW, "utf8")) as Workflow;
 
 /** The jobs a release ships from, read by the parser so the per-job case has something to read. */
 const JOBS = ["macos", "macos-sign", "macos-signed-check", "windows", "linux", "linux-arm64", "linux-rpm-install", "linux-flatpak", "engine", "engine-ui-smoke"];
-/** The tag push as the expressions see it: `changes` is skipped there, so its answer is empty. */
+/** The tag push as the expressions see it: `changes` is skipped there, so its answer is empty, and no pull request's door is read. */
 const atTag: IfContext = {
   "github.event_name": "push", "github.ref": "refs/tags/v1.2.3", "github.repository": "trafficflowhq/ohmail",
-  "needs.changes.outputs.desktop": "",
+  "needs.changes.outputs.desktop": "", "github.event.pull_request.head.repo.full_name": null, "github.head_ref": "",
+  "github.event.pull_request.user.type": null, "github.event.pull_request.author_association": null,
+  "github.actor": "a-maintainer", "github.triggering_actor": "a-maintainer",
 };
 
 describe("build.yml runs at the version tag", () => {
