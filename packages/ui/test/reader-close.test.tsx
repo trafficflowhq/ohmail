@@ -148,3 +148,42 @@ describe("the stylesheet gates the affordance and the ground to overlay widths",
     expect(decl(shown, "position"), "the exit must stay on screen while the thread scrolls").toBe("fixed");
   });
 });
+
+describe("the reading mark on <body> holds while the sheet stays open", () => {
+  // The shell re-renders on every keystroke in the reply editor and hands a fresh `onClose`
+  // each time; dropping and re-adding `reading` restarted the rail's and the shell's opacity
+  // transitions, so the window flickered while the person typed.
+  it("a re-render with a new onClose never takes the class off", () => {
+    const sheet = (onClose: () => void) => (
+      <Reader returnHint="to return" ariaLabel="Reading" closeLabel="Back" open onClose={onClose}>
+        <article className="msg">hello</article>
+      </Reader>
+    );
+    const { rerender } = render(sheet(() => {}));
+    expect(document.body.classList.contains("reading")).toBe(true);
+    const watch = new MutationObserver(() => {});
+    watch.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    for (let i = 0; i < 3; i += 1) rerender(sheet(() => {}));
+    const churn = watch.takeRecords();
+    watch.disconnect();
+    expect(churn, "the reading class was dropped and re-added on a re-render").toHaveLength(0);
+    expect(document.body.classList.contains("reading")).toBe(true);
+  });
+
+  it("Escape closes through the latest onClose, and closing takes the class off", () => {
+    const first = vi.fn();
+    const latest = vi.fn();
+    const sheet = (open: boolean, onClose: () => void) => (
+      <Reader returnHint="to return" ariaLabel="Reading" closeLabel="Back" open={open} onClose={onClose}>
+        <article className="msg">hello</article>
+      </Reader>
+    );
+    const { rerender } = render(sheet(true, first));
+    rerender(sheet(true, latest));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+    rerender(sheet(false, latest));
+    expect(document.body.classList.contains("reading")).toBe(false);
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject, type ReactNode } from "react";
+import { useEffect, useRef, type MutableRefObject, type ReactNode } from "react";
 import { Kbd } from "../primitives/Kbd.js";
 import "./reader.css";
 
@@ -59,18 +59,22 @@ export function Reader({
   closeLabel,
   sheetRef,
 }: ReaderProps) {
+  // Hosts pass a fresh `onClose` per render; keying the class on it re-ran the transitions per keystroke.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     document.body.classList.add("reading");
+    return () => document.body.classList.remove("reading");
+  }, [open]);
+  useEffect(() => {
+    if (!open || !closeOnEscape) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && closeOnEscape) onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.classList.remove("reading");
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open, onClose, closeOnEscape]);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, closeOnEscape]);
 
   if (!open) return null;
   return (

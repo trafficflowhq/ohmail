@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { typeInto } from "./fixtures/rich-editor-driver";
 
 /**
  * CMP-F6 — `r` WORKS WHEREVER THE PILL THAT ADVERTISES IT IS ON SCREEN.
@@ -128,6 +129,32 @@ describe("CMP-F6 — `r` opens the reply editor outside the Ohbox", () => {
       () => document.querySelector(".reader .reply[data-reply-for]") != null,
       "the reply editor inside the reader",
     );
+  }, 20000);
+
+  it("typing the reply in the Reads reader never takes the reading mark off <body>", async () => {
+    // Each keystroke re-renders the shell; a dropped-and-re-added `reading` class restarted the
+    // rail's and the shell's opacity transitions, and the window flickered while typing.
+    await shell();
+    await key("g");
+    await key("r");
+    await waitFor(() => document.querySelector(".view-reads") != null, "the Reads pile");
+    await key("j");
+    await key("r");
+    await waitFor(() => document.querySelector(".reader .reply .rte-surface") != null, "the editor in the reader");
+    const surface = document.querySelector<HTMLElement>(".reader .reply .rte-surface")!;
+    const churn: MutationRecord[] = [];
+    const watch = new MutationObserver((records) => churn.push(...records));
+    watch.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    for (const text of ["T", "Th", "Tha", "Than", "Thanks"]) {
+      await act(async () => {
+        typeInto(surface, text);
+      });
+    }
+    churn.push(...watch.takeRecords());
+    watch.disconnect();
+    expect(surface.textContent).toBe("Thanks");
+    expect(churn, "the reading class churned while typing").toHaveLength(0);
+    expect(document.body.classList.contains("reading")).toBe(true);
   }, 20000);
 
   it("inside Triage: `r` opens the editor in the reading column", async () => {
