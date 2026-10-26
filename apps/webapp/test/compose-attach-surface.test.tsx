@@ -12,6 +12,7 @@ import {
   composeAttachCapBinding,
 } from "../app/components/ComposeAttach";
 import { setActiveCatalog } from "../app/shell/locale";
+import { announceUpdate, resetUpdateStoreForTests, restartHold } from "../app/shell/app-update";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -175,6 +176,7 @@ beforeEach(() => {
 afterEach(async () => {
   await unmount();
   setActiveCatalog("en", null);
+  resetUpdateStoreForTests();
   vi.restoreAllMocks();
 });
 
@@ -368,5 +370,61 @@ describe("one rule, two declarations, and the small number says why", () => {
     expect(capText(".view-compose")).toContain("3,1 MB");
     expect(whyText(".view-compose")).toContain("Der Mailserver");
     expect(whyText(".view-compose")).not.toContain("Your mail server");
+  });
+});
+
+/**
+ * ═══ A DRAFT'S FILES HOLD A RESTART ═══════════════════════════════════════════════════════
+ *
+ * Attached files live in memory only: the scratch buffer and the account's draft row keep the
+ * text, never the bytes. A restart from the update line brought the draft back without its
+ * file, and sent as it stood it went without the attachment. While the compose or a reply holds
+ * a file, or a pick is still being read, the rail's Restart stands greyed and says why.
+ */
+describe("a draft's files hold a restart", () => {
+  const attach = async (scope: string): Promise<void> => {
+    const input = host!.querySelector<HTMLInputElement>(`${scope} .compose-attach input[type="file"]`)!;
+    const file = new File([new Uint8Array(2048)], "notes.txt", { type: "text/plain" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+  };
+  // FileReader delivers as a task.
+  const drain = async (): Promise<void> => {
+    for (let i = 0; i < 8; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+  const remove = async (scope: string): Promise<void> => {
+    await act(async () => { host!.querySelector<HTMLButtonElement>(`${scope} .compose-attach-remove`)!.click(); });
+  };
+  const restart = (): HTMLButtonElement => host!.querySelector<HTMLButtonElement>(".upd-line .ul-do")!;
+
+  it("in the compose: a file being read, then attached, greys the rail's Restart until it is removed", async () => {
+    await mountShell({ size: 25 * MIB });
+    await goCompose();
+    const pressed = vi.fn();
+    await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: pressed, key: "ready:0.30.6" }));
+    await attach(".view-compose");
+    expect(restartHold(), "a pick still being read did not hold the restart").toBe("files");
+    await drain();
+    expect(host!.querySelector(".view-compose .compose-attach-item"), "the file never attached").not.toBeNull();
+    expect(restartHold(), "an attached file did not hold the restart").toBe("files");
+    expect(restart().getAttribute("aria-disabled")).toBe("true");
+    expect(host!.querySelector(".upd-line")!.textContent).toContain(messages.update.lineAfterFiles);
+    await act(async () => { restart().click(); });
+    expect(pressed, "Restart dropped the draft's file").not.toHaveBeenCalled();
+
+    await remove(".view-compose");
+    expect(restartHold()).toBeNull();
+    expect(restart().getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("in a reply: its files hold the restart while the editor holds them", async () => {
+    await mountShell({ size: 25 * MIB });
+    await openReply();
+    await attach(".reply");
+    await drain();
+    expect(host!.querySelector(".reply .compose-attach-item"), "the file never attached").not.toBeNull();
+    expect(restartHold()).toBe("files");
+    await remove(".reply");
+    expect(restartHold()).toBeNull();
   });
 });

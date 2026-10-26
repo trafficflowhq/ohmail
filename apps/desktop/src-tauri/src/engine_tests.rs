@@ -4379,6 +4379,13 @@ fn every_granted_permission_is_declared_by_the_build() {
     // Nothing missing must also mean nothing rewritten: the string tauri receives is the string
     // `engine.rs` wrote.
     assert_eq!(grant, LOCAL_ENGINE_CAPABILITY);
+    // Settings' install switch and the window's "a send waits" are granted and declared.
+    for permission in ["allow-update-set-auto", "allow-update-hold"] {
+        assert!(grant.contains(&format!("\"{permission}\"")), "{permission} is not granted");
+    }
+    for command in ["update_set_auto", "update_hold"] {
+        assert!(DECLARED_WINDOW_COMMANDS.split(',').any(|c| c == command), "{command} is not declared");
+    }
 }
 
 /// A GRANT THE MANIFEST CANNOT RESOLVE LOSES THAT PERMISSION AND NOTHING ELSE — named to the

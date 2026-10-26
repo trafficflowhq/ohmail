@@ -1,0 +1,5 @@
+### Desktop updates now install on the next restart, and the sidebar says when one is ready
+
+ohmail on the desktop now installs a verified update when you quit it, instead of asking first; the AppImage also installs it when it next starts. Where replacing ohmail needs your password, the update waits for Restart instead. A short line at the foot of the sidebar, above Command, says when an update is ready, with Restart to install it at once. An open draft's text is saved first, and Restart waits while a message is still being sent or a draft holds attached files. An update that could not install by itself is said in the same line, with Retry, and is not tried again at every quit. To be asked before every update again, turn off "Install updates automatically" in Settings → About → Updates.
+
+The strip across the top of the window is gone: in the browser, the offer to reload into a newer ohmail moved into the same line. The AppImage now replaces itself with a single rename, so an update interrupted by a crash or a power cut can no longer leave an app that does not start. Installs updated by a package manager, Flatpak or the App Store are unchanged.

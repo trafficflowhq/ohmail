@@ -1587,7 +1587,7 @@ fn an_install_that_cannot_update_itself_says_so_in_every_stage() {
     ] {
         let sentence = kind.menu_sentence().expect("this kind cannot install");
         for flow in &stages {
-            let (label, enabled) = menu_text(kind, flow);
+            let (label, enabled) = menu_text(kind, flow, false);
             assert_eq!(label, sentence, "{}: the bar said something else", kind.as_str());
             assert!(!enabled, "{}: the item was pressable", kind.as_str());
         }
@@ -1605,7 +1605,7 @@ fn an_install_that_cannot_update_itself_says_so_in_every_stage() {
     // flow's own enablement, in every stage.
     for flow in &stages {
         assert_eq!(
-            menu_text(InstallKind::AppImage, flow),
+            menu_text(InstallKind::AppImage, flow, false),
             (flow.menu_label(), flow.menu_enabled()),
         );
     }
@@ -2122,6 +2122,19 @@ fn an_exit_raised_while_an_install_writes_is_prevented_and_asked_again_by_the_qu
     assert_eq!(run(None), (0, vec![]), "an exit was held after the install returned");
 }
 
+/// A RESTART'S EXIT IS NOTED ON THE FENCE, for the install at the loop's last event: Tauri starts
+/// the app again after it, and Windows' installer must too. A quit's never is.
+#[test]
+fn a_restart_is_noted_on_the_fence_and_a_quit_is_not() {
+    let fence = fence_for_tests(Duration::from_secs(30));
+    for code in [None, Some(0), Some(1)] {
+        hold_the_exit(fence, code, &Prevented(Cell::new(0)), |_| {});
+        assert!(!fence.restarts(), "{code:?} was noted as a restart");
+    }
+    hold_the_exit(fence, Some(tauri::RESTART_EXIT_CODE), &Prevented(Cell::new(0)), |_| {});
+    assert!(fence.restarts(), "a restart's exit was not noted");
+}
+
 /// THE LOOP'S LAST EVENT AS IT RUNS: `at_exit` itself, on a fence of this test's own, waits for the
 /// install and then lets none start.
 #[test]
@@ -2198,7 +2211,7 @@ fn the_install_holds_the_fence_for_its_own_call_and_no_longer() {
 /// then. The app's own fence, held here for the length of the case and released by it.
 #[test]
 fn the_window_is_told_closing_only_while_a_quit_waits_on_a_writing_install() {
-    let closing = || told(&Flow::default(), None, InstallKind::AppImage)["closing"].clone();
+    let closing = || told(&Flow::default(), None, InstallKind::AppImage, Standing::default())["closing"].clone();
     assert_eq!(closing(), serde_json::json!(false));
     let writing = FENCE.begin_install().expect("the app's fence is open in the tests");
     assert_eq!(closing(), serde_json::json!(false), "closing with no quit asked");
@@ -2367,6 +2380,10 @@ pub(crate) struct StubPayload {
     fetched: AtomicUsize,
     /// The bytes each install was handed.
     handed: std::sync::Mutex<Vec<Vec<u8>>>,
+    /// The bytes each install at quit was handed, and whether it was told to start the app again.
+    quit_handed: std::sync::Mutex<Vec<(Vec<u8>, bool)>>,
+    /// What reading the staged release back answers.
+    staged: std::sync::Mutex<Option<Result<Vec<u8>, String>>>,
     /// Does preparing succeed? `false` is a disk that cannot take the installer: no hook runs.
     prepares: bool,
     start: Start,
@@ -2379,6 +2396,8 @@ impl StubPayload {
             answers: std::sync::Mutex::new(Vec::new()),
             fetched: AtomicUsize::new(0),
             handed: std::sync::Mutex::new(Vec::new()),
+            quit_handed: std::sync::Mutex::new(Vec::new()),
+            staged: std::sync::Mutex::new(None),
             prepares,
             start,
         }
@@ -2387,6 +2406,19 @@ impl StubPayload {
     pub(crate) fn answering(self, answers: Vec<Result<Vec<u8>, String>>) -> StubPayload {
         *self.answers.lock().unwrap() = answers;
         self
+    }
+
+    fn staged(self, answer: Result<Vec<u8>, String>) -> StubPayload {
+        *self.staged.lock().unwrap() = Some(answer);
+        self
+    }
+
+    fn quit_handed(&self) -> Vec<Vec<u8>> {
+        self.quit_handed.lock().unwrap().iter().map(|(bytes, _)| bytes.clone()).collect()
+    }
+
+    fn quit_restarts(&self) -> Vec<bool> {
+        self.quit_handed.lock().unwrap().iter().map(|(_, restart)| *restart).collect()
     }
 
     pub(crate) fn fetches(&self) -> usize {
@@ -2419,6 +2451,18 @@ impl Payload for StubPayload {
             Start::Replaces => Ok(()),
             Start::Exits => std::process::exit(0),
         }
+    }
+
+    fn install_on_quit(&self, bytes: &[u8], restart: bool) -> Result<(), String> {
+        if !self.prepares {
+            return Err("the installer could not be written".into());
+        }
+        self.quit_handed.lock().unwrap().push((bytes.to_vec(), restart));
+        Ok(())
+    }
+
+    fn read_staged(&self) -> Result<Vec<u8>, String> {
+        self.staged.lock().unwrap().clone().unwrap_or_else(|| Err("nothing staged".into()))
     }
 }
 
@@ -2720,4 +2764,384 @@ fn our_signers_trusted_comment_names_no_version_field_and_the_signature_still_ve
             "{switch} is on in tauri.conf.json"
         );
     }
+}
+
+/* ── INSTALLED AT THE NEXT RESTART ─────────────────────────────────────────────────────────────
+ *
+ * With Settings' switch on (the default) a verified release goes in when the app quits, or at the
+ * next launch for an AppImage staged beside itself. Never while a send waits, never through the
+ * fence the loop's last event closed, never fetched at quit, and a staged release is verified
+ * again before it is used. */
+
+use super::{
+    at_quit, auto_at, failure_stands, keep_quit_outcome, launch_apply, press_now, quit_install, report_with,
+    standing_of, verify_staged, AtLaunch, AtQuit, AutoAt, Held, Launch, Policy, QuitFacts, QuitInstall, SendHold,
+    Skip, Standing, HOLD_FOR,
+};
+use crate::appimage_stage::{self, tests::Bed, Failure, PolicyRead};
+
+/// Every fact a quit reads, each allowing the install.
+fn quitting() -> QuitFacts {
+    QuitFacts {
+        ready: true,
+        payload: true,
+        auto: true,
+        failed_before: false,
+        send_waits: false,
+        self_applies: true,
+        replaceable: true,
+        session_ending: false,
+        busy: false,
+        restarting: false,
+    }
+}
+
+#[test]
+fn the_install_at_quit_goes_in_only_when_every_fact_allows_it() {
+    assert_eq!(quit_install(quitting()), QuitInstall::Install);
+    let rows = [
+        (QuitFacts { busy: true, ..quitting() }, Skip::Busy),
+        (QuitFacts { self_applies: false, ..quitting() }, Skip::CannotSelfApply),
+        (QuitFacts { ready: false, ..quitting() }, Skip::NotReady),
+        (QuitFacts { payload: false, ..quitting() }, Skip::NoPayload),
+        (QuitFacts { auto: false, ..quitting() }, Skip::AskFirst),
+        // Its install at quit or launch failed once: it waits for a press, so a quit never loops.
+        (QuitFacts { failed_before: true, ..quitting() }, Skip::FailedBefore),
+        (QuitFacts { send_waits: true, ..quitting() }, Skip::SendWaits),
+        (QuitFacts { replaceable: false, ..quitting() }, Skip::NeedsPermission),
+        // Windows ending the session: tao hands WM_ENDSESSION over as the loop's exit, and an
+        // installer started then can be cut off half-way.
+        (QuitFacts { session_ending: true, ..quitting() }, Skip::SessionEnding),
+    ];
+    for (facts, skip) in rows {
+        assert_eq!(quit_install(facts), QuitInstall::Skip(skip), "{facts:?}");
+    }
+    let names: Vec<&str> = rows.iter().map(|(_, skip)| skip.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "busy",
+            "cannotSelfApply",
+            "notReady",
+            "noPayload",
+            "askFirst",
+            "failedBefore",
+            "sendWaits",
+            "needsPermission",
+            "sessionEnding"
+        ]
+    );
+}
+
+fn holding(payload: StubPayload, hook: Arc<InstallHook>, held: Held) -> std::sync::Mutex<Option<Waiting<StubPayload>>> {
+    std::sync::Mutex::new(Some(Waiting::holding(payload, held, hook)))
+}
+
+#[test]
+fn the_install_at_quit_runs_past_the_closed_fence_and_never_fetches() {
+    let door = Arc::new(StubDoor::default());
+    let hook = Arc::new(InstallHook::new(door.clone()));
+    let pending = waiting(StubPayload::new(&hook, true, Start::Replaces), hook, b"v2");
+    let (latch, fence) = (AtomicBool::new(false), fence_for_tests(Duration::from_secs(30)));
+    fence.close_for_exit();
+    assert!(matches!(attempt(&latch, fence, &pending, |_| {}), Attempt::Closed), "a press got past the closed fence");
+
+    assert_eq!(at_quit(&latch, &pending, quitting()), AtQuit::Installed);
+
+    let held = pending.lock().unwrap();
+    let payload = &held.as_ref().unwrap().payload;
+    assert_eq!(payload.quit_handed(), vec![b"v2".to_vec()], "the quit did not install the verified bytes");
+    assert_eq!(payload.quit_restarts(), vec![false], "a quit started the app again");
+    assert!(payload.handed().is_empty(), "the quit ran the press's install, which starts the app again");
+    assert_eq!(payload.fetches(), 0, "the quit fetched");
+    assert!(latch.load(Ordering::SeqCst), "the latch let go while the app goes");
+    assert_eq!(door.resumes.load(Ordering::SeqCst), 0, "the quit started the engine again");
+}
+
+#[test]
+fn the_install_at_quit_skips_a_busy_latch_and_fetches_no_release_it_does_not_hold() {
+    let hook = Arc::new(InstallHook::new(Arc::new(StubDoor::default())));
+    let pending = waiting(StubPayload::new(&hook, true, Start::Replaces), Arc::clone(&hook), b"v2");
+    assert_eq!(at_quit(&AtomicBool::new(true), &pending, quitting()), AtQuit::Skipped(Skip::Busy));
+    // An installer that did not start took the bytes; the quit fetches nothing to replace them.
+    let gone = holding(StubPayload::new(&hook, true, Start::Replaces), hook, Held::Nothing);
+    let latch = AtomicBool::new(false);
+    assert_eq!(at_quit(&latch, &gone, quitting()), AtQuit::Skipped(Skip::NoPayload));
+    assert!(!latch.load(Ordering::SeqCst), "a quit that installed nothing kept the latch");
+    for slot in [&pending, &gone] {
+        let held = slot.lock().unwrap();
+        let payload = &held.as_ref().unwrap().payload;
+        assert_eq!(payload.fetches(), 0);
+        assert!(payload.quit_handed().is_empty());
+    }
+}
+
+#[test]
+fn a_staged_release_is_read_back_for_the_quit_and_one_that_is_gone_installs_nothing() {
+    let hook = Arc::new(InstallHook::new(Arc::new(StubDoor::default())));
+    let gone = StubPayload::new(&hook, true, Start::Replaces).staged(Err("no staged release".into()));
+    let pending = holding(gone, Arc::clone(&hook), Held::Staged);
+    assert_eq!(at_quit(&AtomicBool::new(false), &pending, quitting()), AtQuit::Failed("no staged release".into()));
+    assert!(pending.lock().unwrap().as_ref().unwrap().payload.quit_handed().is_empty(), "an installer was handed nothing read");
+
+    let verified = StubPayload::new(&hook, true, Start::Replaces).staged(Ok(b"v2, read back".to_vec()));
+    let pending = holding(verified, hook, Held::Staged);
+    assert_eq!(at_quit(&AtomicBool::new(false), &pending, quitting()), AtQuit::Installed);
+    assert_eq!(pending.lock().unwrap().as_ref().unwrap().payload.quit_handed(), vec![b"v2, read back".to_vec()]);
+}
+
+#[test]
+fn while_a_send_waits_no_press_and_no_menu_item_installs_and_the_hold_lapses() {
+    let flow = ready();
+    assert_eq!(press_now(&flow, false), Press::Restart);
+    assert_eq!(press_now(&flow, true), Press::Nothing, "a press installs while a send waits");
+    assert_eq!(menu_text(InstallKind::AppImage, &flow, true), ("Restart to Install 0.9.2".to_string(), false));
+    assert!(menu_text(InstallKind::AppImage, &flow, false).1);
+    // A check installs nothing, so the hold leaves it alone.
+    assert_eq!(press_now(&Flow::default(), true), Press::Check);
+
+    let hold = SendHold::default();
+    let at = Instant::now();
+    assert!(!hold.held(at));
+    hold.set(true, at);
+    assert!(hold.held(at + HOLD_FOR - Duration::from_millis(1)));
+    assert!(!hold.held(at + HOLD_FOR), "a window that went away holds the install for ever");
+    hold.set(false, at);
+    assert!(!hold.held(at), "the send's end did not let go");
+}
+
+#[test]
+fn the_window_is_told_the_switch_the_hold_and_whether_the_quit_installs() {
+    let on = Standing { auto_install: true, held: false, installs_on_quit: true, auto_at: Some(AutoAt::Quit), ..Standing::default() };
+    let seen = report_with(&ready(), None, "0.9.1", InstallKind::AppImage, on);
+    assert_eq!(seen["autoInstall"], serde_json::json!(true));
+    assert_eq!(seen["held"], serde_json::json!(false));
+    assert_eq!(seen["installsOnQuit"], serde_json::json!(true));
+    assert_eq!(seen["canInstall"], serde_json::json!(true));
+    assert_eq!(seen["autoInstallsAt"], serde_json::json!("quit"));
+    assert_eq!(seen["installFailedAt"], serde_json::Value::Null);
+
+    let held = report_with(&ready(), None, "0.9.1", InstallKind::AppImage, Standing { held: true, installs_on_quit: false, ..on });
+    assert_eq!(held["held"], serde_json::json!(true));
+    assert_eq!(held["canInstall"], serde_json::json!(false), "the pane offers Restart while a send waits");
+    assert_eq!(held["state"], serde_json::json!("ready"));
+
+    let asks = report_with(&ready(), None, "0.9.1", InstallKind::AppImage, Standing::default());
+    assert_eq!(asks["autoInstall"], serde_json::json!(false));
+    assert_eq!(asks["installsOnQuit"], serde_json::json!(false));
+    assert_eq!(asks["autoInstallsAt"], serde_json::Value::Null);
+}
+
+/* WHAT SETTINGS SAYS UNDER THE SWITCH is what the shell will do on this copy: only an AppImage that
+   can stage beside itself installs at its next start; the Windows setup and the macOS app install
+   as they quit; where replacing the app needs a password, nothing goes in without Restart. */
+#[test]
+fn the_switch_says_when_this_copy_installs_and_never_more() {
+    use InstallKind::*;
+    assert_eq!(auto_at(AppImage, true, true), Some(AutoAt::QuitOrLaunch));
+    assert_eq!(auto_at(AppImage, true, false), Some(AutoAt::Quit), "an AppImage that cannot stage");
+    assert_eq!(auto_at(WindowsSetup, true, true), Some(AutoAt::Quit), "the Windows setup installs at a start");
+    assert_eq!(auto_at(MacBundle, true, true), Some(AutoAt::Quit), "the macOS app installs at a start");
+    assert_eq!(auto_at(MacBundle, false, true), Some(AutoAt::Restart));
+    assert_eq!(auto_at(AppImage, false, true), Some(AutoAt::Restart));
+    for kind in [Deb, Rpm, LinuxPackage, Flatpak, MacAppStore, Unpackaged] {
+        assert_eq!(auto_at(kind, true, true), None, "{}", kind.as_str());
+    }
+    let names: Vec<&str> = [AutoAt::QuitOrLaunch, AutoAt::Quit, AutoAt::Restart].iter().map(|at| at.as_str()).collect();
+    assert_eq!(names, ["quitOrLaunch", "quit", "restart"]);
+}
+
+/* ── AN AUTOMATIC INSTALL THAT FAILS IS SAID, AND NEVER LOOPS ─────────────────────────────────────
+ *
+ * A quit or a launch installs with no window on screen, so a failure there used to be a log line
+ * only: the next launch fetched the release again, promised the quit again, and the next quit
+ * failed the same way, every session. Now it is kept beside the policy file: the next launch's
+ * report names it (the window's line says so, with Retry through the press, which speaks), no quit
+ * tries that release by itself again, and a newer release or an install ends it. */
+
+#[test]
+fn an_install_at_quit_that_fails_is_kept_and_the_next_report_says_so_and_promises_no_quit() {
+    let bed = Bed::new("quit-failed");
+    let hook = Arc::new(InstallHook::new(Arc::new(StubDoor::default())));
+    let pending = waiting(StubPayload::new(&hook, false, Start::Replaces), hook, b"v2");
+    let outcome = at_quit(&AtomicBool::new(false), &pending, quitting());
+    assert_eq!(outcome, AtQuit::Failed("the installer could not be written".into()));
+
+    keep_quit_outcome(&bed.data, "0.9.2", &outcome, 1_761_000_000_000);
+    let kept = appimage_stage::read_failure(&bed.data).expect("the failure was only logged");
+    assert_eq!((kept.version.as_str(), kept.at.as_str()), ("0.9.2", "quit"));
+
+    // The next launch, the same release on offer again.
+    let failed = Some(&kept).filter(|failed| failure_stands(failed, "0.9.1", Some("0.9.2")));
+    let standing = standing_of(true, quitting(), failed, Some(AutoAt::QuitOrLaunch));
+    let seen = report_with(&ready(), None, "0.9.1", InstallKind::AppImage, standing);
+    assert_eq!(seen["installsOnQuit"], serde_json::json!(false), "the quit is promised again");
+    assert_eq!(seen["installFailedAt"], serde_json::json!(1_761_000_000_000u64));
+    assert_eq!(seen["canInstall"], serde_json::json!(true), "Retry has no press to go through");
+    assert_eq!(quit_install(QuitFacts { failed_before: true, ..quitting() }), QuitInstall::Skip(Skip::FailedBefore));
+
+    // An install ends it.
+    keep_quit_outcome(&bed.data, "0.9.2", &AtQuit::<String>::Installed, 1);
+    assert_eq!(appimage_stage::read_failure(&bed.data), None);
+}
+
+#[test]
+fn a_kept_failure_stands_only_for_its_release_and_only_while_it_is_newer_than_the_one_running() {
+    let failure = Failure { version: "0.9.2".into(), error_class: "Io".into(), at: "quit".into(), at_unix_ms: 1 };
+    assert!(failure_stands(&failure, "0.9.1", None), "at launch, before the check");
+    assert!(failure_stands(&failure, "0.9.1", Some("0.9.2")));
+    assert!(!failure_stands(&failure, "0.9.1", Some("0.9.3")), "a newer release is on offer");
+    assert!(!failure_stands(&failure, "0.9.2", None), "it went in after all");
+    assert!(!failure_stands(&failure, "0.9.3", None));
+    assert!(!failure_stands(&Failure { version: "garbled".into(), ..failure.clone() }, "0.9.1", None));
+}
+
+#[test]
+fn the_switch_is_on_without_a_file_and_off_when_it_says_ask_or_cannot_be_read() {
+    assert_eq!(Policy::read(&PolicyRead::Missing), Policy::Auto);
+    assert_eq!(Policy::read(&PolicyRead::Text("auto\n".into())), Policy::Auto);
+    assert_eq!(Policy::read(&PolicyRead::Text("ask\n".into())), Policy::Ask);
+    assert_eq!(Policy::read(&PolicyRead::Text("yes please".into())), Policy::Ask);
+    assert_eq!(Policy::read(&PolicyRead::Unreadable), Policy::Ask);
+    let bed = Bed::new("policy-switch");
+    for policy in [Policy::Ask, Policy::Auto] {
+        appimage_stage::write_policy(&bed.data, policy.word()).unwrap();
+        assert_eq!(Policy::read(&appimage_stage::read_policy(&bed.data)), policy);
+    }
+}
+
+#[test]
+fn a_staged_release_verifies_only_as_signed_newer_and_for_this_asset() {
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    let (sig, key) = (versioned_sig_b64(), shipped_pubkey());
+    assert_eq!(verify_staged(&payload, &sig, &key, "0.13.2", "0.13.3", ASSET), Some(semver::Version::parse("0.13.3").unwrap()));
+    assert_eq!(verify_staged(&payload, &sig, &key, "0.13.3", "0.13.3", ASSET), None, "the version running");
+    assert_eq!(verify_staged(&payload, &sig, &key, "0.14.0", "0.13.3", ASSET), None, "a downgrade");
+    assert_eq!(verify_staged(&payload, &sig, &key, "0.13.2", "0.13.4", ASSET), None, "a record that names another version");
+    assert_eq!(verify_staged(&payload, &sig, &key, "0.13.2", "0.13.3", "ohmail-linux-aarch64.AppImage"), None, "another asset");
+    let mut flipped = payload.clone();
+    flipped[0] ^= 0x01;
+    assert_eq!(verify_staged(&flipped, &sig, &key, "0.13.2", "0.13.3", ASSET), None, "one flipped byte");
+    let legacy = fs::read_to_string(fixtures_dir().join("payload.bin.sig")).unwrap();
+    assert_eq!(verify_staged(&payload, &legacy, &key, "0.13.2", "0.13.3", ASSET), None, "no signed version");
+    assert_eq!(verify_staged(&payload, &sig, "not a key", "0.13.2", "0.13.3", ASSET), None);
+}
+
+/// A bed with the fixture release staged beside its image, signed as 0.13.3 for this asset.
+fn staged_bed(name: &str) -> Bed {
+    let bed = Bed::new(name);
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    appimage_stage::stage(&bed.data, &bed.record("0.13.3", &versioned_sig_b64()), &payload).unwrap();
+    bed
+}
+
+fn at_launch(bed: &Bed, running: &str, policy: Policy, asset: &str) -> AtLaunch {
+    let key = shipped_pubkey();
+    launch_apply(&Launch { dir: &bed.data, image: &bed.image, running, pubkey: &key, policy, expected_asset: asset })
+}
+
+#[test]
+fn a_launch_applies_a_staged_release_only_when_everything_matches() {
+    let bed = staged_bed("launch-applies");
+    assert_eq!(at_launch(&bed, "0.13.2", Policy::Auto, ASSET), AtLaunch::Applied(semver::Version::parse("0.13.3").unwrap()));
+    assert_eq!(fs::read(&bed.image).unwrap(), fs::read(fixtures_dir().join("payload.bin")).unwrap());
+    assert_eq!(appimage_stage::read_record(&bed.data), None, "the record outlived its apply");
+    // The copy it started, on the version it installed, finds nothing to do.
+    assert_eq!(at_launch(&bed, "0.13.3", Policy::Auto, ASSET), AtLaunch::Nothing);
+}
+
+/// The launch refuses, the image is the old one byte for byte, and nothing is left to retry.
+fn refused(bed: &Bed, running: &str, policy: Policy, asset: &str) {
+    let outcome = at_launch(bed, running, policy, asset);
+    assert!(matches!(outcome, AtLaunch::Refused(_)), "{outcome:?}");
+    assert_eq!(fs::read(&bed.image).unwrap(), b"the old image", "the image was touched");
+    assert_eq!(appimage_stage::read_record(&bed.data), None, "the record is kept for the next launch");
+    assert!(!appimage_stage::staged_path(&bed.image).unwrap().exists(), "the staged release is kept");
+    assert_eq!(appimage_stage::read_failure(&bed.data), None, "a refusal was kept as a failed install");
+}
+
+/// The launch could not put the release in: kept for the line, the staged release discarded.
+fn failed_at_launch(bed: &Bed, reason: &'static str) {
+    assert_eq!(at_launch(bed, "0.13.2", Policy::Auto, ASSET), AtLaunch::Refused(reason));
+    let kept = appimage_stage::read_failure(&bed.data).expect("the failed launch install was only logged");
+    assert_eq!((kept.version.as_str(), kept.at.as_str()), ("0.13.3", "launch"));
+    assert!(kept.at_unix_ms > 0);
+    assert_eq!(appimage_stage::read_record(&bed.data), None, "the record is kept for the next launch to retry");
+}
+
+#[test]
+fn a_launch_that_cannot_put_the_release_in_keeps_the_failure_for_the_line() {
+    // The staged release is gone.
+    let gone = staged_bed("launch-missing");
+    fs::remove_file(appimage_stage::staged_path(&gone.image).unwrap()).unwrap();
+    failed_at_launch(&gone, "missing");
+    assert_eq!(fs::read(&gone.image).unwrap(), b"the old image");
+
+    // The rename over the image fails: here a folder holds its name.
+    let stuck = staged_bed("launch-not-applied");
+    fs::remove_file(&stuck.image).unwrap();
+    fs::create_dir(&stuck.image).unwrap();
+    fs::write(stuck.image.join("kept"), b"kept").unwrap();
+    failed_at_launch(&stuck, "notApplied");
+    assert_eq!(fs::read(stuck.image.join("kept")).unwrap(), b"kept");
+}
+
+#[test]
+fn a_launch_refuses_every_mismatch_and_leaves_the_image_untouched() {
+    refused(&staged_bed("launch-equal"), "0.13.3", Policy::Auto, ASSET);
+    refused(&staged_bed("launch-older"), "0.14.0", Policy::Auto, ASSET);
+    refused(&staged_bed("launch-switch-off"), "0.13.2", Policy::Ask, ASSET);
+    refused(&staged_bed("launch-other-asset"), "0.13.2", Policy::Auto, "ohmail-linux-aarch64.AppImage");
+
+    let flipped = staged_bed("launch-flipped");
+    let staged = appimage_stage::staged_path(&flipped.image).unwrap();
+    let mut bytes = fs::read(&staged).unwrap();
+    bytes[0] ^= 0x01;
+    fs::write(&staged, bytes).unwrap();
+    refused(&flipped, "0.13.2", Policy::Auto, ASSET);
+
+    // A record written for another copy of the app: that copy's release is not this image's.
+    let elsewhere = staged_bed("launch-other-image");
+    let other = elsewhere.root.join("Elsewhere").join("ohmail-linux-x86_64.AppImage");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    fs::write(&other, b"another copy").unwrap();
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    let record = appimage_stage::Record { image: other.clone(), version: "0.13.3".into(), signature: versioned_sig_b64() };
+    appimage_stage::stage(&elsewhere.data, &record, &payload).unwrap();
+    refused(&elsewhere, "0.13.2", Policy::Auto, ASSET);
+    assert_eq!(fs::read(&other).unwrap(), b"another copy", "the other copy was replaced");
+}
+
+#[test]
+fn the_staged_release_is_found_beside_the_image_and_never_where_a_record_points() {
+    let bed = Bed::new("launch-record-path");
+    let payload = fs::read(fixtures_dir().join("payload.bin")).unwrap();
+    let planted = bed.root.join("planted.AppImage");
+    fs::write(&planted, &payload).unwrap();
+    let record = serde_json::json!({
+        "image": bed.image.to_str().unwrap(),
+        "version": "0.13.3",
+        "signature": versioned_sig_b64(),
+        "staged": planted.to_str().unwrap(),
+    });
+    fs::write(bed.data.join(appimage_stage::RECORD_FILE), record.to_string()).unwrap();
+
+    let outcome = at_launch(&bed, "0.13.2", Policy::Auto, ASSET);
+
+    assert!(matches!(outcome, AtLaunch::Refused(_)), "{outcome:?}");
+    assert_eq!(fs::read(&bed.image).unwrap(), b"the old image");
+    assert_eq!(fs::read(&planted).unwrap(), payload, "a file the record named was moved");
+}
+
+/// THE RELAUNCH CARD'S RESTART IS AN EXIT TOO: the release goes in, and the installer is told to start
+/// the app again, so the relaunch somebody asked for still happens (Windows' installer otherwise leaves
+/// the app closed). A plain quit is never told to.
+#[test]
+fn an_install_at_an_exit_that_restarts_starts_the_app_again() {
+    let hook = Arc::new(InstallHook::new(Arc::new(StubDoor::default())));
+    let pending = waiting(StubPayload::new(&hook, true, Start::Replaces), hook, b"v2");
+    let restarting = QuitFacts { restarting: true, ..quitting() };
+    assert_eq!(quit_install(restarting), QuitInstall::Install, "a restart's exit decides like a quit");
+    assert_eq!(at_quit(&AtomicBool::new(false), &pending, restarting), AtQuit::Installed);
+    assert_eq!(pending.lock().unwrap().as_ref().unwrap().payload.quit_restarts(), vec![true]);
 }

@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { RailNav } from "@ohmail/ui";
-import { DesktopCta } from "../app/shell/AppShell";
+import { NextIntlClientProvider } from "next-intl";
+import en from "../messages/en.json";
+import { DesktopCta, ShellRail } from "../app/shell/AppShell";
+import { announceUpdate, announceVersion, resetUpdateStoreForTests } from "../app/shell/app-update";
 
 /**
  * ═══ THE RAIL'S FOOT HOLDS NO EMPTY BOX (owner report 2026-08-29, bug 3) ════════════════════
@@ -39,6 +42,7 @@ afterEach(async () => {
   }
   roots.length = 0;
   document.body.innerHTML = "";
+  resetUpdateStoreForTests();
 });
 
 async function mount(node: React.ReactElement): Promise<HTMLElement> {
@@ -66,6 +70,17 @@ describe("the rail's footer box exists only when something is in it", () => {
     const kids = [...c.querySelector("nav")!.children].map((e) => e.className);
     expect(kids).toEqual(["rail-scroll", "rail-sync-slot", "rail-dock", "rail-mail"]);
     expect(c.querySelector(".rail-scroll [data-rail-id=\"ohbox\"]")).not.toBeNull();
+  });
+
+  it("the update line has its own slot between the sync slot and the dock, and none when silent", async () => {
+    const base = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [] };
+    const foot = { sync: h("span", null, "Sending"), dock: h("span", null, "dock"), footer: h("span", null, "ohmail 0.30.5") };
+    const c = await mount(h(RailNav, { ...base, ...foot, update: h("div", { className: "upd-line" }, "0.30.6 ready") }));
+    const kids = [...c.querySelector("nav")!.children].map((e) => e.className);
+    expect(kids).toEqual(["rail-scroll", "rail-sync-slot", "rail-update", "rail-dock", "rail-mail"]);
+    expect(c.querySelector(".rail-update")!.textContent).toBe("0.30.6 ready");
+    const silent = await mount(h(RailNav, { ...base, ...foot }));
+    expect(silent.querySelector(".rail-update"), "an empty slot would hold a band under the sync line").toBeNull();
   });
 
   it("…and a real footer still gets its box (the control case)", async () => {
@@ -149,5 +164,21 @@ describe("DesktopCta is controlled — dismissal is the parent's fact", () => {
     // Still rendered: a self-hiding CTA is exactly the shape that left the empty box behind —
     // the PARENT withdraws the footer (and with it the box), never the child alone.
     expect(c.querySelector(".rail-desktop-cta"), "DesktopCta hid itself — the padded box is back").not.toBeNull();
+  });
+});
+
+describe("the desktop rail's foot names the version it runs, and the line stands above Command", () => {
+  it("the shell's version is the foot line; a tab with none keeps no box; an offer takes the slot", async () => {
+    const props = { composeLabel: "Compose", mailboxesLabel: "Mailboxes", ariaLabel: "Main", groups: [] };
+    const c = await mount(h(NextIntlClientProvider, { locale: "en", messages: en as never, children: h(ShellRail, props) }));
+    expect(c.querySelector(".rail-mail"), "a tab with no version kept a box").toBeNull();
+    expect(c.querySelector(".rail-update")).toBeNull();
+
+    await act(async () => announceVersion("0.30.5"));
+    expect(c.querySelector(".rail-mail .rail-version")!.textContent).toBe("ohmail 0.30.5");
+
+    await act(async () => announceUpdate({ kind: "ready", version: "0.30.6", act: () => {}, key: "ready:0.30.6" }));
+    expect(c.querySelector(".rail-update .upd-line")!.textContent).toContain("0.30.6 ready");
+    expect(c.querySelector(".rail-mail .rail-version")!.textContent).toBe("ohmail 0.30.5");
   });
 });

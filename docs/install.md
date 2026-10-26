@@ -215,6 +215,19 @@ this tree before it may install. There is no other phone-home.
 `scripts/verify-feeds.mjs` checks both feeds offline; CI runs it on every
 release.
 
+A verified update installs when you quit the app; the AppImage also installs it
+at its next start. A line at the foot of the sidebar says when one is ready,
+with Restart to install it at once, and nothing installs while a message is
+still being sent or a draft holds attached files. To be asked first instead,
+turn off "Install updates automatically" in Settings → About → Updates. The
+AppImage keeps the update beside itself until then, checks it again, and
+replaces itself with a single rename; the Windows setup and the macOS app hold
+it until they quit. Where replacing the app would need your password, the
+update waits for Restart. Windows starts no installer while it is shutting
+down, so an update still waiting then installs at a later quit. An update that
+could not install by itself is said in the sidebar line, with Retry, and is not
+tried again at every quit.
+
 A release becomes *Latest* only once those feeds are on it and answering: the
 workflow that signs them marks a new release a prerelease until all three have
 been read back from the address your app uses. If they never attach,

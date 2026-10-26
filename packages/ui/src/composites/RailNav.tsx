@@ -132,6 +132,12 @@ export interface RailNavProps {
    */
   sync?: ReactNode;
   /**
+   * The app's own update line (a newer ohmail: ready, downloading, failed), between the sync line
+   * and the dock: app chrome, above Command. `undefined` when there is nothing to say, so the rail
+   * keeps no empty band.
+   */
+  update?: ReactNode;
+  /**
    * The host's notice block (who organizes the mailboxes, the gap offer),
    * right under the piles: after the last group before the first list group
    * (`tags` or `custom`), or after the last group when there is none. Nothing
@@ -196,6 +202,7 @@ export function RailNav({
   mailboxes,
   dock,
   sync,
+  update,
   notice,
   footer,
   ariaLabel,
@@ -346,6 +353,7 @@ export function RailNav({
       </div>
 
       {sync ? <div className="rail-sync-slot"><div className="rail-sync-stack">{sync}</div></div> : null}
+      {update ? <div className="rail-update">{update}</div> : null}
       {dock ? <div className="rail-dock">{dock}</div> : null}
       {footer ? <div className="rail-mail">{footer}</div> : null}
     </nav>

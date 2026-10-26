@@ -194,7 +194,7 @@ import { useMayHandOffFor } from "./send-handoff";
 import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
-import { UpdateNotice } from "./UpdateNotice";
+import { RailVersion, SendWaitsRelay, UpdateDot, UpdateLine, useRunningVersion, useUpdateOffer } from "./UpdateLine";
 import { DurabilityNotice } from "./DurabilityNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
@@ -513,7 +513,7 @@ function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version"
 /** The navigation rail's id, which both drawer toggles name in `aria-controls`. */
 const RAIL_ID = "shell-rail";
 
-function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
+export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
   /**
    * The paired desktop's standing line — the third member of the footer
    * slot, beside the account address and the desktop prompt. In this slot
@@ -558,14 +558,20 @@ function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }:
     />
   ) : null;
   const host = hostConnection ? <HostConnectionLine connection={hostConnection} /> : null;
-  const fullFooter = footer || cta || host ? (
+  // The version the desktop's shell runs, at the foot; a tab has none to name.
+  const running = useRunningVersion();
+  const version = running !== null ? <RailVersion version={running} /> : null;
+  const fullFooter = footer || version || cta || host ? (
     <>
       {footer}
+      {version}
       {host}
       {cta}
     </>
   ) : undefined;
-  return <RailNav groups={withTagState} {...rest} footer={fullFooter} />;
+  // The update line's slot exists only while there is something to say, as the footer's does.
+  const offer = useUpdateOffer();
+  return <RailNav groups={withTagState} {...rest} update={offer !== null ? <UpdateLine /> : undefined} footer={fullFooter} />;
 }
 
 /**
@@ -2310,19 +2316,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             from the DOM when there are none, like every other strip the shell mounts once. */}
         <UnsavedChanges variant="shell" />
 
-        {/*
-            A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by the shell so no view
-            can forget it, outside every list's scroller, and absent from the DOM whenever there is nothing to say.
-            What is on offer differs by door — a build this origin is already serving, or a signed release the desktop
-            shell has fetched and verified — and this shell knows neither; `app-update.ts` holds the one offer and the
-            once-a-day restraint on saying it. HELD WHILE A MESSAGE IS BEING WRITTEN. A strip appearing above somebody
-            mid-sentence moves the layout under their cursor, and the press it offers throws the draft's window away.
-            The offer is not withdrawn and not re-decided — it is simply not drawn until the compose is closed.
-          */}
-        <UpdateNotice quiet={effectiveView === "compose"} />
+        {/* A send waiting holds every restart: the update line greys Restart, and the desktop's shell installs
+            nothing meanwhile (`UpdateLine.tsx`). The line itself stands in the rail, above Command. */}
+        <SendWaitsRelay api={mailSend} />
 
         {/* THIS BROWSER IS NOT KEEPING DECISIONS — the same slot and the same argument as the
-            strip above: a fact about the app rather than about a pile. Said once per session and
+            strips above: a fact about the app rather than about a pile. Said once per session and
             absent from the DOM until a durable write has actually been refused. */}
         <DurabilityNotice />
 
@@ -2363,6 +2362,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             onClick={() => setRailOpen(true)}
           >
             <Icon name="menu" />
+            <UpdateDot />
           </button>
           )}
           {/* ONE TITLE BELOW 1024 (DESIGN-FOLD-WIDTHS §5): the topbar owns the page's name,
@@ -2406,6 +2406,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   onClick={() => setRailOpen((o) => !o)}
                 >
                   <Icon name="menu" />
+                  {railOpen ? null : <UpdateDot />}
                 </button>
               </>
             }
