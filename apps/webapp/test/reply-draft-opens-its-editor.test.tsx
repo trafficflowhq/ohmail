@@ -5,7 +5,10 @@ import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { writeReplyDraft } from "../app/shell/mail-send";
-import { act, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
+import {
+  act, FORWARD_PARTS, fillForward, forwardDock, message, mountShell, NOW, press, replyDraft, replySurface, stubDom, unmountAll, waitFor,
+  type DraftShell,
+} from "./_draft-shell.js";
 
 /**
  * A REPLY DRAFT PRESSED IN DRAFTS OPENS ITS CONVERSATION WITH THE DRAFT IN THE EDITOR. The press
@@ -380,5 +383,49 @@ describe("a reply draft open here while another device changes it", () => {
     await rounds(20);
     expect({ stated: saves(s)[0]!.ifContentRevision, rows: replies(s).map((d) => d.id), says: said().includes(messages.reply.changedElsewhere) })
       .toEqual({ stated: "rev-theirs", rows: ["d1"], says: false });
+  }, 60_000);
+});
+
+describe("an inline forward's draft changed on another device", () => {
+  const TO = "colleague@example.net";
+  const [PART_A, PART_B] = FORWARD_PARTS.map((p) => p.id);
+  const forwards = (s: DraftShell): EngineDraft[] =>
+    s.store.list<EngineDraft>("draft").filter((d) => d.status === "draft" && d.forwardOfMessageId === "m1");
+  const saves = (s: DraftShell) => s.sent.filter((m) => m.kind === "draft_save") as Array<Extract<EngineMutation, { kind: "draft_save" }>>;
+  const sends = (s: DraftShell) => s.sent.filter((m) => m.kind === "mail_send") as Array<Extract<EngineMutation, { kind: "mail_send" }>>;
+  const said = (): string => [...document.querySelectorAll(".toast, .toast-held")].map((n) => n.textContent ?? "").join(" | ");
+  /** The forward's row on the account, then another device's write of it, seen here. */
+  async function forwardChangedThere(): Promise<{ s: DraftShell; row: string }> {
+    const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { versions: true, parts: true });
+    await fillForward(s, TO, "Have a look");
+    await waitFor(() => forwards(s).length === 1, "the forward's row", 200);
+    const row = forwards(s)[0]!.id;
+    await s.editElsewhere(row, { body: "Written on the other device." });
+    await act(async () => { await s.engine.syncOnce().catch(() => undefined); });
+    await waitFor(() => s.store.get<EngineDraft>("draft", row)?.body === "Written on the other device.", "their write here");
+    return { s, row };
+  }
+
+  it("a save over it keeps their version, and the words go to a new forward row, said once", async () => {
+    const { s, row } = await forwardChangedThere();
+    await act(async () => { typeInto(forwardDock(s.el)!.querySelector<HTMLElement>(".rte-surface")!, " and the budget"); });
+    await waitFor(() => forwards(s).length === 2, "the words kept as a new forward draft", 200);
+    const mine = forwards(s).find((d) => d.id !== row)!;
+    expect({
+      theirs: s.store.get<EngineDraft>("draft", row)?.body, creates: saves(s).filter((m) => m.draftId === null).length,
+      mine: [mine.inReplyToMessageId ?? null, mine.forwardParts, mine.to.map((a) => a.address), mine.body?.includes("and the budget")],
+      said: said().split(messages.reply.forwardChangedElsewhere).length - 1,
+    }).toEqual({ theirs: "Written on the other device.", creates: 2, mine: [null, [PART_A, PART_B], [TO], true], said: 1 });
+  }, 60_000);
+
+  it("Send over it is refused with the base stated, and the words go to a new forward row", async () => {
+    const { s, row } = await forwardChangedThere();
+    await press([...forwardDock(s.el)!.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").startsWith("Send")) ?? null, "Send");
+    await waitFor(() => forwards(s).length === 2, "the words kept as a new forward draft", 200);
+    const mine = forwards(s).find((d) => d.id !== row)!;
+    expect({
+      refused: sends(s).map((m) => [m.draftId, m.ifContentRevision !== undefined && m.ifContentRevision !== s.versions.get(row)]),
+      theirs: s.store.get<EngineDraft>("draft", row)?.body, mine: [mine.forwardOfMessageId, mine.forwardParts],
+    }).toEqual({ refused: [[row, true]], theirs: "Written on the other device.", mine: ["m1", [PART_A, PART_B]] });
   }, 60_000);
 });
