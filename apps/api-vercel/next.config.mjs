@@ -214,10 +214,8 @@ const nextConfig = {
   //     is how you discover at runtime that a transport or an auth mechanism is missing.
   //   • mailparser — loads encoding tables lazily, for the same reason.
   //   • postgres (postgres.js) — the driver the pooled Db runs on.
-  // They are also DIRECT dependencies of this app, not just transitive ones through
-  // `@trafficflow/core`: pnpm's strict node_modules means an externalised package must be
-  // resolvable from the app itself, or the deployed function throws MODULE_NOT_FOUND on the
-  // first send.
+  // An externalised package must resolve from the app itself (the root install hoists them),
+  // or the deployed function throws MODULE_NOT_FOUND on the first send.
   serverExternalPackages: ["imapflow", "nodemailer", "mailparser", "postgres"],
   // Let the HANDLER canonicalize trailing slashes instead of the framework redirecting first.
   //
