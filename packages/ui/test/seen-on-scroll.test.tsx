@@ -13,8 +13,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { useRef } from "react";
-import { useSeenOnScroll, type SeenObserver } from "@ohmail/ui";
+import { useRef, type RefObject } from "react";
+import { LANDING_QUIET_MS, READ_HOLD_MS, useSeenOnScroll, type SeenObserver } from "@ohmail/ui";
 
 type IOCallback = (entries: Partial<IntersectionObserverEntry>[]) => void;
 
@@ -48,17 +48,49 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function Harness({ onSeen, onObserver }: { onSeen: (id: string) => void; onObserver?: (o: SeenObserver) => void }) {
+function Harness({ onSeen, onObserver, onLanded, deaf = false }: {
+  onSeen: (id: string) => void;
+  onObserver?: (o: SeenObserver) => void;
+  onLanded?: () => void;
+  deaf?: boolean;
+}) {
   const root = useRef<HTMLDivElement>(null);
-  const observer = useSeenOnScroll({ root, onSeen });
+  const observer = useSeenOnScroll({ root, onSeen, onLanded });
   onObserver?.(observer);
   return (
     <div data-testid="scroller" ref={root}>
       <button data-id="f1" data-unseen="1">one</button>
       <button data-id="f2" data-unseen="1">two</button>
       <button data-id="f3">seen already</button>
+      <iframe data-testid="letter" title="letter" ref={deaf ? deafen : undefined} />
     </div>
   );
+}
+
+/** The pane's scroll geometry, which jsdom leaves at 0: `top` of a `height`-tall content in a `view`. */
+function scrolledTo(el: HTMLElement, top: number, height = 2000, view = 400): void {
+  for (const [k, value] of Object.entries({ scrollTop: top, scrollHeight: height, clientHeight: view })) {
+    Object.defineProperty(el, k, { configurable: true, value });
+  }
+}
+
+/** Lay `el` out at `top()` px, `height` tall: jsdom has no layout. */
+function lay(el: Element, top: () => number, height = 200): void {
+  const rect = () => ({ top: top(), bottom: top() + height, height, left: 0, right: 300, width: 300, x: 0, y: top() });
+  Object.defineProperty(el, "getBoundingClientRect", { configurable: true, value: rect });
+}
+
+/** A letter as WebKit renders it: sandboxed without scripts, its document runs no listener of the app's. */
+function deafen(frame: HTMLIFrameElement | null): void {
+  if (!frame) return;
+  const doc = document.implementation.createHTMLDocument("letter");
+  Object.defineProperty(doc, "addEventListener", { value: () => {} });
+  Object.defineProperty(frame, "contentDocument", { configurable: true, get: () => doc });
+}
+
+/** A key typed inside the letter: Chromium hands it to the letter's own document, never the app's. */
+function typeIn(letter: HTMLElement, key: string, init: KeyboardEventInit = {}): void {
+  fireEvent.keyDown((letter as HTMLIFrameElement).contentDocument!.body, { key, ...init });
 }
 
 function entryFor(el: Element, bottom: number, rootBottom = 400, isIntersecting = true) {
@@ -177,6 +209,246 @@ describe("useSeenOnScroll", () => {
     expect(onSeen).not.toHaveBeenCalled();
     io.callback([entryFor(io.observed[0], 100, 400, true)]);
     expect(onSeen).toHaveBeenCalledWith("f1");
+  });
+
+  it("End lands: nothing it carries through the band is marked; once it rests the band is", () => {
+    vi.useFakeTimers();
+    try {
+      const onSeen = vi.fn();
+      const { getByTestId } = render(<Harness onSeen={onSeen} />);
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      const [f1, f2] = io.observed;
+      fireEvent.keyDown(getByTestId("scroller"), { key: "End" });
+      io.callback([entryFor(f1!, 100)]); // carried through the band in mid-flight
+      fireEvent.scroll(getByTestId("scroller"));
+      vi.advanceTimersByTime(LANDING_QUIET_MS - 1);
+      io.callback([entryFor(f1!, -20, 400, false)]);
+      expect(onSeen).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      // At rest the targets are observed afresh, and only the band then is marked.
+      expect(io.observed.map((el) => el.getAttribute("data-id"))).toEqual(["f1", "f2"]);
+      io.callback([entryFor(f2!, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f2"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("Cmd+ArrowDown lands like End; PageDown still marks at once", () => {
+    vi.useFakeTimers();
+    try {
+      const onSeen = vi.fn();
+      const { getByTestId } = render(<Harness onSeen={onSeen} />);
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      fireEvent.keyDown(getByTestId("scroller"), { key: "ArrowDown", metaKey: true });
+      io.callback([entryFor(io.observed[0]!, 100)]);
+      expect(onSeen).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      fireEvent.keyDown(getByTestId("scroller"), { key: "PageDown" });
+      io.callback([entryFor(io.observed[1]!, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f2"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("End with focus outside the pane still holds the marks of a pane a wheel armed", () => {
+    vi.useFakeTimers();
+    try {
+      const onSeen = vi.fn();
+      const { getByTestId } = render(<Harness onSeen={onSeen} />);
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      fireEvent.wheel(getByTestId("scroller"));
+      fireEvent.keyDown(document.body, { key: "End" });
+      io.callback([entryFor(io.observed[0]!, 100)]);
+      expect(onSeen).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("focus in a letter's frame", () => {
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    /** A pane a wheel armed a while ago, with focus then put in its letter. */
+    function inLetter(deaf = false) {
+      const onSeen = vi.fn();
+      const onLanded = vi.fn();
+      const box: { observer?: SeenObserver } = {};
+      const { getByTestId } = render(
+        <Harness onSeen={onSeen} onObserver={(o) => { box.observer = o; }} onLanded={onLanded} deaf={deaf} />,
+      );
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      const [f1, f2] = io.observed as [Element, Element];
+      const scroller = getByTestId("scroller");
+      fireEvent.wheel(scroller);
+      vi.advanceTimersByTime(400);
+      const letter = getByTestId("letter");
+      letter.focus();
+      return { onSeen, onLanded, observer: box.observer!, io, f1, f2, scroller, letter };
+    }
+    const scroll = (el: HTMLElement, top: number, height?: number) => {
+      scrolledTo(el, top, height);
+      fireEvent.scroll(el);
+    };
+
+    it("End typed in a letter lands: a correction off the end before it rests marks nothing it carried", () => {
+      const { onSeen, io, f1, f2, scroller, letter } = inLetter();
+      typeIn(letter, "End");
+      scroll(scroller, 400);
+      io.callback([entryFor(f1, 100)]); // carried through the band in mid-flight
+      scroll(scroller, 1600);
+      scroll(scroller, 1572); // the stream's anchoring takes it 28px back up
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      expect(onSeen).not.toHaveBeenCalled();
+      io.callback([entryFor(f2, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f2"]]);
+    });
+
+    it("End typed in a letter lands when the pane shrinks, then grows, before it rests", () => {
+      const { onSeen, io, f1, scroller, letter } = inLetter();
+      typeIn(letter, "End");
+      scroll(scroller, 400, 2000);
+      io.callback([entryFor(f1, 100)]);
+      scroll(scroller, 1300, 1700); // cards measured shorter than guessed: End stops at 1300
+      scrolledTo(scroller, 1300, 2100); // then the last ones render taller
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      expect(onSeen).not.toHaveBeenCalled();
+    });
+
+    it("a wheel delivered to the letter's document is a read, even when the pane rests at its end", () => {
+      const { onSeen, io, f1, scroller, letter } = inLetter();
+      // Chromium hands a wheel over a letter to the letter's own document; the pane only scrolls.
+      fireEvent.wheel((letter as HTMLIFrameElement).contentDocument!.body);
+      scroll(scroller, 1600);
+      io.callback([entryFor(f1, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+    });
+
+    it("PageDown typed in a letter marks what it passes, onto the last page too; Ctrl+ArrowUp lands", () => {
+      const { onSeen, io, f1, f2, scroller, letter } = inLetter();
+      typeIn(letter, "PageDown");
+      scroll(scroller, 1600);
+      io.callback([entryFor(f1, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+      typeIn(letter, "ArrowUp", { ctrlKey: true });
+      scroll(scroller, 0);
+      io.callback([entryFor(f2, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+    });
+
+    it("a scroll from a letter whose keys never reach the app (WebKit) is no landing and marks nothing it carries through the band", () => {
+      const { onSeen, onLanded, io, f1, f2, scroller } = inLetter(true);
+      scroll(scroller, 400);
+      io.callback([entryFor(f1, 100)]);
+      scroll(scroller, 1572); // End corrected short of the end, or a PageDown: no key says which
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      expect({ seen: onSeen.mock.calls, landed: onLanded.mock.calls.length }).toEqual({ seen: [], landed: 0 });
+      io.callback([entryFor(f2, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f2"]]);
+      // A wheel over the pane just before its scroll is the reader's own hand: marked at once.
+      fireEvent.wheel(scroller);
+      scroll(scroller, 1500);
+      io.callback([entryFor(f1, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f2"], ["f1"]]);
+    });
+
+    it("such a scroll reads a letter whose first lines stay READ_HOLD_MS on screen, and none it carries past sooner", () => {
+      const { onSeen, observer, f1, f2, scroller } = inLetter(true);
+      const tops = new Map<Element, number>([[f1, 100], [f2, 500]]);
+      lay(scroller, () => 0, 400);
+      for (const f of [f1, f2]) lay(f, () => tops.get(f)!);
+      scroll(scroller, 10);
+      expect(observer.landing(), "judged, not a landing").toBe(false);
+      expect(observer.judging()).toBe(true);
+      vi.advanceTimersByTime(100);
+      tops.set(f1, 50).set(f2, 250); // f2's first lines come on screen
+      scroll(scroller, 60);
+      vi.advanceTimersByTime(100);
+      tops.set(f1, 0).set(f2, -100); // and are carried off 100ms later
+      scroll(scroller, 160);
+      vi.advanceTimersByTime(READ_HOLD_MS - 201);
+      expect(onSeen).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+      vi.advanceTimersByTime(READ_HOLD_MS);
+      expect({ seen: onSeen.mock.calls, judging: observer.judging() }).toEqual({ seen: [["f1"]], judging: false });
+    });
+
+    it("a wheel's scroll stays a read while the pane keeps moving, past 200ms too (WebKit animates it)", () => {
+      const { onSeen, io, f1, scroller } = inLetter(true);
+      fireEvent.wheel(scroller);
+      for (let top = 40; top <= 400; top += 40) {
+        vi.advanceTimersByTime(50);
+        scroll(scroller, top);
+      }
+      io.callback([entryFor(f1, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+    });
+
+    it("a wheel joining a hold no key started makes it the wheel's own scroll: all of it is read", () => {
+      const { onSeen, observer, io, f1, f2, scroller } = inLetter(true);
+      scroll(scroller, 300); // WebKit scrolls for the wheel before the page hears it
+      io.callback([entryFor(f1, 100)]);
+      fireEvent.wheel(scroller);
+      expect({ landing: observer.landing(), seen: onSeen.mock.calls }).toEqual({ landing: false, seen: [["f1"]] });
+      scroll(scroller, 600);
+      io.callback([entryFor(f2, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"], ["f2"]]);
+    });
+
+    it("a wheel does not end a landing a key started", () => {
+      const { onSeen, observer, io, f1, scroller, letter } = inLetter();
+      typeIn(letter, "End");
+      scroll(scroller, 300);
+      fireEvent.wheel(scroller);
+      scroll(scroller, 1600); // End's animation carries on past the wheel
+      io.callback([entryFor(f1, 100)]);
+      expect({ landing: observer.landing(), seen: onSeen.mock.calls }).toEqual({ landing: true, seen: [] });
+    });
+
+    it("a letter's keys stop counting when the pane's observer goes and the letter stays", () => {
+      function Seen({ root }: { root: RefObject<HTMLDivElement | null> }) {
+        useSeenOnScroll({ root, onSeen: () => {} });
+        return null;
+      }
+      function Pane({ seen }: { seen: boolean }) {
+        const root = useRef<HTMLDivElement>(null);
+        return (
+          <div ref={root}>
+            <button data-id="f1" data-unseen="1">one</button>
+            <iframe data-testid="letter" title="letter" />
+            {seen ? <Seen root={root} /> : null}
+          </div>
+        );
+      }
+      const { getByTestId, rerender } = render(<Pane seen />);
+      const io = MockIntersectionObserver.instances.at(-1)!;
+      rerender(<Pane seen={false} />);
+      typeIn(getByTestId("letter"), "End");
+      vi.advanceTimersByTime(LANDING_QUIET_MS);
+      // A landing left behind would rest on its gone observer and observe the pane again.
+      expect(io.observed).toEqual([]);
+    });
+
+    it("the app's own scroll of the pane neither starts a hold nor keeps one from resting", () => {
+      const { onSeen, observer, io, f1, scroller } = inLetter(true);
+      // The browser fires the scroll event of the app's own correction on the next frame.
+      observer.own(() => scrolledTo(scroller, 28));
+      fireEvent.scroll(scroller);
+      io.callback([entryFor(f1, 100)]);
+      expect(onSeen.mock.calls).toEqual([["f1"]]);
+      fireEvent.keyDown(scroller, { key: "End" });
+      scroll(scroller, 1600);
+      vi.advanceTimersByTime(100);
+      observer.own(() => scrolledTo(scroller, 1572));
+      fireEvent.scroll(scroller);
+      vi.advanceTimersByTime(LANDING_QUIET_MS - 100);
+      expect(observer.landing()).toBe(false);
+    });
   });
 
   it("restart() forgets what was seen: a row shown before it is not marked after it", () => {
