@@ -813,6 +813,10 @@ describe("the Rust side", () => {
       // watched on every platform's CI.
       "vitals.rs",
       "vitals_tests.rs",
+      // HOW WEBKITGTK HANDS FRAMES TO THE WINDOW: shared memory rather than DMA-BUF on Hyprland, set
+      // once at the top of `main` unless the person set it. ALWAYS compiled; a no-op off Linux.
+      "webkit_buffers.rs",
+      "webkit_buffers_tests.rs",
       // WHEN WEBKITGTK GIVES MEMORY BACK, for the whole process: the pressure thresholds, asked
       // for once at the top of `main`, and never a kill threshold. The per-window cache-model ask
       // that used to live here never took effect and, measured applied, saved nothing, so it went.

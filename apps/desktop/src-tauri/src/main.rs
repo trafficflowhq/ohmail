@@ -123,6 +123,10 @@ mod link_gate;
 // preview opens the same window and asks for the same budget.
 mod webview_budget;
 
+// How WebKitGTK hands frames to the window (shared memory, not DMA-BUF, on Hyprland). Always
+// compiled; a no-op off Linux.
+mod webkit_buffers;
+
 #[cfg(target_os = "linux")]
 mod gtk_text_dpi;
 
@@ -170,6 +174,8 @@ fn main() {
     // cap, and there is no window to apply it to yet. `webview_budget.rs` has the thresholds and
     // why the kill threshold is not among them.
     webview_budget::apply_process_pressure();
+    // On Hyprland, frames reach the window through shared memory; read with the first web context.
+    webkit_buffers::apply();
 
     // GTK applies the desktop's text scale to WebKit's whole canvas. Pin GTK's text DPI to its
     // 96-DPI baseline in both directions, but leave the monitor's scale alone. GTK is already up.
