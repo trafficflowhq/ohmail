@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { refreshTokens } from "@trafficflow/db";
 import { generateToken, hashToken, totpNow } from "@trafficflow/services";
 import { ACCOUNT_HEADER, createApp, apiRoutes, csrfTokenFor, type ApiDeps, type Route } from "@trafficflow/api";
-import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW, type TestClock } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, sweepPath, FIXED_NOW, type TestClock } from "./helpers.js";
 
 /**
  * ═══ THE OWNER-BOUND RESPONSE CENSUS ══════════════════════════════════════════════════════════
@@ -160,9 +160,8 @@ const FAST_SSE = { heartbeatMs: 5, pollMs: 5, lifetimeMs: 20 };
 
 const app = createApp(apiRoutes);
 
-/** A path for a route pattern: every `:param` becomes a well-formed uuid that names no row. */
-const pathFor = (route: Route, id: string): string =>
-  route.pattern.split("/").map((p) => (p.startsWith(":") ? id : p)).join("/");
+/** A path for a route pattern: well-formed ids and queries that name no row (`sweepPath`). */
+const pathFor = (route: Route, id: string): string => sweepPath(route, id);
 
 /**
  * Drive one route and read the header off the answer. `deps` is spread FRESH per request because

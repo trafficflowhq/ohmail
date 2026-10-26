@@ -1824,8 +1824,9 @@ export async function evaluateAlertsWithScope(
 
   // ── 11c. THE POOLER IS REFUSING WORK ───────────────────────────────────────────────────
   //
-  // A `DbAcquireTimeoutError` means the connection never began this statement, so the API
-  // declined with a 503. ONE of those is the ceiling WORKING; the incident is the RATE.
+  // A `DbAcquireTimeoutError` means the connection never began this statement, and a
+  // `DbConnectionCapError` that a new connection was refused at the client cap; either way the
+  // API declined with a 503. ONE of those is the ceiling WORKING; the incident is the RATE.
   //
   // Deployment-wide, not per route — a saturated pool refuses whoever asked next, so the route
   // carries no information; the DISTINCT route count is in the sentence instead. And it is not a
@@ -1840,7 +1841,8 @@ export async function evaluateAlertsWithScope(
       detail:
         `${pooler.refusals} request(s) across ${pooler.routes} route(s) were declined with 503 ` +
         `because the database connection did not begin their statement inside the acquire ` +
-        `ceiling, in the last ${humanAge(Math.round(t.apiFaultWindowMs / 1000))} — past the ` +
+        `ceiling, or the pooler refused a new connection at its connection limit, in the last ` +
+        `${humanAge(Math.round(t.apiFaultWindowMs / 1000))} — past the ` +
         `floor of ${t.poolerRefusalThreshold}. One refusal is the ceiling working; this many is ` +
         `a saturated pool. Newest ${humanAge(secondsBetween(now, pooler.newest))} ago.`,
       count: pooler.refusals,

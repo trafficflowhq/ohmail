@@ -54,16 +54,19 @@ export const STAFF_CHANNEL_OTHER = "other";
  */
 export const DB_ACQUIRE_TIMEOUT_CODE = "db_acquire_timeout";
 
+/** `DbConnectionCapError.code`, spelled for {@link DB_ACQUIRE_TIMEOUT_CODE}'s reason. */
+export const DB_CONNECTION_CAP_CODE = "db_connection_cap";
+
 /**
  * `ApiHealth.errorCode` / `errorDetail` — the ONE channel in this registry whose value is
  * composed at runtime today rather than chosen from a literal. `health.ts` reads `err.code` off
  * whatever the database handle threw and the console prints it under the red banner, so the
  * writer is the driver and, one hop further out, the host. The set is the driver vocabulary this
- * codebase already names for the same errors, plus our own acquire timeout.
+ * codebase already names for the same errors, plus our own acquire timeout and connection cap.
  */
 export const API_HEALTH_ERROR_CODES: ReadonlySet<string> = new Set<string>([
   ...CONNECT_ERRNOS, ...TIMEOUT_ERRNOS, ...STORAGE_SQLSTATES, ...SQLSTATE_DETAILS,
-  DB_ACQUIRE_TIMEOUT_CODE,
+  DB_ACQUIRE_TIMEOUT_CODE, DB_CONNECTION_CAP_CODE,
 ]);
 
 /** Is this a value `ApiHealth.errorCode` is allowed to carry to a staff screen? */
@@ -170,7 +173,8 @@ export const STAFF_CHANNELS: readonly StaffChannel[] = [
     members: [...API_HEALTH_ERROR_CODES],
     isMember: isApiHealthErrorCode,
     why: "the database driver's own code for a probe that did not complete, plus our acquire "
-      + "timeout. Composed at runtime from a thrown value, which is why it is in this registry.",
+      + "timeout and connection cap. Composed at runtime from a thrown value, which is why it is in "
+      + "this registry.",
   },
 ];
 

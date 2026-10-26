@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { totpNow } from "@trafficflow/services";
 import { SoftwareAuthenticator } from "../../services/test/webauthn-authenticator.js";
-import { makeDeps, req, setCookieMap, cookieMaxAge } from "./helpers.js";
+import { makeDeps, req, setCookieMap, cookieMaxAge, sweepPath } from "./helpers.js";
 
 /**
  * Stage-2 ONBOARDING OVER THE WIRE, with no seeded session.
@@ -420,7 +420,7 @@ describe("an enrollment session is fenced to the enrollment surface", () => {
     expect(fenced.length).toBeGreaterThan(80);           // the sweep is not vacuous
 
     for (const route of fenced) {
-      const path = route.pattern.split("/").map((s) => (s.startsWith(":") ? id : s)).join("/");
+      const path = sweepPath(route, id);
       const res = await H(
         req(route.method, path, { cookie: e.cookie, headers: { "x-csrf-token": e.csrf } }),
         deps,

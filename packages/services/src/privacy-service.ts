@@ -4,7 +4,7 @@ import { hostOf, isKnownTracker, isBeaconUrl } from "@trafficflow/core/mail";
 import { imageDimensions } from "@trafficflow/core/image-dimensions";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { requireUuid } from "./ids.js";
+import { isUuid, requireUuid } from "./ids.js";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import { assertPublicHttpUrl, type HostResolver } from "./ssrf-guard.js";
 import { pinnedHttpRequest } from "./pinned-fetch.js";
@@ -149,6 +149,28 @@ export interface ProxyImageResult {
   body: Uint8Array;
 }
 
+/**
+ * The refusals `proxyImage` makes from the input alone, first one wins, or null. Stateless, so the
+ * route asks it before the session read (`withImageInputShape`). LENGTH FIRST — `.length` is O(1)
+ * and every step after it is not: `u` is sender-chosen and reaches `new URL()`, the SSRF gate, DNS
+ * and an outbound fetch ({@link PROXY_URL_MAX_CHARS}). `mid`'s shape here, its ownership after the
+ * session, so this answer is the same whether or not a row exists.
+ */
+export function proxyImageRefusal(input: ProxyImageInput): ServiceError | null {
+  const { messageId, url } = input;
+  if (url.length > PROXY_URL_MAX_CHARS) {
+    return new ServiceError(
+      "validation_failed", 400,
+      `u is ${url.length} characters; the limit is ${PROXY_URL_MAX_CHARS}`,
+    );
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return new ServiceError("validation_failed", 400, "u must be an http(s) url");
+  }
+  if (!isUuid(messageId)) return new ServiceError("validation_failed", 400, "mid must be an id");
+  return null;
+}
+
 // A 1×1 fully-transparent GIF — served in place of a detected tracking pixel so
 // the reader's client renders nothing and the sender's chosen bytes are never
 // relayed onward. 43 bytes.
@@ -176,22 +198,11 @@ export class PrivacyService {
 
   async proxyImage(ctx: ServiceContext, input: ProxyImageInput): Promise<ProxyImageResult> {
     const { messageId, url } = input;
-    // LENGTH FIRST — `.length` is O(1) and every step after this is not. See
-    // {@link PROXY_URL_MAX_CHARS}: the value is sender-chosen, it reaches `new URL()`, the SSRF
-    // gate's resolution, a DNS lookup and an outbound fetch, and nothing bounded it. The request
-    // door does not: it bounds a request BODY and this is a GET query string.
-    if (url.length > PROXY_URL_MAX_CHARS) {
-      throw new ServiceError(
-        "validation_failed", 400,
-        `u is ${url.length} characters; the limit is ${PROXY_URL_MAX_CHARS}`,
-      );
-    }
-    if (!/^https?:\/\//i.test(url)) {
-      throw new ServiceError("validation_failed", 400, "u must be an http(s) url");
-    }
+    const refusal = proxyImageRefusal(input);
+    if (refusal) throw refusal;
     // Ownership BEFORE the SSRF gate, so an unauthorised caller cannot make us
     // spend a DNS lookup on a name of their choosing. Cheap syntactic refusals
-    // (the scheme test above) stay in front of both.
+    // (the shape checks above) stay in front of both.
     await this.requireOwnedMessage(ctx, messageId);
 
     /**

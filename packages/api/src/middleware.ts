@@ -12,7 +12,7 @@ import { lookupIdempotent, storedResponse, type StoredIdempotent } from "./idemp
 import type { ApiDeps, SessionVia } from "./deps.js";
 import { accessRefusedMayReach, accessRouteClassOf, unverifiedMayReach } from "./router.js";
 import { accessFor, parseCookies } from "./routes/shared.js";
-import type { Handler, Route } from "./router.js";
+import type { Handler, ReplayDisposition, Route } from "./router.js";
 
 /**
  * A middleware wraps the next handler. It receives the resolved `Route` so it can
@@ -184,6 +184,8 @@ export interface IdempotencyProtection {
   routeIsIdempotent?: boolean;
   /** The matched route carries `options.replaySafe`. */
   routeIsReplaySafe?: boolean;
+  /** The matched route's `replay` disposition, read only at the client cap. */
+  routeReplay?: ReplayDisposition;
   /** A session was resolved — `withIdempotency` needs an `accountId` and skips without one. */
   hasAccount?: boolean;
   /**
@@ -205,29 +207,43 @@ export interface IdempotencyProtection {
  */
 export function dbBusyResponse(
   req: Request, protection: IdempotencyProtection = {},
+  /** What refused, when the caller has it: a refusal at the cap is named and may widen the retry. */
+  err?: unknown,
 ): Response {
+  const atCap = nameOf(err) === DB_CONNECTION_CAP_ERROR;
   const known = {
     routeIsIdempotent: protection.routeIsIdempotent === true,
     hasAccount: protection.hasAccount === true,
     routeRequiresSession: protection.routeRequiresSession === true,
-    routeIsReplaySafe: protection.routeIsReplaySafe === true,
+    // At the cap the refused statement never reached the server, so a route whose replay
+    // converges may retry. Not under the acquire ceiling: its statement may still run.
+    routeIsReplaySafe: protection.routeIsReplaySafe === true
+      || (atCap && CAP_REPLAYABLE.has(protection.routeReplay)),
   };
-  return dbBusyResponseFor(req, known);
+  return dbBusyResponseFor(req, known, atCap);
 }
+
+/** The `replay` dispositions whose second arrival reaches the same state or is deduplicated. */
+const CAP_REPLAYABLE: ReadonlySet<ReplayDisposition | undefined> = new Set<ReplayDisposition | undefined>(
+  ["state", "guarded", "handler"],
+);
 
 function dbBusyResponseFor(
   req: Request,
   protection: {
     routeIsIdempotent: boolean; hasAccount: boolean; routeRequiresSession: boolean; routeIsReplaySafe: boolean;
   },
+  atCap: boolean,
 ): Response {
   return errorResponse(
     "db_busy", 503,
     // Says what happened, and says it accurately. NOT "could not get a connection": it had one —
     // the connection was busy with other work and this statement never began. The distinction is
     // the whole diagnosis, and a message that blurs it would send the next reader looking for a
-    // connection leak.
-    "the server's database connection was busy and this request could not be started; retry shortly",
+    // connection leak. At the cap it is the other case, and says so.
+    atCap
+      ? "the database is at its connection limit and this request could not be started; retry shortly"
+      : "the server's database connection was busy and this request could not be started; retry shortly",
     undefined, mayRetry(req, protection),
     { "Retry-After": String(DB_BUSY_RETRY_AFTER_SECONDS) },
   );
@@ -243,16 +259,23 @@ function dbBusyResponseFor(
  */
 const DB_ACQUIRE_TIMEOUT_ERROR = "DbAcquireTimeoutError";
 
+/** `DbConnectionCapError`'s name, spelled for the same reason; `db-busy.test.ts` pins it by behaviour. */
+const DB_CONNECTION_CAP_ERROR = "DbConnectionCapError";
+
+const nameOf = (err: unknown): unknown =>
+  typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+
 /**
- * The pooled handle gave up waiting for a connection — see `POOLED_ACQUIRE_TIMEOUT_MS`.
+ * The pooled handle gave up waiting for a connection (`POOLED_ACQUIRE_TIMEOUT_MS`), or the pooler
+ * or server refused a new one at its client cap: either way the statement never began.
  *
  * Matched on `name` rather than `instanceof` for the import reason above, and matched at all
  * because the alternative answer is a 500: this is not an unhandled fault, it is the API
  * declining work it has no connection to do.
  */
 export function isDbBusy(err: unknown): boolean {
-  return typeof err === "object" && err !== null
-    && (err as { name?: unknown }).name === DB_ACQUIRE_TIMEOUT_ERROR;
+  const name = nameOf(err);
+  return name === DB_ACQUIRE_TIMEOUT_ERROR || name === DB_CONNECTION_CAP_ERROR;
 }
 
 /**
@@ -378,7 +401,8 @@ export const withErrorEnvelope: Middleware = (next, route) => async (req, deps, 
         hasAccount: Boolean(deps.session?.accountId),
         routeRequiresSession: route.options?.public !== true,
         routeIsReplaySafe: route.options?.replaySafe === true,
-      });
+        routeReplay: route.replay,
+      }, err);
     }
     /**
      * The refusal every reader door shares (mail 0083). `OrganizedElsewhereError` and

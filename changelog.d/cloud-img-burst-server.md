@@ -1,0 +1,5 @@
+### ohmail Cloud stays up when one window loads hundreds of pictures at once
+
+Opening many letters with pictures at the same moment (a sender's held letters in the Screener, for example) could fill ohmail Cloud's database connections and make it refuse everyone for several minutes. A picture request that names no valid letter or address is now refused before it reaches the database, the server lets go of idle database connections within about 20 seconds, and a full connection limit is answered as "busy, try again" instead of as an error.
+
+For operators: a connection pooler at its client limit (`EMAXCONN`) or Postgres at its connection limit (`53300`) is answered `503 db_busy` with `Retry-After: 5`, recorded as `DbConnectionCapError` and counted by `pooler_refusals`. `/health` answers `503 database_refusing_new_connections` when a fresh connection is refused while the instance's held ones still work, and reports `dbFreshConnectMs` otherwise. Pooled connections close after 20 seconds idle (was 120), and the hosted API keeps an instance awake 22 seconds after its last answer so they close before the platform suspends it.

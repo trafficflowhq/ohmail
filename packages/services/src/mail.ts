@@ -207,7 +207,7 @@ export {
 } from "./search-service.js";
 export {
   PrivacyService, makePrivacyService, nodeRemoteFetch, makeNodeRemoteFetch,
-  PROXY_URL_MAX_CHARS,
+  PROXY_URL_MAX_CHARS, proxyImageRefusal,
   type RemoteFetch, type PrivacyServiceDeps, type ProxyImageInput, type ProxyImageResult,
 } from "./privacy-service.js";
 export {

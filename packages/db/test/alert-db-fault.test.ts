@@ -5,7 +5,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { schema } from "../src/schema.js";
-import { makePooledDb } from "../src/client.js";
+import { DbConnectionCapError, freshConnectProbe, makePooledDb } from "../src/client.js";
 import { makeTestDb } from "../src/testing.js";
 import { sql } from "drizzle-orm";
 import { NotContentBlindError } from "../src/admin-db.js";
@@ -57,6 +57,28 @@ async function server(mode: "silent" | "close"): Promise<number> {
 }
 
 const urlOf = (port: number): string => `postgres://u:p@127.0.0.1:${port}/x`;
+
+/** The pooler's words at its client cap (2026-10-26), as it sends them. */
+const EMAXCONN = "(EMAXCONN) max client connections reached, limit: 200";
+
+/** A pooler or server at its cap: it answers the startup with one ErrorResponse and closes. Counts its dials. */
+async function capped(code: string, message: string): Promise<{ port: number; dials: () => number }> {
+  let dials = 0;
+  const s = net.createServer((sock) => {
+    dials += 1;
+    sock.on("error", () => undefined);
+    sock.once("data", () => {
+      const fields = Buffer.from(`SFATAL\0VFATAL\0C${code}\0M${message}\0\0`, "utf8");
+      const head = Buffer.alloc(5);
+      head.write("E", 0, "ascii");
+      head.writeInt32BE(4 + fields.length, 1);
+      sock.end(Buffer.concat([head, fields]));
+    });
+  });
+  await new Promise<void>((r) => s.listen(0, "127.0.0.1", () => r()));
+  servers.push(s);
+  return { port: (s.address() as net.AddressInfo).port, dials: () => dials };
+}
 
 function client(port: number, opts: { connect_timeout?: number } = {}) {
   const c = postgres(urlOf(port), { max: 1, connect_timeout: opts.connect_timeout ?? 2, onnotice: () => undefined });
@@ -128,6 +150,58 @@ describe("the pooled handle's acquire ceiling", () => {
     for (const s of servers.splice(0)) await new Promise<void>((r) => { s.close(() => r()); });
     await first;
   }, 20_000);
+});
+
+describe("a connection cap, through the pooled handle", () => {
+  it("the pooler's EMAXCONN is DbConnectionCapError (pooler) with no driver text, for a statement and a transaction", async () => {
+    const db = makePooledDb(urlOf((await capped("XX000", EMAXCONN)).port), { acquireTimeoutMs: 4_000, max: 1 });
+    for (const err of [await failureOf(db.execute(sql`select 1`)), await failureOf(db.transaction(async () => 1))]) {
+      expect(err).toBeInstanceOf(DbConnectionCapError);
+      expect(err).toMatchObject({ name: "DbConnectionCapError", code: "db_connection_cap", cap: "pooler" });
+      expect(`${(err as Error).message} ${JSON.stringify(err)}`).not.toMatch(/EMAXCONN|limit: 200|XX000/);
+      expect((err as { cause?: unknown }).cause, "a driver error carries the query's parameters").toBeUndefined();
+      expect(isAlertDatabaseUnreadable(err)).toBe(true);
+    }
+  }, 20_000);
+
+  it("a server's 53300 is the server's cap; any other XX000 stays the driver's own error", async () => {
+    const server = makePooledDb(urlOf((await capped("53300", "sorry, too many clients already")).port), { max: 1 });
+    expect(await failureOf(server.execute(sql`select 1`))).toMatchObject({ name: "DbConnectionCapError", cap: "server" });
+    const other = makePooledDb(urlOf((await capped("XX000", "an internal error")).port), { max: 1 });
+    const plain = await failureOf(other.execute(sql`select 1`));
+    expect(plain).toMatchObject({ name: "PostgresError", code: "XX000" });
+    expect(isAlertDatabaseUnreadable(plain)).toBe(true);
+  }, 20_000);
+});
+
+/** `/health`'s fresh connection: warm instances' held connections said healthy while new ones were refused. */
+describe("the fresh-connection probe", () => {
+  it("a pooler at its cap reads db_connection_cap, and the probe does not throw", async () => {
+    const reading = await freshConnectProbe(urlOf((await capped("XX000", EMAXCONN)).port))();
+    expect(reading).toMatchObject({ ok: false, code: "db_connection_cap" });
+    expect(reading.ms).toEqual(expect.any(Number));
+  });
+
+  it("a silent server reads CONNECT_TIMEOUT inside the deadline", async () => {
+    const started = Date.now();
+    const reading = await freshConnectProbe(urlOf(await server("silent")), { timeoutMs: 300 })();
+    expect(reading).toMatchObject({ ok: false, code: "CONNECT_TIMEOUT" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
+  it("three asks at once open one socket, one inside the memo window opens none, one past it asks again", async () => {
+    const pooler = await capped("XX000", EMAXCONN);
+    const probe = freshConnectProbe(urlOf(pooler.port), { memoMs: 60_000 });
+    expect((await Promise.all([probe(), probe(), probe()])).map((r) => r.code))
+      .toEqual(["db_connection_cap", "db_connection_cap", "db_connection_cap"]);
+    expect(pooler.dials()).toBe(1);
+    await probe();
+    expect(pooler.dials(), "inside the memo window").toBe(1);
+    const unkept = freshConnectProbe(urlOf(pooler.port), { memoMs: 0 });
+    await unkept();
+    await unkept();
+    expect(pooler.dials()).toBe(3);
+  });
 });
 
 const coded = (code: string): Error => Object.assign(new Error("x"), { code });

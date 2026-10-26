@@ -115,13 +115,13 @@ export function evaluationUnderDeadline<T>(read: () => PromiseLike<T> | T, ms: n
 
 /**
  * Codes only the database produces: postgres.js's connection codes, the pooled handle's acquire
- * ceiling, a read-only database (25006) and the internal errors (XX000-XX002), beside the SQLSTATE
- * classes of {@link DATABASE_ONLY_CLASSES}.
+ * ceiling and connection cap, a read-only database (25006) and the internal errors (XX000-XX002),
+ * beside the SQLSTATE classes of {@link DATABASE_ONLY_CLASSES}.
  */
 const DATABASE_ONLY_CODES: ReadonlySet<string> = new Set([
   "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED", "CONNECT_TIMEOUT",
   "CONNECTION_CONNECT_TIMEOUT",
-  "db_acquire_timeout",
+  "db_acquire_timeout", "db_connection_cap",
   "25006",
   "XX000", "XX001", "XX002",
 ]);

@@ -601,6 +601,14 @@ export interface HealthConfig {
    * throws. Absent ⇒ the key is published as `null`, like `entitlements`.
    */
   aiPricing?: (() => Promise<"plane" | "unpriced" | "unmetered">) | null;
+  /**
+   * CAN THIS HOST OPEN A NEW DATABASE CONNECTION? The probe rides one the pool already holds, so a
+   * pooler at its client cap read healthy on every warm instance (2026-10-26). Asked only on the
+   * Postgres arm once the probe answered: refused is 503 `database_refusing_new_connections` naming
+   * its code, opened publishes `dbFreshConnectMs`. The host memoises it; it never throws, and a
+   * throw is no reading. Absent ⇒ not asked.
+   */
+  freshConnect?: (() => Promise<{ ok: boolean; ms: number; code: string | null }>) | null;
 /**
  * Every configured pager arm on this host, and whether it is actually delivering. A capability,
  * not a value: the memory is the alert driver's own delivery streak, in the route module that
