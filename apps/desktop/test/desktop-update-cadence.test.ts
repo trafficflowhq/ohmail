@@ -8,8 +8,10 @@ import {
   currentUpdateOffer,
   currentVersion,
   holdFilesForRestart,
+  holdForRestart,
   putUpdateAway,
   resetUpdateStoreForTests,
+  RESTART_FLUSH_MS,
   setSendWaits,
   UPDATE_PERIOD_MS,
 } from "../../webapp/app/shell/app-update.js";
@@ -75,11 +77,25 @@ const report = (over: Partial<UpdateReport> = {}): UpdateReport => ({
 /** The shell, as a value: what it answers, and what it was asked to do. */
 function shell(answer: () => UpdateReport | null) {
   const polls: number[] = [];
+  const presses: number[] = [];
   let push: ((r: UpdateReport) => void) | null = null;
+  let menuAsk: (() => void) | null = null;
   return {
     polls,
+    presses,
     tell: (r: UpdateReport) => push?.(r),
+    /** The menu's Restart, asking the window. */
+    ask: () => menuAsk?.(),
     options: {
+      asked: async (run: () => void) => {
+        menuAsk = run;
+        return () => {
+          menuAsk = null;
+        };
+      },
+      press: async () => {
+        presses.push(presses.length);
+      },
       read: async () => answer(),
       poll: async () => {
         polls.push(polls.length);
@@ -1109,6 +1125,9 @@ describe("the cadence, running", () => {
     clock.at += 3 * CHECK_EVERY_MS;
     await vi.advanceTimersByTimeAsync(3 * CHECK_EVERY_MS);
     expect(s.polls).toEqual([]);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS);
+    expect(s.presses, "a stopped cadence answered the menu").toEqual([]);
   });
 
   /**
@@ -1158,5 +1177,110 @@ describe("the cadence, running", () => {
     await vi.advanceTimersByTimeAsync(7 * 24 * HOUR);
     expect(s.polls.length, "the AppImage stopped being asked about too").toBeGreaterThan(0);
     stop();
+  });
+});
+
+describe("the menu's Restart, answered by this window", () => {
+  const ready = report({ state: "ready", offered: NEXT, canCheck: false, canInstall: true });
+
+  it("WRITES THE OPEN EDITOR BEFORE IT PRESSES", async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const s = shell(() => ready);
+    holdForRestart(async () => void order.push("saved"));
+    const stop = startUpdateCadence({ ...s.options, press: async () => void order.push("pressed") });
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(order).toEqual(["saved", "pressed"]);
+    stop();
+  });
+
+  it("presses nothing while a send waits", async () => {
+    vi.useFakeTimers();
+    const s = shell(() => ({ ...ready, canInstall: false, held: true }));
+    const stop = startUpdateCadence({ ...s.options });
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS);
+    expect(s.presses).toEqual([]);
+    stop();
+  });
+
+  it("a second ask while the first is answered still presses once", async () => {
+    vi.useFakeTimers();
+    const saves: Array<() => void> = [];
+    const s = shell(() => ready);
+    holdForRestart(() => new Promise<void>((done) => saves.push(done)));
+    const stop = startUpdateCadence({ ...s.options });
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saves, "the second ask saved again").toHaveLength(1);
+    saves[0]!();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS);
+    expect(s.presses).toEqual([0]);
+    stop();
+  });
+
+  it("a save that never settles holds the press for RESTART_FLUSH_MS, no longer", async () => {
+    vi.useFakeTimers();
+    const s = shell(() => ready);
+    holdForRestart(() => new Promise<void>(() => {}));
+    const stop = startUpdateCadence({ ...s.options });
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS - 1);
+    expect(s.presses).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.presses).toEqual([0]);
+    stop();
+  });
+
+  it("A LATE ANSWER AFTER THE SHELL'S OWN ATTEMPT presses nothing", async () => {
+    vi.useFakeTimers();
+    let now = ready;
+    const s = shell(() => now);
+    // The shell's bound ran out during the save, and its installer did not start.
+    holdForRestart(async () => void (now = { ...ready, notStartedAt: START }));
+    const stop = startUpdateCadence({ ...s.options });
+    await vi.advanceTimersByTimeAsync(0);
+    s.ask();
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS);
+    expect(s.presses).toEqual([]);
+    stop();
+  });
+
+  it("listens on the shell's event and presses update_press after the save", async () => {
+    vi.useFakeTimers();
+    const calls: Array<{ command: string; event?: unknown }> = [];
+    const callbacks: Array<(payload: unknown) => void> = [];
+    const host = globalThis as { __TAURI_INTERNALS__?: unknown };
+    host.__TAURI_INTERNALS__ = {
+      invoke: async (command: string, payload?: { event?: unknown; handler?: number }) => {
+        calls.push({ command, event: payload?.event });
+      },
+      transformCallback: (callback: (payload: unknown) => void) => callbacks.push(callback) - 1,
+    };
+    try {
+      const order: string[] = [];
+      holdForRestart(async () => void order.push(`saved after ${calls.length} calls`));
+      const stop = startUpdateCadence({
+        read: async () => ready,
+        poll: async () => {},
+        listen: async () => () => {},
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toEqual([{ command: "plugin:event|listen", event: "updater://restart-asked" }]);
+      callbacks[0]!(null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(order).toEqual(["saved after 1 calls"]);
+      expect(calls.map((c) => c.command)).toEqual(["plugin:event|listen", "update_press"]);
+      stop();
+    } finally {
+      delete host.__TAURI_INTERNALS__;
+    }
   });
 });

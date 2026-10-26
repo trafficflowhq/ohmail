@@ -2910,6 +2910,52 @@ fn while_a_send_waits_no_press_and_no_menu_item_installs_and_the_hold_lapses() {
     assert!(!hold.held(at), "the send's end did not let go");
 }
 
+use super::{menu_pick, MenuPick, RestartAsk, RESTART_ASKED_EVENT, RESTART_ASK_BOUND};
+
+#[test]
+fn the_menus_restart_asks_a_window_that_can_save_and_presses_everything_else() {
+    let mut downloading = Flow::default();
+    downloading.apply(Signal::CheckStarted);
+    downloading.apply(Signal::Offered("0.9.2".into()));
+    let mut failed = Flow::default();
+    failed.apply(Signal::CheckStarted);
+    failed.apply(Signal::Failed);
+    assert_eq!(menu_pick(&ready(), false, true), MenuPick::AskWindow);
+    assert_eq!(menu_pick(&ready(), false, false), MenuPick::Press(Press::Restart), "no window restarts at once");
+    assert_eq!(menu_pick(&ready(), true, true), MenuPick::Press(Press::Nothing), "asked while a send waits");
+    for held in [false, true] {
+        for window in [false, true] {
+            assert_eq!(menu_pick(&Flow::default(), held, window), MenuPick::Press(Press::Check));
+            assert_eq!(menu_pick(&failed, held, window), MenuPick::Press(Press::Check));
+            assert_eq!(menu_pick(&downloading, held, window), MenuPick::Press(Press::Nothing));
+        }
+    }
+}
+
+#[test]
+fn one_ask_stands_at_a_time_and_is_answered_or_lapsed_once() {
+    let asks = RestartAsk::default();
+    let at = Instant::now();
+    let a = asks.ask(at).expect("the first ask");
+    assert_eq!(asks.ask(at), None, "a second menu press asked again");
+    assert!(asks.answer());
+    assert!(!asks.lapse(a), "the timer pressed after the window did");
+    let b = asks.ask(at).expect("a new ask after the answer");
+    assert!(asks.lapse(b));
+    assert!(!asks.lapse(b), "one ask lapsed twice");
+    assert!(!asks.answer());
+    // An ask whose timer never ran does not hold the item for ever.
+    let old = RestartAsk::default();
+    assert!(old.ask(at).is_some());
+    assert!(old.ask(at + RESTART_ASK_BOUND).is_some());
+}
+
+#[test]
+fn the_ask_outlasts_the_windows_save_and_names_the_windows_event() {
+    assert!(RESTART_ASK_BOUND > Duration::from_millis(3_000));
+    assert_eq!(RESTART_ASKED_EVENT, "updater://restart-asked");
+}
+
 #[test]
 fn the_window_is_told_the_switch_the_hold_and_whether_the_quit_installs() {
     let on = Standing { auto_install: true, held: false, installs_on_quit: true, auto_at: Some(AutoAt::Quit), ..Standing::default() };

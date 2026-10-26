@@ -24,6 +24,7 @@ import {
   announceVersion,
   askDue,
   currentUpdateOffer,
+  flushBeforeRestart,
   periodElapsed,
   putAwayThisRun,
   readAskMemory,
@@ -34,7 +35,15 @@ import {
   writeAskMemory,
   type UpdateOffer,
 } from "../../webapp/app/shell/app-update.js";
-import { onUpdateState, updateHold, updatePoll, updatePress, updateState, type UpdateReport } from "./update.js";
+import {
+  onRestartAsked,
+  onUpdateState,
+  updateHold,
+  updatePoll,
+  updatePress,
+  updateState,
+  type UpdateReport,
+} from "./update.js";
 
 /** How long the app may go without asking the feed. */
 export const CHECK_EVERY_MS = UPDATE_PERIOD_MS;
@@ -152,6 +161,9 @@ export interface UpdateCadenceOptions {
   /** Tells the shell a send waits (`true`) or no longer does. */
   hold?: (waits: boolean) => Promise<void>;
   renewEvery?: number;
+  /** The menu's Restart asking this window to save an open draft, then press. */
+  asked?: (run: () => void) => Promise<() => void>;
+  press?: () => Promise<void>;
 }
 
 /**
@@ -170,6 +182,8 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   const listen = options.listen ?? onUpdateState;
   const hold = options.hold ?? updateHold;
   const renewEvery = options.renewEvery ?? HOLD_RENEW_MS;
+  const asked = options.asked ?? onRestartAsked;
+  const press = options.press ?? updatePress;
 
   const armedAt = now();
   let stopped = false;
@@ -278,6 +292,37 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   const offWaits = subscribeRestartHold((why) => tellHold(why !== null));
   if (restartHold() !== null) tellHold(true);
 
+  /* THE MENU'S RESTART ASKS HERE, so an open draft is written first, as from the line and Settings.
+     One ask at a time. It presses only where a press still installs, and not after an attempt
+     (`notStartedAt` moved) the shell made meanwhile; the shell restarts by itself if none lands. */
+  let answering = false;
+  const answer = async (): Promise<void> => {
+    if (stopped || answering) return;
+    answering = true;
+    try {
+      const before = await read();
+      await flushBeforeRestart();
+      const after = await read();
+      if (stopped || after === null || !after.canInstall) return;
+      if (after.notStartedAt !== (before?.notStartedAt ?? null)) return;
+      await press();
+    } catch {
+      /* A refused read or press: the shell's own bound restarts. */
+    } finally {
+      answering = false;
+    }
+  };
+  let releaseAsk: (() => void) | null = null;
+  void (async () => {
+    try {
+      const off = await asked(() => void answer());
+      if (stopped) off();
+      else releaseAsk = off;
+    } catch {
+      /* No ask reaches this window; the shell restarts by itself. */
+    }
+  })();
+
   const tick = async (): Promise<void> => {
     if (stopped) return;
     const report = await read();
@@ -348,5 +393,6 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     if (renewal !== null) clearInterval(renewal);
     offWaits();
     release?.();
+    releaseAsk?.();
   };
 }
