@@ -117,6 +117,72 @@ describe("the reported case: a conversation of unread replies, opened with ↵",
   }, 30_000);
 });
 
+/**
+ * THE OWNER'S CASE (2026-10-26): the latest of two messages went to 34 people, so its To list fills
+ * the screen and its body starts far below its sender line. The sender line is seen at the open, the
+ * first lines on the way down; held for the dwell, they read it. Here the latest is 2400px tall, its
+ * body 900px down; the view is the 740px above the bar.
+ */
+describe("a To list taller than the view: the latest of two, opened and read down", () => {
+  const tallHeader = async (older: Record<string, unknown> = {}): Promise<HTMLElement> => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { q2: 2400 }, bodyAt: { q2: 900 } });
+    bodies(["q1", "q2"]);
+    return mountThread([msg("q1", 0, older), msg("q2", 10)]);
+  };
+  /** A person reading down: a wheel's 240px at a time, a dwell's worth of reading at each stop. */
+  const readDown = async (to: number): Promise<void> => {
+    for (let y = layout.scroller().scrollTop; y < to;) {
+      y = Math.min(to, y + 240);
+      await layout.handScroll(y);
+      await settle();
+      await dwell();
+    }
+  };
+  const theEnd = (): number => layout.topOf("q2") + 2400 - layout.barTop;
+
+  it("opened and read down to its end: it turns read, the reader's line and the row's dot go", async () => {
+    const host = await tallHeader({ unread: false });
+    await click(theRow(host), "the conversation's row");
+    await dwell();
+    expect(glances(), "its sender line alone is not its top").toEqual([]);
+    await readDown(layout.topOf("q2") + 200);
+    expect(glances(), "the To list on screen, the first lines still under the bar").toEqual([]);
+    await readDown(theEnd());
+    expect(glances(), "one \\Seen write, once its first lines held on the way down").toEqual([["q2"]]);
+    expect(unseen("q2"), "the reader's unread line").toBe(false);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot").toBe(false);
+  }, 60_000);
+
+  it("both unread: the older, never on screen, keeps the row's dot until its own top is seen", async () => {
+    const host = await tallHeader();
+    await click(theRow(host), "the conversation's row");
+    await dwell();
+    await readDown(theEnd());
+    expect(glances(), "the latest, read down").toEqual([["q2"]]);
+    expect(unseen("q1"), "the older was never on screen").toBe(true);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row keeps its dot for the older").toBe(true);
+    await layout.handScroll(layout.topOf("q1"));
+    await settle();
+    await dwell();
+    expect(glances()).toEqual([["q2"], ["q1"]]);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot").toBe(false);
+  }, 60_000);
+
+  it("a single letter to as many, opened at its top and read down: read", async () => {
+    layout.restore();
+    layout = stubThreadLayout({ heights: { s1: 2400 }, bodyAt: { s1: 900 } });
+    bodies(["s1"]);
+    const host = await mountThread([msg("s1", 0, { threadId: "S" })]);
+    await click(theRow(host), "the letter's row");
+    await dwell();
+    expect(glances(), "its sender line alone").toEqual([]);
+    await readDown(layout.topOf("s1") + 2400 - layout.barTop);
+    expect(glances()).toEqual([["s1"]]);
+    expect(theRow(host)?.hasAttribute("data-unseen"), "the row's dot").toBe(false);
+  }, 60_000);
+});
+
 describe("a preview reads nothing", () => {
   it("j and the dwell's worth of looks write nothing; a wheel in the column then reads", async () => {
     bodies(["p1", "p2", "p3", "p4"]);

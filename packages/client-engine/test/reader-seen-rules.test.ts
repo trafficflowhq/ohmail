@@ -12,12 +12,13 @@ import {
 /**
  * THE THREAD-READ RULE the web, the desktop and the phone share (owner ruling 2026-10-23: "having
  * seen the top part of a message should be sufficient to mark it read"). An unread message in a
- * conversation the person entered turns read once its TOP — its sender line and the first lines of
- * its body — has been wholly in view, without a break, for the dwell (0.7 s). Its last line is not
- * needed; a pass shorter than the dwell, a preview, a look nobody can see and a moving layout read
+ * conversation the person entered turns read once its TOP has been seen: its sender line wholly in
+ * view, and the first lines of its body wholly in view, without a break, for the dwell (0.7 s) —
+ * together where they fit, one after the other where a tall header keeps them apart. Its last line is
+ * not needed; a pass shorter than the dwell, a preview, a look nobody can see and a moving layout read
  * nothing. Each deciding line is mutated once and a case below turns red: the entered gate, the dwell's
- * length, the break that starts it over, the keep, the ready check, the height restart and the view
- * nobody sees.
+ * length, the break that starts it over, the keep, the ready check, the height restart, the view
+ * nobody sees, the sender line's sighting and what Mark unread forgets.
  */
 
 const HOLD = THREAD_READ_HOLD_MS;
@@ -250,5 +251,78 @@ describe("a message that arrives into the open visit", () => {
     r.enter(0);
     r.observe([panel("a", 0, 300), panel("b", 900, 300)], view, unread("b"), 0);
     expect(r.observe([panel("a", 0, 300), panel("b", 900, 300)], view, unread("b"), 10 * HOLD)).toEqual([]);
+  });
+});
+
+describe("a header taller than the view (a To list of 34): the sender line, then the first lines", () => {
+  /** The sender line 40px down, the first lines 1100px down: never in the 800px view together. */
+  const tall = (y: number): ThreadPanel => ({
+    id: "a", ready: true, height: 3000, first: { top: y + 40, bottom: y + 72 }, lead: { top: y + 1100, bottom: y + 1172 },
+  });
+
+  it("opened at its sender line and read down: read once its first lines have held for the dwell", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    expect(r.observe([tall(0)], view, unread("a"), 0), "the sender line alone").toEqual([]);
+    expect(r.observe([tall(-300)], view, unread("a"), 1000), "the recipients").toEqual([]);
+    r.observe([tall(-1000)], view, unread("a"), 2000);
+    expect(r.observe([tall(-1000)], view, unread("a"), 2000 + HOLD - 1)).toEqual([]);
+    expect(r.observe([tall(-1000)], view, unread("a"), 2000 + HOLD)).toEqual(["a"]);
+  });
+
+  it("read from below: the first lines held, then the sender line comes into view: read then", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([tall(-1000)], view, unread("a"), 0);
+    expect(r.observe([tall(-1000)], view, unread("a"), HOLD), "the sender line not seen yet").toEqual([]);
+    expect(r.observe([tall(0)], view, unread("a"), 3000)).toEqual(["a"]);
+  });
+
+  it("a sender line seen in the preview counts once the visit is entered and the first lines hold", () => {
+    const r = createThreadRead();
+    r.observe([tall(0)], view, unread("a"), 0); // j lands on it: a preview
+    r.enter(500); // a wheel enters
+    r.observe([tall(-1000)], view, unread("a"), 600);
+    expect(r.observe([tall(-1000)], view, unread("a"), 600 + HOLD)).toEqual(["a"]);
+  });
+
+  it("a sender line never wholly in view (cut by 1px): the first lines alone read nothing", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([tall(-41)], view, unread("a"), 0);
+    r.observe([tall(-1000)], view, unread("a"), 100);
+    expect(r.observe([tall(-1000)], view, unread("a"), 100 + 10 * HOLD)).toEqual([]);
+  });
+
+  it("a preview alone reads nothing, however long the first lines rest in view", () => {
+    const r = createThreadRead();
+    r.observe([tall(0)], view, unread("a"), 0);
+    r.observe([tall(-1000)], view, unread("a"), 100);
+    expect(r.observe([tall(-1000)], view, unread("a"), 100 + 10 * HOLD)).toEqual([]);
+  });
+
+  it("a look nobody can see sees no sender line", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([tall(0)], null, unread("a"), 0);
+    r.observe([tall(-1000)], view, unread("a"), 100);
+    expect(r.observe([tall(-1000)], view, unread("a"), 100 + HOLD)).toEqual([]);
+  });
+
+  it("Mark unread forgets the sender line and the first lines seen before it", () => {
+    const r = createThreadRead();
+    r.enter(0);
+    r.observe([tall(0)], view, unread("a"), 0);
+    r.keepUnread("a");
+    r.release("a");
+    r.observe([tall(-1000)], view, unread("a"), 100);
+    expect(r.observe([tall(-1000)], view, unread("a"), 100 + HOLD), "the sender line seen before the keep").toEqual([]);
+    const s = createThreadRead();
+    s.enter(0);
+    s.observe([tall(-1000)], view, unread("a"), 0);
+    s.observe([tall(-1000)], view, unread("a"), HOLD);
+    s.keepUnread("a");
+    s.release("a");
+    expect(s.observe([tall(0)], view, unread("a"), 2 * HOLD), "the first lines held before the keep").toEqual([]);
   });
 });

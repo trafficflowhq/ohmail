@@ -13,12 +13,15 @@ export { clock, fullDateTime, weekdayDateClock, zonedDayNumber, zonedFields } fr
  * (its sender row, where its body starts and its own end marker), each member panel's place in the
  * group drawn above or below the opened message, its header row, where its body starts and its end
  * marker, the enclosing offsets, the scroll view's height, what of the bottom chrome stands over it,
- * and every scroll. A message turns read once its TOP — its sender row and its body's first lines
- * (`THREAD_TOP_LINES` of them, `lines(id)` px, or the body to its end where it is shorter) — has been
- * in view for the dwell; its end is not needed. One look per frame, and one when a dwell under way
- * is due; what turned read goes out at once (`onRead`). The record is entered at the reader's mount:
- * a phone reader is an open. Nothing is looked at while the app is not in the foreground, and every
- * dwell starts over then.
+ * and every scroll. The rule, the same as on web, desktop and Cloud: "A message turns read once its
+ * sender line has been fully on screen (a preview counts) and its first lines have stayed on screen for
+ * 0.7 s, in either order. Reaching the end is not needed. Nothing that was never on screen turns read;
+ * Mark unread starts it over." Here the sender line is the sender row and the first lines are
+ * `THREAD_TOP_LINES` of the body (`lines(id)` px, or the body to its end where it is shorter); each
+ * counts on its own, so a fling past the sender row still counts it. One look per
+ * frame, and one when a dwell under way is due; what turned read goes out at once (`onRead`). The
+ * record is entered at the reader's mount: a phone reader is an open. Nothing is looked at while the
+ * app is not in the foreground, and every dwell starts over then.
  *
  * The ring (`onHere`) is the engine's walk (`threadWalk`, the web's too): the last message whose top
  * has crossed the reading line, the first at the top and the last at the very end. Its geometry — the

@@ -108,6 +108,24 @@ describe("a message turns read once its top has been in view for the dwell", () 
     expect(reads).toEqual([["open", "m1"]]);
   });
 
+  it("a header taller than the view: its sender row at the open, its first lines on the way down", () => {
+    unread = new Set(["open"]);
+    const c = core();
+    c.viewport(700);
+    c.chrome(0);
+    c.offset("padded", 0);
+    c.offset("opened", 0);
+    c.openedFrom(0, 40);
+    c.openedBody(1200);
+    c.openedEnd(2400);
+    c.content(2500);
+    pass(2 * HOLD);
+    expect(reads, "the sender row alone").toEqual([]);
+    c.onScroll(1150);
+    pass(HOLD + 1);
+    expect(reads).toEqual([["open"]]);
+  });
+
   it("a fast scroll past reads nothing it passes", () => {
     const c = core();
     laidOut(c);

@@ -16,7 +16,10 @@ import type { ThreadWalkChannel } from "./thread-walk-channel";
  * shorter; it is ready while it carries `data-body-ready`, unread while it carries `data-unseen`. The
  * view is the scroller's box above the sticky bar or the reply dock. One observe per frame, on
  * scroll, resize, a panel's size or attributes changing, the window coming back, and when a dwell
- * under way is due; a message turns read once its top has been in view for the whole dwell.
+ * under way is due. The rule (the engine's header): "A message turns read once its sender line has
+ * been fully on screen (a preview counts) and its first lines have stayed on screen for 0.7 s, in
+ * either order. Reaching the end is not needed. Nothing that was never on screen turns read; Mark
+ * unread starts it over."
  *
  * A look counts only while the person can be reading: the tab visible, and the window focused or
  * scrolled by the person's own hand within the evidence window (a wheel over a window beside another

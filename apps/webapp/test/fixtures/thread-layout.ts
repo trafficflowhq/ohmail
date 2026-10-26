@@ -3,8 +3,8 @@
  * so the rule would see no line anywhere. This gives the reading column (`.read-col`) and the
  * sheet (`.reader`) a viewport, stacks their `[data-conv-id]` panels top to bottom with a gap, and
  * answers each panel's sender line (`.msg-from`, 20px down), body block (`.msg-body`/`.pm-body`,
- * from 80px down; its first lines the 72px of three fallback lines) and end marker
- * (`[data-own-end]`) from that stack and the scroller's own `scrollTop`. The sticky bar
+ * from 80px down, or `bodyAt[id]` under a tall header; its first lines the 72px of three fallback
+ * lines) and end marker (`[data-own-end]`) from that stack and the scroller's own `scrollTop`. The sticky bar
  * (`.msg-actions`) sits at the viewport's foot. A panel's height is `heights[id]` or the default.
  * The window is focused (jsdom answers `hasFocus()` false until something takes focus) unless a
  * test sets `focused` false.
@@ -50,12 +50,15 @@ export interface ThreadLayout {
 
 export function stubThreadLayout(opts: {
   viewport?: number; defaultHeight?: number; heights?: Record<string, number>;
+  /** Where a panel's body starts, by id (default 80px down): a tall header pushes it down. */
+  bodyAt?: Record<string, number>;
   /** Is the reading column `display:none` now (a phone width)? Then it lays out nothing. */
   columnHidden?: () => boolean;
 } = {}): ThreadLayout {
   const viewport = opts.viewport ?? 800;
   const defaultHeight = opts.defaultHeight ?? 400;
   const heights: Record<string, number> = { ...(opts.heights ?? {}) };
+  const bodyAt: Record<string, number> = opts.bodyAt ?? {};
   const barTop = viewport - 60;
   const tops = new WeakMap<Element, number>();
   const proto = HTMLElement.prototype;
@@ -114,7 +117,7 @@ export function stubThreadLayout(opts: {
     if (this === panel) return box(top, top + h);
     if (this.classList.contains("msg-from")) return box(top + 20, top + 60);
     if (this.hasAttribute("data-own-end")) return box(top + h - 30, top + h - 30);
-    if (this.classList.contains("msg-body") || this.classList.contains("pm-body")) return box(top + 80, top + h - 30);
+    if (this.classList.contains("msg-body") || this.classList.contains("pm-body")) return box(top + (bodyAt[panel.dataset.convId!] ?? 80), top + h - 30);
     return box(0, 0);
   };
   Object.defineProperty(Element.prototype, "clientHeight", {

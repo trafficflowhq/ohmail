@@ -3,16 +3,23 @@
  * `apps/mobile/src/ui/reader-seen.ts`). Pure: each adapter hands in its panels' line boxes and the
  * view in one coordinate system, at a moment, and gets back the ids that turned read.
  *
- * An unread message turns read once its TOP — its sender line and the first lines of its body (about
- * `THREAD_TOP_LINES` lines, or the whole body when it is shorter; a framed body's top, about the same
- * height) — has been wholly inside the view, without a break, for `THREAD_READ_HOLD_MS` of a visit the
- * person ENTERED (an open, a press or a hand scroll in the reader). Its last line is not needed: having
- * seen the top of a message is reading it (owner ruling 2026-10-23). One dwell for every message, the newest
- * and a reply that arrives into the open visit included, and the id is returned only once it is done.
- * Never counted: a preview (before `enter`), a look nobody can see (`view` null: the tab hidden, the
- * window away — every dwell starts over), a panel whose body is not ready, an id kept unread for the
- * visit (`u`, Mark unread, or any read-to-unread turn the record sees), and a dwell across a change of
- * the panel's height by more than 1px (the layout moved: what was on screen was not this top).
+ * The rule, for every message on web, desktop, Cloud and the phone: "A message turns read once its
+ * sender line has been fully on screen (a preview counts) and its first lines have stayed on screen for
+ * 0.7 s, in either order. Reaching the end is not needed. Nothing that was never on screen turns read;
+ * Mark unread starts it over." (The end: owner ruling 2026-10-23.)
+ *
+ * In this code: the sender line counts once it is wholly inside the view at a look someone could see
+ * (a preview's look too); the first lines of the body (about `THREAD_TOP_LINES` lines, or the whole body
+ * when it is shorter; a framed body's top, about the same height) count once they are wholly inside the
+ * view, without a break, for `THREAD_READ_HOLD_MS` of a visit the person ENTERED (an open, a press or a
+ * hand scroll in the reader). Each is kept separately for the visit, for every message, whether or not
+ * the two fit in the view together.
+ * One dwell for every message, the newest and a reply that arrives into the open visit included, and the
+ * id is returned once, at the first look that has both. Never counted: a dwell in a preview (before
+ * `enter`), a look nobody can see (`view` null: the tab hidden, the window away — every dwell starts
+ * over), a panel whose body is not ready, an id kept unread for the visit (`u`, Mark unread, or any
+ * read-to-unread turn the record sees; `keepUnread` also forgets what was seen of it), and a dwell across
+ * a change of the panel's height by more than 1px (the layout moved: what was on screen was not this top).
  */
 
 /** The dwell: a message's top this long on screen reads it. The tint settles once the read lands. */
@@ -65,8 +72,9 @@ export interface ThreadRead {
   /** A deliberate read: the keep is let go. */
   release(id: string): void;
   /**
-   * One look at `now`: the ids whose top has now been in view for the whole dwell, each once, in
-   * panel order. `view` null is a look nobody can see: every dwell under way starts over.
+   * One look at `now`: the ids whose top has now been seen (the sender line, and the first lines for
+   * the whole dwell), each once, in panel order. `view` null is a look nobody can see: every dwell
+   * under way starts over.
    */
   observe(panels: readonly ThreadPanel[], view: ThreadView | null, unreadNow: ReadonlySet<string>, now: number): string[];
   /** When the earliest dwell under way is done (the adapter looks again then), or `null` when none is. */
@@ -86,11 +94,15 @@ export function createThreadRead(): ThreadRead {
   let enteredAt = Number.NEGATIVE_INFINITY;
   const kept = new Set<string>();
   const returned = new Set<string>();
-  /** When each top came into view, unbroken since. */
+  /** When each message's first lines came into view, unbroken since. */
   const since = new Map<string, number>();
   const heights = new Map<string, number>();
   /** Each id's read state at the last observe: a turn to unread is kept. */
   const wasUnread = new Map<string, boolean>();
+  /** Sender lines seen wholly in view at a look someone could see, this visit. */
+  const firstSeen = new Set<string>();
+  /** First lines that held in view for a whole dwell of the entered visit. */
+  const leadHeld = new Set<string>();
 
   return {
     enter(now) {
@@ -105,6 +117,8 @@ export function createThreadRead(): ThreadRead {
     keepUnread(id) {
       kept.add(id);
       since.delete(id);
+      firstSeen.delete(id);
+      leadHeld.delete(id);
     },
     release(id) {
       kept.delete(id);
@@ -121,19 +135,20 @@ export function createThreadRead(): ThreadRead {
         const h = heights.get(p.id);
         heights.set(p.id, p.height);
         if (h !== undefined && Math.abs(p.height - h) > HEIGHT_SLACK) since.delete(p.id);
-        const shown = view !== null && entered && p.ready && unread && !kept.has(p.id) && !returned.has(p.id)
-          && inside(p.first, view) && inside(p.lead, view);
-        if (!shown) {
+        const open = unread && !kept.has(p.id) && !returned.has(p.id);
+        if (view !== null && open && inside(p.first, view)) firstSeen.add(p.id);
+        const counts = view !== null && entered && p.ready && open;
+        if (!counts || !inside(p.lead, view)) {
           since.delete(p.id);
-          continue;
+        } else {
+          const from = since.get(p.id);
+          if (from === undefined) since.set(p.id, now);
+          else if (now - from >= THREAD_READ_HOLD_MS) {
+            since.delete(p.id);
+            leadHeld.add(p.id);
+          }
         }
-        const from = since.get(p.id);
-        if (from === undefined) {
-          since.set(p.id, now);
-          continue;
-        }
-        if (now - from >= THREAD_READ_HOLD_MS) {
-          since.delete(p.id);
+        if (counts && leadHeld.has(p.id) && firstSeen.has(p.id)) {
           returned.add(p.id);
           out.push(p.id);
         }
