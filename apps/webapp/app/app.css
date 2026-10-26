@@ -5089,12 +5089,6 @@ input.set-tag-input {
     white-space: nowrap;
   }
 }
-@media (pointer: coarse) and (max-width: 699.98px) {
-  .view-screener .row .av,
-  .view-screener .row .addr {
-    pointer-events: none;
-  }
-}
 @media (min-width: 1024px) {
   .rail-bg {
     display: none !important;
@@ -5837,18 +5831,18 @@ input.set-tag-input {
 /* ================= the sender affordance in a row ============================
    Clicking a row's circle or address opens that sender's screening. The handler
    is ONE capture-phase listener on <main class="stage"> (AppShell), so the hint
-   below is true in every list — Ohbox, Reads, Receipts, Screener, Tags, Search —
-   and it ships in the same file as the claim. */
-.view .row .av,
-.view .row .addr {
+   below is true in every list — Ohbox, Reads, Receipts, Tags, Search — and it
+   ships in the same file as the claim. A Screener row is one target (`sender-hit.ts`). */
+.view:not(.view-screener) .row .av,
+.view:not(.view-screener) .row .addr {
   cursor: pointer;
 }
-.view .row .addr:hover {
+.view:not(.view-screener) .row .addr:hover {
   color: var(--accent-ink);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.view .row .av:hover {
+.view:not(.view-screener) .row .av:hover {
   box-shadow: var(--lift-2);
 }
 

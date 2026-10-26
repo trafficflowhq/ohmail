@@ -1346,11 +1346,13 @@ export function ScreenerView({
       chord: "s",
       group: "screener",
       label: tk("screen"),
-      disabled: !decidable || state.role.mode === "blocked" || fullShown,
+      disabled: !decidable || state.role.mode === "blocked",
       run: () => {
         if (!activeId) return;
+        // The menu hangs off the row, which the full letter covers: leave it first.
+        if (fullShown) onFull(false);
         reveal(activeId);
-        setMenuFor((open) => (open === activeId ? null : activeId));
+        setMenuFor((open) => (open === activeId && !fullShown ? null : activeId));
       },
     },
     /* ── [ / ] WALK THE THREE SEGMENTS (the ohmarchy keymap, Phase 1) ──────────────────

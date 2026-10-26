@@ -21,13 +21,16 @@ export interface SenderHit {
 }
 
 /** Every element that means "this is the sender", in both idioms — and the Screener preview's
- *  sender press (`HeldMail`), a card stamped like a stream card, where a phone's row is one target. */
+ *  sender press (`HeldMail`), a card stamped like a stream card, where the row is one target. */
 const HANDLES = ".row .av, .row .addr, .scast .addr, .hmail .hm-who";
 /** The carriers of a message id, in the order they nest. */
 const CARRIERS = ".row[data-id], .scast[data-sid], .hmail[data-sid]";
 
 export function senderHitOf(target: Element | null): SenderHit | null {
   if (!target?.closest?.(HANDLES)) return null;
+  // A Screener row is the sender: a press anywhere selects it, so `s` and o/r/c/n/x act on it. The
+  // sheet is the preview's sender press there.
+  if (target.closest(".view-screener .row")) return null;
   const anchor = target.closest<HTMLElement>(CARRIERS);
   // `data-id` on a row, `data-sid` on a card. A carrier with neither is a rendering fault, not
   // a click to guess about: answering `null` leaves the ordinary click to do its ordinary job.
