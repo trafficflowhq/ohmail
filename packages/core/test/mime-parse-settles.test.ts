@@ -1,6 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MAX_HTML_TO_TEXT_CHARS, MimeParseError, normalizeMime } from "../src/mime.js";
+import { MIME_PARSE_CEILING_MS, ParseDeadlineExceeded, parseBounded, startParseBudget } from "../src/mime-parse.js";
 
 /**
  * normalizeMime ALWAYS SETTLES. A throw inside mailparser's header processing used to escape as
@@ -128,12 +130,22 @@ describe("a parse that stops is a parse_timeout at the deadline, not before", ()
     expect((t.error() as MimeParseError).reason).toBe("parse_timeout");
   });
 
-  it("one budget covers the fallback re-parse: it expires 30 s after the FIRST parse began", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  /** Fake time one second at a time, with real ticks between, until `t` settles: the fake ms it took. */
+  async function settledAfter(t: { state: () => string }, maxMs: number): Promise<number> {
+    for (let ms = 0; ms <= maxMs; ms += 1_000) {
+      if (t.state() !== "pending") return ms;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await realTicks(10);
+    }
+    return Number.POSITIVE_INFINITY;
+  }
+
+  // The first parse waits 20 s on its first chunk, then meets the html-to-text refusal.
+  function delayFirstThen(fallback: (self: unknown, args: unknown[]) => unknown): () => boolean {
     let firstDelayed = false;
     let fallbackStarted = false;
     proto.processChunk = function (this: { options: { skipHtmlToText?: boolean } }, ...args: unknown[]) {
-      if (this.options.skipHtmlToText) { fallbackStarted = true; return; }   // the fallback stops
+      if (this.options.skipHtmlToText) { fallbackStarted = true; return fallback(this, args); }
       if (!firstDelayed) {
         firstDelayed = true;
         setTimeout(() => { originals.processChunk.apply(this, args); }, 20_000);
@@ -141,21 +153,118 @@ describe("a parse that stops is a parse_timeout at the deadline, not before", ()
       }
       return originals.processChunk.apply(this, args);
     };
+    return () => fallbackStarted;
+  }
+
+  it("one budget covers the fallback re-parse: a stopped fallback is refused 30 s after the last progress", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const fallbackStarted = delayFirstThen(() => undefined);   // the fallback stops
     const t = track(normalizeMime(msg({ html: `<p>${"x".repeat(MAX_HTML_TO_TEXT_CHARS + 16)}</p>` })));
     await realTicks();
-    await vi.advanceTimersByTimeAsync(20_000);
-    await realTicks();
-    expect(fallbackStarted, "the html-to-text refusal never sent the message to the fallback").toBe(true);
-    await vi.advanceTimersByTimeAsync(DEADLINE_MS - 20_000 - 1);
-    expect(t.state()).toBe("pending");
-    await vi.advanceTimersByTimeAsync(1);
-    expect(t.state(), "the fallback ran on a clock of its own").toBe("rejected");
+    expect(await settledAfter(t, 120_000), "the first parse's last progress was at 20 s").toBe(50_000);
+    expect(fallbackStarted(), "the html-to-text refusal never sent the message to the fallback").toBe(true);
     expect((t.error() as MimeParseError).reason).toBe("parse_timeout");
+  });
+
+  it("one budget covers the fallback re-parse: its ceiling counts from the FIRST parse's start", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // A fallback that keeps progressing, one chunk every 20 s, never meets the 30 s bound.
+    const fallbackStarted = delayFirstThen((self, args) => {
+      setTimeout(() => { originals.processChunk.apply(self, args); }, 20_000);
+    });
+    const parts = Array.from({ length: 40 }, (_, i) => ["--B", "Content-Type: text/plain", "", `part ${i}`]);
+    const t = track(normalizeMime(Buffer.from([
+      "From: Alice <alice@example.com>", "Subject: parts", 'Content-Type: multipart/mixed; boundary="B"', "",
+      "--B", "Content-Type: text/html", "", `<p>${"x".repeat(MAX_HTML_TO_TEXT_CHARS + 16)}</p>`, ...parts.flat(), "--B--", "",
+    ].join("\r\n"))));
+    await realTicks();
+    expect(await settledAfter(t, MIME_PARSE_CEILING_MS + 60_000), "the fallback ran on a clock of its own")
+      .toBe(MIME_PARSE_CEILING_MS);
+    expect(fallbackStarted()).toBe(true);
+    expect((t.error() as MimeParseError).reason).toBe("parse_timeout");
+    expect(((t.error() as Error).cause as ParseDeadlineExceeded).ms).toBe(MIME_PARSE_CEILING_MS);
   });
 
   it("the deadline is 30 s", async () => {
     const { MIME_PARSE_DEADLINE_MS } = await import("../src/mime-parse.js");
     expect(MIME_PARSE_DEADLINE_MS).toBe(DEADLINE_MS);
+    expect(MIME_PARSE_CEILING_MS).toBe(10 * 60_000);
+  });
+});
+
+describe("the deadline counts turns without progress, not wall time", () => {
+  // Synthetic inline images: `sizes` raw bytes each, base64 in 76-column lines or one unbroken line.
+  const heavy = (sizes: number[], wrapped: boolean): Buffer => Buffer.from([
+    "From: Letter <news@example.com>", "To: reader@example.com", "Subject: heavy", "Message-ID: <heavy@example.com>",
+    'Content-Type: multipart/related; boundary="B"', "", "--B", "Content-Type: text/html; charset=utf-8", "",
+    `<html><body>${sizes.map((_, i) => `<img src="cid:p${i}@example.com">`).join("")}</body></html>`, "",
+    ...sizes.flatMap((n, i) => {
+      const b64 = randomBytes(n).toString("base64");
+      return ["--B", "Content-Type: image/png", "Content-Transfer-Encoding: base64", `Content-ID: <p${i}@example.com>`,
+        "Content-Disposition: inline", "", wrapped ? b64.replace(/.{76}/g, "$&\r\n") : b64, ""];
+    }),
+    "--B--", "",
+  ].join("\r\n"));
+
+  // A busy engine: every turn of the loop also spends a second of somebody else's work.
+  async function onBusyLoop<T>(run: () => Promise<T>): Promise<T> {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let on = true;
+    const spin = (): void => { if (!on) return; vi.advanceTimersByTime(1_000); setImmediate(spin); };
+    setImmediate(spin);
+    try { return await run(); } finally { on = false; }
+  }
+
+  for (const [label, sizes, wrapped] of [
+    ["three ~540 KB inline images", [400_000, 400_000, 400_000], true],
+    ["one ~1.2 MB inline image in a 1.6 MB letter", [900_000, 280_000], true],
+    ["six unbroken ~540 KB inline images", Array<number>(6).fill(405_000), false],
+  ] as const) {
+    it(`a heavy letter (${label}) on a busy loop is read whole`, async () => {
+      const m = await onBusyLoop(() => normalizeMime(heavy([...sizes], wrapped)));
+      expect(m.attachments.filter((a) => a.inline).map((a) => a.sizeBytes)).toEqual(sizes);
+    }, 60_000);
+  }
+
+  it("a loop held for longer than the deadline is one late look, not an expiry", async () => {
+    const budget = startParseBudget(200, 30_000);
+    let held = false;
+    proto.processChunk = function (...args: unknown[]) {
+      if (!held) { held = true; const until = Date.now() + 600; while (Date.now() < until) { /* the loop is held */ } }
+      return originals.processChunk.apply(this, args);
+    };
+    try {
+      const m = await parseBounded(msg(), { keepCidLinks: true, maxHtmlLengthToParse: MAX_HTML_TO_TEXT_CHARS }, budget);
+      expect(held).toBe(true);
+      expect(m.text).toBe("hi\n");
+    } finally {
+      budget.clear();
+    }
+  });
+
+  it("a parse that keeps progressing still ends at the ceiling, and the error names the bound that fired", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+    const busy = startParseBudget(120, 600);
+    const idle = startParseBudget(120, 600);
+    const fired: Array<[string, number]> = [];
+    busy.onExpire((ms) => fired.push(["busy", ms]));
+    idle.onExpire((ms) => fired.push(["idle", ms]));
+    const beat = setInterval(() => busy.progress(), 20);
+    try {
+      vi.advanceTimersByTime(119);
+      expect(fired).toEqual([]);
+      vi.advanceTimersByTime(1);
+      expect(fired).toEqual([["idle", 120]]);
+      vi.advanceTimersByTime(479);
+      expect(fired).toEqual([["idle", 120]]);
+      vi.advanceTimersByTime(1);
+      expect(fired).toEqual([["idle", 120], ["busy", 600]]);
+      expect(new ParseDeadlineExceeded(600).ms).toBe(600);
+    } finally {
+      clearInterval(beat);
+      busy.clear();
+      idle.clear();
+    }
   });
 });
 
