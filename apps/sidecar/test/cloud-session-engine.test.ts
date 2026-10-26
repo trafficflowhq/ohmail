@@ -42,6 +42,10 @@ function host(refresh: () => Response): Host {
     const send = (v: unknown): Response =>
       new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
     if (url.pathname === "/auth/refresh") return refresh();
+    // The password sign-in, which mints `access-2`, and the identity read that follows it.
+    if (url.pathname === "/auth/login") return send({ status: "twofa_required", loginToken: "lt-1" });
+    if (url.pathname === "/auth/2fa/totp/verify") return send({ tokens: { accessToken: "access-2", refreshToken: "refresh-2" } });
+    if (url.pathname === "/auth/session") return send({ user: { email: "me@ohmail.test" }, scope: "full" });
     if (h.expired && new Headers(init?.headers).get("authorization") === "Bearer access-1") {
       return new Response(JSON.stringify({ error: { code: "unauthorized" } }), { status: 401 });
     }
@@ -92,6 +96,33 @@ async function until(s: CloudSidecar, want: (h: Health) => boolean, what: string
 
 const html403 = (): Response =>
   new Response("<html>Access denied</html>", { status: 403, headers: { "content-type": "text/html" } });
+const revoked401 = (): Response => new Response(JSON.stringify({ error: { code: "refresh_revoked" } }), { status: 401 });
+
+const call = (s: CloudSidecar, method: string, path: string, body?: unknown): Promise<Response> =>
+  s.handle(new Request(`http://sidecar${path}`, {
+    method,
+    headers: { authorization: `Bearer ${s.sessionToken}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }));
+
+/** A run whose session the server refuses, kept until the refusal's teardown removed the seal, then stopped. */
+async function refusedRun(dataDir: string, keks: Record<number, Buffer>): Promise<void> {
+  const h = host(revoked401);
+  const s = await boot(dataDir, h, { keks });
+  h.expired = true;
+  await until(s, (x) => x.sessionExpired, "the engine never took the refusal");
+  const deadline = Date.now() + 10_000;
+  while (existsSync(join(dataDir, "cloud-tokens.seal"))) {
+    if (Date.now() > deadline) throw new Error("the refused seal was never removed");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  await s.stop();
+  sidecars.splice(sidecars.indexOf(s), 1);
+}
+
+/** A launch with no session on hand, as every launch after a refusal is. */
+const relaunch = (dataDir: string, keks: Record<number, Buffer>, address?: string): Promise<CloudSidecar> =>
+  boot(dataDir, host(html403), { keks, tokens: false, ...(address ? { address } : {}) });
 
 describe("the cloud engine's session through /health", () => {
   it("a firewall's 403 at the refresh: still signed in, not expired, the seal and the mirror kept", { timeout: 40_000 }, async () => {
@@ -127,6 +158,58 @@ describe("the cloud engine's session through /health", () => {
       if (Date.now() > deadline) throw new Error("the refused seal was never removed");
       await new Promise((r) => setTimeout(r, 25));
     }
+  });
+});
+
+/**
+ * THE REFUSAL OUTLIVES THE RUN THAT HEARD IT. The teardown removes the seal, so the next launch is
+ * pre-auth: it names the refusal on the sign-in door (never as an expiry over an empty mailbox),
+ * until a sign-in, the person's own sign-out or a launch for another account.
+ */
+describe("a refusal heard by an earlier run", () => {
+  it("is named at the next launch, and a sign-in takes it away", { timeout: 60_000 }, async () => {
+    const dataDir = await freshDataDir("ohmail-session-refused-before-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await refusedRun(dataDir, keks);
+
+    const again = await relaunch(dataDir, keks);
+    expect(await health(again)).toMatchObject({
+      signedIn: false, sessionExpired: false, session: { state: "refused_before", code: "refresh_revoked" },
+    });
+    const signIn = await call(again, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
+    expect(signIn.status, await signIn.clone().text()).toBe(200);
+    expect((await health(again)).session).toMatchObject({ state: "live" });
+    await again.stop();
+    sidecars.splice(0);
+
+    // The shell's own sign-out with the engine down removes the seal and nothing else.
+    rmSync(join(dataDir, "cloud-tokens.seal"));
+    expect((await health(await relaunch(dataDir, keks))).session, "a sign-in left the old refusal behind").toBeNull();
+  });
+
+  it("the person's own sign-out takes it away", { timeout: 60_000 }, async () => {
+    const dataDir = await freshDataDir("ohmail-session-refused-out-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await refusedRun(dataDir, keks);
+
+    const again = await relaunch(dataDir, keks);
+    expect((await health(again)).session).toMatchObject({ state: "refused_before" });
+    expect((await call(again, "DELETE", "/cloud/session")).status).toBe(200);
+    expect((await health(again)).session).toBeNull();
+    await again.stop();
+    sidecars.splice(0);
+    expect((await health(await relaunch(dataDir, keks))).session, "a sign-out left the refusal to be said again").toBeNull();
+  });
+
+  it("is not carried to another account", { timeout: 60_000 }, async () => {
+    const dataDir = await freshDataDir("ohmail-session-refused-other-");
+    dirs.push(dataDir);
+    const keks = ring();
+    await refusedRun(dataDir, keks);
+    const other = await relaunch(dataDir, keks, "someone-else@ohmail.test");
+    expect(await health(other)).toMatchObject({ signedIn: false, sessionExpired: false, session: null });
   });
 });
 

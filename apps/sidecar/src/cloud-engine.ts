@@ -16,9 +16,10 @@ import {
 import { ensureLocalWorld, type LocalWorld } from "./identity.js";
 import { launchSessionExpiredResponse, mintLaunchBearer } from "./launch-bearer.js";
 import {
-  createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED,
+  createCloudAuth, loadSealedTokens, sealTokens, ACCOUNT_ERASED, REFUSAL_CODES,
   type CloudAuth, type CloudSessionReading, type CloudTokens,
 } from "./cloud-auth.js";
+import { writeAtomic } from "./fs-atomic.js";
 import {
   cloudIdentity,
   cloudSignIn,
@@ -583,7 +584,7 @@ export function enforceMirrorOwner(
        there belongs to the world being left and must go — which is what it has always done. */
     const stale = askedToStartOver && !addressChanged && !serverChanged
       ? ["pgdata", "cloud-cursor.json"]
-      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal"];
+      : ["pgdata", "cloud-cursor.json", "cloud-tokens.seal", SESSION_REFUSED_FILE];
     /* THE WINDOW'S QUEUED CHANGES ARE THEIR OWNER'S, not the directory's: a launch for another account
        or server opens and removes none, and they wait for their own sign-in. Only the person's own
        start-over, on the same account and server, takes the changes of the record that asked for it. */
@@ -665,6 +666,25 @@ export function clearMirrorErased(dataDir: string): void {
   if (!r.erased) return;
   writeFileSync(join(dataDir, MIRROR_OWNER_FILE),
     encodeMirrorRecord(r.address, r.base, r.account, r.discardPending, false), { mode: 0o600 });
+}
+
+/**
+ * THE REFUSAL AN EARLIER RUN HEARD, for the next launch: its teardown removes the seal, so that
+ * launch is pre-auth and would greet the person as a first run. The code and its time, nothing more.
+ */
+const SESSION_REFUSED_FILE = "cloud-session-refused.json";
+
+/** The kept refusal, or null; a file that does not read as one says nothing. */
+function readSessionRefused(dataDir: string): { code: string; since: string } | null {
+  try {
+    const raw = readFileSync(join(dataDir, SESSION_REFUSED_FILE), "utf8");
+    const v = JSON.parse(raw) as { code?: unknown; since?: unknown } | null;
+    if (typeof v?.code !== "string" || !REFUSAL_CODES.has(v.code)) return null;
+    if (typeof v.since !== "string" || !Number.isFinite(Date.parse(v.since))) return null;
+    return { code: v.code, since: v.since };
+  } catch {
+    return null;
+  }
 }
 
 /** How long a sign-out waits for the server to end the session it held. */
@@ -820,6 +840,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       throw new Error("OHMAIL_IDENTITY_PENDING needs OHMAIL_KEK: the first claim seals its session for the relaunch.");
     }
     const sealPath = join(config.dataDir, "cloud-tokens.seal");
+    const refusedPath = join(config.dataDir, SESSION_REFUSED_FILE);
+    /** A session, or the person's own sign-out, makes the kept refusal old news. */
+    const forgetRefusal = (): void => {
+      try { rmSync(refusedPath, { force: true }); } catch { /* the next sign-in or sign-out removes it */ }
+    };
 
     const sealed = keyProvider ? await loadSealedTokens(sealPath, keyProvider) : null;
     /* A SEAL ON DISK THAT THIS KEY CANNOT OPEN is the one seal fault a sign-in is owed for — the
@@ -959,6 +984,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       // that fails costs only that: the next `account_erased` answer latches it back regardless.
       accountErasedLatch = false;
       try { clearMirrorErased(config.dataDir); } catch { /* see above */ }
+      forgetRefusal();
       const auth = createCloudAuth({
         baseUrl: cloudBase,
         tokens,
@@ -983,6 +1009,12 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // A DELETED account takes the same teardown and latches first, so the window says so.
           const erased = code === ACCOUNT_ERASED;
           if (erased) accountErasedLatch = true;
+          // Kept for the next launch, which finds no seal; a failed write loses only the sentence.
+          else if (REFUSAL_CODES.has(code)) {
+            try {
+              writeAtomic(refusedPath, JSON.stringify({ code, since: now().toISOString() }), 0o600);
+            } catch { /* see above */ }
+          }
           log?.("cloud_session_renewal_failed", {
             code,
             reason: erased
@@ -1069,6 +1101,11 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       activate(launchTokens);
     } else {
       if (sealUnreadable) setHostedSession({ state: "seal_failed", code: "seal_unreadable", since: now().toISOString() });
+      else if (config.identityPending === undefined) {
+        // Said as a cause, never as `sessionExpired`: that one is a refusal THIS process heard.
+        const before = readSessionRefused(config.dataDir);
+        if (before !== null) setHostedSession({ state: "refused_before", ...before });
+      }
       // NOT A FAILURE. See the pre-auth section in this file's header: the engine serves
       // `/health` and `/cloud/signin`, and the shell renders a sign-in surface rather than an
       // error about a process that would not start.
@@ -1946,6 +1983,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         const inFlight = await flights.undo(deadline);
         const live = authed;
         setHostedSession(null);
+        forgetRefusal();
         const teardown = signOut();
         retainTeardown(teardown);
         /* THE WINDOW'S ACCEPTED WRITES LAND FIRST, under the still-live session, for a share of the
@@ -2157,7 +2195,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
        mirror rather than a mail pipeline, which makes it the closest thing to a control the
        measurement has. No-op when this install was given no logger. */
     const stopVitals = log
-      ? startEngineVitals(log, { storeBytes: () => opened.storeBytes() })
+      ? startEngineVitals(log, { storeBytes: () => opened.storeBytes(), storeSyncs: () => opened.storeSyncs() })
       : () => { /* nothing to write to */ };
 
     /* ONE SIGN-IN AT A TIME, queued at the door (`serialTail`): the password, code and approval

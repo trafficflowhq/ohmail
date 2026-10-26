@@ -551,6 +551,8 @@ export {
 } from "./reader-seen-rules.js";
 // The thread's squares: which one is current while the reader scrolls, and where a press lands.
 export { WALK_LINE, threadWalk, type Walk, type WalkGeometry, type WalkPin } from "./thread-walk.js";
+// A line of squares longer than its room: the run that stands, its "+N" counts and its taper.
+export { SQUARES_TAPER, squaresWindow, type SquaresWindow } from "./squares-window.js";
 
 // The routing verbs' delayed commit — the half of a screening plan the wire cannot reverse.
 export {
@@ -748,6 +750,7 @@ export {
   type OrganizerRequestView,
   // A rule verb waiting on this client's queue, for the rules surface.
   type QueuedRuleWrite,
+  type AppliedRuleRequest,
   type WaitingOnOrganizerView,
   // Cancel's vocabulary: what a withdrawal found, and the refusal code a withdrawn verb settles
   // with — a surface reads the code to say nothing rather than "it failed".
@@ -980,7 +983,8 @@ export { attachmentFaultClass, type AttachmentFaultClass } from "./attachment-fa
 export { outrankCoveringDomains } from "./address-rank.js";
 // A rule's `match` as every reader keys it — the router's and the queue SQL's key, spaces only.
 export { ruleMatchKey } from "@trafficflow/core/rule-order";
-export { PROFILE_RULES_SENT_MAX } from "./profile-bound.js";
+export { PROFILE_APPLIED_MAX, PROFILE_RULES_SENT_MAX } from "./profile-bound.js";
+export { rulesShown, type RulesShown } from "./rules-shown.js";
 export {
   pressGained,
   pressOutcome,

@@ -12,7 +12,7 @@ import {
 import {
   agreeWindowCutoff, gateHoldsSender, makeDrizzleRepo, unscreenedGroups, writeScreenerIntents, type UnscreenedRow,
 } from "@trafficflow/core/adapters/drizzle-repo";
-import { carryDialect, dialect } from "@trafficflow/db/dialect";
+import { carryDialect, dialect, type Dialect } from "@trafficflow/db/dialect";
 import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow } from "./rule-pass.js";
 
 /* MAIL FROM A GAP, FILED ONLY ON A PERSON'S PRESS. The window is the gap the reader is looking at
@@ -25,8 +25,14 @@ import { perMailboxAuthservTrust, ruleInputOf, upsertDesired, type RuleInputRow 
    first set and screens the second only while both sizes are the counts they were shown. */
 
 /* Where a look opens the window: a leaf, so both engines read one arbitration. */
-import { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap } from "./gap-window.js";
-export { gapKeyFrom, gapOpenStart, instantOf, travellingGapColumns, type TravelledGap };
+import {
+  GAP_CLOCK_ALLOWANCE_MS, gapKeyFrom, gapOpenStart, handBackStart, heldElsewhereUntilOnLeave, instantOf, markOrganizedThrough,
+  travellingGapColumns, type TravelledGap,
+} from "./gap-window.js";
+export {
+  GAP_CLOCK_ALLOWANCE_MS, gapKeyFrom, gapOpenStart, handBackStart, heldElsewhereUntilOnLeave, instantOf, markOrganizedThrough,
+  travellingGapColumns, type TravelledGap,
+};
 
 /** Rows read per page of the walk. */
 export const GAP_CATCHUP_BATCH = 100;
@@ -201,7 +207,6 @@ export async function gapCatchupPass(
  * every letter that way before it read INTERNALDATE by hand). Said, never filed; the window closes.
  */
 async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Promise<void> {
-  const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
   const [r] = await tx.select({ n: sql<number>`count(*)` }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .where(and(
@@ -210,7 +215,7 @@ async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Pr
       eq(folderState.lastSetBy, "peer"),
       eq(folderState.observedFolder, "INBOX"),
       isNull(messages.arrivedAt),
-      sql`${messages.createdAt} >= ${since}`,
+      takenInInside(dialect(tx)),
     ));
   const count = Number(r?.n ?? 0);
   if (count > 0) {
@@ -220,6 +225,19 @@ async function sayUnarrived(tx: Tx, deps: GapCatchupDeps, mailboxId: string): Pr
         + "could not offer them; it closes, and they stay in the inbox",
     });
   }
+}
+
+/**
+ * TAKEN IN INSIDE THE WINDOW, read off the row: at or after its start, or within the clock allowance
+ * before it (the start may be on the server's clock, intake is on the store's), but never by the last
+ * instant the row said another install held the mailbox (mail 0169). A letter taken in while held
+ * predates the window, so it is never gap mail (review HIGH-1).
+ */
+function takenInInside(d: Dialect): SQL {
+  const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
+  const held = sql`(select mb.held_elsewhere_until from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
+  return sql`(${messages.createdAt} >= ${since} or (${messages.createdAt} >= ${since} - ${d.interval(GAP_CLOCK_ALLOWANCE_MS)}
+    and (${held} is null or ${messages.createdAt} > ${held})))`;
 }
 
 /** A gap row in the shape the Screener's writes and groups read. */
@@ -304,8 +322,7 @@ async function selectGapCandidates(
   const d = dialect(t);
   const since = sql`(select mb.gap_since from ${mailboxes} mb where mb.id = ${messages.mailboxId})`;
   /* INSIDE THE WINDOW, read off the row itself: a NULL arrival or a closed window matches nothing.
-     INTAKE TOO, whatever the arrival says: a letter this store first took in while its row said
-     another install held the mailbox predates the window, so it is never gap mail. */
+     INTAKE TOO, whatever the arrival says ({@link takenInInside}). */
   const filters = [
     eq(messages.accountId, o.accountId),
     eq(messages.mailboxId, o.mailboxId),
@@ -313,7 +330,7 @@ async function selectGapCandidates(
     eq(folderState.observedFolder, "INBOX"),
     eq(folderState.desiredFolder, "INBOX"),
     sql`${messages.arrivedAt} >= ${since}`,
-    sql`${messages.createdAt} >= ${since}`,
+    takenInInside(d),
     isNull(messages.sensitivityCategory),
     eq(messages.noAi, false),
     isNull(messages.deletedAt),

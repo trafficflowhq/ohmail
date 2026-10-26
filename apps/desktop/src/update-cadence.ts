@@ -14,25 +14,27 @@
  * stops every monotonic clock, so a lid closed nightly would be checked every three or four
  * days. Nothing counts firings: a short interval wakes, asks the shell when its last check
  * finished (a wall-clock instant it already keeps) and compares two instants; the arithmetic
- * is `periodElapsed` in the shared `app-update.ts`, backwards-clock guard included. It ASKS
- * rather than installs: a found release is verified, then asked about HERE, in ohmail's own window,
- * as the strip (`app/shell/UpdateNotice.tsx`) — a native dialog has no parent on Linux and opens on
- * whatever workspace is in front. "Later" leaves the payload ready; the strip asks ONCE A DAY, and
- * at once again when a press (Check for Updates, Try again) ends ready.
+ * is `periodElapsed` in the shared `app-update.ts`, backwards-clock guard included. What it
+ * found is said HERE, in ohmail's own window, as one quiet line at the rail's foot
+ * (`app/shell/UpdateLine.tsx`): ready, downloading, or failed. It also tells the shell when a
+ * send waits or a draft holds files, which holds every install until they are gone.
  */
 import {
   announceUpdate,
+  announceVersion,
   askDue,
-  offerKey,
+  currentUpdateOffer,
   periodElapsed,
+  putAwayThisRun,
   readAskMemory,
   rememberAsk,
+  restartHold,
+  subscribeRestartHold,
   UPDATE_PERIOD_MS,
   writeAskMemory,
   type UpdateOffer,
 } from "../../webapp/app/shell/app-update.js";
-import { BUILD_PLATFORM } from "./platform.js";
-import { onUpdateState, updatePoll, updatePress, updateState, type UpdateReport } from "./update.js";
+import { onUpdateState, updateHold, updatePoll, updatePress, updateState, type UpdateReport } from "./update.js";
 
 /** How long the app may go without asking the feed. */
 export const CHECK_EVERY_MS = UPDATE_PERIOD_MS;
@@ -69,6 +71,9 @@ export const INSTALL_RETRIES = 1;
  */
 export const REQUEST_RETRIES = 3;
 
+/** How often a hold is renewed while a send waits; the shell lets one lapse after two minutes. */
+export const HOLD_RENEW_MS = 60 * 1000;
+
 /**
  * Did an INSTALL refuse — as opposed to a check failing to reach the feed? The shell reports a
  * stage and, separately, what the last completed CHECK found, and the pair separates them
@@ -82,25 +87,11 @@ export function installRefused(report: UpdateReport): boolean {
 }
 
 /**
- * …and the case where that refusal is a FACT ABOUT THE INSTALL rather than an accident.
- *
- * Linux only, because that is where a copy's files can belong to something else. Everywhere else
- * a refused install is a mishap — a file held open, a half-written temporary directory — and
- * telling somebody to go to a package manager would be a sentence about a machine they are not
- * using. This is the SENTENCE's condition; the CADENCE's bound is [`installRefused`] and applies
- * on every platform, because a daily dialog about an install that keeps failing is a nag whatever
- * the reason for the failing.
- */
-export function cannotSelfInstall(report: UpdateReport, linux: boolean): boolean {
-  return linux && installRefused(report);
-}
-
-/**
  * Is a periodic check due? `canCheck` is the shell's own `Flow::press` answer, carried over
  * rather than re-derived: this cannot start a check the menu item has disabled, and cannot
  * press in the one state where a press INSTALLS. Giving up is NOT here — a refused install
  * leaves a state a press would check from, so the stop lives in the driver beside its counter
- * (`cannotSelfInstall` is the classifier both use). `floor` is the earliest instant a check
+ * (`installRefused` is the classifier both use). `floor` is the earliest instant a check
  * may be counted from: the WINDOW OPENING for a shell with no last check to report, and the
  * LAST PRESS, which stops a press that produced neither `checking` nor a stamp from being
  * re-pressed every tick. The instant compared is the LATER of the two.
@@ -111,22 +102,42 @@ export function checkDue(report: UpdateReport, now: number, floor: number): bool
 }
 
 /**
- * What, if anything, the window should say about this report. A verified payload waiting is
- * the ask: one press restarts into it. An install this app could not perform is a different
- * sentence, not a louder one — `cannotSelfInstall` carries which state that is. THE SENTENCE
- * HEDGES ITS PROVENANCE ON PURPOSE: the state establishes that the replacement failed, not
- * HOW the copy was installed — an AppImage on a read-only mount reaches it too — so the copy
- * says the app could not replace its own files and names the package manager as a condition,
- * not a diagnosis. Asserting "this copy came from your package manager" would be false for
- * that person and send them somewhere the release is not.
+ * WHAT THE LINE SAYS ABOUT THIS REPORT, or null for nothing. Ready is a release one press from
+ * installing (greyed while a send waits or a draft holds files); downloading is one being
+ * fetched; failed is an install that did not go through, at a press, a quit or a launch, or a
+ * check somebody pressed that did not finish. A scheduled check that fails says nothing. Each line
+ * carries the key its restraint is counted against: a ready or a failure that answers a press is
+ * keyed by that instant, so it is said once, at once.
  */
-export function offerOf(report: UpdateReport, linux: boolean): UpdateOffer | null {
-  if (report.state === "ready" && report.canInstall) {
-    // An installer that did not start is told at once: it answers a press somebody just made.
-    const kind = typeof report.notStartedAt === "number" ? "retry" : "restart";
-    return { kind, version: report.offered ?? report.version, act: () => void updatePress() };
+export function lineOf(report: UpdateReport): UpdateOffer | null {
+  const version = report.offered ?? report.version;
+  const line = (kind: UpdateOffer["kind"], key: string, failed?: UpdateOffer["failed"]): UpdateOffer => ({
+    kind,
+    version,
+    key,
+    act: () => void updatePress(),
+    ...(failed ? { failed } : {}),
+  });
+  if (report.state === "ready" && typeof report.notStartedAt === "number") {
+    return line("failed", `failed:${version}@${report.notStartedAt}`, "install");
   }
-  if (cannotSelfInstall(report, linux)) return { kind: "package" };
+  /* AN INSTALL AT QUIT OR LAUNCH THAT FAILED stands through the release's next download, keyed by
+     its instant; Retry is drawn only where a press can act now. */
+  if (typeof report.installFailedAt === "number") {
+    const key = `failed:install@${report.installFailedAt}`;
+    return report.canInstall || report.canCheck
+      ? line("failed", key, "install")
+      : { kind: "failed", version, key, failed: "install" };
+  }
+  if (report.state === "downloading") return { kind: "downloading", version, key: `downloading:${version}` };
+  if (report.state === "ready" && (report.canInstall || report.held)) {
+    const at = report.pressedAt;
+    return line("ready", typeof at === "number" ? `ready:${version}@${at}` : `ready:${version}`);
+  }
+  if (installRefused(report)) return line("failed", "failed:install", "install");
+  if (report.state === "failed" && typeof report.pressedAt === "number") {
+    return line("failed", `failed:check@${report.pressedAt}`, "check");
+  }
   return null;
 }
 
@@ -134,11 +145,13 @@ export interface UpdateCadenceOptions {
   /** Seams, so the whole cadence is drivable from a test with no clock, no shell and no timers. */
   now?: () => number;
   every?: number;
-  linux?: boolean;
   read?: () => Promise<UpdateReport | null>;
   /** The silent check. Named `poll` and not `press` because the two are different requests. */
   poll?: () => Promise<void>;
   listen?: (show: (report: UpdateReport) => void) => Promise<() => void>;
+  /** Tells the shell a send waits (`true`) or no longer does. */
+  hold?: (waits: boolean) => Promise<void>;
+  renewEvery?: number;
 }
 
 /**
@@ -152,10 +165,11 @@ export interface UpdateCadenceOptions {
 export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => void {
   const now = options.now ?? (() => Date.now());
   const every = options.every ?? POLL_EVERY_MS;
-  const linux = options.linux ?? BUILD_PLATFORM === "linux";
   const read = options.read ?? updateState;
   const poll = options.poll ?? updatePoll;
   const listen = options.listen ?? onUpdateState;
+  const hold = options.hold ?? updateHold;
+  const renewEvery = options.renewEvery ?? HOLD_RENEW_MS;
 
   const armedAt = now();
   let stopped = false;
@@ -178,7 +192,7 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
    * feed and a download that died both write `failed` as the last check's result, so reading
    * it as recovery hands a package-managed copy on flaky wifi a fresh install dialog every
    * couple of days, for ever. The recovery is the one retry's own cycle: it ends in `ready`,
-   * the strip asks, and somebody who freed the disk presses Restart. Settings →
+   * the line asks, and somebody who freed the disk presses Restart. Settings →
    * Check now still reaches the feed and still offers the install, unaffected by the latch —
    * and it does not clear it either, because its cycle ends in `ready` and not in `idle`.
    */
@@ -212,28 +226,57 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   };
 
   /**
-   * Decide what this report means for the strip.
-   *
-   * Silence is a decision here too: a report with nothing on offer WITHDRAWS a standing strip,
-   * because an offer that has been installed or has failed away is one nobody should still be
-   * looking at.
+   * May this line start standing now? Downloading always may. A ready line, with installs automatic,
+   * may unless Later put it away this run: the release goes in at the next restart regardless. Every
+   * other line asks the once-a-day memory, keyed per release, and at once for a press's own instant.
+   */
+  const mayStand = (line: UpdateOffer, report: UpdateReport): boolean => {
+    const key = line.key ?? line.kind;
+    if (line.kind === "downloading") return true;
+    if (line.kind === "ready" && report.autoInstall === true) return !putAwayThisRun(key);
+    const memory = readAskMemory();
+    if (!askDue(memory, key, now())) return false;
+    writeAskMemory(rememberAsk(memory, key, now()));
+    return true;
+  };
+
+  /**
+   * Decide what this report means for the line. The line standing under the same key is refreshed
+   * (a send began or ended, the switch moved); a report with nothing to say withdraws it.
    */
   const say = (report: UpdateReport): void => {
-    const offer = offerOf(report, linux);
-    if (offer === null) {
+    announceVersion(report.version);
+    const line = lineOf(report);
+    if (line === null) {
       announceUpdate(null);
       return;
     }
-    /* A START THAT FAILED, AND A READY THAT ANSWERS A PRESS, ARE KEYED BY THEIR INSTANT, so each is
-       said once, at once, and Later puts that one away; the next press is a new question. A ready
-       nobody pressed for keeps the once-a-day key. */
-    const at = offer.kind === "retry" ? report.notStartedAt : offer.kind === "restart" ? report.pressedAt : null;
-    const key = typeof at === "number" ? `${offerKey(offer)}@${at}` : offerKey(offer);
-    const memory = readAskMemory();
-    if (!askDue(memory, key, now())) return;
-    writeAskMemory(rememberAsk(memory, key, now()));
-    announceUpdate(offer);
+    const standing = currentUpdateOffer();
+    if (standing !== null && standing.key === line.key) {
+      announceUpdate(line);
+      return;
+    }
+    if (!mayStand(line, report)) {
+      if (standing !== null) announceUpdate(null);
+      return;
+    }
+    announceUpdate(line);
   };
+
+  /* A SEND WAITS OR A DRAFT HOLDS FILES: the shell is told at once, again each `renewEvery` while
+     it holds, and as soon as nothing does. A hold the shell cannot take (an older shell) changes
+     nothing here. */
+  let renewal: ReturnType<typeof setInterval> | null = null;
+  let holding = false;
+  const tellHold = (waits: boolean): void => {
+    if (waits === holding) return;
+    holding = waits;
+    if (renewal !== null) clearInterval(renewal);
+    renewal = waits ? setInterval(() => void hold(true).catch(() => {}), renewEvery) : null;
+    void hold(waits).catch(() => {});
+  };
+  const offWaits = subscribeRestartHold((why) => tellHold(why !== null));
+  if (restartHold() !== null) tellHold(true);
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
@@ -246,8 +289,8 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
        A refused install leaves the flow where a check would start, and the release is still
        newer — unbounded, the day sends this window round the loop for ever: fetch, verify,
        ask "ready to install", fail, repeat tomorrow; a modal over
-       somebody's mail once a day for the life of the install. ONE more attempt, and NOT
-       platform-gated even though the strip's sentence is: the same state is reachable from a
+       somebody's mail once a day for the life of the install. ONE more attempt, on every
+       platform: the same state is reachable from a
        full disk or a read-only mount and can be repaired while the app is open. One retry
        buys the recovery and stops short of a daily dialog. */
     const givenUp = installWasRefused && checksSinceRefusal >= INSTALL_RETRIES;
@@ -302,6 +345,8 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
   return () => {
     stopped = true;
     clearInterval(timer);
+    if (renewal !== null) clearInterval(renewal);
+    offWaits();
     release?.();
   };
 }

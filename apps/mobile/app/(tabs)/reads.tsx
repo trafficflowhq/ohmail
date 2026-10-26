@@ -9,7 +9,9 @@
  * once per visit. Every issue the world answers renders; no "and 9 more".
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { AppState, View } from "react-native";
+import type { SweepFrame } from "../../src/state/sweep";
+import { useSeenRun } from "../../src/ui/stream-seen";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
@@ -55,22 +57,19 @@ function ReadsBody() {
   // Unknown ≠ empty — the stream shows card silhouettes until this mirror has settled once.
   const surface = listSurface({ settled: w.boot.settled, count: items.length });
 
-  /* A card's frame in scroll-content coordinates, as its cell lays out (`MailList#onRowFrame`). */
-  const bounds = useRef<Record<string, { y: number; h: number }>>({});
+  /* A mounted card's frame in scroll-content coordinates, as its cell lays out (`MailList#onRowFrame`). */
+  const bounds = useRef(new Map<string, SweepFrame>());
   const onRowFrame = useCallback((m: WorldMail, frame: RowFrame) => {
-    bounds.current[m.id] = { y: frame.y, h: frame.height };
+    bounds.current.set(m.id, { id: m.id, top: frame.y, bottom: frame.y + frame.height });
   }, []);
-
-  const onScroll = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, layoutMeasurement } = e.nativeEvent;
-      const line = contentOffset.y + layoutMeasurement.height * READ_LINE;
-      const passed = Object.entries(bounds.current)
-        .filter(([, b]) => b.y + b.h <= line)
-        .map(([id]) => id);
-      if (passed.length) actions.markSeenThrough("reads", passed);
-    },
-    [actions],
+  const onRowGone = useCallback((m: WorldMail) => {
+    bounds.current.delete(m.id);
+  }, []);
+  // Only a look the person drives marks: the list holding its place or gliding marks nothing.
+  const { run, gestures } = useSeenRun(
+    READ_LINE,
+    () => bounds.current.values(),
+    (ids) => actions.markSeenThrough("reads", ids),
   );
 
   // Leaving the stream (tab switch, back) is the waterline commit — and so is the APP going
@@ -81,14 +80,16 @@ function ReadsBody() {
   // real leave carries only what accrued after, and a commit that says nothing new is skipped.
   useFocusEffect(
     useCallback(() => {
+      run.restart();
       const sub = AppState.addEventListener("change", (s) => {
         if (s === "background") void actions.leaveFeed("reads");
+        if (s === "active") run.restart();
       });
       return () => {
         sub.remove();
         void actions.leaveFeed("reads");
       };
-    }, [actions]),
+    }, [actions, run]),
   );
 
   const list = (
@@ -116,7 +117,8 @@ function ReadsBody() {
         // Each issue is its own card: no panel under the stream.
         surface={false}
         onRowFrame={onRowFrame}
-        onScroll={onScroll}
+        onRowGone={onRowGone}
+        {...gestures}
         scrollEventThrottle={64}
         refresh={pull}
         head={

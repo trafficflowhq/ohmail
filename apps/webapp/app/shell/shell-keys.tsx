@@ -221,7 +221,6 @@ export interface ShellKeysInput {
   toggleReply: ShellCompose["toggleReply"];
   createTagAlone: ShellVerbs["createTagAlone"];
   onMessageAction: ShellVerbs["onMessageAction"];
-  onStreamAction: ShellVerbs["onStreamAction"];
   openSenderMenu: ShellVerbs["openSenderMenu"];
   toggleTag: ShellVerbs["toggleTag"];
   /** The inline reply's id and its setter — the shell's own state, read and closed here. */
@@ -247,7 +246,7 @@ export function useShellKeys({
   setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
   shortcutsOpen, startFR, subjectRule,
   mailSend, openForward, forwardTargetFor, sendReply, toggleReply,
-  createTagAlone, onMessageAction, onStreamAction, openSenderMenu, toggleTag,
+  createTagAlone, onMessageAction, openSenderMenu, toggleTag,
   replyTo, setReplyTo,
 }: ShellKeysInput) {
   /**
@@ -548,16 +547,15 @@ export function useShellKeys({
        * "ohbox" || selectedOhbox == null`, so a message opened out of Search rendered a Reply pill printing `r` (the
        * pill reads this registry, and a disabled binding still owns its chord) over a key that did nothing. The
        * reader sheet IS a message pane; a verb pressed while it is open acts on the message being read — the rule
-       * `focused` already states. On the two skim streams the key takes the card button's own path
-       * (`onStreamAction`), which raises the reader first so the editor has a pane to land in. A TOGGLE, as before:
-       * `r` on the open editor closes it.
+       * `focused` already states. On the two skim streams the key takes the card button's own path, and the
+       * letter is answered in place (`stream-in-place.tsx`). A TOGGLE, as before: `r` on the open editor closes it.
        */
       disabled: focused == null,
       ...noCursor,
       run: () => {
         if (!focused) return;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id);
-        else onStreamAction("reply", focused);
+        else onMessageAction("reply", focused);
       },
     },
     {
@@ -574,7 +572,7 @@ export function useShellKeys({
         if (!focused) return;
         const all = replyAllRecipients(focused, ownAddresses) !== null;
         if (readerMessage != null || route.view === "ohbox") toggleReply(focused.id, all);
-        else onStreamAction(all ? "reply_all" : "reply", focused);
+        else onMessageAction(all ? "reply_all" : "reply", focused);
       },
     },
     {
@@ -609,7 +607,7 @@ export function useShellKeys({
           const target = forwardTargetFor(focused);
           openForward(target.id, target);
         }
-        else onStreamAction("forward", focused);
+        else onMessageAction("forward", focused);
       },
     },
     /* Declared only while a run is open, so the sheet never prints its line where there is no run. */

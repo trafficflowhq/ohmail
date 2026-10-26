@@ -152,52 +152,28 @@ export function marksShown<T>(marks: readonly T[], room: number | null): readonl
   return marks.length > fit ? marks.slice(marks.length - fit) : marks;
 }
 
-/** The reader rail's pitch per square, its least before it scrolls, and the air above the first. */
+/** The reader rail's pitch per square, its "+N" row, and the air above the first. */
 export const RAIL_PITCH = 30;
-export const RAIL_PITCH_MIN = 16;
+export const RAIL_MORE = 16;
 export const RAIL_TOP = 6;
 /** A square's touch target: its own pitch high, so the squares tile the rail without overlap (`Tap`'s default slop overlapped them). */
 export const RAIL_HIT_SLOP = { top: 0, bottom: 0, left: MIN_SLOP, right: MIN_SLOP } as const;
 
 /**
- * THE RAIL FITS THE READER: `n` squares in `room` dp (the rail's height less the chrome standing over
- * it) at 30dp each, closer down to 16dp where that fits them all; past that the rail scrolls, so the
- * newest squares — often the unread ones — are never under the bar or off the screen.
+ * A square's slot in a windowed line (`squaresWindow`, client-engine): its pitch × its scale, in whole
+ * dp; 0 beyond the window.
  */
-export function railFit(n: number, room: number | null): { pitch: number; scrolls: boolean } {
-  if (room === null || room <= 0 || n <= 0) return { pitch: RAIL_PITCH, scrolls: false };
-  const each = (room - RAIL_TOP) / n;
-  if (each >= RAIL_PITCH) return { pitch: RAIL_PITCH, scrolls: false };
-  if (each >= RAIL_PITCH_MIN) return { pitch: Math.floor(each), scrolls: false };
-  return { pitch: RAIL_PITCH_MIN, scrolls: true };
-}
-
-/** Where a scrolling rail stands so square `index` is in view, centred where it can be. */
-export function railOffsetFor(index: number, n: number, pitch: number, room: number): number {
-  const content = RAIL_TOP + n * pitch;
-  const max = Math.max(0, content - room);
-  const centre = RAIL_TOP + index * pitch + pitch / 2 - room / 2;
-  return Math.max(0, Math.min(max, centre));
-}
+export const slotOf = (pitch: number, scale: number): number => Math.round(pitch * scale);
 
 /** A list row's strip of the reader's squares: 20dp a square, its face 5dp in (the row's text at 14 over 9 of air). */
 export const STRIP_SLOT = 20;
 export const STRIP_START = 9;
 export const STRIP_END = 14;
+/** The strip's "+N" slot at an edge that hides squares; the old edge's count starts at a face's inset. */
+export const STRIP_MORE = 32;
+export const STRIP_FACE_IN = 5;
 /** Its presses reach down over its air, never up into the row above them nor into a neighbour. */
 export const STRIP_HIT_SLOP = { top: 4, bottom: 10, left: 0, right: 0 } as const;
-
-/**
- * Where a strip that scrolls stands so square `index` is in view, centred where it can be. After a
- * reply arrives (`newest`) it goes on towards the end, so the newest square is whole, as far as
- * square `index` stays in view.
- */
-export function stripOffsetFor(index: number, n: number, room: number, newest = false): number {
-  const content = STRIP_START + n * STRIP_SLOT + STRIP_END;
-  const max = Math.max(0, content - room);
-  const centre = Math.max(0, Math.min(max, STRIP_START + index * STRIP_SLOT + STRIP_SLOT / 2 - room / 2));
-  return newest ? Math.max(centre, Math.min(max, STRIP_START + index * STRIP_SLOT)) : centre;
-}
 
 /** A body's states the read rule takes as final: the text is all there is to show. */
 const FINAL_BODY: ReadonlySet<string> = new Set(["full", "withheld"]);

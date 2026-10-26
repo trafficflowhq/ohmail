@@ -7,7 +7,9 @@ import {
   ENGINE_VITALS_INTERVAL_MS,
   VITALS_INTERVAL_MAX_MS,
   VITALS_INTERVAL_MIN_MS,
+  startEngineVitals,
 } from "../src/vitals.js";
+import { nodeLoopDelay } from "../src/loop-delay.js";
 
 /**
  * THE PROCESS ENTRY POINT'S TWO SHARP EDGES.
@@ -289,6 +291,42 @@ describe("the engine vitals interval knob", () => {
       expect(() => configFromEnv(env), raw)
         .toThrow(new RegExp(`${VITALS_INTERVAL_MIN_MS}.*${VITALS_INTERVAL_MAX_MS}`));
     }
+  });
+});
+
+describe("the engine vitals loop reading", () => {
+  it("the drain's loop monitor reads a 200 ms turn", async () => {
+    const reader = nodeLoopDelay();
+    let read: { p99Ms: number; maxMs: number };
+    try {
+      await new Promise((r) => setTimeout(r, 50));
+      const until = performance.now() + 200;
+      while (performance.now() < until) { /* one synchronous 200 ms turn */ }
+      await new Promise((r) => setTimeout(r, 30));
+      read = reader.read();
+    } finally { reader.stop(); }
+    expect(read.maxMs, "the 200 ms turn is not in the reading").toBeGreaterThanOrEqual(150);
+    expect(read.p99Ms).toBeGreaterThan(0);
+  });
+
+  it("carries the drains' longest turns since the last line, and the loop's busy share", () => {
+    const lines: Record<string, unknown>[] = [];
+    startEngineVitals((_e, d) => { lines.push(d); }, { storeBytes: () => 0, drainTurns: () => ({ p99Ms: 9, maxMs: 210 }) })();
+    startEngineVitals((_e, d) => { lines.push(d); }, { storeBytes: () => 0, drainTurns: () => null })();
+    expect(lines[0]).toMatchObject({ loopDelayP99Ms: 9, loopDelayMaxMs: 210, loopReading: "drains" });
+    expect(lines[1]).toMatchObject({ loopDelayP99Ms: null, loopDelayMaxMs: null, loopReading: "no_drain" });
+    const busy = lines[0]!.loopUtilization as number;
+    expect(busy, "the line no longer says how busy the loop was").toBeGreaterThanOrEqual(0);
+    expect(busy).toBeLessThanOrEqual(1);
+  });
+
+  it("writes null and says why where the engine measures no drain or store fsync count", () => {
+    const lines: Record<string, unknown>[] = [];
+    startEngineVitals((_e, d) => { lines.push(d); }, { storeBytes: () => 0 })();
+    expect(lines[0]).toMatchObject({
+      loopDelayP99Ms: null, loopDelayMaxMs: null, loopReading: "not_measured",
+      storeFsyncs: null, storeFsyncMs: null,
+    });
   });
 });
 

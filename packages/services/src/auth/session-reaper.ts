@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 
@@ -7,13 +7,17 @@ import { dialect } from "@trafficflow/db/dialect";
  * otherwise sit live-but-idle for ever. It revokes plain web sessions UNSEEN for over sixty days:
  * an active browser re-stamps `last_seen_at` on every rotation, so only a browser silent for two
  * months meets a sign-in prompt on return. Structural scope: `device_id IS NULL` (a paired device
- * is NEVER auto-reaped — re-pairing has a ceremony cost re-login does not), `scope = 'full'`, and
- * the whole refresh FAMILY dies with the session. Run by the hosted API's cron on the RUNTIME
- * connection; hosted barrel only. Bounded and convergent: at most `limit` per run, chunks of 500,
- * each a GUARDED update so a concurrent revocation counts once.
+ * is NEVER auto-reaped — re-pairing has a ceremony cost re-login does not), `scope = 'full'`, the
+ * cookie window (`refresh_expires_at - last_seen_at` under 100 days, migration 0061's
+ * discriminator: a rotation writes the two in lockstep, 90 days apart on the browser and 400 on
+ * the native surface, so a device-less desktop session keeps its 400 days), and the whole refresh
+ * FAMILY dies with the session. Run by the hosted API's cron on the RUNTIME connection; hosted
+ * barrel only. Bounded and convergent: at most `limit` per run, chunks of 500, each a GUARDED
+ * update so a concurrent revocation counts once.
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const COOKIE_WINDOW_UNDER_MS = 100 * DAY_MS;
 const CHUNK = 500;
 
 export interface ReapResult {
@@ -29,14 +33,16 @@ export async function reapStaleWebSessions(
   const olderThanMs = opts.olderThanMs ?? 60 * DAY_MS;
   const budget = Math.min(Math.max(1, opts.limit ?? 5_000), 20_000);
   const cutoff = new Date(now.getTime() - olderThanMs);
+  const reapable = and(
+    isNull(sessions.deviceId),
+    eq(sessions.scope, "full"),
+    isNull(sessions.revokedAt),
+    lt(sessions.lastSeenAt, cutoff),
+    sql`${sessions.refreshExpiresAt} - ${sessions.lastSeenAt} < ${dialect(db).interval(COOKIE_WINDOW_UNDER_MS)}`,
+  );
 
   const candidates = await db.select({ id: sessions.id }).from(sessions)
-    .where(and(
-      isNull(sessions.deviceId),
-      eq(sessions.scope, "full"),
-      isNull(sessions.revokedAt),
-      lt(sessions.lastSeenAt, cutoff),
-    ))
+    .where(reapable)
     .limit(budget);
 
   let reaped = 0;
@@ -48,13 +54,7 @@ export async function reapStaleWebSessions(
     // missing — a session that ROTATED in that window (`mintRotation` stamps `last_seen_at`
     // current) is a browser that just came back to life, which a maintenance pass must not
     // sign out. Only rows THIS statement flipped count.
-    const stale = and(
-      inArray(sessions.id, ids),
-      isNull(sessions.deviceId),
-      eq(sessions.scope, "full"),
-      isNull(sessions.revokedAt),
-      lt(sessions.lastSeenAt, cutoff),
-    );
+    const stale = and(inArray(sessions.id, ids), reapable);
     // One transaction per chunk, its sessions locked in id order first, erasure's step-7 order: the
     // update alone locks in scan order, and the two orders deadlocked over two stale sessions.
     const claimed = await db.transaction(async (tx) => {

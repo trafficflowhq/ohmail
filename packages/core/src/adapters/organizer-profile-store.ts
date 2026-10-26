@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, like, sql } from "drizzle-orm";
 import {
-  accountSettings, awayResponders, contacts, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
+  accountSettings, awayResponders, contacts, idempotencyKeys, mailboxes as mailboxesTbl, notifyRules as notifyRulesTbl,
   rules as rulesTbl, tags as tagsTbl,
   fenceErased, lockAccountRuleKeys, recordChanges, recordProfileImportResolution, rerouteOwnHeldBag,
   resolveImportAsk, ruleDelta,
@@ -12,7 +12,7 @@ import { DEFAULT_DORMANCY_DAYS } from "../rules.js";
 import { AWAY_AUDIENCES, AWAY_THROTTLES, nextEnabledAt, type AwayAudience, type AwayThrottle } from "../away-eligibility.js";
 import { awayScopeFitsAudience, isAwayPile, type AwayPile } from "../away-scope.js";
 import {
-  PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint, profileScreenerAddress,
+  PROFILE_APPLIED_MAX, PROFILE_LIST_MAX, applicableProfileRule, arrivesDecided, oversizedProfileList, profileFingerprint, profileScreenerAddress,
   type ApplicableProfileRule, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileReadResult,
   type ProfileScreening,
 } from "./organizer-profile.js";
@@ -53,14 +53,16 @@ export async function serializeOrganizerProfileCounted(
    * republish then reads as the person having cleared their signature.
    */
   mailboxId: string,
-): Promise<{ payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; screening: ProfileScreening }> {
+  /** `applied`: also read the request ids this organizer applied ({@link OrganizerProfileDoc.applied}). */
+  opts: { applied?: boolean; now?: Date } = {},
+): Promise<{ payload: OrganizerProfilePayload; leftOut: ProfileLeftOut; screening: ProfileScreening; applied?: string[] }> {
   // ONE SNAPSHOT, not five. Under READ COMMITTED each statement sees its own snapshot, so a
   // screener decide committing between the contacts read and the rules read would serialize a
   // TORN configuration — the contact without its promoted rule — and the document would say
   // something no store ever held (self-healing one flush later, but "a burst is one write" is
   // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening] = await db.transaction(async (tx) => {
+  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows] = await db.transaction(async (tx) => {
     return [
       // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
@@ -106,6 +108,17 @@ export async function serializeOrganizerProfileCounted(
       // THE SEVENTH READ, the window the envelope carries: the same snapshot, so a document never
       // publishes a window from a different instant than its payload.
       await readOrganizerScreening(tx as unknown as Tx, accountId),
+      // THE EIGHTH READ: the requests applied in this snapshot, claimed in the apply's own
+      // transaction, so a rule change and its request id are published together.
+      opts.applied === true
+        // Live keys only, before the bound: expired ones would crowd a fresh id out.
+        ? await tx.select({ key: idempotencyKeys.key, responseJson: idempotencyKeys.responseJson }).from(idempotencyKeys)
+          .where(and(
+            eq(idempotencyKeys.accountId, accountId), like(idempotencyKeys.key, `${APPLIED_KEY_PREFIX}%`),
+            gt(idempotencyKeys.expiresAt, opts.now ?? new Date()), isNull(idempotencyKeys.erasedAt),
+          ))
+          .orderBy(desc(idempotencyKeys.createdAt), desc(idempotencyKeys.key)).limit(PROFILE_APPLIED_MAX)
+        : null,
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
@@ -159,7 +172,23 @@ export async function serializeOrganizerProfileCounted(
        about what the store actually holds. */
     ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
   };
-  return { payload, leftOut, screening };
+  return { payload, leftOut, screening, ...(appliedRows === null ? {} : appliedOf(appliedRows)) };
+}
+
+const APPLIED_KEY_PREFIX = "meta-request:";
+
+/**
+ * The applied ids, newest first; the JSON is read here so the read runs on SQLite too. A read that
+ * hit its bound may have left ids out, so it states nothing and a reader falls back.
+ */
+function appliedOf(rows: ReadonlyArray<{ key: string; responseJson: unknown }>): { applied?: string[] } {
+  if (rows.length >= PROFILE_APPLIED_MAX) return {};
+  const applied: string[] = [];
+  for (const r of rows) {
+    const json = r.responseJson as { applied?: unknown } | null;
+    if (json?.applied === true) applied.push(r.key.slice(APPLIED_KEY_PREFIX.length));
+  }
+  return { applied };
 }
 
 /**

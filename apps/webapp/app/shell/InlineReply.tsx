@@ -154,6 +154,8 @@ export function InlineReply({
   onSubject,
   heldResolve = null,
   forwardFiles = null,
+  land = true,
+  focusOnOpen = true,
 }: {
   message: EngineMessage;
   /**
@@ -304,11 +306,17 @@ export function InlineReply({
   } | null;
   /** A forward's original files, listed and removable — the shell's plan, the one its send carries. */
   forwardFiles?: { plan: ForwardFilesPlan; onRemove: (id: string) => void; said: boolean } | null;
+  /** Scroll the editor into view on open; false where the host brings it (a reading stream). */
+  land?: boolean;
+  /** Focus the editor on open; false for an editor mounted again rather than opened. */
+  focusOnOpen?: boolean;
 }) {
   const t = useTranslations("reply");
   /** `compose` owns the forwarding honesty line — one sentence, both surfaces. */
   const tc = useTranslations("compose");
   const box = useRef<HTMLDivElement>(null);
+  /* Read at the open: a host's later renders say nothing about this editor's arrival. */
+  const focusAtOpen = useRef(focusOnOpen).current;
 
   /**
    * Drag-to-resize. `null` means nobody has dragged this session and the stylesheet's default posture
@@ -474,7 +482,7 @@ export function InlineReply({
    */
   useEffect(() => {
     const el = box.current;
-    if (!el) return;
+    if (!el || !land) return;
     /* A STUCK DOCK IS ALREADY "IN VIEW", so `scrollIntoView` does nothing and the dock covers the
        action row and the letter's last lines until the column is scrolled. The dock
        is the column's last thing, so its own place is the column's end: go there. */
@@ -803,7 +811,7 @@ export function InlineReply({
            "Write your reply…". The forward's sentence is the compose editor's own, because it is
            the same act: a message of your own, above the one being passed on. */
         placeholder={mode === "forward" ? t("forwardPlaceholder") : t("placeholder")}
-        autoFocus
+        autoFocus={focusAtOpen}
         value={value}
         /* The text is never taken away from the author, not even mid-send: a failed send
            whose draft had been cleared would be a reply the user has to write twice. It stops

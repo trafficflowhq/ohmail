@@ -268,10 +268,10 @@ const BASE_MESSAGE_NAMESPACES = [
   // belongs — the exact failure `columns` reached a release build with.
   "trash",
   // `update` is the app's own update, in both places it is said: Settings → About → Updates
-  // (`src/DesktopUpdate.tsx`) and the shell's quiet strip (`app/shell/UpdateNotice.tsx`).
+  // (`src/DesktopUpdate.tsx`) and the rail's update line (`app/shell/UpdateLine.tsx`).
   // NO LONGER DESKTOP-ONLY, and the line that said so is worth correcting rather than deleting:
   // the browser client genuinely had no build to update, and now it does — a tab is a program
-  // downloaded once and left running for weeks, and the strip is how it is told the origin has
+  // downloaded once and left running for weeks, and the line is how it is told the origin has
   // moved on. The namespace is read by shared shell code, so both bundles need it.
   // Genuinely reachable in the engine-bearing binary, and on the desktops where the compositor
   // owns the window frame the settings pane is the ONLY update affordance there is

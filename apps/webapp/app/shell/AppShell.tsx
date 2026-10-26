@@ -46,6 +46,7 @@ import {
   type TagDTO,
   autoUnsubscribeConfirms,
   unsubscribeLetterOf,
+  rulesShown,
 } from "@ohmail/client-engine";
 import {
   Button,
@@ -194,7 +195,7 @@ import { useMayHandOffFor } from "./send-handoff";
 import { HostConnectionLine } from "./HostConnectionLine";
 import type { HostConnection } from "./host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
-import { UpdateNotice } from "./UpdateNotice";
+import { RailVersion, SendWaitsRelay, UpdateDot, UpdateLine, useRunningVersion, useUpdateOffer } from "./UpdateLine";
 import { DurabilityNotice } from "./DurabilityNotice";
 import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe } from "./MailStateProvider";
 /* The ONE stand-down predicate, aggregated over the roster: what may the Screener do here, and
@@ -239,6 +240,7 @@ import {
   type ReplyEnvelopeEdit,
 } from "./compose-from";
 import { MessageChromeProvider, type BodyTarget } from "./message-chrome";
+import { useInPlaceHost } from "./stream-in-place";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel } from "./SenderAuditPanel";
 import { attributeMessages } from "./sender-audit";
@@ -513,7 +515,7 @@ function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version"
 /** The navigation rail's id, which both drawer toggles name in `aria-controls`. */
 const RAIL_ID = "shell-rail";
 
-function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
+export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }: RailNavProps & {
   /**
    * The paired desktop's standing line — the third member of the footer
    * slot, beside the account address and the desktop prompt. In this slot
@@ -558,14 +560,20 @@ function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...rest }:
     />
   ) : null;
   const host = hostConnection ? <HostConnectionLine connection={hostConnection} /> : null;
-  const fullFooter = footer || cta || host ? (
+  // The version the desktop's shell runs, at the foot; a tab has none to name.
+  const running = useRunningVersion();
+  const version = running !== null ? <RailVersion version={running} /> : null;
+  const fullFooter = footer || version || cta || host ? (
     <>
       {footer}
+      {version}
       {host}
       {cta}
     </>
   ) : undefined;
-  return <RailNav groups={withTagState} {...rest} footer={fullFooter} />;
+  // The update line's slot exists only while there is something to say, as the footer's does.
+  const offer = useUpdateOffer();
+  return <RailNav groups={withTagState} {...rest} update={offer !== null ? <UpdateLine /> : undefined} footer={fullFooter} />;
 }
 
 /**
@@ -1434,7 +1442,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
     older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
-    folderUnread, openFolder, folderMessages, rules, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
+    folderUnread, openFolder, folderMessages, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
     notifications, allOhbox, participantsOf, threadCountOf, threadMarksOf, threadSubjectOf, fallbackMailboxId,
     drafts, scheduled, waitingRows,
   } = useShellDerivations({
@@ -1508,6 +1516,13 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   // The Rules pane's posture from the same roster; the Screener's role carries its refusal, said first.
   const rulesPosture = useMemo(() => rulesPostureOf(facts), [facts]);
+  /* A reader-only install lists the organizer's copy, its own applied presses over it. */
+  const rulesReaderOnly = rulesPosture.mode !== "organizer";
+  const rulesApplied = useMemo(() => engine.appliedRuleRequests?.() ?? [], [engine, reader, derived]);
+  const shownRules = useMemo(
+    () => rulesShown(reader, { readerOnly: rulesReaderOnly, queued: rulesQueued, applied: rulesApplied, now: nowAt() }),
+    [reader, derived, rulesReaderOnly, rulesQueued, rulesApplied, nowAt],
+  );
   const screenerRole = useMemo(() => ({ ...screenerMode(facts), pressRefusal: postureRefusal(rulesPosture) }), [facts, rulesPosture]);
   /* …AND THE DELETE KEY READS THE SAME ROSTER, one mailbox at a time. In an EFFECT rather than
      during render (review finding): a render that yields and is discarded must not publish a
@@ -1925,6 +1940,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * which it reads (`setReaderFor` for the narrow open); `replyTo` stays above both, because the
    * route transition closes the editor.
    */
+  const inPlaceHost = useInPlaceHost({ view: route.view, seedOwed, partition, receipts, conversationOf });
   /** May a send leave its editor at once: the connection's health read at the press (`send-handoff.ts`). */
   const mayHandOffFor = useMayHandOffFor({ stateKey: mailState.key, sync: syncStatus, hostOffline: hostConnection != null, engine, facts });
   const {
@@ -1938,7 +1954,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
     engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
-    fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
+    fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues, inPlaceHost,
     setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
   });
 
@@ -1951,10 +1967,10 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     bulkToggleTag, bulkVerbs, canDeleteMessage, canReplyAllTo, changeScreening, moveStayed, stayedFor, confirmSubjectRule,
     createTag, createTagAlone, dropTag, actedIds, lastActed, onMessageAction, onStageClickCapture,
-    onStreamAction, openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
+    openSenderAudit, openSenderMenu, openSubjectRule, openTagPicker, retargetRule,
     revokeRule, rulePastMailOf, screeningForecast, screeningRules, tagAdmin, toggleTag,
   } = useShellVerbs({
-    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt,
+    engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesReaderOnly,
     fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface: allOhbox, refusalCopy,
     rosterRef, routing, pressWatch, deleting, restoring,
     markSeen, readSetFor: route.view === "ohbox" ? readSetFor : undefined, offOhbox: route.view !== "ohbox", ownFaceFor,
@@ -1993,7 +2009,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     setReaderFor, setScreenerFull, setSenderAudit, setSenderMenu, setShortcutsOpen, setSubjectRule,
     shortcutsOpen, startFR, subjectRule,
     mailSend, openForward, sendReply, toggleReply,
-    createTagAlone, onMessageAction, onStreamAction, openSenderMenu, toggleTag,
+    createTagAlone, onMessageAction, openSenderMenu, toggleTag,
     replyTo, setReplyTo,
   });
   useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
@@ -2310,19 +2326,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             from the DOM when there are none, like every other strip the shell mounts once. */}
         <UnsavedChanges variant="shell" />
 
-        {/*
-            A NEWER OHMAIL, IN EVERY VIEW. The strip's sibling and its argument: rendered once by the shell so no view
-            can forget it, outside every list's scroller, and absent from the DOM whenever there is nothing to say.
-            What is on offer differs by door — a build this origin is already serving, or a signed release the desktop
-            shell has fetched and verified — and this shell knows neither; `app-update.ts` holds the one offer and the
-            once-a-day restraint on saying it. HELD WHILE A MESSAGE IS BEING WRITTEN. A strip appearing above somebody
-            mid-sentence moves the layout under their cursor, and the press it offers throws the draft's window away.
-            The offer is not withdrawn and not re-decided — it is simply not drawn until the compose is closed.
-          */}
-        <UpdateNotice quiet={effectiveView === "compose"} />
+        {/* A send waiting holds every restart: the update line greys Restart, and the desktop's shell installs
+            nothing meanwhile (`UpdateLine.tsx`). The line itself stands in the rail, above Command. */}
+        <SendWaitsRelay api={mailSend} />
 
         {/* THIS BROWSER IS NOT KEEPING DECISIONS — the same slot and the same argument as the
-            strip above: a fact about the app rather than about a pile. Said once per session and
+            strips above: a fact about the app rather than about a pile. Said once per session and
             absent from the DOM until a durable write has actually been refused. */}
         <DurabilityNotice />
 
@@ -2363,6 +2372,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             onClick={() => setRailOpen(true)}
           >
             <Icon name="menu" />
+            <UpdateDot />
           </button>
           )}
           {/* ONE TITLE BELOW 1024 (DESIGN-FOLD-WIDTHS §5): the topbar owns the page's name,
@@ -2406,6 +2416,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   onClick={() => setRailOpen((o) => !o)}
                 >
                   <Icon name="menu" />
+                  {railOpen ? null : <UpdateDot />}
                 </button>
               </>
             }
@@ -2724,7 +2735,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "reads" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
-                onAction={onStreamAction}
+                onAction={onMessageAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />
@@ -2771,7 +2782,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onJumped={() => setJump(null)}
                 closeTo={closeCard?.view === "receipts" ? closeCard.id : null}
                 onClosed={() => setCloseCard(null)}
-                onAction={onStreamAction}
+                onAction={onMessageAction}
                 onMarkAllRead={markAllRead}
                 onPick={reportPick}
               />
@@ -3230,7 +3241,11 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 tagCounts={Object.fromEntries(
                   tagGroups.map((g) => [g.tag.id, g.messages.length]),
                 )}
-                rules={{ items: rules, waiting: rulesWaiting, queued: rulesQueued, mailboxLabel: mailboxLabelOf, onRevoke: revokeRule, onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture }}
+                rules={{
+                  items: shownRules.rules, waiting: rulesWaiting, queued: rulesQueued, mailboxLabel: mailboxLabelOf, onRevoke: revokeRule,
+                  onRetarget: retargetRule, pastMail: rulePastMailOf, posture: rulesPosture,
+                  source: shownRules.source, doorless: shownRules.doorless, holder: shownRules.holder,
+                }}
                 /* Rename and delete. Not gated on `demo`, unlike the four injected panes:
                    both are ordinary engine mutations, so the FixturesAdapter serves them out
                    of `mutationEffects` and the demo is correct with no special case. */

@@ -8,12 +8,14 @@ import { lineOf, withoutComments } from "../../../scripts/lib/source-scan.mjs";
    Walked by path, so a landing selects this file when either root moves. */
 
 /**
- * THE ORGANIZER'S PUBLISHED COPY IS NOT A RULES LIST (ARCH-RULES-PAGE-INVARIANT §0). A surface lists
- * and a press names ONE source, the mirror's own `rule` entities; `mailbox_profile` decides only
- * whose rules a HELD mailbox's mail is judged by (the consent index and the press readings built
- * on it). A surface listing the published copy as rules is the false state VERIFY-026 measured, so
- * every reader is named here with its reason, and the rules page, the phone's UI and `enrich` are
- * refused outright. Read in one pass, comments blanked; a planted view proves the refusal.
+ * THE ORGANIZER'S PUBLISHED COPY IS NOT A RULES LIST (ARCH-RULES-PAGE-INVARIANT §0, amended): a
+ * press names only local entities. `mailbox_profile` decides whose rules a HELD mailbox's mail is
+ * judged by (the consent index and the press readings built on it), and one reader lists it for a
+ * reader-only Rules page, `rules-shown.ts`, which hands every row a local id or none (doorless) and
+ * lays the device's applied presses over it. Any other surface listing the published copy as rules
+ * is the false state VERIFY-026 measured, so every reader is named here with its reason, and the
+ * rules page, the phone's UI and `enrich` are refused outright. Read in one pass, comments blanked;
+ * a planted view proves the refusal.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "apps/mobile/src"];
@@ -23,6 +25,7 @@ const SKIP = new Set(["node_modules", "dist", ".next"]);
 const ADMITTED: Record<string, string> = {
   "packages/client-engine/src/consent-cutline.ts": "the definition, and the consent index judging a held mailbox's mail",
   "packages/client-engine/src/press-forecast.ts": "a press's forecast through the consent index",
+  "packages/client-engine/src/rules-shown.ts": "a reader-only Rules page's list: the copy, local ids or doorless rows, applied presses laid over it",
   "apps/webapp/app/shell/press-verdict.ts": "what a press did, read through `pressOutcome`'s consent reading",
   "apps/webapp/app/shell/sender-screening.ts": "the sender sheet's consent index (where the sender's mail is judged)",
   "apps/mobile/src/state/live.ts": "`pressOutcome`'s `profiles:`, the consent reading of a press",

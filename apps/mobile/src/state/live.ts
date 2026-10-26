@@ -2433,9 +2433,11 @@ export function planPhoneRouting(
      is in the outbox and the reader already shows the letter at the place, so nothing moves twice.
      A row from before `found` was recorded reads the shown place. */
   const found = foundOf(intent) ?? intent.from;
+  // Marked as the press marked them: a press that held a rule moved its letters as the rule's.
+  const mark = (intent as PhoneMoveIntent).holdsRule === false ? {} : { pressRule: true as const };
   const letters = intent.messageIds.flatMap((id): EngineMutation[] => {
     const m = reader.get<EngineMessage>("message", id);
-    return m !== undefined && m.folder === found && m.folder !== folder ? [{ kind: "move", messageId: id, folder }] : [];
+    return m !== undefined && m.folder === found && m.folder !== folder ? [{ kind: "move", messageId: id, folder, ...mark }] : [];
   });
   return [...rules, ...letters];
 }
@@ -2568,15 +2570,16 @@ const decisionOf = (dest: ScreenDest): "yes" | "no" => (dest === "screened" || d
 
 /**
  * The card's letters the RAW mirror holds in the INBOX, each once and none whose place is decided,
- * moved by id ONLY while still in the INBOX (`from`: the server skips one filed elsewhere since). An
- * Ohbox decision plans none: they are already there.
+ * moved by id ONLY while still in the INBOX (`from`: the server skips one filed elsewhere since), and
+ * marked as the decision's (`pressRule`) so the next decision moves them too. An Ohbox decision plans
+ * none: they are already there.
  */
 function cardInboxMoves(reader: EntityReader, ids: readonly string[], dest: ScreenDest): EngineMutation[] {
   if (FOLDER_OF_VIEW[dest] === FOLDER_OF_VIEW.ohbox) return [];
   return [...new Set(ids)].filter((id) => {
     const m = reader.get<EngineMessage>("message", id);
     return m?.folder === "INBOX" && m.placeDecided !== true;
-  }).map((id) => ({ kind: "move" as const, messageId: id, folder: FOLDER_OF_VIEW[dest], from: FOLDER_OF_VIEW.ohbox }));
+  }).map((id) => ({ kind: "move" as const, messageId: id, folder: FOLDER_OF_VIEW[dest], from: FOLDER_OF_VIEW.ohbox, pressRule: true as const }));
 }
 
 /** Another sender's letters the card named, less those whose own held press now files them. */
@@ -4487,7 +4490,9 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     /* THE LETTERS MOVE NOW and THE RULES ARE HELD for the undo window, as a Move's are: a rule
        mutation has no wire inverse, so the way back is to not send it yet (`held-routing.ts`).
        `retro`: a release's rule keeps the backlog pass the release has always made. */
-    const letters: EngineMutation[] = moveIds.map((id) => ({ kind: "move", messageId: id, folder: wanted }));
+    // A release that rewrites the rule moves its letters as the rule's, as a Move does (`pressRule`).
+    const ruled = retargets.length > 0;
+    const letters: EngineMutation[] = moveIds.map((id) => ({ kind: "move", messageId: id, folder: wanted, ...(ruled ? { pressRule: true as const } : {}) }));
     const inv = letters.flatMap((w) => inverseMutations(engine.verbRead(), w));
     const pressId = deps.uuid ? deps.uuid() : `${row.id}:${now().getTime()}`;
     const intent: PhoneMoveIntent = {

@@ -651,7 +651,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these forty-six files and no others", () => {
+  it("is these fifty files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -662,6 +662,12 @@ describe("the Rust side", () => {
       // race. Linux only: no other platform reads it.
       "allocator_arenas.rs",
       "allocator_arenas_tests.rs",
+      // EVERY FILE THE UPDATE FLOW WRITES: a verified release staged beside the AppImage, the
+      // record naming it, and Settings' install policy — each through a `.part`, an fsync and a
+      // rename, the image replaced by one rename and never written in place. ALWAYS compiled: every
+      // build's AppImage press replaces by rename. `updater.rs` still writes nothing itself.
+      "appimage_stage.rs",
+      "appimage_stage_tests.rs",
       // THE IN-APP PREVIEW'S BYTES, KEPT OUT OF THE WINDOW'S SCRIPT: the staged-image table, the
       // `attachment-preview` scheme that serves it by token (main window, GET, four raster types,
       // real parent == the staging folder), and the two commands. Compiled only under
@@ -709,6 +715,12 @@ describe("the Rust side", () => {
       // on descriptors it already holds, and opens, writes and spawns nothing; its tests spawn.
       "inherited_fds.rs",
       "inherited_fds_tests.rs",
+      // HOW EACH WEB PROCESS ENDED, AND WHAT OTHER CODE SAID. Compiled only under `local-engine`,
+      // real on Linux only. It holds a pidfd per web process and reads its exit with `WNOWAIT`
+      // (never reaping, signalling or tracing it), and points fd 2 at `stderr.log` beside the log,
+      // while the shell's own lines, the browser and a restart keep the launch's stderr.
+      "last_words.rs",
+      "last_words_tests.rs",
       // THE WINDOW OPENS HIDDEN AND IS SHOWN ON ITS OWN CANVAS. ALWAYS compiled: every build opens
       // the same hidden window, and a build without a way to show it is an invisible app. The
       // engine build shows it on the page's report, the preview on the document's load, and both
@@ -842,7 +854,7 @@ describe("the Rust side", () => {
     const call = src.indexOf("webview_budget::apply_process_pressure();");
     expect(call, "main.rs must set the process-global pressure hint").toBeGreaterThan(-1);
     expect(call, "the hint must be set before the runtime is built").toBeLessThan(
-      src.indexOf(".build(tauri::generate_context!())"),
+      src.indexOf("tauri::generate_context!()"),
     );
     // And the kill threshold is never asked for: a mail window that vanishes to save memory is
     // a worse outcome than the memory it saved.
@@ -1179,6 +1191,12 @@ describe("the Rust side", () => {
       // `update_poll` is the LAUNCH check's own path — `check(app, false)` — and is silent unless
       // it finds something. It names nothing and takes no argument either.
       "update_poll",
+      // …and two that take one bool each and can only DELAY an install, never cause one: Settings'
+      // "Install updates automatically" (a ready release goes in at the next quit or launch, or
+      // waits for a press), and the window's word that a send waits, which holds every install for
+      // at most two minutes unless renewed. Neither names a feed, a version or a path.
+      "update_set_auto",
+      "update_hold",
       // The page's report that its first frame is composed, carrying that frame's canvas as one
       // `#rrggbb` string the shell parses strictly. The window is created hidden; this paints it
       // that colour and shows it. `launch_window.rs` has the measurement.
@@ -2001,28 +2019,28 @@ describe("the auto-updater", () => {
   });
 
   /**
-   * INSTALLING IS WHAT CONSENT GATES, AND THE DOWNLOAD IS NOT THE INSTALL.
+   * THE PERSON'S SETTING GATES THE INSTALL, AND THE DOWNLOAD IS NOT THE INSTALL.
    *
-   * The old flow asked twice — once before the download and again before the restart — with a
-   * progress window between them, so one update was three modal interruptions. It now asks ONCE,
-   * at the end, and the split that makes that safe is the one asserted here: `Update::download`
-   * streams the payload and minisign-verifies it (that verification is the plugin's and is
-   * untouched), and `Update::install` is a SEPARATE call that only ever runs from the branch the
-   * user pressed. `download_and_install` — the convenience that fused the two — is gone, and a
-   * regression back to it would put an install behind a fetch again.
+   * `Update::download` streams the payload and minisign-verifies it (the plugin's, untouched), and
+   * the install is a SEPARATE call: at the app's quit or, for an AppImage staged beside itself, at
+   * the next launch while Settings' "Install updates automatically" is on (the default), and on a
+   * press only while it is off. `download_and_install`, which fused the two, is gone. Held bytes
+   * are TAKEN, and a staged release is read back and verified again before any use
+   * (`updater_tests.rs` drives each arm).
    *
-   * The dialog is non-blocking (`show`, not `blocking_show`): the answer arrives on a callback
-   * instead of a parked thread, so the app stays usable with the question on screen.
+   * The preview's dialog is non-blocking (`show`, not `blocking_show`): the answer arrives on a
+   * callback instead of a parked thread, so the app stays usable with the question on screen.
    */
-  it("consent gates the INSTALL, is asked once, and never blocks", () => {
+  it("the setting gates the INSTALL, a held release is taken and verified again, and nothing blocks", () => {
     // The two calls are separate, and the fused one is not used.
     expect(updater).toMatch(/\.download\(/);
     expect(updater).toMatch(/fenced\(fence, \|\| waiting\.payload\.install\(&bytes\)\)/);
     expect(updater).not.toMatch(/download_and_install/);
     // A retry after an installer that did not start fetches through the plugin's `download`, which
-    // verifies the signature before it returns a byte; the bytes the installer was handed are not kept.
+    // verifies the signature before it returns a byte; the bytes the installer was handed are not
+    // kept, and a staged release is read back through the check that verifies it again.
     expect(updater).toMatch(/fn fetch\(&self\) -> Result<Vec<u8>, Self::Error> \{\s*tauri::async_runtime::block_on\(self\.0\.download\(/);
-    expect(updater).toMatch(/let bytes = match waiting\.bytes\.take\(\) \{/);
+    expect(updater).toMatch(/let kept = match std::mem::replace\(&mut waiting\.held, Held::Nothing\) \{\s*Held::Memory\(bytes\) => Some\(bytes\),\s*Held::Staged => waiting\.payload\.read_staged\(\)\.ok\(\),/);
 
     // Non-blocking, both for the question and for every notice. Matched as a CALL, so the
     // module's own note about why it does not use the blocking form does not stand in for the
@@ -2038,8 +2056,8 @@ describe("the auto-updater", () => {
     expect(updater).toMatch(/if !lock\(&state\.flow\)\.should_prompt\(\) \{\s*return;/);
     expect(updater).toMatch(/Signal::Deferred\)? =>? \{?\s*self\.deferred = true;/);
 
-    // And the payload is held in memory, never written down: an update nobody consented to must
-    // leave nothing on the machine when the app quits.
+    // And this file writes nothing itself: a release is held in memory, or staged beside the
+    // AppImage by `appimage_stage.rs`, whose every write is a `.part` renamed into place.
     //
     // Matched as CALLS and not as the bare word `write`, which is the same rule the blocking-show
     // assertion above already follows. The word spelling fired on the prose in `signed_release`
@@ -2047,7 +2065,7 @@ describe("the auto-updater", () => {
     // security comment explains who the attacker is teaches people to delete the comment. Every
     // API that could put these bytes on disk is still named, and one that is not can be added; the
     // list is the assertion, and it must stay exhaustive rather than convenient.
-    expect(updater).toMatch(/bytes: Option<Vec<u8>>/);
+    expect(updater).toMatch(/held: Held,/);
     expect(updater).not.toMatch(/File::create|fs::write|tempfile|OpenOptions|\.write(_all)?\(|write!\(/);
   });
 
@@ -2095,9 +2113,10 @@ describe("the auto-updater", () => {
      * protected is still the important one and is unchanged: the webview is granted no UPDATER
      * PLUGIN permission, and engine.rs contains no part of the update flow.
      *
-     * What engine.rs may now name is exactly three things — the two commands the settings pane
-     * calls, and the silent check the window's daily cadence asks for — and the count is
-     * asserted, not just their presence: a fourth mention is a verb somebody added without
+     * What engine.rs may now name is exactly five commands — the two the settings pane calls, the
+     * silent check the window's daily cadence asks for, and the two that take one bool and can only
+     * DELAY an install (Settings' install switch, the window's "a send waits") — and the count is
+     * asserted, not just their presence: a sixth mention is a verb somebody added without
      * re-deciding this.
      *
      * IT WAS TWO, and the third was argued in rather than appended. `update_poll` exists because
@@ -2118,10 +2137,12 @@ describe("the auto-updater", () => {
       .replace(/\/\*[\s\S]*?\*\//g, "")
       .replace(/^[ \t]*\/\/.*$/gm, "");
     const named = [...engineCode.matchAll(/updater/g)];
-    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(9);
+    expect(named, "engine.rs names the updater somewhere new — re-decide this rule").toHaveLength(11);
     expect(engineCode).toMatch(/crate::updater::update_state/);
     expect(engineCode).toMatch(/crate::updater::update_press/);
     expect(engineCode).toMatch(/crate::updater::update_poll/);
+    expect(engineCode).toMatch(/crate::updater::update_set_auto/);
+    expect(engineCode).toMatch(/crate::updater::update_hold/);
     /* AND THE INSTALL FENCE, WHICH IS NOT THE FLOW. The close and every restart are engine.rs's,
        and none may end the process while an install writes the app, so this file reads the fence
        (its type, the app's one fence, a restart's wait) and asks for its exit through the
@@ -2129,7 +2150,7 @@ describe("the auto-updater", () => {
        checks, fetches, verifies or installs. A restart that did not happen after the person
        closed the app answers so (`Resume::Quitting`), and the updater ends the app itself. */
     const fence = engineCode.match(/crate::updater::\w+/g) ?? [];
-    expect(fence.filter((name) => !/update_(?:state|press|poll)$/.test(name)).sort()).toEqual([
+    expect(fence.filter((name) => !/update_(?:state|press|poll|set_auto|hold)$/.test(name)).sort()).toEqual([
       "crate::updater::FENCE",
       "crate::updater::InstallFence",
       "crate::updater::after_install",
@@ -2327,15 +2348,15 @@ describe("the auto-updater", () => {
     expect([...updater.matchAll(/app\.updater_builder\(\)/g)]).toHaveLength(1);
     expect([...updater.matchAll(/app\.updater\(\)/g)]).toHaveLength(0);
 
-    /* THE BAR AND THE PANE READ THE SAME INSTALL. `relabel` is the one place both surfaces are
-       written, so the kind is folded in there rather than at each of them — the failure mode of
-       two readers is a pane saying "updates come from your package manager" beside a bar offering
-       to check. */
+    /* THE BAR AND THE PANE READ THE SAME INSTALL, AND THE SAME HOLD. `relabel` is the one place
+       both surfaces are written, so the kind and a waiting send are folded in there rather than at
+       each of them — the failure mode of two readers is a pane saying "updates come from your
+       package manager" beside a bar offering to check, or a bar offering Restart while a send waits. */
     const relabel = /fn relabel<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
     expect(relabel, "the relabel helper was not found").toContain("set_text");
-    expect(relabel).toContain("menu_text(kind, &flow)");
-    expect(relabel).toMatch(/told\(&flow, last, kind\)/);
-    expect(updater).toMatch(/fn told\(flow: &Flow, last: Option<Check>, kind: InstallKind\) -> serde_json::Value \{\s*let mut told = report\(flow, last, env!\("CARGO_PKG_VERSION"\), kind\);/);
+    expect(relabel).toContain("menu_text(kind, &flow, standing.held)");
+    expect(relabel).toMatch(/told\(&flow, last, kind, standing\)/);
+    expect(updater).toMatch(/fn told\(flow: &Flow, last: Option<Check>, kind: InstallKind, standing: Standing\) -> serde_json::Value \{\s*let mut told = report_with\(flow, last, env!\("CARGO_PKG_VERSION"\), kind, standing\);/);
   });
 
   /**
@@ -2409,8 +2430,12 @@ describe("the auto-updater", () => {
   it("withholds the launch's descriptors before either restart spawns the new copy", () => {
     const code = (src: string) => src.replace(/^\s*\/\/.*$/gm, "");
     const withhold = "crate::inherited_fds::withhold_from_the_restart();";
-    const install = code(/fn install_and_restart<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "");
-    expect(install, "install_and_restart was not found").toContain("app.restart();");
+    /* The press's restart and the launch's are one function, which the press reaches from its
+       install and the launch from its staged release. */
+    expect(code(/fn install_and_restart<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? ""))
+      .toContain('Attempt::Installed => restart_into_the_new_copy(app, "press"),');
+    const install = code(/fn restart_into_the_new_copy<R: Runtime>[\s\S]*?\n\}\n/.exec(updater)?.[0] ?? "");
+    expect(install, "restart_into_the_new_copy was not found").toContain("app.restart();");
     expect(install.indexOf(withhold)).toBeGreaterThan(-1);
     expect(install.indexOf(withhold)).toBeLessThan(install.indexOf("app.restart();"));
     const relaunch =
@@ -2722,7 +2747,7 @@ describe("the auto-updater", () => {
    * This module logged nothing at all, so answering "which feed did this install reach, and what
    * did it do about it" meant reading the one compiled endpoint out of the binary and watching
    * the process's sockets. `updater_tests.rs` drives the lines themselves; what it cannot reach
-   * is where the calls sit, because `run` and `install_and_restart` hold an `AppHandle`. Asserted
+   * is where the calls sit, because `run` and the install's helpers hold an `AppHandle`. Asserted
    * here, at each site, by source — the arrangement the check-result wiring above already has.
    */
   it("writes what it checked and what it decided, and nothing that identifies anybody", () => {
@@ -2745,12 +2770,14 @@ describe("the auto-updater", () => {
        verdict logged only on success would make a failed install look like an install that never
        happened, which is the one reading a log must not leave open. */
     const install = /fn install_and_restart<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
-    expect(install, "the install helper was not found").toContain("app.restart()");
-    expect(install).toContain("log_verdict(Verdict::Installed, None)");
     expect(install).toMatch(/log_verdict\(Verdict::Failed, Some\(error_class\(&format!\("\{err:\?\}"\)\)\)\)/);
+    // The success line is the shared restart's, where the press and the launch both say it…
+    const restart = /fn restart_into_the_new_copy<R: Runtime>[^{]*\{([\s\S]*?)\n\}/.exec(updater)?.[1] ?? "";
+    expect(restart, "the restart helper was not found").toContain("app.restart()");
+    expect(restart).toContain('log_verdict_with(Verdict::Installed, None, &[("at", at)])');
     // …and the line is written BEFORE the restart, or the build that wrote it is already gone.
-    expect(install.indexOf("log_verdict(Verdict::Installed"))
-      .toBeLessThan(install.indexOf("app.restart()"));
+    expect(restart.indexOf("log_verdict_with(Verdict::Installed"))
+      .toBeLessThan(restart.indexOf("app.restart()"));
     expect(updater).toMatch(/log_verdict\(Verdict::Deferred, None\);\s*signal\(&deferrer, Signal::Deferred\)/);
 
     /* NOTHING IDENTIFYING GOES IN. A failure is a CLASS — the leading identifier of the error's

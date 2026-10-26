@@ -37,14 +37,14 @@ describe("the phone card's decision files what the card shows", () => {
   it("a held representative: the decide asks no past-mail answer, and the card's INBOX letter moves", async () => {
     const out = planDecideCommit(await reader(msg("h1", "ohmail/Screener"), msg("i1", "INBOX")), intent("h1", ["h1", "i1"]));
     expect(out.find((m) => m.kind === "screener_decide")).toMatchObject({ senderId: "h1", dest: "reads", applyRetro: false });
-    expect(out.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX" }]);
+    expect(out.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
   });
 
   it("a representative past the gate: the rule asks no past-mail answer either, and the letter moves", async () => {
     const out = planDecideCommit(await reader(msg("i2", "INBOX")), intent("i2", ["i2"]));
     const rule = out.find((m) => m.kind === "rule_create");
     expect(rule).toMatchObject({ applyRetro: false });
-    expect(out.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i2", folder: "ohmail/News", from: "INBOX" }]);
+    expect(out.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i2", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
   });
 
   it("an Ohbox decision plans no move for a letter already in the INBOX", async () => {

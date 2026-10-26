@@ -1149,6 +1149,46 @@ describe("the sweep ledger prunes to the rendered generation", () => {
     ledger.retain(["a"], []); // the row survived but its group is gone from the render
     expect(ledger.passed(1000)).toEqual([]); // an incomplete chain never answers passed
   });
+
+  it("answers each fully measured row's frame, and forgets a row whose cell left the list", () => {
+    const ledger = new GroupedSweepLedger();
+    ledger.setPanel(100);
+    ledger.setGroup("g1", 0);
+    ledger.setItems("g1", 30);
+    ledger.setRow("a", "g1", 0, 80);
+    ledger.setRow("b", "g1", 80, 80);
+    ledger.setRow("x", "unmeasured", 0, 10);
+    expect(ledger.frames()).toEqual([
+      { id: "a", top: 130, bottom: 210 },
+      { id: "b", top: 210, bottom: 290 },
+    ]);
+    ledger.drop("a");
+    expect(ledger.frames().map((f) => f.id)).toEqual(["b"]);
+    expect(ledger.passed(1000)).toEqual(["b"]);
+  });
+});
+
+describe("a visit that marked only deep letters leaves the arrivals above it unread", () => {
+  it("the line anchors on the newest letter marked, and the newer ones stay new", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addMessage(dto("r1", { subject: "Issue 13", folder: "ohmail/News", date: "2026-08-20T09:00:00Z" }));
+      fake.addMessage(dto("r2", { subject: "Issue 12", folder: "ohmail/News", date: "2026-08-19T09:00:00Z" }));
+      fake.addMessage(dto("r3", { subject: "Issue 11", folder: "ohmail/News", date: "2026-08-18T09:00:00Z" }));
+      const live = await liveWorldOn(fake, origin);
+      const reader = live.engine.read();
+      await live.actions.sweepFeed("reads", ["r3"]);
+      await live.actions.leaveFeed("reads");
+      expect(reader.get<{ newestSeenId: string }>("view_meta", waterlineIdOf("reads"))?.newestSeenId).toBe("r3");
+      const reads = liveReads(presentedOf(reader, view.now), view);
+      expect(reads.waterlineAboveId).toBe("r3");
+      expect(reads.items.filter((m) => m.unread).map((m) => m.id)).toEqual(["r1", "r2"]);
+      live.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
 });
 
 /* Keep the demo world's own gates in view: this file adds the LIVE world beside the fixtures
@@ -1225,6 +1265,28 @@ describe("the Piles screen is translatable — it reads the deck, not a copy of 
       expect(titleOf("replyLater")).toBe(Copy.replyLater);
       expect(titleOf("setAside")).toBe(Copy.setAside);
       expect(titleOf("resurface")).toBe(Copy.resurface);
+      live.store.close();
+    } finally {
+      fake.server.close();
+    }
+  });
+});
+
+describe("the sheet's rules on a mailbox this install only reads", () => {
+  it("names the organizer's rule, never a stale rule of this install's own", async () => {
+    const fake = mailServer();
+    const origin = await listen(fake.server);
+    try {
+      fake.addRule(ruleDto("local-1", "sender", "sender@fake.test", "ohmail/News"));
+      fake.addMessage(dto("m1", { subject: "Order", folder: "ohmail/Receipts" }));
+      const at = "2026-08-19T09:00:00Z";
+      fake.push("mailbox_profile", "create", "mb-1", {
+        mailboxId: "mb-1", rules: [ruleDto("profile:mb-1:0", "sender", "sender@fake.test", "ohmail/Receipts")],
+        asOf: at, from: { kind: "local", name: "Laptop", since: null }, updatedAt: at, applied: null,
+      });
+      const live = await liveWorldOn(fake, origin);
+      const inPlay = live.actions.screeningRules("m1", "sender");
+      expect(inPlay?.lines.flatMap((l) => l.rules.map((r) => `${r.id}->${r.destination}`))).toEqual(["profile:mb-1:0->ohmail/Receipts"]);
       live.store.close();
     } finally {
       fake.server.close();

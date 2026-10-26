@@ -97,6 +97,29 @@ describe("an absent module reached through a NAMED import still refuses by name"
     );
     expect(mod.h!()).toBe("function");
   }, 60_000);
+
+  it("formats and reads back the organizer profile through the phone's own `util`", async () => {
+    // The phone's `util` is the npm polyfill: a member it lacks failed the profile append on
+    // every phone organizer as a TypeError.
+    const probe = await bundleProbe(
+      'import { makeProfileDoc, formatProfileMessage, parseProfileMessage } from "../../packages/core/src/adapters/organizer-profile";\n'
+        + "export const p = () => {\n"
+        + '  const doc = makeProfileDoc({ screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: ["Träume"], signature: null },\n'
+        + '    { updatedAt: new Date(Date.UTC(2026, 9, 25)), producer: { kind: "mobile", version: "test" } });\n'
+        + '  const r = parseProfileMessage(formatProfileMessage(doc, { installId: "install-probe" })) as { status?: string; encoded?: boolean };\n'
+        + "  return { status: r?.status, encoded: r?.encoded };\n"
+        + "};\n",
+    );
+    built.push(probe.dir);
+    const Module = require_("node:module") as { _load(req: string, parent: unknown, isMain: boolean): unknown };
+    const original = Module._load;
+    Module._load = function load(request: string, parent: unknown, isMain: boolean): unknown {
+      return original.call(this, request === "react-native-quick-crypto" ? "node:crypto" : request, parent, isMain);
+    };
+    let mod: Record<string, () => unknown>;
+    try { mod = require_(probe.bundlePath) as Record<string, () => unknown>; } finally { Module._load = original; }
+    expect(mod.p!()).toEqual({ status: "ok", encoded: true });
+  }, 60_000);
 });
 
 describe("the recorded export lists are a measurement, not a curated set", () => {

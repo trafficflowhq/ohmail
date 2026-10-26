@@ -321,18 +321,16 @@ The app can update itself, and it does it the way an app that fetches and runs
 new code has to: every payload is cryptographically verified before it is allowed
 to install, and the user consents before anything happens.
 
-**Rust-side, and the menu item is the whole interface.** "Check for Updates…" is
-a native menu item, not a button in the web UI — putting it in the page would mean
-granting the webview an updater permission and breaking the locks above. Instead
-the whole updater lives in `src-tauri/src/updater.rs`, and the webview gains
-nothing.
-
-That is also why there is no update banner inside the mail window: a banner needs
-a button, a button needs a command, and a command is the exact permission being
-withheld. So the item carries the state instead of one fixed word. It reads
-"Checking for Updates…" while the feed is being asked, "Downloading ohmail 0.9.2…"
-while a release is being fetched, and "Restart to Install 0.9.2" once a verified
-payload is waiting — which is the only thing in the app that installs anything.
+**Rust-side; the window only says it.** The whole updater lives in
+`src-tauri/src/updater.rs`: the feed, the signature check, the version guard and
+the install. The window is granted no updater permission. It reads the flow's
+state through the shell's own commands, presses the same button the native
+"Check for Updates…" item is, turns Settings' install switch, and says when a
+message is still being sent; none of these names a feed, a version or a path,
+and none can install anything the shell has not verified. The menu item carries
+the state too: "Checking for Updates…" while the feed is being asked,
+"Downloading ohmail 0.9.2…" while a release is being fetched, and "Restart to
+Install 0.9.2" once a verified payload is waiting.
 
 **One pinned HTTPS feed.** `plugins.updater.endpoints` in `tauri.conf.json` is a
 single URL — the project's own GitHub Releases `latest.json`:
@@ -357,16 +355,21 @@ security of an unsigned-installer updater, `src-tauri/build.rs` **fails the buil
 if the pubkey is missing or empty** — you cannot accidentally ship a build that
 would trust an unsigned feed.
 
-**One decision, asked once, and nothing installed without it.** The app checks
-the feed shortly after launch and whenever the menu item is picked. A newer signed
-release is fetched in the background — `Update::download` streams it and verifies
-the signature, and that is all it does; nothing on the machine has changed yet.
-When the payload is verified and waiting, one dialog asks whether to restart and
-install it. "Later" is remembered for the rest of the run and is never asked
-again; the menu item stays as the way back to it, and a payload that is never
-consented to is discarded when the app quits.
+**Installed at the next restart, by your own setting.** The app checks the feed
+shortly after launch, once a day while it stays open, and whenever the menu item is
+picked. A newer signed release is fetched in the background — `Update::download`
+streams it and verifies the signature, and that is all it does. A line at the foot
+of the sidebar then says it is ready, with Restart beside it. With Settings →
+About → Updates → "Install updates automatically" on (the default), the release
+goes in when the app quits, or at the next launch for an AppImage, which keeps it
+beside itself and checks it again first; with it off, nothing is installed until
+Restart is pressed, and a payload never pressed for is discarded when the app
+quits. Where replacing the app needs a password, the release waits for Restart.
+Nothing installs while a message is still being sent or a draft holds attached
+files, and an install at quit or launch that fails is said in the sidebar line,
+with Retry, rather than tried again at every quit.
 
-The restart happens on that press and on nothing else. A check that finds nothing
+The app restarts on that press and on nothing else. A check that finds nothing
 says so only when you asked for it; a check that fails says one plain sentence
 with "Try again" beside it, and a check nobody asked for fails silently rather
 than putting an error box over your mail.
@@ -552,7 +555,8 @@ apps/desktop/
         ├── host.rs           host mode: tray, tailscale serve, autostart
         ├── config.rs         the settings files (never a secret)
         ├── menu.rs           the one menu bar
-        ├── updater.rs        the menu item, the feed check, notify-and-install
+        ├── updater.rs        the menu item, the feed check, the install at quit or launch
+        ├── appimage_stage.rs every file the update writes: the staged release, its record
         └── *_tests.rs        each module's proofs (cargo test)
 ```
 

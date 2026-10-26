@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   announceUpdate,
@@ -7,15 +7,23 @@ import {
   ASK_MEMORY_KEY,
   buildToken,
   currentUpdateOffer,
+  flushBeforeRestart,
+  holdFilesForRestart,
+  holdForRestart,
   offerKey,
   periodElapsed,
   readAskMemory,
   rememberAsk,
   resetUpdateStoreForTests,
+  RESTART_FLUSH_MS,
+  restartHold,
+  setSendWaits,
+  subscribeRestartHold,
   subscribeUpdateOffer,
   UPDATE_PERIOD_MS,
   writeAskMemory,
   type AskMemory,
+  type RestartHold,
 } from "../app/shell/app-update";
 
 /**
@@ -87,24 +95,24 @@ describe("once a day, per thing being offered", () => {
     // The promise is "once a day per version", not "once a day". Someone told about 0.15.0 this
     // morning and offered 0.15.1 this afternoon should hear about it — a fix that shipped
     // because the first one was broken is exactly the case that must not be swallowed.
-    const memory = rememberAsk({}, "restart:0.15.0", START);
-    expect(askDue(memory, "restart:0.15.0", START + HOUR)).toBe(false);
-    expect(askDue(memory, "restart:0.15.1", START + HOUR)).toBe(true);
+    const memory = rememberAsk({}, "ready:0.15.0", START);
+    expect(askDue(memory, "ready:0.15.0", START + HOUR)).toBe(false);
+    expect(askDue(memory, "ready:0.15.1", START + HOUR)).toBe(true);
   });
 
   it("the key is the release, and a kind with no version is its own key", () => {
-    expect(offerKey({ kind: "restart", version: "0.15.0" })).toBe("restart:0.15.0");
+    expect(offerKey({ kind: "ready", version: "0.15.0" })).toBe("ready:0.15.0");
     expect(offerKey({ kind: "reload", version: "8f2ac091" })).toBe("reload:8f2ac091");
-    expect(offerKey({ kind: "package" })).toBe("package");
+    expect(offerKey({ kind: "failed" })).toBe("failed");
   });
 
   it("forgets entries that can no longer change a decision", () => {
     // Every release this device is ever offered would otherwise add a permanent key to a store
     // a browser may refuse to write when it is full. An entry older than two periods can only
     // ever answer "due", so dropping it changes nothing and keeps the store small.
-    const old = { "restart:0.1.0": START - 3 * UPDATE_PERIOD_MS, "restart:0.14.0": START - HOUR };
-    const kept = rememberAsk(old, "restart:0.15.0", START);
-    expect(Object.keys(kept).sort()).toEqual(["restart:0.14.0", "restart:0.15.0"]);
+    const old = { "ready:0.1.0": START - 3 * UPDATE_PERIOD_MS, "ready:0.14.0": START - HOUR };
+    const kept = rememberAsk(old, "ready:0.15.0", START);
+    expect(Object.keys(kept).sort()).toEqual(["ready:0.14.0", "ready:0.15.0"]);
   });
 });
 
@@ -166,5 +174,53 @@ describe("the one offer, and everyone who reads it", () => {
     subscribeUpdateOffer(() => { told += 1; });
     announceUpdate(null);
     expect(told).toBe(0);
+  });
+});
+
+describe("what a restart waits for", () => {
+  it("every open editor's save, and only while it is open", async () => {
+    const saved: string[] = [];
+    const off = holdForRestart(async () => void saved.push("compose"));
+    holdForRestart(async () => void saved.push("reply"));
+    await flushBeforeRestart();
+    expect(saved.sort()).toEqual(["compose", "reply"]);
+    off();
+    await flushBeforeRestart();
+    expect(saved.filter((s) => s === "compose"), "a closed editor was saved again").toHaveLength(1);
+  });
+
+  it("never past its bound: a save that hangs costs the account copy, not the restart", async () => {
+    vi.useFakeTimers();
+    holdForRestart(() => new Promise(() => {}));
+    let done = false;
+    void flushBeforeRestart().then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(RESTART_FLUSH_MS - 1);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("a save that throws does not stop the restart", async () => {
+    holdForRestart(async () => { throw new Error("refused"); });
+    await expect(flushBeforeRestart()).resolves.toBeUndefined();
+  });
+
+  it("an editor's files hold it until every holder lets go, and a waiting send is named first", () => {
+    const told: RestartHold[] = [];
+    subscribeRestartHold((hold) => told.push(hold));
+    expect(restartHold()).toBeNull();
+    const compose = holdFilesForRestart();
+    const reply = holdFilesForRestart();
+    expect(restartHold()).toBe("files");
+    compose();
+    compose();
+    expect(restartHold(), "one editor letting go twice freed the other's files").toBe("files");
+    setSendWaits(true);
+    expect(restartHold()).toBe("send");
+    reply();
+    setSendWaits(false);
+    expect(restartHold()).toBeNull();
+    expect(told, "each change told once").toEqual(["files", "send", null]);
   });
 });

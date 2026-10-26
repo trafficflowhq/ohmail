@@ -302,6 +302,19 @@ async function wheel(by: number): Promise<void> {
   });
 }
 
+/**
+ * End as a browser delivers it: the key, then the scroller carried to its end over frames, the
+ * first ones short (Chromium and WebKit report 10-14 scroll frames for one End).
+ */
+async function endKey(el: Element = listEl()): Promise<void> {
+  const max = Math.max(0, rowsOf(el).length * ROW_H - VIEW_H);
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    for (const f of [0.03, 0.12, 0.3, 0.55, 0.75, 0.9, 0.97, 1]) setScroll(el, Math.round(max * f));
+  });
+  for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(50); });
+}
+
 /** Let every effect, rAF and timer the views scheduled land. */
 const settle = async (): Promise<void> => {
   await act(async () => { vi.advanceTimersByTime(50); });
@@ -484,6 +497,13 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
     expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
   });
 
+  it("End in the list marks only the rows in the band once it rests", async () => {
+    await mountReceipts(TWENTY);
+    await endKey();
+    expect(listTop()).toBe(1000);
+    expect(marked).toEqual(["r12", "r13", "r14"]);
+  });
+
   it("the guard is per-pane: a wheel over the reading stream marks no LIST rows", async () => {
     // Two scrollers, two guards. They used to share one trigger in practice, because the
     // list scrolls itself whenever the stream's scroll-spy moves the selection.
@@ -531,6 +551,20 @@ describe("Reads: the same two guards, on the view that shares the machinery", ()
     await wheel(400);
     await settle();
     expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
+  });
+
+  it("End in the list marks only the rows in the band once it rests", async () => {
+    await mountReads(TWENTY);
+    await endKey();
+    expect(listTop()).toBe(1000);
+    expect(marked).toEqual(["r12", "r13", "r14"]);
+  });
+
+  it("End in the stream marks no card it carried past", async () => {
+    await mountReads(TWENTY);
+    await endKey(host!.querySelector(".stream")!);
+    const atRest = ["r12", "r13", "r14", "r15", "r16", "r17", "r18", "r19"];
+    expect(marked.filter((id) => !atRest.includes(id))).toEqual([]);
   });
 
   /**

@@ -420,17 +420,22 @@ export function useLocalFirstRun(opts: LocalFirstRunOptions): FirstRunHost | und
        organizes (the stamp is refused and the window IS written), and `removed`/`no_mailbox` are
        a mailbox that is not there, which stores nothing. The stage advances on the first two and
        must not on the last two. See {@link FirstRunOrganizeOutcome}. */
+    /* THE DOOR MAY LOOK AT THE MAIL SERVER FIRST, for as long as the peek read's own minute: the
+       bridge's one minute would end the press on the same tick the door's answer is sent. */
     const res = await bridgeFetch(organizePath(mailboxId), {
       method: "POST",
       headers: JSON_HEADERS,
+      deadlineMs: LOCAL_SERVER_CALL_DEADLINE_MS,
       body: JSON.stringify({
         ...(body.screening ? { screening: body.screening } : {}),
         ...(body.intent ? { intent: body.intent } : {}),
         ...(body.screenBacklog ? { screenBacklog: true } : {}),
       }),
     });
-    /* 409 is the door's refusal over a live holder this press did not ask to displace. */
+    /* 409 is the door's refusal over a live holder this press did not ask to displace; 503 a look
+       that did not land. Neither wrote anything. */
     if (res.status === 409) return "held";
+    if (res.status === 503) return "unchecked";
     const r = await jsonOf<{ outcome?: string }>(res);
     return r.outcome === "authorized" || r.outcome === "already_organizing" ? "stored" : "gone";
   }, []);

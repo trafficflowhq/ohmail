@@ -143,3 +143,12 @@ export async function pauseArm(w: World): Promise<void> {
   await patchToReceipts(w, ruleId);
   expect(await ruleOf(w, ruleId), "their pause stays").toMatchObject({ enabled: false, destination: RECEIPTS, stamped: true });
 }
+
+/** A marked move files the letter as the rule's, deciding no place of its own; a hand move decides one. */
+export async function decidedArm(w: World): Promise<void> {
+  const placeDecided = async (marked: boolean) => {
+    const r = await moves.move(w.ctx, await filedToNews(w), { folder: RECEIPTS, ...(marked ? { pressRule: true } : {}) });
+    return "dto" in r && r.dto.placeDecided === true;
+  };
+  expect([await placeDecided(true), await placeDecided(false)], "[marked, by hand]").toEqual([false, true]);
+}

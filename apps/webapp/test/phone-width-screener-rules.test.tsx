@@ -25,7 +25,7 @@ import { settleFirstPaint } from "./_first-paint.js";
  * coarse pointer). Each case loads the stylesheets' OWN phone rules, lifted from their media
  * blocks, so "at phone width" is the cascade's answer and not a class name; the wide control loads
  * none of them. A tap is dispatched where a thumb lands: `pointer-events: none` hands the press to
- * the box under it. Mutations watched red: the coarse block's `pointer-events` rule, the preview's
+ * the box under it. Mutations watched red: `sender-hit.ts`'s Screener-row exclusion, the preview's
  * `hm-who` press, `useOverlayFit`'s `full`, the badge's short form and its third, the rules row's
  * stack, and `button kbd` in `touch-keys.css`.
  */
@@ -37,6 +37,8 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 Element.prototype.scrollTo ??= function scrollTo() {};
 Element.prototype.scrollIntoView ??= function scrollIntoView() {};
+// jsdom has no `CSS`; `s` looks its row up by `CSS.escape`d id.
+(globalThis as { CSS?: { escape: (s: string) => string } }).CSS ??= { escape: (s: string) => s };
 
 // ── the stylesheets, read as the cascade reads them ───────────────────────────────────────────
 
@@ -82,11 +84,10 @@ const topRules = (css: string): string[] => {
 };
 
 /** The Screener's phone rules: its narrow blocks (the row CD shape lives in the drawer band since the
- *  width ladder — the band's 300px list wants it too) and the coarse one. */
+ *  width ladder — the band's 300px list wants it too). */
 const screenerPhone = (): string[] => [
   ...rulesUnder(APP, "(max-width: 1023.98px)").filter((r) => r.startsWith(".view-screener")),
   ...rulesUnder(APP, "(max-width: 699.98px)").filter((r) => r.startsWith(".view-screener")),
-  ...rulesUnder(APP, "(pointer: coarse) and (max-width: 699.98px)"),
 ];
 /** The touch rule: every `(pointer: coarse)` block of the two files that hold it. */
 const touchRules = (): string[] => [
@@ -304,12 +305,37 @@ describe("R13-04 — a thumb on a waiting row opens the letter, never the sender
     expect(sheetFor, "the press reached the stage's hit test as the held letter").toEqual(["m1"]);
   });
 
-  it("control: wide, with a fine pointer, the address still opens the sheet and nothing goes full-screen", async () => {
-    vp = { width: 1280, coarse: false };
-    await mountScreener([held("m1")]);
-    await tap(rowOf("m1").querySelector(".row-top .addr")!);
-    expect(sheetFor).toEqual(["m1"]);
+  it("wide, with a fine pointer, a click on the address selects the row, and s opens that sender's menu", async () => {
+    vp = { width: 1440, coarse: false };
+    await mountScreener([held("m1"), held("m2")]);
+    const row = rowOf("m2");
+    await tap(row.querySelector(".row-top .addr")!);
+    expect(sheetFor, "the address opened the sender sheet").toEqual([]);
     expect(fullCalls).not.toContain(true);
+    expect(row.getAttribute("aria-selected")).toBe("true");
+    await act(async () => {
+      row.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
+    });
+    await flush();
+    const menu = host!.querySelector("[role=menu]");
+    expect(menu?.getAttribute("aria-label")).toBe("Choose where this sender's mail goes");
+    expect(menu?.closest(".row-slot")?.querySelector(".row")?.getAttribute("data-id")).toBe("m2");
+  });
+
+  it("narrow, with a fine pointer, a click opens the full letter, and s leaves it for that sender's menu", async () => {
+    vp = { width: 640, coarse: false };
+    load(screenerPhone());
+    await mountScreener([held("m1"), held("m2")]);
+    await tap(rowOf("m2"));
+    expect(section().className, "the click opened the full letter").toContain("scn-full");
+    await act(async () => {
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true, cancelable: true }));
+    });
+    await flush();
+    expect(section().className, "the menu would sit under the full letter").not.toContain("scn-full");
+    const menu = host!.querySelector("[role=menu]");
+    expect(menu?.getAttribute("aria-label")).toBe("Choose where this sender's mail goes");
+    expect(menu?.closest(".row-slot")?.querySelector(".row")?.getAttribute("data-id")).toBe("m2");
   });
 });
 

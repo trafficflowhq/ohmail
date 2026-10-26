@@ -2,6 +2,8 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { parseProfileMessage, type OrganizerProfileDoc } from "../../../packages/core/src/adapters/organizer-profile.js";
+
 import { BUNDLE, buildPhoneEngine } from "../scripts/bundle-engine.mjs";
 
 /**
@@ -62,12 +64,23 @@ function sqlExecutor() {
   };
 }
 
-/** A fresh fixture mailbox of `LETTERS` letters. The server runs with authentication disabled. */
-async function seed(user: string): Promise<void> {
+type Witness = {
+  connect(): Promise<void>; append(p: string, raw: string): Promise<unknown>; logout(): Promise<void>;
+  list(): Promise<{ path: string }[]>; getMailboxLock(p: string): Promise<{ release(): void }>;
+  fetch(r: string, q: unknown): AsyncIterable<{ source?: Buffer }>;
+};
+/** The server runs with authentication disabled. */
+const imapAuth = (user: string) => ({ host: HOST, port: PORT, secure: false, auth: { user, pass: "fixture" } });
+function witness(user: string): Witness {
   const { ImapFlow } = require_(require_.resolve("imapflow", { paths: [require_.resolve("../../../packages/core/package.json")] })) as {
-    ImapFlow: new (o: unknown) => { connect(): Promise<void>; append(p: string, raw: string): Promise<unknown>; logout(): Promise<void> };
+    ImapFlow: new (o: unknown) => Witness;
   };
-  const c = new ImapFlow({ host: HOST, port: PORT, secure: false, auth: { user, pass: "fixture" }, logger: false });
+  return new ImapFlow({ ...imapAuth(user), logger: false });
+}
+
+/** A fresh fixture mailbox of `LETTERS` letters. */
+async function seed(user: string): Promise<void> {
+  const c = witness(user);
   await c.connect();
   for (let i = 0; i < LETTERS; i += 1) {
     await c.append("INBOX", [`From: Sender ${i % 5} <s${i % 5}@sender.test>`, `To: ${user}`, `Subject: Letter ${i}`,
@@ -89,24 +102,59 @@ function installReactNativeImmediate(): void {
 }
 afterEach(() => { (globalThis as { setImmediate: unknown }).setImmediate = nodeSetImmediate; });
 
+type Engine = {
+  stop(): Promise<void>; claimHere(o: { by: "press" }): Promise<string>;
+  handle(r: Request): Promise<Response>; sessionToken: string;
+};
+/** A fresh artifact instance with its own database and install id, logging into `lines`. */
+async function startEngine(user: string, lines: string[], extra: Record<string, unknown> = {}): Promise<Engine> {
+  const start = loadArtifact().startPhoneEngine as (d: unknown) => Promise<Engine>;
+  return start({
+    exec: sqlExecutor(), imap: imapAuth(user),
+    address: user, machineName: "first-sync census", installId: `install-${randomUUID()}`, keks: { 1: "c".repeat(64) },
+    logSink: (line: string) => { lines.push(line); },
+    ...extra,
+  });
+}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const logged = (lines: string[], event: string, from = 0) => lines.slice(from).find((l) => l.includes(`"event":"${event}"`));
+
 async function firstSync(): Promise<{ messages?: number } | null> {
   await buildPhoneEngine();
   const user = `first-sync-${randomUUID().slice(0, 8)}@lane.test`;
   await seed(user);
-  const mod = loadArtifact();
-  const start = mod.startPhoneEngine as (d: unknown) => Promise<{ stop(): Promise<void> }>;
-  let finished: { messages?: number } | null = null;
-  live = await start({
-    exec: sqlExecutor(),
-    imap: { host: HOST, port: PORT, secure: false, auth: { user, pass: "fixture" } },
-    address: user, machineName: "first-sync census", installId: `install-${randomUUID()}`, keks: { 1: "c".repeat(64) },
-    logSink: (line: string) => {
-      if (!line.includes('"first_sync_finished"')) return;
-      finished = JSON.parse(line) as { messages?: number };
-    },
-  });
-  for (let i = 0; i < 240 && finished === null; i += 1) await new Promise((r) => setTimeout(r, 250));
-  return finished;
+  const lines: string[] = [];
+  live = await startEngine(user, lines);
+  for (let i = 0; i < 240 && !logged(lines, "first_sync_finished"); i += 1) await sleep(250);
+  const line = logged(lines, "first_sync_finished");
+  return line === undefined ? null : JSON.parse(line) as { messages?: number };
+}
+
+async function call(e: Engine, method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
+  const res = await e.handle(new Request(`http://engine.invalid${path}`, {
+    method, headers: { authorization: `Bearer ${e.sessionToken}`, "content-type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }));
+  return { status: res.status, json: await res.json().catch(() => null) };
+}
+
+/** Every `X-Ohmail-Profile: 1` message in the mailbox's `_meta` folder, as raw text. */
+async function profilesInMeta(user: string): Promise<string[]> {
+  const c = witness(user);
+  await c.connect();
+  const out: string[] = [];
+  try {
+    for (const { path } of (await c.list()).filter((f) => /(^|[./])ohmail[./]_meta$/.test(f.path))) {
+      const lock = await c.getMailboxLock(path);
+      try {
+        for await (const m of c.fetch("1:*", { uid: true, source: true })) {
+          const raw = m.source?.toString("utf8") ?? "";
+          if (/^X-Ohmail-Profile:[ \t]*1[ \t]*$/im.test(raw.split(/\r?\n\r?\n/, 1)[0] ?? "")) out.push(raw);
+        }
+      } finally { lock.release(); }
+    }
+  } finally { await c.logout(); }
+  return out;
 }
 
 describe("the phone engine artifact against a real IMAP server", () => {
@@ -122,4 +170,41 @@ describe("the phone engine artifact against a real IMAP server", () => {
     expect(finished, "the first sync never finished: an IMAP answer was pushed and never read").not.toBeNull();
     expect(finished!.messages, "the first sync finished without the mailbox's letters").toBe(LETTERS);
   }, 120_000);
+
+  it("an organizer phone writes its profile to _meta, and a second install imports it", async () => {
+    await buildPhoneEngine();
+    const user = `profile-${randomUUID().slice(0, 8)}@lane.test`;
+    await seed(user);
+    const a: string[] = [];
+    const engineA = await startEngine(user, a, { profileFlushIntervalMs: 1000 });
+    live = engineA;
+    for (let i = 0; i < 240 && !logged(a, "first_sync_finished"); i += 1) await sleep(250);
+    expect(await engineA.claimHere({ by: "press" })).toBe("claimed");
+    const rule = { kind: "sender", match: "s1@sender.test", destination: "ohmail/News" };
+    expect((await call(engineA, "POST", "/rules", rule)).status).toBe(201);
+    const mark = a.length;
+    for (let i = 0; i < 240 && !logged(a, "organizer_profile_written", mark); i += 1) await sleep(250);
+    expect(logged(a, "organizer_profile_write_failed"), "the profile append failed").toBeUndefined();
+    expect(logged(a, "organizer_profile_written", mark), "no profile write after the rule").toBeDefined();
+
+    const stored = await profilesInMeta(user);
+    expect(stored).toHaveLength(1);
+    const parsed = parseProfileMessage(stored[0]!) as { status?: string; encoded?: boolean; doc?: OrganizerProfileDoc };
+    expect(parsed).toMatchObject({ status: "ok", encoded: true });
+    expect(parsed.doc!.rules).toEqual([expect.objectContaining(rule)]);
+
+    const b: string[] = [];
+    const engineB = await startEngine(user, b);
+    try {
+      for (let i = 0; i < 240 && !logged(b, "profile_mirror_written"); i += 1) await sleep(250);
+      expect(logged(b, "profile_mirror_written"), "the second install never mirrored the profile").toBeDefined();
+      const boxes = (await call(engineB, "GET", "/mailboxes")).json;
+      const id = ((boxes?.items ?? boxes) as { id: string }[])[0]!.id;
+      const view = await call(engineB, "GET", `/mailboxes/${id}/profile`);
+      expect(view.status).toBe(200);
+      expect(view.json.organizing).toBe(false);
+      expect(view.json.profile.rules).toEqual([expect.objectContaining(rule)]);
+      expect(view.json.profile.screening).toMatchObject({ baselineAt: expect.any(String), dormancyDays: 60, scope: "window" });
+    } finally { await engineB.stop().catch(() => undefined); }
+  }, 180_000);
 });

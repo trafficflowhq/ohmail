@@ -14,14 +14,15 @@
 // minisign-verified before it may install. It is Rust-side on purpose — the
 // webview is granted no updater permission, so the four locks that assert "the
 // page reaches nothing" stay literally true while the PROCESS makes the request.
-// `updater.rs` carries the reasoning; `attach` and `on_launch` here are the only
-// places it is hooked up.
+// `updater.rs` carries the reasoning; `attach`, `on_launch`, and in the engine build
+// the launch's `apply_staged_at_launch` and the last event's `install_on_quit`, are
+// the places it is hooked up.
 //
 // `on_launch` is the check that happens without being asked, once, shortly after
-// the window opens. It says nothing at all unless it finds a newer release, and
-// it installs nothing on its own: the payload is fetched and verified, and one
-// dialog then asks whether to restart into it. An updater whose only trigger is a
-// menu item is an updater nobody runs.
+// the window opens. It says nothing at all unless it finds a newer release; the
+// payload is fetched and verified, and with Settings' switch on (the default) it
+// goes in at the next quit or launch, or now on Restart. An updater whose only
+// trigger is a menu item is an updater nobody runs.
 //
 // ── THE ONE PIECE OF INTERFACE THIS PROCESS DRAWS ─────────────────────────────
 //
@@ -95,6 +96,9 @@ mod omarchy;
 #[cfg(feature = "local-engine")]
 mod omarchy_core;
 mod updater;
+// The files the update flow writes: a release staged beside the AppImage, its record, and
+// Settings' install policy. Always compiled: every build's AppImage press replaces by rename.
+mod appimage_stage;
 // WHAT THE RENDERER COSTS. `engine_vitals` measures the sidecar, which is the process that
 // behaved correctly; the webview was never measured and that is where a 4.1 GB session went.
 // Feature-gated with the engine because it
@@ -129,6 +133,10 @@ mod launch_window;
 // A web process that dies is reloaded once with a sentence, and a second death offers a relaunch
 // instead of a dead frame. Always compiled: every build opens the same window.
 mod renderer_recovery;
+
+// How each web process ended, read without reaping it, and other code's stderr kept beside the log.
+#[cfg(feature = "local-engine")]
+mod last_words;
 
 // What a restart hands the new copy: stdio, and none of the descriptors this launch was handed.
 // Always compiled: both restarts, the update's and the renderer's relaunch, go through it.
@@ -192,8 +200,13 @@ fn main() {
         builder = launch_window::attach(builder);
     }
 
+    let context = tauri::generate_context!();
+    // Other code's stderr to `stderr.log` beside the log, before setup starts a web process. The
+    // identifier is the context's: the Flatpak overlay changes it.
+    #[cfg(feature = "local-engine")]
+    last_words::install(&context.config().identifier);
     let app = builder
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("ohmail: failed to start the Tauri runtime");
 
     // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:
@@ -204,6 +217,9 @@ fn main() {
     #[cfg(feature = "local-engine")]
     let (host_boot, launch_undone) = {
         engine::Shell::open_log(&app);
+        // A release staged beside the AppImage that no quit installed goes in now, before the
+        // engine or the window starts, and the app restarts into it.
+        updater::apply_staged_at_launch(&app);
         let paths = engine::Shell::paths(&app);
         // A pairing the last run never settled puts its replaced door back before anything reads
         // it; what that undo took back is finished below, once the shell and host mode exist.
@@ -337,6 +353,11 @@ fn main() {
                     }
                 }
             }
+        }
+        // A ready release goes in as the app goes, after the engine was told to leave above.
+        #[cfg(feature = "local-engine")]
+        if matches!(&_event, tauri::RunEvent::Exit) {
+            updater::install_on_quit(_app);
         }
     };
 

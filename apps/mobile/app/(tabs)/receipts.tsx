@@ -9,7 +9,8 @@
  * really cleared the line. The rows are a window, never the whole stream.
  */
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AppState, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { AppState, View } from "react-native";
+import { useSeenRun } from "../../src/ui/stream-seen";
 import { useFocusEffect } from "expo-router";
 import { Copy } from "../../src/copy";
 import { usePullToSync } from "../../src/state/pull";
@@ -91,14 +92,11 @@ function ReceiptsBody() {
     [groupOfRow, ledger],
   );
 
-  const onScroll = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, layoutMeasurement } = e.nativeEvent;
-      const line = contentOffset.y + layoutMeasurement.height * READ_LINE;
-      const passed = ledger.passed(line);
-      if (passed.length) actions.markSeenThrough("receipts", passed);
-    },
-    [actions, ledger],
+  const onRowGone = useCallback((m: WorldMail) => ledger.drop(m.id), [ledger]);
+  const { run, gestures } = useSeenRun(
+    READ_LINE,
+    () => ledger.frames(),
+    (ids) => actions.markSeenThrough("receipts", ids),
   );
 
   // The leave commit for this stream's own waterline — including the APP backgrounding while
@@ -107,14 +105,16 @@ function ReceiptsBody() {
   // rides the durable outbox so even that kill delivers on the next boot.
   useFocusEffect(
     useCallback(() => {
+      run.restart();
       const sub = AppState.addEventListener("change", (s) => {
         if (s === "background") void actions.leaveFeed("receipts");
+        if (s === "active") run.restart();
       });
       return () => {
         sub.remove();
         void actions.leaveFeed("receipts");
       };
-    }, [actions]),
+    }, [actions, run]),
   );
 
   const dayGroups: ListGroup<WorldMail>[] = groups.map((g) => ({
@@ -139,7 +139,8 @@ function ReceiptsBody() {
         )}
         rowInset={6}
         onRowFrame={onRowFrame}
-        onScroll={onScroll}
+        onRowGone={onRowGone}
+        {...gestures}
         scrollEventThrottle={64}
         refresh={pull}
         head={

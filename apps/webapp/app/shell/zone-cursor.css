@@ -73,3 +73,19 @@
   outline: calc(var(--focus-w) * var(--teach)) solid var(--focus, var(--accent));
   outline-offset: calc(-1 * var(--gap-edge));
 }
+/* Beside a column of squares the ring starts at the paper, not the track: the rail stands in the
+   seam (o9), and the track's edge ran the ring along the squares. On the left it lies over the
+   paper's own ring; top, right and bottom stay where the outline drew them. */
+:root[data-zone="reader"] .view.split:has(> .thread-marks) > .read-col:has(> .conv[data-thread-read]) {
+  outline: none;
+}
+:root[data-zone="reader"] .view.split:has(> .thread-marks):has(> .read-col > .conv[data-thread-read])::after {
+  content: "";
+  position: absolute;
+  grid-row: 1;
+  grid-column: -2 / -1;
+  inset: 0 0 0 var(--tm-gutter);
+  box-shadow: 0 0 0 calc(var(--focus-w) * var(--teach)) var(--focus, var(--accent));
+  pointer-events: none;
+  z-index: 1;
+}

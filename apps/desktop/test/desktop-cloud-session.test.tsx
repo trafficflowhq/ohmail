@@ -43,8 +43,12 @@ describe("the window's reading of /health.session", () => {
     expect(signInCauseOf(reading("refused", "refresh_revoked"))).toBe("revoked");
     expect(signInCauseOf(reading("refused", "refresh_expired"))).toBe("expired");
     expect(signInCauseOf(reading("seal_failed", "seal_unreadable"))).toBe("seal");
+    // A refusal an earlier run heard names the same cause at the next launch.
+    expect(signInCauseOf(reading("refused_before", "refresh_revoked"))).toBe("revoked");
+    expect(signInCauseOf(reading("refused_before", "refresh_expired"))).toBe("expired");
     // The legacy code does not say which, so the ordinary sentence is said.
     expect(signInCauseOf(reading("refused", "unauthorized"))).toBeNull();
+    expect(signInCauseOf(reading("refused_before", "unauthorized"))).toBeNull();
     expect(signInCauseOf(reading("renewing", "refresh_revoked"))).toBeNull();
     expect(signInCauseOf(null)).toBeNull();
   });
@@ -238,6 +242,14 @@ describe("the gate over each session state", () => {
     const el = await render();
     expect(dialog(el)).toBe(true);
     expect(text(el)).toContain(DOOR_COPY.cloudLeadSealFailed(machineWord()));
+    expect(text(el)).not.toContain(DOOR_COPY.cloudLeadSignIn(machineWord()));
+  });
+
+  it("a refusal an earlier run heard: the dialog at launch names it, not the first-run sentence", async () => {
+    fakeShell({ signedIn: false, sessionExpired: false, session: reading("refused_before", "refresh_revoked") });
+    const el = await render();
+    expect(dialog(el)).toBe(true);
+    expect(text(el)).toContain(DOOR_COPY.cloudLeadRevoked(machineWord()));
     expect(text(el)).not.toContain(DOOR_COPY.cloudLeadSignIn(machineWord()));
   });
 });

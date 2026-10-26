@@ -736,6 +736,302 @@ describe("runLeaseGate — read, decide, then write", () => {
     const res = await runLeaseGate({ capabilities: [], io, self: self(), now: NOW });
     expect(res.verdict.verdict).toBe("stand_down");
   });
+
+  /* ── A JOIN NEVER TAKES A LIVE HOLDER'S MAILBOX, EVEN OVER A READ THAT MISSED IT ──────────────
+     Two Dovecot indexes over one maildir, or a provider whose sessions agree only eventually: the
+     election's read can miss a live holder the confirm read shows. The join's claim carried its
+     press, which ranks first, so it won its confirm and the holder stood down to it. */
+  const selfHostClaim = (heartbeat: Date = ago(30_000)): RawClaimMessage => ({
+    ref: 53,
+    raw: formatClaim({
+      installId: "cloud:selfhost", kind: "cloud", displayName: "localhost:6080",
+      heartbeat, claimedAt: ago(20 * 60_000), nonce: "sh",
+      authorizedAt: ago(20 * 60_000), capabilities: ["requests"],
+    }),
+  });
+  /** The folder's FIRST read misses the records `hidden` picks; every later read shows them. */
+  const missesFirst = (io: FakeIo, hidden: (m: RawClaimMessage) => boolean): FakeIo => {
+    const plain = io.listClaims.bind(io);
+    let reads = 0;
+    io.listClaims = async (): Promise<RawClaimMessage[]> => {
+      const all = await plain();
+      reads += 1;
+      return reads === 1 ? all.filter((m) => !hidden(m)) : all;
+    };
+    return io;
+  };
+  const claimsIn = (io: FakeIo): OrganizerClaim[] => io.messages.map((m) => parseClaim(m.raw, m.ref) as OrganizerClaim);
+  const pressOn = (io: LeaseIo, installId: string, intent: OrganizerIntent, pressed: Date, now: Date = NOW) => runLeaseGate({
+    capabilities: [], io, self: self({ installId, displayName: installId }), now, newNonce: () => `n-${installId}`,
+    takeover: { authorizedAt: pressed, intent },
+  });
+
+  it("a join whose first read missed a live holder yields at the confirm, and the holder keeps organizing", async () => {
+    const io = missesFirst(new FakeIo(), (m) => m.ref === 53);
+    io.messages.push(selfHostClaim());
+    const events: string[] = [];
+    const res = await runLeaseGate({
+      capabilities: [], io, self: self({ installId: "desktop", displayName: "zorin" }), now: NOW,
+      newNonce: () => "j1", takeover: { authorizedAt: NOW, intent: "join" }, log: (event) => { events.push(event); },
+    });
+    expect(res.verdict, "a join took a live holder's mailbox").toMatchObject({
+      verdict: "stand_down", reason: "organized_elsewhere:cloud", by: { installId: "cloud:selfhost" },
+    });
+    expect(res.nonce).toBeNull();
+    expect(events).toContain("lease_lost_race");
+    expect(claimsIn(io).map((c) => c.installId), "the join's claim stayed beside the holder's").toEqual(["cloud:selfhost"]);
+    const holder = decideLease({
+      self: { installId: "cloud:selfhost", kind: "cloud", displayName: "localhost:6080", lastNonce: "sh" },
+      claims: claimsIn(io), now: new Date(NOW.getTime() + 30_000),
+    });
+    expect(holder.verdict, "the holder stood down on its next pass").toBe("organize");
+  });
+
+  it("CONTROL: the same missed read under \"Organize here instead\" still takes the mailbox", async () => {
+    const io = missesFirst(new FakeIo(), (m) => m.ref === 53);
+    io.messages.push(selfHostClaim());
+    const res = await pressOn(io, "desktop", "takeover", NOW);
+    expect(res.verdict.verdict).toBe("organize");
+    expect(res.nonce).toBe("n-desktop");
+  });
+
+  it("CONTROL: a holder that stopped renewing does not make a join yield at the confirm", async () => {
+    const io = missesFirst(new FakeIo(), (m) => m.ref === 53);
+    io.messages.push(selfHostClaim(ago(DEFAULT_STALE_AFTER_MS + 60_000)));
+    const res = await pressOn(io, "desktop", "join", NOW);
+    expect(res.verdict.verdict).toBe("organize");
+  });
+
+  /* TWO JOINS, THE LATER ONE ON A READ THAT MISSED THE EARLIER ONE'S CLAIM: the earlier press keeps
+     the mailbox, whichever install id it carries. */
+  it.each([["a", "b"], ["b", "a"]] as const)(
+    "two joins crossing: the earlier press (%s) keeps the mailbox and the later one (%s) yields",
+    async (earlier, later) => {
+      const folder = new FakeIo();
+      expect((await pressOn(folder, earlier, "join", ago(5_000))).verdict.verdict).toBe("organize");
+      const lagging = missesFirst(folder, (m) => (parseClaim(m.raw) as OrganizerClaim).installId === earlier);
+      const res = await pressOn(lagging, later, "join", NOW, new Date(NOW.getTime() + 1_000));
+      expect(res.verdict, "the later join took the earlier one's mailbox").toMatchObject({
+        verdict: "stand_down", by: { installId: earlier },
+      });
+      expect(claimsIn(folder).map((c) => c.installId)).toEqual([earlier]);
+      const next = decideLease({
+        self: self({ installId: earlier, lastNonce: `n-${earlier}` }), claims: claimsIn(folder),
+        now: new Date(NOW.getTime() + 30_000),
+      });
+      expect(next.verdict).toBe("organize");
+    });
+
+  /* AND TWO PRESSES OF ONE INSTANT, EACH MISSING THE OTHER UNTIL BOTH CONFIRM: the election's own
+     tie-break keeps one of them, the lower install id, in either order. */
+  it.each([["a", "b"], ["b", "a"]] as const)(
+    "two joins of one instant crossing at once: exactly one organizes, the lower install id (%s runs first)",
+    async (x, y) => {
+      const folder = new FakeIo();
+      const [rx, ry] = await Promise.all([pressOn(folder, x, "join", NOW), pressOn(folder, y, "join", NOW)]);
+      expect({ [x]: rx.verdict.verdict, [y]: ry.verdict.verdict }).toEqual({ a: "organize", b: "stand_down" });
+      expect(claimsIn(folder).map((c) => c.installId)).toEqual(["a"]);
+    });
+
+  /** Two gates over one folder: both first reads before either append, both confirm reads before either removal. */
+  const lockstep = (folder: FakeIo): ((who: string) => LeaseIo) => {
+    const barrier = (): (() => Promise<void>) => {
+      let arrived = 0;
+      let open!: () => void;
+      const opened = new Promise<void>((r) => { open = r; });
+      return async () => { arrived += 1; if (arrived === 2) open(); await opened; };
+    };
+    const [read, appended, confirmed] = [barrier(), barrier(), barrier()];
+    return () => {
+      let reads = 0;
+      return {
+        uidValidity: () => folder.uidValidity(),
+        ensureMetaFolder: () => folder.ensureMetaFolder(),
+        listClaims: async () => {
+          reads += 1;
+          const snapshot = await folder.listClaims();
+          if (reads === 1) await read();
+          if (reads === 2) await confirmed();
+          return snapshot;
+        },
+        appendClaim: async (raw) => { await folder.appendClaim(raw); await appended(); },
+        removeClaims: (refs) => folder.removeClaims(refs),
+      };
+    };
+  };
+
+  it.each([["a", "b"], ["b", "a"]] as const)(
+    "two joins pressed seconds apart whose first reads both saw an empty folder: the earlier (%s) keeps it, %s yields",
+    async (earlier, later) => {
+      const folder = new FakeIo();
+      const io = lockstep(folder);
+      const [re, rl] = await Promise.all([
+        pressOn(io(earlier), earlier, "join", ago(5_000), ago(4_900)),
+        pressOn(io(later), later, "join", ago(2_000), ago(1_900)),
+      ]);
+      expect({ earlier: re.verdict.verdict, later: rl.verdict.verdict }, "both presses stood down, or both organize")
+        .toEqual({ earlier: "organize", later: "stand_down" });
+      expect(rl.verdict).toMatchObject({ by: { installId: earlier } });
+      expect(claimsIn(folder).map((c) => c.installId)).toEqual([earlier]);
+    });
+
+  it("a holder whose pass lands between a lagging join's append and its confirm keeps organizing", async () => {
+    const io = missesFirst(new FakeIo(), (m) => m.ref === 53);
+    io.messages.push(selfHostClaim());
+    const append = io.appendClaim.bind(io);
+    let holder = "";
+    io.appendClaim = async (raw: string): Promise<void> => {
+      await append(raw);
+      io.appendClaim = append;
+      holder = (await runLeaseGate({
+        capabilities: ["requests"], io, now: new Date(NOW.getTime() + 500), newNonce: () => "sh2",
+        self: { installId: "cloud:selfhost", kind: "cloud", displayName: "localhost:6080", lastNonce: "sh" },
+      })).verdict.verdict;
+    };
+    const res = await pressOn(io, "desktop", "join", NOW);
+    expect(holder, "the holder stood down to a join that had not confirmed yet").toBe("organize");
+    expect(res.verdict).toMatchObject({ verdict: "stand_down", by: { installId: "cloud:selfhost" } });
+    expect(claimsIn(io).map((c) => c.installId)).toEqual(["cloud:selfhost"]);
+  });
+
+  it("a join yields to a renewing holder whose clock runs ahead of its own", async () => {
+    const io = missesFirst(new FakeIo(), (m) => m.ref === 54);
+    io.messages.push({
+      ref: 54,
+      raw: formatClaim({
+        installId: "their-mac", kind: "local", displayName: "Their Mac",
+        heartbeat: new Date(NOW.getTime() + 115_000), claimedAt: new Date(NOW.getTime() + 90_000),
+        nonce: "tm", authorizedAt: null, intent: "join", capabilities: [],
+      }),
+    });
+    const res = await pressOn(io, "desktop", "join", NOW);
+    expect(res.verdict, "a join took a renewing holder's mailbox")
+      .toMatchObject({ verdict: "stand_down", by: { installId: "their-mac" } });
+    expect(claimsIn(io).map((c) => c.installId)).toEqual(["their-mac"]);
+  });
+
+  it("a join's first claim carries no press and starts its own tenure; the claim its confirm leaves carries the press", async () => {
+    const io = new FakeIo();
+    io.messages.push({ ref: 60, raw: formatClaim({
+      installId: "desktop", kind: "local", displayName: "desktop", heartbeat: ago(30 * 60_000),
+      claimedAt: ago(2 * 3_600_000), nonce: "old", authorizedAt: null, capabilities: [],
+    }) });
+    io.messages.push({ ref: 61, raw: formatClaim({
+      installId: "gone", kind: "local", displayName: "Gone", heartbeat: ago(30 * 60_000),
+      claimedAt: ago(3 * 3_600_000), nonce: "g", authorizedAt: null, capabilities: [],
+    }) });
+    expect((await pressOn(io, "desktop", "join", ago(1_000))).verdict).toMatchObject({ verdict: "organize", authorized: true });
+    const [first, pressed] = io.appended.map((raw) => parseClaim(raw) as OrganizerClaim);
+    expect({ press: first!.authorizedAt, since: first!.claimedAt.toISOString() })
+      .toEqual({ press: null, since: NOW.toISOString() });
+    const holder = claim({ installId: "their-mac", nonce: "tm", claimedAt: ago(3_600_000) });
+    expect(decideLease({ self: self({ installId: "their-mac", lastNonce: "tm" }), claims: [holder, first!], now: NOW }).verdict,
+      "a holder whose pass reads the join's first claim stands down to it").toBe("organize");
+    expect({ press: pressed?.authorizedAt?.toISOString(), since: pressed?.claimedAt.toISOString() },
+      "the confirmed join's claim carries no press").toEqual({ press: ago(1_000).toISOString(), since: NOW.toISOString() });
+    expect(claimsIn(io).map((c) => c.authorizedAt?.toISOString() ?? null), "the first claim stayed beside the pressed one")
+      .toEqual([ago(1_000).toISOString()]);
+  });
+
+  /* AN OLDER PRESS NEVER REVERSES A NEWER ONE (0.14.1): "Organize here instead" pressed an hour ago on
+     a laptop whose server did not answer stays on its row, unspent; the person then agrees on the
+     desktop over a free folder. */
+  it("an older takeover press still unspent elsewhere stands down to a confirmed join, which keeps organizing", async () => {
+    const folder = new FakeIo();
+    expect((await pressOn(folder, "desktop-b", "join", ago(60_000))).verdict.verdict).toBe("organize");
+    const stale = await pressOn(folder, "laptop-l", "takeover", ago(3_600_000), new Date(NOW.getTime() + 30_000));
+    expect(stale.verdict, "the hour-old press took the mailbox from the newer Agree")
+      .toMatchObject({ verdict: "stand_down", by: { installId: "desktop-b" } });
+    const next = await runLeaseGate({
+      capabilities: [], io: folder, now: new Date(NOW.getTime() + 60_000), newNonce: () => "n-desktop-b-2",
+      self: self({ installId: "desktop-b", displayName: "desktop-b", lastNonce: "n-desktop-b" }),
+    });
+    expect(next.verdict.verdict).toBe("organize");
+    expect(claimsIn(folder).map((c) => c.installId)).toEqual(["desktop-b"]);
+  });
+
+  it("CONTROL: a takeover press newer than the join's Agree still takes the mailbox", async () => {
+    const folder = new FakeIo();
+    expect((await pressOn(folder, "desktop-b", "join", ago(60_000))).verdict.verdict).toBe("organize");
+    const newer = await pressOn(folder, "laptop-l", "takeover", ago(10_000), new Date(NOW.getTime() + 30_000));
+    expect(newer.verdict.verdict).toBe("organize");
+    expect(claimsIn(folder).map((c) => c.installId)).toEqual(["laptop-l"]);
+  });
+
+  /* A server that refuses the cleanup leaves both claims; the renewal must read the pressed one. */
+  it("a join's renewal carries the press even when its first claim could not be removed", async () => {
+    const io = new FakeIo();
+    const remove = io.removeClaims.bind(io);
+    io.removeClaims = async (refs: readonly unknown[]): Promise<void> => { await remove(refs.filter((r) => r !== 1)); };
+    let minted = 0;
+    const won = await runLeaseGate({
+      capabilities: [], io, self: self({ installId: "desktop", displayName: "desktop" }), now: NOW,
+      newNonce: () => `n-${++minted}`, takeover: { authorizedAt: ago(1_000), intent: "join" },
+    });
+    expect(won.verdict.verdict).toBe("organize");
+    const renewed = await runLeaseGate({
+      capabilities: [], io, now: new Date(NOW.getTime() + 60_000), newNonce: () => "n-renew",
+      self: self({ installId: "desktop", displayName: "desktop", lastNonce: won.nonce, mintedNonces: ["n-1", "n-2"] }),
+    });
+    expect(renewed.verdict.verdict).toBe("organize");
+    expect(claimsIn(io).find((c) => c.nonce === "n-renew")?.authorizedAt?.toISOString(),
+      "the renewal read the unpressed first claim").toBe(ago(1_000).toISOString());
+  });
+
+  it("a confirmed join whose pressed write is refused still organizes on its first claim, and says so", async () => {
+    const io = new FakeIo();
+    const append = io.appendClaim.bind(io);
+    let appends = 0;
+    io.appendClaim = async (raw: string): Promise<void> => {
+      appends += 1;
+      if (appends === 2) throw new Error("NO");
+      await append(raw);
+    };
+    let minted = 0;
+    const events: string[] = [];
+    const res = await runLeaseGate({
+      capabilities: [], io, self: self({ installId: "desktop", displayName: "desktop" }), now: NOW,
+      newNonce: () => `n-${++minted}`, takeover: { authorizedAt: ago(1_000), intent: "join" },
+      log: (event) => { events.push(event); },
+    });
+    expect(res.verdict.verdict).toBe("organize");
+    expect(res.nonce).toBe("n-1");
+    expect(claimsIn(io).map((c) => c.nonce)).toEqual(["n-1"]);
+    expect(events).toContain("lease_join_press_failed");
+  });
+
+  /* A GATE STOPPED BETWEEN THE TWO WRITES (the process ended, the connection dropped) leaves the
+     first claim and the press, unspent, on the row: the next pass finishes the join. */
+  it("a join tenure an interrupted gate left unpressed takes its press on the next pass that offers it", async () => {
+    const io = new FakeIo();
+    io.messages.push({ ref: 70, raw: formatClaim({
+      installId: "desktop", kind: "local", displayName: "desktop", heartbeat: ago(30_000), claimedAt: ago(30_000),
+      nonce: "first", authorizedAt: null, intent: "join", capabilities: [],
+    }) });
+    let minted = 0;
+    const res = await runLeaseGate({
+      capabilities: [], io, self: self({ installId: "desktop", displayName: "desktop" }), now: NOW,
+      newNonce: () => `n-${++minted}`, takeover: { authorizedAt: ago(40_000), intent: "join" },
+    });
+    expect(res.verdict).toMatchObject({ verdict: "organize", authorized: false });
+    expect(claimsIn(io).map((c) => ({ press: c.authorizedAt?.toISOString() ?? null, since: c.claimedAt.toISOString() })),
+      "the tenure stayed unpressed").toEqual([{ press: ago(40_000).toISOString(), since: ago(30_000).toISOString() }]);
+    expect(res.nonce).toBe(claimsIn(io)[0]!.nonce);
+  });
+
+  it("CONTROL: a renewal with no press outstanding writes once and carries what its tenure holds", async () => {
+    const io = new FakeIo();
+    io.messages.push({ ref: 70, raw: formatClaim({
+      installId: "desktop", kind: "local", displayName: "desktop", heartbeat: ago(30_000), claimedAt: ago(30_000),
+      nonce: "first", authorizedAt: null, intent: "join", capabilities: [],
+    }) });
+    await runLeaseGate({
+      capabilities: [], io, self: self({ installId: "desktop", displayName: "desktop", lastNonce: "first" }), now: NOW,
+      newNonce: () => "n-1",
+    });
+    expect(io.appended).toHaveLength(1);
+    expect(claimsIn(io).map((c) => c.authorizedAt)).toEqual([null]);
+  });
 });
 
 /**
@@ -1398,18 +1694,21 @@ describe("runLeaseGate — authorized takeover of a live equal-kind incumbent", 
    * newer press whose arm-4 tenure was recorded as unpressed. The decide-table row states the
    * sequence; this is the same property at the gate, against the bytes in the folder.
    */
-  it("an EMPTY folder stamps the press, so a staler one cannot beat it afterwards", async () => {
+  it.each(["takeover", "join"] as const)("an EMPTY folder stamps the %s press, so a staler one cannot beat it afterwards", async (intent) => {
     const io = new FakeIo();
     const pressedAt = new Date(NOW.getTime() - 5_000);
+    let minted = 0;
     const res = await runLeaseGate({
       capabilities: [], io, self: selfHosted(), now: NOW,
-      takeover: { authorizedAt: pressedAt, intent: "takeover" }, newNonce: () => "n-us",
+      takeover: { authorizedAt: pressedAt, intent }, newNonce: () => `n-us-${++minted}`,
     });
     expect(res.verdict.verdict).toBe("organize");
+    expect(io.messages, "the folder holds more than the one claim of ours").toHaveLength(1);
     const written = parseClaim(io.messages[0]!.raw, io.messages[0]!.ref) as OrganizerClaim;
     expect(written.authorizedAt?.toISOString(),
       "an arm-4 win recorded no press, so an OLDER decision can reverse this one")
       .toBe(pressedAt.toISOString());
+    expect(res.nonce, "the gate handed back another claim's nonce").toBe(written.nonce);
 
     // And the older press really does lose against it, from the other install's side.
     const older = decideLease({

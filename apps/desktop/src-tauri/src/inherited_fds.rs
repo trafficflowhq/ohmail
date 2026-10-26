@@ -57,6 +57,9 @@ pub fn open_descriptors() -> Vec<(i32, bool)> {
 /// already started hold their own copies. Returns how many were marked.
 #[cfg(target_os = "linux")]
 pub fn withhold_from_the_restart() -> usize {
+    // …and stderr back to the launch's, not `stderr.log` (`last_words.rs`).
+    #[cfg(feature = "local-engine")]
+    crate::last_words::hand_back();
     handed_in(&open_descriptors())
         .into_iter()
         .filter(|&fd| {

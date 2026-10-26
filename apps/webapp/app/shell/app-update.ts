@@ -2,7 +2,8 @@
  * A newer ohmail exists — the one fact, and the rules about how often a person may be told it. The browser and the
  * desktop answer "is there something newer?" in unrelated ways (a tab compares the build it loaded against the one
  * the origin serves; the desktop asks a signed feed through its native process) and nothing here tries to share the
- * mechanisms. What IS shared is everything a person experiences: one quiet strip, one sentence — and the restraint.
+ * mechanisms. What IS shared is everything a person experiences: one quiet line at the foot of the rail, one
+ * sentence — and the restraint.
  */
 
 /**
@@ -23,29 +24,31 @@ import { durableSet } from "./durable";
 export const UPDATE_PERIOD_MS = 24 * 60 * 60 * 1000;
 
 /**
- * What is on offer, and what pressing the notice would do.
+ * What the update line says, and what its verb would do.
  *
  *  · `reload` — the origin serves a newer build than this document was loaded from; the remedy
  *    is entirely local to the tab.
- *  · `restart` — the desktop shell fetched and verified a release, one press from installing it.
- *  · `package` — the desktop shell cannot install this update itself: something else owns the
- *    app's files. There is no button; there is a place to go.
- *  · `retry` — the desktop shell's installer did not start; the press fetches it and tries again.
+ *  · `ready` — the desktop shell fetched and verified a release; Restart installs it now.
+ *  · `downloading` — the desktop shell is fetching a release; there is nothing to press.
+ *  · `failed` — an install did not go through, or a check somebody pressed did not finish; the
+ *    verb tries again.
  */
-export type UpdateOfferKind = "reload" | "restart" | "package" | "retry";
+export type UpdateOfferKind = "reload" | "ready" | "downloading" | "failed";
 
 export interface UpdateOffer {
   kind: UpdateOfferKind;
   /** The release being offered, where the source knows it by name. */
   version?: string;
   /**
-   * What the notice's one button does. Held as a function rather than as data on purpose: the
-   * strip is shared code and must not be able to name a feed, a version or an install command.
-   * It renders a sentence and calls back; the source that armed the offer owns the verb.
-   *
-   * Absent for `package`, which is a notice and not a control.
+   * What the line's one verb does. Held as a function rather than as data on purpose: the line
+   * is shared code and must not be able to name a feed, a version or an install command. It
+   * renders a sentence and calls back; the source that armed the offer owns the verb.
    */
   act?: () => void;
+  /** `failed` only: what did not finish. */
+  failed?: "check" | "install";
+  /** The key the source shows the line under: Later puts that key away for the rest of the run. */
+  key?: string;
 }
 
 /**
@@ -205,8 +208,112 @@ export function subscribeUpdateOffer(tell: (next: UpdateOffer | null) => void): 
   };
 }
 
+/** One value and its readers — the shape of each store below. */
+function cell<T>(initial: T) {
+  let value = initial;
+  const readers = new Set<(next: T) => void>();
+  return {
+    get: (): T => value,
+    set(next: T): void {
+      if (Object.is(next, value)) return;
+      value = next;
+      for (const tell of [...readers]) tell(value);
+    },
+    subscribe(tell: (next: T) => void): () => void {
+      readers.add(tell);
+      return () => {
+        readers.delete(tell);
+      };
+    },
+    reset(): void {
+      value = initial;
+      readers.clear();
+    },
+  };
+}
+
+/**
+ * WHAT HOLDS A RESTART: a send waiting (a message queued or on its way, the sending line's own
+ * model), or files an open editor holds, whose bytes live in memory only. The line greys Restart
+ * and says which; the desktop tells its shell, which installs nothing meanwhile.
+ */
+export type RestartHold = "send" | "files" | null;
+
+const waiting = cell(false);
+const fileHolders = new Set<object>();
+const held = cell<RestartHold>(null);
+const reckon = (): void => held.set(waiting.get() ? "send" : fileHolders.size > 0 ? "files" : null);
+
+export const setSendWaits = (waits: boolean): void => {
+  waiting.set(waits);
+  reckon();
+};
+export const sendWaits = (): boolean => waiting.get();
+export const subscribeSendWaits = (tell: (waits: boolean) => void): (() => void) => waiting.subscribe(tell);
+
+/** An editor holds files (or a pick is still being read) until the returned call; idempotent. */
+export function holdFilesForRestart(): () => void {
+  const holder = {};
+  fileHolders.add(holder);
+  reckon();
+  return () => {
+    fileHolders.delete(holder);
+    reckon();
+  };
+}
+
+export const restartHold = (): RestartHold => held.get();
+export const subscribeRestartHold = (tell: (hold: RestartHold) => void): (() => void) => held.subscribe(tell);
+
+/** The version the desktop's shell runs, for the rail's foot. Never set in a browser tab. */
+const running = cell<string | null>(null);
+export const announceVersion = (version: string | null): void => running.set(version);
+export const currentVersion = (): string | null => running.get();
+export const subscribeVersion = (tell: (version: string | null) => void): (() => void) => running.subscribe(tell);
+
+/** Keys Later put away; a module value, so a new launch starts with none. */
+const putAway = new Set<string>();
+
+/** LATER: the line goes, and its key stays put away for the rest of this run. */
+export function putUpdateAway(): void {
+  if (offer?.key) putAway.add(offer.key);
+  announceUpdate(null);
+}
+
+export function putAwayThisRun(key: string): boolean {
+  return putAway.has(key);
+}
+
+/**
+ * What must be written before ohmail restarts — an open editor's pending words. A restart from
+ * the line or from Settings waits for these, never past {@link RESTART_FLUSH_MS}: the editors keep
+ * their words locally too, so a save that hangs costs the account copy, not the words.
+ */
+const beforeRestart = new Set<() => Promise<unknown>>();
+export const RESTART_FLUSH_MS = 3_000;
+
+export function holdForRestart(flush: () => Promise<unknown>): () => void {
+  beforeRestart.add(flush);
+  return () => {
+    beforeRestart.delete(flush);
+  };
+}
+
+export async function flushBeforeRestart(bound: number = RESTART_FLUSH_MS): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const flushed = Promise.allSettled([...beforeRestart].map((flush) => flush()));
+  await Promise.race([flushed, new Promise((resolve) => { timer = setTimeout(resolve, bound); })]);
+  clearTimeout(timer);
+}
+
 /** Tests only: forget the offer and every listener, so each test drives a fresh store. */
 export function resetUpdateStoreForTests(): void {
   offer = null;
   listeners.clear();
+  waiting.reset();
+  fileHolders.clear();
+  held.reset();
+  running.reset();
+  putAway.clear();
+  beforeRestart.clear();
 }

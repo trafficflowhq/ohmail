@@ -53,10 +53,20 @@ const scrollTops = new WeakMap<Element, number>();
 let pileSize = 10;
 /** Every card that was inside the viewport at some offset the stream rested on. */
 let displayed = new Set<string>();
+/** Cards re-measured above: every card from index `from` on sits `by` px off its slot. */
+let shift = { from: Infinity, by: 0 };
 
 function streamCards(stream: Element): HTMLElement[] {
   return [...stream.querySelectorAll<HTMLElement>(".scast[data-sid]")];
 }
+
+/** A letter answered in place is its conversation: taller, and taller still with the dock open. */
+const grown = (el: Element): number =>
+  !el.classList.contains("in-place") ? 0 : el.querySelector(".reply-dock") ? 700 : 300;
+const grownAbove = (stream: Element, i: number): number =>
+  [...stream.querySelectorAll<HTMLElement>(".scast.in-place")]
+    .filter((c) => Number(c.dataset.sid?.slice(1)) < i)
+    .reduce((y, c) => y + grown(c), 0);
 
 /** `.stream` is the viewport; each `.scast` sits at its index times CARD_H, minus the offset. */
 function rectFor(el: Element): DOMRect {
@@ -70,14 +80,15 @@ function rectFor(el: Element): DOMRect {
     // Placed at its PILE index (the ids are r<index>), so the window may mount any run of it.
     const i = Number((el as HTMLElement).dataset.sid?.slice(1));
     if (!Number.isFinite(i)) return zero as DOMRect;
-    const top = i * CARD_H - (scrollTops.get(stream) ?? 0);
-    return { ...zero, top, bottom: top + CARD_H, height: CARD_H } as DOMRect;
+    const top = i * CARD_H + (i >= shift.from ? shift.by : 0) + grownAbove(stream, i) - (scrollTops.get(stream) ?? 0);
+    const height = CARD_H + grown(el);
+    return { ...zero, top, bottom: top + height, height } as DOMRect;
   }
   return zero as DOMRect;
 }
 
 function setStreamScroll(stream: Element, next: number): void {
-  const max = Math.max(0, pileSize * CARD_H - VIEW_H);
+  const max = Math.max(0, pileSize * CARD_H + grownAbove(stream, pileSize) - VIEW_H);
   scrollTops.set(stream, Math.min(Math.max(0, next), max));
   for (const c of streamCards(stream)) {
     const r = rectFor(c);
@@ -147,6 +158,7 @@ let host: HTMLDivElement | null = null;
 /** Every commit the view handed up on its way out — the thing under test. */
 let commits: Array<{ upToId: string; messageIds: string[] }> = [];
 let marked: string[] = [];
+let curs: string[] = [];
 
 const NOW = new Date("2026-08-02T09:00:00.000Z");
 
@@ -239,7 +251,7 @@ async function leapStream(...offsets: number[]): Promise<void> {
  * A view whose cursor and jump live in the shell, as AppShell holds them: `onCur` and
  * `onJumped` re-render, so the stream re-renders around a jump the way it does in the app.
  */
-async function mountReadsLive(rows: Row[], jump: string): Promise<void> {
+async function mountReadsLive(rows: Row[], jump: string | null): Promise<void> {
   await unmount();
   const { ReadsView } = await import("../app/views/ReadsView.js");
   const { KeymapProvider } = await import("../app/shell/keymap.js");
@@ -250,7 +262,7 @@ async function mountReadsLive(rows: Row[], jump: string): Promise<void> {
   const tree = (): React.ReactNode => wrap(h(ReadsView as never, {
     settled: true, owed: false,
     partition: { waterline: null, fresh, seen: [], newCount: rows.length },
-    tags: [], now: NOW, cur, onCur: (id: string) => { cur = id; root?.render(tree()); },
+    tags: [], now: NOW, cur, onCur: (id: string) => { curs.push(id); cur = id; root?.render(tree()); },
     aiChip: null, chipState: null, onChipState: () => {},
     markSeen: (id: string) => { marked.push(id); },
     onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.push(c); },
@@ -285,6 +297,7 @@ beforeEach(() => {
   marked = [];
   pileSize = 10;
   displayed = new Set();
+  shift = { from: Infinity, by: 0 };
   DeliveringIO.live = new Set();
   // The port's own size, which the stream's jump reads to tell a near landing from a far one.
   const isStream = (el: Element) => (el as HTMLElement).classList?.contains("stream");
@@ -297,7 +310,7 @@ beforeEach(() => {
     configurable: true, get(this: Element) { return isStream(this) ? VIEW_H : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollHeight", {
-    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H : 0; },
+    configurable: true, get(this: Element) { return isStream(this) ? pileSize * CARD_H + grownAbove(this, pileSize) : 0; },
   });
   Object.defineProperty(Element.prototype, "scrollTop", {
     configurable: true,
@@ -445,6 +458,105 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
   });
 
+  it("End over frames moves the cursor once and marks and commits only the end screen", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    curs = [];
+    marked = [];
+    const el = streamEl();
+    await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(16); });
+    }
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    const endScreen = ["r37", "r38", "r39"];
+    expect({ curs, offScreen: marked.filter((id) => !endScreen.includes(id)) }).toEqual({ curs: ["r39"], offScreen: [] });
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r37", messageIds: endScreen }]);
+  });
+
+  /**
+   * End with focus in r0's letter, over frames; 100ms after its last scroll the cards from r37 on
+   * re-measure 28px shorter above, and the stream's own anchoring takes it 28px back up, off the end.
+   * The landing still rests 150ms after End's last scroll, on the screen there: r36's foot to r39.
+   */
+  async function endInLetter(frame: HTMLIFrameElement): Promise<void> {
+    const { LANDING_QUIET_MS } = await import("@ohmail/ui");
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    el.querySelector('.scast[data-sid="r0"]')!.appendChild(frame);
+    frame.focus();
+    expect(document.activeElement, "control: focus is in the letter's frame").toBe(frame);
+    curs = [];
+    marked = [];
+    const doc = frame.contentDocument!;
+    const End = () => new (doc.defaultView as typeof window).KeyboardEvent("keydown", { key: "End", bubbles: true });
+    await act(async () => { doc.body.dispatchEvent(End()); });
+    for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(16); });
+    }
+    await act(async () => { vi.advanceTimersByTime(84); });
+    shift = { from: 37, by: -28 };
+    await act(async () => { vi.advanceTimersByTime(20); });
+    expect(scrollTops.get(el), "control: the stream's anchoring took it off the end").toBe(7372);
+    await act(async () => { vi.advanceTimersByTime(LANDING_QUIET_MS - 100); });
+    expect(marked, "rested while the stream was correcting itself").toEqual(["r36", "r37"]);
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect({ curs, marked }).toEqual({ curs: ["r37"], marked: ["r36", "r37"] });
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r36", messageIds: ["r36", "r37", "r38", "r39"] }]);
+  }
+
+  it("a dwell that comes due while End is in flight marks nothing End carried off the screen", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await wheelStream(150); // the cursor settles on r1, its foot still below the line: its 2s dwell starts
+    expect(marked, "control: the band marked r0, not r1").toEqual(["r0"]);
+    marked = [];
+    await act(async () => { vi.advanceTimersByTime(1800); });
+    await act(async () => { el.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
+    for (const top of [222, 888, 2220, 4070, 5550, 6660, 7178, 7400]) {
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(16); });
+    }
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked.filter((id) => !["r37", "r38", "r39"].includes(id))).toEqual([]);
+  });
+
+  it("End typed inside a letter's frame lands on the screen it rests on, though the stream corrects it off the end", async () => {
+    await endInLetter(document.createElement("iframe"));
+  });
+
+  it("a wheel over a letter with focus in it marks and commits the cards it scrolls past", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    const frame = document.createElement("iframe");
+    el.querySelector('.scast[data-sid="r0"]')!.appendChild(frame);
+    frame.focus();
+    marked = [];
+    // Chromium hands a wheel over a letter to the letter's own document; the stream only scrolls.
+    const letter = frame.contentDocument!;
+    for (let top = 100; top <= 2400; top += 100) {
+      await act(async () => { letter.body.dispatchEvent(new (letter.defaultView as typeof window).WheelEvent("wheel", { bubbles: true })); });
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(16); });
+    }
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    const past = Array.from({ length: 13 }, (_, i) => `r${i}`);
+    expect(marked).toEqual(past);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...past, "r13", "r14"] }]);
+  });
+
   it("End after a scroll key commits only the end screen, in Receipts too", async () => {
     pileSize = 40;
     await mountReceipts(FORTY);
@@ -463,6 +575,75 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     await leapStream(1200);
     await unmount();
     expect(commits).toEqual([{ upToId: "r6", messageIds: ["r6", "r7", "r8"] }]);
+  });
+});
+
+describe("WebKit: a scroll from a letter the app cannot hear is judged by the read rule", () => {
+  const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
+  const ids = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => `r${from + i}`);
+
+  /** A wheel's read down to `top` (a wheel alone at 0), then focus in `card`'s letter, which runs no listener of the app's. */
+  async function deafReader(top: number, card = "r0"): Promise<Element> {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    if (top > 0) await wheelStream(top);
+    else await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
+    await act(async () => { vi.advanceTimersByTime(400); });
+    const frame = document.createElement("iframe");
+    const doc = document.implementation.createHTMLDocument("letter");
+    Object.defineProperty(doc, "addEventListener", { value: () => {} });
+    Object.defineProperty(frame, "contentDocument", { configurable: true, get: () => doc });
+    el.querySelector(`.scast[data-sid="${card}"]`)!.appendChild(frame);
+    frame.focus();
+    expect(document.activeElement, "control: focus is in the letter's frame").toBe(frame);
+    curs = [];
+    return el;
+  }
+
+  /** The pane carried by keys the app never hears: one offset per `ms`, then a second to settle. */
+  async function unheard(el: Element, offsets: number[], ms: number): Promise<void> {
+    for (const top of offsets) {
+      await act(async () => { setStreamScroll(el, top); });
+      await act(async () => { vi.advanceTimersByTime(ms); });
+    }
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(100); });
+  }
+
+  it("ArrowDown held at a pace that keeps each letter's first lines 0.7s on screen marks them, and the leave covers them", async () => {
+    const el = await deafReader(0);
+    marked = [];
+    await unheard(el, Array.from({ length: 50 }, (_, i) => 40 * (i + 1)), 100);
+    expect(marked).toEqual(ids(2, 12));
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: ids(0, 12) }]);
+  });
+
+  it("End marks only the screen it rests on, and the leave covers none of the letters it flew past", async () => {
+    const el = await deafReader(0);
+    marked = [];
+    await unheard(el, [222, 888, 2220, 4070, 5550, 6660, 7178, 7400], 16);
+    expect({ curs, marked }).toEqual({ curs: ["r39"], marked: ["r37", "r38", "r39"] });
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 2), ...ids(37, 39)] }]);
+  });
+
+  it("PageDown pressed six times 120ms apart marks only what stayed 0.7s on screen", async () => {
+    const el = await deafReader(0);
+    marked = [];
+    // Each page (525px) animated over four frames, the next press as it ends.
+    await unheard(el, Array.from({ length: 24 }, (_, i) => Math.round(131.25 * (i + 1))), 30);
+    expect(marked).toEqual(["r16", "r17", "r18"]);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 2), ...ids(15, 18)] }]);
+  });
+
+  it("what a wheel read before such a scroll stays in the leave", async () => {
+    const el = await deafReader(400, "r3");
+    expect(marked, "control: the wheel lifted r0-r2 past the band; r3 and r4 wait for the leave").toEqual(ids(0, 2));
+    await unheard(el, [622, 1288, 2620, 4470, 5950, 6900, 7300, 7400], 16);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: [...ids(0, 4), ...ids(37, 39)] }]);
   });
 });
 
@@ -495,5 +676,180 @@ describe("the streams are dotless; the sweep's attribute survives", () => {
     });
     expect(host!.querySelectorAll(".dot-unread")).toHaveLength(1);
     expect(host!.querySelector(".row[data-unseen]")).not.toBeNull();
+  });
+});
+
+/* ── a letter answered in place ─────────────────────────────────────────────────────────── */
+
+/** The view under the chrome the shell answers with: `replyTo`, the send lanes, the cursor. */
+let answer: { replyTo: string | null; phases: Record<string, string>; curs: string[] };
+let rerender: () => Promise<void> = async () => {};
+
+async function mountAnswering(view: "reads" | "receipts"): Promise<void> {
+  await unmount();
+  const { ReadsView } = await import("../app/views/ReadsView.js");
+  const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
+  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { MessageChromeProvider } = await import("../app/shell/message-chrome.js");
+  answer = { replyTo: null, phases: {}, curs: [] };
+  const body = (m: { snippet: string }) => ({
+    text: m.snippet, state: "full", html: null, loadedRemoteContent: false, unsubscribe: "no_header", unsubscribeUrl: null,
+  });
+  const common = {
+    settled: true, owed: false, tags: [], now: NOW, cur: "r1", onCur: (id: string) => { answer.curs.push(id); },
+    markSeen: (id: string) => { marked.push(id); },
+    onLeaveSeen: (c: { upToId: string; messageIds: string[] }) => { commits.push(c); },
+    bodyOf: body, hydrateBody: () => {}, jumpTo: null, onJumped: () => {}, onAction: () => {},
+  };
+  const node = () => view === "reads"
+    ? h(ReadsView as never, {
+      ...common, aiChip: null, chipState: null, onChipState: () => {},
+      partition: { waterline: null, fresh: TEN.map((r) => msg(r, "ohmail/News")), seen: [] },
+    } as never)
+    : h(ReceiptsView as never, {
+      ...common, messages: TEN.map((r) => msg(r, "ohmail/Receipts")), waterline: null,
+      unreadCount: TEN.length, isUnread: (m: { unread: boolean }) => m.unread,
+    } as never);
+  const tree = () => wrap(h(MessageChromeProvider as never, {
+    value: {
+      nowAt: () => NOW, ownAddresses: [], absoluteTime: false, onToggleAbsoluteTime: () => {},
+      replyTo: answer.replyTo, replyBody: { text: "", html: "" },
+      onReplyBody: () => {}, closeReply: () => {}, sendReply: () => {},
+      replyEnvelope: null, replyFromId: null, replyAttachments: [], replySubjectEdit: null,
+      replySig: { mode: "following" }, replySendShowing: null,
+      replySendState: (lane: string) => ({ phase: answer.phases[lane] ?? "idle" }),
+      openSenderMenu: () => {}, openAttachmentPreview: () => {},
+      conversationOf: () => [], bodyOf: body, hydrateBody: () => {}, hydrateThread: () => {},
+    },
+    children: node(),
+  } as never), KeymapProvider);
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  rerender = async () => { await act(async () => { root!.render(tree()); await Promise.resolve(); }); };
+  await rerender();
+  await rerender();
+}
+
+/** Lets the stream's frames run: the reveal, the hold, the scroll-spy. */
+const frames = async (n = 10) => { for (let i = 0; i < n; i += 1) await act(async () => { vi.advanceTimersByTime(20); }); };
+/** The editor's typing surface, once the editor has loaded in the letter's place. */
+const editorIn = async (sid: string): Promise<Element> => {
+  const sel = `.scast[data-sid='${sid}'].in-place .reply .rte-surface`;
+  await vi.waitFor(async () => {
+    await act(async () => { vi.advanceTimersByTime(20); });
+    expect(host!.querySelector(sel), "the editor in place, inside the stream").not.toBeNull();
+  }, { timeout: 5000, interval: 20 });
+  return host!.querySelector(sel)!;
+};
+const topOf = (sid: string): number => host!.querySelector(`.scast[data-sid='${sid}']`)!.getBoundingClientRect().top;
+
+describe("a letter answered in place", () => {
+  it("typing its reply scrolls nothing: leaving writes no \\Seen, a later app scroll marks nothing", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    for (const view of ["reads", "receipts"] as const) {
+      commits = [];
+      marked = [];
+      await mountAnswering(view);
+      answer.replyTo = "r1";
+      await rerender();
+      const surface = await editorIn("r1");
+      for (const k of ["o", " ", "End"]) {
+        await act(async () => { surface.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })); });
+      }
+      answer.replyTo = null;
+      await rerender();
+      await act(async () => { setStreamScroll(streamEl(), 800); });
+      await frames(5);
+      expect(marked, view).toEqual([]);
+      await unmount();
+      expect(commits, view).toEqual([]);
+    }
+  });
+
+  /* The letter straddles the port's top edge: a close that held the card below would pull it down
+     past the reading line and hand the cursor to the letter above. */
+  const answeredAbove = async (): Promise<void> => {
+    await mountAnswering("reads");
+    await act(async () => { setStreamScroll(streamEl(), 400); });
+    answer.replyTo = "r1";
+    await rerender();
+    await frames();
+    expect(topOf("r1"), "the dock's end revealed, the letter's head above the port").toBeLessThan(0);
+    // The person writes for a while: the open's own hold has long run out.
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await frames();
+    answer.curs = [];
+  };
+
+  it("after Send the cursor stays on the answered letter and its top stays where it was", async () => {
+    await answeredAbove();
+    const top = topOf("r1");
+    answer.replyTo = null;
+    answer.phases = { r1: "sending" };
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
+    expect(topOf("r1")).toBe(top);
+    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
+  });
+
+  it("after Esc the card comes back at the reading line, the cursor still on it", async () => {
+    await answeredAbove();
+    answer.replyTo = null;
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
+    expect(topOf("r1"), "its head at the reading line").toBe(14);
+    expect(answer.curs.filter((id) => id !== "r1"), "the cursor moved").toEqual([]);
+  });
+
+  /** The card on the scroll-spy's reading line, 90px down: where the cursor is. */
+  const onLine = (): string | null => {
+    let at: string | null = null;
+    for (const c of streamCards(streamEl())) {
+      if (c.getBoundingClientRect().top > 90) break;
+      at = c.dataset.sid!;
+    }
+    return at;
+  };
+  /* The person read on below the answered letter with its dock still open: the letter is wholly
+     above the port and the cursor is on r3. Closing the dock must not take them back to it. */
+  const readOnBelow = async (): Promise<number> => {
+    await mountAnswering("reads");
+    answer.replyTo = "r1";
+    await rerender();
+    await frames();
+    await wheelStream(1300);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    await frames();
+    expect(onLine(), "read on to r3").toBe("r3");
+    expect(answer.curs.at(-1), "the cursor followed").toBe("r3");
+    expect(topOf("r2"), "the letter wholly above the port").toBeLessThan(0);
+    answer.curs = [];
+    return topOf("r3");
+  };
+
+  it("read on below it, Esc leaves the stream on the card being read, the cursor with it", async () => {
+    const top = await readOnBelow();
+    answer.replyTo = null;
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place")).toBeNull();
+    expect(onLine(), "the card on the reading line").toBe("r3");
+    expect(topOf("r3"), "the stream jumped").toBe(top);
+    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
+  });
+
+  it("read on below it, a handed-off Send leaves the stream on the card being read", async () => {
+    const top = await readOnBelow();
+    answer.replyTo = null;
+    answer.phases = { r1: "sending" };
+    await rerender();
+    await frames();
+    expect(host!.querySelector(".scast[data-sid='r1'].in-place"), "still its conversation").not.toBeNull();
+    expect(onLine(), "the card on the reading line").toBe("r3");
+    expect(topOf("r3"), "the stream jumped").toBe(top);
+    expect(answer.curs.filter((id) => id !== "r3"), "the cursor moved").toEqual([]);
   });
 });

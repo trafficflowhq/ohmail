@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { FetchMessageObject, ImapFlow } from "imapflow";
 import * as imap from "../src/adapters/imap.js";
+import { memoryImapServer } from "./adapters/_metaworld.js";
+import { greenmailConfig } from "./adapters/_imapenv.js";
 
 const { answerFor, answerForTheAskedMessage } = imap;
 
@@ -158,5 +160,39 @@ describe("readServerDates — INTERNALDATE as an instant, whatever the runtime's
     expect(imapDateTime("24-Oct-2026 24:00:00 +0000")).toBeNull();
     expect(imapDateTime(new Date(Number.NaN))).toBeNull();
     expect(imapDateTime(12)).toBeNull();
+  });
+});
+
+describe("readArrivals — the server's INTERNALDATE for the UIDs a store asks about, read-only", () => {
+  const rfc3501 = (d: Date): string => {
+    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]!;
+    const p = (n: number): string => String(n).padStart(2, "0");
+    return `${String(d.getUTCDate()).padStart(2, " ")}-${mon}-${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} +0000`;
+  };
+  const at = (s: number): Date => new Date(Date.UTC(2026, 9, 20, 8, 0, s));
+
+  it("answers the asked UIDs only, nothing under another UIDVALIDITY, and writes nothing", async () => {
+    const server = memoryImapServer({ folders: ["INBOX"] });
+    const uids = [0, 1, 2].map((i) => server.seed("INBOX", `Subject: ${i}\r\n\r\nbody ${i}`, at(i), []));
+    const fetch = server.fetch.bind(server);
+    // The phone's view (a string stamp), and an unasked row the server volunteers first.
+    const client = Object.assign(Object.create(server) as object, {
+      capabilities: new Map<string, boolean>(),
+      async logout() { /* noop */ },
+      close() { /* noop */ },
+      async *fetch(...args: Parameters<typeof fetch>) {
+        yield { seq: 2, uid: uids[1], internalDate: rfc3501(at(1)) };
+        for await (const m of fetch(...args)) {
+          yield m.internalDate instanceof Date ? { ...m, internalDate: rfc3501(m.internalDate) } : m;
+        }
+      },
+    });
+    const adapter = new imap.ImapAdapter(greenmailConfig(), { client, capabilityOverrides: { condstore: false } });
+    await adapter.connect();
+    const got = await adapter.readArrivals("INBOX", "1000", [uids[0]!, uids[2]!]);
+    expect([...got].map(([u, d]) => [u, d.getTime()]).sort((a, b) => a[0]! - b[0]!))
+      .toEqual([[uids[0], at(0).getTime()], [uids[2], at(2).getTime()]]);
+    expect(await adapter.readArrivals("INBOX", "999", uids), "another generation's UIDs name other letters").toEqual(new Map());
+    expect(server.tree.get("INBOX")!.messages.map((m) => m.flags.size), "a date read set a flag").toEqual([0, 0, 0]);
   });
 });

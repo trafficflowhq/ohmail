@@ -1,4 +1,10 @@
-//! When WebKitGTK gives memory back, for this whole process.
+//! When WebKitGTK gives memory back, in the processes this setting reaches.
+//!
+//! WebKitGTK 2.52 hands these settings to the NETWORK process only. The window's web process
+//! runs WebKit's own defaults: it releases caches from about 1 GiB, and kills itself only past
+//! 7 GiB plus 1 GiB per page (15 GiB above 16 GiB of RAM) while shown or hidden under 8 minutes,
+//! or past 3 GiB plus 1 GiB per page (at most 90% of RAM) once hidden longer; it reports that
+//! kill as `memory_limit` (`renderer_recovery.rs`).
 //!
 //! The window once also asked for the document-viewer cache model with the back/forward cache
 //! off. That ask ran before the window existed and never took effect; applied from the one
@@ -20,10 +26,10 @@ pub struct Pressure {
     pub poll_s: f64,
 }
 
-/// The ask. `kill` is not here and is never set: WebKitGTK can be told to KILL the web process
-/// at a threshold, and a mail window that vanishes to save memory is a worse outcome than the
-/// memory. Absent means disabled, which is the default, and making it unrepresentable is the
-/// point of it not being a field.
+/// The ask. `kill` is not here and is never set: WebKitGTK can be told to KILL a process at a
+/// threshold, and a mail window that vanishes to save memory is a worse outcome than the memory.
+/// Absent leaves WebKit's built-in kill limits above in place; making a lower one unrepresentable
+/// is the point of it not being a field.
 pub const PRESSURE: Pressure =
     Pressure { limit_mib: 1024, conservative: 0.33, strict: 0.5, poll_s: 15.0 };
 
@@ -42,7 +48,7 @@ mod gtk_sink {
     }
 }
 
-/// Tell WebKitGTK when to give memory back, for this whole PROCESS.
+/// Tell WebKitGTK when to give memory back, from the top of `main`.
 ///
 /// Called from the top of `main`, before anything builds a window, because the WebKitGTK call
 /// behind it is process-global and is read when the first web context is created — after that a

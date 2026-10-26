@@ -10,6 +10,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { startWorker } from "../src/index.js";
+import { GAP_CLOCK_ALLOWANCE_MS } from "../src/gap-window.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 
@@ -103,7 +104,9 @@ describe("the gap travels on the hosted worker", () => {
     const last = documents(meta.messages.map((m) => m.raw)).at(-1)!;
     expect(last.installId).toBe("cloud-test");
     expect(last.doc.rules.map((r) => r.match).sort()).toEqual(["feed.example", "later.example"]);
-    expect(last.doc.gap, "the release left no gap").toMatchObject({ since: pressed.toISOString(), by: "cloud-test" });
+    // No claim here carries the server's stamp: the gap starts at the press less the clock allowance.
+    expect(last.doc.gap, "the release left no gap")
+      .toMatchObject({ since: new Date(pressed.getTime() - GAP_CLOCK_ALLOWANCE_MS).toISOString(), by: "cloud-test" });
     expect(Date.parse(last.doc.gap!.at)).toBeGreaterThanOrEqual(pressed.getTime());
     // Once per release: the reader cycles after it write nothing.
     await new Promise((r) => setTimeout(r, 800));
@@ -165,6 +168,63 @@ describe("the gap travels on the hosted worker", () => {
     expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).gapLetters === 1),
       "the letter the hand-back let through was never offered").toBe(true);
     expect(fleet.movesFor(mb.mailboxId), "an offer moved mail").toEqual([]);
+  }, 60_000);
+
+  it("mail 0169: a cycle that took mail in keeps its claim's server stamp, and the stop starts the window and the key there", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedConsentedMailbox(db);
+    const meta = fleet.metaFor(mb.mailboxId);
+    // The server's clock, three seconds behind the worker's, in whole seconds as INTERNALDATE is.
+    const stamps: number[] = [];
+    meta.claimStamp = () => {
+      const at = new Date(Math.floor((Date.now() - 3_000) / 1000) * 1000);
+      stamps.push(at.getTime());
+      return at;
+    };
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, sentDomain: "trafficflow.test", rosterIntervalMs: 200,
+      adapterFactory: fleet.factory,
+      organizer: { installId: "cloud-test", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+    expect(await waitFor(async () => meta.profileAppends >= 1), "premise: the organizer cycled").toBe(true);
+    await new Promise((r) => setTimeout(r, 600));
+    expect((await rowOf(db, mb.mailboxId)).organizedThrough, "a cycle that took no mail recorded a start").toBeNull();
+
+    const organized = { from: "digest@feed.example", subject: "organized", messageId: `org-${randomUUID()}@feed.example`, internalDate: new Date() };
+    fleet.behave(mb.mailboxId, { deliver: [organized] });
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).organizedThrough !== null),
+      "the cycle that took the letter recorded nothing").toBe(true);
+    const through = (await rowOf(db, mb.mailboxId)).organizedThrough!;
+    expect(stamps, "the start is not a claim's server stamp").toContain(through.getTime());
+
+    await db.update(mailboxes).set({ releaseRequestedAt: new Date() }).where(eq(mailboxes.id, mb.mailboxId));
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).organizerReleasedAt !== null),
+      "the release was never recorded").toBe(true);
+    const released = await rowOf(db, mb.mailboxId);
+    expect(released.gapSince?.getTime(), "the window did not start at the last finished cycle").toBe(through.getTime());
+    expect(released.organizedThrough, "the release kept the tenure's start").toBeNull();
+    const last = documents(meta.messages.map((m) => m.raw)).at(-1)!;
+    expect(last.doc.gap?.since, "the key did not carry the last finished cycle").toBe(through.toISOString());
+
+    // Two letters the reader takes in: one the server stamped after that cycle began, one before it.
+    fleet.behave(mb.mailboxId, {
+      deliver: [
+        organized,
+        { from: "digest@feed.example", subject: "inside", messageId: `in-${randomUUID()}@feed.example`, internalDate: new Date(through.getTime() + 1_000) },
+        { from: "digest@feed.example", subject: "before", messageId: `out-${randomUUID()}@feed.example`, internalDate: new Date(through.getTime() - 2_000) },
+      ],
+    });
+    expect(await waitFor(async () => (await db.select({ by: folderState.lastSetBy }).from(folderState)
+      .innerJoin(messages, eq(messages.id, folderState.messageId))
+      .where(and(eq(messages.mailboxId, mb.mailboxId), eq(folderState.lastSetBy, "peer")))).length === 2),
+    "the reader did not adopt the letters").toBe(true);
+    await db.update(mailboxes).set({ takeoverAuthorizedAt: new Date(), takeoverIntent: "takeover" })
+      .where(eq(mailboxes.id, mb.mailboxId));
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).gapLetters !== null),
+      "the window was never counted").toBe(true);
+    expect((await rowOf(db, mb.mailboxId)).gapLetters, "the letter before the last finished cycle was counted, or the one after it not").toBe(1);
   }, 60_000);
 
   /** A reader whose window opened ten minutes ago, before the tenure it is about to find. */

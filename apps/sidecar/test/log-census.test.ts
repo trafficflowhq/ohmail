@@ -635,6 +635,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // store past CHECKPOINT_SLOW_MS, with its `kind`, a segment count and a duration.
   local_db_checkpointed: "info",
   local_db_checkpoint_failed: "error",
+  // db.ts — a log performance setting read back otherwise at the open; `count` + `reason`, and
+  // the store serves.
+  local_db_log_settings_differ: "info",
   // db.ts — the timed log flush (the walwriter PGlite lacks) failed one write; it is tried again
   // at the next deadline.
   local_db_flush_failed: "error",
@@ -1350,6 +1353,14 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      window. `info`, the retro pass's twin: counts only. Its failure arm carries `err` + `reason`. */
   gap_catchup_pass: "info",
   gap_catchup_failed: "error",
+  /* A GAP WINDOW WAITING FOR ITS LETTERS' ARRIVAL TIMES (the phone's backfill), said once. `info`. */
+  gap_catchup_withheld: "info",
+  /* ARRIVAL TIMES THE STORE LOST, asked of the server a page per drain: counts only. The failure
+     arm carries `err` + `reason`; the next drain asks again. */
+  arrival_backfill: "info",
+  arrival_backfill_failed: "error",
+  /* WHERE A HAND-BACK'S WINDOW STARTS could not be recorded. `error`: it carries `err`. */
+  organized_through_write_failed: "error",
   /* THE CLAIM HANDED BACK BECAUSE THE APP IS LEAVING THE FOREGROUND. `info` on
      `organizer_claim_released`'s rule: nothing failed, and the consequence is not deducible from
      any other row — the organizer row is deliberately UNTOUCHED, so this install is still the

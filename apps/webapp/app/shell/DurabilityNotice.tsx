@@ -2,7 +2,7 @@
 
 /**
  * "This browser is not keeping your decisions" — one quiet strip, said once per session.
- * `UpdateNotice`'s shape and slot, for its reason: a fact about the APP has to be rendered by the
+ * The shell's app-level strip, for its reason: a fact about the APP has to be rendered by the
  * shell, or only the people standing in the view that remembered it ever see it. Absent from the
  * DOM until a durable write has actually been refused, and it can be put away — `durable.ts` holds
  * the latch, so a dismissal is not undone by the next refused write. The copy sits in `session`
@@ -36,7 +36,7 @@ export function DurabilityNotice() {
   const lost = useDurabilityLost();
   if (!lost) return null;
   return (
-    <div className="upd-bar ohx-durability" role="status">
+    <div className="ohx-durability" role="status">
       <span>{t("storageRefused")}</span>
       <button type="button" className="upd-later" onClick={dismissDurabilityLost}>
         {t("storageRefusedDismiss")}

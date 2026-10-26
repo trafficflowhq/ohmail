@@ -5,14 +5,14 @@
  * reader showed last carries its squares under the row (the strip), ringed where the person stopped;
  * a press on one opens the row and leaves that member for the reader to land on; another
  * conversation opening moves the strip there. The strip rides the row's swipe surface, but a drag
- * that starts on it scrolls the strip and never swipes the row.
+ * that starts on it never swipes the row.
  */
 import { createElement as h, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const pan = vi.hoisted(() => ({ configs: [] as Record<string, any>[] }));
-/** Where each strip was scrolled to, in order. */
-const scrolls = vi.hoisted(() => [] as number[]);
+/** The theme's reduced motion, and each layout step configured to move. */
+const motion = vi.hoisted(() => ({ reduce: true, steps: 0 }));
 
 vi.mock("react-native", async () => {
   const React = await import("react");
@@ -22,10 +22,8 @@ vi.mock("react-native", async () => {
   return {
     View: host("View"),
     Text: host("Text"),
-    ScrollView: (props: any) => {
-      if (props.ref) props.ref.current = { scrollTo: (o: { x: number }) => { scrolls.push(o.x); } };
-      return host("ScrollView")(props);
-    },
+    ScrollView: host("ScrollView"),
+    LayoutAnimation: { configureNext: () => { motion.steps++; }, create: () => ({}), Types: {}, Properties: {} },
     Pressable: host("Pressable"),
     Animated: {
       View: host("Animated"),
@@ -59,7 +57,7 @@ vi.mock("../src/theme", () => ({
   useTheme: () => ({
     c: new Proxy({}, { get: () => "#000" }),
     radius: new Proxy({}, { get: () => 8 }),
-    reduceMotion: true,
+    get reduceMotion() { return motion.reduce; },
     lift: () => ({}),
   }),
 }));
@@ -128,7 +126,7 @@ const { default: OhboxScreen } = await import("../app/(tabs)/index");
 const place = await import("../src/state/thread-place");
 const { ringRadius, rowSquareRadius, squareRadius } = await import("../src/ui/MarkSquare");
 const { MailRow } = await import("../src/ui/MailRow");
-const { STRIP_END, STRIP_SLOT, STRIP_START } = await import("../src/ui/reader-marks");
+const { STRIP_END, STRIP_MORE, STRIP_SLOT, STRIP_START } = await import("../src/ui/reader-marks");
 
 type El = HTMLElement & { __props?: Record<string, any> };
 const rowOf = (mail: { id: string; memberIds?: string[]; marks?: ("unread" | "read" | "mine")[] }) => ({
@@ -142,6 +140,8 @@ const itemsB = [{ id: "b1", kind: "read", sender: "Ben" }, { id: "b2", kind: "re
 
 let screen: ReturnType<typeof mount> | null = null;
 beforeEach(() => {
+  motion.reduce = true;
+  motion.steps = 0;
   place.resetThreadPlaceForTests();
   pan.configs = [];
   lists.fresh = [A, B];
@@ -239,7 +239,7 @@ describe("a finger held on a strip square shows its sheet under the row", () => 
     }
   });
 
-  it("a held sheet goes at once on a press of another square, or a drag of the strip", () => {
+  it("a held sheet goes at once on a press of another square", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     try {
       place.publishThreadPlace([...dated], "a2");
@@ -251,9 +251,6 @@ describe("a finger held on a strip square shows its sheet under the row", () => 
       act(() => { squares("a3")[0]!.__props!.onLongPress(); squares("a3")[0]!.__props!.onPressOut(); });
       act(() => { squares("a3")[2]!.__props!.onPress(); });
       expect(sheet("a3"), "the press").toBeNull();
-      act(() => { squares("a3")[1]!.__props!.onLongPress(); squares("a3")[1]!.__props!.onPressOut(); });
-      act(() => { rowEl("a3").querySelector<El>("[data-test='row-strip']")!.__props!.onScrollBeginDrag(); });
-      expect(sheet("a3"), "the drag").toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -262,8 +259,8 @@ describe("a finger held on a strip square shows its sheet under the row", () => 
   it("paper's soft squares: the square 3 and the ring 7 on paper's 8, both square where the radius is 0", () => {
     place.publishThreadPlace([...itemsA], "a2");
     screen = mount(h(OhboxScreen));
-    const ring = squares("a3")[1]!.querySelector<El>("[data-rn='View']")!;
-    const face = ring.querySelector<El>("[data-rn='Animated']")!;
+    const ring = rowEl("a3").querySelector<El>("[data-test='ring-strip']")!;
+    const face = squares("a3")[1]!.querySelector<El>("[data-rn='Animated']")!;
     expect([face.__props!.style.borderRadius, ring.__props!.style.borderRadius]).toEqual([3, 7]);
     expect([squareRadius(0), ringRadius(0)], "ohmarchy's 0").toEqual([0, 0]);
   });
@@ -361,7 +358,7 @@ describe("closed, the strip draws the conversation as it stands, not the reader'
   });
 });
 
-describe("a drag that starts on the strip scrolls the strip, never swipes the row", () => {
+describe("a drag that starts on the strip never swipes the row", () => {
   const surfaceOf = (id: string): El =>
     [...rowEl(id).querySelectorAll<El>("[data-rn='Animated']")].find((e) => e.__props?.["data-pan"] !== undefined)!;
   const cfgOf = (id: string): Record<string, any> => pan.configs[Number(surfaceOf(id).__props!["data-pan"])]!;
@@ -443,33 +440,100 @@ describe("a closed row's own squares are whole: the newest kept, the older count
   });
 });
 
-describe("the open strip keeps the newest square whole when a reply arrives", () => {
+/**
+ * A STRIP LONGER THAN ITS ROW (owner 2026-10-26, the taper demo): no scroll; a window over the
+ * conversation follows the ring, every square whole or not drawn, "+N" at each edge that hides
+ * squares counting them, the squares at such an edge tapered (35, 55, 75 %), the ringed one whole.
+ */
+describe("a strip longer than its row stands a window that follows the ring", () => {
   const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `c${i + 1}`, kind: "read" as const, sender: "Ada" }));
   const row = (n: number, here: string) =>
     h(MailRow, { m: rowOf({ id: `c${n}` }) as never, onPress: () => undefined, strip: { items: items(n), here, onPress: () => undefined } });
-  /** Square `i`'s slot in the strip's view, scrolled to `x`. */
-  const slot = (i: number, x: number): [number, number] => [STRIP_START + i * STRIP_SLOT - x, STRIP_START + (i + 1) * STRIP_SLOT - x];
-  const open = (n: number, here: string, room: number): void => {
-    scrolls.length = 0;
+  const open = (n: number, here: string, room: number | null): void => {
     screen = mount(row(n, here));
-    act(() => { screen!.el.querySelector<El>("[data-test='row-strip']")!.__props!.onLayout({ nativeEvent: { layout: { width: room } } }); });
+    if (room !== null) act(() => { screen!.el.querySelector<El>("[data-test='row-strip']")!.__props!.onLayout({ nativeEvent: { layout: { width: room } } }); });
   };
+  const count = (side: "old" | "new"): number => {
+    const el = screen!.el.querySelector<El>(`[data-test='more-${side}']`);
+    return el ? Number((el.textContent ?? "").replace(/^\+/, "")) : 0;
+  };
+  /** Each square's slot width and its face's size, in order. */
+  const line = () => [...screen!.el.querySelectorAll<El>("[data-test^='strip-']")].map((s) => ({
+    slot: Number(s.__props!.style.width),
+    face: Number(s.querySelector<El>("[data-rn='Animated']")!.__props!.style.width),
+  }));
 
-  it("a 17th square arriving in a 330dp strip is drawn whole, the ringed one still in view", () => {
-    open(16, "c2", 330);
-    screen!.render(row(17, "c2"));
-    const x = scrolls.at(-1)!;
-    const [l, r] = slot(16, x);
-    expect(l >= 0 && r <= 330, `the newest square at ${l}..${r} of 330`).toBe(true);
-    const [cl, cr] = slot(1, x);
-    expect(cl >= 0 && cr <= 330, "the ringed square stays in view").toBe(true);
-    expect(x, "never past the strip's end").toBeLessThanOrEqual(STRIP_START + 17 * STRIP_SLOT + STRIP_END - 330);
+  for (const room of [330, 245])
+    it(`40 messages in a ${room}dp row: at every place of the ring the squares fit whole, the counts are exact`, () => {
+      open(40, "c1", room);
+      const starts = new Set<number>();
+      for (const at of [1, 5, 14, 20, 27, 36, 40]) {
+        screen!.render(row(40, `c${at}`));
+        const l = line();
+        const shown = l.map((x, i) => (x.slot > 0 ? i : -1)).filter((i) => i >= 0);
+        const old = count("old");
+        const nw = count("new");
+        expect(l.reduce((t, x) => t + x.slot, 0) + (old > 0 ? STRIP_MORE : 0) + (nw > 0 ? STRIP_MORE : 0), `ring on ${at}: within the row`)
+          .toBeLessThanOrEqual(room - STRIP_START - STRIP_END);
+        expect(l[at - 1], `ring on ${at}: whole, at full size`).toEqual({ slot: STRIP_SLOT, face: 10 });
+        expect(shown, "one unbroken run").toEqual(shown.map((_, k) => shown[0]! + k));
+        expect([old, nw], `ring on ${at}: +N counts exactly what each edge hides`).toEqual([shown[0], 40 - 1 - shown.at(-1)!]);
+        if (old > 0) expect(l.slice(shown[0], shown[0]! + 3), "the old edge tapers").toEqual([{ slot: 7, face: 3.5 }, { slot: 11, face: 5.5 }, { slot: 15, face: 7.5 }]);
+        if (nw > 0) expect(l.slice(shown.at(-1)! - 2, shown.at(-1)! + 1).map((x) => x.slot), "the new edge tapers").toEqual([15, 11, 7]);
+        if (old === 0) expect(l[0], "the start: the first whole").toEqual({ slot: STRIP_SLOT, face: 10 });
+        starts.add(shown[0]!);
+      }
+      expect(starts.size, "the window follows the ring").toBeGreaterThan(2);
+    });
+
+  it("one ring, at the ringed square's rest place: a step mid-conversation leaves it standing", () => {
+    open(40, "c20", 330);
+    const ring = () => screen!.el.querySelector<El>("[data-test='ring-strip']")?.__props?.style;
+    const rest = (i: number): number => {
+      const l = line();
+      return STRIP_START + (count("old") > 0 ? STRIP_MORE : 0) + l.slice(0, i).reduce((t, x) => t + x.slot, 0) + l[i]!.slot / 2 - 9;
+    };
+    const mid = ring()?.left;
+    expect([mid, ring()?.top], "on the ringed square").toEqual([rest(19), 1]);
+    screen!.render(row(40, "c21"));
+    expect(ring()!.left, "a step mid-conversation: the squares move, the ring stands").toBe(mid);
+    expect(ring()!.left).toBe(rest(20));
+    screen!.render(row(40, "c1"));
+    expect(ring()!.left, "at the start it moves with its square").toBe(rest(0));
+    const own = [...screen!.el.querySelectorAll<El>("[data-test^='strip-c']")].map((s) => s.querySelector<El>("[data-rn='View']")!.__props!.style.borderWidth ?? 0);
+    expect(own, "no square wears a ring of its own").toEqual(Array(40).fill(0));
   });
 
-  it("where both cannot be in view, the ringed square wins", () => {
-    open(99, "c2", 330);
-    screen!.render(row(100, "c2"));
-    const [cl, cr] = slot(1, scrolls.at(-1)!);
-    expect(cl >= 0 && cr <= 330).toBe(true);
+  it("the old edge's +N starts where a first square's face does, at the row's text (owner 2026-10-26)", () => {
+    open(6, "c2", 330);
+    const first = line()[0]!;
+    const faceAt = STRIP_START + (first.slot - first.face) / 2;
+    screen!.unmount();
+    open(40, "c20", 330);
+    const old = screen!.el.querySelector<El>("[data-test='more-old']")!.__props!.style;
+    const nw = screen!.el.querySelector<El>("[data-test='more-new']")!.__props!.style;
+    expect([STRIP_START + (old.paddingLeft ?? 0), old.width], "+N's text start, its slot").toEqual([faceAt, STRIP_MORE]);
+    expect([nw.paddingLeft ?? 0, nw.paddingRight ?? 0], "the new edge's count ends at the line's end").toEqual([0, 0]);
+  });
+
+  it("a short conversation, or a row not laid out yet: every square whole, no count", () => {
+    open(6, "c2", 330);
+    expect([line().every((x) => x.slot === STRIP_SLOT && x.face === 10), count("old"), count("new")]).toEqual([true, 0, 0]);
+    screen!.unmount();
+    open(40, "c2", null);
+    expect([line().every((x) => x.slot === STRIP_SLOT), count("old"), count("new")]).toEqual([true, 0, 0]);
+  });
+
+  it("a step of the window moves as motion; under reduced motion it lands at once", () => {
+    motion.reduce = false;
+    open(40, "c20", 330);
+    const before = motion.steps;
+    screen!.render(row(40, "c21"));
+    expect(motion.steps, "a step is laid out as motion").toBe(before + 1);
+    screen!.render(row(40, "c21"));
+    expect(motion.steps, "nothing moved, nothing asked").toBe(before + 1);
+    motion.reduce = true;
+    screen!.render(row(40, "c22"));
+    expect(motion.steps, "reduced motion: at once").toBe(before + 1);
   });
 });

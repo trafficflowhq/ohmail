@@ -507,9 +507,10 @@ describe("the refresh client", () => {
     expect(src).toMatch(/if \(!isRecoverable\(err\.status, err\.code\) \|\| !mayRefreshFor\(path\)\) throw err;/);
     // One refresh, and anything but `resumed` ends it: a fault as `session_unchecked`, a refusal as itself,
     // or as the storage-owner refusal when another account signed in while the renewal waited for the lock (whose
-    // question is asked inside it). A request a renewal overtook takes the new jar (`sessionMints`), never a second one.
+    // question is asked inside it). A request a renewal overtook takes the new jar (`sessionMints`, or another
+    // tab's past the jar it left on: `staleJar`), never a second one.
     expect(src).toMatch(
-      /const resumed = sessionMints\(\) !== mintsAtSend \? "resumed" : await resumeSession\(\{ mayProceed: \(\) => whose\(\) === "holds" \}\);\n\s*if \(resumed === "unavailable"\) throw sessionUncheckedError\(\);\n\s*if \(resumed !== "resumed"\) throw whose\(\) === "mismatch" \? ownerRefusal\("mismatch"\) : err;/,
+      /const resumed = sessionMints\(\) !== mintsAtSend\n\s*\? "resumed" : await resumeSession\(\{ mayProceed: \(\) => whose\(\) === "holds", staleJar: jarAtSend \}\);\n\s*if \(resumed === "unavailable"\) throw sessionUncheckedError\(\);\n\s*if \(resumed !== "resumed"\) throw whose\(\) === "mismatch" \? ownerRefusal\("mismatch"\) : err;/,
     );
     /* The retry calls `attempt`, which does NOT recurse into the refresh wrapper — and the
        property is "the catch never calls `api` again", not the exact spelling of the return.

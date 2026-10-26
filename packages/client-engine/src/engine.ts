@@ -251,6 +251,16 @@ export interface QueuedRuleWrite {
  * It is not on any retry queue here: nothing this client does moves it, and only a change
  * arriving through /sync settles it.
  */
+/** One row of {@link OhmailEngine.appliedRuleRequests}: a rule request the organizer applied. */
+export interface AppliedRuleRequest {
+  requestId: string;
+  kind: string;
+  mailboxId: string;
+  decidedAt: ISODateTime;
+  resolvedAt: ISODateTime | null;
+  target: WaitingTargetWire;
+}
+
 /** One row of {@link OhmailEngine.waitingOnOrganizer} — what a surface lists as waiting. */
 export interface WaitingOnOrganizerView {
   /** The server's request id, or `null` for a request this session holds that names none. */
@@ -5054,6 +5064,20 @@ export class OhmailEngine {
       });
     }
     return out.sort((a, b) => Date.parse(b.decidedAt) - Date.parse(a.decidedAt));
+  }
+
+  /**
+   * THE RULE REQUESTS THE LAST `GET /organizer-requests` READ ANSWERED `applied` — what a reader-only
+   * Rules page lays over a published copy that may not include them yet. The first call asks, as
+   * {@link waitingOnOrganizer} does; no timer of its own.
+   */
+  appliedRuleRequests(): AppliedRuleRequest[] {
+    if (!this.waitingAsked) this.refreshWaitingOnOrganizer();
+    return (this.waitingServer ?? [])
+      .filter((w) => w.state === "applied" && w.kind.startsWith("rule."))
+      .map((w) => ({
+        requestId: w.id, kind: w.kind, mailboxId: w.mailboxId, decidedAt: w.decidedAt, resolvedAt: w.resolvedAt, target: w.target,
+      }));
   }
 
   /**

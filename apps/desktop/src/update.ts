@@ -6,7 +6,9 @@
  * (`src-tauri/src/frame.rs`), so "Check for Updates…" there is unreachable, and Settings is
  * where the app's own facts belong. Three argument-less commands cross: `updateState` reads
  * the flow's value, `updatePress` does what the menu item does, `updatePoll` starts the launch
- * check's request without a press's dialogs. No "install" verb; no feed, version or file names.
+ * check's request without a press's dialogs; and two take one bool, `updateSetAuto` (Settings'
+ * install switch) and `updateHold` (a send waits, or a draft holds files), each able to delay an
+ * install, never to cause one. No "install" verb; no feed, version or file names.
  */
 
 /*
@@ -22,10 +24,12 @@
 /** The event the shell emits whenever the update flow moves. Spelled again in `updater.rs`. */
 export const UPDATE_STATE_EVENT = "updater://state";
 
-/** The three commands the shell registers for this file. */
+/** The commands the shell registers for this file. */
 const STATE_COMMAND = "update_state";
 const PRESS_COMMAND = "update_press";
 const POLL_COMMAND = "update_poll";
+const SET_AUTO_COMMAND = "update_set_auto";
+const HOLD_COMMAND = "update_hold";
 
 /**
  * Where the flow is. The same five the Rust `Stage` has, plus the honest sixth for a payload this
@@ -100,6 +104,18 @@ export function updateManagedElsewhere(report: UpdateReport): boolean {
   return MANAGED_SENTENCE_KEYS[report.installKind] !== undefined;
 }
 
+/** The three kinds that replace their own files: the only ones the install switch means anything on. */
+export const SELF_INSTALLING_KINDS: readonly InstallKind[] = ["appimage", "windowsSetup", "macBundle"];
+
+/**
+ * When the switch, on, installs a ready release on this copy, as the shell decides it: at quit or
+ * the next start (an AppImage that stages beside itself), at quit (the Windows setup and the macOS
+ * app), or only on Restart (where replacing the app needs a password).
+ */
+export const AUTO_INSTALLS_AT = ["quitOrLaunch", "quit", "restart"] as const;
+
+export type AutoInstallsAt = (typeof AUTO_INSTALLS_AT)[number];
+
 /**
  * Installs that cannot register a login item, and the sentence each shows instead of the switch.
  *
@@ -145,6 +161,22 @@ export interface UpdateReport {
    * until it closes (`update-closing.ts`). False from a shell that does not say.
    */
   closing: boolean;
+  /**
+   * Settings' "Install updates automatically": a ready release goes in at the next quit or launch.
+   * Null from a shell that does not say: the switch is not drawn and nothing claims an install.
+   */
+  autoInstall: boolean | null;
+  /** A send waits or a draft holds files, so no install starts. False from a shell that does not say. */
+  held: boolean;
+  /** A ready release goes in when ohmail quits, with no prompt. False from a shell that does not say. */
+  installsOnQuit: boolean;
+  /**
+   * Unix milliseconds of an automatic install (at quit or at launch) that failed, while its release
+   * is still the one on offer: no quit tries it again, and the line says so with Retry.
+   */
+  installFailedAt: number | null;
+  /** When the switch, on, installs here; null from a shell that does not say, and then no switch is drawn. */
+  autoInstallsAt: AutoInstallsAt | null;
 }
 
 interface TauriInternals {
@@ -206,6 +238,14 @@ export function reportOfPayload(payload: unknown): UpdateReport | null {
         : null,
     lastResult: oneOf(raw.lastResult, UPDATE_RESULTS) ?? "never",
     closing: raw.closing === true,
+    autoInstall: typeof raw.autoInstall === "boolean" ? raw.autoInstall : null,
+    held: raw.held === true,
+    installsOnQuit: raw.installsOnQuit === true,
+    installFailedAt:
+      typeof raw.installFailedAt === "number" && Number.isFinite(raw.installFailedAt)
+        ? raw.installFailedAt
+        : null,
+    autoInstallsAt: oneOf(raw.autoInstallsAt, AUTO_INSTALLS_AT),
   };
 }
 
@@ -256,6 +296,26 @@ export async function updatePoll(): Promise<void> {
   const shell = internals();
   if (!shell) return;
   await shell.invoke(POLL_COMMAND);
+}
+
+/**
+ * Settings' switch: on, a verified release goes in at the next quit or launch; off, it waits for a
+ * press. Rejects on a shell too old to have it.
+ */
+export async function updateSetAuto(on: boolean): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(SET_AUTO_COMMAND, { on });
+}
+
+/**
+ * A send waits or a draft holds files (`true`), or nothing does: the shell starts no install
+ * meanwhile, and lets a hold lapse two minutes after the last word, so the cadence renews it.
+ */
+export async function updateHold(waits: boolean): Promise<void> {
+  const shell = internals();
+  if (!shell) return;
+  await shell.invoke(HOLD_COMMAND, { waits });
 }
 
 /* ── ONE REGISTRATION FOR THE PROCESS, MANY SUBSCRIBERS ────────────────────────────────────────
@@ -348,11 +408,16 @@ export function updateSentenceKey(report: UpdateReport): string {
   switch (report.state) {
     case "checking":
       return "checking";
+    // "Nothing is installed until you agree" is true only while the switch is off.
     case "downloading":
-      return "downloading";
+      return report.autoInstall === true ? "downloadingAuto" : "downloading";
     // The same ready payload, after an installer that did not start: the press tries again.
     case "ready":
-      return typeof report.notStartedAt === "number" ? "notStarted" : "ready";
+      if (typeof report.notStartedAt === "number") return "notStarted";
+      if (report.held) return "readyHeld";
+      // Its install at quit or launch failed: no quit tries it again, Restart does.
+      if (typeof report.installFailedAt === "number") return "autoFailed";
+      return report.installsOnQuit ? "readyOnQuit" : "ready";
     case "failed":
       return "failed";
     // `idle` and `unknown` are both "nothing in flight", and what is worth saying then is what the
@@ -386,4 +451,17 @@ export function updateButtonKey(report: UpdateReport): string | null {
   if (report.canInstall) return "restart";
   if (report.canCheck) return "check";
   return null;
+}
+
+/** The sentence under the install switch: what the shell will do on this copy, never more. */
+export function autoSentenceKey(report: Pick<UpdateReport, "autoInstall" | "autoInstallsAt">): string {
+  if (report.autoInstall !== true) return "autoOff";
+  switch (report.autoInstallsAt) {
+    case "quitOrLaunch":
+      return "autoOn";
+    case "restart":
+      return "autoOnRestart";
+    default:
+      return "autoOnQuit";
+  }
 }

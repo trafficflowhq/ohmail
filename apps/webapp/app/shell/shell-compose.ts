@@ -112,6 +112,7 @@ import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text
 import { go, type Route } from "./routing";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { documentHidden } from "./document-hidden";
+import { holdFilesForRestart, holdForRestart } from "./app-update";
 import { attachSendLockDraft, discardDecision, holdOf, releaseSendLockForRow } from "./send-lock";
 import { releaseSendAndDone } from "./send-release";
 import type { DiscardRefusal } from "../views/DraftsView";
@@ -187,8 +188,8 @@ function keptNotSent(e: UnshownEnding): boolean {
 }
 
 /** A send from the row its lane's refused send left (`replyRows`), or the send as built. */
-function withLaneRow(row: string | null, m: MailSendMutation): MailSendMutation {
-  return row === null ? m : { ...m, draftId: row };
+function withLaneRow(row: string | null, base: string | null, m: MailSendMutation): MailSendMutation {
+  return row === null ? m : { ...m, draftId: row, ...(base !== null ? { ifContentRevision: base } : {}) };
 }
 
 export interface ShellComposeInput {
@@ -239,6 +240,8 @@ export interface ShellComposeInput {
    * Absent: never, and every send waits in its editor as before.
    */
   mayHandOffFor?: (mailboxId: string | null) => boolean;
+  /** A reading stream on screen answers this message in place (`stream-in-place.tsx`): no sheet. */
+  inPlaceHost?: (messageId: string) => boolean;
 }
 
 /** The record the shell composes with. Consumers destructure it: a memo may not depend on it. */
@@ -248,6 +251,7 @@ export function useShellCompose({
   engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
   fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues,
   setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor,
+  inPlaceHost,
 }: ShellComposeInput) {
   /** The route as it is now, for an ending that arrives after the person moved on. */
   const routeViewRef = useRef(route.view);
@@ -327,11 +331,15 @@ export function useShellCompose({
     // and hide the one thing Send is waiting for. A reply keeps `null`: the computed audience
     // stands until the head is pressed, exactly as before.
     setReplyEnvelope(replyMode === "forward" ? { to: "", cc: "", bcc: "" } : null);
-    // …or, once, the audience held by the reply row this open adopted (`adoptReplyRow`).
+    const lane = replyTo === null ? null : replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
+    // A forward reopened shows the audience its lane last held while it held words.
+    const typed = lane !== null && replyMode === "forward" ? readReplyMeta(lane).envelope : undefined;
+    if (typed) setReplyEnvelope({ to: formatRecipientChips(typed.to), cc: formatRecipientChips(typed.cc), bcc: formatRecipientChips(typed.bcc) });
+    // …or, once, the audience held by the row this open adopted (`adoptReplyRow`).
     const adopted = adoptedEdits.current;
-    if (adopted?.lane !== replyTo) return;
+    if (lane === null || adopted?.lane !== lane) return;
     adoptedEdits.current = { ...adopted, envelope: null };
-    if (replyMode === "reply" && adopted.envelope !== null) setReplyEnvelope(adopted.envelope);
+    if (adopted.envelope !== null) setReplyEnvelope(adopted.envelope);
   }, [replyTo, replyAll, replyMode]);
   /* …and a lane whose handed-off press is still owed back opens with that press's audience. Keyed on
      the open alone, so a Reply / Reply all switch on the open dock still widens or narrows it. */
@@ -373,10 +381,11 @@ export function useShellCompose({
    * the editor or none, and a settled send spends them together.
    */
   useEffect(() => {
+    const lane = replyTo === null ? null : replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
     const adopted = adoptedEdits.current;
-    if (adopted?.lane === replyTo) adoptedEdits.current = null;
+    if (lane !== null && adopted?.lane === lane) adoptedEdits.current = null;
     const back = replyTo === null ? null : pressBackOf(replyTo, replyMode);
-    setReplyFromId(back !== null ? back.fromId : replyMode === "reply" && adopted?.lane === replyTo ? adopted.fromId : null);
+    setReplyFromId(back !== null ? back.fromId : lane !== null && adopted?.lane === lane ? adopted.fromId : null);
     setReplyAttachments(back?.attachments ?? []);
     if (replyTo !== null) {
       const meta = readReplyMeta(replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo);
@@ -487,18 +496,47 @@ export function useShellCompose({
       // MOBILE. Under 700px the reading column is `display:none` (app.css), so an inline
       // reply would mount into a pane nobody can see and `r` would look broken — measured on
       // the shipped build at 390px. There, the reader IS the open message, so open it.
-      if (readColumnHidden()) setReaderFor(messageId);
+      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
     };
-    const scratch = readReplyDraft(messageId);
-    // The creates this lane stored before a reload count again once this engine shows them.
-    replyAutosave.restore(messageId);
-    // THE ACCOUNT'S ROW FOR THIS REPLY, written here or on another device, is what Reply opens.
-    const row = laneRowOf(messageId) === null ? accountReplyRow(messageId) : null;
-    const meta = readReplyMeta(messageId);
-    const named = row === null && laneRowOf(messageId) === null ? meta.row : undefined;
-    // Sent from another device (no record of this browser's names it): ended as a delete ends it.
-    const hold = named === undefined ? null : holdOf(engine, { lane: messageId, draftId: named.id, session: null });
+    resumeLane(messageId, open, all);
+  });
+
+  /**
+   * WHAT A DOCK OPENS WITH — the lane's scratch, or the account's row for it (a reply's, or a forward's
+   * on `fwd:<id>`), written here or on another device; a row this lane last wrote and that went elsewhere
+   * is not written again.
+   */
+  /** The dock lets go of a forward row the composer took, and of its words when they are the row's. */
+  const letGoOfForwardRow = useStableCallback((lane: string, row: string) => {
+    const was = readReplyMeta(lane);
+    if (replyRows.current.get(lane)?.row !== row && was.row?.id !== row) return;
+    replyRows.current.delete(lane);
+    replyAutosave.rebind(lane);
+    if (was.row?.holds === sigOf(readReplyDraft(lane).text.trim())) clearReplyLane(lane);
+    else writeReplyMeta(lane, { ...was, row: undefined });
+  });
+  /** The row a lane last wrote went from another device: `sent`, and no record of this browser's names it. */
+  const sentElsewhereOf = useStableCallback((lane: string, id: string | undefined): boolean => {
+    const hold = id === undefined ? null : holdOf(engine, { lane, draftId: id, session: null });
     const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";
+    return sentElsewhere;
+  });
+  /* `shown`: the words of an editor open on the lane now, ended where it stands, which says so. */
+  const resumeLane = useStableCallback((lane: string, open: (body: RichValue) => void, all: boolean, shown?: RichValue) => {
+    const fwd = lane.startsWith("fwd:");
+    /* A FORWARD'S ROW THE COMPOSER TOOK (opened from Drafts) is the composer's: the dock lets go of it, and
+       of its words when they are the row's, so one row is written by one editor. */
+    const held = fwd ? laneRowOf(lane) : null;
+    if (held !== null && (releaseDraftIdRef.current === held || readComposeRow() === held)) letGoOfForwardRow(lane, held);
+    const scratch = shown ?? readReplyDraft(lane);
+    // The creates this lane stored before a reload count again once this engine shows them.
+    replyAutosave.restore(lane);
+    // THE ACCOUNT'S ROW FOR THIS REPLY, written here or on another device, is what Reply opens.
+    const row = laneRowOf(lane) === null ? accountReplyRow(lane) : null;
+    const meta = readReplyMeta(lane);
+    const named = row === null && laneRowOf(lane) === null ? meta.row : undefined;
+    // Sent from another device (no record of this browser's names it): ended as a delete ends it.
+    const sentElsewhere = sentElsewhereOf(lane, named?.id);
     if (row === null && named !== undefined && (sentElsewhere || engine.read().get("draft", named.id) == null)) {
       /* THE ROW THIS LANE LAST WROTE IS NOT IN THE MIRROR: deleted elsewhere while ohmail was closed,
          its words are not saved again; words it never held are kept as a new draft, and said. */
@@ -508,22 +546,28 @@ export function useShellCompose({
       ).then((answer) => {
         if (answer !== "gone") { open(scratch); return; }
         const copy = sigOf(scratch.text.trim());
-        replyAutosave.forget(messageId);
+        replyAutosave.forget(lane);
+        replyRows.current.delete(lane);
+        const went = sentElsewhere && shown !== undefined;
         if (isRichEmpty(scratch) || named.holds === copy) {
-          clearReplyLane(messageId);
+          clearReplyLane(lane);
+          if (went) toast(t(fwd ? "reply.forwardSentElsewhere" : "reply.sentElsewhere"));
           open(EMPTY_RICH);
           return;
         }
         if (named.pending === copy) {
           /* A SAVE OF THESE WORDS WAITED UNSEEN when the row went: they may be the row's, so they are
              shown and not saved again until they change. The meta stays, so a reload does the same. */
-          replyAutosave.asSaved(messageId, scratch.text);
-          if (!sentElsewhere) toast(t("reply.deletedElsewhere"));
+          replyAutosave.asSaved(lane, scratch.text);
+          if (!sentElsewhere) toast(t(fwd ? "reply.forwardDeletedElsewhere" : "reply.deletedElsewhere"));
+          else if (went) toast(t(fwd ? "reply.forwardSentElsewhere" : "reply.sentElsewhere"));
           open(scratch);
           return;
         }
-        writeReplyMeta(messageId, { ...meta, row: undefined });
-        toast(t(sentElsewhere ? "reply.sentElsewhereKept" : "reply.deletedElsewhereKept"));
+        writeReplyMeta(lane, { ...meta, row: undefined });
+        toast(t(sentElsewhere
+          ? (fwd ? "reply.forwardSentElsewhereKept" : "reply.sentElsewhereKept")
+          : (fwd ? "reply.forwardDeletedElsewhereKept" : "reply.deletedElsewhereKept")));
         open(scratch);
       });
       return;
@@ -531,10 +575,10 @@ export function useShellCompose({
     if (row === null) { open(scratch); return; }
     void openDraftDecision(row, {
       readDraftBody: (id) => engine.readDraftBody(id),
-      openWithBody: (d, text) => open(adoptReplyRow(messageId, d, text, scratch, all)),
+      openWithBody: (d, text) => open(adoptReplyRow(lane, d, text, scratch, all)),
       unavailable: () => {
         // A row whose text cannot be read is neither written over nor twinned.
-        unreadableRows.current.add(messageId);
+        unreadableRows.current.add(lane);
         toast(t("drafts.bodyUnavailable"));
         open(scratch);
       },
@@ -554,19 +598,21 @@ export function useShellCompose({
       ?? (seed?.id === messageId ? seed : undefined);
     if (!m) return;
     const press = forwardPress(m, held != null);
-    const open = () => {
+    const open = (body: RichValue) => {
       setForwardGate(press.ask === null && held != null
         ? null
         : { id: messageId, ask: press.ask ?? "sensitive", confirmed: press.ask === null, seed: held ? null : m });
       setReplyAll(false);
       setReplyMode("forward");
       setReplyTo(messageId);
-      setReplyBody(readReplyDraft(replyDraftKey("forward", messageId)));
+      setReplyBody(body);
       // The same mobile rule `openReply` states: below 700px the dock lives in the reader.
-      if (readColumnHidden()) setReaderFor(messageId);
+      if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
     };
-    if (!press.fetch) { open(); return; }
-    void engine.hydrateBody(messageId, { urgent: true }).catch(() => undefined).then(open);
+    // The forward's own lane: its scratch, or the account's forward row for this message.
+    const resume = (): void => resumeLane(replyDraftKey("forward", messageId), open, false);
+    if (!press.fetch) { resume(); return; }
+    void engine.hydrateBody(messageId, { urgent: true }).catch(() => undefined).then(resume);
   });
 
   /** The person answered the ask: the dock shows the editor, and the send carries the confirmation. */
@@ -828,7 +874,7 @@ export function useShellCompose({
     writeReplyDraft(messageId, next);
     // Same mobile rule `openReply` states: under 700px the reading column is display:none,
     // so an editor mounted there is one nobody can see.
-    if (readColumnHidden()) setReaderFor(messageId);
+    if (readColumnHidden() && !inPlaceHost?.(messageId)) setReaderFor(messageId);
   });
 
   /**
@@ -1010,6 +1056,12 @@ export function useShellCompose({
     if (!moved) replyRows.current.delete(key);
     if (key.startsWith("fwd:")) {
       const forwarded = key.slice(4);
+      if (!moved) {
+        // The forward went: its row is spent, a create of it still waiting is a copy, the next forward a new one.
+        replyAutosave.settled(key, m.draftId ?? null);
+        replyAutosave.forget(key);
+        dropPriorRow(key, m.draftId ?? null);
+      }
       // Close ONLY the editor this settlement is about: a late forward confirmation must not
       // take down a REPLY the user has since opened on the same message.
       if (!moved) setReplyTo((cur) => (cur === forwarded && replyModeRef.current === "forward" ? null : cur));
@@ -1101,14 +1153,22 @@ export function useShellCompose({
   /** Lanes whose account row could not be read at the open: nothing writes for them. */
   const unreadableRows = useRef(new Set<string>());
   /** The account's reply row for a message — the newest one still a draft and free to write. */
-  const accountReplyRow = useStableCallback((messageId: string): EngineDraft | null => {
+  const accountReplyRow = useStableCallback((lane: string): EngineDraft | null => {
+    const fwd = lane.startsWith("fwd:") ? lane.slice("fwd:".length) : null;
+    const original = fwd !== null ? reader.get<EngineMessage>("message", fwd) ?? null : null;
     let best: EngineDraft | null = null;
     for (const d of drafts) {
       // `holdOf` parks every row past `draft`, so a free row is an ordinary draft.
-      if (d.inReplyToMessageId !== messageId) continue;
-      if (holdOf(engine, { lane: messageId, draftId: d.id, session: null }).kind !== "free") continue;
+      if (fwd === null ? d.inReplyToMessageId !== lane : d.forwardOfMessageId !== fwd || d.inReplyToMessageId != null) continue;
+      if (holdOf(engine, { lane, draftId: d.id, session: null }).kind !== "free") continue;
       // A row a create of this reply made, still to be judged beside the reply's row, is not that row.
-      if (replyAutosave.ownsRow(messageId, d.id)) continue;
+      if (replyAutosave.ownsRow(lane, d.id)) continue;
+      // The dock sends the derived subject and no other: a forward retitled in the composer, or held there, stays there.
+      if (fwd !== null && (original === null || d.subject !== forwardSubject(original.subject)
+        || releaseDraftIdRef.current === d.id || readComposeRow() === d.id)) continue;
+      // Or by its create, still waiting.
+      const h = fwd !== null ? handleOf(engine, d) : null;
+      if (h?.kind === "create" && autosave.holdsCreate(h.key)) continue;
       if (best === null || d.updatedAt > best.updatedAt) best = d;
     }
     return best;
@@ -1138,7 +1198,13 @@ export function useShellCompose({
     // The row's own markup seeds the editor and the baseline: a reply opened plain from a formatted
     // row could not be saved or sent.
     const rowHtml = typeof d.html === "string" ? d.html : "";
-    const fields = { mailboxId: d.mailboxId, subject: d.subject, body: text, html: rowHtml, to: d.to, cc: d.cc, bcc: d.bcc };
+    // A forward's lane names its original after `fwd:`; its row carries the original and the kept files.
+    const forward = lane.startsWith("fwd:");
+    const parentId = forward ? lane.slice("fwd:".length) : lane;
+    const fields = {
+      mailboxId: d.mailboxId, subject: d.subject, body: text, html: rowHtml, to: d.to, cc: d.cc, bcc: d.bcc,
+      ...(forward ? { forwardOf: parentId, forwardParts: d.forwardParts ?? null } : {}),
+    };
     const own = create === null && replyAutosave.ownsRow(lane, id);
     if (own) {
       // The row a create of this lane made is taken, never rebound past.
@@ -1159,13 +1225,17 @@ export function useShellCompose({
       replyRows.current.delete(lane);
       replyAutosave.awaits(lane, create, fields);
     }
-    const parent = reader.get<EngineMessage>("message", lane) ?? null;
+    const parent = reader.get<EngineMessage>("message", parentId) ?? null;
     const derived = parent ? replySubject(parent.subject) : d.subject;
-    const subject = rowWins || meta.subject === undefined ? (d.subject !== derived ? d.subject : undefined) : meta.subject;
+    // A forward's subject is the derived one (`accountReplyRow` adopts no other): nothing to keep.
+    const subject = forward ? undefined
+      : rowWins || meta.subject === undefined ? (d.subject !== derived ? d.subject : undefined) : meta.subject;
     const at = engine.read().get<EngineDraft>("draft", id)?.updatedAt ?? d.updatedAt;
     // Bound to a create, the lane holds no row yet: a row named before is another draft now.
     writeReplyMeta(lane, {
       ...readReplyMeta(lane), subject,
+      // The row's kept files when its words are shown: the row is what another device chose last.
+      ...(forward && rowWins ? { forwardParts: d.forwardParts ?? undefined } : {}),
       row: create === null
         ? {
           id, at, holds: sigOf(text.trim()), ...(own || (meta.row?.id === id && meta.row.made) ? { made: true as const } : {}),
@@ -1175,8 +1245,9 @@ export function useShellCompose({
     });
     const plan = replyEnvelopePlan(parent, ownAddresses, all, null);
     const who = (xs: readonly EmailAddress[]): string => xs.map((a) => a.address.toLowerCase()).join(",");
-    const edited = parent !== null && (who(d.to) !== who(plan.to ?? [parent.from])
-      || who(d.cc) !== who(plan.cc ?? []) || d.bcc.length > 0);
+    // A forward's audience is never derived: the row's is the audience.
+    const edited = forward || (parent !== null && (who(d.to) !== who(plan.to ?? [parent.from])
+      || who(d.cc) !== who(plan.cc ?? []) || d.bcc.length > 0));
     adoptedEdits.current = {
       lane,
       envelope: edited ? { to: formatRecipientChips(d.to), cc: formatRecipientChips(d.cc), bcc: formatRecipientChips(d.bcc) } : null,
@@ -1338,7 +1409,7 @@ export function useShellCompose({
   ): boolean => {
     /* A COMPOSE SAVE REFUSED BECAUSE THE ROW MOVED ELSEWHERE: that row is the other version's, so it
        is neither marked not sent nor taken; the composer forks and says so once. */
-    const changedRow = !accepted && detail?.ended?.code === "draft_changed" && !key.startsWith("fwd:");
+    const changedRow = !accepted && detail?.ended?.code === "draft_changed";
     const changed = changedRow && key === COMPOSE_SEND_KEY;
     const leftRow = changedRow ? undefined : detail?.left;
     if (!accepted && detail?.ended !== undefined && detail.shown === false) {
@@ -1446,6 +1517,32 @@ export function useShellCompose({
       bcc: replyEnvelope ? typed(replyEnvelope.bcc) : [],
     };
   }
+  /**
+   * THE INLINE FORWARD IS A ROW TOO, on its own lane (`fwd:<id>`): the original it forwards, the files
+   * kept, the audience typed, the note. An unanswered ask writes nothing, as it sends nothing.
+   */
+  const forwardParent = replyTo !== null && replyMode === "forward"
+    ? reader.get<EngineMessage>("message", replyTo) ?? null
+    : null;
+  const fwdLaneRow = forwardParent !== null ? laneRowOf(inlineForwardKey(forwardParent.id)) : null;
+  /* The kept files: this lane's choice, else its row's (another device's). */
+  const fwdKept = replyForwardParts ?? (fwdLaneRow !== null ? drafts.find((x) => x.id === fwdLaneRow)?.forwardParts ?? null : null);
+  let forwardForm: ReplyDraftForm | null = null;
+  if (forwardParent !== null && forwardAsk === null) {
+    const typed = (line: string): EmailAddress[] => parseRecipients(line).addresses;
+    forwardForm = {
+      lane: inlineForwardKey(forwardParent.id),
+      threadId: null,
+      mailboxId: resolveReplyFrom(fromOptions, forwardParent.mailboxId, replyFromId).mailboxId ?? forwardParent.mailboxId,
+      subject: forwardSubject(forwardParent.subject),
+      subjectEdited: false,
+      body: replyBody.text,
+      html: replyBody.html,
+      to: typed(replyEnvelope?.to ?? ""), cc: typed(replyEnvelope?.cc ?? ""), bcc: typed(replyEnvelope?.bcc ?? ""),
+      forwardOf: forwardParent.id,
+      forwardParts: fwdKept,
+    };
+  }
   /** Lanes whose last write the outbox took, until the mirror's row holds it. */
   const pendingLanes = useRef(new Set<string>());
   /** The row version a lane's words are based on: held in memory, or stored beside the lane (a reload). */
@@ -1477,7 +1574,7 @@ export function useShellCompose({
     } else if (meta.row?.id === row) writeReplyMeta(lane, { ...meta, row: undefined });
     replyAutosave.rebind(lane);
   });
-  const replyAutosave = useReplyAutosave(engine, replyForm, {
+  const replyAutosave = useReplyAutosave(engine, replyForm ?? forwardForm, {
     rowOf: (lane) => laneRowOf(lane),
     // A send of this reply on its way, a row held for it, or a row it holds and may not write now.
     refuses: (lane) => SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(lane).phase)
@@ -1488,7 +1585,11 @@ export function useShellCompose({
       || (unreadableRows.current.has(lane) && accountReplyRow(lane) !== null),
     baseOf: (lane, row) => replyBaseOf(lane, row),
     changed: (lane, row) => replyChanged(lane, row),
-    forked: (_lane, kept) => { toast(t(kept ? "reply.changedElsewhere" : "reply.changedElsewhereUnsaved")); },
+    forked: (lane, kept) => {
+      const fwd = lane.startsWith("fwd:");
+      toast(t(kept ? (fwd ? "reply.forwardChangedElsewhere" : "reply.changedElsewhere")
+        : (fwd ? "reply.forwardChangedElsewhereUnsaved" : "reply.changedElsewhereUnsaved")));
+    },
     took: (lane, row, text, confirmed, made, revision) => {
       const was = replyRows.current.get(lane);
       const meta = readReplyMeta(lane);
@@ -1543,15 +1644,27 @@ export function useShellCompose({
       });
     }
   }, [drafts]);
+  /* THE OPEN EDITOR'S ROW WENT FROM ANOTHER DEVICE: the lane ends as a reopen ends it, where it stands. */
+  const openLane = replyTo === null ? null : replyMode === "forward" ? inlineForwardKey(replyTo) : replyTo;
+  const endedRows = useRef(new Set<string>());
+  useEffect(() => {
+    // This editor's own press ends its lane through the send's settlement.
+    if (openLane === null || replyTo === null || pressRows.current.has(openLane)) return;
+    const named = readReplyMeta(openLane).row;
+    if (named === undefined || endedRows.current.has(named.id) || !sentElsewhereOf(openLane, named.id)) return;
+    endedRows.current.add(named.id);
+    const [at, mode] = [replyTo, replyMode];
+    resumeLane(openLane, (body) => {
+      if (!isRichEmpty(body)) { setReplyBody(body); return; }
+      setReplyTo((cur) => (cur === at && replyModeRef.current === mode ? null : cur));
+    }, replyAll, replyBody);
+  }, [drafts, openLane]);
 
   /**
    * THE LANE KEEPS THE ENVELOPE IT IS WRITTEN UNDER — sender, subject on screen, audience as shown —
    * while it holds text, so a promotion after the parent is gone sends the words to the same people
    * (`promotionPlanFor`). A reply reads it off the form above, a forward off the rows it typed.
    */
-  const forwardParent = replyTo !== null && replyMode === "forward"
-    ? reader.get<EngineMessage>("message", replyTo) ?? null
-    : null;
   const typedLine = (line: string): EmailAddress[] => parseRecipients(line).addresses;
   const laneEnvelope: { lane: string; envelope: LaneEnvelope } | null = replyForm !== null && replyForm.mailboxId
     ? {
@@ -1569,9 +1682,8 @@ export function useShellCompose({
       }
       : null;
   /* THE INLINE FORWARD'S FILES — the lane meta's list, else the lane row's (`forward-files.ts`). */
-  const fwdLaneRow = forwardParent !== null ? laneRowOf(inlineForwardKey(forwardParent.id)) : null;
   const replyForward = useForwardFiles(engine, forwardParent?.id ?? null, {
-    kept: replyForwardParts ?? (fwdLaneRow !== null ? drafts.find((x) => x.id === fwdLaneRow)?.forwardParts ?? null : null),
+    kept: fwdKept,
     addedBytes: attachmentBytes(replyAttachments),
     maxMessageBytes: forwardParent !== null
       ? resolveReplyFrom(fromOptions, forwardParent.mailboxId, replyFromId).maxMessageBytes : null,
@@ -1681,6 +1793,10 @@ export function useShellCompose({
       }
       const fwdLane = inlineForwardKey(messageId);
       const fwdRow = laneRowOf(fwdLane);
+      // The version the lane's words are based on: a row moved elsewhere refuses the send.
+      const fwdBase = fwdRow !== null ? replyBaseOf(fwdLane, fwdRow) : null;
+      // The words this press sends are not saved again, and a create still in the air is undone.
+      const unsealFwd = replyAutosave.seal(fwdLane);
       const fwdHandOff = mayHandOffFor?.(from.mailboxId ?? parent.mailboxId) === true
         ? handOffDock(fwdLane, messageId, "forward") : undefined;
       const atPress = { row: replyRows.current.get(fwdLane)?.row ?? null, seed: null };
@@ -1688,7 +1804,7 @@ export function useShellCompose({
         // The signature seals into the forward's note, and the server appends the quoted
         // original AFTER the body it is handed (`send-service.ts`) — so the block the editor
         // showed sits ABOVE the quoted history in what the recipient reads.
-        withLaneRow(fwdRow, withSignature(forwardSend(parent, {
+        withLaneRow(fwdRow, fwdBase, withSignature(forwardSend(parent, {
           body: replyBody.text,
           html: replyBody.html ? replyBody.html : null,
           // The resolved sender, or the receiving mailbox — the editor's lock judged the
@@ -1701,13 +1817,20 @@ export function useShellCompose({
           // The kept files, only once one was removed — the plan the dock's rows were drawn from.
           ...(replyForward?.wire !== undefined ? { forwardParts: replyForward.wire } : {}),
         }), sigText, sigHtml)),
-        withDone({ surface: "inline" as const, ...(fwdHandOff ? { handOff: fwdHandOff } : {}) }),
+        withDone({
+          surface: "inline" as const,
+          // The row this lane holds or last wrote: one sent elsewhere refuses the press.
+          heldRow: replyRows.current.get(fwdLane)?.row ?? readReplyMeta(fwdLane).row?.id ?? null,
+          ...(fwdHandOff ? { handOff: fwdHandOff } : {}),
+        }),
       );
+      // The send carries the words: a create the pause left on the outbox goes, as a reply's does.
       // A new press owes back nothing of the last; its own hand-off keeps it (`handOffDock`).
       if (went) {
+        replyAutosave.sending(fwdLane);
         handedPress.current.delete(fwdLane);
         pressRows.current.set(fwdLane, atPress);
-      }
+      } else unsealFwd();
       return;
     }
     // WHO IT IS ADDRESSED TO — `replyEnvelopePlan`, ONE derivation for the head, the lock and this wire. Untouched
@@ -1770,7 +1893,7 @@ export function useShellCompose({
       ...(replySubjectEdit !== null ? { subject: replySubjectEdit } : {}),
       ...replyEnvelopeOnWire(plan),
     }, sigText, sigHtml), withDone({
-      heldRow: heldReplyRow(messageId),
+      heldRow: heldReplyRow(messageId) ?? replyRows.current.get(messageId)?.row ?? readReplyMeta(messageId).row?.id ?? null,
       ...(replyHandOff ? { handOff: replyHandOff } : {}),
     }));
     // The send carries the words and makes its own row: a create the pause left on the outbox goes.
@@ -2181,6 +2304,14 @@ export function useShellCompose({
           // A letter whose first save is still on its way is bound by that create, never its local id.
           if (handle.kind === "create") autosave.awaitCreate(handle.key, seeded);
           else autosave.adopt(handle.id, seeded, handle.revision);
+          // A forward row the dock wrote is the composer's now: the dock lets go of it, as `resumeLane` does.
+          const fwdLane = d.forwardOfMessageId ? inlineForwardKey(d.forwardOfMessageId) : null;
+          if (fwdLane !== null && handle.kind === "row") letGoOfForwardRow(fwdLane, handle.id);
+          else if (fwdLane !== null && handle.kind === "create" && replyAutosave.owns(fwdLane, handle.key)) {
+            // Or of its create still waiting, which lands as the composer's row; the dock's words go when they are its.
+            replyAutosave.rebind(fwdLane);
+            if (sigOf(readReplyDraft(fwdLane).text.trim()) === sigOf(body.trim())) clearReplyLane(fwdLane);
+          }
         }
         composeSeeded.current = true;
         go("compose");
@@ -2688,6 +2819,14 @@ export function useShellCompose({
    * refusals the composer already states, so only `failed` stops the exit. Every other way out
    * takes the hook's belt, which cannot stay open and does not need to.
    */
+  /* A RESTART FROM THE UPDATE LINE OR SETTINGS writes what the open composer holds first, as a
+     close does (`app-update.ts`). Files live in memory only, so while the form or an open reply
+     holds any, the restart waits for them instead. */
+  const composeOpen = route.view === "compose";
+  useEffect(() => (composeOpen ? holdForRestart(autosave.flush) : undefined), [composeOpen, autosave.flush]);
+  const holdsFiles = (compose.attachments?.length ?? 0) > 0 || (replyTo !== null && replyAttachments.length > 0);
+  useEffect(() => (holdsFiles ? holdFilesForRestart() : undefined), [holdsFiles]);
+
   const closing = useRef(false);
   const closeCompose = useStableCallback(() => {
     if (closing.current) return;

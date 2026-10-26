@@ -17,8 +17,8 @@ import { leaveForManagePage } from "./SubscriptionSection";
 /**
  * THE STRIP ABOVE THE APP, while the account is still open and something is running out — and the
  * one after it reopens. Never a modal: the app keeps working in every state this draws, so taking
- * the screen would be a lie about what has happened. `UpdateNotice`'s slot and `UpdateNotice`'s
- * shape, for its reason — a fact about the ACCOUNT rather than about a pile, rendered once by the
+ * the screen would be a lie about what has happened. The durability strip's slot and shape, for
+ * its reason — a fact about the ACCOUNT rather than about a pile, rendered once by the
  * shell, absent from the DOM whenever there is nothing to say.
  *
  * Cloud-only by construction: the shared shell takes it as a node, so the desktop window and the

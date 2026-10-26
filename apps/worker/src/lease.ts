@@ -169,6 +169,8 @@ export type MailboxLeaseOutcome =
      * written next with nothing in front of it.
      */
     stamp: Promise<MetaBaselineReading>;
+    /** The server's INTERNALDATE on the claim this gate wrote; null when the server gave none. */
+    claimServerAt?: Date | null;
   }
   | {
     organize: false;
@@ -275,6 +277,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
       // and an unhandled rejection on a promise a caller is entitled to ignore would be this
       // function's fault rather than the connection's.
       stamp: result.stamp.catch((): MetaBaselineReading => ({ custody: "unproven" })),
+      claimServerAt: result.claimServerAt ?? null,
     };
   }
   return {

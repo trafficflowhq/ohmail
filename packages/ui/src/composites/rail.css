@@ -138,6 +138,10 @@ input.ritem-new-input{flex:1 1 auto;min-width:0;
   margin-inline:-6px;padding-inline:6px;flex-direction:column-reverse}
 .rail-sync-stack{flex:none}
 .rail-sync-slot + .rail-dock{margin-top:0}
+/* THE UPDATE LINE'S PLACE — see `update` in `RailNav.tsx`: under the sync line, above the dock.
+ * It takes the slack only when no sync slot stands above it, by the same first-auto-wins rule. */
+.rail-update{flex:none;margin-top:auto}
+.rail-sync-slot + .rail-update,.rail-update + .rail-dock{margin-top:0}
 /* THE NOTICE SLOT'S PLACE — see `notice` in `RailNav.tsx`: under the piles, before Tags. Spaced
  * as a `.rgroup` and out of the foot's auto-margin chain, so the sync slot keeps the slack and a
  * notice never moves the foot. At the foot it fell below the window's edge under folders. No

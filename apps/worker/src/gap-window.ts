@@ -1,6 +1,6 @@
-import { sql, type SQL } from "drizzle-orm";
-import { mailboxes } from "@trafficflow/db";
-import type { Dialect } from "@trafficflow/db/dialect";
+import { and, eq, sql, type SQL } from "drizzle-orm";
+import { mailboxes, type Tx } from "@trafficflow/db";
+import { dialect, type Dialect } from "@trafficflow/db/dialect";
 
 /* WHERE A READER'S LOOK OPENS THE GAP WINDOW (RULING-026 lane A). The start is a fact about the
    mailbox: the releasing organizer leaves it in its settings document (`gap: { since, by, at }`),
@@ -14,6 +14,57 @@ export interface TravelledGap {
   /** The releasing install's lease id. */
   by: string;
   at: Date;
+}
+
+/**
+ * How far the store's clock may sit from the mail server's while the lease still admits it: the
+ * lease's own skew bound at the default window (`clockSkewBoundMs(DEFAULT_STALE_AFTER_MS)`). A
+ * window start on the server's clock is compared with intake times on the store's by this much.
+ */
+export const GAP_CLOCK_ALLOWANCE_MS = 150_000;
+
+/**
+ * WHERE A HAND-BACK'S WINDOW STARTS: the server's stamp on the last organizing drain that finished
+ * its inbound backlog (`organized_through`), never later than `press`; unknown, `press` less
+ * {@link GAP_CLOCK_ALLOWANCE_MS}, but never before the end of a held stretch the row recorded
+ * (`held_elsewhere_until`, a takeover's own instant) nor after `press`. NULL when `press` is NULL.
+ * `organized_through` takes no such floor: every role change clears it, so it is the server's stamp on
+ * a claim made after any held stretch the row recorded, and the gap read's arrival test, on that same
+ * clock, keeps out every letter the server took in before it (bar an INTERNALDATE set later than the
+ * delivery). A floor at `held_elsewhere_until`, on the store's clock, would drop letters this tenure
+ * never drained whenever that clock runs ahead of the server's.
+ */
+export function handBackStart(d: Dialect, press: SQL): SQL {
+  const T = sql`${mailboxes.organizedThrough}`;
+  const H = sql`${mailboxes.heldElsewhereUntil}`;
+  const back = sql`${press} - ${d.interval(GAP_CLOCK_ALLOWANCE_MS)}`;
+  return sql`case when ${T} is not null and ${T} <= ${press} then ${T}
+    when ${T} is not null then ${press}
+    when ${H} is not null and ${H} > ${back} then case when ${H} <= ${press} then ${H} else ${press} end
+    else ${back} end`;
+}
+
+/**
+ * A DRAIN THAT TOOK MAIL IN AND FINISHED THE INBOUND BACKLOG: nothing the server stamped before its
+ * claim waits unorganized, so `organized_through` moves to the claim's server stamp, never back, and
+ * only while the row still says organizer (mail 0169). Both stores; one UPDATE.
+ */
+export async function markOrganizedThrough(db: Tx, mailboxId: string, at: Date): Promise<void> {
+  const v = dialect(db).ts(at);
+  const T = sql`${mailboxes.organizedThrough}`;
+  await db.update(mailboxes)
+    .set({ organizedThrough: sql`case when ${T} is null or ${T} < ${v} then ${v} else ${T} end` })
+    .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.organizerRole, "organizer")));
+}
+
+/**
+ * A WRITE THAT ENDS A HELD STRETCH (mail 0169) — the look that finds the holder this row named gone
+ * or stopped, a promotion over it, a release past it, a stand-down to a verdict that is not `held` —
+ * stamps the store's clock, the one intake is stamped with; any other write keeps the instant. Reads
+ * the row as it stood before the UPDATE it rides.
+ */
+export function heldElsewhereUntilOnLeave(d: Dialect): SQL {
+  return sql`case when ${mailboxes.organizerState} = 'held' then ${d.now()} else ${mailboxes.heldElsewhereUntil} end`;
 }
 
 /** `least(a, b)` on both stores; neither may be NULL. */
@@ -72,8 +123,8 @@ export function gapOpenStart(d: Dialect, o: {
 
 /**
  * THE `since` A RELEASING ORGANIZER LEAVES, and `at`, from its own row before the release clears it:
- * its own uncounted window; else the press when the row recorded no holder since (and, on the
- * device, no sibling refusal); else now. Never a counted window: that one is this tenure's own.
+ * its own uncounted window; else, when the row recorded no holder since (and, on the device, no
+ * sibling refusal), the hand-back's start ({@link handBackStart}) at the press; else now. Never a counted window: that one is this tenure's own.
  */
 export function travellingGapColumns(d: Dialect, o: { sibling: boolean }): { since: SQL<unknown>; at: SQL<unknown> } {
   const noHolder = sql`${mailboxes.organizedByKind} is null and ${mailboxes.organizedByName} is null
@@ -81,7 +132,7 @@ export function travellingGapColumns(d: Dialect, o: { sibling: boolean }): { sin
   const press = o.sibling ? sql`${mailboxes.releaseRefusal} is null and ${noHolder}` : noHolder;
   return {
     since: sql`case when ${mailboxes.gapSince} is not null and ${mailboxes.gapLetters} is null then ${mailboxes.gapSince}
-      when ${press} then coalesce(${mailboxes.releaseRequestedAt}, ${d.now()}) else ${d.now()} end`,
+      when ${press} then ${handBackStart(d, sql`coalesce(${mailboxes.releaseRequestedAt}, ${d.now()})`)} else ${d.now()} end`,
     at: sql`${d.now()}`,
   };
 }

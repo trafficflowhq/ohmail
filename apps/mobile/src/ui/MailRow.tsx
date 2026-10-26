@@ -6,9 +6,8 @@
  * Blanc's row hierarchy survives the narrower column intact: weight carries
  * unread, colour carries seen, and the dot is the only mark.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Animated, PanResponder, View } from "react-native";
-import { ScrollView } from "react-native";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import type { Mail } from "../state/model";
@@ -22,8 +21,8 @@ import {
   readFaceOf, swipeClaims, swipeOffset, swipeVerbFor, SWIPE_FIRE_DX,
 } from "./row-swipe";
 import { rowSubjectLine } from "./row-subject";
-import { MARK_HOLD_MS, STRIP_END, STRIP_HIT_SLOP, STRIP_SLOT, STRIP_START, marksShown, stripOffsetFor, type RailItem } from "./reader-marks";
-import { MARK_RING, MarkSheet, MarkSquare, ringRadius, rowSquareRadius, useMarkHold } from "./MarkSquare";
+import { MARK_HOLD_MS, STRIP_END, STRIP_FACE_IN, STRIP_HIT_SLOP, STRIP_MORE, STRIP_SLOT, STRIP_START, marksShown, slotOf, type RailItem } from "./reader-marks";
+import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, rowSquareRadius, useMarkHold, useSquaresWindow } from "./MarkSquare";
 
 /** The open conversation's squares on its row: the reader's, its ring, and a press on one. */
 export interface RowStripFacts {
@@ -104,7 +103,7 @@ export function MailRow({
 
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const dxNow = useRef(0);
-  /* A touch that started on the strip: its drag scrolls the strip, so the row never claims it. */
+  /* A touch that started on the strip is the squares': the row never claims its drag. */
   const onStrip = useRef(false);
   const settle = () => {
     dxNow.current = 0;
@@ -117,7 +116,7 @@ export function MailRow({
         onStartShouldSetPanResponderCapture: () => { onStrip.current = false; return false; },
         /* Claimed at the MOVE and never at the start: a row that takes the touch down owns every
            tap, and the list must go on scrolling under a finger that only meant to scroll. A drag
-           that started on the strip scrolls the strip. */
+           that started on the strip is never a swipe. */
         onMoveShouldSetPanResponder: (_e, g) => swipe === true && !onStrip.current && swipeClaims(g.dx, g.dy),
         onPanResponderMove: (_e, g) => {
           dxNow.current = g.dx;
@@ -332,69 +331,75 @@ function RowMarks({ marks }: { marks: readonly ("unread" | "read" | "mine")[] })
 
 /**
  * THE READER'S SQUARES ON THE ROW — the rail's own, oldest first, the current one ringed, each a
- * press that scrolls the reader to its message. A long conversation scrolls sideways, keeping the
- * ringed square in view, and a reply that arrives whole beside it where both fit. Spoken as the
- * rail's squares are. A finger held on one shows its sheet under the strip and presses nothing.
+ * press that scrolls the reader to its message. Spoken as the rail's squares are. A conversation
+ * longer than the row stands a window over it that follows the ring (`useSquaresWindow`): every
+ * square whole or not drawn, the squares at an edge that hides more tapered, "+N" there counting
+ * them; nothing scrolls. A finger held on a square shows its sheet under the strip and presses nothing.
  */
 function RowStrip({ items, here, onPress }: RowStripFacts) {
-  const t = useTheme();
   const { held, hold, release, drop } = useMarkHold();
   const heldItem = held === null ? undefined : items.find((it) => it.id === held);
-  const list = useRef<ScrollView>(null);
-  const [room, setRoom] = useState(0);
+  const [room, setRoom] = useState<number | null>(null);
   const n = items.length;
   const at = items.findIndex((it) => it.id === here);
-  const lastN = useRef(n);
-  useEffect(() => {
-    if (room <= 0) return;
-    const arrived = n > lastN.current;
-    lastN.current = n;
-    if (at < 0 && !arrived) return;
-    list.current?.scrollTo({ x: stripOffsetFor(at < 0 ? n - 1 : at, n, room, arrived), animated: false });
-  }, [at, n, room]);
+  const run = useSquaresWindow(n, at, room === null ? null : room - STRIP_START - STRIP_END, STRIP_SLOT, STRIP_MORE);
+  const older = run?.from ?? 0;
+  const newer = run === null ? 0 : n - run.to;
+  const ringAt = ringRest(items.map((_, i) => slotOf(STRIP_SLOT, run?.scale[i] ?? 1)), at, STRIP_START + (older > 0 ? STRIP_MORE : 0));
   return (
     <View>
-    <ScrollView
-      ref={list}
-      horizontal
-      showsHorizontalScrollIndicator={false}
+    <View
       accessibilityRole="toolbar"
       accessibilityLabel={Copy.readerMarksAria}
       testID="row-strip"
-      style={{ marginTop: -4, flexGrow: 0 }}
-      contentContainerStyle={{ paddingLeft: STRIP_START, paddingRight: STRIP_END, paddingBottom: 10 }}
+      style={{ flexDirection: "row", alignItems: "center", overflow: "hidden", marginTop: -4, paddingLeft: STRIP_START, paddingRight: STRIP_END, paddingBottom: 10 }}
       onLayout={(e) => setRoom(e.nativeEvent.layout.width)}
-      onScrollBeginDrag={drop}
     >
-      {items.map((it, i) => (
-        <Tap
-          key={it.id}
-          accessibilityRole="button"
-          accessibilityLabel={it.kind === "mine"
-            ? Copy.readerMarkMine(i + 1, n)
-            : Copy.readerMarkFrom(i + 1, n, it.sender, it.kind === "unread")}
-          accessibilityState={{ selected: it.id === here }}
-          testID={`strip-${it.id}`}
-          hitSlop={STRIP_HIT_SLOP}
-          onPressIn={() => { if (held !== null && held !== it.id) drop(); }}
-          onPress={() => { drop(); onPress(it.id); }}
-          onLongPress={() => hold(it.id)}
-          delayLongPress={MARK_HOLD_MS}
-          onPressOut={release}
-          style={{ width: STRIP_SLOT, height: STRIP_SLOT, alignItems: "center", justifyContent: "center" }}
-        >
-          <View
-            style={{
-              width: MARK_RING, height: MARK_RING, alignItems: "center", justifyContent: "center",
-              borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3, borderRadius: ringRadius(t.radius.focus),
-            }}
+      {older > 0 ? <StripMore n={older} side="old" /> : null}
+      {items.map((it, i) => {
+        const s = run?.scale[i] ?? 1;
+        return (
+          <Tap
+            key={it.id}
+            accessibilityRole="button"
+            accessibilityLabel={it.kind === "mine"
+              ? Copy.readerMarkMine(i + 1, n)
+              : Copy.readerMarkFrom(i + 1, n, it.sender, it.kind === "unread")}
+            accessibilityState={{ selected: it.id === here }}
+            testID={`strip-${it.id}`}
+            hitSlop={STRIP_HIT_SLOP}
+            onPressIn={() => { if (held !== null && held !== it.id) drop(); }}
+            onPress={() => { drop(); onPress(it.id); }}
+            onLongPress={() => hold(it.id)}
+            delayLongPress={MARK_HOLD_MS}
+            onPressOut={release}
+            style={{ width: slotOf(STRIP_SLOT, s), height: STRIP_SLOT, alignItems: "center", justifyContent: "center" }}
           >
-            <MarkSquare kind={it.kind} />
-          </View>
-        </Tap>
-      ))}
-    </ScrollView>
+            <View
+              style={{
+                // never wider than its slot: a hidden square's box would take presses beside it
+                width: Math.min(MARK_RING, slotOf(STRIP_SLOT, s)), height: MARK_RING, alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <MarkSquare kind={it.kind} scale={s} />
+            </View>
+          </Tap>
+        );
+      })}
+      {newer > 0 ? <StripMore n={newer} side="new" /> : null}
+      {ringAt === null ? null : <MarkRing testID="ring-strip" along="left" at={ringAt} cross={(STRIP_SLOT - MARK_RING) / 2} />}
+    </View>
     {heldItem ? <MarkSheet item={heldItem} style={{ marginHorizontal: 8, marginTop: -4, marginBottom: 10 }} /> : null}
+    </View>
+  );
+}
+
+/** "+N" in its slot at a strip's edge: the squares that edge hides, in the preview's ink. The old
+ *  edge's starts where a first square's face would, at the row's text (owner 2026-10-26). */
+function StripMore({ n, side }: { n: number; side: "old" | "new" }) {
+  return (
+    <View testID={`more-${side}`} style={{ width: STRIP_MORE, height: STRIP_SLOT, justifyContent: "center", alignItems: side === "old" ? "flex-start" : "flex-end", ...(side === "old" ? { paddingLeft: STRIP_FACE_IN } : {}) }}>
+      <Txt variant="caption" tone="ink3" tabular numberOfLines={1}>{Copy.rowMarksMore(n)}</Txt>
     </View>
   );
 }

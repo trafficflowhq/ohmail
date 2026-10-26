@@ -16,17 +16,21 @@
  * the copy is its own namespace (`update`).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
-import { Button, SettingsRow, SettingsSubhead } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 
+import { flushBeforeRestart, restartHold, subscribeRestartHold } from "../../webapp/app/shell/app-update.js";
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
+  autoSentenceKey,
   onUpdateState,
+  SELF_INSTALLING_KINDS,
   updateButtonKey,
   updateManagedElsewhere,
   updatePress,
   updateSentenceKey,
+  updateSetAuto,
   updateState,
   type UpdateReport,
 } from "./update.js";
@@ -40,7 +44,11 @@ import {
  * the process's life and hands back an ordinary unsubscribe. The `alive` flag guards a
  * different window: the pull that may still be in flight when the pane closes.
  */
-function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<void> } {
+function useUpdateReport(): {
+  report: UpdateReport | null;
+  press: () => Promise<void>;
+  setAuto: (on: boolean) => Promise<void>;
+} {
   const [report, setReport] = useState<UpdateReport | null>(null);
   /* Is this component still on screen? For the PRESS only — the subscription below tracks its own
      cancellation per effect run, for the reason that comment gives. */
@@ -106,20 +114,36 @@ function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<
    * answers every case and cannot go stale — it reads the flow as it is now; the report set
    * is a fresh object, so the effect that clears `busy` fires even when nothing changed.
    */
-  const press = useCallback(async () => {
-    const at = pushes.current;
-    try {
-      await updatePress();
-    } catch {
-      /* The shell refused the press. The re-read below is what the person sees. */
-    }
+  const reRead = useCallback(async (at: number) => {
     const now = await updateState();
     // …unless the shell already announced something newer while the read was in flight, in which
     // case what is on screen is ahead of what came back and must stay.
     if (mounted.current && now !== null && pushes.current === at) setReport(now);
   }, []);
 
-  return { report, press };
+  const press = useCallback(async () => {
+    const at = pushes.current;
+    try {
+      // A press that installs restarts the app: an open editor's words are written first.
+      if (report?.canInstall) await flushBeforeRestart();
+      await updatePress();
+    } catch {
+      /* The shell refused the press. The re-read below is what the person sees. */
+    }
+    await reRead(at);
+  }, [report, reRead]);
+
+  const setAuto = useCallback(async (on: boolean) => {
+    const at = pushes.current;
+    try {
+      await updateSetAuto(on);
+    } catch {
+      /* Not taken: the re-read shows the switch where the shell still has it. */
+    }
+    await reRead(at);
+  }, [reRead]);
+
+  return { report, press, setAuto };
 }
 
 /**
@@ -129,18 +153,23 @@ function useUpdateReport(): { report: UpdateReport | null; press: () => Promise<
  */
 export function DesktopUpdate() {
   const t = useTranslations("update");
-  const { report, press } = useUpdateReport();
+  const { report, press, setAuto } = useUpdateReport();
+  // Which hold the shell's `held` stands for: the window knows, the shell does not.
+  const hold = useSyncExternalStore(subscribeRestartHold, restartHold, () => null);
   const [busy, setBusy] = useState(false);
+  const [switching, setSwitching] = useState(false);
 
   // The button un-busies on the next report rather than on a timer: the shell emits on every
   // transition, so the state that arrives IS the answer to the press.
   useEffect(() => {
     setBusy(false);
+    setSwitching(false);
   }, [report]);
 
   if (report === null) return null;
 
-  const sentence = t(updateSentenceKey(report), {
+  const key = updateSentenceKey(report);
+  const sentence = t(key === "readyHeld" && hold === "files" ? "readyHeldFiles" : key, {
     version: report.version,
     offered: report.offered ?? report.version,
   });
@@ -156,6 +185,13 @@ export function DesktopUpdate() {
      already said where to go. The three that CAN install keep the control in every state,
      disabled while a check runs (`updateButtonKey`). */
   const managed = updateManagedElsewhere(report);
+  /* THE SWITCH, only where it means something: on a copy that replaces its own files, and from a
+     shell that says where it stands and when it installs. A shell that does not say keeps today's
+     pane. Its sentence is what the shell will do here (`autoSentenceKey`). */
+  const switchable =
+    report.autoInstall !== null &&
+    report.autoInstallsAt !== null &&
+    SELF_INSTALLING_KINDS.includes(report.installKind);
 
   return (
     <>
@@ -181,12 +217,30 @@ export function DesktopUpdate() {
             >
               {/* A press with nothing to press is DISABLED and still says what it would do — a
                   button that changes its own words while it is unavailable reads as broken. The
-                  busy word is the one exception, because that is what just happened. */}
-              {busy ? t("working") : t(buttonKey ?? "check")}
+                  busy word is the one exception, because that is what just happened. A ready
+                  release held while a send waits still says Restart. */}
+              {busy ? t("working") : t(buttonKey ?? (report.state === "ready" ? "restart" : "check"))}
             </Button>
           )
         }
       />
+      {switchable ? (
+        <SettingsRow
+          label={t("autoLabel")}
+          description={t(autoSentenceKey(report))}
+          control={
+            <Switch
+              checked={report.autoInstall === true}
+              disabled={switching}
+              ariaLabel={t("autoLabel")}
+              onChange={(on) => {
+                setSwitching(true);
+                void setAuto(on);
+              }}
+            />
+          }
+        />
+      ) : null}
     </>
   );
 }

@@ -144,9 +144,10 @@ tauri = { version = "2", default-features = false, features = [
 
 # The auto-updater. Fetches the pinned `latest.json` feed, compares versions,
 # downloads the platform artifact and verifies its minisign signature against
-# `plugins.updater.pubkey` before installing. Notify-and-install: the Rust side
-# asks the user first (see `src/updater.rs`) and installs only on consent — never
-# silently. Brings `reqwest` in transitively; that is the only HTTP client in the
+# `plugins.updater.pubkey` before installing. A verified release installs at the
+# next restart while Settings' "Install updates automatically" is on (the default),
+# and only on a press with it off (see `src/updater.rs`); the window shows which.
+# Brings `reqwest` in transitively; that is the only HTTP client in the
 # binary and it is reached from nowhere but the updater. MIT OR Apache-2.0 —
 # permissive, like every dependency of this client: the only copyleft in the
 # shipped binary is meant to be this project's own AGPL-3.0.
@@ -178,6 +179,13 @@ semver = "1"
 # rather than only into the tests. Already in the graph (the updater plugin decodes the
 # same envelope with the same crate); MIT OR Apache-2.0.
 base64 = "0.22"
+
+# SHIPPING, and it was dev-only until a release could wait on disk. An AppImage's verified
+# release is staged beside it and applied at quit or at the next launch, and `updater.rs`'s
+# `verify_staged` checks those bytes again with the same primitive `tauri-plugin-updater`
+# verifies with, against the same shipped key. Already in the graph at 0.2.5 (the plugin
+# depends on it); MIT. The tests verify the committed fixtures with it too.
+minisign-verify = "0.2"
 
 # A DIRECT dependency, not an optional one, since the updater's config lives in
 # tauri.conf.json: `tauri::generate_context!` embeds every `plugins` entry as a
@@ -312,12 +320,22 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # The pressure half must be asked for after GTK is up and before the first web context exists,
 # above the runtime's own `gtk::init`. Same `0.18` already resolved for wry and webkit2gtk: no new code.
 gtk = "0.18"
+# HOW A WEB PROCESS ENDED, AND WHAT IT SAID (`src/last_words.rs`): pidfds, `waitid`, and fd 2 moved
+# to a file beside the log. Both crates are already in this binary's graph through tauri at these
+# versions, so naming them adds no third-party code to audit; MIT OR Apache-2.0.
+libc = "0.2"
+dirs = "6"
 
 # WEBVIEW2, NAMED FOR ONE EVENT: `ProcessFailed`, so a renderer that dies on Windows is reloaded
 # (`src/renderer_recovery.rs`). The crate is already in this binary's graph (wry links the same
 # `=0.38.2`), so naming it adds no third-party code to audit; MIT, like everything else here.
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "=0.38.2"
+# WINDOWS-SYS, NAMED FOR ONE CALL: `GetSystemMetrics(SM_SHUTTINGDOWN)`, so an update never starts
+# its installer while Windows ends the session (`src/updater.rs`). Already in this binary's graph
+# at the version and features `tauri-plugin-updater` resolves, so it adds no code to audit; MIT OR
+# Apache-2.0.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
 
 # WKWEBVIEW, NAMED FOR THE GESTURE GATE (`src/link_gate_macos.rs`): a navigation delegate that
 # answers a new window in front of wry's own and forwards every other selector to it, and the main
@@ -339,17 +357,6 @@ objc2-web-kit = { version = "0.3", default-features = false, features = [
     "WKNavigationAction",
     "WKFrameInfo",
 ] }
-
-[dev-dependencies]
-# The signature-verification biting test signs nothing at test time — it verifies
-# a committed fixture (`test/fixtures/updater/payload.bin{,.sig}`) against the
-# SAME public key shipped in `tauri.conf.json`, using the SAME primitive
-# `tauri-plugin-updater` verifies with. Flip one byte of the payload and the
-# verification refuses; that is the test. It reaches for `base64` too, but that is a
-# real dependency now (see above) rather than a dev-only one — only `minisign-verify`
-# is test-scoped, and it is the one primitive the tests must hold independently of the
-# plugin in order to be evidence about it rather than a restatement of it.
-minisign-verify = "0.2"
 
 [profile.release]
 codegen-units = 1

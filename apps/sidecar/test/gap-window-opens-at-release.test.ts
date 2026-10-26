@@ -18,6 +18,7 @@ import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/or
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
 import { formatProfileMessage, makeProfileDoc, profileFingerprint } from "@trafficflow/core/adapters/organizer-profile";
 import { startPhoneEngine, type PhoneEngine, type PhoneSqlExecutor, type PhoneSqlRows } from "../src/mobile.js";
+import { GAP_CLOCK_ALLOWANCE_MS } from "@trafficflow/worker/gap-catchup";
 
 const sqlite = createRequire(import.meta.url)("node:sqlite") as {
   DatabaseSync: new (path: string) => {
@@ -90,7 +91,11 @@ class MemoryMetaFolder implements LeaseIo, ProfileIo {
   onRemove: (() => void) | null = null;
   async ensureMetaFolder(): Promise<void> {}
   async listClaims(): Promise<RawClaimMessage[]> { return this.claims.map((c) => ({ ...c })); }
-  async appendClaim(raw: string): Promise<void> { this.claims.push({ ref: this.nextUid++, raw }); }
+  /** The server's INTERNALDATE on each appended claim; none when null. */
+  stamp: (() => Date) | null = null;
+  async appendClaim(raw: string): Promise<void> {
+    this.claims.push({ ref: this.nextUid++, raw, ...(this.stamp === null ? {} : { internalDate: this.stamp() }) });
+  }
   async removeClaims(refs: readonly unknown[]): Promise<void> {
     const gone = new Set(refs);
     for (let i = this.claims.length - 1; i >= 0; i--) if (gone.has(this.claims[i]!.ref)) this.claims.splice(i, 1);
@@ -207,6 +212,7 @@ async function organizingPhone() {
     engine, meta, server, id, route, exec,
     gap, until,
     pressedAt: (): number | null => (exec.direct("select release_requested_at as p from mailboxes where id = ?", [id]) as { p: number | null }[])[0]!.p,
+    through: (): number | null => (exec.direct("select organized_through as t from mailboxes where id = ?", [id]) as { t: number | null }[])[0]!.t,
     refusal: (): string | null => (exec.direct("select release_refusal as r from mailboxes where id = ?", [id]) as { r: string | null }[])[0]!.r,
     letters: () => exec.direct(`select m.id, m.created_at as createdAt, m.arrived_at as arrivedAt, f.last_set_by as lastSetBy,
         f.desired_folder as desired from messages m join folder_state f on f.message_id = m.id order by m.created_at`) as
@@ -319,7 +325,8 @@ describe.runIf(ON_DEVICE_STORE)("the gap window a hand-back opens, on the device
     p.server.pending.push(letter(new Date()));
     await p.engine.resume();
     const since = p.gap().since;
-    expect(since, "the window did not open at the press").toBe(pressedAt);
+    // No claim here carries the server's stamp, so the window starts at the press less the clock allowance.
+    expect(since, "the window did not open at the press").toBe(pressedAt! - GAP_CLOCK_ALLOWANCE_MS);
     // Inside the window by both instants: only the organizer's decision keeps it out.
     expect(decided!.createdAt).toBeGreaterThanOrEqual(since!);
     expect(decided!.arrivedAt).toBeGreaterThanOrEqual(since!);
@@ -334,6 +341,40 @@ describe.runIf(ON_DEVICE_STORE)("the gap window a hand-back opens, on the device
     for (let i = 0; i < 3; i++) await p.engine.resume();
     expect(p.gapFiled(), "the gap pass filed a letter the organizer had decided").toEqual([gapLetter!.id]);
     expect(p.gap()).toEqual({ since: null, letters: null, pressed: null });
+  }, 60_000);
+
+  it("mail 0169: a drain that took mail in keeps its claim's server stamp; the stop starts there and clears it, a hand-back keeps it, a promotion and a stand-down clear it", async () => {
+    const p = await organizingPhone();
+    const stamp = new Date(Date.now() - 20_000);
+    p.meta.stamp = () => stamp;
+    await p.engine.resume();
+    expect(p.through(), "a drain that took no mail recorded a start").toBeNull();
+    p.server.pending.push(letter(new Date()));
+    expect(await p.until(() => p.through() !== null), "the drain that took the letter recorded nothing").toBe(true);
+    expect(p.through()).toBe(stamp.getTime());
+
+    expect(await p.engine.handBack()).toEqual([{ mailboxId: p.id, released: 1 }]);
+    expect(p.through(), "the hand-back dropped the start").toBe(stamp.getTime());
+    await p.engine.resume();
+    expect(p.through()).toBe(stamp.getTime());
+
+    await expect(p.engine.stopOrganizing()).resolves.toBe("released");
+    expect(p.gap().since, "the stop did not start the window at the last finished drain").toBe(stamp.getTime());
+    expect(p.through(), "the stop left this tenure's start").toBeNull();
+
+    p.exec.direct("update mailboxes set organized_through = ? where id = ?", [stamp.getTime(), p.id]);
+    expect(await p.engine.claimHere({ by: "press" })).toBe("claimed");
+    await p.engine.resume();
+    expect(p.through(), "the promotion kept the last tenure's start").toBeNull();
+
+    p.exec.direct("update mailboxes set organized_through = ? where id = ?", [stamp.getTime(), p.id]);
+    await p.meta.appendClaim(formatClaim({
+      installId: "another-install", kind: "local", displayName: "a laptop", heartbeat: new Date(Date.now() + 1_000),
+      claimedAt: new Date(Date.now() + 1_000), nonce: "laptop-take", authorizedAt: new Date(Date.now() + 1_000), capabilities: [],
+    }));
+    await p.engine.resume();
+    expect(p.engine.runtimes().organizer[p.id]?.organizing, "premise: the phone stood down").toBe(false);
+    expect(p.through(), "the stand-down kept the start").toBeNull();
   }, 60_000);
 
   it("the cross-install case: a fresh phone with the other install's settings unanswered waits; the import offers the letter", async () => {

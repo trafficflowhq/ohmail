@@ -951,6 +951,8 @@ export function mailServer() {
 
   return {
     server, addMessage, addRule, addFolder, seen,
+    /** Any change on /sync, as the server writes it — an entity this double has no verb for. */
+    push,
     /** Keys a Cancel tombstoned on this server. */
     withdrawnKeys: (): string[] => [...withdrawnKeys],
     /** `false` turns the withdraw route off: a server that predates it answers 404. */

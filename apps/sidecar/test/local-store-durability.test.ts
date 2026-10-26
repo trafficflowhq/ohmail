@@ -10,6 +10,7 @@ import {
 } from "../src/db.js";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { inStoreLane } from "../src/store-lanes.js";
+import { startEngineVitals } from "../src/vitals.js";
 import { freshDataDir } from "./_datadir.js";
 
 /**
@@ -83,7 +84,37 @@ describe("the local store's durability", () => {
     open.push(h);
     expect(await guc(h, "wal_sync_method"), "the log is not synced by the store's fsync, so a commit "
       + "no longer waits for its record").toBe("fsync");
+    // Each 1 MB segment zero-filled cost the engine's turns a run of fsyncs; recycling saves them.
+    expect(await guc(h, "wal_init_zero"), "a new log segment is zero-filled again").toBe("off");
+    expect(await guc(h, "wal_recycle"), "a checkpoint deletes freed log segments instead of reusing them").toBe("on");
   });
+
+  /* A segment created during a write is an fsync, a rename and a directory sync inside the commit
+     that needs it; one a checkpoint recycled is already there. */
+  it("writes a second batch after a checkpoint into the segments it freed, creating none", async () => {
+    const dir = await freshDataDir("ohmail-wal-recycle-");
+    dirs.push(dir);
+    const h = await openLocalDb(dir);
+    open.push(h);
+    const at = async () => Number(gucOf(await h.db.execute("select (pg_current_wal_insert_lsn() - '0/0'::pg_lsn)::bigint::text")));
+    const batch = async (bytes: number) => {
+      const start = await at();
+      while (await at() - start < bytes) {
+        await inStoreLane("ingest", () => h.db.transaction(async (tx) => {
+          await tx.execute("insert into churn select g, repeat('x', 400) from generate_series(1, 500) g");
+        }));
+      }
+      await h.db.execute("insert into churn values (0, '')"); // a synchronous commit writes the log out
+    };
+    await h.db.execute("create table churn (n int, pad text)");
+    await batch(6 * 1024 * 1024);
+    await h.checkpoint();
+    const wal = () => readdirSync(join(dir, "pgdata", "pg_wal")).filter((f) => /^[0-9A-F]{24}$/.test(f));
+    const kept = new Set(wal());
+    await batch(2 * 1024 * 1024);
+    const made = wal().filter((f) => !kept.has(f));
+    expect(made, `${made.length} log segments created by the second batch, each synced inside a commit`).toEqual([]);
+  }, 120_000);
 
   it("relaxes the flush inside the ingest's transaction and nowhere else, and still fsyncs", async () => {
     const dir = await freshDataDir("ohmail-durability-");
@@ -291,6 +322,8 @@ describe("the local store's durability", () => {
     const cps = lines.filter((l) => l.event === "local_db_checkpointed").map((l) => l.detail);
     expect(cps.map((d) => d.kind), "a checkpoint over the floor wrote no line").toEqual(["asked", "fold"]);
     expect(cps.every((d) => typeof d.totalMs === "number" && typeof d.dropped === "number")).toBe(true);
+    expect(cps.map((d) => typeof d.fsyncs === "number" && d.fsyncs > 0), "a checkpoint's line counts no fsync")
+      .toEqual([true, true]);
 
     const quiet: string[] = [];
     const dir2 = await freshDataDir("ohmail-slow-checkpoint-quiet-");
@@ -300,6 +333,31 @@ describe("the local store's durability", () => {
     await h2.checkpoint();
     expect(quiet.filter((e) => e === "local_db_checkpointed"), "a quick checkpoint that reclaimed "
       + "nothing wrote a line — the log is noise again").toEqual([]);
+  }, 120_000);
+
+  it("counts the store's fsyncs and their time on the engine's vitals line, per interval", async () => {
+    const dir = await freshDataDir("ohmail-vitals-fsync-");
+    dirs.push(dir);
+    const h = await openLocalDb(dir);
+    open.push(h);
+    const lines: Array<Record<string, unknown>> = [];
+    const stop = startEngineVitals((event, detail) => { if (event === "engine_vitals") lines.push(detail); }, {
+      storeBytes: () => h.storeBytes(), storeSyncs: () => h.storeSyncs(), intervalMs: 1_000,
+    });
+    try {
+      await h.db.execute("create table churn (n int)");
+      await h.db.execute("insert into churn select generate_series(1, 2000)");
+      await h.checkpoint();
+      const seen = lines.length;
+      await vi.waitFor(() => expect(lines.length).toBeGreaterThan(Math.max(1, seen)), { timeout: 5_000, interval: 50 });
+    } finally { stop(); }
+    const later = lines.slice(1);
+    expect(later.reduce((n, l) => n + (l.storeFsyncs as number), 0), "the interval's checkpoint synced nothing on the line")
+      .toBeGreaterThan(0);
+    expect(later.every((l) => typeof l.storeFsyncMs === "number")).toBe(true);
+    const count = h.storeSyncs()!;
+    expect(count.maxMs, "no fsync was timed").toBeGreaterThan(0);
+    expect(count.ms).toBeGreaterThanOrEqual(count.maxMs);
   }, 120_000);
 });
 

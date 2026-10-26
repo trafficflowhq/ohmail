@@ -45,12 +45,12 @@ import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cove
 import { Sheet, SheetRow } from "./Sheet";
 import { useBottomChromeExtent } from "./bottom-chrome";
 import {
-  MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railFit, railItemsMemo, railOffsetFor, readerChromeOverlap,
+  MARK_HOLD_MS, RAIL_HIT_SLOP, RAIL_MORE, RAIL_PITCH, RAIL_TOP, arrivalsToAsk, markUnreadOffered, openedBodyFinal, railItemsMemo, readerChromeOverlap, slotOf,
   readerGroups, type RailItem,
 } from "./reader-marks";
 import { hideVisit, showVisit, visitRecordFor } from "./visit-records";
 import { threadHeading } from "./thread-heading";
-import { MARK_RING, MarkSheet, MarkSquare, ringRadius, useMarkHold, type MarkHold } from "./MarkSquare";
+import { MARK_RING, MarkRing, MarkSheet, MarkSquare, ringRest, useMarkHold, useSquaresWindow, type MarkHold } from "./MarkSquare";
 import {
   bindThreadJump, clearThreadPlace, publishThreadPlace, takeThreadPending, threadPending, threadPlace,
 } from "../state/thread-place";
@@ -909,9 +909,10 @@ function ReadTint({ unread, style }: { unread: boolean; style: object }) {
  * reader draws the conversation here and the row's squares run): solid accent unread, dimmed read,
  * hollow the account's own; the current message ringed (neutral, never the accent): the engine's
  * walk, first at the top and last at the very end. A tap brings that message's top to the walk's
- * reading line and holds its ring until the person drags. Marks, never a count. It fits the reader's height less what of the
- * bottom chrome stands over it — closer squares first, and past that it scrolls, keeping the ringed
- * square in view — so the newest squares are never under the bar or off the screen (`railFit`).
+ * reading line and holds its ring until the person drags. It fits the reader's height less what of
+ * the bottom chrome stands over it: past that a window over the conversation follows the ring
+ * (`useSquaresWindow`), the squares at an edge that hides more tapered and "+N" there counting them,
+ * so the ringed square is always whole in view and nothing scrolls.
  */
 function ReaderRail({ items, here, over, onJump, marks }: {
   items: readonly RailItem[];
@@ -922,24 +923,28 @@ function ReaderRail({ items, here, over, onJump, marks }: {
   /** The held square: the reader's, so its own drag drops the sheet too. */
   marks: MarkHold;
 }) {
-  const t = useTheme();
   const n = items.length;
   const [height, setHeight] = useState<number | null>(null);
   const room = height === null ? null : Math.max(0, height - over);
-  const { pitch, scrolls } = railFit(n, room);
-  const list = useRef<ScrollView>(null);
   const at = items.findIndex((it) => it.id === here);
-  useEffect(() => {
-    if (!scrolls || room === null || at < 0) return;
-    list.current?.scrollTo({ y: railOffsetFor(at, n, pitch, room), animated: false });
-  }, [scrolls, room, at, n, pitch]);
-  const ring = Math.min(MARK_RING, pitch);
+  const run = useSquaresWindow(n, at, room === null ? null : room - RAIL_TOP, RAIL_PITCH, RAIL_MORE);
+  const older = run?.from ?? 0;
+  const newer = run === null ? 0 : n - run.to;
+  const slots = items.map((_, i) => slotOf(RAIL_PITCH, run?.scale[i] ?? 1));
+  const ringAt = ringRest(slots, at, RAIL_TOP + (older > 0 ? RAIL_MORE : 0));
   /* A held square's sheet stands right of the rail under its square (over it near the foot), never on a square. */
   const { held, hold, release, drop } = marks;
   const heldAt = held === null ? -1 : items.findIndex((it) => it.id === held);
-  const railY = useRef(0);
   const [sheetH, setSheetH] = useState(0);
   const win = useWindowDimensions();
+  const more = (k: number, side: "old" | "new") => (
+    <View testID={`more-${side}`} pointerEvents="none" style={{ height: RAIL_MORE, flexDirection: "row" }}>
+      {/* as wide as the count from the rail's start: a short one centred on the rail, "+109" runs on beside it */}
+      <View style={{ position: "absolute", left: 0, top: 0, bottom: 0, minWidth: 22, flexDirection: "row", alignItems: "center", justifyContent: "center" }}>
+        <Txt variant="caption" tone="ink3" tabular numberOfLines={1}>{Copy.rowMarksMore(k)}</Txt>
+      </View>
+    </View>
+  );
   const squares = items.map((it, i) => (
     <Tap
       key={it.id}
@@ -955,42 +960,34 @@ function ReaderRail({ items, here, over, onJump, marks }: {
       delayLongPress={MARK_HOLD_MS}
       onPressOut={release}
       hitSlop={RAIL_HIT_SLOP}
-      style={{ height: pitch, width: 22, alignItems: "center", justifyContent: "center" }}
+      style={{ height: slots[i], width: 22, alignItems: "center", justifyContent: "center" }}
     >
       <View
         style={{
-          width: ring, height: ring, alignItems: "center", justifyContent: "center",
-          borderWidth: it.id === here ? 1.5 : 0, borderColor: t.c.ink3, borderRadius: ringRadius(t.radius.focus),
+          // never taller than its slot: a hidden square's box would take presses beside it
+          width: MARK_RING, height: Math.min(MARK_RING, slots[i]!), alignItems: "center", justifyContent: "center",
         }}
       >
-        <MarkSquare kind={it.kind} />
+        <MarkSquare kind={it.kind} scale={run?.scale[i] ?? 1} />
       </View>
     </Tap>
   ));
-  const under = RAIL_TOP + (heldAt + 1) * pitch - railY.current + 4;
-  const sheetTop = room !== null && sheetH > 0 && under + sheetH > room ? Math.max(0, under - pitch - 8 - sheetH) : under;
+  const under = RAIL_TOP + (older > 0 ? RAIL_MORE : 0) + slots.slice(0, heldAt + 1).reduce((a, b) => a + b, 0) + 4;
+  const sheetTop = room !== null && sheetH > 0 && under + sheetH > room ? Math.max(0, under - slots[heldAt]! - 8 - sheetH) : under;
   return (
     <View
       accessibilityRole="toolbar"
       accessibilityLabel={Copy.readerMarksAria}
-      style={{ width: 22, alignSelf: "stretch", zIndex: heldAt >= 0 ? 2 : 0 }}
+      style={{ width: 22, alignSelf: "stretch", zIndex: heldAt >= 0 ? 2 : 1 }}
       onLayout={(e) => setHeight(e.nativeEvent.layout.height)}
     >
-      {scrolls && room !== null ? (
-        <ScrollView
-          ref={list}
-          style={{ height: room, flexGrow: 0 }}
-          contentContainerStyle={{ paddingTop: RAIL_TOP }}
-          showsVerticalScrollIndicator={false}
-          onScroll={(e) => { railY.current = e.nativeEvent.contentOffset.y; }}
-          onScrollBeginDrag={drop}
-          scrollEventThrottle={16}
-        >
-          {squares}
-        </ScrollView>
-      ) : (
-        <View style={{ paddingTop: RAIL_TOP }}>{squares}</View>
-      )}
+      {/* no clip: the window fits the room, and a long count runs on over the reader's margin */}
+      <View style={{ paddingTop: RAIL_TOP, ...(room !== null ? { maxHeight: room } : {}) }}>
+        {older > 0 ? more(older, "old") : null}
+        {squares}
+        {newer > 0 ? more(newer, "new") : null}
+        {ringAt === null ? null : <MarkRing testID="ring-rail" along="top" at={ringAt} cross={(22 - MARK_RING) / 2} />}
+      </View>
       {heldAt >= 0 ? (
         <MarkSheet
           item={items[heldAt]!}

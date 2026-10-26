@@ -442,6 +442,10 @@ export const mailboxes = sqliteTable("mailboxes", {
   gapPressedAt: integer("gap_pressed_at", { mode: "timestamp_ms" }),
   /** Mail 0158 — the gap offer's stranger count; see the pg twin. LAST for 0111's reason. */
   gapStrangers: integer("gap_strangers"),
+  /** Mail 0169 — where a hand-back's gap window starts; see the pg twin. LAST for 0111's reason. */
+  organizedThrough: integer("organized_through", { mode: "timestamp_ms" }),
+  /** Mail 0169 — the last instant this row said another install held it; see the pg twin. LAST for 0111's reason. */
+  heldElsewhereUntil: integer("held_elsewhere_until", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.

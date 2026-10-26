@@ -52,9 +52,10 @@ export interface CloudTokens {
  * (the latter under that code). `renewing` is an answer that was not a
  * verdict (a firewall's 403, a busy 503, a 429, an uncoded 401); `unreachable` is no answer at
  * all; `seal_failed` is a renewal withheld because its attempt could not be written to disk
- * first. Every state but `refused` keeps the session and retries on its own clock.
+ * first. Every state but `refused` keeps the session and retries on its own clock. `refused_before`
+ * is the engine's alone: a launch with no session saying the refusal an earlier run heard.
  */
-type CloudSessionState = "live" | "renewing" | "unreachable" | "refused" | "seal_failed";
+type CloudSessionState = "live" | "renewing" | "unreachable" | "refused" | "seal_failed" | "refused_before";
 
 export interface CloudSessionReading {
   state: CloudSessionState;
@@ -69,7 +70,7 @@ export interface CloudSessionReading {
  * legacy `unauthorized` stays until every server this build meets names the three; a 401 with no
  * code of ours is a platform's answer and is retried like any other fault.
  */
-const REFUSAL_CODES: ReadonlySet<string> = new Set([
+export const REFUSAL_CODES: ReadonlySet<string> = new Set([
   "refresh_missing", "refresh_expired", "refresh_revoked", "unauthorized",
 ]);
 

@@ -191,7 +191,7 @@ describe("a replayed card decision reads its letters again", () => {
     const second = await mountState(engineOver(store, server));
     await second.bump();
     await act(async () => { await Promise.resolve(); });
-    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX" }]);
+    expect(sent.filter((m) => m.kind === "move")).toEqual([{ kind: "move", messageId: "i1", folder: "ohmail/News", from: "INBOX", pressRule: true }]);
     expect(server.get("i1")).toBe("ohmail/Receipts");
   });
 

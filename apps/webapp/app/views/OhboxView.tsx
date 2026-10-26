@@ -9,7 +9,7 @@
 import * as React from "react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { useRowBadgeCopy } from "../shell/row-copy";
+import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
 import { rowThread, rowThreadOf } from "../shell/row-thread";
 import {
   arrivalMs, conversationKeyOf, countWhen, createThreadRead, foldOhboxRows, isOwnSent, isResurfaced, listSurface, ohboxUnreadIds,
@@ -42,7 +42,7 @@ import { sharedNotOrganizedWhy, type NotOrganizingYet } from "../shell/mail-stat
 import { displayAddress } from "../shell/idn";
 import type { UndoLink } from "../shell/shell-dispatch";
 import type { OhboxRowGroup } from "./ohbox-groups";
-import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, sentAvatarOf, sentRowRecipient, tagsOfMessage, hueOf } from "../shell/format";
+import { PLACE_LABEL, avatarOf, resurfaceLabel, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
@@ -1805,25 +1805,8 @@ export function OhboxView({
     pick(id);
   }, [pickRangeTo, togglePick]);
 
-  /**
-   * OWN-SENT ROWS NAME THE RECIPIENT — "Me → Nora Lindt", never the writer's own identity.
-   *
-   * A sent row's `from` is the reader themselves, which is the one fact on the row that says
-   * nothing; who it WENT TO is the row's whole context. The first To recipient's display name
-   * (their address where there is none), "+N" for the rest, and the circle carries the
-   * recipient's initial and hue — the person the row is about. `null` keeps the ordinary
-   * sender display: a received row, or a sent row whose mirror predates recipients on the
-   * wire (empty `to`) — never "Me →" with nothing after the arrow.
-   */
-  const sentLabelOf = (m: EngineMessage): { label: string; avatar: { avatarInitial: string; avatarHue: number } } | null => {
-    const r = sentRowRecipient(m);
-    if (!r) return null;
-    const label =
-      r.extra > 0
-        ? t("rowSentToMore", { name: r.name, count: r.extra })
-        : t("rowSentTo", { name: r.name });
-    return { label, avatar: sentAvatarOf(r) };
-  };
+  /** An own-sent row is labelled by its recipient — see `useSentLabel`. */
+  const sentLabelOf = useSentLabel();
 
   /**
    * A message's circle in the participant-stack's shape — the SAME derivation the row's own

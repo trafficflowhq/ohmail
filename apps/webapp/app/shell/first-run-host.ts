@@ -70,9 +70,15 @@ export type FirstRunOrganizeOutcome =
   | "gone"
   /**
    * Refused, nothing written: another install is renewing its claim and the press did not ask to
-   * take the mailbox over. The flow re-reads and asks the claim question.
+   * take the mailbox over. The flow waits for a read that names the holder and asks the claim
+   * question.
    */
-  | "held";
+  | "held"
+  /**
+   * Refused, nothing written: the door could not see whether another install organizes the
+   * mailbox. The flow says so and stays.
+   */
+  | "unchecked";
 
 /**
  * WHAT THE PRESS ASKS FOR. `"takeover"` only after the person chose "Organize here instead";

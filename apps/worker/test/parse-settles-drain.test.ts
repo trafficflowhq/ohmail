@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -150,4 +150,66 @@ describe("the drain continues past a message whose parser callback throws", () =
       .where(eq(messageFailures.mailboxId, mailboxId));
     expect(failed.map((r) => r.code)).toEqual(["mime_unparseable"]);
   }, 60_000);
+});
+
+describe("the drain on a loaded machine", () => {
+  // The rig's shape: a 1.6 MB letter of three ~540 KB inline images, synthetic bytes.
+  const heavy = (id: string): Buffer => Buffer.from([
+    "From: Letter <news@example.com>", "To: reader@example.com", "Subject: heavy", `Message-ID: <${id}>`, "X-Heavy: 1",
+    'Content-Type: multipart/related; boundary="B"', "", "--B", "Content-Type: text/html; charset=utf-8", "",
+    '<html><body><img src="cid:a@example.com"><img src="cid:b@example.com"><img src="cid:c@example.com"></body></html>', "",
+    ...["a", "b", "c"].flatMap((cid) => ["--B", "Content-Type: image/png", "Content-Transfer-Encoding: base64",
+      `Content-ID: <${cid}@example.com>`, "Content-Disposition: inline", "",
+      randomBytes(400_000).toString("base64").replace(/.{76}/g, "$&\r\n"), ""]),
+    "--B--", "",
+  ].join("\r\n"));
+
+  it("a heavy letter on a busy engine is stored and the letter behind it lands; nothing is deferred", async () => {
+    const ACCOUNT = "00000000-0000-4000-8000-00000000fb27";
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [mb] = await db.insert(mailboxes).values({
+      accountId: ACCOUNT, provider: "imap", address: `heavy-${randomUUID().slice(0, 8)}@example.com`,
+    }).returning();
+    const mailboxId = mb!.id;
+    const fleet = new FakeAdapterFleet();
+    const adapter = fleet.factory(
+      { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId: ACCOUNT, mailboxId, onConnectionError: () => { /* nothing dials here */ } },
+    );
+    const tag = randomUUID();
+    fleet.behave(mailboxId, {
+      deliver: [
+        { from: "news@example.com", subject: "heavy", messageId: `heavy-${tag}@example.com`, raw: heavy(`heavy-${tag}@example.com`) },
+        { from: "news@example.com", subject: "after", messageId: `after-${tag}@example.com` },
+      ],
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    // From the heavy letter's first chunk on, every turn of the loop also spends a second elsewhere.
+    let hogging = false;
+    let stopped = false;
+    proto.processChunk = function (this: { headers?: unknown }, ...args: unknown[]) {
+      if (!hogging && this.headers instanceof Map && this.headers.has("x-heavy")) {
+        hogging = true;
+        let turns = 0;
+        const spin = (): void => { if (stopped || ++turns > 400) return; vi.advanceTimersByTime(1_000); setImmediate(spin); };
+        setImmediate(spin);
+      }
+      return originals.processChunk.apply(this, args);
+    };
+    let thrown: unknown = null;
+    try {
+      await runSyncCycle({
+        writeAuthority: FIXTURE_LEASE,
+        repo: makeDrizzleRepo(db as never), adapter, accountId: ACCOUNT, mailboxId,
+        storageCap: UNMETERED_STORAGE_CAP, role: "organizer", trustedAuthservIds: new Set<string>(),
+      }).catch((e: unknown) => { thrown = e; });
+    } finally {
+      stopped = true;
+    }
+    expect(hogging, "the heavy letter was never parsed").toBe(true);
+    expect(thrown, "the cycle failed on the heavy letter").toBeNull();
+    const landed = await db.select({ subject: messages.subject }).from(messages).where(eq(messages.mailboxId, mailboxId));
+    expect(landed.map((m) => m.subject).sort()).toEqual(["after", "heavy"]);
+    expect(await db.select().from(messageFailures).where(eq(messageFailures.mailboxId, mailboxId))).toEqual([]);
+  }, 120_000);
 });

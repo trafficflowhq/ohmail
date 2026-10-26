@@ -98,10 +98,10 @@ const REGISTRY: Record<string, Partial<Record<Verb, Seam>>> = {
         + "this install wrote and never heard back about is its own at every one of them",
     },
     appendClaim: {
-      calls: 1,
+      calls: 2,
       upholds: "identity-recorded-before-the-write",
-      why: "the one write of a claim in this product, with the minted nonce handed to the caller "
-        + "on the line before it — nothing may come between",
+      why: "the write of a claim, and a confirmed join's second write of it carrying its press, "
+        + "each with its minted nonce handed to the caller just before it — nothing may come between",
     },
     removeClaims: {
       calls: 5,

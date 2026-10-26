@@ -10,8 +10,10 @@ import { accounts, folderState, mailboxes, messages, routingDecisions, rules } f
 import { schema } from "@trafficflow/db/cloud";
 import type { Tx } from "@trafficflow/db";
 import { gapCatchupPass } from "../src/gap-catchup.js";
-import { clearOrganizerStandDown, markMailboxReleased, readTravellingGapSince, refreshOrganizerHolder } from "../src/mailboxes.js";
-import { gapOpenStart, type TravelledGap } from "../src/gap-window.js";
+import {
+  clearOrganizerStandDown, markMailboxReleased, markMailboxStoodDown, readTravellingGapSince, refreshOrganizerHolder,
+} from "../src/mailboxes.js";
+import { GAP_CLOCK_ALLOWANCE_MS, gapOpenStart, markOrganizedThrough, type TravelledGap } from "../src/gap-window.js";
 
 /**
  * A HAND-BACK OPENS THE GAP AT THE RELEASE, NOT ONE LOOK LATER. The letter is taken in
@@ -195,10 +197,12 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     expect(k).toMatchObject({ desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
   }, 60_000);
 
-  it("CONTROL: a letter taken in before the person pressed is not in the window", async () => {
+  it("CONTROL: a letter that arrived before the tenure's last finished drain is not in the window", async () => {
     const w = await organizedWithAStop();
     await db.update(mailboxes).set({ releaseRequestedAt: null }).where(eq(mailboxes.id, w.mailboxId));
     const before = await readerTakesIn(w, await storeNow());
+    await new Promise((r) => setTimeout(r, 30));
+    await markOrganizedThrough(db as unknown as Tx, w.mailboxId, await storeNow());
     await new Promise((r) => setTimeout(r, 30));
     await db.update(mailboxes).set({ releaseRequestedAt: await storeNow() }).where(eq(mailboxes.id, w.mailboxId));
     expect(await markMailboxReleased(db as never, w.mailboxId)).toBe(true);
@@ -208,6 +212,52 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     expect((await rowOf(w.mailboxId)).letters).toBeNull();
     const [kept] = await db.select().from(folderState).where(eq(folderState.messageId, before));
     expect(kept).toMatchObject({ desiredFolder: "INBOX", lastSetBy: "peer" });
+  }, 60_000);
+
+  it("mail 0169: the window starts at the last finished drain, never after the press; unknown, at the press less the allowance", async () => {
+    const w = await organizedWithAStop();
+    const pressed = (await rowOf(w.mailboxId)).releaseRequestedAt!;
+    const drained = new Date(pressed.getTime() - 45_000);
+    await markOrganizedThrough(db as unknown as Tx, w.mailboxId, drained);
+    // Forward only: an older drain never moves the start back.
+    await markOrganizedThrough(db as unknown as Tx, w.mailboxId, new Date(drained.getTime() - 60_000));
+    const between = await readerTakesIn(w, new Date(drained.getTime() + 5_000));
+    const older = await readerTakesIn(w, new Date(drained.getTime() - 5_000));
+    expect(await markMailboxReleased(db as never, w.mailboxId)).toBe(true);
+    const released = await db.select({ since: mailboxes.gapSince, through: mailboxes.organizedThrough })
+      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId));
+    expect(released[0]!.since?.getTime(), "the window did not start at the last finished drain").toBe(drained.getTime());
+    expect(released[0]!.through, "the release kept the tenure's start").toBeNull();
+    await organizeHere(w.mailboxId);
+    expect(await gapCatchupPass(db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR }))
+      .toEqual({ offered: 1, moved: 0, completed: 0 });
+    await db.update(mailboxes).set({ gapPressedAt: new Date() }).where(eq(mailboxes.id, w.mailboxId));
+    await gapCatchupPass(db as unknown as Tx, { accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR });
+    const decided = await db.select({ m: routingDecisions.messageId }).from(routingDecisions)
+      .where(eq(routingDecisions.accountId, w.accountId));
+    expect(decided.map((d) => d.m), "the letter before the last drain was filed").toEqual([between]);
+    const [kept] = await db.select().from(folderState).where(eq(folderState.messageId, older));
+    expect(kept).toMatchObject({ desiredFolder: "INBOX", lastSetBy: "peer" });
+
+    // A drain stamped after the press (a skewed store) never starts the window after it.
+    const late = await organizedWithAStop();
+    const latePress = (await rowOf(late.mailboxId)).releaseRequestedAt!;
+    await markOrganizedThrough(db as unknown as Tx, late.mailboxId, new Date(latePress.getTime() + 60_000));
+    expect(await markMailboxReleased(db as never, late.mailboxId)).toBe(true);
+    expect((await rowOf(late.mailboxId)).since?.getTime()).toBe(latePress.getTime());
+
+    // Unknown: the press less the allowance.
+    const unknown = await organizedWithAStop();
+    const unknownPress = (await rowOf(unknown.mailboxId)).releaseRequestedAt!;
+    expect(await markMailboxReleased(db as never, unknown.mailboxId)).toBe(true);
+    expect((await rowOf(unknown.mailboxId)).since?.getTime()).toBe(unknownPress.getTime() - GAP_CLOCK_ALLOWANCE_MS);
+
+    // A reader's row records nothing.
+    const reader = await organizedWithAStop();
+    await db.update(mailboxes).set({ organizerRole: "reader" }).where(eq(mailboxes.id, reader.mailboxId));
+    await markOrganizedThrough(db as unknown as Tx, reader.mailboxId, drained);
+    const [r] = await db.select({ t: mailboxes.organizedThrough }).from(mailboxes).where(eq(mailboxes.id, reader.mailboxId));
+    expect(r!.t, "a reader recorded a start").toBeNull();
   }, 60_000);
 
   it("an earlier window keeps its start, and the wall's park opens none", async () => {
@@ -265,11 +315,14 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const opts = (w: { accountId: string }) => ({ accountId: w.accountId, trustedAuthservIdsFor: NONE, clearanceFor: CLEAR });
 
-  it("travelling since: a closed window leaves the press; an uncounted one its own start; a counted one the press", async () => {
+  it("travelling since: a closed window leaves the press less the allowance, or the last finished drain; an uncounted one its own start; a counted one the press", async () => {
     const closed = await organizedWithAStop();
     const pressed = (await rowOf(closed.mailboxId)).releaseRequestedAt!;
     const k1 = await readTravellingGapSince(db as never, closed.mailboxId, SELF);
-    expect(k1).toMatchObject({ since: pressed.toISOString(), by: SELF });
+    expect(k1).toMatchObject({ since: new Date(pressed.getTime() - GAP_CLOCK_ALLOWANCE_MS).toISOString(), by: SELF });
+    const drained = new Date(pressed.getTime() - 20_000);
+    await markOrganizedThrough(db as unknown as Tx, closed.mailboxId, drained);
+    expect((await readTravellingGapSince(db as never, closed.mailboxId, SELF))?.since).toBe(drained.toISOString());
     expect(Date.parse(k1!.at)).toBeGreaterThanOrEqual(Date.parse(k1!.since));
 
     const uncounted = await organizedWithAStop();
@@ -282,7 +335,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     await db.update(mailboxes).set({ gapSince: offered, gapLetters: 3 }).where(eq(mailboxes.id, counted.mailboxId));
     const press = (await rowOf(counted.mailboxId)).releaseRequestedAt!;
     expect((await readTravellingGapSince(db as never, counted.mailboxId, SELF))?.since, "a counted window travelled")
-      .toBe(press.toISOString());
+      .toBe(new Date(press.getTime() - GAP_CLOCK_ALLOWANCE_MS).toISOString());
     // …while the row keeps its own window and its offer.
     expect(await markMailboxReleased(db as never, counted.mailboxId)).toBe(true);
     expect(await rowOf(counted.mailboxId)).toMatchObject({ since: offered, letters: 3 });
@@ -553,5 +606,53 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
     expect(said.find((l) => l.event === "gap_catchup_withheld")?.fields).toMatchObject({ mailboxId: w.mailboxId, outcome: "held" });
     expect(await rowOf(w.mailboxId)).toMatchObject({ since: key.since, letters: null });
     expect(await offered(w), "the window kept under the hold was not the key's").toBe(1);
+  }, 60_000);
+
+  /* ── MAIL 0169: A LETTER TAKEN IN WHILE ANOTHER INSTALL HELD THE MAILBOX IS NEVER GAP MAIL ──────
+     Each write that ends the held stretch stamps it, and the window never reaches back over it. A
+     letter dated a minute ahead (the server's clock ahead of the store's) passes the arrival bound,
+     so only the intake floor keeps it out. Each CONTROL, with nobody held, counts the same letter. */
+  const heldBy = async (state: "held" | "stopped") =>
+    ({ kind: "local", installId: "the-laptop", displayName: "Laptop", claimedAt: await storeNow(), state, capabilities: null }) as never;
+  const heldLook = async (id: string) =>
+    expect(await refreshOrganizerHolder(db as never, id, await heldBy("held"), { gap: "close", stateChanged: true })).toBe(true);
+  const takenInAhead = async (w: { accountId: string; mailboxId: string }) =>
+    readerTakesIn(w, new Date((await storeNow()).getTime() + 60_000));
+
+  it("mail 0169: the look that finds the holder gone ends the held stretch; CONTROL — with nobody held the letter is counted", async () => {
+    for (const held of [true, false]) {
+      const w = await readerRow();
+      if (held) await heldLook(w.mailboxId);
+      await takenInAhead(w);
+      await wait(20);
+      expect(await refreshOrganizerHolder(db as never, w.mailboxId, NOBODY, { gap: "open", stateChanged: held })).toBe(true);
+      expect(await offered(w), held ? "a letter taken in while held was counted" : "the control was left out").toBe(held ? null : 1);
+    }
+  }, 60_000);
+
+  it("mail 0169: a Stop soon after taking a held mailbox over starts at the takeover; CONTROL — with nobody held, at the press less the allowance", async () => {
+    for (const held of [true, false]) {
+      const w = await readerRow();
+      if (held) await heldLook(w.mailboxId);
+      await readerTakesIn(w, await storeNow());
+      await wait(20);
+      await organizeHere(w.mailboxId);
+      await db.update(mailboxes).set({ releaseRequestedAt: new Date() }).where(eq(mailboxes.id, w.mailboxId));
+      expect(await markMailboxReleased(db as never, w.mailboxId)).toBe(true);
+      expect(await offered(w), held ? "a letter taken in while held was counted" : "the control was left out").toBe(held ? null : 1);
+    }
+  }, 60_000);
+
+  it("mail 0169: a hand-back withheld behind a live holder, or a stand-down to a stopped claim, ends the held stretch", async () => {
+    for (const exit of ["release", "stand-down"] as const) {
+      const w = await organizedWithAStop();
+      await heldLook(w.mailboxId);
+      await takenInAhead(w);
+      await wait(20);
+      expect(exit === "release" ? await markMailboxReleased(db as never, w.mailboxId)
+        : await markMailboxStoodDown(db as never, w.mailboxId, "organized_elsewhere:local", { by: await heldBy("stopped") })).toBe(true);
+      expect(await refreshOrganizerHolder(db as never, w.mailboxId, NOBODY, { gap: "open", stateChanged: true })).toBe(true);
+      expect(await offered(w), `a letter taken in while held was counted after the ${exit}`).toBeNull();
+    }
   }, 60_000);
 });

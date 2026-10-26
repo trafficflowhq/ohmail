@@ -156,6 +156,8 @@ export interface MailboxProfileEntity {
   asOf: string;
   from: { kind: string | null; name: string | null; since: string | null };
   updatedAt: string;
+  /** The request ids the organizer says this copy includes; `null` or absent = unstated. */
+  applied?: string[] | null;
 }
 
 export interface ScreenerSuggestionEntity {

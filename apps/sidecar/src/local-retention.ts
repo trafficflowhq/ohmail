@@ -1,5 +1,5 @@
 import {
-  AUDIT_LOG_RETENTION_MS, RETENTION_DELETE_BATCH, pruneAuditLog, pruneChangeLogForAccount, type Tx,
+  AUDIT_LOG_RETENTION_MS, RETENTION_DELETE_BATCH, pruneAuditLog, pruneChangeLogForAccount, pruneIdempotencyKeys, type Tx,
 } from "@trafficflow/db";
 import { ingestIsRunning } from "./store-lanes.js";
 import type { Diagnostic } from "./log.js";
@@ -24,8 +24,9 @@ export function localRetentionDue(db: object, clocks: CadenceClocks = SYSTEM_CLO
 }
 
 /**
- * One pass: the change-log compaction (floor first, then one batch) and one audit-log batch.
- * Contained — a failure is logged and the next due drain asks again; the floor only rises.
+ * One pass: the change-log compaction (floor first, then one batch), one audit-log batch, and one
+ * batch of the request keys past their day (the hosted worker's prune; a key outlives nothing it
+ * answers). Contained — a failure is logged and the next due drain asks again; the floor only rises.
  */
 export async function runLocalRetention(
   db: Tx, accountId: string, now: Date, log: Diagnostic, clocks: CadenceClocks = SYSTEM_CLOCKS,
@@ -34,7 +35,8 @@ export async function runLocalRetention(
   try {
     const cl = await pruneChangeLogForAccount(db, accountId, now, { batch: RETENTION_DELETE_BATCH, maxBatches: 1 });
     const audit = await pruneAuditLog(db, now, AUDIT_LOG_RETENTION_MS, RETENTION_DELETE_BATCH);
-    if (cl.deleted > 0 || audit > 0) log("local_retention_pruned", { pruned: cl.deleted, removed: audit });
+    const keys = await pruneIdempotencyKeys(db, now, RETENTION_DELETE_BATCH);
+    if (cl.deleted > 0 || audit > 0 || keys > 0) log("local_retention_pruned", { pruned: cl.deleted, removed: audit + keys });
   } catch (err) {
     log("local_retention_failed", {
       err,

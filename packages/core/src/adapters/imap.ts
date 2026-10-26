@@ -3318,6 +3318,43 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     return entry.dates;
   }
 
+  /**
+   * THE SERVER'S INTERNALDATE FOR THESE UIDS of one folder, for a store that lost its arrival times.
+   * Read-only (EXAMINE, `UID FETCH (UID INTERNALDATE)`): no flags, no body, no write. Nothing when the
+   * folder's UIDVALIDITY is not `uidValidity` (the UIDs name other letters); only the UIDs it asked;
+   * a UID the server does not answer for, or dates unreadably, is left out.
+   */
+  async readArrivals(folder: string, uidValidity: string, uids: readonly number[]): Promise<Map<number, Date>> {
+    const out = new Map<number, Date>();
+    const wanted = [...new Set(uids)].filter((u) => Number.isInteger(u) && u > 0).sort((a, b) => b - a);
+    if (wanted.length === 0) return out;
+    let lock: { release(): void };
+    try {
+      lock = await this.bounded(this.client.getMailboxLock(this.toServerPath(folder), { readOnly: true }));
+    } catch (err) {
+      if (err instanceof ImapBoundExceeded) throw err;
+      return out;   // folder not present / not selectable
+    }
+    try {
+      const mb = this.client.mailbox as MailboxObject | false;
+      if (!mb || !sameEpoch(epochOf(mb.uidValidity), epochOf(uidValidity))) return out;
+      const deadline = this.readDeadline();
+      const maxUids = this.config.dateReadCommandSize ?? ImapAdapter.DATE_FETCH_MAX_UIDS;
+      for (const chunk of uidSetChunks(wanted, ImapAdapter.DATE_FETCH_CHUNK, maxUids)) {
+        const asked = new Set(chunk.uids);
+        const rows = await boundedCollect(this.client.fetch(chunk.set, { uid: true, internalDate: true }, { uid: true }), {
+          max: 2 * chunk.uids.length + 16, bound: "page_rows", deadline, folder,
+          onAbandon: (_notify, because) => this.retireConnection(because),
+          map: (m) => (askedRow(m, asked, "date") ? { uid: m.uid, at: imapDateTime(m.internalDate) } : null),
+        });
+        for (const r of rows) if (r !== null && r.at !== null) out.set(r.uid, r.at);
+      }
+      return out;
+    } finally {
+      lock.release();
+    }
+  }
+
   /** Ranges per date-lookup command — the command's LENGTH, at most ~6 KiB on the wire. */
   private static readonly DATE_FETCH_CHUNK = 500;
 

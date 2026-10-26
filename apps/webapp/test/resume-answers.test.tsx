@@ -32,6 +32,11 @@ const json = (body: unknown, status: number, headers: Record<string, string> = {
 const db503 = (): Response =>
   json({ error: { code: "db_busy", retryable: true, message: "busy" } }, 503, { "retry-after": "5" });
 const refused = (code: string) => (): Response => json({ error: { code, message: "refused" } }, 401);
+/** The refusal as the server sends it: `clearSessionCookies()` takes `tf_owner` with the rest of the jar. */
+const refusedClearing = (code: string) => (): Response => {
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  return refused(code)();
+};
 const platform401 = (): Response => new Response("<html>401</html>", { status: 401, headers: { "content-type": "text/html" } });
 const minted = (): Response => new Response(null, { status: 204 });
 
@@ -196,6 +201,25 @@ describe("(d) the door's refusals go to /login on the FIRST attempt, with the se
     expect(sessionStorage.getItem(NOTE_KEY)).toBe(note);
     await tick(10_000);
     expect(refreshes).toBe(1);
+  });
+
+  it.each([
+    ["refresh_revoked", "revoked"],
+    ["refresh_expired", "expired"],
+  ])("%s with the jar cleared as the server clears it — /login with note %s, never the landing page", async (code, note) => {
+    script = [refusedClearing(code)];
+    await mountResume();
+    expect(reloads, "the door's own refusal was read as a jar that changed hands").toBe(0);
+    expect(replaced).toEqual(["/login"]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBe(note);
+  });
+
+  it("the control: a refusal that lands under another account's jar reloads, with no sentence", async () => {
+    script = [() => { document.cookie = "tf_owner=acct_B; Path=/"; return refused("refresh_revoked")(); }];
+    await mountResume();
+    expect(reloads).toBe(1);
+    expect(replaced).toEqual([]);
+    expect(sessionStorage.getItem(NOTE_KEY)).toBeNull();
   });
 });
 

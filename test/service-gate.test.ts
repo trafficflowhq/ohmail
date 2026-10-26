@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SERVICE_VERDICT_ENV } from "../packages/db/src/test-services.js";
+import { probeCondstore } from "../packages/core/test/adapters/_imapenv.js";
 import { SERVICE_GATE_PREFIX } from "./support/service-needs.mjs";
 import { isLoopback, probeServices, serviceAddresses, type ServiceAddresses } from "./support/services.js";
 
@@ -197,6 +198,32 @@ describe("the probe", () => {
     expect((await probeServices({ IMAP_CONDSTORE: "1" }, addresses({}))).dovecot?.up).toBe(true);
     await expect(probeServices({}, addresses({ rustfs: at("127.0.0.1", Number.NaN) }))).rejects.toThrow("cannot run");
   });
+
+  it("a listening Dovecot that holds a login for its auth penalty answers the CONDSTORE probe", async () => {
+    // As Dovecot answers a login from an address it refused one from a moment ago: 4 s later.
+    const mine: Socket[] = [];
+    const [srv, port] = await listen((s) => {
+      mine.push(s);
+      s.write("* OK [CAPABILITY IMAP4rev1 LOGIN-REFERRALS] Dovecot ready.\r\n");
+      s.on("data", (b: Buffer) => {
+        const line = b.toString("utf8");
+        if (/^p1 LOGIN /.test(line)) setTimeout(() => s.write("p1 OK Logged in\r\n"), 4_000);
+        else if (/^p2 CAPABILITY/.test(line)) s.write("* CAPABILITY IMAP4rev1 IDLE CONDSTORE\r\np2 OK done\r\n");
+      });
+    });
+    const saved = process.env[SERVICE_VERDICT_ENV];
+    const force = process.env.IMAP_CONDSTORE;
+    delete process.env.IMAP_CONDSTORE;
+    process.env[SERVICE_VERDICT_ENV] = JSON.stringify({ dovecot: { at: [`127.0.0.1:${port}`], up: true, why: "" } });
+    try {
+      expect(await probeCondstore("127.0.0.1", port)).toEqual({ ok: true });
+    } finally {
+      if (saved === undefined) delete process.env[SERVICE_VERDICT_ENV]; else process.env[SERVICE_VERDICT_ENV] = saved;
+      if (force !== undefined) process.env.IMAP_CONDSTORE = force;
+      for (const s of mine) s.destroy();
+      await new Promise<void>((r) => srv.close(() => r()));
+    }
+  }, 15_000);
 
   it("reads each address from the resolver its tests dial through, and keeps no credential", () => {
     const pg = new URL("postgres://localhost:5433/trafficflow_l_0123456789ab");

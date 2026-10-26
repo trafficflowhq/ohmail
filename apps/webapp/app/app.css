@@ -353,6 +353,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-receipts .stream {
   overflow-anchor: none;
 }
+/* The Screener's read column holds its own anchor too (`held-window.ts`): older held letters are
+   mounted above the reader, and the window moves `scrollTop` by exactly what it inserted. */
+.view-screener .scn-read {
+  overflow-anchor: none;
+}
 
 /* THE READING STREAMS' MOUNTED CARDS ARE MADE CHEAP OFF-SCREEN.
    Reads and Receipts mount an opening run of cards that grows toward the reader and never
@@ -430,6 +435,109 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 .view-reads .stream .scast:has(.cpop),
 .view-receipts .stream .scast:has(.cpop) {
   content-visibility: visible;
+}
+
+/* A LETTER ANSWERED IN PLACE (`stream-in-place.tsx`): the card's element holds the Ohbox's
+   conversation — no card skin, and the item takes the stream's left padding (12px, stream.css; both
+   sides from 1024, below), so at 1440 the paper stands where the Ohbox's does (x692, 736 wide, the
+   688 measure) and the squares' room is reserved from the start: the paper never moves when the
+   reply joins. */
+.view-reads .stream .scast.in-place,
+.view-receipts .stream .scast.in-place {
+  max-width: none;
+  margin: 0 0 20px -12px;
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+  content-visibility: visible;
+}
+.view-reads .stream .conv[data-stream],
+.view-receipts .stream .conv[data-stream] {
+  padding-left: 22px;
+}
+.view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
+.view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
+  width: 22px;
+}
+@media (max-width: 699.98px) {
+  .view-reads .stream .scast.in-place,
+  .view-receipts .stream .scast.in-place {
+    margin: 0 0 20px -6px;
+  }
+}
+@media (min-width: 1024px) {
+  .view-reads .stream .scast.in-place,
+  .view-receipts .stream .scast.in-place {
+    margin-right: -12px;
+  }
+  /* The split's seam: list | 12 | 18 rail | 12 | paper. */
+  .view-reads .stream .conv[data-stream],
+  .view-receipts .stream .conv[data-stream] {
+    padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
+  }
+  .view-reads .stream .conv[data-stream] > .thread-marks,
+  .view-receipts .stream .conv[data-stream] > .thread-marks {
+    top: var(--gap-edge);
+  }
+  .view-reads .stream .conv[data-stream] > .thread-marks > .tm-bar,
+  .view-receipts .stream .conv[data-stream] > .thread-marks > .tm-bar {
+    width: calc(var(--tm-rail) + var(--gap-rail));
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb,
+  .view-receipts .stream .conv[data-stream] .tm-mb {
+    grid-template-columns: var(--tm-rail) minmax(0, 1fr);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb::before {
+    content: "";
+    align-self: stretch;
+    justify-self: stretch;
+    pointer-events: none;
+    border-radius: calc(var(--r-ctl) * 5 / 8);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:hover,
+  .view-receipts .stream .conv[data-stream] .tm-mb:hover {
+    background: none;
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:hover::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb:hover::before {
+    background: var(--tint);
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible,
+  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible {
+    outline: none;
+  }
+  .view-reads .stream .conv[data-stream] .tm-mb:focus-visible::before,
+  .view-receipts .stream .conv[data-stream] .tm-mb:focus-visible::before {
+    outline: var(--focus-w) solid var(--accent);
+    outline-offset: -2px;
+  }
+  /* The squares stand a little left of the stream's box and the paper's ring at its right edge, as
+     in the reading column (message.css): while a letter is in place the stream takes the frame on
+     both sides (its content box does not move) and fades the left strip up to the squares. */
+  .view-reads .stream:has(> .scast.in-place),
+  .view-receipts .stream:has(> .scast.in-place) {
+    margin-left: calc(-1 * var(--gap-edge));
+    margin-right: calc(-1 * var(--gap-edge));
+    padding-left: calc(12px + var(--gap-edge));
+    padding-right: calc(12px + var(--gap-edge));
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 calc(var(--gap-edge) + min(0px, var(--gap-rail) - var(--gap-tile))));
+    mask-image: linear-gradient(to right, transparent, #000 calc(var(--gap-edge) + min(0px, var(--gap-rail) - var(--gap-tile))));
+  }
+}
+/* The Ohbox's dock: sticky at the stream's foot where the reading column's is (reader.css). */
+@media (min-width: 1024px) and (min-height: 640px) {
+  .view-reads .stream .scast.in-place .reply-dock,
+  .view-receipts .stream .scast.in-place .reply-dock {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding: 10px 0 12px;
+  }
+  .view-reads .stream .scast.in-place .reply-dock > .reply,
+  .view-receipts .stream .scast.in-place .reply-dock > .reply {
+    margin-top: 0;
+  }
 }
 
 /* ================= the sent-mail seed review ================= */
@@ -753,13 +861,11 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   }
 }
 
-/* ================= a newer ohmail =================
-   The update strip, a sibling of the sync strip and deliberately its quieter twin. Same
-   geometry — `flex: none` inside .shell, centred row, 11.5px — so the two cannot disagree about
-   what a shell-level sentence looks like, and a neutral ground rather than the accent because
-   this is information and the sync strip is a fault. Nothing about it is conditional on face or
-   layout: it reads tokens and nothing else. */
-.upd-bar {
+/* ================= this browser is not keeping it =================
+   The durability strips (`DurabilityNotice.tsx`, the paired page's `HostOutboxNotice.tsx`): a
+   fact about the whole app, said once, above everything — `flex: none` inside .shell, centred
+   row, 11.5px, on a neutral ground because this is information and the sync strip is a fault. */
+.ohx-durability {
   flex: none;
   display: flex;
   align-items: center;
@@ -772,10 +878,9 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   background: var(--tint);
   border-bottom: 1px solid var(--hair);
 }
-/* Both controls are the strip's own shape rather than the app's Button: a 22px-tall row cannot
-   hold a control built for a form without growing to twice its height, which is the difference
-   between a strip and a banner. */
-.upd-bar button {
+/* The strip's own control shape rather than the app's Button: a 22px-tall row cannot hold a
+   control built for a form without growing to twice its height. */
+.ohx-durability button {
   font: inherit;
   font-weight: 600;
   color: inherit;
@@ -785,25 +890,166 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   padding: 1px 9px;
   background: transparent;
 }
-.upd-bar .upd-do {
-  color: var(--on-accent);
-  background: var(--accent);
-}
-.upd-bar .upd-do:hover {
-  filter: brightness(1.06);
-}
-.upd-bar .upd-later {
+.ohx-durability .upd-later {
   color: var(--ink3);
 }
-.upd-bar .upd-later:hover {
+.ohx-durability .upd-later:hover {
   color: var(--ink2);
   background: var(--tint2);
 }
+/* ================= a newer ohmail: the update line =================
+   One quiet line at the rail's foot, above Command (`UpdateLine.tsx`): a mark, a sentence, a verb
+   and ×, in the rail's notice register — no box, no fill. A filled accent mark is an offer, one
+   press away; a hollow one a fact that asks nothing (downloading, a failure); a faded one an offer
+   held while a send waits. The mark rides the sentence's first line, so a sentence that wraps
+   wraps under itself and only the verbs drop to a row of their own. */
+.upd-line {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 4px;
+  row-gap: 2px;
+  padding: 3px 0 7px 8px;
+  font-size:calc(11.5px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink2);
+}
+.upd-mark {
+  display: inline-block;
+  vertical-align: middle;
+  width: 8px;
+  height: 8px;
+  margin: -2px 7px 0 0;
+  border-radius: var(--r-avatar);
+  background: var(--accent);
+}
+.upd-mark.hollow {
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+}
+.upd-mark.wait {
+  opacity: 0.5;
+}
+.ul-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.upd-line[data-s="downloading"] .ul-text,
+.upd-line[data-s="failed"] .ul-text {
+  color: var(--ink2);
+  font-weight: 500;
+}
+.ul-acts {
+  display: inline-flex;
+  align-items: center;
+  margin: -1px 0 -1px auto;
+}
+.ul-do,
+.ul-x {
+  font: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.ul-do {
+  font-weight: 600;
+  color: var(--accent-ink);
+  border-radius: var(--r-pill);
+  padding: 1px 5px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.ul-do:hover {
+  background: var(--accent-soft);
+}
+.ul-do[aria-disabled="true"] {
+  color: var(--ink3);
+  cursor: default;
+}
+.ul-do[aria-disabled="true"]:hover {
+  background: none;
+}
+.ul-x {
+  width: 18px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: calc(var(--r-ctl) * 6 / 8);
+  color: var(--ink3);
+}
+.ul-x:hover {
+  color: var(--ink);
+  background: var(--tint);
+}
+.ul-x svg {
+  width: 11px;
+  height: 11px;
+}
+/* Restart's hover: what a restart costs, said before it is pressed. */
+.ul-tip {
+  position: absolute;
+  left: 8px;
+  right: 0;
+  bottom: calc(100% - 2px);
+  z-index: 5;
+  padding: 4px 9px;
+  font-size:calc(11px + var(--type-up));
+  font-weight: 450;
+  line-height: 1.4;
+  color: var(--ink);
+  background: var(--float);
+  box-shadow: var(--lift-2);
+  border-radius: var(--r-ctl);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s var(--swift);
+}
+.upd-line:has(.ul-do:hover) .ul-tip,
+.upd-line:has(.ul-do:focus-visible) .ul-tip {
+  opacity: 1;
+}
+/* Why Restart waits, under the held verb, past the mark. */
+.upd-sub {
+  flex: 1 1 100%;
+  margin: -2px 0 0 15px;
+  font-size:calc(10.5px + var(--type-up));
+  line-height: 1.4;
+  color: var(--ink3);
+}
+.upd-track {
+  flex: 0 0 auto;
+  width: 100%;
+  margin-top: 4px;
+}
+/* The desktop's foot line: the version this copy runs. */
+.rail-version {
+  font-variant-numeric: tabular-nums;
+}
+/* The ≡ below 1024px carries a dot while the line has something to press and the drawer is shut. */
+.tb-btn:has(.upd-dot),
+.rail-expand:has(.upd-dot) {
+  position: relative;
+}
+.upd-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-avatar);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--panel);
+}
 /* ── THE ACCOUNT'S OWN STRIP, and the one after it reopens ────────────────────────────────────
-   `.upd-bar`'s shape and its slot: a fact about the whole app, said once, above everything, and
-   absent from the DOM when there is nothing to say. A separate class rather than a second
-   modifier on the update strip because the two can stand at once and must not merge into one
-   unreadable row — this one takes the accent tint so the eye tells them apart. */
+   The durability strip's shape and its slot: a fact about the whole app, said once, above
+   everything, and absent from the DOM when there is nothing to say. A separate class rather than
+   a second modifier because the two can stand at once and must not merge into one unreadable row
+   — this one takes the accent tint so the eye tells them apart. */
 .acct-bar {
   flex: none;
   display: flex;
@@ -1199,7 +1445,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    so the total is unknowable until the drain ends and a filled track would be an invention. A
    travelling sliver carries exactly the knowledge available — a process is running — which is
    the spinner's claim in the shape a compact row has room for. */
-.rail-sync .rs-track {
+.rail-sync .rs-track,
+.upd-line .rs-track {
   position: relative;
   display: block;
   height: 2px;
@@ -1212,7 +1459,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
    no progress — and one infinite animation buys the whole 60 Hz pipeline (1.7 cores in the
    desktop's web process, Omarchy guest), which is why it is mounted by a fact rather than
    stilled by a class. */
-.rail-sync .rs-track i {
+.rail-sync .rs-track i,
+.upd-line .rs-track i {
   position: absolute;
   inset: 0 auto 0 0;
   width: 38%;
@@ -1231,7 +1479,8 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
 /* The track survives without the travel, the same answer `.mbx-spin` gives: the affordance is
    the thing, the motion is how it is drawn. */
 @media (prefers-reduced-motion: reduce) {
-  .rail-sync .rs-track i {
+  .rail-sync .rs-track i,
+  .upd-line .rs-track i {
     animation: none;
     width: 100%;
     opacity: 0.45;
@@ -4638,6 +4887,10 @@ input.set-tag-input {
 }
 /* ═══ THE DRAWER BAND, < 1024: the rail is a drawer, the topbar stands over the deck ═══════ */
 @media (max-width: 1023.98px) {
+  /* A shut drawer is off screen, and the update download's sliver does not travel there. */
+  .deck > .rail:not(.open) .upd-line .rs-track i {
+    animation: none;
+  }
   .topbar {
     display: flex;
     align-items: center;
@@ -5087,12 +5340,6 @@ input.set-tag-input {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-}
-@media (pointer: coarse) and (max-width: 699.98px) {
-  .view-screener .row .av,
-  .view-screener .row .addr {
-    pointer-events: none;
   }
 }
 @media (min-width: 1024px) {
@@ -5837,18 +6084,18 @@ input.set-tag-input {
 /* ================= the sender affordance in a row ============================
    Clicking a row's circle or address opens that sender's screening. The handler
    is ONE capture-phase listener on <main class="stage"> (AppShell), so the hint
-   below is true in every list — Ohbox, Reads, Receipts, Screener, Tags, Search —
-   and it ships in the same file as the claim. */
-.view .row .av,
-.view .row .addr {
+   below is true in every list — Ohbox, Reads, Receipts, Tags, Search — and it
+   ships in the same file as the claim. A Screener row is one target (`sender-hit.ts`). */
+.view:not(.view-screener) .row .av,
+.view:not(.view-screener) .row .addr {
   cursor: pointer;
 }
-.view .row .addr:hover {
+.view:not(.view-screener) .row .addr:hover {
   color: var(--accent-ink);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.view .row .av:hover {
+.view:not(.view-screener) .row .av:hover {
   box-shadow: var(--lift-2);
 }
 
@@ -6021,9 +6268,11 @@ input.set-tag-input {
 }
 .view.split {
   --tm-rail: 18px;
+  /* the reading track's start to the paper: the rail's room (zone-cursor.css rings the paper past it) */
+  --tm-gutter: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
 }
 .view.split > .read-col > .conv[data-thread-read] {
-  padding-left: calc(var(--tm-rail) + 2 * var(--gap-rail) - var(--gap-tile));
+  padding-left: var(--tm-gutter);
 }
 .conv:has(> .thread-marks[data-narrow]) {
   padding-left: 22px;
@@ -6052,7 +6301,12 @@ input.set-tag-input {
   left: auto;
   right: 100%;
 }
+/* A line longer than its room never scrolls (owner 2026-10-26): `ThreadMarksBar` stands a window over
+   it (`squaresWindow`). Each slot is --tm-pitch × --s long (0 beyond the window), its square 10px × --s;
+   at an edge that hides more the squares taper and a --tm-more slot holds "+N". */
 .tm-bar {
+  --tm-pitch: 24px;
+  --tm-more: 16px;
   position: absolute;
   left: 0;
   top: 10px;
@@ -6061,11 +6315,10 @@ input.set-tag-input {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  overflow-y: auto;
-  scrollbar-width: none;
+  overflow: hidden;
 }
-.tm-bar::-webkit-scrollbar {
-  display: none;
+.thread-marks[data-narrow] .tm-bar {
+  --tm-pitch: 30px;
 }
 .conv > .thread-marks[data-narrow] > .tm-bar {
   width: 22px;
@@ -6078,10 +6331,14 @@ input.set-tag-input {
 }
 .tm-mb {
   position: relative;
-  flex: 0 1 24px;
-  min-height: 14px;
+  flex: 0 0 auto;
+  height: calc(var(--tm-pitch) * var(--s, 1));
+  height: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
+  min-height: 0;
   width: 100%;
   display: grid;
+  /* one track the slot's size: the 18px ring overflows a tapered slot centred, never sizing it */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   padding: 0;
   border: 0;
@@ -6089,9 +6346,8 @@ input.set-tag-input {
   background: none;
   cursor: pointer;
 }
-.thread-marks[data-narrow] .tm-mb {
-  flex-basis: 30px;
-  min-height: 16px;
+.tm-mb[data-off] {
+  pointer-events: none;
 }
 .tm-mb > .tm-sq,
 .tm-mb::after,
@@ -6100,6 +6356,12 @@ input.set-tag-input {
 }
 .tm-mb:hover {
   background: var(--tint);
+}
+.tm-bar .tm-mb {
+  transition: height .22s var(--swift);
+}
+.tm-strip .tm-mb {
+  transition: width .22s var(--swift);
 }
 .tm-mb:focus-visible {
   outline-offset: -2px;
@@ -6149,14 +6411,19 @@ input.set-tag-input {
 }
 .tm-sq {
   display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: calc(var(--r-ctl) * 3 / 8);
+  width: calc(10px * var(--s, 1));
+  height: calc(10px * var(--s, 1));
+  border-radius: calc(var(--r-ctl) * 3 / 8 * var(--s, 1));
   background: var(--accent);
-  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1);
+  transition: opacity 850ms cubic-bezier(.22, .61, .36, 1), width .22s var(--swift), height .22s var(--swift);
+}
+/* ohmarchy's square corners want whole pixels: 3.5 / 5.5 / 7.5 draw as 4 / 6 / 8 */
+[data-face="ohmarchy"] .tm-sq {
+  width: round(calc(10px * var(--s, 1)), 1px);
+  height: round(calc(10px * var(--s, 1)), 1px);
 }
 .tm-sq.unread {
-  transition-duration: 320ms;
+  transition-duration: 320ms, .22s, .22s;
   transition-delay: 0s;
 }
 .tm-sq.read {
@@ -6164,33 +6431,109 @@ input.set-tag-input {
 }
 .tm-sq.mine {
   background: transparent;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 calc(2px * var(--s, 1)) var(--accent);
   opacity: var(--mark-mine);
 }
 /* THE OPEN CONVERSATION'S ROW carries the same squares under its preview (`ThreadStrip`, in the
-   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring, the first square
-   where the row's own 8px squares stood; past the row's width it scrolls sideways, no bar, so the
-   row grows in height only and no column moves. */
+   row's `.row-follow`): one row, oldest first, 20px buttons for the 18px ring. Its first box, a
+   square (5px into its slot) or "+N", stands at the subject's left (owner 2026-10-26); a longer
+   line stands a window, so the row grows in height only and no column moves. */
 .tm-strip {
+  --tm-pitch: 20px;
+  --tm-more: 32px;
   position: relative;
   display: flex;
   align-items: center;
   margin: -4px 0 0;
   padding: 0 14px 10px 9px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  overscroll-behavior-x: contain;
+  overflow: hidden;
 }
-.tm-strip::-webkit-scrollbar {
-  display: none;
+/* Under a lead circle the subject starts past it: the 30px `.av` and the row's 11px gap (row.css). */
+.row-slot:has(> .row.srow) > .row-follow > .tm-strip {
+  padding-left: calc(9px + 30px + 11px);
 }
 .tm-strip .tm-mb {
-  flex: 0 1 20px;
-  min-width: 16px;
-  width: auto;
+  width: calc(var(--tm-pitch) * var(--s, 1));
+  width: round(calc(var(--tm-pitch) * var(--s, 1)), 1px);
   height: 20px;
-  min-height: 0;
+}
+/* "+N": the squares an edge hides, in the preview's ink, in a slot of its own that folds to 0 */
+.tm-more {
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: calc(11px + var(--type-up));
+  color: var(--ink3);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  transition: width .22s var(--swift), height .22s var(--swift), opacity .16s var(--swift);
+}
+.tm-more[data-on] {
+  opacity: 1;
+}
+.tm-strip .tm-more {
+  width: 0;
+  line-height: 20px;
+}
+.tm-strip .tm-more[data-on] {
+  width: var(--tm-more);
+}
+.tm-strip .tm-more[data-side="new"] {
+  text-align: right;
+}
+/* "+N" starts where a square's face would, 5px into the line, at the subject's left */
+.tm-strip .tm-more[data-side="old"] {
+  text-indent: calc((var(--tm-pitch) - 10px) / 2);
+}
+.tm-bar .tm-more {
+  height: 0;
+  width: 100%;
+  line-height: 16px;
+  font-size: calc(10px + var(--type-up));
+  text-align: center;
+}
+.tm-bar .tm-more[data-on] {
+  height: var(--tm-more);
+}
+/* Beside the reader the count is centred on the rail; a longer one ("+109") runs on into the gap
+   beside it rather than being cut. */
+.view.split > .thread-marks .tm-more {
+  display: grid;
+  grid-template-columns: var(--tm-rail);
+  justify-items: center;
+  justify-items: safe center;
+}
+/* A windowed line's one ring (`ThreadMarksBar`), at the current square's rest place: the squares
+   flow past it. It switches on and off at once, as the button's ring does. */
+.tm-ring {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: calc(var(--r-ctl) * 7 / 8);
+  box-shadow: inset 0 0 0 1.5px var(--ink3);
+  pointer-events: none;
+  transition: left .22s var(--swift), top .22s var(--swift);
+}
+.tm-bar > .tm-ring {
+  top: var(--tm-ring);
+  left: 50%;
+  translate: -50% 0;
+}
+.view.split > .thread-marks .tm-ring {
+  left: calc(var(--tm-rail) / 2);
+}
+.tm-strip > .tm-ring {
+  top: 1px;
+  left: var(--tm-ring);
+}
+[data-window] > .tm-mb::after {
+  display: none;
+}
+.row-slot:hover .tm-more,
+.tm-bar:hover .tm-more {
+  color: var(--ink2);
 }
 /* A held finger shows the chip: no callout, no text selection over the squares. */
 .tm-mb {
@@ -6275,7 +6618,10 @@ input.set-tag-input {
   .conv[data-thread-read] > article.pm,
   .reader .msg[data-thread-read],
   .read-col:has(> .msg[data-thread-read]),
-  .tm-sq {
+  .tm-sq,
+  .tm-mb,
+  .tm-more,
+  .tm-ring {
     transition: none;
   }
 }

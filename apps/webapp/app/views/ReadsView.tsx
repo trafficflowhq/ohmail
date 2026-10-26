@@ -11,7 +11,7 @@
  */
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { countWhen, presentsUnread } from "@ohmail/client-engine";
+import { countWhen, isOwnOutbound, presentsUnread } from "@ohmail/client-engine";
 import type {
   EngineMessage,
   FeedPartition,
@@ -29,7 +29,7 @@ import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, withheldCopyKey } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
-import { useRowBadgeCopy } from "../shell/row-copy";
+import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { useListWindow } from "../shell/list-window";
@@ -44,6 +44,8 @@ import { useBodyStamp } from "../shell/body-slice";
 import { useStreamNear } from "../shell/stream-near";
 import { afterPaint, useVisit } from "../shell/visit";
 import { waterlineStamp } from "../shell/format";
+import { useStreamInPlace } from "../shell/stream-in-place";
+import { ThreadStrip } from "../shell/ThreadStrip";
 
 export type ReadsChipState = null | "approved" | "corrected";
 
@@ -228,7 +230,8 @@ export function ReadsView({
    * the final screen — the contiguous run the reader scrolled through, including the last
    * screenful the exit-through-the-top observer can structurally never reach. Bounded by
    * the viewport, never the pile: what was below the final screen was not displayed and is
-   * not flipped. Refs, because this fires while the view is unmounting.
+   * not flipped, nor is a card a keyboard scroll in a letter carried past (`flownPast`). Refs,
+   * because this fires while the view is unmounting.
    */
   const onStreamLeave = useCallback((s: StreamLeaveState) => {
     const fn = onLeaveSeenRef.current;
@@ -240,7 +243,7 @@ export function ReadsView({
     const end = b >= a ? b : a;
     fn({
       upToId: s.newestSeenId,
-      messageIds: order.slice(a, end + 1).filter((m) => m.unread).map((m) => m.id),
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread && !s.flownPast?.(m.id)).map((m) => m.id),
     });
   }, []);
   /**
@@ -288,6 +291,16 @@ export function ReadsView({
     return m;
   }, [streamIds]);
   const pileIndexOf = useCallback((id: string) => pileIndex.get(id) ?? -1, [pileIndex]);
+  /* A letter answered here becomes its conversation in place (`stream-in-place.tsx`). */
+  const answered = useStreamInPlace({
+    pileHas: (id) => pileIndex.has(id),
+    stamp: partition,
+    streamRef,
+    tags,
+    now,
+    onAction,
+  });
+  const sentLabelOf = useSentLabel();
   /** Are the cards drawn yet — see "the rows paint before the stream" below. */
   const [streamArmed, setStreamArmed] = useState(false);
   const stream = useStreamWindow({
@@ -631,6 +644,10 @@ export function ReadsView({
      array index as the slot (the Ohbox's warning). */
   const row = (m: EngineMessage, windowIndex: number, inSet: { size: number; position: number }) => {
     const mailbox = mailboxLabelOf?.(m.mailboxId) ?? undefined;
+    /* Answered in place: the row reads as the Ohbox's for a conversation ending in your reply. */
+    const placed = answered.rowOf(m.id);
+    const sent = placed && isOwnOutbound(placed.newest) ? sentLabelOf(placed.newest) : null;
+    const shown = sent ? placed!.newest : m;
     return (
     <MessageRow
       spoken={rowBadge.spoken}
@@ -638,14 +655,14 @@ export function ReadsView({
       id={m.id}
       windowIndex={windowIndex}
       inSet={inSet}
-      from={senderName(m)}
-      address={rowAddress(m)}
-      {...senderCheckRow(m)}
-      {...avatarOf(m)}
+      from={sent ? sent.label : senderName(m)}
+      address={sent ? undefined : rowAddress(m)}
+      {...(sent ? {} : senderCheckRow(m))}
+      {...(sent ? sent.avatar : avatarOf(m))}
       participants={m.threadId ? threadParticipants?.(m.threadId) : undefined}
-      {...rowStamp(m, now, absoluteTime, onToggleTime)}
+      {...rowStamp(shown, now, absoluteTime, onToggleTime)}
       subject={m.subject}
-      preview={m.snippet}
+      preview={shown.snippet}
       /* `data-unseen` for the sweep; NO dot — newness is the row's position
          relative to the line, readness is the mailbox's own statement: a
          `\Seen` message takes the quiet ink, an unread one keeps full
@@ -665,6 +682,14 @@ export function ReadsView({
          (`m.mailboxId`), never a To/Cc read, which is silent on a Bcc and on list mail. */
       mailbox={mailbox}
       mailboxTitle={mailbox ? tm("deliveredToTitle", { label: mailbox }) : undefined}
+      follow={placed ? (
+        <ThreadStrip
+          channel={placed.walk}
+          members={placed.members}
+          onOpen={() => jump(m.id)}
+          conversationOf={answered.conversationOf}
+        />
+      ) : undefined}
       onClick={() => jump(m.id)}
     />
     );
@@ -731,6 +756,7 @@ export function ReadsView({
         onSelect={onCur}
         onToggle={onToggle}
         onAction={onAction}
+        inPlace={answered.inPlace(m)}
       />
     );
   };

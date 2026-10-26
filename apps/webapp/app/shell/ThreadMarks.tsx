@@ -22,10 +22,10 @@
  * published on the visit's channel (`thread-walk-channel.ts`), so the list row's strip wears the same
  * ring and its press is this jump.
  */
-import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type RefObject, type WheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslations } from "next-intl";
-import { clock, fullDateTime, isOwnOutbound, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
+import { clock, fullDateTime, isOwnOutbound, squaresWindow, threadWalk, weekdayDateClock, zonedDayNumber, zonedFields, type EngineMessage, type Walk } from "@ohmail/client-engine";
 import { Icon, cssRect } from "@ohmail/ui";
 import { senderName } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
@@ -102,7 +102,6 @@ export function ThreadMarks({
   const view = useRef(0);
   /** The held square: the opened message on arrival, a pressed one after a press; a hand scroll ends it. */
   const pin = useRef<string | null>(openedId ?? null);
-  const bar = useRef<HTMLDivElement | null>(null);
   const latest = useRef({ onEnter, releaseAnchor, channel });
   latest.current = { onEnter, releaseAnchor, channel };
 
@@ -227,24 +226,11 @@ export function ThreadMarks({
     return () => ro.disconnect();
   }, [conv]);
 
-  /* A column longer than its box keeps the ring's square in it (the app's scroll, stamped). */
-  useLayoutEffect(() => {
-    const b = bar.current;
-    if (!b || here === null || b.scrollHeight <= b.clientHeight) return;
-    const q = b.querySelector<HTMLElement>(`.tm-mb[data-for="${CSS.escape(here)}"]`);
-    if (!q) return;
-    if (q.offsetTop < b.scrollTop) scrollProgrammatically(b, q.offsetTop);
-    else if (q.offsetTop + q.offsetHeight > b.scrollTop + b.clientHeight) scrollProgrammatically(b, q.offsetTop + q.offsetHeight - b.clientHeight);
-  }, [here, host]);
-
   const onWheel = (e: WheelEvent<HTMLDivElement>): void => {
     const sc = scroller?.current;
-    const bar = e.currentTarget;
     if (!sc || e.ctrlKey) return;
     const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? sc.clientHeight : 1);
     if (dy === 0) return;
-    // A column longer than its box scrolls itself first.
-    if (dy < 0 ? bar.scrollTop > 0 : bar.scrollTop + bar.clientHeight < bar.scrollHeight - 1) return;
     scrollByHand(sc, dy, { deltaY: e.deltaY, deltaMode: e.deltaMode });
   };
 
@@ -282,13 +268,13 @@ export function ThreadMarks({
   if (sc && !beside) {
     return (
       <div className="thread-marks" data-narrow={narrow ? "" : undefined} hidden={!shown}>
-        <ThreadMarksBar messages={messages} here={here} tabStop={tabStop} onJump={onJump} onKey={onKey} barRef={bar} place="right" tipOn="focus" />
+        <ThreadMarksBar messages={messages} here={here} tabStop={tabStop} onJump={onJump} onKey={onKey} place="right" tipOn="focus" />
       </div>
     );
   }
   if (!host) return null;
   return createPortal(
-    <ThreadMarksBar messages={messages} here={here} tabStop={tabStop} onJump={onJump} onKey={onKey} onWheel={onWheel} barRef={bar} />,
+    <ThreadMarksBar messages={messages} here={here} tabStop={tabStop} onJump={onJump} onKey={onKey} onWheel={onWheel} />,
     host,
   );
 }
@@ -379,6 +365,11 @@ const keyboardFocus = (el: Element): boolean => {
  * the body (the column and the list clip their overflow), placed by `tipAt`. The squares carry no
  * `title`, so the name is never shown twice. A finger held on a square (380 ms) shows it too, and that
  * hold presses nothing. `tipOn="focus"`: no pointer hover (the reader sheet, under a finger).
+ *
+ * A LINE LONGER THAN ITS ROOM never scrolls (owner 2026-10-26): `squaresWindow` picks the run that
+ * stands, centred on the ring; each square's slot and face scale by its `--s` (0 beyond the run), the
+ * squares nearest an edge that hides more taper off, and "+N" at that edge counts them. The room, the
+ * pitch and the count's slot are the stylesheet's (`--tm-pitch`, `--tm-more`), read after each layout.
  */
 export function ThreadMarksBar({
   messages,
@@ -388,7 +379,6 @@ export function ThreadMarksBar({
   onKey,
   onWheel,
   axis = "y",
-  barRef,
   place = axis === "x" ? "under" : "left",
   tipOn = "hover",
 }: {
@@ -400,17 +390,12 @@ export function ThreadMarksBar({
   onWheel?: (e: WheelEvent<HTMLDivElement>) => void;
   /** `y`: the column beside the reader; `x`: the strip under the conversation's list row. */
   axis?: "x" | "y";
-  barRef?: RefObject<HTMLDivElement | null>;
   place?: TipPlace;
   tipOn?: "hover" | "focus";
 }) {
   const tm = useTranslations("message");
   const n = messages.length;
   const own = useRef<HTMLDivElement | null>(null);
-  const setBar = (el: HTMLDivElement | null): void => {
-    own.current = el;
-    if (barRef) (barRef as { current: HTMLDivElement | null }).current = el;
-  };
   const chip = useRef<HTMLDivElement | null>(null);
   const pointed = useRef<HTMLElement | null>(null);
   const focused = useRef<HTMLElement | null>(null);
@@ -421,6 +406,48 @@ export function ThreadMarksBar({
   const swallow = useRef(false);
   const [tip, setTip] = useState<string | null>(null);
   const named = tip === null ? null : messages.find((m) => m.id === tip) ?? null;
+  /** The line's room, pitch, count slot and start padding, in the bar's own px; null until measured. */
+  const [geo, setGeo] = useState<{ room: number; pitch: number; count: number; start: number } | null>(null);
+  const [focusAt, setFocusAt] = useState<string | null>(null);
+  const measureLine = useCallback((): void => {
+    const b = own.current;
+    if (!b) return;
+    const cs = getComputedStyle(b);
+    const room = axis === "x" ? b.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0) : parseFloat(cs.maxHeight);
+    const pitch = parseFloat(cs.getPropertyValue("--tm-pitch"));
+    const count = parseFloat(cs.getPropertyValue("--tm-more")) || 0;
+    const start = parseFloat(axis === "x" ? cs.paddingLeft : cs.paddingTop) || 0;
+    const next = Number.isFinite(room) && pitch > 0 ? { room, pitch, count, start } : null;
+    setGeo((g) => (g?.room === next?.room && g?.pitch === next?.pitch && g?.count === next?.count && g?.start === next?.start ? g : next));
+  }, [axis]);
+  useLayoutEffect(measureLine);
+  useEffect(() => {
+    const b = own.current;
+    const win = b?.ownerDocument.defaultView;
+    if (!b || !win) return;
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measureLine);
+    ro?.observe(b);
+    if (b.parentElement) ro?.observe(b.parentElement);
+    win.addEventListener("resize", measureLine);
+    return () => {
+      ro?.disconnect();
+      win.removeEventListener("resize", measureLine);
+    };
+  }, [measureLine]);
+  const at = here === null ? -1 : messages.findIndex((m) => m.id === here);
+  const focusIdx = focusAt === null ? -1 : messages.findIndex((m) => m.id === focusAt);
+  const run = geo === null ? null : squaresWindow({ n, current: at, room: geo.room, pitch: geo.pitch, count: geo.count, ...(focusIdx >= 0 ? { focus: focusIdx } : {}) });
+  const older = run?.from ?? 0;
+  const newer = run === null ? 0 : n - run.to;
+  /* A windowed line's ONE ring stands at the current square's rest place (where it is once the step's
+     slots have grown and folded), so the squares flow past it; a ring on the button would ride its
+     mid-step place, a slot ahead, and ease back on every step. */
+  let ringAt: number | null = null;
+  if (run !== null && geo !== null && (older > 0 || newer > 0) && at >= 0 && (run.scale[at] ?? 0) > 0) {
+    let pos = geo.start + (older > 0 ? geo.count : 0);
+    for (let i = run.from; i < at; i++) pos += Math.round(geo.pitch * run.scale[i]!);
+    ringAt = pos + Math.round(geo.pitch * run.scale[at]!) / 2 - 9;
+  }
 
   /** The square the chip names: the one a finger holds, else under the pointer, else keyboard focus's. */
   const refresh = (): void => {
@@ -495,8 +522,9 @@ export function ThreadMarksBar({
 
   return (
     <div
-      ref={setBar}
+      ref={own}
       className={axis === "x" ? "tm-strip" : "tm-bar"}
+      data-window={older > 0 || newer > 0 ? "" : undefined}
       role="toolbar"
       aria-orientation={axis === "x" ? "horizontal" : "vertical"}
       aria-label={tm("marksAria")}
@@ -511,9 +539,11 @@ export function ThreadMarksBar({
       onFocus={(e) => {
         const b = squareOf(e.target);
         focused.current = b && keyboardFocus(b) ? b : null;
+        // only a keyboard focus pulls the window: a press's focus would move it under the pointer
+        setFocusAt(focused.current?.dataset.for ?? null);
         refresh();
       }}
-      onBlur={() => { focused.current = null; refresh(); }}
+      onBlur={() => { focused.current = null; setFocusAt(null); refresh(); }}
       onPointerDown={onHoldStart}
       onPointerUp={onHoldEnd}
       onPointerCancel={onHoldEnd}
@@ -526,16 +556,20 @@ export function ThreadMarksBar({
       }}
       onContextMenu={(e) => { if (squareOf(e.target)) e.preventDefault(); }}
     >
+      <span className="tm-more" data-side="old" data-on={older > 0 ? "" : undefined} aria-hidden="true">{older > 0 ? `+${older}` : ""}</span>
       {messages.map((m, i) => {
         const kind = m.unread ? "unread" : isOwnOutbound(m) ? "mine" : "read";
         const label = kind === "mine"
           ? tm("markMine", { position: i + 1, count: n })
           : tm(kind === "unread" ? "markFromUnread" : "markFromRead", { position: i + 1, count: n, sender: senderName(m) });
+        const s = run?.scale[i] ?? 1;
         return (
           <button
             key={m.id}
             type="button"
             className="tm-mb"
+            style={s === 1 ? undefined : ({ "--s": s } as CSSProperties)}
+            data-off={s === 0 ? "" : undefined}
             data-for={m.id}
             tabIndex={m.id === tabStop ? 0 : -1}
             aria-label={label}
@@ -546,6 +580,8 @@ export function ThreadMarksBar({
           </button>
         );
       })}
+      <span className="tm-more" data-side="new" data-on={newer > 0 ? "" : undefined} aria-hidden="true">{newer > 0 ? `+${newer}` : ""}</span>
+      {ringAt === null ? null : <span className="tm-ring" data-on="" aria-hidden="true" style={{ "--tm-ring": `${ringAt}px` } as CSSProperties} />}
       {named && own.current ? createPortal(<ThreadTip ref={chip} m={named} place={place} />, own.current.ownerDocument.body) : null}
     </div>
   );
