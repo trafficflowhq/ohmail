@@ -320,6 +320,11 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # The pressure half must be asked for after GTK is up and before the first web context exists,
 # above the runtime's own `gtk::init`. Same `0.18` already resolved for wry and webkit2gtk: no new code.
 gtk = "0.18"
+# HOW A WEB PROCESS ENDED, AND WHAT IT SAID (`src/last_words.rs`): pidfds, `waitid`, and fd 2 moved
+# to a file beside the log. Both crates are already in this binary's graph through tauri at these
+# versions, so naming them adds no third-party code to audit; MIT OR Apache-2.0.
+libc = "0.2"
+dirs = "6"
 
 # WEBVIEW2, NAMED FOR ONE EVENT: `ProcessFailed`, so a renderer that dies on Windows is reloaded
 # (`src/renderer_recovery.rs`). The crate is already in this binary's graph (wry links the same

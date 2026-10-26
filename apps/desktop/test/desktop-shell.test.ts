@@ -651,7 +651,7 @@ describe("the Rust side", () => {
    * describe would stay green while the shell grew a capability. Adding a file therefore fails
    * this test until somebody decides which rules it lives under.
    */
-  it("is these forty-eight files and no others", () => {
+  it("is these fifty files and no others", () => {
     const files = fs.readdirSync(path.join(APP, "src-tauri/src")).sort();
     expect(files).toEqual([
       // HOW MANY ALLOCATOR ARENAS THIS APP'S PROCESSES MAY HAVE. glibc gives a contending
@@ -715,6 +715,12 @@ describe("the Rust side", () => {
       // on descriptors it already holds, and opens, writes and spawns nothing; its tests spawn.
       "inherited_fds.rs",
       "inherited_fds_tests.rs",
+      // HOW EACH WEB PROCESS ENDED, AND WHAT OTHER CODE SAID. Compiled only under `local-engine`,
+      // real on Linux only. It holds a pidfd per web process and reads its exit with `WNOWAIT`
+      // (never reaping, signalling or tracing it), and points fd 2 at `stderr.log` beside the log,
+      // while the shell's own lines, the browser and a restart keep the launch's stderr.
+      "last_words.rs",
+      "last_words_tests.rs",
       // THE WINDOW OPENS HIDDEN AND IS SHOWN ON ITS OWN CANVAS. ALWAYS compiled: every build opens
       // the same hidden window, and a build without a way to show it is an invisible app. The
       // engine build shows it on the page's report, the preview on the document's load, and both
@@ -848,7 +854,7 @@ describe("the Rust side", () => {
     const call = src.indexOf("webview_budget::apply_process_pressure();");
     expect(call, "main.rs must set the process-global pressure hint").toBeGreaterThan(-1);
     expect(call, "the hint must be set before the runtime is built").toBeLessThan(
-      src.indexOf(".build(tauri::generate_context!())"),
+      src.indexOf("tauri::generate_context!()"),
     );
     // And the kill threshold is never asked for: a mail window that vanishes to save memory is
     // a worse outcome than the memory it saved.

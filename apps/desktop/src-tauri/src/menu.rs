@@ -183,6 +183,9 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
             // The config window exists from here: its web process is watched from its first
             // frame (`renderer_recovery.rs`).
             crate::renderer_recovery::arm(app.handle());
+            // …and how each of its web processes ends, read from the kernel (`last_words.rs`).
+            #[cfg(all(feature = "local-engine", target_os = "linux"))]
+            crate::last_words::arm(app.handle());
             // …and its zoom is the kept Text size before its first frame (`text_scale.rs`).
             crate::text_scale::prepare(app);
             /* THE FRAME DECISION LIVES HERE FOR ONE REASON: this is the binary's only `setup`,

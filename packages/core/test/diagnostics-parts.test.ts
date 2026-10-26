@@ -211,6 +211,17 @@ describe("the diagnostic file's parts", () => {
     expect(text).toContain('"attempt": 2');
   });
 
+  it("a window process's end keeps its signal, method and numbers, and drops its pid", () => {
+    const line = '{"service":"shell","event":"renderer_exit","pid":1855920,"signal":"SIGSEGV","signo":11,"core":true,"exitStatus":null,"method":"pidfd_info","stderrLines":3}';
+    const b = buildDiagnosticBundle({ surface: "desktop", now: new Date("2026-10-26T00:00:00.000Z"), build: {}, platform: {}, install: INSTALL, log: [line] });
+    const log = b.sections.find((s) => s.k === "log");
+    if (log?.k !== "log" || log.lines[0]?.shape !== "event") throw new Error("the line was not read as an event");
+    expect(log.lines[0].event).toBe("renderer_exit");
+    expect(log.lines[0].labels).toEqual({ signal: "SIGSEGV", method: "pidfd_info" });
+    expect(log.lines[0].values).toEqual({ signo: 11, core: true, exitStatus: null, stderrLines: 3 });
+    expect(renderDiagnosticBundle(b)).not.toContain("1855920");
+  });
+
   it("the install identity is kept inside its rotation and minted fresh outside it", () => {
     const now = new Date("2026-09-27T00:00:00.000Z");
     const mint = () => "fedcba9876543210fedcba9876543210";

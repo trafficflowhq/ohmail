@@ -15,6 +15,8 @@ export const DIAGNOSTIC_EXTRA_VALUE_FIELDS: readonly string[] = [
   "openTimeouts", "switchP50Ms", "switchP95Ms", "switchCount", "switchTimeouts", "searchP50Ms",
   "searchP95Ms", "searchCount", "longFrames", "longTasks", "deriveMs", "deriveP50Ms", "deriveP95Ms",
   "deriveCount", "notifiesPer5min", "mirrorMessages",
+  // How the desktop's window process ended (`last_words.rs`); its pid stays out.
+  "signo", "core", "exitStatus", "stderrLines",
 ];
 
 /** The only keys whose STRING value may be copied, and only through {@link LABEL_RE}. */
