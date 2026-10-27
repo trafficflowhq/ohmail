@@ -3,13 +3,15 @@
  * (its frame, its measure, its proxied pictures), opened and entered at once; with `away` the person
  * scrolls into its middle as soon as the frame measures (its top off screen), and back to it later.
  * `landing`: three panels, the opened one held at the top by a copy of `MessagePane`'s thread anchor
- * (a ResizeObserver re-scroll), while the body above it lands and grows. Bundled by the test;
+ * (a ResizeObserver re-scroll), while the body above it lands and grows. `streamPress`: a press inside a
+ * stream card's letter, under `readStreamCards`. Bundled by the test;
  * nothing here is product code. */
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createThreadRead } from "@ohmail/client-engine";
 import { MessageBody } from "../../app/components/MessageBody";
 import { createThreadReadDom } from "../../app/shell/reader-seen";
+import { readStreamCards } from "../../app/shell/stream-landing-read";
 
 interface Log { reads: string[][]; at: number[] }
 const frames = (n: number): Promise<void> =>
@@ -197,4 +199,29 @@ async function backgrounds(each: number, refused = 0): Promise<{ cells: number; 
   return { cells: cells().length, shown: shown(), parked: parked() };
 }
 
-(window as unknown as { rig: unknown }).rig = { framed, landing, pictures, backgrounds };
+/** A News stream of two unread cards, the first with a sandboxed letter on screen, the second far below;
+ * the rule over it, never driven. `pressed()` reports what was read, and when, after the test's press. */
+let streamLog: Log = { reads: [], at: [] };
+function streamPress(): void {
+  streamLog = { reads: [], at: [] };
+  const sc = scrollerOf(700, 600);
+  sc.className = "stream";
+  for (const id of ["c1", "c2"]) {
+    const card = document.createElement("article");
+    card.className = "scast";
+    card.dataset.sid = id;
+    card.setAttribute("data-unseen", "");
+    card.style.cssText = `display:block;padding:12px;margin-bottom:${id === "c1" ? 1400 : 0}px`;
+    card.innerHTML = `<div class="sc-line" style="height:20px">From ${id}</div><div class="sc-clip"><div class="sc-viewer" style="line-height:20px">` +
+      `<iframe sandbox="allow-same-origin" style="width:500px;height:300px;border:0" srcdoc="<p style='font:16px/20px sans-serif'>${"Letter text. ".repeat(60)}</p>"></iframe></div></div>`;
+    sc.appendChild(card);
+  }
+  t0 = performance.now();
+  readStreamCards({
+    scroller: sc, record: createThreadRead(), driven: () => false,
+    onRead: (ids) => { streamLog.reads.push(ids); streamLog.at.push(Math.round(performance.now() - t0)); },
+  });
+}
+const pressed = (): Log & { since: number } => ({ ...streamLog, since: Math.round(performance.now() - t0) });
+
+(window as unknown as { rig: unknown }).rig = { framed, landing, pictures, backgrounds, streamPress, pressed };

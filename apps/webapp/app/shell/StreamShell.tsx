@@ -21,7 +21,9 @@ import {
 } from "react";
 /* Every rect here meets `scrollTop`, so every rect is read in CSS px (`ui-zoom.ts`). */
 import { cssRect, useSeenOnScroll } from "@ohmail/ui";
+import { createThreadRead } from "@ohmail/client-engine";
 import { useVisit } from "./visit";
+import { readStreamCards, type StreamRead } from "./stream-landing-read";
 
 /**
  * THE COLUMN WIDTH THE MOUNTED CARDS SHARE, measured once per stream.
@@ -52,6 +54,8 @@ export interface StreamHandle {
    */
   scrollTo: (id: string, onLanded?: () => void) => void;
   element: () => HTMLDivElement | null;
+  /** The reader opened a card by keyboard (↵): the visit is entered, as a press in the stream enters it. */
+  enter: () => void;
   /** Does this card reach into the port right now? `false` for a card that is not mounted. */
   onScreen: (id: string) => boolean;
   /**
@@ -131,9 +135,8 @@ export interface StreamLeaveState {
   newestSeenId: string | null;
   bottomVisibleId: string | null;
   /**
-   * A card in that range a scroll judged by the read rule carried past (`SeenObserver.judging`): never on a
-   * screen the stream rested on or read through, and never marked. The commit leaves it unread. Absent
-   * when the visit had no such scroll.
+   * After a scroll judged by the read rule (`SeenObserver.judging`), a card in that range the visit did not
+   * read: the commit leaves it unread. Absent when the visit had no such scroll.
    */
   flownPast?: (id: string) => boolean;
 }
@@ -264,9 +267,10 @@ export const StreamShell = forwardRef<
 
   /** A far landing in flight: what it passes or flashes is not displayed, so nothing is tracked or marked. */
   const landingRef = useRef(false);
-  /** This visit's cards marked seen, and those on a screen measured outside a judged scroll (`flownPast`). */
+  /** This visit's cards marked seen: all a visit with a judged scroll commits (`flownPast`). */
   const markedRef = useRef<Set<string>>(new Set());
-  const displayedRef = useRef<Set<string>>(new Set());
+  /** The read rule over the visit's cards (`readStreamCards`). */
+  const readRef = useRef<StreamRead | null>(null);
   /** A judged scroll ran this visit; one is in flight, and the next measure bridges what it skipped. */
   const flewRef = useRef(false);
   const bridgeRef = useRef(false);
@@ -335,6 +339,23 @@ export const StreamShell = forwardRef<
   const observerRef = useRef(observer);
   observerRef.current = observer;
 
+  /* The read rule over every card on screen, once the reader scrolled, pressed or opened a card here; a
+     record per visit (an Activity hide runs this cleanup). Nothing counts during a flight, and a frame the
+     anchoring loop is about to put back is looked at again on the next one. */
+  useEffect(() => {
+    const el = divRef.current;
+    if (!el) return;
+    const read = readStreamCards({
+      scroller: el,
+      record: createThreadRead(),
+      driven: () => observerRef.current.userHasDriven(),
+      hold: () => (landingRef.current || observerRef.current.landing() ? "blind" : pendingShift() !== 0 ? "again" : null),
+      onRead: (ids) => { for (const id of ids) seenUnlessLanding(id); },
+    });
+    readRef.current = read;
+    return () => { readRef.current = null; read.stop(); };
+  }, []);
+
   /**
    * THE VISIBLE RANGE, TRACKED — the leave-commit's data (see {@link StreamLeaveState}).
    *
@@ -373,7 +394,6 @@ export const StreamShell = forwardRef<
       if (r.bottom <= rootRect.top || r.top >= rootRect.bottom) continue;
       if (topVisible === null) topVisible = c.dataset.sid!;
       bottomVisible = c.dataset.sid!;
-      displayedRef.current.add(bottomVisible);
     }
     if (topVisible === null) return;
     const last = shownRef.current;
@@ -427,7 +447,6 @@ export const StreamShell = forwardRef<
       rangeRef.current = { newestSeenId: null, bottomVisibleId: null };
       shownRef.current = null;
       markedRef.current = new Set();
-      displayedRef.current = new Set();
       flewRef.current = false;
       bridgeRef.current = false;
       landingRef.current = false;
@@ -474,9 +493,8 @@ export const StreamShell = forwardRef<
       newestSeenId: rangeRef.current.newestSeenId,
       bottomVisibleId: rangeRef.current.bottomVisibleId,
     };
-    const shown = displayedRef.current;
     const marked = markedRef.current;
-    if (flewRef.current) state.flownPast = (id) => !shown.has(id) && !marked.has(id);
+    if (flewRef.current) state.flownPast = (id) => !marked.has(id);
     return state;
   };
 
@@ -858,6 +876,7 @@ export const StreamShell = forwardRef<
       if (land && cssRect(item).top < cssRect(el).top - 0.5) observerRef.current.own(() => this.scrollTo(id));
     },
     element: () => divRef.current,
+    enter: () => readRef.current?.enter(),
     onScreen: inPort,
     whenOffScreen: (id: string, cb: () => void) => {
       offScreenRef.current.set(id, cb);
