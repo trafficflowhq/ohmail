@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
-import { DataDirLockedError } from "../src/db.js";
+import { DataDirLockedError, LOCK_FILE } from "../src/db.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
-import { freshDataDir } from "./_datadir.js";
+import { freshCloudDataDir } from "./_datadir.js";
 
 /**
  * THE ENGINE'S SIDE OF A DURABLE SESSION, through the real constructor and `/health`.
@@ -19,11 +19,27 @@ const MAILBOX = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const ring = (): Record<number, Buffer> => ({ 1: Buffer.from(crypto.getRandomValues(new Uint8Array(32))) });
 
 const sidecars: CloudSidecar[] = [];
+const booting = new Set<Promise<unknown>>();
 const dirs: string[] = [];
-afterEach(async () => {
-  for (const s of sidecars.splice(0)) await s.stop().catch(() => undefined);
+let closing = false;
+beforeEach(() => { closing = false; });
+/** Stops every engine the case booted, one still booting included, then removes its directories. */
+async function teardown(): Promise<void> {
+  // A timed-out case keeps running: refuse its next boot, and stop the ones it started until none is left.
+  closing = true;
+  while (booting.size || sidecars.length) {
+    await Promise.allSettled([...booting]);
+    for (const s of sidecars.splice(0)) await s.stop().catch(() => undefined);
+  }
+  const held = dirs.filter((d) => existsSync(join(d, LOCK_FILE)));
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
+  if (held.length) throw new Error(`an engine still held ${held.join(", ")} when it was removed`);
+}
+afterEach(teardown, 60_000);
+
+/** A templated directory this server's launch adopts; a bare template would be discarded and pay `initdb`. */
+const cloudDir = (tag: string): Promise<string> =>
+  freshCloudDataDir(tag, { address: "me@ohmail.test", cloudUrl: "https://cloud.test" });
 
 interface Host {
   fetchImpl: typeof fetch;
@@ -31,11 +47,13 @@ interface Host {
   seen: string[];
   /** Once true, the launch access token is stale and the next pull asks for a renewal. */
   expired: boolean;
+  /** Every event the engine booted against this host logged. */
+  logged: string[];
 }
 
 /** A hosted API whose refresh door answers `refresh()`. */
 function host(refresh: () => Response): Host {
-  const h: Host = { seen: [], expired: false, fetchImpl: undefined as unknown as typeof fetch };
+  const h: Host = { seen: [], expired: false, logged: [], fetchImpl: undefined as unknown as typeof fetch };
   h.fetchImpl = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     h.seen.push(url.pathname);
@@ -60,21 +78,27 @@ function host(refresh: () => Response): Host {
   return h;
 }
 
-async function boot(dataDir: string, h: Host, over: {
+function boot(dataDir: string, h: Host, over: {
   keks?: Record<number, Buffer>; address?: string; tokens?: boolean;
 } = {}): Promise<CloudSidecar> {
-  const sidecar = await createCloudSidecar({
-    dataDir,
-    cloudUrl: "https://cloud.test",
-    address: over.address ?? "me@ohmail.test",
-    ...(over.tokens === false ? {} : { tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }),
-    keks: over.keks ?? ring(),
-    fetchImpl: h.fetchImpl,
-    pollIntervalMs: 40,
-  });
-  sidecars.push(sidecar);
-  await sidecar.start();
-  return sidecar;
+  if (closing) return Promise.reject(new Error("boot after teardown began"));
+  const run = (async () => {
+    const sidecar = await createCloudSidecar({
+      dataDir,
+      cloudUrl: "https://cloud.test",
+      address: over.address ?? "me@ohmail.test",
+      ...(over.tokens === false ? {} : { tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }),
+      keks: over.keks ?? ring(),
+      fetchImpl: h.fetchImpl,
+      log: (event) => { h.logged.push(event); },
+      pollIntervalMs: 40,
+    });
+    sidecars.push(sidecar);
+    await sidecar.start();
+    return sidecar;
+  })();
+  booting.add(run);
+  return run.finally(() => booting.delete(run));
 }
 
 type Health = {
@@ -126,10 +150,11 @@ const relaunch = (dataDir: string, keks: Record<number, Buffer>, address?: strin
 
 describe("the cloud engine's session through /health", () => {
   it("a firewall's 403 at the refresh: still signed in, not expired, the seal and the mirror kept", { timeout: 40_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-403-");
+    const dataDir = await cloudDir("ohmail-session-403-");
     dirs.push(dataDir);
     const h = host(html403);
     const sidecar = await boot(dataDir, h);
+    expect(h.logged, "the launch adopts the fixture's store, so no case pays initdb").not.toContain("cloud_mirror_reset_on_owner_change");
     h.expired = true;
     const got = await until(sidecar, (x) => x.session?.state === "renewing", "the engine never met the 403");
     expect(got).toMatchObject({ signedIn: true, sessionExpired: false, session: { code: "http_403" } });
@@ -146,7 +171,7 @@ describe("the cloud engine's session through /health", () => {
   });
 
   it("a coded refusal: signed out, expired, the code named, the spent seal removed", { timeout: 40_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-revoked-");
+    const dataDir = await cloudDir("ohmail-session-revoked-");
     dirs.push(dataDir);
     const h = host(() => new Response(JSON.stringify({ error: { code: "refresh_revoked" } }), { status: 401 }));
     const sidecar = await boot(dataDir, h);
@@ -168,7 +193,7 @@ describe("the cloud engine's session through /health", () => {
  */
 describe("a refusal heard by an earlier run", () => {
   it("is named at the next launch, and a sign-in takes it away", { timeout: 60_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-refused-before-");
+    const dataDir = await cloudDir("ohmail-session-refused-before-");
     dirs.push(dataDir);
     const keks = ring();
     await refusedRun(dataDir, keks);
@@ -189,7 +214,7 @@ describe("a refusal heard by an earlier run", () => {
   });
 
   it("the person's own sign-out takes it away", { timeout: 60_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-refused-out-");
+    const dataDir = await cloudDir("ohmail-session-refused-out-");
     dirs.push(dataDir);
     const keks = ring();
     await refusedRun(dataDir, keks);
@@ -204,7 +229,7 @@ describe("a refusal heard by an earlier run", () => {
   });
 
   it("is not carried to another account", { timeout: 60_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-refused-other-");
+    const dataDir = await cloudDir("ohmail-session-refused-other-");
     dirs.push(dataDir);
     const keks = ring();
     await refusedRun(dataDir, keks);
@@ -215,7 +240,7 @@ describe("a refusal heard by an earlier run", () => {
 
 describe("one engine per data directory", () => {
   it("a second engine is refused by name before it touches the running one's seal or store", { timeout: 40_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-twice-");
+    const dataDir = await cloudDir("ohmail-session-twice-");
     dirs.push(dataDir);
     const first = await boot(dataDir, host(html403));
     const sealPath = join(dataDir, "cloud-tokens.seal");
@@ -240,7 +265,7 @@ describe("one engine per data directory", () => {
 
 describe("a seal on disk this key cannot open", () => {
   it("is named at launch, apart from a first run; the right key opens it", { timeout: 40_000 }, async () => {
-    const dataDir = await freshDataDir("ohmail-session-unreadable-");
+    const dataDir = await cloudDir("ohmail-session-unreadable-");
     dirs.push(dataDir);
     const keks = ring();
     await (await boot(dataDir, host(html403), { keks })).stop();
@@ -256,5 +281,20 @@ describe("a seal on disk this key cannot open", () => {
     // The positive control: the key that wrote it opens it, and the launch is signed in.
     const same = await boot(dataDir, host(html403), { keks, tokens: false });
     expect(await health(same)).toMatchObject({ signedIn: true, session: { state: "live" } });
+  });
+});
+
+describe("the harness's teardown", () => {
+  it("stops a timed-out case's later boots before it removes the directory", { timeout: 40_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-teardown-");
+    dirs.push(dataDir);
+    // Vitest does not cancel a timed-out case: its body boots again while the hook runs.
+    const body = (async () => {
+      await (await boot(dataDir, host(html403))).stop();
+      sidecars.splice(0);
+      await boot(dataDir, host(html403));
+    })();
+    await teardown();
+    await expect(body).rejects.toThrow("boot after teardown began");
   });
 });
