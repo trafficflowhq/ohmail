@@ -38,6 +38,7 @@ import "./message-body.css";
 import { liveCopy } from "../shell/locale";
 import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
+import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
 import { QUOTED_HISTORY_LIMITS, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
@@ -2400,8 +2401,16 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     const beacon = tiny || BEACON_PATH.test(decodeUnreservedEscapes(url));
     record(url, "css", beacon);
     // `loadPixels` lifts the beacon override and nothing else — the proxy is still the only road.
-    return proxy && (!beacon || loadPixels) ? proxy(url) : null;
+    const via = proxy && (!beacon || loadPixels) ? proxy(url) : null;
+    return via === "" ? null : via;
   };
+  /** Park an element's proxied css urls for `proxied-images.ts`, which swaps the live css in once they loaded. */
+  const deferCss = (node: Element, urls: string[]): void => {
+    const had = node.getAttribute(DEFERRED_URLS_ATTR);
+    node.setAttribute(DEFERRED_URLS_ATTR, JSON.stringify([...(had ? (JSON.parse(had) as string[]) : []), ...urls]));
+  };
+  /** Each sheet's parked text (its proxied urls as `none`) to its live text and urls, in document order. */
+  const liveSheets = new Map<string, { live: string; urls: string[] }[]>();
 
   /**
    * How a style-attribute `url(cid:…)` resolves: the SAME map and the SAME gate as the `<img>`
@@ -2411,11 +2420,14 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * map grows and this pass runs again. It is never counted in `blocked`: a `cid:` is not a
    * remote image and must not trip the "images blocked" notice.
    */
-  const cssCid = (cid: string): string | null => {
+  const cidResolved = (cid: string): string | null => {
     const resolved = cidImages?.get(cid);
-    if (resolved && inlineImageAdmitted(resolved, ownImages)) return resolved;
-    recordCid(cid);
-    return null;
+    return resolved && inlineImageAdmitted(resolved, ownImages) ? resolved : null;
+  };
+  const cssCid = (cid: string): string | null => {
+    const resolved = cidResolved(cid);
+    if (resolved === null) recordCid(cid);
+    return resolved;
   };
 
   /**
@@ -2433,7 +2445,26 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     const pixel =
       tag === "img" && (declaresPixel(node) || BEACON_PATH.test(decodeUnreservedEscapes(node.getAttribute("src") ?? "")));
 
-    neutraliseStyleAttr(node, (url) => cssUrl(url, pixel), cssCid);
+    const original = node.getAttribute("style");
+    const proxiedCss: string[] = [];
+    neutraliseStyleAttr(node, (url) => {
+      const via = cssUrl(url, pixel);
+      if (via !== null) proxiedCss.push(via);
+      return via;
+    }, cssCid);
+    if (original !== null && proxiedCss.length > 0) {
+      // Parked with those urls as `none`: the frame would fetch them all at parse.
+      node.setAttribute(DEFERRED_STYLE_ATTR, node.getAttribute("style") ?? "");
+      node.setAttribute("style", neutraliseCss(original, () => null, undefined, cidResolved));
+      deferCss(node, proxiedCss);
+    }
+    if (tag === "style") {
+      const live = liveSheets.get(node.textContent ?? "")?.shift();
+      if (live) {
+        node.setAttribute(DEFERRED_SHEET_ATTR, live.live);
+        deferCss(node, live.urls);
+      }
+    }
 
     // A background image is a picture, and dark viewing must not negate it. The dark filter
     // inverts everything under it, and {@link FRAME_CSS} negates `img` back so photographs and
@@ -2450,7 +2481,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     // banner whose picture is its point reads correctly and its overlaid caption reads worse,
     // which is better than the banner arriving as a negative. Same escape as everywhere in this
     // transform — the reader can drop the message back to its original colours.
-    const styled = node.getAttribute("style");
+    const styled = node.getAttribute(DEFERRED_STYLE_ATTR) ?? node.getAttribute("style");
     if (styled && /background[^:;]*:[^;]*url\(/i.test(styled)) {
       node.setAttribute("data-ohmail-bgimg", "1");
     }
@@ -2501,7 +2532,13 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
         if (resolved) {
           node.setAttribute("src", resolved);
         } else if (proxy && (!pixel || loadPixels)) {
-          node.setAttribute("src", proxy(src));
+          const via = proxy(src);
+          // Parked over a blank: the frame runs no script, so `proxied-images.ts` starts it once loaded.
+          node.setAttribute("src", via === "" ? "" : BLANK_GIF);
+          if (via !== "") node.setAttribute(DEFERRED_SRC_ATTR, via);
+          // A blank's 1:1 would stand a width-only picture as a square of its width while it waits.
+          const h = (node as HTMLElement).style?.getPropertyValue("height") ?? "";
+          if (via !== "" && (h === "auto" || (h === "" && !node.getAttribute("height")))) node.setAttribute(PARK_FLAT_ATTR, "1");
         } else {
           node.setAttribute("src", BLANK_GIF);
           node.setAttribute("data-ohmail-blocked", "1");
@@ -2635,7 +2672,20 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    */
   let styleText = "";
   for (const el of parsed.querySelectorAll("style")) {
-    el.textContent = neutraliseCss(el.textContent ?? "", (u) => cssUrl(u), recordSheet);
+    const text = el.textContent ?? "";
+    const urls: string[] = [];
+    const live = neutraliseCss(text, (u) => {
+      const via = cssUrl(u);
+      if (via !== null) urls.push(via);
+      return via;
+    }, recordSheet);
+    // Parked with its proxied urls as `none`; the post-pass hands the live text to the frame's queue.
+    el.textContent = urls.length > 0 ? neutraliseCss(text, () => null) : live;
+    if (urls.length > 0) {
+      const same = liveSheets.get(el.textContent) ?? [];
+      same.push({ live, urls });
+      liveSheets.set(el.textContent, same);
+    }
     // Accumulated for {@link effectiveBackground} only, and it is the NEUTRALISED text — the
     // sheet the frame is going to get — so the paper this reads is the paper the reader sees.
     styleText += `${el.textContent}\n`;
@@ -3084,6 +3134,8 @@ a[data-ohmail-inert]{text-decoration:line-through;opacity:.75}
    keeps a sideways gesture that reaches the block's end from turning into a history swipe.
    Same rule, same reason, on the native path's \`.msg-pre-wrap\`/\`.msg-table-wrap\`. */
 :root[data-ohmail-reflow] pre{white-space:pre !important;overflow-x:auto !important;overflow-y:hidden !important;overscroll-behavior-x:contain;overflow-wrap:normal !important}
+/* A parked picture that declares no height waits flat, as one in flight does (proxied-images.ts). */
+:root img[data-ohmail-parkflat]{height:0 !important}
 `;
 
 /**
@@ -4319,6 +4371,7 @@ export function MessageBody({
                  sandboxed without scripts. */
               setLoadedKey(shownKey);
               measure();
+              proxiedImages.admit(frameRef.current?.contentDocument);
             }}
           />
         </div>

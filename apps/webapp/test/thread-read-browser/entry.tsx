@@ -141,4 +141,60 @@ async function landing(opts: { anchor: boolean }): Promise<Record<string, unknow
   return { before, reads: log.reads, aInView: r.top >= view.top && r.bottom <= view.bottom };
 }
 
-(window as unknown as { rig: unknown }).rig = { framed, landing };
+/** Three framed letters, like a Screener preview. */
+function three(html: (id: string) => string): HTMLElement {
+  const sc = scrollerOf(900, 760);
+  const conv = document.createElement("div");
+  sc.appendChild(conv);
+  createRoot(conv).render(
+    <>
+      {["p1", "p2", "p3"].map((id) => (
+        <MessageBody
+          key={id} messageId={id} text="the text part" html={html(id)} remoteLoaded
+          imageProxy={(u) => `${location.origin}/api/img?u=${encodeURIComponent(u)}`}
+        />
+      ))}
+    </>,
+  );
+  return sc;
+}
+const frameDocs = (sc: HTMLElement): Document[] =>
+  [...sc.querySelectorAll("iframe")].flatMap((f) => (f.contentDocument ? [f.contentDocument] : []));
+
+/** Three letters of `each` pictures and one width-only picture whose answer is held back; resolves
+ * once every other picture drew, or at 15 s, with the held one's box while it was parked. */
+async function pictures(each: number): Promise<{ total: number; drawn: number; parked: { w: number; h: number } | null }> {
+  const held = (id: string): string =>
+    `<tr><td><img src="https://pictures.example.test/${id}-held.png" width="564" style="max-width:1200px;display:inline" alt=""></td></tr>`;
+  const sc = three((id) => letter(1, each).replaceAll("/p", `/${id}-p`).replace("</table>", `${held(id)}</table>`));
+  const imgs = (): HTMLImageElement[] => frameDocs(sc).flatMap((d) => [...d.querySelectorAll("img")]);
+  const drawn = (): number => imgs().filter((i) => i.naturalWidth === 8).length;
+  let parked: { w: number; h: number } | null = null;
+  for (let waited = 0; waited < 15_000 && drawn() < 3 * each; waited += 20) {
+    const wait: HTMLImageElement | undefined = parked ? undefined : imgs().find((i) => i.getAttribute("width") === "564" && i.hasAttribute("data-ohmail-src"));
+    if (wait) { const box: DOMRect = wait.getBoundingClientRect(); parked = { w: Math.round(box.width), h: Math.round(box.height) }; }
+    await sleep(20);
+  }
+  return { total: imgs().length, drawn: drawn(), parked };
+}
+
+/** Three letters of `each` cells painted by an inline `background-image` and `each` by a `<style>`
+ * sheet's, the first `refused` of each kind refused by the proxy; resolves once every other cell
+ * shows its proxied background and nothing is parked, or at 15 s. */
+async function backgrounds(each: number, refused = 0): Promise<{ cells: number; shown: number; parked: number }> {
+  const sc = three((id) => {
+    const at = (k: string, i: number): string => `https://pictures.example.test/${id}-${k}${i}${i < refused ? "-refused" : ""}.png`;
+    const rules = Array.from({ length: each }, (_, i) => `.s${i}{background-image:url(${at("s", i)})}`).join("");
+    const cell = (attrs: string): string => `<tr><td ${attrs} style="width:600px;height:40px"></td></tr>`;
+    const inline = Array.from({ length: each }, (_, i) => `<tr><td style="width:600px;height:40px;background-image:url(${at("i", i)})"></td></tr>`);
+    const sheet = Array.from({ length: each }, (_, i) => cell(`class="s${i}"`));
+    return `<html><head><style>${rules}</style></head><body><table width="600" cellpadding="0" cellspacing="0">${[...inline, ...sheet].join("")}</table></body></html>`;
+  });
+  const cells = (): HTMLElement[] => frameDocs(sc).flatMap((d) => [...d.querySelectorAll<HTMLElement>("td")]);
+  const shown = (): number => cells().filter((c) => c.ownerDocument.defaultView?.getComputedStyle(c).backgroundImage.includes("/api/img")).length;
+  const parked = (): number => frameDocs(sc).reduce((n, d) => n + d.querySelectorAll("[data-ohmail-css-src]").length, 0);
+  for (let waited = 0; waited < 15_000 && (shown() < 6 * (each - refused) || parked() > 0); waited += 20) await sleep(20);
+  return { cells: cells().length, shown: shown(), parked: parked() };
+}
+
+(window as unknown as { rig: unknown }).rig = { framed, landing, pictures, backgrounds };

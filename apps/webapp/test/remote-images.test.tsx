@@ -6,11 +6,16 @@ import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { COPY, MessageBody } from "../app/components/MessageBody";
+import { COPY, MessageBody, sanitizeMailHtml } from "../app/components/MessageBody";
 import { AppShell } from "../app/shell/AppShell";
 import type { ConsentTransport } from "../app/shell/consent-state";
 import { OWNER_COOKIE } from "../app/shell/owner-cookie";
-import { type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
+import {
+  DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, PROXIED_IMAGES_IN_FLIGHT,
+  createProxiedImageQueue,
+} from "../app/components/proxied-images";
+import { PROXY_URL_MAX_CHARS as SERVER_URL_MAX } from "@trafficflow/services";
+import { PROXY_URL_MAX_CHARS, type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
 import { RemoteImagesRow } from "../app/shell/RemoteImagesRow";
 import { TrackingPixelsRow } from "../app/shell/TrackingPixelsRow";
 import de from "../messages/de.json";
@@ -197,9 +202,12 @@ function fetchedOnOpen(el: HTMLDivElement): string[] {
   const doc = frameDoc(el);
   for (const node of doc.querySelectorAll("*")) {
     push(node.getAttribute("src") ?? "");
+    // A parked picture: `proxied-images.ts` starts it once the frame has loaded.
+    push(node.getAttribute(DEFERRED_SRC_ATTR) ?? "");
     push(node.getAttribute("background") ?? "");
-    for (const m of (node.getAttribute("style") ?? "").matchAll(/url\(\s*['"]?([^'")]*)/gi)) {
-      push(m[1] ?? "");
+    // A parked style or sheet: its live css is swapped in once its urls have loaded.
+    for (const css of [node.getAttribute("style"), node.getAttribute(DEFERRED_STYLE_ATTR), node.getAttribute(DEFERRED_SHEET_ATTR)]) {
+      for (const m of (css ?? "").matchAll(/url\(\s*['"]?([^'")]*)/gi)) push(m[1] ?? "");
     }
     if (node.tagName.toLowerCase() === "style") {
       for (const m of (node.textContent ?? "").matchAll(/url\(\s*['"]?([^'")]*)/gi)) push(m[1] ?? "");
@@ -1143,5 +1151,177 @@ describe("a measurement whose inputs have not moved writes nothing", () => {
     expect(probes(), "control: a changed box must probe").toBe(2);
     expect(frame.style.height).toBe("480px");
     seen.disconnect();
+  });
+});
+
+/**
+ * 2026-10-26: one tab's Screener drew 27 newsletters of 40 pictures at once, 1,080 `GET /img` in six
+ * seconds, and the API's database pool filled for everyone. A frame runs no script, so its pictures
+ * are parked by the sanitizer and handed out by one queue per tab. The real-engine half (every
+ * picture draws, at most six asked at once) is `thread-read-browser.test.ts`.
+ */
+describe("proxied pictures are asked for a few at a time", () => {
+  it("a consented picture is parked over a blank, never in a fetching src, until its frame loads", async () => {
+    const el = await mount("msg-1", HTML, "auto");
+    const pic = [...frameDoc(el).querySelectorAll("img")].find((i) => i.hasAttribute(DEFERRED_SRC_ATTR));
+    expect(pic, "the picture was not parked").toBeTruthy();
+    expect(new URL(pic!.getAttribute(DEFERRED_SRC_ATTR)!).searchParams.get("u")).toBe(PICTURE);
+    expect(pic!.getAttribute("src"), "the parked picture is fetched at parse").toMatch(/^data:image\/gif;/);
+  });
+
+  function parked(n: number, tag: string): { box: HTMLDivElement; imgs: HTMLImageElement[]; done: Set<Element> } {
+    const box = document.createElement("div");
+    document.body.appendChild(box);
+    const done = new Set<Element>();
+    const imgs = Array.from({ length: n }, (_, i) => {
+      const img = document.createElement("img");
+      img.setAttribute("src", "data:image/gif;base64,R0lGODlhAQABAAAAACw=");
+      img.setAttribute(DEFERRED_SRC_ATTR, `/api/img?u=${tag}-${i}`);
+      // A picture has ended once the test says so (jsdom loads nothing).
+      Object.defineProperty(img, "complete", { configurable: true, get: () => done.has(img) });
+      box.appendChild(img);
+      return img;
+    });
+    return { box, imgs, done };
+  }
+  const started = (imgs: HTMLImageElement[]): string[] =>
+    imgs.filter((i) => !i.hasAttribute(DEFERRED_SRC_ATTR)).map((i) => i.getAttribute("src")!);
+
+  it("starts six, and one more as each ends, top to bottom", () => {
+    vi.useFakeTimers();
+    try {
+      const q = createProxiedImageQueue();
+      const a = parked(20, "a");
+      q.admit(document);
+      expect(PROXIED_IMAGES_IN_FLIGHT).toBe(6);
+      expect(started(a.imgs)).toEqual([0, 1, 2, 3, 4, 5].map((i) => `/api/img?u=a-${i}`));
+      a.done.add(a.imgs[0]!).add(a.imgs[3]!);
+      vi.advanceTimersByTime(60);
+      expect(started(a.imgs)).toHaveLength(8);
+      expect(q.inFlight()).toBe(6);
+      for (const img of a.imgs) a.done.add(img);
+      for (let i = 0; i < 10; i += 1) vi.advanceTimersByTime(60);
+      expect(started(a.imgs), "a parked picture never started").toHaveLength(20);
+      expect(q.inFlight()).toBe(0);
+      a.box.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the frame newest to load goes first; a frame taken away and a stalled picture free their slots", () => {
+    vi.useFakeTimers();
+    try {
+      const q = createProxiedImageQueue(2);
+      const old = parked(4, "old");
+      q.admit(old.box as unknown as Document);
+      const fresh = parked(2, "new");
+      q.admit(fresh.box as unknown as Document);
+      old.box.remove();
+      vi.advanceTimersByTime(60);
+      expect(started(fresh.imgs), "the newest frame waited behind an older one").toEqual(["/api/img?u=new-0", "/api/img?u=new-1"]);
+      expect(started(old.imgs), "a frame taken away kept asking").toHaveLength(2);
+      vi.advanceTimersByTime(15_100);
+      expect(q.inFlight(), "a stalled picture held its slot").toBe(0);
+      fresh.box.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a proxied css url is parked as none in its style and its sheet; a picture with no declared height waits flat", () => {
+    const via = (u: string): string => `/api/img?u=${encodeURIComponent(u)}`;
+    const { html } = sanitizeMailHtml(
+      `<style>.a{background:url(https://${SENDER}/s.png)}</style>` +
+        `<div style="color:red;background-image:url(https://${SENDER}/c.png)">x</div>` +
+        `<img src="https://${SENDER}/w.png" width="564"><img src="https://${SENDER}/a.png" width="600" style="height:auto">` +
+        `<img src="https://${SENDER}/h.png" width="600" height="200">`,
+      { imageProxy: via },
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const cell = doc.querySelector(`[${DEFERRED_STYLE_ATTR}]`)!;
+    expect(cell.getAttribute("style"), "a parked background is fetched at parse").toBe("color:red;background-image:none");
+    expect(cell.getAttribute(DEFERRED_STYLE_ATTR)).toContain(via(`https://${SENDER}/c.png`));
+    expect(JSON.parse(cell.getAttribute(DEFERRED_URLS_ATTR)!)).toEqual([via(`https://${SENDER}/c.png`)]);
+    const sheet = doc.querySelector("style")!;
+    expect(sheet.textContent, "a parked sheet is fetched at parse").toBe(".a{background:none}");
+    expect(sheet.getAttribute(DEFERRED_SHEET_ATTR)).toBe(`.a{background:url("${via(`https://${SENDER}/s.png`)}")}`);
+    expect(JSON.parse(sheet.getAttribute(DEFERRED_URLS_ATTR)!)).toEqual([via(`https://${SENDER}/s.png`)]);
+    const flat = [...doc.querySelectorAll("img")].map((i) => i.hasAttribute(PARK_FLAT_ATTR));
+    expect(flat, "width only, height:auto, both declared").toEqual([true, true, false]);
+  });
+
+  it("a parked style or sheet is swapped in once every url of its own has ended, within the same budget; a refused url as none", () => {
+    vi.useFakeTimers();
+    const ended = new Set<string>();
+    const refused = new Set(["/s2"]);
+    const complete = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "complete")!;
+    const naturalWidth = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "naturalWidth")!;
+    // A probe has ended once the test says so, and drew unless refused (jsdom loads nothing).
+    Object.defineProperty(HTMLImageElement.prototype, "complete", {
+      configurable: true, get(this: HTMLImageElement) { return ended.has(this.getAttribute("src") ?? ""); },
+    });
+    Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", {
+      configurable: true, get(this: HTMLImageElement) { return refused.has(this.getAttribute("src") ?? "") ? 0 : 8; },
+    });
+    const box = document.createElement("div");
+    try {
+      const q = createProxiedImageQueue(2);
+      const cell = document.createElement("div");
+      cell.setAttribute("style", "background:none");
+      cell.setAttribute(DEFERRED_STYLE_ATTR, 'background:url("/c")');
+      cell.setAttribute(DEFERRED_URLS_ATTR, JSON.stringify(["/c"]));
+      const sheet = document.createElement("style");
+      sheet.textContent = ".a{background:none}.b{background:none}";
+      sheet.setAttribute(DEFERRED_SHEET_ATTR, '.a{background:url("/s1")}.b{background:url("/s2")}');
+      sheet.setAttribute(DEFERRED_URLS_ATTR, JSON.stringify(["/s1", "/s2"]));
+      box.append(cell, sheet);
+      document.body.appendChild(box);
+      q.admit(box as unknown as Document);
+      expect(q.inFlight()).toBe(2);
+      expect(cell.getAttribute("style"), "swapped in before its url ended").toBe("background:none");
+      ended.add("/c");
+      vi.advanceTimersByTime(60);
+      expect(cell.getAttribute("style")).toBe('background:url("/c")');
+      expect(cell.hasAttribute(DEFERRED_STYLE_ATTR) || cell.hasAttribute(DEFERRED_URLS_ATTR)).toBe(false);
+      expect(q.inFlight(), "the sheet's second url waited for a slot").toBe(2);
+      ended.add("/s1");
+      vi.advanceTimersByTime(60);
+      expect(sheet.textContent, "a sheet swapped in with a url still loading").toBe(".a{background:none}.b{background:none}");
+      ended.add("/s2");
+      vi.advanceTimersByTime(60);
+      // A refusal carries no cache lifetime: written live, the sheet would ask for it again, outside the budget.
+      expect(sheet.textContent, "a refused url was swapped in live").toBe('.a{background:url("/s1")}.b{background:none}');
+      expect(q.inFlight()).toBe(0);
+    } finally {
+      Object.defineProperty(HTMLImageElement.prototype, "complete", complete);
+      Object.defineProperty(HTMLImageElement.prototype, "naturalWidth", naturalWidth);
+      box.remove();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a url the proxy refuses on sight is never asked for", async () => {
+    expect(PROXY_URL_MAX_CHARS, "the client's ceiling is the server's").toBe(SERVER_URL_MAX);
+    const chrome = (() => {
+      const box: { current: RemoteImagesChrome | undefined } = { current: undefined };
+      const Probe = (): null => {
+        box.current = useRemoteImages({ onFailed: () => {}, mode: "auto", loadPixels: false });
+        return null;
+      };
+      return { box, Probe };
+    })();
+    await unmount();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root!.render(h(chrome.Probe)); });
+    const proxy = chrome.box.current!.proxyFor("m1");
+    const fits = `https://${SENDER}/${"a".repeat(PROXY_URL_MAX_CHARS - SENDER.length - 9)}`;
+    expect(fits.length).toBe(PROXY_URL_MAX_CHARS);
+    expect(proxy(fits), "control: the longest url the proxy takes").toContain("/api/img?");
+    expect(proxy(`${fits}a`), "an over-long url was asked for").toBe("");
+    expect(proxy("ftp://images.example/a.png")).toBe("");
+    expect(proxy("//images.example/a.png")).toBe("");
   });
 });
