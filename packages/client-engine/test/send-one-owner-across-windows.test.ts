@@ -226,6 +226,31 @@ describe("a waiting send has exactly one engine that sends it", () => {
     });
   }
 
+  it.each([["made", "hears", undefined], ["named", "hears", "d-named"], ["made", "misses", undefined]] as const)(
+    "Cancel in B of a send whose row its press %s, A %s the notice: its withdrawn ending names that row", async (_how, heard, named) => {
+    const factory = new IDBFactory(); const reg = registry(); const srv = server();
+    const A = await open(factory, reg.api, srv);
+    const B = await open(factory, reg.api, srv);
+    // A press with no row makes one first (POST /drafts); every send is then refused retryably, so it waits.
+    const send = srv.adapter.mutate;
+    srv.adapter.mutate = async (m, o) => {
+      if (m.kind !== "mail_send") return send(m, o);
+      const opts = o as { createdRow?: unknown; onDraftRow?: (row: { id: string; revision: null }) => Promise<void> };
+      if (!(m as { draftId?: string }).draftId && opts.createdRow === undefined) await opts.onDraftRow?.({ id: "d-made", revision: null });
+      throw new MutationRejectedError("the connection dropped", { code: "network", retryable: true });
+    };
+    const res = await A.engine.mutate({ ...SEND("Thanks, Ada."), ...(named ? { draftId: named } : {}) } as EngineMutation);
+    expect(res.status).toBe("queued");
+    await until(() => rows(B).some((r) => r.key === res.key), "B reads it");
+    // Missed: A's next dispatch meets B's answered mark on the disk row instead.
+    if (heard === "misses") (A.store as unknown as { bus: { close: () => void } }).bus.close();
+    expect(await B.engine.withdrawQueued(res.key)).toBe("withdrawn");
+    if (heard === "hears") await until(() => A.engine.hasLateResults(), "A hears the Cancel");
+    const ended = (await A.engine.flushPending()).find((r) => r.key === res.key);
+    expect({ code: ended?.error?.code, row: ended?.entityId, sent: srv.deliveries }).toEqual({ code: OUTBOX_WITHDRAWN_CODE, row: named ?? "d-made", sent: [] });
+    A.store.close(); B.store.close();
+  });
+
   it("the owning window closes with the row queued: B adopts and delivers it once", async () => {
     const factory = new IDBFactory(); const reg = registry(); const srv = server();
     const B = await open(factory, reg.api, srv);

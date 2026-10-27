@@ -187,7 +187,7 @@ export interface MutationResult {
    * that one, but the durable send record has to name it or a reload cannot
    * tell the row in Drafts is the message it is waiting on. A rolled-back
    * result carries it too when the refusal knows the row — see
-   * {@link MutationRejectedError.entityId} (an `unverified` send's row).
+   * {@link MutationRejectedError.entityId} (an `unverified` send's row, a withdrawn one's).
    */
   entityId?: string;
   /**
@@ -657,11 +657,17 @@ export function targetOf(m: EngineMutation): string | null {
 /** Replay order is user order: the stamp minted at `mutate()`, then its sequence. */
 const byAtN = (a: PendingMutation, b: PendingMutation): number => (a.at - b.at) || (a.n - b.n);
 
-/** The answer a verb cancelled from another window settles with: the code a surface says nothing for. */
+/**
+ * The answer a withdrawn verb settles with, here or from another window: the code a surface says nothing
+ * for, and a send's row (the one it named, or made for a press that named none), so its words stay in it.
+ */
 function withdrawnResult(p: PendingMutation): MutationResult {
+  const row = p.mutation.kind === "mail_send" ? p.createdRow?.id ?? p.mutation.draftId ?? null : null;
   return {
-    id: p.id, key: p.key, status: "rolled_back", seq: null,
-    error: new MutationRejectedError("withdrawn before it was sent", { code: OUTBOX_WITHDRAWN_CODE, retryable: false }),
+    id: p.id, key: p.key, status: "rolled_back", seq: null, ...(row ? { entityId: row } : {}),
+    error: new MutationRejectedError("withdrawn before it was sent", {
+      code: OUTBOX_WITHDRAWN_CODE, retryable: false, ...(row ? { entityId: row } : {}),
+    }),
   };
 }
 
@@ -8739,12 +8745,7 @@ export class OhmailEngine {
       this.notify();
       this.sayEnded(p, "withdrawn");
       await this.dropOutbox(p.id);
-      return {
-        id: p.id, key: p.key, status: "rolled_back", seq: null,
-        error: new MutationRejectedError("withdrawn before it was sent", {
-          code: OUTBOX_WITHDRAWN_CODE, retryable: false,
-        }),
-      };
+      return withdrawnResult(p);
     }
     try {
       // A claim the disk could not answer sends nothing this round: the row may carry a Cancel.
