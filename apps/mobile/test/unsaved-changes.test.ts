@@ -8,13 +8,26 @@
  * be behaving correctly and the app would be quietly lying by omission.
  *
  * So the assertions here are about the two things a platform actually owes: a sentence for every
- * verb, and a door to both answers.
+ * verb, and a door to both answers. The last block mounts the notice and presses it.
  */
-import { describe, expect, it } from "vitest";
+import { createElement as h } from "react";
+/* First: it answers the testing library's own `require("react-native")`. */
+import { screen as device } from "./helpers/rn-host";
+import { act, cleanupAsync, fireEvent, render, screen, type RenderResult } from "@testing-library/react-native/pure";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AbandonedMutation } from "@ohmail/client-engine";
 import { MUTATION_KINDS } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
 import { describeKind, reason, retrySaid } from "../src/ui/unsaved-copy";
+import { ThemeProvider } from "../src/theme";
+import { UnsavedChanges } from "../src/ui/UnsavedChanges";
+
+vi.mock("react-native", () => import("./helpers/rn-host"));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+vi.mock("react-native-svg", () => ({ default: () => null, Circle: () => null, Path: () => null, Rect: () => null }));
+vi.mock("expo", () => ({ requireOptionalNativeModule: () => null }));
+const world = vi.hoisted(() => ({ abandoned: [] as unknown[], queued: [] as unknown[], actions: {} as Record<string, unknown> }));
+vi.mock("../src/state/world", () => ({ useWorld: () => world }));
 
 const row = (kind: string, error: Partial<AbandonedMutation["error"]> = {}): AbandonedMutation => ({
   id: `id-${kind}`,
@@ -109,96 +122,78 @@ describe("I7 — every surface that can abandon work can show it", () => {
     expect(detail, "DetailBar must render it too").toContain("<UnsavedChanges />");
   });
 
-  it("the recovery controls sit INSIDE the scroller, not merely beside the word", async () => {
-    /**
-     * ── WHAT THIS USED TO BE, AND WHY IT WAS WORTH NOTHING ─────────────────────────────────
-     *
-     * `expect(src).toContain("ScrollView")` plus `toMatch(/maxHeight/)`. Round four named the
-     * mutation that walks straight through it: replace the JSX `<ScrollView>` with `<View>` and
-     * leave the import, the comment and the `maxHeight` style. Both assertions still pass, and
-     * the controls are unreachable again — the exact defect this test was added for.
-     *
-     * A substring is not a structure. What matters is CONTAINMENT: Try again and Discard have to
-     * be inside the element that scrolls. So the JSX is bracket-matched and the controls are
-     * required to fall between the scroller's open and close tags.
-     *
-     * ── AND THIS IS STILL NOT A MOUNT ──────────────────────────────────────────────────────
-     *
-     * It reads source, which is the weaker instrument. Mounting a React Native tree needs a
-     * renderer this repository does not have — `react-test-renderer` and
-     * `@testing-library/react-native` are absent from the workspace and from the pnpm store — so
-     * adding one means a lockfile change and an install. That is a shared-file decision, not an
-     * implementer's, and it is recorded here rather than quietly skipped.
-     */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/ui/UnsavedChanges.tsx", import.meta.url), "utf8");
-
-    const open = src.indexOf("<ScrollView");
-    expect(open, "the expanded list is not inside a ScrollView at all").toBeGreaterThan(-1);
-    const close = src.indexOf("</ScrollView>", open);
-    expect(close, "the ScrollView is never closed — the list cannot be inside it").toBeGreaterThan(open);
-
-    const openTagEnd = src.indexOf(">", open);
-    const openTag = src.slice(open, openTagEnd + 1);
-    expect(openTag, "the scroller has no height bound, so it cannot scroll").toMatch(/maxHeight/);
-
-    const inside = src.slice(openTagEnd, close);
-    expect(
-      inside,
-      "Try again is outside the scroller: with enough rows it sits below the viewport and cannot "
-        + "be reached",
-    ).toContain("Copy.unsavedRetry");
-    expect(
-      inside,
-      "Discard is outside the scroller — the same unreachability, on the control that clears it",
-    ).toContain("Copy.unsavedDiscard");
-  });
-
-  it("the notice survives its last row, or the check-Sent warning has nowhere to appear", async () => {
-    /**
-     * ── ROUND FOUR, FINDING 10 ─────────────────────────────────────────────────────────────
-     *
-     * A retried send whose answer was lost ends with the record gone: the retry moves it to the
-     * live collection, and the terminal outcome removes that row too. The warning that says "this
-     * may have been sent — check Sent" lives in the notice's own `said` state, and the notice
-     * returned `null` the moment the collection emptied. So the one outcome a person MUST see was
-     * rendered into a component that had just decided not to exist.
-     *
-     * Reverting the early return to `rows.length === 0` alone restores that, and round four
-     * found nothing in the mobile suite that would notice. The web test does not cover the phone.
-     *
-     * Structural, not a mount, for the reason given above: this repository has no React Native
-     * renderer. What it pins is the half of the condition that is load-bearing.
-     */
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/ui/UnsavedChanges.tsx", import.meta.url), "utf8");
-    const early = src.match(/if \(([^)]*)\)\s*return null;/);
-    expect(early, "the notice has no early return at all any more — check this guard, not the code")
-      .not.toBeNull();
-    expect(
-      early![1],
-      "the notice disappears as soon as the last row goes, taking the check-Sent warning with it",
-    ).toMatch(/said/);
-  });
-
-  it("the row actions stack below 380px rather than clipping", async () => {
-    // THE STATED REASON USED TO BE GERMAN, and that was a claim about a state this app cannot
-    // reach: `copy.ts` is one hard-coded English deck with no locale mechanism, so the phone
-    // cannot render "Erneut versuchen" at all. The assertion is the same; the justification now
-    // matches what is measurable — the threshold, and the two labels that share the row.
-    const { readFileSync } = await import("node:fs");
-    const src = readFileSync(new URL("../src/ui/UnsavedChanges.tsx", import.meta.url), "utf8");
-    expect(src).toContain("useWindowDimensions");
-    expect(src).toMatch(/narrow \? "column" : "row"/);
-    expect(src).toMatch(/width < 380/);
-    // Both labels do share one row, which is what makes the threshold load-bearing.
-    expect(Copy.unsavedRetry).not.toBe("");
-    expect(Copy.unsavedDiscard).not.toBe("");
-  });
-
   it("a send retried from the strip whose key had already delivered says so", () => {
     expect(retrySaid({ status: "confirmed", firstSend: { status: "sent", at: "x" } })).toBe(Copy.unsavedSendAlreadyWent);
     expect(retrySaid({ status: "confirmed" }), "CONTROL: an ordinary confirmation says nothing").toBeNull();
   });
 });
 
+describe("the notice, mounted", () => {
+  afterEach(async () => {
+    await cleanupAsync();
+    Object.assign(device, { width: 400, height: 800 });
+  });
+  const notice = () => h(ThemeProvider, { pref: "light", children: h(UnsavedChanges) });
+  const mount = (rows: AbandonedMutation[], actions: Record<string, unknown> = {}): RenderResult => {
+    Object.assign(world, { abandoned: rows, queued: [], actions });
+    return render(notice());
+  };
+  const shown = () => fireEvent.press(screen.getByText(`${Copy.unsavedCount(world.abandoned.length)} · ${Copy.unsavedShow}`));
+  /** The host elements above a node, nearest first. */
+  type Host = { type: unknown; props: { style?: Record<string, unknown> }; parent: Host | null };
+  const above = (node: unknown): Host[] => {
+    const out: Host[] = [];
+    for (let n = (node as Host).parent; n; n = n.parent) if (typeof n.type === "string") out.push(n);
+    return out;
+  };
+  const rowOf = (label: string) => above(screen.getByText(label)).find((n) => n.props.style?.flexDirection)?.props.style;
+
+  it("renders, and says the count only while there is something to say", () => {
+    const empty = mount([]);
+    expect(screen.queryByText(/could not be saved/)).toBeNull();
+    empty.unmount();
+    mount([row("move"), row("mail_send")]);
+    expect(screen.getByText(`${Copy.unsavedCount(2)} · ${Copy.unsavedShow}`)).toBeTruthy();
+  });
+
+  it("Try again and Discard sit inside the bounded scroller, and stack below 380 dp", () => {
+    device.width = 360;
+    const narrow = mount([row("move")]);
+    shown();
+    for (const label of [Copy.unsavedRetry, Copy.unsavedDiscard]) {
+      const scroller = above(screen.getByText(label)).find((n) => n.type === "RCTScrollView");
+      expect(scroller, `${label} is outside the scroller`).toBeDefined();
+      expect(scroller!.props.style).toMatchObject({ maxHeight: Math.round(800 / 3) });
+      expect(rowOf(label)).toMatchObject({ flexDirection: "column" });
+    }
+    narrow.unmount();
+    device.width = 400;
+    mount([row("move")]);
+    shown();
+    expect(rowOf(Copy.unsavedRetry), "CONTROL: a wide screen keeps them on one row").toMatchObject({ flexDirection: "row" });
+  });
+
+  it("pressing Try again and Discard asks the engine for that change", async () => {
+    const retryAbandoned = vi.fn(async () => ({ status: "confirmed" }));
+    const discardAbandoned = vi.fn(async () => undefined);
+    mount([row("move")], { retryAbandoned, discardAbandoned });
+    shown();
+    await act(async () => { fireEvent.press(screen.getByText(Copy.unsavedRetry)); });
+    expect(retryAbandoned).toHaveBeenCalledWith("id-move");
+    await act(async () => { fireEvent.press(screen.getByText(Copy.unsavedDiscard)); });
+    expect(discardAbandoned).toHaveBeenCalledWith("id-move");
+  });
+
+  it("a terminal answer to the last row stays on screen after the row is gone", async () => {
+    const retryAbandoned = vi.fn(async () => {
+      world.abandoned = [];
+      return { status: "rolled_back", error: { code: "send_unverified", message: "It may have gone. Check Sent." } };
+    });
+    const view = mount([row("mail_send")], { retryAbandoned });
+    shown();
+    await act(async () => { fireEvent.press(screen.getByText(Copy.unsavedRetry)); });
+    view.rerender(notice());
+    expect(screen.getByText(`It may have gone. Check Sent. · ${Copy.unsavedDismiss}`)).toBeTruthy();
+    expect(screen.queryByText(Copy.unsavedRetry), "CONTROL: the row itself is gone").toBeNull();
+  });
+});

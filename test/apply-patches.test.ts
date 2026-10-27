@@ -246,6 +246,18 @@ describe("verify-tree: the installed tree is the locked one, read off the disk",
     expect(r.out).not.toContain("PATCHES_APPLIED");
   });
 
+  it("admits a package installed under an alias (npm:react-is@18 as @jest/react-is-18), by the name the lock records", () => {
+    const root = tree([NODEMAILER]);
+    relock(root, { "node_modules/@jest/react-is-18": { name: "react-is", version: "18.3.1" } });
+    add(root, "node_modules/@jest/react-is-18", { name: "react-is", version: "18.3.1" });
+    const r = run(["verify-tree", "--root", root]);
+    expect(r.code, r.err).toBe(0);
+    add(root, "node_modules/@jest/react-is-18", { name: "react-is", version: "18.2.0" });
+    const moved = run(["verify-tree", "--root", root]);
+    expect(moved.err, "CONTROL: the aliased copy at another version").toContain(
+      "MOVED node_modules/@jest/react-is-18: the lock says react-is@18.3.1, the disk holds react-is@18.2.0");
+  });
+
   it("refuses a required package that is gone", () => {
     const root = tree([NODEMAILER]);
     relock(root, { "node_modules/gone": { version: "1.0.0" } });

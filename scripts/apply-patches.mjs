@@ -275,8 +275,9 @@ function verifyTree(treeRoot, { extra = [], tree = ".", patched = [] } = {}) {
       const needers = by.filter(presentAt);
       problems.push(`MISSING ${k} (${name}@${e.version})${e.optional ? " — optional, and its platform admits this host" : ""}` +
         `${e.optional && patched.includes(name) ? "; a patched package" : ""}${e.optional && needers.length ? `; needed by ${needers.slice(0, 3).map((n) => n || "the root").join(", ")}` : ""}`);
-    } else if (disk.name !== name || disk.version !== e.version) {
-      problems.push(`MOVED ${k}: the lock says ${name}@${e.version}, the disk holds ${disk.name}@${disk.version}`);
+    } else if (disk.name !== (e.name ?? name) || disk.version !== e.version) {
+      /* `e.name` is an aliased install's own name (npm:react-is@18 at @jest/react-is-18). */
+      problems.push(`MOVED ${k}: the lock says ${e.name ?? name}@${e.version}, the disk holds ${disk.name}@${disk.version}`);
     } else present += 1;
   }
   const ws = Array.isArray(lock.packages[""]?.workspaces) ? lock.packages[""].workspaces : [];
