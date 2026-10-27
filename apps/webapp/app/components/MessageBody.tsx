@@ -3810,17 +3810,9 @@ export function MessageBody({
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
    * `:root[data-ohmail-dark]` in the frame's own sheet, so switching it on or off is one attribute write on the
    * frame's `documentElement`. A rebuild would re-parse the sender's html and force a fresh measurement pass; this
-   * does neither, so a theme change (or the reader's per-message override) is instant and motionless. `loadedKey`
-   * and `mail` are deps so the attribute is re-asserted after the frame loads — a fresh frame starts from whatever
-   * `dark` was baked in, and this keeps the live document in step with the current value. In jsdom `contentDocument`
-   * is null, so this is a no-op there, which is why the dark transform's real proof is a browser check and not this
-   * file.
+   * does neither, so a theme change (or the reader's per-message override) is instant and motionless. The effect
+   * itself sits below `frameKey`: it writes only once the frame's own document has loaded.
    */
-  useEffect(() => {
-    const doc = frameRef.current?.contentDocument;
-    if (!doc?.documentElement) return;
-    doc.documentElement.toggleAttribute("data-ohmail-dark", dark);
-  }, [dark, loadedKey, mail]);
 
   /**
    * Size the frame to the mail — and the obvious way to do it runs away. A fixed-height frame with its own scrollbar
@@ -4021,6 +4013,13 @@ export function MessageBody({
   const docCache = engine && messageId ? mailDocCacheFor<unknown>(engine) : null;
   fitStore.current = frameKey !== null && docCache ? { key: frameKey, cache: docCache } : null;
   seedHeight.current = frameKey !== null && docCache ? docCache.fitOf(frameKey)?.height ?? "" : "";
+  /* The dark flip (see `dark` above), once this frame's own document has loaded: before that the
+     element holds the browser's empty first document, and touching it costs a read per new frame
+     for a document about to be replaced, which carries the value it was built with anyway. */
+  useEffect(() => {
+    if (frameKey === null || loadedKey !== frameKey) return;
+    frameRef.current?.contentDocument?.documentElement?.toggleAttribute("data-ohmail-dark", dark);
+  }, [dark, loadedKey, frameKey]);
   useEffect(() => {
     // THE FRAME ON SCREEN MUST BE THE ONE THIS MAIL LOADED. A fresh element's document is the
     // browser's empty one until `load` fires, and measuring or observing that measures nothing

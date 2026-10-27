@@ -44,6 +44,7 @@ import { cssRect } from "@ohmail/ui";
  * above it while the top edge is inside the rows moves `scrollTop` with it.
  */
 import {
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -316,6 +317,13 @@ export function useListWindow({
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
+    /* A LIST DRAWN WHOLE shows nothing the sums, the floor's stamp or the origin decide (no spacer,
+       no slice), so what this pass learns re-renders it after paint, not inside the commit that
+       mounted it. A window re-prices its slice before paint, as it always has. */
+    const settle = (update: () => void): void => {
+      if (windowed) update();
+      else startTransition(update);
+    };
     /* ROWS ARRIVED ABOVE EVERY INDEX. Heights and frozen prices move down with their rows, the
        new rows are frozen at the mean, and `scrollTop` moves by exactly that price while the top
        edge is inside the rows. The re-render this asks for is laid out before paint. */
@@ -353,10 +361,10 @@ export function useListWindow({
         moved = true;
       }
     }
-    if (moved) setSamples((n) => n + 1);
+    if (moved) settle(() => setSamples((n) => n + 1));
     /* THE FLOOR, decided once and before paint: a list that drew items and stamped none is priced
        at one height, so it goes back to rendering whole below FULL_RANGE_MAX_ROWS. */
-    if (stamped === null && count > 0) setStamped(found);
+    if (stamped === null && count > 0) settle(() => setStamped(found));
     /* ONE ANCHOR. A measured list is anchored below (`scrollTop` follows the item under the top
        edge); the browser's own scroll anchoring on top of it corrects the same move twice — a
        row growing above the viewport moved the rows on screen by its growth, the other way. */
@@ -364,14 +372,14 @@ export function useListWindow({
     /* WHERE SLOT 0 IS — the top spacer's place, which moves with whatever stands above it. */
     const o = listOrigin(el);
     originAt.current = o;
-    if (Math.abs(o - origin) >= 0.5) setOrigin(o);
+    if (Math.abs(o - origin) >= 0.5) settle(() => setOrigin(o));
 
     if (heights.current.size === 0) {
       /* The pre-cache fallback, for a list that stamps no index: one row's height, taken only at
          the top where the leading row's identity does not depend on the height it produces. */
       const row = el.querySelector<HTMLElement>(".row");
       const rh = row?.offsetHeight ?? 0;
-      if (rh > 0 && Math.abs(rh - measured) >= 1 && (measured === 0 || start === 0)) setMeasured(rh);
+      if (rh > 0 && Math.abs(rh - measured) >= 1 && (measured === 0 || start === 0)) settle(() => setMeasured(rh));
       return;
     }
 
