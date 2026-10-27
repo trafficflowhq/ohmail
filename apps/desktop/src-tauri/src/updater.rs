@@ -2204,6 +2204,7 @@ fn install_and_restart<R: Runtime>(app: &AppHandle<R>) {
             if resumed == Resumed::AppGoing {
                 return quit(app, 0);
             }
+            crate::unclean_exit::rearm();
             signal(app, Signal::InstallerDidNotStart { at_unix_ms: now_unix_ms() });
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
@@ -2222,6 +2223,8 @@ fn restart_into_the_new_copy<R: Runtime>(app: &AppHandle<R>, at: &str) {
         // The new image starts without the old one's keep-alive, so the old mount goes when
         // this process does rather than when the new one quits.
         crate::inherited_fds::withhold_from_the_restart();
+        // On the main thread the restart skips the loop's Exit.
+        crate::unclean_exit::clear();
         app.restart();
     })
 }
@@ -2353,6 +2356,8 @@ impl InstallHook {
         self.ran.store(true, Ordering::SeqCst);
         let left = self.door.stop();
         emit(line("updater_hook", &[("engineLeft", if left { "true" } else { "false" })]));
+        // The installer ends the process with no Exit event.
+        crate::unclean_exit::clear();
     }
 
     fn arm(&self) {

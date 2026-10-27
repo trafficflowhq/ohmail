@@ -150,6 +150,9 @@ mod allocator_arenas;
 // Linux. Always compiled: every build opens the same window (issue #14).
 mod text_scale;
 
+// A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
+mod unclean_exit;
+
 // The window's CSP per platform, read through Tauri's own config merge: each overlay names its
 // webview's one spelling of the command scheme, and the base stays closed.
 #[cfg(test)]
@@ -226,6 +229,14 @@ fn main() {
         let undone = engine::recover_door_switch(&paths);
         (host::HostBoot::detect(&paths), undone)
     };
+    // After the build (a second instance has left) and the log's open: a marker the last run left
+    // is one line, and this run's goes in its place.
+    unclean_exit::arm(&app);
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.handle().clone();
+        unclean_exit::quit_on_session_end(move || updater::quit(&handle, 0));
+    }
     #[cfg(feature = "local-engine")]
     let shell = std::sync::Arc::new(engine::Shell::start(&app, host_boot.plan()));
     #[cfg(feature = "local-engine")]
@@ -266,6 +277,10 @@ fn main() {
             }
             tauri::RunEvent::Exit => updater::at_exit(),
             _ => {}
+        }
+        // A clean exit; a restart's Exit comes before the new copy starts.
+        if matches!(&_event, tauri::RunEvent::Exit) {
+            unclean_exit::clear();
         }
         // The preview's staged files go with the app.
         #[cfg(feature = "local-engine")]
