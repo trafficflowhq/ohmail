@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { THREAD_READ_HOLD_MS, createThreadRead, threadWalk, type ThreadRead } from "@ohmail/client-engine";
 import { createPhoneThreadRead, type PhoneThreadRead } from "../src/ui/reader-seen";
 import {
-  RAIL_PITCH, RAIL_PITCH_MIN, RAIL_TOP, openedBodyFinal, railFit, railOffsetFor, readerChromeOverlap,
+  openedBodyFinal, readerChromeOverlap,
 } from "../src/ui/reader-marks";
 import { VISIT_HANDOFF_MS, hideVisit, resetVisitsForTests, showVisit, visitRecordFor } from "../src/ui/visit-records";
 import {
@@ -633,28 +633,6 @@ describe("a fold keeps the visit (the reader remounts for the same message)", ()
   });
 });
 
-describe("the rail fits the reader", () => {
-  it("30dp a square where they fit, closer down to 16dp, and past that it scrolls", () => {
-    expect(railFit(5, 700)).toEqual({ pitch: RAIL_PITCH, scrolls: false });
-    expect(railFit(30, 700)).toEqual({ pitch: 23, scrolls: false });
-    expect(railFit(40, 600)).toEqual({ pitch: RAIL_PITCH_MIN, scrolls: true });
-  });
-  it("every square of a 30-message conversation lies inside the room above the chrome", () => {
-    const room = 700;
-    const { pitch } = railFit(30, room);
-    expect(RAIL_TOP + 30 * pitch).toBeLessThanOrEqual(room);
-  });
-  it("a scrolling rail keeps the ringed square in view, the newest reachable", () => {
-    const n = 40, room = 600, { pitch } = railFit(n, room);
-    for (const i of [0, 20, 39]) {
-      const off = railOffsetFor(i, n, pitch, room);
-      const top = RAIL_TOP + i * pitch;
-      expect(top - off).toBeGreaterThanOrEqual(0);
-      expect(top + pitch - off).toBeLessThanOrEqual(room);
-    }
-  });
-});
-
 describe("the reader wires it", () => {
   const reader = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/MessageReader.tsx", import.meta.url)), "utf8"));
   it("one record per visit, held outside the tree, entered at the mount; the rule's reads go out as one glance", () => {
@@ -716,9 +694,7 @@ describe("the reader wires it", () => {
   it("a reply that syncs into the open reader is asked its text", () => {
     expect(reader).toMatch(/const fresh = arrivalsToAsk\(m\.earlier, asked\.current\);\s*if \(fresh\.length > 0\) hydrateHeld\(fresh\);/);
   });
-  it("the rail fits the reader's room above the chrome, and scrolls past it", () => {
-    expect(reader).toMatch(/const \{ pitch, scrolls \} = railFit\(n, room\);/);
+  it("the rail fits the reader's room above the chrome", () => {
     expect(reader).toMatch(/over=\{chromeOver\}/);
-    expect(reader).toMatch(/railOffsetFor\(at, n, pitch, room\)/);
   });
 });

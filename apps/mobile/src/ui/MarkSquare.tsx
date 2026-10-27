@@ -6,7 +6,8 @@
  * ohmarchy. A finger held on a square shows its sheet (`MarkSheet`): who, when, the first line.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, View, type LayoutChangeEvent, type ViewStyle } from "react-native";
+import { Animated, Easing, LayoutAnimation, View, type LayoutChangeEvent, type ViewStyle } from "react-native";
+import { squaresWindow, type SquaresWindow } from "@ohmail/ui/squares-window";
 import { Copy } from "../copy";
 import { activeLocale } from "../i18n/locale";
 import { readerZone } from "../state/live";
@@ -26,7 +27,8 @@ export const rowSquareRadius = (ctl: number): number => (ctl * 3) / 10;
 
 const EASE = Easing.bezier(0.22, 0.61, 0.36, 1);
 
-export function MarkSquare({ kind }: { kind: MarkKind }) {
+/** `scale`: a tapered square at a window's edge (`useSquaresWindow`), its corner and outline with it. */
+export function MarkSquare({ kind, scale = 1 }: { kind: MarkKind; scale?: number }) {
   const t = useTheme();
   const target = kind === "unread" ? 1 : kind === "mine" ? t.c.markMine : t.c.markRead;
   const v = useRef(new Animated.Value(target)).current;
@@ -45,14 +47,63 @@ export function MarkSquare({ kind }: { kind: MarkKind }) {
   return (
     <Animated.View
       style={{
-        width: 10,
-        height: 10,
+        width: 10 * scale,
+        height: 10 * scale,
         opacity: v,
         backgroundColor: kind === "mine" ? "transparent" : t.c.accent,
-        borderWidth: kind === "mine" ? 2 : 0,
+        borderWidth: kind === "mine" ? 2 * scale : 0,
         borderColor: t.c.accent,
-        borderRadius: squareRadius(t.radius.focus),
+        borderRadius: squareRadius(t.radius.focus) * scale,
       }}
+    />
+  );
+}
+
+/**
+ * THE WINDOW OVER A LINE OF SQUARES longer than its room (the row's strip, the rail; owner 2026-10-26):
+ * `squaresWindow` for the ringed square (the last where none is); null while the line is not laid out,
+ * every square standing. A step of the window is laid out as motion, 220 ms; at once under reduced motion.
+ */
+export function useSquaresWindow(n: number, current: number, room: number | null, pitch: number, count: number): SquaresWindow | null {
+  const t = useTheme();
+  const run = useMemo(
+    () => (room === null || room <= 0 ? null : squaresWindow({ n, current, room, pitch, count })),
+    [n, current, room, pitch, count],
+  );
+  const key = run === null ? "" : run.scale.join(" ");
+  const last = useRef(key);
+  if (last.current !== key) {
+    // the commit that carries the step animates its layout: the slots fold and grow, the squares with them
+    if (last.current !== "" && key !== "" && !t.reduceMotion) {
+      LayoutAnimation.configureNext(LayoutAnimation.create(220, LayoutAnimation.Types.easeInEaseOut, LayoutAnimation.Properties.scaleXY));
+    }
+    last.current = key;
+  }
+  return run;
+}
+
+/**
+ * Where a line's ONE ring stands: at the ringed square's rest place (its slot once a step's layout
+ * animation ends), `lead` after the line's start. A ring on the square would ride its slot mid-step,
+ * a slot ahead, and ease back on every step; this one lets the squares flow past it. Null where the
+ * ringed square stands in no slot.
+ */
+export function ringRest(slots: readonly number[], at: number, lead: number): number | null {
+  if (at < 0 || !((slots[at] ?? 0) > 0)) return null;
+  let pos = lead;
+  for (let i = 0; i < at; i++) pos += slots[i]!;
+  return pos + slots[at]! / 2 - MARK_RING / 2;
+}
+
+/** The ring, out of the line's flow: `along` the line at `at`, `cross` into it. */
+export function MarkRing({ testID, along, at, cross }: { testID: string; along: "top" | "left"; at: number; cross: number }) {
+  const t = useTheme();
+  const box = { width: MARK_RING, height: MARK_RING, borderWidth: 1.5, borderColor: t.c.ink3, borderRadius: ringRadius(t.radius.focus) };
+  return (
+    <View
+      testID={testID}
+      pointerEvents="none"
+      style={{ position: "absolute", ...(along === "top" ? { top: at, left: cross } : { left: at, top: cross }), ...box }}
     />
   );
 }

@@ -7,15 +7,15 @@
  * read from the visit's channel, so it stands on the same square in both at every moment; a press
  * scrolls the reader exactly as a press on the column does. With no reader on screen (closed, or a
  * phone's list under a put-away sheet) the row keeps its ring where the person stopped, and a press
- * opens the row the row's own way and lands on that message. A long conversation scrolls sideways
- * inside the row; the ring's square is kept in view.
+ * opens the row the row's own way and lands on that message. A conversation longer than the row
+ * stands a window over it that follows the ring (`ThreadMarksBar`); nothing scrolls.
  *
  * The squares are the conversation AS IT STANDS (`conversationOf`), never the reader's last picture:
  * closed, a reply that arrives gets its square and a Mark unread turns them, as on the row's own
  * marks. Only the place (the ring) is the walk's. The host gives the strip only to the walked row
  * ({@link useWalkedRow}), and a row with a strip draws none of its own squares: one strip per row.
  */
-import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
 import { ThreadMarksBar, marksKeys } from "./ThreadMarks";
 import type { ThreadWalkChannel, ThreadWalkSnapshot } from "./thread-walk-channel";
@@ -51,7 +51,6 @@ export function ThreadStrip({ channel, members, onOpen, conversationOf, marks }:
   };
   const snap = useSyncExternalStore(channel.subscribe, mine, mine);
   const [stop, setStop] = useState<string | null>(null);
-  const bar = useRef<HTMLDivElement | null>(null);
   /* One whole-conversation read per change of what the squares draw (the walk's members and kinds,
      the row's marks), never per ring step. */
   const anchor = snap === null ? null : snap.openedId ?? snap.messages[0]?.id ?? null;
@@ -64,16 +63,6 @@ export function ThreadStrip({ channel, members, onOpen, conversationOf, marks }:
     // `snap` is read through `drawn`; a ring step alone asks nothing.
   }, [anchor, drawn, rowMarks, conversationOf]); // eslint-disable-line react-hooks/exhaustive-deps
   const here = snap?.here !== undefined && snap.here !== null && messages.some((m) => m.id === snap.here) ? snap.here : null;
-
-  useLayoutEffect(() => {
-    const b = bar.current;
-    if (!b || here === null || b.scrollWidth <= b.clientWidth) return;
-    const q = b.querySelector<HTMLElement>(`.tm-mb[data-for="${CSS.escape(here)}"]`);
-    if (!q) return;
-    const left = q.offsetLeft; // the strip is its squares' offset parent (app.css)
-    if (left < b.scrollLeft) b.scrollLeft = left;
-    else if (left + q.offsetWidth > b.scrollLeft + b.clientWidth) b.scrollLeft = left + q.offsetWidth - b.clientWidth;
-  }, [here]);
 
   if (!snap || messages.length < 2) return null;
   const ids = messages.map((m) => m.id);
@@ -92,7 +81,6 @@ export function ThreadStrip({ channel, members, onOpen, conversationOf, marks }:
       tabStop={tabStop}
       onJump={press}
       onKey={marksKeys("x", setStop)}
-      barRef={bar}
     />
   );
 }

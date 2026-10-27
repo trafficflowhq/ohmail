@@ -195,3 +195,5 @@ export { formatFileSize } from "./format/file-size.js";
 export { uiZoom, cssRect, cssPoint, cssViewport, UI_ZOOM_VAR } from "./ui-zoom.js";
 export type { CssRect } from "./ui-zoom.js";
 export { BODY_PAGE_CHARS, BODY_PAGE_LINES, pageEnd, pageEnds } from "./format/long-text.js";
+// A line of squares longer than its room: the run that stands, its "+N" counts and its taper.
+export { SQUARES_TAPER, squaresWindow, type SquaresWindow } from "./squares-window.js";
