@@ -397,6 +397,15 @@ afterEach(async () => {
 
 const TEN: Row[] = Array.from({ length: 10 }, (_, i) => ({ id: `r${i}`, unread: true }));
 
+/** The band reports, the cards' sender lines and texts are laid out and the window has focus: the read rule can read. */
+function readable(): void {
+  vi.stubGlobal("IntersectionObserver", DeliveringIO);
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  inner = true;
+}
+/** A rest past the rule's 0.7s. */
+const rest = async (ms = 800): Promise<void> => { await act(async () => { vi.advanceTimersByTime(ms); }); };
+
 /* ── the guards ────────────────────────────────────────────────────────────────────────── */
 
 describe("leaving commits the waterline — once, anchored, bounded", () => {
@@ -405,8 +414,10 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     // the top, so the observer model alone never marks it — the commit must. The anchor is
     // r0, the newest card the visit displayed, which puts the line above everything.
     // Break `StreamShell`'s unmount cleanup (or the view's range arithmetic) and this is red.
+    readable();
     await mountReads(TEN);
     await wheelStream(1400); // max: 10 cards × 200 − 600
+    await rest();
     await unmount();
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9"] },
@@ -417,8 +428,10 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     // A partial read: 400px in, the final screen shows r2–r4. The commit covers r0–r4 (the
     // contiguous run the visit displayed) and NOT r5–r9, which never entered the viewport.
     // Widen the slice in the view's leave handler to the whole pile and this goes red.
+    readable();
     await mountReads(TEN);
     await wheelStream(400);
+    await rest();
     await unmount();
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r1", "r2", "r3", "r4"] },
@@ -430,8 +443,10 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     // the wire does not need. The anchor is unchanged: the line is about what was SEEN,
     // not about what this commit had to flip.
     const rows = TEN.map((r, i) => ({ ...r, unread: i !== 1 && i !== 3 }));
+    readable();
     await mountReads(rows);
     await wheelStream(400);
+    await rest();
     await unmount();
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r2", "r4"] },
@@ -456,8 +471,10 @@ describe("leaving commits the waterline — once, anchored, bounded", () => {
     // line); this proves the Receipts VIEW actually produces the commit — anchored and
     // bounded exactly as Reads' — so the pair `AppShell` binds (`commitFeedSeen("receipts")`)
     // has something real arriving at it.
+    readable();
     await mountReceipts(TEN);
     await wheelStream(400);
+    await rest();
     await unmount();
     expect(commits).toEqual([
       { upToId: "r0", messageIds: ["r0", "r1", "r2", "r3", "r4"] },
@@ -474,15 +491,17 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
   const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
 
   it("leave after a far jump and one wheel commits only what was on screen after the landing", async () => {
+    readable();
     await mountReadsLive(FORTY, "r30");
     const landed = scrollTops.get(streamEl()) ?? 0;
     expect(landed, "control: the jump went deep").toBeGreaterThan(5000);
     displayed = onScreen();
     await wheelStream(landed + 100);
+    await rest();
     await unmount();
     expect(commits[0]!.messageIds.filter((id) => !displayed.has(id))).toEqual([]);
-    // The run starts at the landing (r29 straddles the top at rest) and ends with the wheel's screen.
-    expect(commits).toEqual([{ upToId: "r29", messageIds: ["r29", "r30", "r31", "r32", "r33"] }]);
+    // The run starts at the landing (r29 straddles the top at rest, only its foot on screen); r33 shows only its sender line at the foot.
+    expect(commits).toEqual([{ upToId: "r29", messageIds: ["r30", "r31", "r32"] }]);
   });
 
   it("after a far jump and a wheel, the seen observer marks no card mounted above the landing", async () => {
@@ -493,22 +512,24 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     await wheelStream(landed + 100);
     for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
     expect(marked.filter((id) => !displayed.has(id))).toEqual([]);
-    // What the wheel lifted past the line, from the landed screen: r29 and r30.
-    expect(marked).toEqual(["r29", "r30"]);
+    // What the wheel lifted past the line, from the landed screen: r30 (r29 showed only its foot).
+    expect(marked).toEqual(["r30"]);
   });
 
   it("a scrollbar drag to the end after a wheel commits only the screen it rests on", async () => {
     pileSize = 40;
+    readable();
     await mountReads(FORTY);
     await wheelStream(100);
     await leapStream(2400, 4800, 7400);
+    await rest();
     await unmount();
     expect(commits[0]!.messageIds.filter((id) => !displayed.has(id))).toEqual([]);
     expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
   });
 
   const drags: Array<{ to: string; path: number[]; after: { curs: string[]; top: number; marked: string[] } }> = [
-    { to: "mid-pile", path: [1200, 2400, 3600, 4800, 4840, 4880, 4900], after: { curs: ["r6", "r12", "r18", "r24", "r25"], top: 4986, marked: ["r25"] } },
+    { to: "mid-pile", path: [1200, 2400, 3600, 4800, 4840, 4880, 4900], after: { curs: ["r6", "r12", "r18", "r24", "r25"], top: 4986, marked: [] } },
     { to: "the end", path: [2400, 4800, 7000, 7300, 7400], after: { curs: ["r12", "r39"], top: 7400, marked: [] } },
   ];
   for (const { to, path, after } of drags) {
@@ -525,7 +546,7 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
   }
 
   it("End over frames moves the cursor once and marks and commits only the end screen", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     curs = [];
     marked = [];
@@ -538,6 +559,7 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
     const endScreen = ["r37", "r38", "r39"];
     expect({ curs, offScreen: marked.filter((id) => !endScreen.includes(id)) }).toEqual({ curs: ["r39"], offScreen: [] });
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r37", messageIds: endScreen }]);
   });
@@ -549,7 +571,7 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
    */
   async function endInLetter(frame: HTMLIFrameElement): Promise<void> {
     const { LANDING_QUIET_MS } = await import("@ohmail/ui");
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
@@ -572,11 +594,13 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     await act(async () => { vi.advanceTimersByTime(20); });
     expect(scrollTops.get(el), "control: the stream's anchoring took it off the end").toBe(7372);
     await act(async () => { vi.advanceTimersByTime(LANDING_QUIET_MS - 100); });
-    expect(marked, "rested while the stream was correcting itself").toEqual(["r36", "r37"]);
+    // r36 shows only its foot.
+    expect(marked, "rested while the stream was correcting itself").toEqual(["r37"]);
     for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
-    expect({ curs, marked }).toEqual({ curs: ["r37"], marked: ["r36", "r37"] });
+    expect({ curs, marked }).toEqual({ curs: ["r37"], marked: ["r37"] });
+    await rest();
     await unmount();
-    expect(commits).toEqual([{ upToId: "r36", messageIds: ["r36", "r37", "r38", "r39"] }]);
+    expect(commits).toEqual([{ upToId: "r36", messageIds: ["r37", "r38", "r39"] }]);
   }
 
   it("a dwell that comes due while End is in flight marks nothing End carried off the screen", async () => {
@@ -601,7 +625,7 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
   });
 
   it("a wheel over a letter with focus in it marks and commits the cards it scrolls past", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     await act(async () => { el.dispatchEvent(new Event("wheel", { bubbles: true })); });
@@ -620,26 +644,33 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
     const past = Array.from({ length: 13 }, (_, i) => `r${i}`);
     expect(marked).toEqual(past);
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r0", messageIds: [...past, "r13", "r14"] }]);
   });
 
   it("End after a scroll key commits only the end screen, in Receipts too", async () => {
     pileSize = 40;
+    readable();
     await mountReceipts(FORTY);
+    // A wheel first: this harness's static mount mounts the end window only once the stream was driven.
+    await wheelStream(100);
     await act(async () => { streamEl().dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })); });
     await leapStream(7400);
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
   });
 
   it("a drag back up past unseen cards starts the run where it rests", async () => {
     pileSize = 40;
+    readable();
     await mountReads(FORTY);
     await wheelStream(100);
     await leapStream(6000);
     await wheelStream(6100);
     await leapStream(1200);
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r6", messageIds: ["r6", "r7", "r8"] }]);
   });
@@ -767,7 +798,7 @@ describe("a scroll key the pane never hears, after a press in it", () => {
   const FORTY: Row[] = Array.from({ length: 40 }, (_, i) => ({ id: `r${i}`, unread: true }));
 
   it("PageDown with nothing focused reads like PageDown on the pane", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     await act(async () => { vi.advanceTimersByTime(400); });
@@ -775,12 +806,13 @@ describe("a scroll key the pane never hears, after a press in it", () => {
     marked = [];
     await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); });
     await unheard(el, [150, 300, 450, 600], 30);
+    await rest();
     await unmount();
     expect({ marked, commits }).toEqual({ marked: ids(0, 3), commits: [{ upToId: "r0", messageIds: ids(0, 5) }] });
   });
 
   it("PageDown typed in a letter the app hears reads the same", async () => {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     await act(async () => { vi.advanceTimersByTime(400); });
@@ -791,6 +823,7 @@ describe("a scroll key the pane never hears, after a press in it", () => {
     const letter = frame.contentDocument!;
     await act(async () => { letter.body.dispatchEvent(new (letter.defaultView as typeof window).KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); });
     await unheard(el, [150, 300, 450, 600], 30);
+    await rest();
     await unmount();
     expect({ marked, commits }).toEqual({ marked: ids(0, 3), commits: [{ upToId: "r0", messageIds: ids(0, 5) }] });
   });
@@ -801,7 +834,7 @@ describe("after End rests, a frame the stream has not re-anchored yet is nobody'
 
   /** A wheel read down to r4, a pause, then End heard over frames, resting on r37-r39. */
   async function wheelThenEnd(): Promise<Element> {
-    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    readable();
     await mountReadsLive(FORTY, null);
     const el = streamEl();
     await wheelStream(900);
@@ -814,12 +847,14 @@ describe("after End rests, a frame the stream has not re-anchored yet is nobody'
 
   it("a letter above the resting screen that grows as its body lands is not committed", async () => {
     await aboveGrows(await wheelThenEnd());
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r37", messageIds: ids(37, 39) }]);
   });
 
   it("control: with no growth the leave commits the resting screen", async () => {
     await wheelThenEnd();
+    await rest();
     await unmount();
     expect(commits).toEqual([{ upToId: "r37", messageIds: ids(37, 39) }]);
   });
@@ -1008,7 +1043,66 @@ describe("the read rule over every card on screen, after the reader's own scroll
     await act(async () => { hint!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
     await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true })); });
     await act(async () => { vi.advanceTimersByTime(3000); });
-    expect(marked, "j marks its own target, as before").toEqual(["r1"]);
+    expect(marked, "j reads only the letter it rests on, by the rule").toEqual(["r1"]);
+  });
+
+  /* The measured runs: keys only, nothing clicked and no wheel, j with nothing focused. */
+  const press = async (key: string): Promise<void> => {
+    await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+  };
+
+  it("j j j 80ms apart, then a 2.5s rest: only the letter it stops on turns read", async () => {
+    await laidOut();
+    for (let i = 0; i < 3; i += 1) {
+      await press("j");
+      await act(async () => { vi.advanceTimersByTime(80); });
+    }
+    expect(marked, "r1 and r2 were current for 80ms each").toEqual([]);
+    await rest(2500);
+    expect(marked).toEqual(["r3"]);
+  });
+
+  it("j three times 2.5s apart: nothing at a press, each letter it rests on read by the rule, nothing else on screen", async () => {
+    await laidOut();
+    for (const id of ["r1", "r2", "r3"]) {
+      await press("j");
+      expect(marked.includes(id), `${id} at the press`).toBe(false);
+      await rest(2500);
+      expect(marked.at(-1), `${id} after resting on it`).toBe(id);
+    }
+    // r0 stood on screen from the open, r4 below the last one: a step enters nothing.
+    expect(marked).toEqual(["r1", "r2", "r3"]);
+  });
+
+  it("after a wheel armed the stream, j j j 80ms apart marks nothing on the way; the rule then reads the screen it rests on", async () => {
+    await laidOut();
+    await wheelStream(40);
+    await rest(3000);
+    expect(marked, "control: the wheel's screen, by the rule").toEqual(["r0", "r1", "r2"]);
+    marked = [];
+    for (let i = 0; i < 3; i += 1) {
+      await press("j");
+      await act(async () => { vi.advanceTimersByTime(80); });
+    }
+    expect(marked, "the pass").toEqual([]);
+    await rest(2500);
+    expect([...marked].sort()).toEqual(["r3", "r4", "r5"]);
+  });
+
+  it("after a wheel armed the stream, j onto a snippet card marks nothing; the reader's next wheel reads it as it rises", async () => {
+    readable();
+    await mountReadsLive(FORTY, null); // snippet cards: the rule reads none of them live
+    await wheelStream(40);
+    await rest(3000);
+    expect(marked, "control: the band took r0").toEqual(["r0"]);
+    marked = [];
+    await press("j");
+    await act(async () => { vi.advanceTimersByTime(80); });
+    expect(marked, "at the press").toEqual([]);
+    await rest(2500);
+    expect(marked, "at rest").toEqual([]);
+    await wheelStream(CARD_H - 14 + 100);
+    expect(marked).toEqual(["r1"]);
   });
 
 
@@ -1027,6 +1121,253 @@ describe("the read rule over every card on screen, after the reader's own scroll
     expect([...marked].sort()).toEqual(["r37", "r38", "r39"]);
   });
 
+  it("a row click opens its letter: it and the letters whole on screen below it turn read after 0.7s, the one above does not", async () => {
+    const el = await laidOut();
+    const row = host!.querySelector<HTMLElement>('.view-reads .row[data-id="r5"]');
+    expect(row, "control: the row is mounted").not.toBeNull();
+    await act(async () => { row!.click(); });
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(scrollTops.get(el), "control: r5 at the reading line").toBe(5 * CARD_H - 14);
+    expect(marked, "a click reads nothing by itself").toEqual([]);
+    await rest(900);
+    expect(marked).toEqual(["r5", "r6", "r7"]);
+    await rest(3000);
+    expect(marked.includes("r4"), "r4 shows only its foot").toBe(false);
+  });
+
+  it("two row clicks 80ms apart: only the screen the second rests on turns read", async () => {
+    await laidOut();
+    const click = async (id: string): Promise<void> => {
+      await act(async () => { host!.querySelector<HTMLElement>(`.view-reads .row[data-id="${id}"]`)!.click(); });
+    };
+    await click("r5");
+    await act(async () => { vi.advanceTimersByTime(80); });
+    await click("r9");
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked, "nothing at either click").toEqual([]);
+    await rest(3000);
+    expect(marked).toEqual(["r9", "r10", "r11"]);
+  });
+
+  it("a far row click with no wheel before it: the landed screen turns read by the rule, not the card above it", async () => {
+    const el = await laidOut();
+    const row = host!.querySelector<HTMLElement>('.view-reads .row[data-id="r30"]');
+    expect(row, "control: the row is mounted").not.toBeNull();
+    await act(async () => { row!.click(); });
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(scrollTops.get(el), "control: a far landing").toBeGreaterThan(5000);
+    await rest(1000);
+    expect(marked).toEqual(["r30", "r31", "r32"]);
+  });
+
+  it("a row click in Receipts enters the visit the same way", async () => {
+    readable();
+    pileSize = 10;
+    await mountReceipts(TEN, { full: true });
+    marked = [];
+    const row = host!.querySelector<HTMLElement>('.view-receipts .row[data-id="r2"]');
+    expect(row, "control: the row is mounted").not.toBeNull();
+    await act(async () => { row!.click(); });
+    for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    expect(marked, "a click reads nothing by itself").toEqual([]);
+    await rest(900);
+    expect(marked).toEqual(["r2", "r3", "r4"]);
+  });
+
+  for (const key of ["ArrowDown", "j"]) it(`${key} ×3 80ms apart in the list marks nothing; resting 0.8s on the third reads only it`, async () => {
+    await laidOut();
+    const row = host!.querySelector<HTMLElement>('.view-reads .row[data-id="r0"]')!;
+    await act(async () => { row.focus(); });
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => { row.ownerDocument.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+      await act(async () => { vi.advanceTimersByTime(80); });
+    }
+    expect(marked, "a fast pass reads nothing").toEqual([]);
+    await rest(800);
+    expect(marked).toEqual(["r3"]);
+    await rest(3000);
+    expect(marked, "the step entered nothing").toEqual(["r3"]);
+  });
+
+  it("↓ in the Receipts list marks nothing at the press; resting 0.8s reads only its target", async () => {
+    readable();
+    pileSize = 10;
+    await mountReceipts(TEN, { full: true });
+    marked = [];
+    const row = host!.querySelector<HTMLElement>('.view-receipts .row[data-id="r0"]')!;
+    await act(async () => { row.focus(); row.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    await act(async () => { vi.advanceTimersByTime(80); });
+    expect(marked).toEqual([]);
+    await rest(3000);
+    expect(marked).toEqual(["r1"]);
+  });
+
+  /** r3, read before the visit, rests at the reading line and is marked unread there. */
+  async function unreadAtLine(): Promise<void> {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    inner = true;
+    await mountReadsLive(FORTY.map((r) => ({ ...r, unread: r.id !== "r3" })), null, { full: true });
+    await wheelStream(3 * CARD_H - 14);
+    await rest(500);
+    marked = [];
+    await act(async () => { setUnreadLive("r3", true); });
+  }
+
+  it("a Mark unread while the stream's dwell ticks holds", async () => {
+    await unreadAtLine();
+    await rest(2500);
+    expect(marked.includes("r3")).toBe(false);
+  });
+
+  it("a Mark unread holds when the stream comes back to it at the reading line", async () => {
+    await unreadAtLine();
+    // Far enough that the window slides and observes r3 again: back up, it crosses the band whole.
+    await wheelStream(6000);
+    await wheelStream(3 * CARD_H - 14);
+    await rest(2500);
+    expect(marked.includes("r3")).toBe(false);
+  });
+
+  it("a Mark unread holds when an upward wheel shows only its foot", async () => {
+    await unreadAtLine();
+    // Far enough that the window slides and observes r3 again.
+    await wheelStream(6000);
+    await rest(2500);
+    await wheelStream(4 * CARD_H - 14);
+    await rest(2500);
+    expect(marked.includes("r3")).toBe(false);
+  });
+
+  it("a Mark unread holds when j steps away and k comes back to it", async () => {
+    vi.stubGlobal("IntersectionObserver", DeliveringIO);
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    inner = true;
+    // As measured: r2 read before the visit; j r1, j r2, Mark unread r2, j r3, k back to r2, a rest.
+    await mountReadsLive(FORTY.map((r) => ({ ...r, unread: r.id !== "r2" })), null, { full: true });
+    marked = [];
+    const step = async (key: string): Promise<void> => {
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+      await rest(1000);
+    };
+    await step("j");
+    await step("j");
+    await act(async () => { setUnreadLive("r2", true); });
+    await step("j");
+    await step("k");
+    expect(curs.at(-1), "control: the cursor is back on r2").toBe("r2");
+    expect(marked).toEqual(["r1", "r3"]);
+  });
+
+  it("after a far open, an upward wheel that leaves the card above 95px of its foot: its dwell reads nothing", async () => {
+    const el = await laidOut();
+    await act(async () => { host!.querySelector<HTMLElement>('.view-reads .row[data-id="r30"]')!.click(); });
+    for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+    const landed = scrollTops.get(el)!;
+    expect(landed, "control: r30 at the reading line").toBe(30 * CARD_H - 14);
+    await rest(3000);
+    // r29 shows its bottom 95px and r30's top stands at 95, past the scroll-spy's 90px line.
+    await wheelStream(landed - 81);
+    await rest(2500);
+    expect(curs.at(-1), "control: the cursor moved to r29, and its dwell came due").toBe("r29");
+    expect(marked.includes("r29"), "r29's sender line and first lines were never on screen").toBe(false);
+  });
+
+  it("the card a wheel settles on, its first lines on screen, is read by its dwell after 2s", async () => {
+    readable();
+    await mountReadsLive(FORTY, null); // snippet cards: the rule reads none of them live
+    await wheelStream(150);
+    expect(marked, "control: the band took r0; the cursor is on r1, its foot below the band").toEqual(["r0"]);
+    await rest(1700);
+    expect(marked, "before the dwell").toEqual(["r0"]);
+    await rest(500);
+    expect(marked).toEqual(["r0", "r1"]);
+  });
+
+  it("the same settle after a press, with no hand on the stream: the dwell reads nothing", async () => {
+    readable();
+    await mountReadsLive(FORTY, null);
+    const el = streamEl();
+    // The press enters the visit, so the rule looks and sees r1's first lines; the scroll is the app's own.
+    await act(async () => { el.querySelector('.scast[data-sid="r0"] h3')!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
+    await act(async () => { setStreamScroll(el, 150); });
+    await rest(2500);
+    expect(curs.at(-1), "control: the scroll-spy put the cursor on r1").toBe("r1");
+    expect(marked).toEqual([]);
+  });
+
+  it("a letter read and then marked unread stays out of the leave", async () => {
+    await laidOut();
+    await wheelStream(100);
+    await rest(900);
+    expect(marked, "control: the rule read r1 and r2").toEqual(["r0", "r1", "r2"]);
+    await act(async () => { setUnreadLive("r1", false); });
+    await act(async () => { setUnreadLive("r1", true); });
+    await rest(900);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0", "r2"] }]);
+  });
+
+  it("marked unread, then scrolled through the band again: still out of the leave", async () => {
+    await laidOut();
+    await wheelStream(100);
+    await rest(900);
+    expect(marked, "control: the rule read r1 and r2").toEqual(["r0", "r1", "r2"]);
+    await act(async () => { setUnreadLive("r1", false); });
+    await act(async () => { setUnreadLive("r1", true); });
+    await wheelStream(0);
+    await wheelStream(400);
+    await rest(900);
+    await unmount();
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.messageIds.includes("r1"), "the Mark unread outlives the band and the leave").toBe(false);
+  });
+
+  it("leaving after a wheel leaves the letter at the foot, its sender line alone on screen, unread", async () => {
+    await laidOut();
+    await wheelStream(40);
+    await rest(3000);
+    expect(marked.includes("r3"), "the rule never read r3").toBe(false);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0", "r1", "r2"] }]);
+  });
+
+  it("leaving after PageDown typed in a letter leaves the foot letter unread too", async () => {
+    const el = await laidOut();
+    const frame = document.createElement("iframe");
+    el.querySelector('.scast[data-sid="r0"]')!.appendChild(frame);
+    frame.focus();
+    const letter = frame.contentDocument!;
+    await act(async () => { letter.body.dispatchEvent(new (letter.defaultView as typeof window).KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); });
+    await unheard(el, [20, 40], 30);
+    await rest(3000);
+    expect(marked.includes("r3"), "the rule never read r3").toBe(false);
+    await unmount();
+    expect(commits).toHaveLength(1);
+    expect(commits[0]!.upToId).toBe("r0");
+    expect(commits[0]!.messageIds.includes("r3"), "r3's text was never on screen").toBe(false);
+  });
+
+  it("Receipts snippet cards are read by the leave alone, by the same rule; the foot card is not", async () => {
+    readable();
+    await mountReceipts(TEN);
+    marked = [];
+    await wheelStream(40);
+    await rest(900);
+    expect(marked, "the band took r0 live; the rule reads no snippet card live").toEqual(["r0"]);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0", "r1", "r2"] }]);
+  });
+
+  it("a snippet card on screen under 0.7s is not read by the leave", async () => {
+    readable();
+    await mountReceipts(TEN);
+    await wheelStream(40);
+    await rest(300);
+    await unmount();
+    expect(commits).toEqual([{ upToId: "r0", messageIds: ["r0"] }]);
+  });
+
   it("a far list click after a wheel: once the landing rests, the screen it shows turns read by the rule", async () => {
     const el = await laidOut();
     await wheelStream(100);
@@ -1038,7 +1379,10 @@ describe("the read rule over every card on screen, after the reader's own scroll
     for (let i = 0; i < 20; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
     expect(scrollTops.get(el), "control: a far landing").toBeGreaterThan(5000);
     await act(async () => { vi.advanceTimersByTime(1000); });
-    expect(marked).toEqual(["r30", "r29", "r31", "r32"]);
+    expect(marked, "r29 shows only its foot").toEqual(["r30", "r31", "r32"]);
+    await wheelStream(29 * CARD_H - 14);
+    await rest(3000);
+    expect(marked.includes("r28"), "an upward wheel shows only r28's foot").toBe(false);
   });
 });
 

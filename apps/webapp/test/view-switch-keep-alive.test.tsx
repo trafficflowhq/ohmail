@@ -14,7 +14,7 @@
  * assertion); drop the scroll reset (the lands-at-the-top row, the subset assertion); drop
  * `bar.endVisit` (the lingering row); leave the stream's `pagehide` listener armed while hidden
  * (the pagehide row); never take the arming back on a visit that committed no card (the rapid row);
- * drop the list's scroll reset (the list-sweep rows).
+ * drop the list's scroll reset (the list rows).
  */
 import { Activity } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -286,9 +286,9 @@ for (const pile of ["reads", "receipts"] as const) {
       await render(pile, TEN);
       await wheel(pile, 1400); // the whole pile, then away
       await render(other, TEN);
-      expect(commits[pile], "control: the first visit commits its range").toEqual([
-        { upToId: "r0", messageIds: TEN.map((r) => r.id) },
-      ]);
+      expect(commits[pile], "control: the first visit commits").toHaveLength(1);
+      expect(commits[pile][0]!.upToId, "control: anchored at the top").toBe("r0");
+      for (const id of commits[pile][0]!.messageIds) expect(displayed.has(id), `control: ${id} was on screen`).toBe(true);
       // Meanwhile: the first visit's mail is read, a new letter arrives on top, r1 is marked
       // unread on another device.
       const later: Row[] = [{ id: "n0", unread: true }, ...TEN.map((r) => ({ ...r, unread: r.id === "r1" }))];
@@ -383,42 +383,38 @@ describe("what a visit leaves behind", () => {
   });
 });
 
-/* THE LIST'S OWN SWEEP. The list keeps its offset through `display:none`, and the observer
-   reports every row it re-observes, rows above the port included: a revisit that opened the list
-   where the last visit left it marked mail that arrived (or was marked unread) meanwhile and was
-   never on screen. A revisit's list opens at the top, as a fresh mount's does. */
+/* THE LIST READS NOTHING. It once had a sweep of its own: the list kept its offset through
+   `display:none`, and a revisit that opened it where the last visit left it marked mail that
+   arrived (or was marked unread) meanwhile and was never on screen. The list now marks no row
+   (only the stream reads), and a revisit's list still opens at the top, as a fresh mount's does. */
 const TWENTY: Row[] = Array.from({ length: 20 }, (_, i) => ({ id: `r${i}`, unread: true }));
 
 for (const pile of ["reads", "receipts"] as const) {
   const other: Pile = pile === "reads" ? "receipts" : "reads";
   describe(`${pile}: the list's sweep on a revisit`, () => {
     for (const [name, meanwhile] of [
-      ["mail that arrived while hidden", (rows: Row[], v1: string[]) => [
+      ["mail that arrived while hidden", (rows: Row[]) => [
         ...Array.from({ length: 5 }, (_, i) => ({ id: `n${i}`, unread: true })),
-        ...rows.map((r) => ({ ...r, unread: !v1.includes(r.id) })),
+        ...rows,
       ]],
-      ["a row marked unread elsewhere", (rows: Row[], v1: string[]) =>
-        rows.map((r) => ({ ...r, unread: r.id === "r5" || !v1.includes(r.id) }))],
+      ["a row marked unread elsewhere", (rows: Row[]) =>
+        rows.map((r) => ({ ...r, unread: r.id === "r5" ? true : r.unread }))],
     ] as const) {
-      it(`marks only rows the revisit displayed: ${name}`, async () => {
+      it(`the list marks nothing, and a revisit's list opens at the top: ${name}`, async () => {
         listGeometry = true;
         vi.stubGlobal("IntersectionObserver", DeliveringIO);
         await mountPiles(TWENTY);
         await render(pile, TWENTY);
         await wheelList(pile, 800);
-        const v1 = [...marked[pile]];
-        expect(v1.length, "control: the first visit's wheel marks rows").toBeGreaterThan(0);
+        expect(scrollTops.get(listOf(pile)), "control: the wheel moved the list").toBe(800);
+        expect(marked[pile], "the first visit's list wheel marked rows").toEqual([]);
         await render(other, TWENTY);
-        const later = meanwhile(TWENTY, v1);
+        const later = meanwhile(TWENTY);
         await render(other, later);
-        marked[pile] = [];
-        displayed = new Set();
         await render(pile, later);
         const atReveal = scrollTops.get(listOf(pile)) ?? 0;
         await wheelList(pile, atReveal + 40);
-        for (const id of marked[pile]) {
-          expect(displayed.has(id), `${id} was written \\Seen by a revisit that never displayed it`).toBe(true);
-        }
+        expect(marked[pile], "the revisit's list wheel marked rows").toEqual([]);
         expect(atReveal, "the revisit's list opened where the last visit left it").toBe(0);
       });
     }

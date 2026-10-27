@@ -428,35 +428,38 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
     expect(hydrated).toEqual(["r12"]);
   });
 
-  it("the user's own scroll still marks exactly the rows it carried past the line", async () => {
-    // The feature has to keep working, and this is the assertion that stops the fix being
-    // "turn seen-on-scroll off". A wheel of 400px over a 600px pane puts rows r0–r6 fully
-    // above the trigger line; those seven, in order, and nothing else.
+  it("the user's own wheel over the list moves the list and marks nothing", async () => {
+    // Rows passing in the list are not letters read: only the stream reads (0.30.9 marked every
+    // unread row a wheel through the News list carried past).
     await mountReceipts(TWENTY);
     await wheel(400);
     await settle();
-    expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
-    expect(unreadIds()).toEqual(ALL_IDS.slice(7));
+    expect(listTop()).toBe(400);
+    expect(marked).toEqual([]);
+    expect(unreadIds()).toEqual(ALL_IDS);
   });
 
   it("a commit does not cause another commit — the fallback moves and nothing follows it", async () => {
-    // The runaway condition itself, positionally. Every one of those seven commits moved the
-    // `cur ?? first-unread` fallback onto the next unread receipt. If the fallback could
-    // still drive the scroller, each move would scroll, each scroll would re-enter the
-    // observer, and the count would walk the list; it stops at the seven the wheel earned.
-    await mountReceipts(TWENTY);
-    await wheel(400);
-    await settle();
-    const afterWheel = [...marked];
+    // The runaway condition itself, positionally. A read commit moves the `cur ?? first-unread` fallback,
+    // here past the list's fold (r9 at 720px of a 600px port); if the fallback could drive the scroller,
+    // the move would scroll, the scroll would re-enter an observer, and the count would walk the list.
+    await mountReceipts(TWENTY.map((r, i) => ({ ...r, unread: i >= 8 })));
+    await act(async () => { commit("r8"); });
     await settle();
     await settle();
-    expect(marked).toEqual(afterWheel);
-    expect(marked).toHaveLength(7);
+    expect(marked).toEqual(["r8"]);
+    expect(listTop()).toBe(0);
   });
 
-  it("a touch drag arms it; the `scroll` event on its own never does", async () => {
-    // The discriminator, stated directly on the real view: the same movement, with and
-    // without the input event that a human produces to cause it.
+  it("a row click moves the cursor and marks nothing at the click", async () => {
+    await mountReceipts(TWENTY);
+    await act(async () => { listEl().querySelector<HTMLElement>('.row[data-id="r1"]')!.click(); });
+    await settle();
+    expect(cur, "control: the click moved the cursor").toBe("r1");
+    expect(marked).toEqual([]);
+  });
+
+  it("neither a touch drag nor a `scroll` event on its own marks a list row", async () => {
     await mountReceipts(TWENTY);
     const el = listEl();
     await act(async () => { setScroll(el, 400); });          // programmatic: no input
@@ -466,42 +469,42 @@ describe("Receipts: a scroll nobody made must not write \\Seen", () => {
       el.dispatchEvent(new Event("touchmove", { bubbles: true }));
       setScroll(el, 480);
     });
-    // What is above the line at 480px and was shown in the band: r0–r2 sat there at mount,
-    // r5–r7 entered it on the way. r3 and r4 were carried from below the band past it in
-    // one programmatic frame, never displayed in it, so they stay unread.
-    expect(marked).toEqual(["r0", "r1", "r2", "r5", "r6", "r7"]);
+    expect(listTop()).toBe(480);
+    expect(marked).toEqual([]);
   });
 
-  it("`j` commits its own target and NOT the rows its scroll passed", async () => {
-    // `j`/`k` move a cursor and call `scrollTo`; they do not scroll natively. `r1` here is
-    // the view's own deliberate `seenMark` for the row `j` landed on — the whole of what a
-    // keypress may write. Add "j" to SCROLL_KEYS in `useSeenOnScroll` and this goes red with
-    // the seven rows the 400px movement swept past appended to it, i.e. a keyboard sweep
-    // marking a mailbox read.
+  it("`j` commits nothing at the press, and NOT the rows its scroll passed", async () => {
+    // `j`/`k` move a cursor and call `scrollTo`; they do not scroll natively. Their target is
+    // read by the rule once it has stood on screen, never at the press. Add "j" to SCROLL_KEYS
+    // in `useSeenOnScroll` and this goes red with the seven rows the 400px movement swept past,
+    // i.e. a keyboard sweep marking a mailbox read.
     await mountReceipts(TWENTY);
     const el = listEl();
     await act(async () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
       setScroll(el, 400);
     });
-    expect(marked).toEqual(["r1"]);
+    expect(marked).toEqual([]);
   });
 
-  it("PageDown inside the scroller IS a scroll — the keyboard path still marks", async () => {
+  it("PageDown in the list scrolls it and marks nothing", async () => {
     await mountReceipts(TWENTY);
     const el = listEl();
     await act(async () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
       for (let y = 40; y <= 400; y += 40) setScroll(el, y);
     });
-    expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
+    await settle();
+    expect(listTop()).toBe(400);
+    expect(marked).toEqual([]);
   });
 
-  it("End in the list marks only the rows in the band once it rests", async () => {
+  it("End in the list rests at the end and marks nothing", async () => {
     await mountReceipts(TWENTY);
     await endKey();
     expect(listTop()).toBe(1000);
-    expect(marked).toEqual(["r12", "r13", "r14"]);
+    expect(marked).toEqual([]);
+    expect(unreadIds()).toEqual(ALL_IDS);
   });
 
   it("the guard is per-pane: a wheel over the reading stream marks no LIST rows", async () => {
@@ -546,18 +549,23 @@ describe("Reads: the same two guards, on the view that shares the machinery", ()
     expect(listTop()).toBe(0);
   });
 
-  it("the user's own scroll still marks the rows it passed", async () => {
+  it("a wheel, a touch or PageDown over the list moves it and marks nothing", async () => {
     await mountReads(TWENTY);
     await wheel(400);
+    await act(async () => { listEl().dispatchEvent(new Event("touchmove", { bubbles: true })); setScroll(listEl(), 480); });
+    await act(async () => { listEl().dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true })); for (let y = 520; y <= 900; y += 40) setScroll(listEl(), y); });
     await settle();
-    expect(marked).toEqual(["r0", "r1", "r2", "r3", "r4", "r5", "r6"]);
+    expect(listTop()).toBe(880);
+    expect(marked).toEqual([]);
+    expect(unreadIds()).toEqual(ALL_IDS);
   });
 
-  it("End in the list marks only the rows in the band once it rests", async () => {
+  it("End in the list rests at the end and marks nothing", async () => {
     await mountReads(TWENTY);
     await endKey();
     expect(listTop()).toBe(1000);
-    expect(marked).toEqual(["r12", "r13", "r14"]);
+    expect(marked).toEqual([]);
+    expect(unreadIds()).toEqual(ALL_IDS);
   });
 
   it("End in the stream marks no card it carried past", async () => {
@@ -567,42 +575,8 @@ describe("Reads: the same two guards, on the view that shares the machinery", ()
     expect(marked.filter((id) => !atRest.includes(id))).toEqual([]);
   });
 
-  /**
-   * B.5 — THE 2s DWELL, AND THE GUARD THAT KEEPS IT BEHIND `userHasDriven`.
-   *
-   * The last screenful never rises off the top, so the IntersectionObserver's "risen above the
-   * line" rule never reaches it; `StreamShell` marks the card the scroll SETTLES on after a 2s
-   * dwell instead. Read-state writes `\Seen` to the user's real IMAP, so the dwell sits behind
-   * the same authority the IO commit does — a HUMAN must have driven this scroller.
-   */
-  const streamEl = (): Element => host!.querySelector(".stream")!;
-
-  it("a HUMAN-driven scroll dwells the landing card into seen after 2s", async () => {
-    // The feature works: a wheel arms the stream, the scroll settles the scroll-spy on a card,
-    // and 2s later that one card marks itself. Proves the dwell path is live — without it the
-    // guard below would pass by the dwell simply never running.
-    await mountReads(TWENTY);
-    const stream = streamEl();
-    await act(async () => {
-      stream.dispatchEvent(new Event("wheel", { bubbles: true }));
-      setScroll(stream, 300);
-    });
-    // The stream's own observer marks what rose past its line; the dwell adds the landing card.
-    const beforeDwell = marked.length;
-    await act(async () => { vi.advanceTimersByTime(2500); });
-    expect(marked.length - beforeDwell).toBe(1);
-  });
-
-  it("a PROGRAMMATIC scroll arms the dwell but never fires it — userHasDriven gates it", async () => {
-    // The guard (mutation-watch). The same settle, WITHOUT the wheel: the dwell timer is armed,
-    // but `userHasDriven()` is false, so it must mark nothing. Delete the `userHasDriven()` gate
-    // in `StreamShell`'s dwell and this goes red — a programmatic scroll writing `\Seen`.
-    await mountReads(TWENTY);
-    const stream = streamEl();
-    await act(async () => { setScroll(stream, 300); });
-    await act(async () => { vi.advanceTimersByTime(2500); });
-    expect(marked).toEqual([]);
-  });
+  /* B.5, the 2s dwell behind `userHasDriven`, is in `waterline-leave.test.tsx`: the dwell reads only a
+     card whose first lines were measured on screen, and this file lays out no card. */
 });
 
 describe("the emulator is describing the geometry the hook actually uses", () => {

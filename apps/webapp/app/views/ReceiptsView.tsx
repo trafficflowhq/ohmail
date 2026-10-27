@@ -194,7 +194,7 @@ export function ReceiptsView({
     const end = b >= a ? b : a;
     fn({
       upToId: s.newestSeenId,
-      messageIds: order.slice(a, end + 1).filter((m) => m.unread && !s.flownPast?.(m.id)).map((m) => m.id),
+      messageIds: order.slice(a, end + 1).filter((m) => m.unread && s.read(m.id)).map((m) => m.id),
     });
   }, []);
   /** Where the line sits in the flat list; everything is fresh until the shell says otherwise. */
@@ -293,13 +293,13 @@ export function ReceiptsView({
      every jump extends the run first and scrolls AFTER the commit that mounted the target.
      `open` marks a jump from OUTSIDE the pile, which must leave the message open and not merely
      selected — the same pair, for the same reasons, as `ReadsView`. */
-  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean } | null>(null);
+  const [pendingScroll, setPendingScroll] = useState<{ id: string; open: boolean; read?: boolean; enters?: boolean } | null>(null);
   const landedRead = useRef<{ id: string; stop: () => void } | null>(null);
-  const seenMarkRef = useRef<(id: string) => void>(() => {});
+  // Marked through the stream, so a Mark unread of this visit holds against it.
   const readLanded = useCallback((id: string) => {
     landedRead.current?.stop();
     const el = streamRef.current?.element();
-    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => seenMarkRef.current(x) }) } : null;
+    landedRead.current = el ? { id, stop: readLandedCard({ scroller: el, id, onRead: (x) => streamRef.current?.seen(x) }) } : null;
   }, []);
   useEffect(() => () => { landedRead.current?.stop(); landedRead.current = null; }, []);
   /** A card the shell has since asked to close — see `ReadsView.closedRef` for the race. */
@@ -316,8 +316,10 @@ export function ReceiptsView({
   useEffect(() => {
     // A stream not armed yet has no card to land on; the scroll waits for the arming.
     if (!pendingScroll || !streamArmed) return;
-    const { id, open, read } = pendingScroll;
-    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : undefined);
+    const { id, open, read, enters } = pendingScroll;
+    // A row opened from the list enters the visit once its card has landed; a step reads only its card, by the rule.
+    const landed = enters ? () => streamRef.current?.enter() : () => readLanded(id);
+    streamRef.current?.scrollTo(id, open ? () => { openLandedCard(id); if (read) readLanded(id); } : landed);
     setPendingScroll(null);
   }, [pendingScroll, openLandedCard, streamArmed]);
   /** The controlled close, through the card's own pill — see `ReadsView` for the full reasoning. */
@@ -346,18 +348,17 @@ export function ReceiptsView({
     markSeen(id);
   };
 
-  const jump = (id: string) => {
-    seenMark(id);
+  // A step or a row click reads nothing by itself — see `ReadsView.jump`.
+  const jump = (id: string, enters = false) => {
     onCur(id);
     stream.ensure(pileIndexOf(id));
-    setPendingScroll({ id, open: false });
+    setPendingScroll({ id, open: false, enters });
   };
 
   /* A jump from outside the pile. `[jumpTo]` is the whole dependency list for the reason
      `ReadsView`'s twin spells out: the shell's callbacks are fresh closures on every render and
      `all` moves on every mirror delta, so anything else in here cancels the pending frame and
      drops the jump. The latest callbacks and order are read through refs at fire time. */
-  seenMarkRef.current = seenMark;
   const jumpRefs = useRef({ onCur, onJumped, jumpEnters });
   jumpRefs.current = { onCur, onJumped, jumpEnters };
   /* The jump effect is [jumpTo]-keyed and reads its collaborators through refs; the pile
@@ -572,11 +573,11 @@ export function ReceiptsView({
         <ThreadStrip
           channel={placed.walk}
           members={placed.members}
-          onOpen={() => jump(m.id)}
+          onOpen={() => jump(m.id, true)}
           conversationOf={answered.conversationOf}
         />
       ) : undefined}
-      onClick={() => jump(m.id)}
+      onClick={() => jump(m.id, true)}
     />
     );
   };
@@ -600,11 +601,7 @@ export function ReceiptsView({
             />
           ) : null
         }
-        onSeen={seenMark}
         scrollerRef={listScrollerRef}
-        /* Re-scan the seen-on-scroll observer as the window slides, so a row that mounts on
-           scroll is still marked read when the reader scrolls past it. */
-        rescanKey={`${win.start}:${win.end}`}
         /* One affordance, not a legend — see `ShortcutHint` and the same note in ReadsView. */
         hints={<ShortcutHint />}
       >
