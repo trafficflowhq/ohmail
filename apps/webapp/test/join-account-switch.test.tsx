@@ -65,6 +65,21 @@ const asAccount = (accountId: string, email: string) => ({
   scope: "full",
 });
 
+/** The same account before its first factor: an enrollment session, as a registration leaves it. */
+const enrolling = (accountId: string, email: string) => ({
+  user: {
+    userId: `u_${accountId}`, accountId, email, displayName: "Pat", emailVerified: false,
+    twofaEnrolled: { webauthn: false, totp: false, recoveryCodes: false },
+  },
+  scope: "enrollment",
+});
+
+/** …and once its codes exist. */
+const withCodes = (accountId: string, email: string) => {
+  const s = asAccount(accountId, email);
+  return { ...s, user: { ...s.user, twofaEnrolled: { ...s.user.twofaEnrolled, recoveryCodes: true } } };
+};
+
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -84,6 +99,9 @@ beforeEach(() => {
     }
     if (url.includes("/auth/2fa/recovery-codes")) {
       return json({ codes: ["aaaa-bbbb", "cccc-dddd"] });
+    }
+    if (url.includes("/auth/2fa/totp/enroll")) {
+      return json({ secret: SEED, otpauthUrl: `otpauth://totp/ohmail:fixture?secret=${SEED}&issuer=ohmail` });
     }
     if (url.includes("/mailboxes")) return json({ items: [] });
     return json({});
@@ -253,10 +271,11 @@ describe("the ordinary first signup — the path the guard was OFF for", () => {
           },
         });
       }
-      // No session before registering — the ordinary first signup — and the SAME account after.
+      // No session before registering — the ordinary first signup — and the SAME account after, in the
+      // enrollment session the server holds until a first factor exists.
       if (url.includes("/auth/session")) {
         if (!registered) return json({ error: { code: "unauthorized" } }, 401);
-        return json(asAccount("acct_A", "a@example.invalid"));
+        return json(enrolling("acct_A", "a@example.invalid"));
       }
       if (url.includes("/auth/2fa/totp/enroll")) {
         return json({ secret: SEED, otpauthUrl: `otpauth://totp/ohmail:fixture?secret=${SEED}&issuer=ohmail` });
@@ -720,5 +739,95 @@ describe("the plan poll asks whose account it is reading", () => {
     } finally {
       globalThis.fetch = priorFetch;
     }
+  });
+});
+
+/**
+ * ═══ ONE SET OF CODES PER ACCOUNT, WHICHEVER TAB ASKS ════════════════════════════════════
+ *
+ * A second wizard in the same browser (a second /join, a reload, the sign-in link of the page that
+ * confirms the address) reaches the codes step of the same account, and every generate deletes the
+ * set before it: the person writes down codes that another tab has already cancelled. The read
+ * before the generate is the one that knows, so it decides; and a factor step whose factor landed in
+ * another tab re-reads the account instead of adding a second one.
+ */
+const settled = async (): Promise<void> => {
+  for (let i = 0; i < 10; i += 1) await act(async () => { await Promise.resolve(); });
+};
+const pressed = async (c: HTMLElement, label: string): Promise<void> => {
+  const button = [...c.querySelectorAll("button")].find((b) => b.textContent === label);
+  expect(button, `no "${label}" button`).toBeTruthy();
+  await act(async () => { (button as HTMLButtonElement).click(); });
+  await settled();
+};
+
+describe("recovery codes are made only for an account that has none", () => {
+  it("the read before the generate says the account has codes: none are made, the step says so, Continue goes on", async () => {
+    sessionScript = [asAccount("acct_A", "a@example.invalid"), withCodes("acct_A", "a@example.invalid")];
+    const c = await mountJoin();
+    expect(c.querySelector("h1")?.textContent, "the wizard never reached the codes step").toBe(messages.join.step_codes_title);
+    expect(generated(), "a new set cancelled the codes the account already has").toEqual([]);
+    expect(c.textContent).toContain(messages.join.codesElsewhere);
+    await pressed(c, messages.join.continue);
+    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_mailbox_title);
+    expect(generated()).toEqual([]);
+  });
+
+  it("Try again after an answer that never arrived makes no second set over the first", async () => {
+    let made = 0;
+    globalThis.fetch = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes("/auth/session")) {
+        return json(made > 0 ? withCodes("acct_A", "a@example.invalid") : asAccount("acct_A", "a@example.invalid"));
+      }
+      // The server makes the set; its answer is lost on the way back.
+      if (url.includes("/auth/2fa/recovery-codes")) { made += 1; throw new TypeError("Failed to fetch"); }
+      if (url.includes("/mailboxes")) return json({ items: [] });
+      return json({});
+    }) as unknown as typeof globalThis.fetch;
+    const c = await mountJoin();
+    expect(generated()).toHaveLength(1);
+    await pressed(c, messages.join.codesRetry);
+    expect(generated(), "Try again made a second set over the one the server already holds").toHaveLength(1);
+    expect(c.textContent).toContain(messages.join.codesElsewhere);
+  });
+});
+
+describe("a factor added in another tab ends the factor step here", () => {
+  for (const [what, label, route] of [
+    ["the passkey", messages.join.addPasskey, "/auth/2fa/webauthn/register/options"],
+    ["the authenticator", messages.join.useTotp, "/auth/2fa/totp/enroll"],
+  ] as const) {
+    it(`${what}: the press re-reads the account, adds no second factor, and the setup goes on`, async () => {
+      // On the factor step at mount; by the press the account has its first factor (another tab).
+      sessionScript = [enrolling("acct_A", "a@example.invalid"), asAccount("acct_A", "a@example.invalid")];
+      const c = await mountJoin();
+      expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_factor_title);
+      await pressed(c, label);
+      expect(calls.filter((u) => u.includes(route)), "a second factor was started").toEqual([]);
+      expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
+      // This account has no codes yet, so this tab makes them, once.
+      expect(generated()).toHaveLength(1);
+      expect(c.textContent).toContain("aaaa-bbbb");
+    });
+  }
+
+  it("the authenticator's Activate, when a passkey landed in another tab after the key was shown", async () => {
+    sessionScript = [
+      enrolling("acct_A", "a@example.invalid"), enrolling("acct_A", "a@example.invalid"),
+      asAccount("acct_A", "a@example.invalid"),
+    ];
+    const c = await mountJoin();
+    await pressed(c, messages.join.useTotp);
+    const field = c.querySelector<HTMLInputElement>("#join-totp");
+    expect(field, "the authenticator key was never shown").toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "123456");
+      field!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await pressed(c, messages.join.activate);
+    expect(calls.filter((u) => u.includes("/auth/2fa/totp/activate")), "a second factor was activated").toEqual([]);
+    expect(c.querySelector("h1")?.textContent).toBe(messages.join.step_codes_title);
   });
 });

@@ -228,22 +228,34 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
       join: Record<string, string>; accessLock: Record<string, string>;
     };
     /*
-     * ONE trial sentence is ruled in (2026-10-17): the plan step says what the site's tier buttons
-     * promise, `planTrial`, in the same words as the wall's never-started state. No price and no
-     * tier in it; the terms are the plane's (a 14-day trial, no card while trial-eligible), so a
-     * change there changes this sentence and the wall's together, which the second check holds.
+     * TWO trial sentences are ruled in. `planTrial` (2026-10-17): the plan step says what the site's
+     * tier buttons promise, in the same words as the wall's never-started state. `planStartTrial`
+     * (2026-10-26): the plan step's button for an account that never started a trial, in the account
+     * page's own words. No price and no tier in either; the terms are the plane's (a 14-day trial, no
+     * card while trial-eligible), so a change there changes these and the wall's together, which the
+     * next checks hold.
      */
-    const { planTrial, ...rest } = messages.join;
+    const { planTrial, planStartTrial, ...rest } = messages.join;
     expect(planTrial).toBe("14 days free, no card.");
     expect(messages.accessLock.neverStartedLead.startsWith(planTrial!)).toBe(true);
+    expect(planStartTrial, "the button names no trial length").toMatch(/\d+/);
+    expect(planStartTrial!.match(/\d+/g), "the button and the trial sentence name two trials").toEqual(planTrial!.match(/\d+/g));
     const copy = Object.values(rest).join(" ");
     expect(copy.length, "the join namespace is empty — then this guards nothing")
       .toBeGreaterThan(400);
     expect(copy, "a price is back in the signup funnel").not.toMatch(/\$\d/);
     expect(copy, "a mailbox tier is back in the signup funnel").not.toMatch(/\d+\s+mailboxes/);
     expect(copy, "a trial term is back in the signup funnel")
-      .not.toMatch(/14 days|no card|full access|everything included|unlimited/i);
+      .not.toMatch(/14[ -]days?|no card|full access|everything included|unlimited/i);
     // …and the component reads no plan table off any response.
     expect(join).not.toMatch(/sub\.plans|card\.mailboxes|card\.priceUsd|monthlyCredits/);
+  });
+
+  it("the join rail's last stop says Organize in the organize step's own word", () => {
+    // `join` is inlined on the first screen and `onboarding` is not, so the word lives twice.
+    for (const file of ["../messages/en.json", "../messages/de.json"]) {
+      const m = JSON.parse(read(file)) as { join: Record<string, string>; onboarding: Record<string, string> };
+      expect(m.join.rail_organize, file).toBe(m.onboarding.rail_organize);
+    }
   });
 });
