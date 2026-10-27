@@ -78,6 +78,35 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.9" date="2026-10-27">
+      <description>
+        <ul>
+          <li>Pressing End in News no longer makes the Linux desktop window reload</li>
+          <li>A letter you read in News or Receipts turns read where it stands</li>
+          <li>News and Receipts read with the keyboard alone</li>
+          <li>A letter turns read in every reader, not only in the Ohbox</li>
+          <li>The Ohbox keeps your place after Resurface, Park, Answer later or Delete</li>
+          <li>Restart to Install in the desktop menu saves the letter open in the compose form first</li>
+          <li>Restart saves the reply or forward you are writing under a letter first</li>
+          <li>A stray key on "ohmail's window stopped" no longer quits ohmail</li>
+          <li>News on the phone keeps your place when new letters arrive</li>
+          <li>The phone's open Settings and Ohbox follow a settings block as it starts and ends</li>
+          <li>A connection lost during a large first import no longer ends the import early</li>
+          <li>Agreeing on two computers at the same moment no longer lets both organize the mailbox</li>
+          <li>Signing up continues in one tab, and the plan step names a trial only when there is one</li>
+          <li>Screener tabs switch with less work per click</li>
+          <li>A first sync over long conversations reads less</li>
+          <li>The desktop app's log says when its last run ended without closing</li>
+          <li>The test suite refuses Postgres-only SQL in code the phone carries</li>
+          <li>The desktop store's crash tests run again</li>
+          <li>The phone app's tests can mount its components</li>
+          <li>ohmail Cloud stays up when one window loads hundreds of pictures at once</li>
+          <li>ohmail Cloud answers "busy, retry shortly" when the database pooler turns a request away</li>
+          <li>The 5xx poll keeps working when ohmail Cloud is busy</li>
+          <li>The sign-in record says why a session ended</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.8" date="2026-10-27">
       <description>
         <ul>
@@ -171,52 +200,6 @@
           <li>The desktop columns keep an even frame on Omarchy</li>
           <li>Cloud erases a closed account only after its erasure warning was delivered</li>
           <li>Cloud can remind a new trial once to connect its mailbox</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.4" date="2026-10-25">
-      <description>
-        <ul>
-          <li>The thread squares follow your reading, and the open row in the list shows them too</li>
-          <li>On the phone the squares follow you through a conversation, and the list row carries them</li>
-          <li>Softer thread squares in the paper look, and a fuller name card on each</li>
-          <li>On the phone, holding a thread square shows who wrote that message and when</li>
-          <li>A message you send stays in view while it goes, and a forward shows what it forwards</li>
-          <li>Answers typed inside a quoted Outlook mail stay in view, and GMX replies fold their history</li>
-          <li>News and Receipts stay ready between visits on the web too</li>
-          <li>The desktop's columns keep their outer borders when Hyprland reports no outer gap</li>
-          <li>The phone keeps the newest message in view when a foldable opens to two panes</li>
-          <li>Folding the phone half open or to its outer screen keeps your place and marks nothing read</li>
-          <li>Sent to … also appears when a send's first answer was lost</li>
-          <li>The desktop app sends at once on ohmail Cloud</li>
-          <li>A slow send keeps its Sent copy, and a dropped upload says it was not sent</li>
-          <li>Large attachments leave from the browser, or the send says why not</li>
-          <li>Park takes the whole conversation out of the Ohbox</li>
-          <li>A filing into an ohmail folder another app deleted is filed again</li>
-          <li>The desktop and the phone say which filings wait, and why</li>
-          <li>Letters deleted in another mail app leave ohmail, Spam included</li>
-          <li>A draft you discard stays discarded</li>
-          <li>A draft open in two places no longer overwrites itself</li>
-          <li>Phone: a message waiting for the network is in Drafts, and Discard cancels it</li>
-          <li>Letters that arrived while a phone had handed its mailbox back are offered after Start</li>
-          <li>Letters on the phone show the date they were sent, whatever form their Date line takes</li>
-          <li>The Ohbox count on the rail includes letters brought back by Resurface</li>
-          <li>Unread messages in a conversation are no longer blue in ohmarchy's light themes</li>
-          <li>A letter filed in another client stays in News or Receipts</li>
-          <li>Phone: people you have written to get through to your Ohbox</li>
-          <li>A letter being written on the phone survives a force-stop, and a kept draft keeps its files</li>
-          <li>Screening a thousand letters no longer stops the phone saving new mail</li>
-          <li>A photo attached on the phone keeps a real name</li>
-          <li>Settings has a Help &amp; contact section</li>
-          <li>Setup picks up where it stopped when no mailbox is connected yet</li>
-          <li>Sign-up offers Sign in with Microsoft for a Microsoft mailbox</li>
-          <li>WEB.DE, t-online and bluewin get their own tiles, and Proton Mail says why it cannot connect</li>
-          <li>The sign-in screens show a new person where to sign up and set up</li>
-          <li>Trial mails no longer promise to keep organizing a mailbox that was never connected</li>
-          <li>Erasing a mailbox frees its storage on ohmail Cloud</li>
-          <li>ohmail Cloud checks its storage count before emptying older letters</li>
-          <li>ohmail Cloud tells you when it stops storing the text of older letters</li>
-          <li>A forward can send only the files the person kept</li>
         </ul>
       </description>
     </release>
