@@ -3566,6 +3566,8 @@ export interface LeaseGateInput {
   capabilities: readonly string[];
   /** Injected for tests; production uses `randomUUID` from `node:crypto`. */
   newNonce?: () => string;
+  /** Injected for tests; production waits on a timer between a join's settle reads. */
+  sleep?: (ms: number) => Promise<void>;
   /**
    * THE NONCE THIS CYCLE IS ABOUT TO WRITE, HANDED OVER BEFORE THE WRITE IS ISSUED.
    *
@@ -3719,6 +3721,27 @@ function liveHolderOfJoin(
   const holder = election.ranked.find((c) => c.installId !== self.installId
     && isClaimLive(c, election.clock, staleAfterMs) && writerStampOf(c) > c.claimedAt.getTime());
   return holder === undefined ? null : namedHolder(holder, self.protocol ?? CLAIM_PROTOCOL);
+}
+
+/** Between a join's settle reads; the bound is about the other join's own confirm read budget. */
+export const JOIN_SETTLE_PAUSE_MS = 2_000;
+export const JOIN_SETTLE_READS_MAX = Math.ceil(IMAP_META_DEADLINE_MS / JOIN_SETTLE_PAUSE_MS);
+
+/**
+ * ANOTHER JOIN STILL CONFIRMING, or null: its newest claim is a join's first (no press, never
+ * renewed), live by the folder clock, and not provably appended after ours (`ownRef`), so its
+ * confirm may have read the folder before our claim landed. Its gate says within one write which
+ * way it went: the press lands, or the first claim goes.
+ */
+function joinStillConfirming(
+  claims: readonly ClaimRecord[], self: LeaseSelf, ownRef: unknown, now: Date, staleAfterMs: number,
+): OrganizerClaim | null {
+  const election = runElection(withServerClock(claims), now, staleAfterMs);
+  const landedAfterOurs = (ref: unknown): boolean => typeof ref === "number" && typeof ownRef === "number" && ref > ownRef;
+  const pending = election.candidates.find((c) => c.installId !== self.installId && c.intent === "join"
+    && c.authorizedAt === null && writerStampOf(c) === c.claimedAt.getTime()
+    && isClaimLive(c, election.clock, staleAfterMs) && !landedAfterOurs(c.ref));
+  return pending === undefined ? null : namedHolder(pending, self.protocol ?? CLAIM_PROTOCOL);
 }
 
 export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResult> {
@@ -4018,91 +4041,6 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
     );
   }
 
-  /**
-   * Append, then look again before touching any mail. Two installs can both decide to organize
-   * and both append; the gate used to return `organize` the moment its APPEND succeeded — a
-   * dual-write window one poll interval wide. So the claim just written is read back and the
-   * election re-run. `takeover` is NOT passed — the authorization was spent; `lastNonce` is the
-   * nonce just written; the displaced claims are excluded BY REF — re-counting them re-elects the
-   * incumbent, so the takeover would lose its own confirm — never by install id: an incumbent
-   * that renewed in the gap wrote a message the decision never ranked, which stays in and wins,
-   * so the press retries. A verify that cannot be READ throws — a mailbox fault, not a loss.
-   */
-  let verifyClaims: readonly ClaimRecord[];
-  try {
-    /* As complete as the election's read, whatever the folder did in between: a rival renewed
-       under a burst of appends is still seen, so a write is never confirmed over a read that could
-       not see all of what it decides about. */
-    const after = (await readClaims()).records;
-    verifyClaims = after
-      .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
-      .filter((c): c is ClaimRecord => c !== null);
-  } catch (err) {
-    /* A refusal that names itself keeps its words: our own append can be what crossed the ceiling. */
-    if (err instanceof LeaseUnavailableError) throw err;
-    throw new LeaseUnavailableError(
-      `the organizer lease in ${META_FOLDER} could not be re-read after the claim was renewed, so ` +
-      `this mailbox cannot be organized safely`,
-      { op: "list_claims", cause: err },
-    );
-  }
-
-  // ── THE CLAIM WE JUST WROTE MUST BE IN WHAT WE READ BACK ──────────────────────────────────
-  //
-  // If it is not, something with delete rights acted on the folder between the append and this
-  // read — a restored clone releasing every claim under our id, a takeover racing ours — and we
-  // do not hold custody. Without this guard the displaced-ref exclusion below could hand the
-  // election an EMPTY set, whose verdict is `organize`: the gate would then expunge the
-  // incumbent and proceed WITH NO STANDING CLAIM AT ALL, which is unleased organizing — the
-  // exact thing every line of this module exists to prevent. Reported as a lost race, not a
-  // mailbox fault: the folder was readable, we simply did not win it.
-  const ownSurvived = verifyClaims.some(
-    (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
-  );
-  if (!ownSurvived) {
-    log("lease_lost_race", { verdict: "own_claim_missing" });
-    // The verdict is still derived from what the folder holds — with the caller's OWN identity,
-    // not one armed with the vanished nonce: on an ordinary renew the folder still holds our
-    // prior claim (its nonce IS `self.lastNonce`), and arming the clone defence with the vanished
-    // nonce would classify that prior claim as a live clone of ourselves — a durable stand-down
-    // naming us while our own claim keeps every peer out. A live FOREIGN winner among the
-    // survivors is a genuine lost race: return the stand-down naming them. Anything else — the
-    // survivors elect ourselves, or the folder is empty or stale — is a WRITE THAT WAS LOST:
-    // retryable, and the next gate re-enters with our prior claim exactly as the election
-    // expects.
-    const survivors = decideLease({
-      self,
-      claims: verifyClaims,
-      now,
-      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
-    });
-    if (survivors.verdict === "stand_down") {
-      // A stand-down RELEASES, here as on the ordinary path: our prior claims are still in the
-      // folder (only the new append vanished), and left behind they obstruct the winner for the
-      // whole staleness window. Best effort, as every release is.
-      const ownRemaining = verifyClaims
-        .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
-        .map((c) => c.ref)
-        .filter((r): r is unknown => r !== undefined);
-      if (ownRemaining.length > 0) {
-        try {
-          await io.removeClaims(ownRemaining);
-        } catch (err) {
-          log("lease_release_failed", {
-            op: "remove_claims" satisfies LeaseOp,
-            err,
-          });
-        }
-      }
-      return { verdict: survivors, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
-    }
-    throw new LeaseUnavailableError(
-      `the claim this gate just appended to ${META_FOLDER} is no longer there and no live rival ` +
-      `stands — the write was lost, and the gate will retry`,
-      { op: "renew_claim" },
-    );
-  }
-
   // The header's third rule: the displaced are not rivals. `ref` is compared by value identity
   // (a uid, or a fake harness's int); a claim with no ref cannot have been displaced.
   const displacedRefs = new Set(verdict.displace);
@@ -4116,21 +4054,127 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
      just appended, which a caller's ring may already name. */
   const supersededOwn = (c: ClaimRecord): boolean =>
     !isMalformed(c) && c.installId === self.installId && c.nonce !== nonce && writtenByThisProcess(self, c.nonce);
-  const confirmClaims = verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c));
-  const elected = decideLease({
-    self: { ...self, lastNonce: nonce },
-    claims: confirmClaims,
-    now,
-    ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
-  });
-  /* A JOIN YIELDS TO A RENEWING HOLDER ITS ELECTION READ MISSED, which a writer clock running ahead
-     can rank below the join's claim. */
-  const yieldTo = elected.verdict === "organize" && joinWin
-    ? liveHolderOfJoin(confirmClaims, self, now, staleWindowMs)
-    : null;
-  const confirmed: LeaseVerdict = yieldTo === null
-    ? elected
-    : { verdict: "stand_down", reason: reasonFor(yieldTo), by: yieldTo };
+
+  /**
+   * Append, then look again before touching any mail. Two installs can both decide to organize
+   * and both append; the gate used to return `organize` the moment its APPEND succeeded — a
+   * dual-write window one poll interval wide. So the claim just written is read back and the
+   * election re-run. `takeover` is NOT passed — the authorization was spent; `lastNonce` is the
+   * nonce just written; the displaced claims are excluded BY REF — re-counting them re-elects the
+   * incumbent, so the takeover would lose its own confirm — never by install id: an incumbent
+   * that renewed in the gap wrote a message the decision never ranked, which stays in and wins,
+   * so the press retries. A verify that cannot be READ throws — a mailbox fault, not a loss.
+   */
+  const sleep = input.sleep ?? ((ms: number): Promise<void> => new Promise((r) => { setTimeout(r, ms); }));
+  /* The latest read-back: the code below the loop works from it. */
+  let verifyClaims: readonly ClaimRecord[];
+  let confirmed: LeaseVerdict;
+  let settleReads = 0;
+  for (;;) {
+    try {
+      /* As complete as the election's read, whatever the folder did in between: a rival renewed
+         under a burst of appends is still seen, so a write is never confirmed over a read that could
+         not see all of what it decides about. */
+      const after = (await readClaims()).records;
+      verifyClaims = after
+        .map((m) => parseClaim(m.raw, m.ref, m.internalDate ?? null))
+        .filter((c): c is ClaimRecord => c !== null);
+    } catch (err) {
+      /* A refusal that names itself keeps its words: our own append can be what crossed the ceiling. */
+      if (err instanceof LeaseUnavailableError) throw err;
+      throw new LeaseUnavailableError(
+        `the organizer lease in ${META_FOLDER} could not be re-read after the claim was renewed, so ` +
+        `this mailbox cannot be organized safely`,
+        { op: "list_claims", cause: err },
+      );
+    }
+
+    // ── THE CLAIM WE JUST WROTE MUST BE IN WHAT WE READ BACK ──────────────────────────────────
+    //
+    // If it is not, something with delete rights acted on the folder between the append and this
+    // read — a restored clone releasing every claim under our id, a takeover racing ours — and we
+    // do not hold custody. Without this guard the displaced-ref exclusion below could hand the
+    // election an EMPTY set, whose verdict is `organize`: the gate would then expunge the
+    // incumbent and proceed WITH NO STANDING CLAIM AT ALL, which is unleased organizing — the
+    // exact thing every line of this module exists to prevent. Reported as a lost race, not a
+    // mailbox fault: the folder was readable, we simply did not win it.
+    const ownWritten = verifyClaims.find(
+      (c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId && c.nonce === nonce,
+    );
+    if (ownWritten === undefined) {
+      log("lease_lost_race", { verdict: "own_claim_missing" });
+      // The verdict is still derived from what the folder holds — with the caller's OWN identity,
+      // not one armed with the vanished nonce: on an ordinary renew the folder still holds our
+      // prior claim (its nonce IS `self.lastNonce`), and arming the clone defence with the vanished
+      // nonce would classify that prior claim as a live clone of ourselves — a durable stand-down
+      // naming us while our own claim keeps every peer out. A live FOREIGN winner among the
+      // survivors is a genuine lost race: return the stand-down naming them. Anything else — the
+      // survivors elect ourselves, or the folder is empty or stale — is a WRITE THAT WAS LOST:
+      // retryable, and the next gate re-enters with our prior claim exactly as the election
+      // expects.
+      const survivors = decideLease({
+        self,
+        claims: verifyClaims,
+        now,
+        ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+      });
+      if (survivors.verdict === "stand_down") {
+        // A stand-down RELEASES, here as on the ordinary path: our prior claims are still in the
+        // folder (only the new append vanished), and left behind they obstruct the winner for the
+        // whole staleness window. Best effort, as every release is.
+        const ownRemaining = verifyClaims
+          .filter((c): c is OrganizerClaim => !isMalformed(c) && c.installId === self.installId)
+          .map((c) => c.ref)
+          .filter((r): r is unknown => r !== undefined);
+        if (ownRemaining.length > 0) {
+          try {
+            await io.removeClaims(ownRemaining);
+          } catch (err) {
+            log("lease_release_failed", {
+              op: "remove_claims" satisfies LeaseOp,
+              err,
+            });
+          }
+        }
+        return { verdict: survivors, nonce: null, uidValidity: electionUidValidity, stamp: noBaseline };
+      }
+      throw new LeaseUnavailableError(
+        `the claim this gate just appended to ${META_FOLDER} is no longer there and no live rival ` +
+        `stands — the write was lost, and the gate will retry`,
+        { op: "renew_claim" },
+      );
+    }
+
+    const confirmClaims = verifyClaims.filter((c) => (c.ref === undefined || !displacedRefs.has(c.ref)) && !supersededOwn(c));
+    const elected = decideLease({
+      self: { ...self, lastNonce: nonce },
+      claims: confirmClaims,
+      now,
+      ...(input.staleAfterMs !== undefined ? { staleAfterMs: input.staleAfterMs } : {}),
+    });
+    /* A JOIN YIELDS TO A RENEWING HOLDER ITS ELECTION READ MISSED, which a writer clock running ahead
+       can rank below the join's claim. */
+    const yieldTo = elected.verdict === "organize" && joinWin
+      ? liveHolderOfJoin(confirmClaims, self, now, staleWindowMs)
+      : null;
+    confirmed = yieldTo === null
+      ? elected
+      : { verdict: "stand_down", reason: reasonFor(yieldTo), by: yieldTo };
+    /* A JOIN WAITS FOR A JOIN STILL CONFIRMING, whose confirm may have read the folder before our
+       claim landed: it presses or withdraws within one write, then this read sees which. Past the
+       bound this join yields to it, which leaves fewer organizers, never more. */
+    const pending = joinWin && confirmed.verdict === "organize"
+      ? joinStillConfirming(confirmClaims, self, ownWritten.ref, now, staleWindowMs)
+      : null;
+    if (pending === null) break;
+    if (settleReads === JOIN_SETTLE_READS_MAX) {
+      confirmed = { verdict: "stand_down", reason: reasonFor(pending), by: pending };
+      break;
+    }
+    settleReads += 1;
+    await sleep(JOIN_SETTLE_PAUSE_MS);
+  }
+  if (settleReads > 0) log("lease_join_waited", { count: settleReads, verdict: confirmed.verdict });
 
   if (confirmed.verdict !== "organize") {
     /* The loser releases its own claims and never the winner's — the election's rule, held here

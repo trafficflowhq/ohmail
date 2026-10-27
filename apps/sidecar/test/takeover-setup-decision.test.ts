@@ -53,6 +53,10 @@ interface FolderView {
   missing?: { installId: string; looks: boolean; firstLeaseRead: boolean };
   /** Holds the gate's first lease read, once taken, until it resolves. */
   afterFirstLeaseRead?: () => Promise<void>;
+  /** Runs after the gate's nth lease read, and before its nth claim append. */
+  afterLeaseRead?: (n: number) => Promise<void> | void;
+  beforeAppend?: (n: number) => Promise<void>;
+  appends?: number;
   /** Looks and lease reads so far. */
   looks?: number;
   leaseReads?: number;
@@ -73,7 +77,15 @@ function mailbox(meta: MemoryMetaFolder, moves: Array<{ from: string; to: string
             view.leaseReads = (view.leaseReads ?? 0) + 1;
             const read = seen(await target.listClaims(), view.leaseReads === 1 && view.missing?.firstLeaseRead);
             if (view.leaseReads === 1) await view.afterFirstLeaseRead?.();
+            await view.afterLeaseRead?.(view.leaseReads);
             return read;
+          };
+        }
+        if (key === "appendClaim") {
+          return async (raw: string) => {
+            view.appends = (view.appends ?? 0) + 1;
+            await view.beforeAppend?.(view.appends);
+            await target.appendClaim(raw);
           };
         }
         const value = Reflect.get(target, key) as unknown;
@@ -545,6 +557,50 @@ describe("two installs agree on one mailbox nobody organizes", () => {
     const reader = Object.values(rows).find((r) => r.organizerRole === "reader");
     expect(reader?.organizedByName).toBe(organizing[0]);
     expect(meta.claims.map((c) => (parseClaim(c.raw) as OrganizerClaim).displayName)).toEqual(organizing);
+  }, 60_000);
+
+  it("one confirming before the other's claim lands: one install is granted a write permit, and the other names it", async () => {
+    const meta = new MemoryMetaFolder();
+    const granted = new Set<string>();
+    const signal = () => { let fire!: () => void; const p = new Promise<void>((r) => { fire = r; }); return { fire, p }; };
+    const install = async (name: string, view: FolderView) => {
+      const dataDir = await freshDataDir("ohmail-two-agree-");
+      const sidecar: Sidecar = await createSidecar({
+        dataDir,
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        address: "owner@trafficflow.test", machineName: name,
+        pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
+        adapterFactory: mailbox(meta, [], view), log: (event: string) => { if (event === "lease_permit_granted") granted.add(name); },
+      });
+      cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+      await sidecar.start();
+      const agree = () => sidecar.handle(new Request(`http://engine.invalid/local/mailboxes/${sidecar.world.mailboxId}/organize`, {
+        method: "POST", headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ screening: { scope: "window" }, intent: "join" }),
+      }));
+      const row = async () => (await sidecar.db.select().from(mailboxes).where(eq(mailboxes.id, sidecar.world.mailboxId)))[0]!;
+      return { sidecar, agree, row };
+    };
+    /* B agrees first and holds after its election read until A has confirmed over its own claim
+       alone; A's press waits for B's next read after its confirm. */
+    const bRead = signal(); const aConfirmed = signal(); const bReadAgain = signal();
+    const b = await install("laptop-b", {
+      afterLeaseRead: async (n) => { if (n === 1) { bRead.fire(); await aConfirmed.p; } if (n === 3) bReadAgain.fire(); },
+    });
+    const a = await install("laptop-a", {
+      afterLeaseRead: (n) => { if (n === 2) aConfirmed.fire(); },
+      beforeAppend: async (n) => { if (n === 2) await bReadAgain.p; },
+    });
+    expect((await b.agree()).status).toBe(200);
+    const bPass = b.sidecar.syncUntilQuiet();
+    await bRead.p;
+    expect((await a.agree()).status).toBe(200);
+    await Promise.all([bPass, a.sidecar.syncUntilQuiet()]);
+    expect([...granted], "both installs were granted a write permit in one pass").toEqual(["laptop-a"]);
+    const rows = { "laptop-a": await a.row(), "laptop-b": await b.row() };
+    expect(Object.entries(rows).filter(([, r]) => r.organizerRole === "organizer").map(([name]) => name)).toEqual(["laptop-a"]);
+    expect(rows["laptop-b"]).toMatchObject({ organizerRole: "reader", organizedByName: "laptop-a" });
+    expect(meta.claims.map((c) => (parseClaim(c.raw) as OrganizerClaim).displayName)).toEqual(["laptop-a"]);
   }, 60_000);
 });
 
