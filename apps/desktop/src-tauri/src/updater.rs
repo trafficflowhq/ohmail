@@ -796,6 +796,75 @@ pub fn press_now(flow: &Flow, held: bool) -> Press {
     }
 }
 
+/// The event that asks the main window to save an open draft and then press Restart itself.
+/// Spelled again in `src/update.ts`.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub const RESTART_ASKED_EVENT: &str = "updater://restart-asked";
+
+/// How long the menu's Restart waits for the window's own press before restarting anyway. Longer
+/// than the window's save bound (`RESTART_FLUSH_MS`, 3 s), so a slow save still lands first.
+pub const RESTART_ASK_BOUND: Duration = Duration::from_secs(5);
+
+/// What picking the menu item does: a restart goes through a window that can save a draft first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuPick {
+    AskWindow,
+    Press(Press),
+}
+
+pub fn menu_pick(flow: &Flow, held: bool, window_saves: bool) -> MenuPick {
+    match press_now(flow, held) {
+        Press::Restart if window_saves => MenuPick::AskWindow,
+        press => MenuPick::Press(press),
+    }
+}
+
+/// The menu's ask to the window, while it stands: answered by the window's press, or lapsed by
+/// the shell after [`RESTART_ASK_BOUND`].
+#[derive(Debug, Default)]
+pub struct RestartAsk(Mutex<AskSlot>);
+
+#[derive(Debug, Default)]
+struct AskSlot {
+    next: u64,
+    standing: Option<(u64, Instant)>,
+}
+
+impl RestartAsk {
+    /// A new ask's id, or none while a younger one stands. An older one is replaced, so a timer
+    /// that never ran cannot leave the menu item dead.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn ask(&self, now: Instant) -> Option<u64> {
+        let mut slot = lock(&self.0);
+        if slot
+            .standing
+            .is_some_and(|(_, at)| now.saturating_duration_since(at) < RESTART_ASK_BOUND)
+        {
+            return None;
+        }
+        slot.next += 1;
+        let id = slot.next;
+        slot.standing = Some((id, now));
+        Some(id)
+    }
+
+    /// The window pressed: whatever stands is answered.
+    pub fn answer(&self) -> bool {
+        lock(&self.0).standing.take().is_some()
+    }
+
+    /// The bound passed: true only when this ask still stands, which it then no longer does.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn lapse(&self, id: u64) -> bool {
+        let mut slot = lock(&self.0);
+        if slot.standing.is_some_and(|(standing, _)| standing == id) {
+            slot.standing = None;
+            return true;
+        }
+        false
+    }
+}
+
 /// WHAT THE MENU ITEM SAYS, and whether it can be pressed — the flow and the install, composed.
 ///
 /// Pure, so `updater_tests.rs` drives every pair, and the only place the two are put together:
@@ -1112,6 +1181,7 @@ struct Updater<R: Runtime> {
     /// Settings' switch, read once from its file and kept.
     policy: Mutex<Option<Policy>>,
     hold: SendHold,
+    ask: RestartAsk,
 }
 
 impl<R: Runtime> Updater<R> {
@@ -1123,6 +1193,7 @@ impl<R: Runtime> Updater<R> {
             last: Mutex::new(None),
             policy: Mutex::new(None),
             hold: SendHold::default(),
+            ask: RestartAsk::default(),
         }
     }
 }
@@ -1479,7 +1550,7 @@ pub fn attach<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
         .manage(Updater::<R>::new())
         .on_menu_event(|app, event| {
             if event.id().as_ref() == CHECK_FOR_UPDATES_ID {
-                pressed(app.clone());
+                menu_pressed(app.clone());
             }
         })
 }
@@ -1609,8 +1680,65 @@ pub fn on_launch<R: Runtime>(app: &AppHandle<R>) {
     check(app.clone(), false);
 }
 
-/// The menu item was picked. What that means depends on where the flow is.
+/// The menu item was picked. A restart with a main window asks the window, which saves an open
+/// draft and then presses (`src/update-cadence.ts`); everything else is [`pressed`].
+fn menu_pressed<R: Runtime>(app: AppHandle<R>) {
+    let window_saves = cfg!(feature = "local-engine") && app.get_webview_window("main").is_some();
+    let pick = {
+        let state = app.state::<Updater<R>>();
+        let flow = lock(&state.flow);
+        menu_pick(&flow, state.hold.held(Instant::now()), window_saves)
+    };
+    match pick {
+        MenuPick::Press(_) => pressed(app),
+        #[cfg(feature = "local-engine")]
+        MenuPick::AskWindow => ask_the_window(app),
+        #[cfg(not(feature = "local-engine"))]
+        MenuPick::AskWindow => pressed(app),
+    }
+}
+
+/// Ask the window, and restart anyway if it has not pressed within [`RESTART_ASK_BOUND`]: a
+/// frozen window never strands the item.
+#[cfg(feature = "local-engine")]
+fn ask_the_window<R: Runtime>(app: AppHandle<R>) {
+    let Some(id) = app.state::<Updater<R>>().ask.ask(Instant::now()) else {
+        return;
+    };
+    let _ = app.emit(RESTART_ASKED_EVENT, ());
+    let waiter = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("ohmail-restart-ask".into())
+        .spawn(move || {
+            std::thread::sleep(RESTART_ASK_BOUND);
+            if waiter.state::<Updater<R>>().ask.lapse(id) {
+                emit(line("updater_restart_ask", &[("answered", "false")]));
+                restart_if_ready(waiter);
+            }
+        });
+    if spawned.is_err() {
+        app.state::<Updater<R>>().ask.lapse(id);
+    }
+}
+
+/// A lapsed ask installs only a release still ready and not held. Never a check: that would raise
+/// a press's dialogs nobody asked for.
+#[cfg(feature = "local-engine")]
+fn restart_if_ready<R: Runtime>(app: AppHandle<R>) {
+    let what = {
+        let state = app.state::<Updater<R>>();
+        let flow = lock(&state.flow);
+        press_now(&flow, state.hold.held(Instant::now()))
+    };
+    if what == Press::Restart {
+        start_install(app);
+    }
+}
+
+/// A press: the menu's, the pane's or the window's line. What that means depends on where the flow is.
 fn pressed<R: Runtime>(app: AppHandle<R>) {
+    // The window's press answers a standing menu ask, so the ask's timer cannot press again.
+    app.state::<Updater<R>>().ask.answer();
     let what = {
         let state = app.state::<Updater<R>>();
         let flow = lock(&state.flow);

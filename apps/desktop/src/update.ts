@@ -24,6 +24,9 @@
 /** The event the shell emits whenever the update flow moves. Spelled again in `updater.rs`. */
 export const UPDATE_STATE_EVENT = "updater://state";
 
+/** The menu's Restart, asking this window to save an open draft and press. Spelled again in `updater.rs`. */
+export const UPDATE_RESTART_ASKED_EVENT = "updater://restart-asked";
+
 /** The commands the shell registers for this file. */
 const STATE_COMMAND = "update_state";
 const PRESS_COMMAND = "update_press";
@@ -367,6 +370,33 @@ export async function onUpdateState(
   await listening;
   return () => {
     subscribers.delete(show);
+  };
+}
+
+/**
+ * Run `run` whenever the menu's Restart asks this window to save and press. One registration,
+ * made by the cadence once per window. Inert with no shell; a refused listen is swallowed, and the
+ * shell restarts on its own when nobody answers.
+ */
+export async function onRestartAsked(run: () => void): Promise<() => void> {
+  const shell = internals();
+  let live = true;
+  if (shell) {
+    const handler = shell.transformCallback(() => {
+      if (live) run();
+    });
+    try {
+      await shell.invoke("plugin:event|listen", {
+        event: UPDATE_RESTART_ASKED_EVENT,
+        target: { kind: "Any" },
+        handler,
+      });
+    } catch {
+      /* An older shell or a dropped grant: the menu restarts after its own bound. */
+    }
+  }
+  return () => {
+    live = false;
   };
 }
 
