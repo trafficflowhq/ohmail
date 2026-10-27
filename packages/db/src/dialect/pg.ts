@@ -109,6 +109,31 @@ function acrossOf(q: string, head: SearchArm, headTsv: SQL, textTsv: SQL, recenc
   };
 }
 
+/** A group's operands in {@link letterTermsOf}: it reads 2^n terms, each one index scan. */
+const LETTER_TERMS_MAX = 3;
+
+/** The straddling letter as single-index terms: per `or` group, each split of its operands over head and text. */
+function letterTermsOf(q: string): SQL[] | null {
+  const ops = queryOperandsOf(q);
+  if (ops.none.length > 0 || ops.any.length === 0) return null;
+  const terms: SQL[] = [];
+  for (const g of ops.any) {
+    if (g.length > LETTER_TERMS_MAX || g.some((o) => o.quoted)) return null;
+    // The same tsquery per operand as `inLetter(o, …, true)`.
+    const t = g.map((o) => foldedTsquery(o.text));
+    for (let mask = 0; mask < 1 << g.length; mask++) {
+      const head = t.filter((_, i) => (mask & (1 << i)) !== 0);
+      const text = t.filter((_, i) => (mask & (1 << i)) === 0);
+      const parts = [
+        ...(head.length > 0 ? [sql`s.head_tsv @@ (${sql.join(head, sql` && `)})`] : []),
+        ...(text.length > 0 ? [sql`s.text_tsv @@ (${sql.join(text, sql` && `)})`] : []),
+      ];
+      terms.push(sql`(${sql.join(parts, sql` and `)})`);
+    }
+  }
+  return terms;
+}
+
 /** The typed query as a tsquery, every ß/ss form of it OR-ed (`eszettForms`); one form is the old shape. */
 function foldedTsquery(q: string): SQL {
   const forms = eszettForms(q);
@@ -409,6 +434,10 @@ export function pgDialect(): Dialect {
             : [],
         };
       },
+      // The word index's key expression (`message_search_words_idx`): no other index carries it,
+      // so the planner reads the account and the words in one GIN.
+      wordKey: (accountId: string): SQL => sql`((s.account_id)::text = (${accountId}::uuid)::text)`,
+      letterTerms: (q: string): SQL[] | null => letterTermsOf(q),
       // Textually the index's expression over `m` (mail 0154), or the planner cannot use it.
       recipient: ({ accountId, address }): SQL =>
         sql`messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array[${accountId}::text || ':' || lower(${address})]`,
@@ -422,7 +451,11 @@ export function pgDialect(): Dialect {
           if (!Number.isFinite(t) || t < 0 || t > 1) throw new Error(`typo threshold ${String(opts.typoThreshold)} is not in [0, 1]`);
           sets.push(sql`set_config('pg_trgm.word_similarity_threshold', ${sql.raw(`'${String(t)}'`)}, true)`);
         }
-        if (opts.preferIndexes === true) sets.push(sql`set_config('enable_seqscan', 'off', true)`);
+        if (opts.preferIndexes === true) {
+          // A word set past hash_mem is no longer a hashed SubPlan, and is asked again per letter
+          // walked (measured 68 ms to 13 s).
+          sets.push(sql`set_config('enable_seqscan', 'off', true)`, sql`set_config('hash_mem_multiplier', '8', true)`);
+        }
         // JIT and parallel workers never pay back on a search read, and a stock Postgres arms both on
         // plan cost: a broad word's page on 74k priced 115k (JIT's threshold is 100k), compiled 336
         // functions in ~60 ms and ran twice as long; its workers' start-up cost ~15 ms more than a

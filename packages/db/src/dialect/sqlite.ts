@@ -531,6 +531,8 @@ export function sqliteDialect(): Dialect {
       recipient: ({ accountId, address }): SQL =>
         sql`m.id in (select r.message_id from message_recipients r where r.account_id = ${accountId} and r.address = lower(${address}))`,
       // A LIKE, not an index operator, and one planner: there is nothing to set.
+      wordKey: (): null => null,
+      letterTerms: (): null => null,
       searchSession: (): null => null,
       // The FTS5 tables are kept by triggers over every row, so nothing here is unindexed.
       unindexed: (): null => null,

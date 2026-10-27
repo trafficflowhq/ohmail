@@ -67,6 +67,34 @@ export async function ensureSearchExtensions(
 }
 
 /**
+ * THE WORD ARMS' ACCOUNT-KEYED INDEX: the account as an expression no other index carries, so a
+ * keyed word read (`search.wordKey`) is one GIN AND inside this index. Keyed by the column, the
+ * planner read the account off `message_search_terms_trgm_idx` and asked every one of its vectors.
+ * One index over both vectors: two would offer the planner a key-only scan. Partial on its own key,
+ * which every row has: only a keyed read implies the predicate, so an unkeyed word read never takes
+ * this index over the plain GINs. It needs btree_gin
+ * ({@link ensureSearchExtensions}) and is never built on the desktop's store.
+ */
+export const WORD_INDEX_SPEC: ConcurrentIndexSpec = {
+  name: "message_search_words_idx",
+  table: "message_search",
+  ddl: sql`create index concurrently if not exists "message_search_words_idx"
+      on public.message_search using gin (((account_id)::text), head_tsv, text_tsv) with (gin_pending_list_limit = 256)
+      where ((account_id)::text) is not null`,
+};
+
+/** Builds {@link WORD_INDEX_SPEC}, after {@link ensureSearchExtensions}; `concurrently: false` as there. */
+export async function ensureWordIndex(
+  db: SqlExecutor, opts: { log?: (msg: string) => void; concurrently?: boolean } = {},
+): Promise<void> {
+  await ensureConcurrentIndexes(db, [WORD_INDEX_SPEC], {
+    label: "the word index build",
+    ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.concurrently === false ? { concurrently: false } : {}),
+  });
+}
+
+/**
  * The pre-migration build of mail 0071's partial index, CONCURRENTLY.
  *
  * Mail 0071 carries the same statement with `IF NOT EXISTS`, so this step — before the migrator,

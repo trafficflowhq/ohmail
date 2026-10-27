@@ -5,8 +5,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { accountSettings, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
-import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
+import { ensureSearchExtensions } from "@trafficflow/db/admin";
+import { MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, throwawayDb } from "@trafficflow/db/testing";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -18,11 +18,16 @@ import type { ServiceContext } from "@trafficflow/services";
  * makes ANY plan JIT (`jit_above_cost = 0`) and every parallel path free (a Gather wherever one is
  * allowed), so the rule holds at any size: the service's own session statement and
  * reads, captured on the wire, are replayed under EXPLAIN. The control drops the two settings.
+ *
+ * It runs on a database of its own, without the word index. On a shared database the rows and
+ * statistics earlier files left decided whether the estimate's arms gathered, and once a file had
+ * built the index its text and part arms were keyed, which plan no Gather even with workers free.
  */
 type Wire = { sql: string; params: unknown[] };
 let wire: Wire[] = [];
-const PG_URL = pgTestUrl(import.meta.url);
-const client = postgres(PG_URL, {
+/* Built and removed by the hooks below. */
+const privateDb = throwawayDb("trafficflow_search_serial");
+const client = postgres(privateDb.url, {
   max: 1, onnotice: () => {},
   // Strings: the driver drops a startup option whose value is falsy, and 0 is. Parallel paths are
   // free too, so an arm inside a statement no Gather can top is planned with workers wherever allowed.
@@ -65,8 +70,10 @@ async function planned(session: Wire[], reads: Wire[]): Promise<Array<{ jit: boo
 
 describe("a search read is planned serial and uncompiled on a stock Postgres", () => {
   beforeAll(async () => {
-    await runMigrations(PG_URL);
+    await privateDb.createFromTemplate();
     await ensureSearchExtensions(db, { concurrently: false });
+    // The index state this file reads, whatever the template carries (see above).
+    await client`drop index if exists message_search_words_idx`;
     const [jit] = await client`select pg_jit_available() as ok`;
     expect(jit!.ok, "this server can JIT (the self-hosted image can): without it the JIT half measures nothing").toBe(true);
     const [mb] = await db.insert(mailboxes).values({ accountId: A, provider: "imap", address: `${A.slice(0, 8)}@serial.example` }).returning();
@@ -90,7 +97,8 @@ describe("a search read is planned serial and uncompiled on a stock Postgres", (
   }, MIGRATED_DB_SETUP_BUDGET_MS);
   afterAll(async () => {
     await client.end();
-  });
+    await privateDb.drop();
+  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
 
   const answers: Array<[string, () => Promise<unknown>]> = [
     ["page", () => svc.search(ctx(), { q: "heron", parts: "page", limit: 4 })],

@@ -90,6 +90,8 @@ describe("the local store searches with the server's own indexes", () => {
       "messages_subject_trgm_idx", "messages_from_address_trgm_idx", "message_search_terms_trgm_idx",
       "messages_account_msg_order_idx",
     ]));
+    // The server's account-keyed word index is not the desktop's: its arms read the store bounded.
+    expect(idx).not.toContain("message_search_words_idx");
     const before = await get(s, "/search?q=axa");
     expect(before.status).toBe(200);
     expect(idsOf(before.body)).toEqual([hit]);

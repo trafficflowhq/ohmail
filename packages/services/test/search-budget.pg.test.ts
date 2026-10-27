@@ -7,7 +7,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -256,21 +256,23 @@ function latent<T extends object>(target: T, ms: number, count: { n: number }): 
 
 /**
  * THE QUERY HARNESS, by the class the answer falls in: a word in many messages (the page cut),
- * a word in a few, no match in either tier, and a typo the similar tier answers. `k` names a
+ * a word in 3-15% of them alone or beside a common one (mid), a word in a few, no match in either
+ * tier, and a typo the similar tier answers. `k` names a
  * vocabulary word; one past the vocabulary is outside it and shares its syllables — the broad typo.
  * `of` spells a query of several words, `{k}` a vocabulary word: each word anywhere in the letter.
  */
-type Cls = "common" | "rare" | "none" | "typo";
+type Cls = "common" | "mid" | "rare" | "none" | "typo";
 const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
   ...[0, 1, 2, 5, 40].map((k) => ({ cls: "common" as const, k })), { cls: "common", q: "axa" }, { cls: "common", q: "portal" },
   ...["portal {0}", "{0} portal {2}", "{0} {1}", "{0} -{1}", "{40} -{1}", "{0} {2} -{1}", "{0} or {2} -{1}"].map((of) => ({ cls: "common" as const, of })),
+  ...["{100}", "{300}", "{1000}", "{1500}", "{0} {100}", "{0} {1000}"].map((of) => ({ cls: "mid" as const, of })),
   ...["kestrel", "osprey", "plover", "heron", "egret", "avocet", "dunlin", "unlin"].map((q) => ({ cls: "rare" as const, q })),
   ...["heron {0}", "dunlin {1}", "heron -{3000}", "heron {0} -{3000}", "heron or dunlin -{3000}"].map((of) => ({ cls: "rare" as const, of })),
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
 ];
 /** A first page is begin, the session's settings, one read and commit; the typo tier is in that read. */
-const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, rare: 4, none: 4, typo: 4 };
+const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, mid: 4, rare: 4, none: 4, typo: 4 };
 
 async function vocabWord(k: number): Promise<string> {
   const [row] = (await base.execute(sql`select (select string_agg((array['ba','ke','ri','so','tu','na','le','mi','po','da','fe','gi','ho','ju','ra','ve'])[(get_byte(decode(md5('v' || ${k}::int), 'hex'), i) % 16) + 1], '' order by i)
@@ -358,6 +360,8 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     await seed(A, N);
     await seedDocumented(D, N, D_SALT);
     await seedDocumented(NOISE, 20_000, NOISE_SALT);
+    // Built over the seeded documents, as setup builds it over a live store.
+    await ensureWordIndex(base, { concurrently: false });
     // Settled as production's are: a vacuumed `messages` lets the History index answer without the
     // heap (fresh rows have no visibility map). The bodies are only analyzed: the page never scans
     // them, and their vacuum is a minute of disk here.
@@ -489,7 +493,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     // The same pages with no round trip: the database's and the service's own share of the budget.
     const near = HARNESS.map(() => [] as number[]);
     for (let pass = 0; pass < 3; pass++) for (const [i, h] of HARNESS.entries()) near[i]!.push((await svc.search(ctx(D), { q: h.q!, parts: "page" })).ms);
-    const CLASSES = ["common", "rare", "none", "typo"] as const;
+    const CLASSES = ["common", "mid", "rare", "none", "typo"] as const;
     const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     // Every round's answers and statement counts, for the class's shape: a round is judged whole.
     const seenOf = HARNESS.map(() => ({ statements: [] as number[], items: [] as number[] }));
@@ -524,7 +528,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         + `no round trip p95 ${p95Of(near.filter((_, i) => HARNESS[i]!.cls === cls).flat())} ms`);
       // The class is what the harness says it is: a full exact page, a short one, none, guesses.
       const items = of.flatMap((r) => r.items);
-      const shaped = cls === "common" ? items.every((n) => n === 50) : cls === "rare" ? items.every((n) => n > 0 && n < 50)
+      const shaped = cls === "common" || cls === "mid" ? items.every((n) => n === 50) : cls === "rare" ? items.every((n) => n > 0 && n < 50)
         : cls === "none" ? items.every((n) => n === 0) : items.every((n) => n < 0);
       expect(shaped, `${cls}: the answers are not this class's`).toBe(true);
       expect(Math.max(...statements), `${cls} statements`).toBeLessThanOrEqual(PAGE_STATEMENTS[cls]);
