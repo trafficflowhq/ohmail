@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
+import { authEvents } from "@trafficflow/db/cloud";
+import { deleteAccount } from "@trafficflow/services";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, users, devices, sessions, refreshTokens, type Tx } from "@trafficflow/db";
 import {
@@ -172,5 +174,21 @@ describe("reapStaleWebSessions", () => {
     expect(third.reaped).toBe(1);
     const fourth = await reapStaleWebSessions(db, NOW, { limit: 2 });
     expect(fourth.reaped).toBe(0);
+  });
+
+  it("leaves one session_reaped row per reaped session, and the erasure takes it with the account", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const me = await seedUser(db);
+    const stale = await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 61 * DAY) });
+    await seedSession(db, { ...me, lastSeenAt: new Date(NOW.getTime() - 59 * DAY) });
+    await reapStaleWebSessions(db, NOW);
+    // The second pass reaps nothing, so it records nothing.
+    await reapStaleWebSessions(db, NOW);
+    const trail = async () => db.select().from(authEvents).where(eq(authEvents.accountId, me.accountId));
+    expect((await trail()).map((r) => ({ event: r.event, userId: r.userId, method: r.method, ip: r.ip, device: r.device, at: r.at.toISOString() })))
+      .toEqual([{ event: "session_reaped", userId: me.userId, method: null, ip: null,
+        device: `family=${stale.familyId} session=${stale.id} idle_d=61`, at: NOW.toISOString() }]);
+    await deleteAccount({ db: db as never, accountId: me.accountId, userId: me.userId, now: () => NOW, requestId: "reap-erase" });
+    expect(await trail()).toEqual([]);
   });
 });

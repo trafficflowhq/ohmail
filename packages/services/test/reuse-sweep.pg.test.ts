@@ -111,6 +111,7 @@ describe.skipIf(!PG_UP)("the reuse sweep's transaction on real Postgres", () => 
     const reuse = rows.filter((r) => r.event === "refresh_reuse_revoked");
     expect(reuse, "exactly one record, committed with the sweep").toHaveLength(1);
     expect(reuse[0]!.device).toContain(`family=${familyId}`);
+    expect(reuse[0]!.device, "the depth, read through postgres-js").toMatch(/ depth=2 tail_age_s=\d+$/);
   });
 
   it("an audit sink that dies inside the transaction does NOT save the family", async () => {

@@ -35,9 +35,10 @@ const REMOVED: Record<string, { count: number; why: string }> = {
 };
 /** Register's account is created inside its transaction: no erasure can stamp it before it commits. */
 const FENCED_BY_CREATION = "auth-service.ts:register";
-/** Raw `.transaction(` calls, outside the opener; the reaper writes no audit and has its own order. */
+/** Raw `.transaction(` calls, outside the opener; the reaper reads no account row and has its own order. */
 const RAW: Record<string, string> = {
-  "session-reaper.ts:reapStaleWebSessions": "the stale-session reaper: no audit, sessions in id order",
+  "session-reaper.ts:reapStaleWebSessions":
+    "sessions in id order; its session_reaped rows are inserted under those locks and read no account row",
 };
 
 interface Site { key: string; line: number }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { dialect } from "@trafficflow/db/dialect";
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, or, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, max, ne, or, type SQL } from "drizzle-orm";
 import { devices, pairingTokens, refreshTokens, sessions, users, type Tx } from "@trafficflow/db";
 import { bridgeTx, runInTransaction, type Db, type ServiceContext, type TransactionFence } from "../context.js";
 import { ServiceError } from "../errors.js";
@@ -1007,13 +1007,14 @@ export class SessionLifecycle {
     event: "refresh_reuse_revoked" | "refresh_attempt_revoked", cause?: "attempt_mismatch",
   ): Promise<ServiceError> {
     const db = asTx(ctx);
-    const detail = `family=${existing.familyId} session=${existing.sessionId}${cause ? ` cause=${cause}` : ""}`;
     try {
       await this.inTransaction(ctx, async (txCtx) => {
         const tx = asTx(txCtx);
         await this.revokeFamily(tx, existing.familyId, now);
         const [reuseUser] = await tx.select().from(users)
           .where(eq(users.id, existing.userId)).limit(1);
+        const detail = `family=${existing.familyId} session=${existing.sessionId}`
+          + `${await this.sweepDepth(tx, existing, now)}${cause ? ` cause=${cause}` : ""}`;
         await this.audit(tx, reuseUser ?? null, event, undefined, txCtx, detail);
       }, { fence: { accountId: existing.accountId } });
     } catch (err) {
@@ -1023,6 +1024,25 @@ export class SessionLifecycle {
       await this.revokeFamily(db, existing.familyId, now);
     }
     return new ServiceError("refresh_revoked", 401, "refresh token reuse detected");
+  }
+
+  /**
+   * The sweep row's evidence, read by nothing: ` depth=<n>`, the family's tokens minted since the
+   * presented one was spent (kills left out), and ` tail_age_s=<s>`, the seconds since the newest.
+   */
+  private async sweepDepth(tx: Tx, existing: typeof refreshTokens.$inferSelect, now: Date): Promise<string> {
+    if (existing.consumedAt == null) return "";
+    const [shape] = await tx.select({ depth: count(), tailAt: max(refreshTokens.createdAt) })
+      .from(refreshTokens)
+      .where(and(
+        eq(refreshTokens.familyId, existing.familyId),
+        ne(refreshTokens.id, existing.id),
+        gte(refreshTokens.createdAt, existing.consumedAt),
+        or(isNull(refreshTokens.consumedAt), gt(refreshTokens.expiresAt, refreshTokens.consumedAt)),
+      ));
+    const tailAt = shape?.tailAt ?? null;
+    const age = tailAt ? ` tail_age_s=${Math.max(0, Math.floor((now.getTime() - tailAt.getTime()) / 1000))}` : "";
+    return ` depth=${Number(shape?.depth ?? 0)}${age}`;
   }
 
   /**

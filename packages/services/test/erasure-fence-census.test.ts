@@ -600,6 +600,11 @@ const ALLOWLIST: Record<string, string> = {
   "apps/worker/src/sensitive-backfill.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/workflow-cron.ts insert workflowRuns":
     "the workflow cron, which enqueues only for a workflow row the sweep deletes",
+  "packages/services/src/auth/session-reaper.ts insert authEvents":
+    "the session reaper, a cron with no session: one `session_reaped` row per session its guarded update "
+    + "just revoked, inserted while the chunk holds those sessions' locks in id order, the order an erasure's "
+    + "step 7 takes before it deletes `auth_events`; the key to `users` refuses a later row. A fence read "
+    + "here makes the erasure the deadlock victim (k91-session-writers-take-id-order.pg.test.ts, reaper first)",
   // The away pass's two writes were here as "the away pass, no session". Having no session is not
   // having no subject: both rows carry the CORRESPONDENT'S ADDRESS, both tables are ones the sweep
   // empties, and the pass SENDS after writing them — so the reason admitted the one door through

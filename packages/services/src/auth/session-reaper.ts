@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { refreshTokens, sessions, type Tx } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import { authEvents } from "@trafficflow/db/cloud";
+import type { AuthAuditEvent } from "./types.js";
 
 /**
  * The web-session reaper — maintenance revocation of long-idle plain browser sessions, which
@@ -62,7 +64,10 @@ export async function reapStaleWebSessions(
       const rows = await tx.update(sessions)
         .set({ revokedAt: now })
         .where(stale)
-        .returning({ familyId: sessions.familyId });
+        .returning({
+          id: sessions.id, accountId: sessions.accountId, userId: sessions.userId,
+          familyId: sessions.familyId, lastSeenAt: sessions.lastSeenAt,
+        });
       if (rows.length > 0) {
         await tx.update(refreshTokens)
           .set({ revokedAt: now })
@@ -70,6 +75,11 @@ export async function reapStaleWebSessions(
             inArray(refreshTokens.familyId, [...new Set(rows.map((c) => c.familyId))]),
             isNull(refreshTokens.revokedAt),
           ));
+        // Under the session locks this chunk holds, which order it before an erasure's step 7.
+        await tx.insert(authEvents).values(rows.map((r) => ({
+          accountId: r.accountId, userId: r.userId, event: "session_reaped" satisfies AuthAuditEvent["event"], at: now,
+          device: `family=${r.familyId} session=${r.id} idle_d=${Math.floor((now.getTime() - r.lastSeenAt.getTime()) / DAY_MS)}`,
+        })));
       }
       return rows;
     });
