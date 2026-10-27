@@ -457,6 +457,15 @@ export function showDesktopCta(opts: { demo: boolean; desktop: boolean }): boole
 export const DESKTOP_CTA_DISMISSED = "ohmail.desktopCtaDismissed";
 
 /**
+ * Where the browser's desktop prompt leads: the latest release page, which lists every platform's
+ * installer and serves a self-hosted web app the same. `undefined` in the desktop window build
+ * (`NEXT_PUBLIC_DESKTOP` is "1" there), which never shows the prompt: the address folds out of the
+ * binary, whose inspection in build.yml admits only its named first-party endpoints.
+ */
+export const DESKTOP_DOWNLOAD_URL: string | undefined =
+  process.env.NEXT_PUBLIC_DESKTOP === "1" ? undefined : "https://github.com/trafficflowhq/ohmail/releases/latest";
+
+/**
  * HOW LONG THE CURSOR HINT STANDS — re-exported from the module that owns the placement
  * (`cursor-placer.ts`), so the constant sits with the one line it times and every caller and
  * guard still reads it from here.
@@ -465,7 +474,7 @@ export { CURSOR_HINT_MS };
 
 /**
  * A subtle, dismissible line at the foot of the rail: "Get ohmail for
- * desktop", linking to the site's download section in a new tab.
+ * desktop", linking to the latest release page in a new tab.
  * CONTROLLED — the dismissal state lives in `AppShell`
  * (`usePersistedFlag`), and that placement is a fix: when this component
  * owned the flag it answered dismissal by rendering `null`, but `AppShell`
@@ -551,9 +560,9 @@ export function ShellRail({ groups, footer, offerDesktopCta, hostConnection, ...
      empty fragment — when neither the account line nor a live prompt will render. The old
      arrangement had `DesktopCta` answer its dismissal with `null` from inside the slot, and
      the box stood empty under the Command row (measured live at 14px). */
-  const cta = offerDesktopCta && !ctaDismissed ? (
+  const cta = offerDesktopCta && !ctaDismissed && DESKTOP_DOWNLOAD_URL !== undefined ? (
     <DesktopCta
-      href="/#download"
+      href={DESKTOP_DOWNLOAD_URL}
       label={t("rail.getDesktop")}
       dismissLabel={t("rail.getDesktopDismiss")}
       onDismiss={() => dismissCta(true)}
