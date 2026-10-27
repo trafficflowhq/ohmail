@@ -1222,6 +1222,8 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   /* A RE-DIAL WHOSE GATE SET A MESSAGE ASIDE. `info`: progress, not a failure — the retirement is
      filed under `mailbox_connection_unavailable`, and this line says the ladder did not climb. */
   mailbox_redial_after_set_aside: "info",
+  /* A RE-DIAL WHOSE CONNECTION SERVED MAIL AND THEN DROPPED. `info`: progress, its twin above. */
+  mailbox_redial_after_progress: "info",
   /* A STOP THAT GAVE UP WAITING FOR ITS CYCLE AND DESTROYED THE SOCKET. `info`, and the NAME is
      why: "forced" and not "failed", because the stop WORKED — this is the bound doing its job on
      a link that answers nothing. The link's own deadness is already filed under

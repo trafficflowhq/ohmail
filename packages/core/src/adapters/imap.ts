@@ -772,6 +772,11 @@ export class ImapConnectionClosedError extends Error {
   }
 }
 
+/** The codes a command fails with when the connection itself is gone, not the folder or the command. */
+const LOST_CONNECTION_CODES: ReadonlySet<string> = new Set([
+  "NoConnection", "EIMAPCLOSED", "ETIMEOUT", "ETIMEDOUT", "ECONNRESET", "EPIPE",
+]);
+
 /**
  * The message is not at this locator any more — expunged, moved by another client, or addressed
  * under a UIDVALIDITY epoch the folder has since left (see `ImapAdapter#assertLocatorEpoch`).
@@ -3867,7 +3872,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // the `??= []` below would additionally drop every customer folder out of the scan
         // silently — a hostile LIST rendered as "you have no folders". So it propagates and
         // fails this mailbox's cycle, which is the whole isolation story (`imap-bounds.ts`).
-        if (err instanceof ImapBoundExceeded) throw err;
+        // A lost connection fails the cycle too: the cached inventory would read as a complete pass.
+        if (err instanceof ImapBoundExceeded || this.lostConnection(err)) throw err;
         // A LIST that fails costs the refresh and nothing else: keep the inventory we have rather
         // than dropping every customer folder out of the scan on one bad command.
         this.passiveFolders ??= [];
@@ -4138,7 +4144,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
         // having no changes, `hasBacklog` stays false, and the pass ends looking complete — so a
         // server that simply stopped answering one folder's SELECT would present as a healthy,
         // fully-drained cycle. That is the shape `initial_import_completed_at` is written on.
-        if (err instanceof ImapBoundExceeded) throw err;
+        // A lost connection is the same: every folder after it would read as absent and the pass as drained.
+        if (err instanceof ImapBoundExceeded || this.lostConnection(err)) throw err;
         // Folder does not exist yet (e.g. ensureFolders not run, or server lacks it).
         // Carry the previous cursor forward and skip — no changes can be observed here.
         this.quietReads.delete(folder);
@@ -5641,6 +5648,12 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   private connectionGone(): boolean {
     return !this.established || this.closing || this.retiredBecause !== null
       || (this.client as unknown as { usable?: unknown } | undefined)?.usable === false;
+  }
+
+  /** Did this failure come from a connection that is gone? Then no folder's absence may be read from it. */
+  private lostConnection(err: unknown): boolean {
+    const code = (err as { code?: unknown } | null)?.code;
+    return this.connectionGone() || (typeof code === "string" && LOST_CONNECTION_CODES.has(code));
   }
 
   /** Does this server file every SMTP submission into Sent itself? See {@link FILES_SUBMISSIONS_CAPABILITIES}. */

@@ -3896,6 +3896,17 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       };
       /** Backoff for the failures that MAY pass. Attempts since the last successful dial. */
       let redialAttempts = 0;
+      /**
+       * THE RE-DIAL IN FLIGHT, waiting for its first served cycle. The re-dial drains inside
+       * itself, and a first import is minutes of it: its connection is proven when it serves a
+       * cycle ({@link noteCycleServed}), not when the whole drain returns.
+       */
+      type ReconnectProof = {
+        deadSince: Date | null;
+        detectedBy: "event" | "bound" | "heartbeat" | "credential" | "replaced" | null;
+        served: boolean;
+      };
+      let reconnectProof: ReconnectProof | null = null;
       /** No re-dial is attempted while this has time left. */
       const redialWait = new WallWait();
       /**
@@ -4434,7 +4445,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * It does NOT clear a death the ADAPTER reported. An event-marked connection is one the
        * driver has told us is gone, and no amount of a drain returning zero cycles over it
        * changes that — a stopped runtime returns 0 without touching the socket at all. Only a
-       * completed re-dial clears that one.
+       * re-dial clears that one, at the first cycle its new connection serves.
        */
       const noteCycleServed = (): void => {
         /* A STOPPED DRAIN NEITHER COUNTS NOR CLEARS. `drainPass` returns 0 at `stopped` without
@@ -4454,6 +4465,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            reached a live server does not clear it (the socket is not the mailbox); see
            {@link outageSince}. */
         outageSince = null;
+        /* A served cycle is what the ladder waits for, so it starts over here. */
+        redialAttempts = 0;
+        redialWait.clear();
+        /* A RE-DIAL'S FIRST SERVED CYCLE IS THE RECONNECTION — after its lease read, on its own
+           connection (a later death of that connection is news keyed on its generation). */
+        const proof = reconnectProof;
+        if (proof !== null && !proof.served && deadGeneration !== generation) {
+          proof.served = true;
+          connectionDeadSince = null;
+          connectionDeadBy = null;
+          certificateRefusedNow = false;
+          plaintextRefusedNow = false;
+          forcedWait.clear();
+          log("mailbox_reconnected", {
+            mailboxId: mb.id,
+            detectedBy: proof.detectedBy ?? "bound",
+            totalMs: proof.deadSince ? Date.now() - proof.deadSince.getTime() : 0,
+            reason: "the mail server connection was re-opened, the organizer lease was read again " +
+              "before anything was moved, and the new connection has served a cycle",
+          });
+        }
       };
 
       /* A DRAIN THE DEVICE STORE ENDED, OVER A LIVE SOCKET: the server answered, so the person's
@@ -4642,9 +4674,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         if (stopped) return;
         heartbeatTimer = setTimeout(() => {
           void heartbeat()
-            .then(() => redialIfDead())     // the ladder holds: the timer passes no `force`
             .catch(() => undefined)
-            .finally(armHeartbeat);
+            .finally(() => {
+              /* Re-armed before the heal: a re-dial drains inside itself, and its import is watched too. */
+              armHeartbeat();
+              void redialIfDead().catch(() => undefined);   // the ladder holds: the timer passes no `force`
+            });
         }, heartbeatTimeoutMs);
         heartbeatTimer.unref?.();
       };
@@ -6723,6 +6758,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             // the previous cycle answered.
             importHold: await profileSync.importHoldNow(),
           }));
+            /* AN ANSWER OVER A CONNECTION WHOSE CLOSE WAS ALREADY REPORTED is neither served nor
+               drained: what it read after the close is not the mailbox. */
+            if (connectionDeadSince !== null && deadGeneration === gen && !deadByBreach) {
+              assertSameConnection(gen, conn);      // a replaced connection is refused by name
+              throw new ImapConnectionClosedError("the connection closed while this cycle ran");
+            }
             cycleServed = true;
             ({ hasBacklog, owesFiling } = outcome);
           } catch (err) {
@@ -7918,6 +7959,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         redialInFlight = new Promise<void>((resolve) => { settle = resolve; });
         const deadSince = outageSince ?? connectionDeadSince;
         const detectedBy = connectionDeadBy;
+        let proof: ReconnectProof | null = null;
         try {
           const old = adapter;
           /* The dead connection is DESTROYED, not asked to leave politely. `close()` issues a
@@ -7944,6 +7986,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              connection for a runtime that has been told it is finished. */
           if (stopped) return;
           adapter = dialAdapter();
+          proof = { deadSince, detectedBy, served: false };
+          reconnectProof = proof;
           const outcome = await dialAndGate();
           if (stopped) {
             /* Removed while we dialled. The connection we just opened has no owner, and leaving
@@ -8009,7 +8053,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (outcome.leaseRead) {
             leaseUnavailableSince = null;
             leaseUnavailableCycles = 0;
-            log("mailbox_reconnected", {
+            // Already said at its first served cycle; this is a drain that served none.
+            if (!proof.served) log("mailbox_reconnected", {
               mailboxId: mb.id,
               detectedBy: detectedBy ?? "bound",
               totalMs: deadSince ? Date.now() - deadSince.getTime() : 0,
@@ -8044,6 +8089,29 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              bound's death armed nothing at the event (see `noteConnectionDead`), so this is where
              its clock starts; any other death already armed it and keeps its first instant. */
           outageSince ??= connectionDeadSince;
+          /* THE NEW CONNECTION SERVED MAIL AND THEN DROPPED: a new death, not a failed dial. It
+             waits the first step and the ladder does not climb; a re-dial that drops before its
+             first served cycle still climbs below. */
+          if (proof?.served === true && isConnectionFailure(err)) {
+            if (connectionDeadSince === null) {
+              connectionDeadSince = now();
+              connectionDeadBy = "bound";
+              deadGeneration = generation;
+              deadByBreach = false;
+            }
+            outageSince ??= connectionDeadSince;
+            redialWait.arm(jittered(reconnect.ladderMs[0]!));
+            floorPoll.arm(redialWait.left());
+            schedule();
+            log("mailbox_redial_after_progress", {
+              mailboxId: mb.id,
+              attempt: redialAttempts,
+              retryInMs: redialWait.left(),
+              reason: "the re-opened connection served mail and then dropped; that is progress, so " +
+                "the next re-dial waits the first step and the ladder does not climb",
+            });
+            return;
+          }
           if (err instanceof PlaintextDialRefused) plaintextRefusedNow = true;
           wentQuiet = dialWentQuiet(err);
           if (certificateRefused(err)) {
@@ -8101,6 +8169,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               "settings row reports is unchanged — it measures the outage, not the attempts",
           });
         } finally {
+          if (reconnectProof === proof) reconnectProof = null;
           redialling = false;
           settle();
         }
@@ -8595,6 +8664,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               });
             }
             schedule();
+            /* AND THE HEARTBEAT: the re-dial that heals this launch carries the rest of its import. */
+            if (heartbeatTimer === null) armHeartbeat();
             throw err;
           } finally {
             settleStart();

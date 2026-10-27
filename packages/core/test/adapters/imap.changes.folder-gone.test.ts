@@ -387,3 +387,30 @@ describe("changesSince — the pre-0.22 News row after the server rename", () =>
     expect([...(both.foldersGone ?? [])].sort()).toEqual(["Projects", LEGACY]);
   });
 });
+
+describe("changesSince — a connection that closed mid-pass is not a run of empty folders", () => {
+  const noConnection = () => Object.assign(new Error("Connection not available"), { code: "NoConnection" });
+  const server = () => ({ ...watched(), INBOX: folder(mails("i", 2)), Sent: folder(mails("s", 2)) });
+
+  it("a SELECT the closed connection refuses fails the pass, not reads as a missing folder", async () => {
+    const client = Object.assign(makeClient(server()), { usable: true as boolean });
+    const lock = client.getMailboxLock.bind(client);
+    client.getMailboxLock = async (path: string) => {
+      // The server closes the link once INBOX is read; every later command is refused.
+      if (path !== "INBOX") { client.usable = false; throw noConnection(); }
+      return lock(path);
+    };
+    await expect(pass(client, cursorOf({ ...watched(), Sent: folder([]) }))).rejects.toMatchObject({ code: "NoConnection" });
+  });
+
+  it("a LIST refresh refused for a lost connection fails the pass, not keeps the old inventory", async () => {
+    const client = makeClient(server());
+    client.capabilities.set("LIST-STATUS", true);
+    const list = client.list.bind(client);
+    client.list = async (opts?: { statusQuery?: unknown }) => {
+      if (opts?.statusQuery) throw noConnection();
+      return list();
+    };
+    await expect(pass(client, cursorOf(watched()))).rejects.toMatchObject({ code: "NoConnection" });
+  });
+});
