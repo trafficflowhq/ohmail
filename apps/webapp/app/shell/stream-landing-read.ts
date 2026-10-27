@@ -1,6 +1,6 @@
 "use client";
 
-import { THREAD_TOP_LINES, createThreadRead, type LineBox, type ThreadPanel } from "@ohmail/client-engine";
+import { EVIDENCE_WINDOW_MS, THREAD_TOP_LINES, createThreadRead, type LineBox, type ThreadPanel, type ThreadRead } from "@ohmail/client-engine";
 import { cssRect } from "@ohmail/ui";
 import { lineHeightOf, nextFrame, threadReadTime } from "./reader-seen";
 
@@ -100,4 +100,149 @@ export function readLandedCard(o: LandedCardOptions): () => void {
   win.addEventListener("blur", poke);
   poke();
   return stop;
+}
+
+/**
+ * The same rule over every card of a News or Receipts visit, as the Ohbox reads a conversation: once the
+ * reader has scrolled the stream (`driven`), pressed in it or opened a card, a card whose first lines stood
+ * the dwell on screen, with its sender line or its end, turns read. Only cards on screen are measured
+ * (an off-screen one would force its `content-visibility` layout); nothing counts unattended or while
+ * `hold` says the frame is a flight. Fetches nothing.
+ */
+export interface StreamReadOptions {
+  scroller: HTMLElement;
+  record: ThreadRead;
+  /** Has the reader scrolled the stream themselves (wheel, touch, a scroll key, a judged scroll)? */
+  driven: () => boolean;
+  /** "blind": nobody reads this frame (a flight); "again": look on the next frame instead. */
+  hold?: () => "blind" | "again" | null;
+  onRead: (ids: string[]) => void;
+  now?: () => number;
+  frame?: (run: () => void) => () => void;
+  after?: (ms: number, run: () => void) => () => void;
+  documentFocused?: () => boolean;
+  visible?: () => boolean;
+}
+export interface StreamRead {
+  /** The reader opened a card by keyboard: the visit is entered. */
+  enter: () => void;
+  stop: () => void;
+}
+
+/** A press here is a verb, not reading: the card's actions, notices, files, links, fields and menus. */
+const VERB = ".msg-actions, .sc-notice, .sc-files, .sc-lead, a[href], input, textarea, select, [contenteditable], [role='menu'], [role='menuitem']";
+function pressReads(scroller: HTMLElement, t: EventTarget | null): boolean {
+  if (t === scroller) return true;
+  if (!(t instanceof Element) || !scroller.contains(t)) return false;
+  const verb = t.closest(VERB);
+  if (verb && scroller.contains(verb)) return false;
+  return t.closest(".scast[data-sid]") !== null;
+}
+
+export function readStreamCards(o: StreamReadOptions): StreamRead {
+  const { scroller, record } = o;
+  const doc = scroller.ownerDocument;
+  const win = doc.defaultView ?? window;
+  const now = o.now ?? (() => threadReadTime.now());
+  const frame = o.frame ?? ((run: () => void) => nextFrame(win, run));
+  const after = o.after ?? ((ms: number, run: () => void) => threadReadTime.after(ms, run));
+  const documentFocused = o.documentFocused ?? (() => doc.hasFocus());
+  const visible = o.visible ?? (() => doc.visibilityState !== "hidden");
+  let live = true;
+  let pending: (() => void) | null = null;
+  let dwell: (() => void) | null = null;
+  let lastHand = Number.NEGATIVE_INFINITY;
+  // Nothing is looked at before the visit is entered: an idle stream queues no frame.
+  const poke = (): void => {
+    if (live && !pending && (record.entered || o.driven())) pending = frame(look);
+  };
+  const enter = (): void => {
+    lastHand = now();
+    record.enter(lastHand);
+    poke();
+  };
+  const schedule = (): void => {
+    dwell?.();
+    dwell = null;
+    const due = record.due;
+    if (due !== null && live) dwell = after(Math.max(0, due - now()) + 1, () => { dwell = null; poke(); });
+  };
+  function look(): void {
+    pending = null;
+    if (!live) return;
+    const held = o.hold?.() ?? null;
+    const t = now();
+    record.enter(t); // a drive enters the visit at its first look
+    // A flight, or a frame the stream is about to put back: nobody reads it; look again on the next one.
+    if (held !== null) {
+      if (held === "blind") record.observe([], null, new Set(), t);
+      poke();
+      return;
+    }
+    const attended = visible() && (documentFocused() || t - lastHand <= EVIDENCE_WINDOW_MS) && scroller.clientHeight > 0;
+    if (!attended) {
+      record.observe([], null, new Set(), t);
+      schedule();
+      return;
+    }
+    const top = cssRect(scroller).top;
+    const view = { top, bottom: top + scroller.clientHeight };
+    const panels: ThreadPanel[] = [];
+    const unread = new Set<string>();
+    for (const card of scroller.querySelectorAll<HTMLElement>(".scast[data-sid]")) {
+      const r = cssRect(card);
+      if (r.bottom <= view.top || r.top >= view.bottom) continue;
+      const id = card.dataset.sid!;
+      panels.push(cardPanel(card, id));
+      if (card.hasAttribute("data-unseen")) unread.add(id);
+    }
+    const ids = record.observe(panels, view, unread, t);
+    if (ids.length > 0) o.onRead(ids);
+    schedule();
+  }
+  const onPress = (e: Event): void => { if (pressReads(scroller, e.target)) enter(); };
+  // Enter or Space on a card's pill: a keyboard open (a script's click is not trusted).
+  const onClick = (e: Event): void => { if (e.isTrusted && pressReads(scroller, e.target)) enter(); };
+  // A press or Tab into a letter stays in the letter's document; the window only loses focus to it.
+  const onBlur = (): void => {
+    const a = doc.activeElement;
+    if (a?.tagName === "IFRAME" && scroller.contains(a)) enter();
+    else poke();
+  };
+  const onHand = (): void => { lastHand = now(); poke(); };
+  // A card turned unread is kept unread for the visit, also before the visit is entered (no look yet).
+  const onChange = (records: MutationRecord[]): void => {
+    for (const r of records) {
+      const card = r.target as HTMLElement;
+      if (r.attributeName === "data-unseen" && r.oldValue === null && card.hasAttribute("data-unseen") && card.matches(".scast[data-sid]")) {
+        record.keepUnread(card.dataset.sid!);
+      }
+    }
+    poke();
+  };
+  const changes = typeof MutationObserver === "undefined" ? null : new MutationObserver(onChange);
+  changes?.observe(scroller, { subtree: true, childList: true, attributes: true, attributeOldValue: true, attributeFilter: ["class", "data-unseen"] });
+  scroller.addEventListener("scroll", poke, { passive: true });
+  scroller.addEventListener("pointerdown", onPress, { passive: true });
+  scroller.addEventListener("click", onClick);
+  scroller.addEventListener("wheel", onHand, { passive: true });
+  scroller.addEventListener("touchstart", onHand, { passive: true });
+  doc.addEventListener("visibilitychange", poke);
+  win.addEventListener("focus", poke);
+  win.addEventListener("blur", onBlur);
+  const stop = (): void => {
+    live = false;
+    pending?.();
+    dwell?.();
+    changes?.disconnect();
+    scroller.removeEventListener("scroll", poke);
+    scroller.removeEventListener("pointerdown", onPress);
+    scroller.removeEventListener("click", onClick);
+    scroller.removeEventListener("wheel", onHand);
+    scroller.removeEventListener("touchstart", onHand);
+    doc.removeEventListener("visibilitychange", poke);
+    win.removeEventListener("focus", poke);
+    win.removeEventListener("blur", onBlur);
+  };
+  return { enter, stop };
 }

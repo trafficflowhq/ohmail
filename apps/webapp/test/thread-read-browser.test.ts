@@ -205,6 +205,27 @@ for (const [name, engine] of ENGINES) {
       }
     }, 90_000);
 
+    // WebKit and Chromium tell the page nothing of a press inside a sandboxed letter but the window's blur.
+    it("a press inside a stream card's letter, with no scroll, reads that card after the dwell, and nothing below the screen", async () => {
+      const page = await open(browser!);
+      try {
+        type Pressed = { reads: string[][]; at: number[]; since: number };
+        await page.evaluate(() => (window as unknown as { rig: { streamPress: () => void } }).rig.streamPress());
+        await page.waitForTimeout(1200);
+        const idle = await page.evaluate(() => (window as unknown as { rig: { pressed: () => Pressed } }).rig.pressed());
+        expect(idle.reads, "read before any press").toEqual([]);
+        const box = (await page.locator('.scast[data-sid="c1"] iframe').boundingBox())!;
+        await page.mouse.click(box.x + 60, box.y + 20);
+        const pressedAt = (await page.evaluate(() => (window as unknown as { rig: { pressed: () => Pressed } }).rig.pressed())).since;
+        await page.waitForTimeout(1300);
+        const r = await page.evaluate(() => (window as unknown as { rig: { pressed: () => Pressed } }).rig.pressed());
+        expect(r.reads, "the pressed letter was not read, or more than it").toEqual([["c1"]]);
+        expect(r.at[0]! - pressedAt, "read before the dwell was done").toBeGreaterThanOrEqual(600);
+      } finally {
+        await page.context().close();
+      }
+    }, 90_000);
+
     it("a body landing above the opened panel reads nothing the anchor kept off screen; with no anchor it reads what stays in view", async () => {
       const page = await open(browser!);
       try {
