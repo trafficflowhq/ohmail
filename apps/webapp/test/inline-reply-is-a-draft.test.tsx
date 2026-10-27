@@ -5,8 +5,8 @@ import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import en from "../messages/en.json";
 import {
-  FORWARD_PARTS, NOW, act, fillForward, message, mountShell, openForward, press, replyDraft, replySurface, stubDom, typeForwardTo,
-  unmountAll, waitFor, type DraftShell,
+  FORWARD_PARTS, NOW, act, fillForward, forwardDock, message, mountShell, openForward, press, pressRestart, replyDraft, replySurface,
+  stubDom, typeForwardTo, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 
 /**
@@ -443,5 +443,39 @@ describe("a reply's row sent from another device while its editor is open", () =
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "a new reply");
     expect([sends(s), replySurface(s.el)!.textContent]).toEqual([[], ""]);
+  }, 40_000);
+});
+
+describe("Restart to install saves an inline reply or forward first", () => {
+  it("the words typed inside the pause are written before the restart", async () => {
+    const s = await mountShell("#/ohbox", [message("m1")]);
+    await openReplyOn(s, "m1");
+    await act(async () => { typeInto(replySurface(s.el)!, "Typed just before the restart"); });
+    const restarted = await pressRestart(s, () => rowsFor(s, "m1").map((d) => d.body));
+    expect(await restarted(), "the restart went before the reply was written").toEqual(["Typed just before the restart"]);
+  }, 30_000);
+
+  it("a save on the wire is waited out, then the newer words go to the same row", async () => {
+    const s = await mountShell("#/ohbox", [message("m1")]);
+    await openReplyOn(s, "m1");
+    let release: () => void = () => {};
+    s.saveGate.wait = new Promise<void>((r) => { release = r; });
+    await typeAndPause(s, "First words", 1);
+    await act(async () => { typeInto(replySurface(s.el)!, "First words and the newer ones"); });
+    const restarted = await pressRestart(s, () => ({ rows: rowsFor(s, "m1").map((d) => d.body), saves: saves(s).length }));
+    s.saveGate.wait = null;
+    await act(async () => { release(); });
+    const at = await restarted();
+    expect(at, "the newer words were not written, or went to a second row").toEqual({ rows: ["First words and the newer ones"], saves: 2 });
+    expect(saves(s)[1]!.draftId).toBe(rowsFor(s, "m1")[0]!.id);
+  }, 30_000);
+
+  it("an inline forward's note is written before the restart", async () => {
+    const s = await mountShell("#/ohbox", [message("m1", { hasAttachments: true, attachmentCount: 3 } as never)], [], { parts: true });
+    await fillForward(s, "colleague@example.net", "Have a look at these two");
+    expect(forwardDock(s.el)).not.toBeNull();
+    const restarted = await pressRestart(s, () =>
+      s.store.list<EngineDraft>("draft").filter((d) => d.forwardOfMessageId === "m1" && d.status === "draft").map((d) => d.body));
+    expect(await restarted(), "the restart went before the forward was written").toEqual(["Have a look at these two"]);
   }, 40_000);
 });

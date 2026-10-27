@@ -25,6 +25,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "../app/shell/mail-state";
+import { announceUpdate, resetUpdateStoreForTests } from "../app/shell/app-update";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 import { typeInto } from "./fixtures/rich-editor-driver";
@@ -120,6 +121,7 @@ export function stubDom(opts: { narrow?: boolean } = {}): void {
 export async function unmountAll(): Promise<void> {
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
+  resetUpdateStoreForTests();
   document.body.innerHTML = "";
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
@@ -521,6 +523,20 @@ export async function waitFor(predicate: () => boolean, what: string, rounds = 1
     await act(async () => { await new Promise((r) => setTimeout(r, 25)); });
   }
   throw new Error(`timed out after ${rounds} rounds waiting for: ${what}`);
+}
+
+/**
+ * An update ready, and the rail's Restart pressed. `seen` reads what the account holds the moment
+ * the app restarts; the returned wait gives that reading.
+ */
+export async function pressRestart<T>(s: DraftShell, seen: () => T): Promise<() => Promise<T>> {
+  let at: { v: T } | null = null;
+  await act(async () => announceUpdate({ kind: "ready", version: "0.30.9", act: () => { at = { v: seen() }; }, key: "ready:0.30.9" }));
+  await act(async () => { s.el.querySelector<HTMLButtonElement>(".upd-line .ul-do")!.click(); });
+  return async () => {
+    await waitFor(() => at !== null, "the restart", 200);
+    return at!.v;
+  };
 }
 
 /** Mount the shell at `hash` over these messages and drafts. */
