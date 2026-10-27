@@ -41,7 +41,7 @@ import {
   type TagHueName,
   type ThemePreference,
 } from "@ohmail/ui";
-import { Icon } from "@ohmail/ui";
+import { Icon, type FaceName } from "@ohmail/ui";
 import { hueOf } from "../shell/format";
 import { LanguageRow } from "../shell/LanguageRow";
 import { FaceRow, type ApplyFaceAllDevices } from "../shell/FaceRow";
@@ -423,6 +423,7 @@ export function SettingsView({
   devicesSection,
   defaultMailSection,
   applyFaceAllDevices = null,
+  holdFaceForAccount,
   initialPane,
   pane: routePane,
   onSelectPane,
@@ -723,6 +724,8 @@ export function SettingsView({
    * that predates it). Null withholds the scope affordance; the device-local control stays.
    */
   applyFaceAllDevices?: ApplyFaceAllDevices | null;
+  /** A look pressed before the account answered, for the shell to write to it then. */
+  holdFaceForAccount?: (face: FaceName) => void;
   initialPane?: PaneId;
   /**
    * THE ROUTE'S PANE — `#/settings/<pane>` resolved by the shell, or absent for the bare hash.
@@ -1107,7 +1110,7 @@ export function SettingsView({
                   because they are the same class of decision. Drawn by the shared file like
                   the language above (both surfaces have a face); only the account-wide scope
                   affordance is host-dependent, and it arrives as a nullable callback. */}
-              <FaceRow applyAllDevices={applyFaceAllDevices} />
+              <FaceRow applyAllDevices={applyFaceAllDevices} holdForAccount={holdFaceForAccount} />
               {/* HOW LARGE THE WHOLE APP IS DRAWN — the third appearance axis, per device and
                   drawn by the shared file: every surface has a screen. See `TextSizeRow`. */}
               <TextSizeRow />
