@@ -4,13 +4,14 @@ import { loadavg } from "node:os";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
-import { brandDialect } from "@trafficflow/db/dialect";
+import { brandDialect, pgDialect } from "@trafficflow/db/dialect";
 import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes } from "@trafficflow/db/admin";
 import { pgTestUrl } from "@trafficflow/db/testing";
+import { searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
-import type { ServiceContext } from "@trafficflow/services";
+import type { SearchFilters, ServiceContext } from "@trafficflow/services";
 import { LOADED_CEILING, QUIET_RATIO, isQuiet, quietLimit, verdicts, type Round, type Verdict } from "./_budget-clock.js";
 
 /**
@@ -161,17 +162,26 @@ async function seedDocumented(acct: string, n: number, salt: string): Promise<vo
       timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g * 97), g % 3 = 0, g % 10 = 0,
       jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g)
     from generate_series(1, ${n}) g`);
-  // Planted: kestrel 1, osprey 4, plover 12, egret 24, avocet 37 bodies.
+  // Planted: kestrel 1, osprey 4, plover 12, egret 24, avocet 37 bodies; grebe in 1 of 100 of the newest 2,000 and
+  // 4 of 5 older ones (57,620), curlew in 1 of 20 of the newest 10,000 (500), auk in the small folder and 1 of 97 (948);
+  // yak and shrike in 1 of 50 of the newest 6,000 and 1 of 3 older (22,787), emu in none of the newest 200 and half
+  // after, gannet in none of the newest 1,500 and a third after.
   await base.execute(sql`
     insert into message_bodies (message_id, text)
     select m.id, ${words(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
       || case when x.g = 31337 then ' kestrel' else '' end || case when x.g % 18500 = 17 then ' osprey' else '' end
       || case when x.g % 6166 = 11 then ' plover' else '' end || case when x.g % 3083 = 7 then ' egret' else '' end
       || case when x.g % 2000 = 13 then ' avocet' else '' end
+      || case when (x.g <= 2000 and x.g % 100 = 1) or (x.g > 2000 and x.g % 5 <> 0) then ' grebe' else '' end
+      || case when x.g <= 10000 and x.g % 20 = 3 then ' curlew' else '' end || case when x.g % 400 = 7 or x.g % 97 = 3 then ' auk' else '' end
+      || case when (x.g <= 6000 and x.g % 50 = 1) or (x.g > 6000 and x.g % 3 = 1) then ' yak shrike' else '' end
+      || case when x.g > 200 and x.g % 2 = 0 then ' emu' else '' end || case when x.g > 1500 and x.g % 3 = 0 then ' gannet' else '' end
     from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
+  // A small folder: one letter in 400.
   await base.execute(sql`
     insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
+    select m.id, f, f, 'us' from messages m cross join lateral (select case when split_part(m.dedup_key, ':', 3)::int % 400 = 7 then 'Receipts' else 'INBOX' end as f) x
+    where m.account_id = ${acct}::uuid`);
   await base.execute(sql`
     insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
     select m.id, m.account_id,
@@ -198,19 +208,25 @@ function ctx(accountId: string = A): ServiceContext {
   return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
 }
 
-/** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
-async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
+type PlanNode = Record<string, unknown>;
+/** Every node of a statement's plan as it ran, under the session settings. */
+async function planNodes(st: SQL, session: SQL[]): Promise<PlanNode[]> {
   const r = (await base.transaction(async (tx) => {
     for (const s of session) await tx.execute(s);
     return tx.execute(sql`explain (analyze, format json) ${st}`);
   })) as unknown as Array<Record<string, unknown>>;
-  const out: string[] = [];
-  const walk = (p: Record<string, unknown>) => {
-    if (p["Node Type"] === "Seq Scan") out.push(String(p["Relation Name"]));
-    for (const c of (p["Plans"] as Array<Record<string, unknown>> | undefined) ?? []) walk(c);
+  const out: PlanNode[] = [];
+  const walk = (p: PlanNode) => {
+    out.push(p);
+    for (const c of (p["Plans"] as PlanNode[] | undefined) ?? []) walk(c);
   };
-  walk(((r[0]!["QUERY PLAN"] as Array<Record<string, unknown>>)[0]!)["Plan"] as Record<string, unknown>);
-  return out.filter((rel) => rel === "messages" || rel === "message_bodies");
+  walk(((r[0]!["QUERY PLAN"] as PlanNode[])[0]!)["Plan"] as PlanNode);
+  return out;
+}
+/** The relations a statement read by a sequential scan, from its own plan, under the session settings. */
+async function seqScans(st: SQL, session: SQL[]): Promise<string[]> {
+  return (await planNodes(st, session)).filter((p) => p["Node Type"] === "Seq Scan").map((p) => String(p["Relation Name"]))
+    .filter((rel) => rel === "messages" || rel === "message_bodies");
 }
 
 /**
@@ -256,21 +272,30 @@ function latent<T extends object>(target: T, ms: number, count: { n: number }): 
 
 /**
  * THE QUERY HARNESS, by the class the answer falls in: a word in many messages (the page cut),
- * a word in a few, no match in either tier, and a typo the similar tier answers. `k` names a
+ * a word in 3-15% of them (`mid`: too sparse for a short walk, too dense to read whole), a word in
+ * a few, no match in either tier, and a typo the similar tier answers. `k` names a
  * vocabulary word; one past the vocabulary is outside it and shares its syllables — the broad typo.
  * `of` spells a query of several words, `{k}` a vocabulary word: each word anywhere in the letter.
  */
-type Cls = "common" | "rare" | "none" | "typo";
-const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string }> = [
+type Cls = "common" | "mid" | "rare" | "none" | "typo";
+const HARNESS: Array<{ cls: Cls; q?: string; k?: number; of?: string; filters?: SearchFilters }> = [
   ...[0, 1, 2, 5, 40].map((k) => ({ cls: "common" as const, k })), { cls: "common", q: "axa" }, { cls: "common", q: "portal" },
+  // Short words in most older mail and few new ones: the planner's walk reads them.
+  { cls: "common", q: "yak" }, { cls: "common", q: "emu" },
   ...["portal {0}", "{0} portal {2}", "{0} {1}", "{0} -{1}", "{40} -{1}", "{0} {2} -{1}", "{0} or {2} -{1}"].map((of) => ({ cls: "common" as const, of })),
+  ...["{100}", "{300}", "{1000}", "{0} {100}", "{1} {300}", "{0} {500}"].map((of) => ({ cls: "mid" as const, of })),
+  // Past the set's cap and sparse lately; recent, under filters on the heap; a short word in a small folder.
+  { cls: "mid", q: "grebe" }, { cls: "mid", q: "curlew", filters: { unread: true } }, { cls: "mid", q: "curlew", filters: { hasAttachments: false } },
+  { cls: "mid", q: "auk", filters: { folder: "Receipts" } },
+  // A part arm beside them: past 100 cuts of matches with the newest 30 short of a cut; none in the newest 1,500.
+  { cls: "mid", q: "shrike" }, { cls: "mid", q: "gannet" },
   ...["kestrel", "osprey", "plover", "heron", "egret", "avocet", "dunlin", "unlin"].map((q) => ({ cls: "rare" as const, q })),
   ...["heron {0}", "dunlin {1}", "heron -{3000}", "heron {0} -{3000}", "heron or dunlin -{3000}"].map((of) => ({ cls: "rare" as const, of })),
   ...["zqxjv", "quokka", "xylograph"].map((q) => ({ cls: "none" as const, q })),
   { cls: "typo", k: 77_777 }, { cls: "typo", q: "heorn" },
 ];
 /** A first page is begin, the session's settings, one read and commit; the typo tier is in that read. */
-const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, rare: 4, none: 4, typo: 4 };
+const PAGE_STATEMENTS: Record<Cls, number> = { common: 4, mid: 4, rare: 4, none: 4, typo: 4 };
 
 async function vocabWord(k: number): Promise<string> {
   const [row] = (await base.execute(sql`select (select string_agg((array['ba','ke','ri','so','tu','na','le','mi','po','da','fe','gi','ho','ju','ra','ve'])[(get_byte(decode(md5('v' || ${k}::int), 'hex'), i) % 16) + 1], '' order by i)
@@ -332,17 +357,17 @@ async function bestOfRounds(label: string, round: () => Promise<Record<string, n
   return verdicts(rounds, BUDGET_MS, quietLimit(quietest));
 }
 /** A figure inside the budget, or over it on a quiet round (red); over on no quiet round warns. */
-function judge(v: Verdict, what: string, budget = BUDGET_MS): void {
+function judge(v: Verdict, what: string): void {
   const limit = quietLimit(quietest);
   if (v.kind === "unjudged") {
-    console.log(`::warning title=search budget CLASSIFY-ASK RUNNER::${what} p95 ${v.ms} ms over ${budget} ms with no quiet round `
+    console.log(`::warning title=search budget CLASSIFY-ASK RUNNER::${what} p95 ${v.ms} ms over ${BUDGET_MS} ms with no quiet round `
       + `(limit ${limit.toFixed(1)} ms, the run's quietest reference ${quietest.toFixed(1)} ms): unjudged`);
     return;
   }
   const how = v.kind !== "over" ? `the best of ${ROUNDS} rounds`
     : v.round ? `on a quiet round (reference ${v.round.before.toFixed(1)}/${v.round.after.toFixed(1)} ms, limit ${limit.toFixed(1)} ms): search over budget`
     : `past ${LOADED_CEILING * BUDGET_MS} ms with no quiet round, slower than load alone has ever read: search over budget`;
-  expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(budget);
+  expect(v.ms, `${what} p95 ${how}`).toBeLessThanOrEqual(BUDGET_MS);
 }
 
 describe("the first page of a search is milliseconds (real Postgres, a large mailbox)", () => {
@@ -439,8 +464,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       }
       return figures;
     });
-    const COUNT_W3000_W1_MS = 125; // temporary ceiling: row SEARCH-BUDGET-COUNT-W3000-STATS-SAMPLE, back to 100 when that row closes
-    for (const [k, v] of Object.entries(best)) judge(v, k, k === "w3000 w1 count" ? COUNT_W3000_W1_MS : BUDGET_MS);
+    for (const [k, v] of Object.entries(best)) judge(v, k);
     for (const q of QS) {
       seen.length = 0;
       await svc.search(ctx(), { q, parts: "page" });
@@ -485,11 +509,11 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
     const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, 8, count);
     const at = { ...ctx(D), db: far as never };
-    for (const h of HARNESS) await svc.search(at, { q: h.q!, parts: "page" });
+    for (const h of HARNESS) await svc.search(at, { q: h.q!, parts: "page", filters: h.filters });
     // The same pages with no round trip: the database's and the service's own share of the budget.
     const near = HARNESS.map(() => [] as number[]);
-    for (let pass = 0; pass < 3; pass++) for (const [i, h] of HARNESS.entries()) near[i]!.push((await svc.search(ctx(D), { q: h.q!, parts: "page" })).ms);
-    const CLASSES = ["common", "rare", "none", "typo"] as const;
+    for (let pass = 0; pass < 3; pass++) for (const [i, h] of HARNESS.entries()) near[i]!.push((await svc.search(ctx(D), { q: h.q!, parts: "page", filters: h.filters })).ms);
+    const CLASSES = ["common", "mid", "rare", "none", "typo"] as const;
     const median = (xs: number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
     // Every round's answers and statement counts, for the class's shape: a round is judged whole.
     const seenOf = HARNESS.map(() => ({ statements: [] as number[], items: [] as number[] }));
@@ -498,15 +522,15 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (let pass = 0; pass < 5; pass++) {
         for (const [i, h] of HARNESS.entries()) {
           count.n = 0;
-          const page = await svc.search(at, { q: h.q!, parts: "page" });
+          const page = await svc.search(at, { q: h.q!, parts: "page", filters: h.filters });
           seenOf[i]!.statements.push(count.n);
           reads[i]!.page.push(page.ms);
           seenOf[i]!.items.push(page.tier === "exact" ? page.items.length : -page.items.length);
-          reads[i]!.count.push((await svc.search(at, { q: h.q!, parts: "estimate" })).ms);
+          reads[i]!.count.push((await svc.search(at, { q: h.q!, parts: "estimate", filters: h.filters })).ms);
         }
       }
       // Each query's page and count medians, so a red class names the query that made it.
-      console.log(`search-budget harness by query: ${HARNESS.map((h, i) => `${h.of ?? h.q} ${median(reads[i]!.page)}/${median(reads[i]!.count)}`).join(", ")}`);
+      console.log(`search-budget harness by query: ${HARNESS.map((h, i) => `${h.of ?? h.q}${h.filters ? JSON.stringify(h.filters) : ""} ${median(reads[i]!.page)}/${median(reads[i]!.count)}`).join(", ")}`);
       const figures: Record<string, number> = {};
       for (const cls of CLASSES) {
         const of = reads.filter((_, i) => HARNESS[i]!.cls === cls);
@@ -524,7 +548,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         + `no round trip p95 ${p95Of(near.filter((_, i) => HARNESS[i]!.cls === cls).flat())} ms`);
       // The class is what the harness says it is: a full exact page, a short one, none, guesses.
       const items = of.flatMap((r) => r.items);
-      const shaped = cls === "common" ? items.every((n) => n === 50) : cls === "rare" ? items.every((n) => n > 0 && n < 50)
+      const shaped = cls === "common" || cls === "mid" ? items.every((n) => n === 50) : cls === "rare" ? items.every((n) => n > 0 && n < 50)
         : cls === "none" ? items.every((n) => n === 0) : items.every((n) => n < 0);
       expect(shaped, `${cls}: the answers are not this class's`).toBe(true);
       expect(Math.max(...statements), `${cls} statements`).toBeLessThanOrEqual(PAGE_STATEMENTS[cls]);
@@ -537,11 +561,24 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const svc = new SearchService();
     for (const h of HARNESS) {
       seen.length = 0;
-      await svc.search(ctx(D), { q: h.q!, parts: "page" });
+      await svc.search(ctx(D), { q: h.q!, parts: "page", filters: h.filters });
       const session = seen.filter(isSession);
       const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
       expect(reads.length, `${h.q}: the page's statements were not recorded`).toBeGreaterThan(0);
       for (const st of reads) expect(await seqScans(st, session), h.q).toEqual([]);
+      // No walk past 30 cuts of 200 visits the heap: under such a filter a set is never walked against
+      // History. A walk of the index alone against a set of ids is a hash probe a letter, and goes deeper.
+      // A mid-band word reads by its density: all its reads together ask no more documents one by one.
+      for (const st of reads) {
+        const nodes = await planNodes(st, session);
+        const walked = nodes.filter((p) => p["Index Name"] === "messages_account_msg_order_idx" && p["Node Type"] === "Index Scan")
+          .map((p) => (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]));
+        expect(Math.max(0, ...walked), `${h.of ?? h.q}: History walked on the heap`).toBeLessThanOrEqual(30 * 200);
+        if (h.cls !== "mid") continue;
+        const asked = nodes.filter((p) => p["Relation Name"] === "message_search" && /Index/.test(String(p["Node Type"])))
+          .reduce((n, p) => n + Number(p["Actual Loops"]), 0);
+        expect(asked, `${h.of ?? h.q}: documents asked one by one`).toBeLessThanOrEqual(30 * 200);
+      }
     }
   }, 300_000);
 
@@ -602,6 +639,19 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (const st of reads) expect(await seqScans(st, session), c.cls).toEqual([]);
     }
   }, 600_000);
+
+  // Every count on an account still building reads its progress: only that account's documents.
+  it("the backfill's progress reads only the account's own search documents", async () => {
+    for (const [acct, done, most] of [[A, 0, 0], [D, N, N]] as const) {
+      seen.length = 0;
+      expect(await searchIndexProgress(db as never, acct)).toEqual({ done, total: N });
+      expect(seen).toHaveLength(1);
+      const nodes = await planNodes(seen[0]!, [pgDialect().search.searchSession({ preferIndexes: true })!]);
+      const read = nodes.filter((p) => p["Relation Name"] === "message_search")
+        .reduce((n, p) => n + (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]), 0);
+      expect(read, acct === A ? "A" : "D").toBeLessThanOrEqual(most);
+    }
+  }, 300_000);
 
   it("a broad page says its total is a lower bound, and the summary answers it exactly", async () => {
     const svc = new SearchService();

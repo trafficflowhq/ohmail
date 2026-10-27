@@ -78,6 +78,25 @@ const SEARCH_TYPO_WALK_FACTOR = 40;
  * the walk ~6 µs a letter (8 000 at most, ~45 ms).
  */
 const SEARCH_EXCLUSION_WALK_FACTOR = 40;
+/**
+ * A bounded arm still short of K after main's walk reads its matches once as a set: never more than
+ * its per-branch read, which reads every match too and sorts them. History is then walked newest
+ * first against the set, index entries only, at most this many a member, half what one member's date
+ * lookup costs; when the probe puts the K-th match past that, or under K members, every member is dated.
+ */
+const SEARCH_SET_WALK_PER_MEMBER = 6;
+/**
+ * The text arm beside a part arm reads its own set only when the part arm's set, every account's of
+ * it, holds at most this many ids a letter of History walked to the part's K-th match: an id costs
+ * about a twelfth of a letter the planner's walk asks (the body vector sits in TOAST), eight leave a
+ * margin, and the text arm's newest K lie at least that deep (a part of a word finds what the whole word finds).
+ */
+const SEARCH_TEXT_SET_PER_WALKED = 8;
+/**
+ * Every `whereSql` whose filters read the heap (folder, sender, unread, attachments): there a set's
+ * members are each looked up to be filtered, where the per-branch read is planned with the filter.
+ */
+const heapWhere = new WeakSet<SQL>();
 /** How many senders the sender facet returns. */
 const SENDER_FACET_LIMIT = 10;
 
@@ -303,6 +322,9 @@ function rowsOf<T>(result: unknown): T[] {
  */
 const markerWritten = new WeakMap<object, Set<string>>();
 const MARKER_MEMO_MAX = 10_000;
+/** The backfill's progress as this handle last read it, per account: a count reads it again after this. */
+const progressRead = new WeakMap<object, Map<string, { at: number; p: { done: number; total: number } }>>();
+const INDEX_PROGRESS_FRESH_MS = 30_000;
 
 // pg_trgm presence is a property of the physical database, not the request: asked once per
 // handle, and a "no" asked again after a while (`storeProbe`), so a later install is seen.
@@ -334,6 +356,8 @@ interface Branch {
   readonly pred: SQL; readonly rank: SQL;
   /** The predicate without its account: what a bounded read asks the index for by itself. */
   readonly raw?: SQL;
+  /** The account `raw` leaves out. */
+  readonly account?: string;
   /**
    * Over the document (`s`), asked only of rows the branch has already cut: an excluded word, whose
    * check reads the body vector, so never of every index match ({@link SearchService.keeps}).
@@ -344,6 +368,8 @@ interface Branch {
    * which {@link SearchService.boundedRead} asks of the newest mail to choose a deeper walk or the index.
    */
   readonly pos?: SQL;
+  /** A pre-0125 branch's matches as ids off its own table, for {@link SearchService.setPath}. */
+  readonly set?: SQL;
 }
 /**
  * An arm: its branches (one per index), cut at its top-K after they are merged. `ranked`: ordered
@@ -353,11 +379,19 @@ interface Arm {
   readonly name: string; readonly ranked: boolean; readonly branches: readonly Branch[];
   /** A recency arm whose selectivity the planner cannot see: see {@link SEARCH_PART_WALK_FACTOR}. */
   readonly bounded?: boolean;
+  /** Its words may straddle the letter's parts: one predicate over the whole letter. */
+  readonly across?: boolean;
   /** Read by {@link SearchService.localRead} for this account: the desktop's own store, documents built. */
   readonly local?: { readonly account: string };
   /** The typo arm's walk test, a cheap necessary condition first: read by {@link SearchService.typoRead}. */
   readonly typo?: { readonly walkPred: SQL; readonly vectors: boolean };
 }
+
+/**
+ * An arm's rows out of its tier's shared reads ({@link SearchService.tierWalk}): a bounded arm's
+ * whole read (`rows`), or the text arm's set beside the planner's read, `gate` saying which answers.
+ */
+type TierRead = { readonly rows: SQL } | { readonly gate: SQL; readonly rows: SQL };
 
 /** A relevance cursor: the last row's fused score, date and id, and the tier it belongs to. */
 interface RelevanceCursor { readonly k: "r"; readonly t: SearchTier; readonly s: number; readonly d: number | null; readonly i: string }
@@ -467,12 +501,21 @@ export class SearchService {
     const { built, trigram } = store;
     const legacy = built ? null : d.search.unindexed(q, { trigram, threshold: FUZZY_THRESHOLD });
     const bare = (b: SearchArm): Branch => ({ pred: sql`(${b.pred} and s.message_id is null)`, rank: b.rank });
+    // A pre-0125 word branch, tagged with its table: its matches as one set there (bodies or subjects).
+    const bareOn = (table: "bodies" | "subjects", b: SearchArm): Branch => ({
+      ...bare(b),
+      set: table === "bodies"
+        ? sql`select b.message_id as id from message_bodies b where ${b.pred}
+            and not exists (select 1 from message_search s where s.message_id = b.message_id)`
+        : sql`select m.id as id from messages m where m.account_id = ${ctx.accountId} and ${b.pred}
+            and not exists (select 1 from message_search s where s.message_id = m.id)`,
+    });
     // Where the arms read the document (a store with vectors), a branch names the document's own
     // account too, so an index that leads with the account reads one account's candidates. A
     // store whose word index is over the rows keeps every row, document or not.
     const documents = d.search.document({ subject: "", people: "", attachments: "", body: "" }) !== null;
     const own = (b: SearchArm): Branch =>
-      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred } : b;
+      documents ? { pred: sql`(s.account_id = ${ctx.accountId} and ${b.pred})`, rank: b.rank, raw: b.pred, account: ctx.accountId } : b;
     if (tier === "similar") {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
@@ -504,8 +547,8 @@ export class SearchService {
     const out: Arm[] = [
       { name: "head", ranked: true, branches: [held(own(words.head)), ...(legacy ? [bare(legacy.words.head)] : [])] },
       {
-        name: "text", ranked: false, ...(words.across === true && d.name === "pg" ? { bounded: true } : {}),
-        branches: [...text, ...(legacy ? [bare(legacy.words.text)] : [])],
+        name: "text", ranked: false, ...(words.across === true && d.name === "pg" ? { bounded: true, across: true } : {}),
+        branches: [...text, ...(legacy ? [bareOn("bodies", legacy.words.text)] : [])],
       },
     ];
     // A part of a word finds what the whole word finds: the same vectors as `head` and `text`,
@@ -517,13 +560,13 @@ export class SearchService {
     if (part !== null && part.across === true) {
       // Words that may straddle the letter's parts: one predicate over the whole letter.
       out.push({
-        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true } : {}),
-        branches: [own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+        name: "part", ranked: false, ...(d.name === "pg" ? { bounded: true } : {}), across: true,
+        branches: [own(part.text), ...(old ? [bareOn("subjects", old.head), bareOn("bodies", old.text)] : [])],
       });
     } else if (part !== null && d.name === "pg") {
       out.push({
         name: "part", ranked: false, bounded: true,
-        branches: [own(part.head), own(part.text), ...(old ? [bare(old.head), bare(old.text)] : [])],
+        branches: [own(part.head), own(part.text), ...(old ? [bareOn("subjects", old.head), bareOn("bodies", old.text)] : [])],
       });
     } else if (part !== null) {
       out.push(
@@ -547,10 +590,10 @@ export class SearchService {
    * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
    * an index; the branches are merged and the arm numbered by its own order.
    */
-  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL): SQL {
+  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, tier?: TierRead): SQL {
     const cut = arm.ranked ? window : k;
-    const read = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
-      ${this.from} where ${where} and ${b.pred}
+    const read = (b: Branch, unless?: SQL): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
+      ${this.from} where ${where} and ${b.pred}${unless ? sql` and not ${unless}` : sql``}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
     const capped = SearchService.capped(arm);
     // A branch held to `after` keeps its cut rows that pass; a full cut says the arm is cut (`x`). A
@@ -559,9 +602,11 @@ export class SearchService {
       ? sql`(select case when ${this.keeps(b.after, sql`c.id`)} then c.id end as id, c.date, c.rank, c.x
           from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
       : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
-    const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
+    // The text arm beside a part arm: its own set, else the planner's read, exactly one by the gate.
+    const merged = tier && "gate" in tier ? sql`(select id, date, 0 as rank from (${tier.rows}) f union all ${read(arm.branches[0]!, tier.gate)})`
+      : arm.local && walk ? this.localRead(where, arm, k, cut, walk)
       : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k)
-      : arm.bounded ? this.boundedRead(where, arm.branches, k)
+      : arm.bounded ? (tier ? sql`(${tier.rows})` : this.boundedRead(where, arm.branches, k))
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank${capped ? sql`, max(x) as x` : sql``}
           from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
@@ -627,15 +672,92 @@ export class SearchService {
   }
 
   /**
+   * ONE PROBE AND ONE WALK FOR A TIER'S BOUNDED ARMS over the server's documents (no exclusion, no
+   * pre-0125 branch), as main's bounded read takes them: the probe asks the newest K under the
+   * filters every such arm's predicates in one look at each document, and an arm walks the newest
+   * {@link SEARCH_PART_WALK_FACTOR} cuts when a sixth of its probe matched, the walk read once for
+   * every arm. Short of K an arm reads its set ({@link setPath}), or under a filter the History index
+   * cannot answer its per-branch read, which the planner reads with that filter's own index. Off the
+   * heap, a text arm beside a part arm takes its own set only when the part arm's proves it cheaper
+   * than the planner's read ({@link SEARCH_TEXT_SET_PER_WALKED}).
+   */
+  private tierWalk(where: SQL, arms: readonly Arm[], k: number, pre: string): { named: SQL[]; of: (i: number) => TierRead | undefined } {
+    const joined = arms.flatMap((x, i) => (x.bounded && !x.local
+      && x.branches.every((b) => b.raw !== undefined && b.after === undefined && b.pos === undefined) ? [i] : []));
+    if (joined.length === 0) return { named: [], of: () => undefined };
+    const heap = heapWhere.has(where);
+    const probe = sql.raw(pre + "rp");
+    const walk = sql.raw(pre + "rw");
+    const f = (i: number): SQL => sql.raw("f" + String(i));
+    const h = (i: number): SQL => sql.raw("h" + String(i));
+    const named = (i: number | string, s: string): SQL => sql.raw(`${pre}j${String(i)}${s}`);
+    const flags = sql.join(joined.map((i) => sql`(${sql.join(arms[i]!.branches.map((b) => b.pred), sql` or `)}) as ${f(i)}`), sql`, `);
+    // Every letter kept (a letter with no document matches none), so a walk shorter than its depth read the mailbox whole.
+    const asked = (n: SQL | number): SQL => sql`(select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${n}) w
+      left join lateral (select ${flags} from message_search s where s.message_id = w.id offset 0) x on true`;
+    const bound = SEARCH_PART_WALK_FACTOR * k;
+    const walks = (i: number): SQL => sql`(select ${h(i)} >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)} from ${probe})`;
+    // The depth of an arm's K-th match at its probe's rate (none when the probe saw none).
+    const reach = (i: number): SQL => sql`(select case when ${h(i)} > 0 then (${3 * k * k} + 2 * ${h(i)} - 1) / (2 * ${h(i)}) end from ${probe})`;
+    // In the walk's own order, newest first: an order by here would sort the walk's whole depth.
+    const walked = (i: number): SQL => sql`select id, date from ${walk} where ${f(i)} and ${walks(i)} limit ${k}`;
+    // Short of K, unless the walk read fewer letters than its depth: then it read every letter under the filters.
+    const short = (i: number): SQL => sql`(case when (select count(*) from (${walked(i)}) t) >= ${k} then false
+      when not ${walks(i)} then true else (select count(*) from ${walk}) >= ${bound} end)`;
+    const ctes: SQL[] = [
+      sql`${probe} as (select ${sql.join(joined.map((i) => sql`coalesce(sum(case when x.${f(i)} then 1 else 0 end), 0) as ${h(i)}`), sql`, `)}
+        from ${asked(k)})`,
+      sql`${walk} as (select w.id as id, w.date as date, ${sql.join(joined.map((i) => sql`x.${f(i)}`), sql`, `)}
+        from ${asked(sql`(select case when ${sql.join(joined.map((i) => sql`${h(i)} >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`), sql` or `)} then ${bound} else 0 end from ${probe})`)})`,
+    ];
+    // The text arm beside a part arm (a part of a word finds what the whole word finds), off the heap.
+    const part = heap ? undefined : joined.find((i) => arms[i]!.name === "part" && !arms[i]!.across);
+    const text = part === undefined ? -1 : arms.findIndex((x) => x.name === "text" && !x.bounded && !x.local && x.branches.length === 1
+      && x.branches[0]!.raw !== undefined && x.branches[0]!.after === undefined && x.branches[0]!.pos === undefined);
+    const reads = new Map<number, TierRead>();
+    for (const i of joined) {
+      const q = named(i, "q");
+      ctes.push(sql`${q} as (select ${short(i)} as v)`);
+      const s = heap ? { named: [], rows: sql`select id, date from (${this.matchedOf(where, arms[i]!.branches, k)}) m where (select v from ${q})` }
+        // A part arm the text arm follows walks History against its set even past the probe's reach: its depth is the text arm's proof.
+        : this.setPath(where, k, {
+          short: sql`(select v from ${q})`, branches: arms[i]!.branches, name: (x) => named(i, x),
+          ...(i === part && text >= 0 ? { every: true } : { reach: reach(i) }),
+        });
+      ctes.push(...s.named);
+      reads.set(i, { rows: sql`select id, date, 0 as rank from (${walked(i)}) w where not (select v from ${q})
+        union all select id, date, 0 as rank from (${s.rows}) x` });
+    }
+    if (part !== undefined && text >= 0) {
+      // Its own set when every account's part set holds at most so many ids a letter walked to the part's K-th match.
+      const gate = sql.raw(`${pre}tg`);
+      ctes.push(sql`${gate} as (select coalesce((select v from ${named(part, "q")}) and ((select g from ${named(part, "n")}) <= ${k}
+        or (select d from ${named(part, "c")}) * ${SEARCH_TEXT_SET_PER_WALKED} >= (select g from ${named(part, "n")})), false) as v)`);
+      // Its K-th match lies at least as deep as the part's.
+      const s = this.setPath(where, k, {
+        short: sql`(select v from ${gate})`, branches: arms[text]!.branches, name: (x) => sql.raw(`${pre}t${x}`), reach: sql`(select d from ${named(part, "c")})`, whole: true,
+      });
+      ctes.push(...s.named);
+      reads.set(text, { gate: sql`(select v from ${gate})`, rows: s.rows });
+    }
+    return { named: ctes, of: (i) => reads.get(i) };
+  }
+
+  /**
    * A bounded arm's newest K. The newest {@link SEARCH_PART_WALK_FACTOR} × K messages under the
    * filters are walked in order, each asked every branch by itself (`limit 1 offset 0` keeps it a
    * per-row question: no join, so no read of every match); when they hold fewer than K, each
    * branch's matches are read instead, under a sort key no index serves (`date is null` first is
-   * `nulls last`), so off its GIN. Exactly one of the two answers.
+   * `nulls last`), so off its GIN. Exactly one of the two answers. Before the backfill the branches'
+   * matches are read as one set instead ({@link setPath}); an arm of its tier's one walk reads that ({@link tierWalk}).
    */
   private boundedRead(where: SQL, branches: readonly Branch[], k: number): SQL {
     const newestOf = (n: number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
+    const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
+      where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
+    const matched = this.matchedOf(where, branches, k);
     // Every branch the document's own: each walked row asks its document alone. The walk's row is
     // already the message under the filters, and a second lookup of it was a disk read per row cold.
     const docOnly = branches.every((b) => b.raw !== undefined);
@@ -646,13 +768,24 @@ export class SearchService {
       where m.id = w.id and (${sql.join(preds, sql` or `)}) limit 1 offset 0)`);
     const hit = hitOf(branches.map((b) => b.pred));
     // The probe: the newest K asked first; a part too sparse there to fill the walk skips it.
-    const dense = sql`(select count(*) from (${newestOf(k)}) w where ${hit}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`;
-    const walked = sql`select w.id as id, w.date as date from (${newestOf(SEARCH_PART_WALK_FACTOR * k)}) w where ${dense} and ${hit}
+    const probe = sql`(select count(*) from (${newestOf(k)}) w where ${hit})`;
+    const walkedOn = (dense: SQL): SQL => sql`select w.id as id, w.date as date from (${newestOf(SEARCH_PART_WALK_FACTOR * k)}) w where ${dense} and ${hit}
       order by w.date desc nulls last, w.id desc limit ${k}`;
-    const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
-      where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
-    const matched = sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
-    if (branches.every((b) => b.after === undefined && b.pos === undefined)) {
+    const walked = walkedOn(sql`${probe} >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`);
+    const plain = branches.every((b) => b.after === undefined && b.pos === undefined);
+    // Before the backfill: each branch's matches off its own table, never one OR across tables.
+    const sets = branches.map((b) => (b.raw !== undefined ? sql`select s.message_id as id from message_search s where ${b.pred}` : b.set));
+    if (plain && !heapWhere.has(where) && sets.every((s) => s !== undefined)) {
+      const s = this.setPath(where, k, {
+        short: sql`(select v from pq)`, set: sql.join(sets as SQL[], sql` union all `), name: (x) => sql.raw("p" + x), distinct: sets.length > 1,
+        reach: sql`(select case when h > 0 then (${3 * k * k} + 2 * h - 1) / (2 * h) end from pp)`,
+      });
+      return sql`(with pp as (select ${probe} as h), pw as (${walkedOn(sql`(select h from pp) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`)}),
+        pq as (select (select count(*) from pw) < ${k} as v), ${sql.join(s.named, sql`, `)}
+        select id, date, 0 as rank from pw where not (select v from pq)
+        union all select id, date, 0 as rank from (${s.rows}) x)`;
+    }
+    if (plain) {
       return sql`(with pw as (${walked})
       select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
       union all
@@ -716,6 +849,64 @@ export class SearchService {
       union all
       select null, null, 0, 1 where ${short} and ${full} and (case when ${walkOn}
         then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${readFull} end))`;
+  }
+
+  /** Each branch's newest K matches under the filters, read off its own index (no index serves `(date is null)` first). */
+  private matchedOf(where: SQL, branches: readonly Branch[], k: number): SQL {
+    const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
+      where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
+    return sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
+  }
+
+  /**
+   * A BOUNDED ARM'S MATCHES AS ONE SET once its walk fell short (`short` gates every read here), off
+   * the heap, named by `name`. The set is read whole: its per-branch read reads every match too, and
+   * sorts them. Under K members, or with its K-th match expected past the walk's bound (`reach`, the
+   * depth the probe predicts), each member is dated, a lookup each; else History is walked newest first
+   * against the set (a hashed SubPlan: `is true` keeps it from becoming a join), index entries only, at
+   * most {@link SEARCH_SET_WALK_PER_MEMBER} a member (`whole`: to its end), and every member is dated
+   * when that walk stopped short of K with History left. Exactly one answer, each exact. `every` keeps
+   * every account's matches beside the set, counted as `g`, and the walk's depth at its last row as `d`.
+   */
+  private setPath(where: SQL, k: number, o: {
+    readonly short: SQL; readonly name: (s: string) => SQL; readonly branches?: readonly Branch[]; readonly set?: SQL;
+    readonly reach?: SQL; readonly every?: boolean; readonly whole?: boolean; readonly distinct?: boolean;
+  }): { named: SQL[]; rows: SQL } {
+    const [a, s, n, h, c] = ["a", "s", "n", "h", "c"].map(o.name) as [SQL, SQL, SQL, SQL, SQL];
+    const per = SEARCH_SET_WALK_PER_MEMBER;
+    const size = sql`(select n from ${n})`;
+    // Every member dated: under K of them, or its K-th match expected past the walk's bound.
+    const lookups = o.reach === undefined ? sql`${size} < ${k}`
+      : sql`(${size} < ${k} or coalesce(${o.reach} > ${per} * ${size}, false))`;
+    // Off the heap the filters read `messages` alone: no folder, so no folder_state.
+    const dated = sql`select t.id as id, d.date as date from (select ${o.distinct ? sql`distinct ` : sql``}id from ${s}) t
+      cross join lateral (select m.date as date from messages m where m.id = t.id and ${where} offset 0) d`;
+    // The documents' own predicates by themselves (`offset 0`), the account asked after: beside it the
+    // planner read the account's documents and asked each one.
+    const own = o.branches === undefined ? undefined : sql`select s.message_id as id, s.account_id as account from message_search s
+      where (${sql.join(o.branches.map((b) => b.raw!), sql` or `)}) and ${o.short} offset 0`;
+    const account = o.branches?.[0]?.account ?? "";
+    const rn = o.every ? sql`, row_number() over (order by m.date desc nulls last, m.id desc) as rn` : sql``;
+    // In History's own order: an order by over the walk would read it to its end.
+    const history = sql`select m.id as id, m.date as date${rn} from messages m
+      where ${where} and not ${lookups} order by m.date desc nulls last, m.id desc${o.whole ? sql`` : sql` limit ${per} * ${size}`}`;
+    const named = [
+      ...(o.every && own ? [sql`${a} as materialized (${own})`, sql`${s} as not materialized (select id from ${a} where account = ${account})`]
+        : [sql`${s} as materialized (${own ? sql`select x.id as id from (${own}) x where x.account = ${account}` : sql`select id from (${o.set!}) u where ${o.short}`})`]),
+      sql`${n} as (select count(*) as n${o.every ? sql`, (select count(*) from ${a}) as g` : sql``} from ${s})`,
+      sql`${h} as (select w.id as id, w.date as date${o.every ? sql`, w.rn as rn` : sql``} from (${history}) w
+        where (w.id in (select id from ${s})) is true limit ${k})`,
+    ];
+    // Walked to History's end, its rows are every member under the filters.
+    if (o.whole) return { named, rows: sql`select id, date from ${h} union all ${dated} where ${lookups}` };
+    // Short of K with History left past the walk's reach.
+    const cut = sql`case when ${lookups} or count(*) >= ${k} then false
+      else (select count(*) from (select 1 from messages m where ${where}
+        order by m.date desc nulls last, m.id desc limit ${per} * ${size}) f) >= ${per} * ${size} end`;
+    return {
+      named: [...named, sql`${c} as (select ${cut} as cut${o.every ? sql`, max(rn) as d` : sql``} from ${h})`],
+      rows: sql`select id, date from ${h} where not (select cut from ${c}) union all ${dated} where ${lookups} or (select cut from ${c})`,
+    };
   }
 
   /** `after` holds for the message `id`: one document lookup, asked by itself. */
@@ -789,7 +980,8 @@ export class SearchService {
     // A local arm's rows of the one shared walk ({@link sharedWalk}), newest first, at its cut.
     const walkOf = (i: number): SQL => sql`select id, date, ${sql.raw("r" + String(i))} as rank from ${walkName}
       where ${sql.raw("f" + String(i))} order by date desc nulls last, id desc limit ${arms[i]!.ranked ? window : k}`;
-    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined));
+    const { named: tierNamed, of: tierOf } = this.tierWalk(where, arms, k, pre);
+    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, tierOf(i)));
     const a = (i: number): SQL => sql.raw(pre + "a" + String(i));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
@@ -803,6 +995,7 @@ export class SearchService {
       k,
       named: sql.join([
         ...(walking ? [sql`${walkName} as (${this.sharedWalk(where, arms, k)})`] : []),
+        ...tierNamed,
         ...armSqls.map((x, i) => sql`${a(i)} as (${x})`),
       ], sql`, `),
       // Each row carries the date its arm read, so the fused candidates are ordered without being
@@ -1101,7 +1294,17 @@ export class SearchService {
   /** This account's search documents while something is still building them, else nothing. */
   private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
     if (store.built || !this.opts.indexFills) return undefined;
-    const p = await searchIndexProgress(db as never, ctx.accountId);
+    const handle = ctx.db as unknown as object;
+    const memo = progressRead.get(handle) ?? new Map<string, { at: number; p: { done: number; total: number } }>();
+    progressRead.set(handle, memo);
+    const now = ctx.now().getTime();
+    const seen = memo.get(ctx.accountId);
+    let p = seen !== undefined && now >= seen.at && now - seen.at < INDEX_PROGRESS_FRESH_MS ? seen.p : null;
+    if (p === null) {
+      p = await searchIndexProgress(db as never, ctx.accountId);
+      if (memo.size >= MARKER_MEMO_MAX) memo.clear();
+      memo.set(ctx.accountId, { at: now, p });
+    }
     return p.done < p.total ? p : undefined;
   }
 
@@ -1412,7 +1615,9 @@ export class SearchService {
     if (f.dateTo !== undefined) {
       preds.push(sql`m.date <= ${d.ts(SearchService.instantOr400(f.dateTo, "dateTo"))}`);
     }
-    return sql.join(preds, sql` and `);
+    const where = sql.join(preds, sql` and `);
+    if (f.folder !== undefined || f.sender !== undefined || f.unread !== undefined || f.hasAttachments !== undefined) heapWhere.add(where);
+    return where;
   }
 }
 
