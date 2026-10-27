@@ -263,16 +263,24 @@ const press = async (label: string): Promise<void> => {
   await act(async () => { b!.click(); });
 };
 
-/** The read column, laid out: 800px tall, every letter 600px, `scrollTop` a real offset. */
-function modelColumn(): { scrollTo: (top: number) => Promise<void> } {
+/**
+ * The read column, laid out: 800px tall, every letter 600px, `scrollTop` a real offset. With
+ * `heightOf`, letters take that height and `scrollTop` clamps to the content, as a browser's does.
+ */
+function modelColumn(heightOf?: (card: Element) => number): { scrollTo: (top: number) => Promise<void> } {
   const read = host!.querySelector<HTMLElement>(".view-screener .scn-read")!;
+  const letterPx = heightOf ?? (() => 600);
+  const content = () => [...read.querySelectorAll(".hmail")].reduce((sum, c) => sum + letterPx(c), 0);
   let top = 0;
-  Object.defineProperty(read, "scrollTop", { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, v); } });
+  Object.defineProperty(read, "scrollTop", { configurable: true, get: () => top, set: (v: number) => {
+    top = Math.max(0, heightOf ? Math.min(v, content() - 800) : v);
+  } });
   Object.defineProperty(read, "clientHeight", { configurable: true, get: () => 800 });
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function rect(this: Element) {
-    const i = [...read.querySelectorAll(".hmail")].indexOf(this);
-    const y = this === read ? 0 : i >= 0 ? i * 600 - top : 0;
-    const height = this === read ? 800 : i >= 0 ? 600 : 0;
+    const cards = [...read.querySelectorAll(".hmail")];
+    const i = cards.indexOf(this);
+    const y = this === read ? 0 : i >= 0 ? cards.slice(0, i).reduce((sum, c) => sum + letterPx(c), 0) - top : 0;
+    const height = this === read ? 800 : i >= 0 ? letterPx(this) : 0;
     return { top: y, bottom: y + height, height, left: 0, right: 0, width: 0, x: 0, y, toJSON: () => ({}) } as DOMRect;
   });
   return {
@@ -372,6 +380,59 @@ describe("a sender's held letters open on the newest three", () => {
     await settle();
     expect(articles(), "premise: the same letters are back").toHaveLength(3);
     expect(sanitize.mock.calls.length - passes, "a revisit sanitized the letters again").toBe(0);
+  });
+
+  /* The tab's commit carries the rows and the letters' heads; the bodies (a sanitize pass and a
+     frame each) follow once that frame has painted. jsdom paints nothing, so the column gets a box,
+     and frames run only when `frames` says. */
+  let queued = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  const boxColumn = () => {
+    const rects = Element.prototype.getClientRects;
+    vi.spyOn(Element.prototype, "getClientRects").mockImplementation(function boxes(this: Element) {
+      return this.classList.contains("scn-read") ? [{ top: 0, bottom: 800, height: 800 }] as unknown as DOMRectList : rects.call(this);
+    });
+    queued = new Map();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => { queued.set(++frameId, cb); return frameId; });
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => { queued.delete(id); });
+  };
+  const frames = async (n: number) => {
+    for (let i = 0; i < n; i++) {
+      const due = [...queued.values()];
+      queued = new Map();
+      await act(async () => {
+        for (const cb of due) cb(performance.now());
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+  };
+  it.each(["screened", "spam"] as const)("%s: a tab click draws the rows before any letter's body", async (segment) => {
+    const { engine } = await engineWith(bag(FOLDER[segment], 3), async (id) => answer(id), { batch: true, html: true });
+    await engine.hydrateBodies(ids(1, 3));
+    await mount(engine, "waiting");
+    await settle();
+    boxColumn();
+    const sanitize = vi.spyOn(DOMPurify, "sanitize");
+    await act(async () => { switchTo(segment); });
+    expect(host!.querySelectorAll(".view-screener .rows .row"), "the rows missed the click's commit").toHaveLength(1);
+    expect(subjects(), "the letters' heads missed the click's commit").toEqual(ids(1, 3).map((id) => `Subject ${id}`));
+    expect(sanitize, "a letter was sanitized before the rows painted").not.toHaveBeenCalled();
+    await frames(3);
+    expect(sanitize, "the bodies never followed").toHaveBeenCalled();
+    for (const [i, a] of articles().entries()) expect(bodyText(a)).toContain(`the whole of ${ids(1, 3)[i]}`);
+  });
+
+  it("the letters drawn without their bodies mount no older ones", async () => {
+    const { engine } = await engineWith(bag(FOLDER.screened), async (id) => answer(id), { batch: true, html: true });
+    await engine.hydrateBodies(ids(10, 12));
+    await mount(engine, "waiting");
+    await settle();
+    boxColumn();
+    modelColumn((card) => (card.querySelector(".hm-body")?.childElementCount ? 600 : 60));
+    await act(async () => { switchTo("screened"); });
+    await frames(4);
+    expect(articles()[0]!.querySelector(".hm-body")!.childElementCount, "premise: the bodies are drawn").toBeGreaterThan(0);
+    expect(subjects(), "three short heads read as a column with room").toEqual(ids(10, 12).map((id) => `Subject ${id}`));
   });
 
   /** A phone: the auto-selected sender's letters mount behind the closed sheet; `tap` opens it. */

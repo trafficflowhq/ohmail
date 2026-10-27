@@ -88,6 +88,33 @@ const cloudWire: JunkWire = {
   codeOf: (err) => (err instanceof ApiError ? err.code : null),
 };
 
+/**
+ * AN ANSWER IS READ BY ITS SHAPE: a page, a search or a preview without its arrays is a FAILED ask,
+ * taken by each call's own failed branch, never a throw in the render or an unhandled rejection.
+ */
+const hasArrays = (v: unknown, ...keys: string[]): boolean =>
+  typeof v === "object" && v !== null && keys.every((k) => Array.isArray((v as Record<string, unknown>)[k]));
+const isPreview = (v: unknown): boolean => {
+  const held = hasArrays(v, "mailboxes") ? (v as { held?: unknown }).held : null;
+  return held !== null && (held === undefined || hasArrays(held, "ids"));
+};
+function shaped<T>(ask: Promise<T>, ok: (v: unknown) => boolean): Promise<T> {
+  return ask.then((v) => {
+    if (!ok(v)) throw new TypeError("junk answer without its arrays");
+    return v;
+  });
+}
+function checkedWire(w: JunkWire): JunkWire {
+  const page = (v: unknown) => hasArrays(v, "items", "mailboxes");
+  return {
+    ...w,
+    list: (opts) => shaped(w.list(opts), page),
+    search: (q) => shaped(w.search(q), page),
+    sweepPreview: () => shaped(w.sweepPreview(), isPreview),
+    sweepRequest: () => shaped(w.sweepRequest(), isPreview),
+  };
+}
+
 /** What one settled junk-body ask holds — the wire's own answer, subject included. */
 type JunkBodyWireAnswer = { subject: string; text: string };
 
@@ -237,12 +264,13 @@ function readDismissed(key: string): number {
 /**
  * The window's state machine. `active` is "the Junk segment is on screen AND the feature is on":
  * the first page loads lazily on entry, and a later entry reads it again once it is
- * {@link JUNK_FIRST_PAGE_FRESH_MS} old; nothing is fetched while the flag is off or the view is
- * elsewhere.
+ * {@link JUNK_FIRST_PAGE_FRESH_MS} old. `warm` is "the Screener is on screen": its entry reads the
+ * page and the preview too, so the first Spam click draws what they answered instead of waiting on
+ * a provider dial. Nothing is fetched while the flag is off or the view is elsewhere.
  */
-export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWire): JunkWindowControl {
+export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWire, warm = false): JunkWindowControl {
   const t = useTranslations("screener");
-  const wire = hostWire ?? cloudWire;
+  const wire = useMemo(() => checkedWire(hostWire ?? cloudWire), [hostWire]);
   const supported = hostWire !== undefined || apiConfigured();
   const [phase, setPhase] = useState<"loading" | "ready" | "failed">("loading");
   const [items, setItems] = useState<JunkItemWire[]>([]);
@@ -270,7 +298,7 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
   /** A stale page must not land over a newer reload's answer. */
   const generation = useRef(0);
 
-  const fetchFirst = useCallback(() => {
+  const fetchFirst = useCallback((keep = false) => {
     if (!supported) {
       // No server behind this build: the honest resting state, never an eternal spinner. The
       // shell also withholds the control entirely on `supported`, so this is the belt.
@@ -280,7 +308,8 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     const gen = ++generation.current;
     listAskedAt.current = Date.now();
     listInFlight.current = true;
-    setPhase("loading");
+    // An entry's re-read keeps a shown page on screen until the answer replaces it.
+    setPhase((p) => (keep && p === "ready" ? p : "loading"));
     void wire.list().then(
       (page) => {
         if (generation.current !== gen) return;
@@ -558,20 +587,22 @@ export function useJunkWindow(active: boolean, toast: ToastFn, hostWire?: JunkWi
     );
   }, [wire, absorbPreview]);
 
-  /* ENTRY: on each rising edge of `active`, the page and the preview are read if never asked, or
+  /* ENTRY: on each rising edge of `active` or `warm`, the page and the preview are read if never asked, or
      if the last ask is at least the age old and none is out. An edge, never a timer: staying on
      the segment, or a tab coming back into view, reads nothing. */
   const wasActive = useRef(false);
+  const wasWarm = useRef(false);
   useEffect(() => {
-    const entered = active && !wasActive.current;
+    const entered = (active && !wasActive.current) || (warm && !wasWarm.current);
     wasActive.current = active;
+    wasWarm.current = warm;
     if (!entered) return;
     const now = Date.now();
     const due = (at: number | null, inFlight: boolean): boolean =>
       at === null || (!inFlight && now - at >= JUNK_FIRST_PAGE_FRESH_MS);
-    if (due(listAskedAt.current, listInFlight.current)) fetchFirst();
+    if (due(listAskedAt.current, listInFlight.current)) fetchFirst(true);
     if (supported && due(previewAskedAt.current, previewInFlight.current)) readPreview();
-  }, [active, supported, fetchFirst, readPreview]);
+  }, [active, warm, supported, fetchFirst, readPreview]);
 
   // While a press is outstanding, re-read the preview on a slow beat until the pile is empty
   // (or the beat runs out — the offer then keeps saying "queued", which is still true).
