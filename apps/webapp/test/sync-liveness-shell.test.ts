@@ -241,15 +241,31 @@ describe("EngineProvider is where the wake signal lives", () => {
     FakeEventSource.opened = [];
     FakeEventSource.closed = 0;
 
+    const at = (i: number) => new URL(FakeEventSource.opened[i]!, "https://ohmail.test");
     const { root } = await shell(null);
     await tick(1_000);
-    expect(FakeEventSource.opened, "the provider never opened its wake stream").toEqual(["/api/events"]);
+    expect(FakeEventSource.opened, "the provider never opened its wake stream").toHaveLength(1);
+    expect(at(0).pathname).toBe("/api/events");
+    const name = at(0).searchParams.get("stream");
+    expect(name, "the stream carries no name of its own").toMatch(/^[0-9a-f]{32}$/);
+
+    // A re-dial names the stream it left, so the server can end that one.
+    await act(async () => { setVisibility("hidden"); await vi.advanceTimersByTimeAsync(0); });
+    await act(async () => { setVisibility("visible"); await vi.advanceTimersByTimeAsync(0); });
+    await tick(1_000);
+    expect(FakeEventSource.opened).toHaveLength(2);
+    expect(at(1).searchParams.get("stream"), "the re-dial named another stream").toBe(name);
 
     await act(() => {
       root.unmount();
     });
     roots = roots.filter((r) => r !== root);
-    expect(FakeEventSource.closed, "an unmounted shell left its wake stream open").toBe(1);
+    expect(FakeEventSource.closed, "an unmounted shell left its wake stream open").toBe(2);
+
+    await shell(null);
+    await tick(1_000);
+    expect(FakeEventSource.opened).toHaveLength(3);
+    expect(at(2).searchParams.get("stream"), "a new page reused the last page's name").not.toBe(name);
   });
 
   it("the demo attaches NO EventSource — same run, same fake, so the control is real", async () => {

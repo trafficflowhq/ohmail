@@ -85,7 +85,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();
     expect(shell.sessionCalls(), "the premise: the confirm was asked").toBeGreaterThanOrEqual(1);
     expect(FakeEventSource.made, "the warm mount held no stream until a tab flip").toHaveLength(1);
-    expect(FakeEventSource.made[0]!.url).toBe("/api/events");
+    expect(new URL(FakeEventSource.made[0]!.url, "https://ohmail.test").pathname).toBe("/api/events");
   });
 
   it("a stream latched dead at its re-dial, the wall, then the payment: the lift dials a NEW stream, and nothing dials while the wall stands", { timeout: 60_000 }, async () => {

@@ -59,10 +59,16 @@ const closeStream = (accountId: string): void => {
   liveTotal = Math.max(0, liveTotal - 1);
 };
 
+/** A dial's own name for its stream (`?stream=`); anything else names nothing. */
+const STREAM_NAME = /^[A-Za-z0-9_-]{1,64}$/;
+/** Named streams on this instance: account, session and name, to that stream's own end. */
+const heldByName = new Map<string, () => void>();
+
 /** Test seam: forget the counters (a leaked count would poison later assertions). */
 export function resetSseCounters(): void {
   liveByAccount.clear();
   liveTotal = 0;
+  heldByName.clear();
 }
 
 /** Observability seam for tests and the cap assertions. */
@@ -97,13 +103,17 @@ export const eventsRoutes: Route[] = [
     // Being `raw` used to mean this route could not be gated AT ALL — see RAW_PIPELINE.
     cost: "connection",
     options: { raw: true },   // reduced pipeline: no JSON envelope / CSRF / idempotency
-    handler: async (_req, deps) => {
+    handler: async (req, deps) => {
       const { accountId, sessionId } = deps.session!;   // raw pipeline still runs withSession (401 if none)
       const cfg = { ...DEFAULT_SSE, ...(deps.sse ?? {}) };
       const log = deps.logger ?? silentLogger;
       const enc = new TextEncoder();
 
       if (cfg.enabled === false) return sseDisabledResponse();
+      const name = new URL(req.url).searchParams.get("stream");
+      const held = name !== null && STREAM_NAME.test(name) ? `${accountId}\n${sessionId}\n${name}` : null;
+      // The client left the stream it names, whether or not this host heard it go.
+      if (held !== null) heldByName.get(held)?.();
       if (cfg.maxPerInstance != null && liveTotal >= cfg.maxPerInstance) {
         return errorResponse("sse_capacity", 503, "too many open event streams on this instance; poll GET /sync");
       }
@@ -120,8 +130,10 @@ export const eventsRoutes: Route[] = [
       let deliveredAt = Date.now();
       /** The hub unsubscribe, once subscribed. Idempotent by the hub's contract. */
       let unhook: (() => void) | null = null;
+      let replace: (() => void) | null = null;
 
       const stop = (): void => {
+        if (held !== null && replace !== null && heldByName.get(held) === replace) heldByName.delete(held);
         if (heartbeat) clearInterval(heartbeat);
         if (lifetime) clearTimeout(lifetime);
         heartbeat = undefined;
@@ -161,6 +173,11 @@ export const eventsRoutes: Route[] = [
             send("event: sync_failed\ndata: {}\n\n");
             finish();
           };
+          // A re-dial under this stream's name ends it; a live holder of the same name waits 30 s.
+          if (held !== null) {
+            replace = () => { send(RETRY_AFTER_FAILURE); finish(); };
+            heldByName.set(held, replace);
+          }
 
           send("retry: 3000\n\n");                       // EventSource reconnect hint
           let lastSeq: bigint;
@@ -197,6 +214,7 @@ export const eventsRoutes: Route[] = [
             readFailed(err);
             return;
           }
+          if (closed) return;                              // ended while its first read was out
 
           /**
            * THE PUSHED WAKE. Subscribed AFTER the first read on purpose: a commit landing in

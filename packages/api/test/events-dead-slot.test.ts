@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createApp, apiRoutes, type ApiDeps, type SseConfig } from "@trafficflow/api";
 import { writeWebResponse } from "@trafficflow/core/adapters/http-host";
 import { resetSseCounters, sseLiveCounts } from "../src/routes/events.js";
-import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE CAP COUNTS LIVE STREAMS. A stream whose frames stop being taken holds its per-account slot
@@ -32,12 +32,13 @@ afterEach(async () => {
 });
 
 /** Read until the ready frame, then either keep reading (a live tab) or stop (a dead one). */
-async function openTab(res: Response, live: boolean): Promise<{ pings: () => number }> {
+async function openTab(res: Response, live: boolean): Promise<{ pings: () => number; text: () => string; ended: () => boolean }> {
   expect(res.status).toBe(200);
   const reader = res.body!.getReader();
   readers.push(reader);
   const dec = new TextDecoder();
   let text = "";
+  let ended = false;
   while (!text.includes("event: ready")) {
     const { done, value } = await reader.read();
     if (done) throw new Error("the stream ended before ready");
@@ -47,12 +48,12 @@ async function openTab(res: Response, live: boolean): Promise<{ pings: () => num
     void (async () => {
       for (;;) {
         const { done, value } = await reader.read().catch(() => ({ done: true, value: undefined }));
-        if (done) return;
+        if (done) { ended = true; return; }
         text += dec.decode(value, { stream: true });
       }
     })();
   }
-  return { pings: () => text.split("event: ping").length - 1 };
+  return { pings: () => text.split("event: ping").length - 1, text: () => text, ended: () => ended };
 }
 
 const countFor = (accountId: string): number => sseLiveCounts().byAccount[accountId] ?? 0;
@@ -118,5 +119,53 @@ describe("GET /events frees the slot of a stream nobody reads", () => {
     const until = Date.now() + 2_000;
     while (countFor(s.accountId) > 0 && Date.now() < until) await sleep(10);
     expect(countFor(s.accountId), "the closed socket's slot was not released").toBe(0);
+  });
+});
+
+/**
+ * A NAMED RE-DIAL ENDS THE STREAM IT LEFT. On Cloud the host keeps reading a stream whose client
+ * has gone, so the delivery bound never trips; a tab that redials names its stream, and the server
+ * ends the earlier one of that name (same account, same session) and takes its slot.
+ */
+describe("GET /events?stream= replaces the stream of that name", () => {
+  it("a desktop door and a tab redialling four times: every dial admitted, each predecessor ended", async () => {
+    const { db, deps } = await makeDeps();
+    const tab = await seedSession(db, { now: FIXED_NOW });
+    const desk = await seedSessionFor(db, { accountId: tab.accountId, userId: tab.userId, now: FIXED_NOW });
+    const dial = (token: string, name: string) => H(req("GET", `/events?stream=${name}`, { bearer: token }), deps, CFG);
+    const door = await openTab(await dial(desk.token, "cloud-door"), true);
+    const tabs = [];
+    for (let i = 0; i < 4; i++) {
+      const res = await dial(tab.token, "0123456789abcdef0123456789abcdef");
+      expect(res.status, `dial ${i + 1} was refused`).toBe(200);
+      tabs.push(await openTab(res, true));
+    }
+    await sleep(20);
+    expect(tabs.slice(0, 3).map((t) => t.ended()), "a replaced stream kept running").toEqual([true, true, true]);
+    expect(tabs.slice(0, 3).every((t) => t.text().includes("retry: 30000"))).toBe(true);
+    expect([tabs[3]!.ended(), door.ended()]).toEqual([false, false]);
+    expect(countFor(tab.accountId)).toBe(2);
+  });
+
+  it("CONTROL: the same name from another session of the account, or from another account, ends nothing", async () => {
+    const { db, deps } = await makeDeps();
+    const a = await seedSession(db, { now: FIXED_NOW });
+    const a2 = await seedSessionFor(db, { accountId: a.accountId, userId: a.userId, now: FIXED_NOW });
+    const b = await seedSession(db, { now: FIXED_NOW });
+    const open = async (token: string) => openTab(await H(req("GET", "/events?stream=same", { bearer: token }), deps, CFG), true);
+    const streams = [await open(a.token), await open(a2.token), await open(b.token)];
+    await sleep(20);
+    expect(streams.map((t) => t.ended()), "a name reached another session's stream").toEqual([false, false, false]);
+    expect([countFor(a.accountId), countFor(b.accountId)]).toEqual([2, 1]);
+  });
+
+  it("CONTROL: a 65-character name names nothing, and the fifth dial is refused", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const open = () => H(req("GET", `/events?stream=${"x".repeat(65)}`, { bearer: s.token }), deps, CFG);
+    for (let i = 0; i < 4; i++) await openTab(await open(), true);
+    const fifth = await open();
+    expect(fifth.status).toBe(429);
+    expect((await fifth.json()).error.code).toBe("sse_too_many_streams");
   });
 });
