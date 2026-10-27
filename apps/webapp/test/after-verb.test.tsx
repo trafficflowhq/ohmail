@@ -8,7 +8,7 @@
  * compiles: a marker never written, an effect keyed to the wrong list, a choice read once at
  * mount. What is pinned: the DEFAULT advances to the next row; `close` clears the selection;
  * a removal the person did NOT cause (a drain applying another device's work) moves nothing —
- * the marker is the whole difference. The pure order walk (`nextSurvivor`) is pinned by unit
+ * the marker is the whole difference. The pure row walk (`nextRowAfter`) is pinned by unit
  * arms beside the journeys.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +29,7 @@ import type { MailboxFacts } from "../app/shell/mail-state";
 import {
   AFTER_VERB_STORAGE_KEY,
   DEFAULT_AFTER_VERB,
-  nextSurvivor,
+  nextRowAfter,
   readAfterVerb,
 } from "../app/shell/after-verb";
 
@@ -85,33 +85,45 @@ afterEach(async () => {
 
 const address = (id: string): string => `p${id}@example.invalid`;
 
-const msg = (id: string): EngineMessage => ({
-  id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
-  subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-03T09:00:00.000Z", unread: false,
-  updatedAt: "2026-09-03T09:00:00.000Z",
+/** A message; thread, date, folder and sender default to a lone INBOX letter of the day before. */
+type Spec = { id: string; thread?: string; date?: string; folder?: string; from?: string };
+
+const msg = (s: Spec): EngineMessage => ({
+  id: s.id, accountId: "a1", mailboxId: "mb1", threadId: s.thread ?? `t-${s.id}`, folder: s.folder ?? "INBOX",
+  subject: `Subject ${s.thread ?? s.id}`, from: { address: s.from ?? address(s.id), name: `Person ${s.id}` },
+  to: [], date: s.date ?? "2026-09-03T09:00:00.000Z", unread: false,
+  updatedAt: s.date ?? "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
-async function storeWith(ids: string[]): Promise<MirrorStore> {
+async function storeWith(specs: (string | Spec)[], older: EngineMessage[] = []): Promise<MirrorStore> {
   const store = new MemoryMirrorStore();
   await store.load();
-  for (const id of ids) {
-    const m = msg(id);
+  for (const spec of specs) {
+    const m = msg(typeof spec === "string" ? { id: spec } : spec);
+    const from = (m.from as { address: string }).address;
     await store.applyChanges([
-      { type: "message", op: "create", id, seq: ++seq, updatedAt: m.updatedAt, entity: m },
-      {
-        type: "rule", op: "create", id: `r-${id}`, seq: ++seq, updatedAt: m.updatedAt,
+      { type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m },
+      ...(m.folder === "INBOX" ? [{
+        type: "rule", op: "create", id: `r-${m.id}`, seq: ++seq, updatedAt: m.updatedAt,
         entity: {
-          id: `r-${id}`, kind: "sender", match: address(id),
+          id: `r-${m.id}`, kind: "sender", match: from,
           destination: "INBOX", enabled: true, createdAt: "2026-09-01T00:00:00.000Z",
         },
-      },
+      }] : []),
     ] as SyncChange[]);
+  }
+  for (const m of older) {
+    const from = (m.from as { address: string }).address;
+    await store.applyChanges([{
+      type: "rule", op: "create", id: `r-${m.id}`, seq: ++seq, updatedAt: NOW.toISOString(),
+      entity: { id: `r-${m.id}`, kind: "sender", match: from, destination: "INBOX", enabled: true, createdAt: "2026-09-01T00:00:00.000Z" },
+    }] as SyncChange[]);
   }
   return store;
 }
 
-function engineOver(store: MirrorStore): OhmailEngine {
+/** `older`: mail the server holds past the mirror window, offered through Load older. */
+function engineOver(store: MirrorStore, older: EngineMessage[] = []): OhmailEngine {
   return new OhmailEngine({
     store,
     now: () => NOW,
@@ -135,6 +147,13 @@ function engineOver(store: MirrorStore): OhmailEngine {
         text: "body", html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
       }),
+      ...(older.length > 0 ? {
+        timeline: async () => ({
+          total: 99, undated: 0,
+          months: [{ month: (older[0]!.date ?? "").slice(0, 7), count: older.length, first: { date: older[0]!.date, id: older[0]!.id } }],
+        }),
+        listMessages: async () => ({ items: older, nextCursor: null }),
+      } : {}),
     },
   } as never);
 }
@@ -147,11 +166,13 @@ const ROSTER: MailboxFacts[] = [{
   organizedBy: null, organizeConsentedAt: "2026-09-01T00:00:00.000Z",
 }];
 
-async function shell(): Promise<{ container: HTMLElement; store: MirrorStore }> {
+async function shell(
+  specs: (string | Spec)[] = ["m1", "m2", "m3"], older: EngineMessage[] = [],
+): Promise<{ container: HTMLElement; store: MirrorStore }> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const store = await storeWith(["m1", "m2", "m3"]);
-  const engine = engineOver(store);
+  const store = await storeWith(specs, older);
+  const engine = engineOver(store, older);
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -199,20 +220,29 @@ const rowIds = (el: HTMLElement): string[] =>
 const selId = (el: HTMLElement): string | null =>
   el.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
 
-describe("nextSurvivor — the order walk", () => {
-  const present = (ids: string[]) => new Set(ids);
-  it("takes the row after the acted one", () => {
-    expect(nextSurvivor(["a", "b", "c"], present(["b", "c"]), "a")).toBe("b");
+describe("nextRowAfter — the row walk", () => {
+  const standing = (keys: string[]) => new Set(keys);
+  const rows = (...keys: string[]) => keys.map((k) => ({ key: k, members: [{ id: k }] }));
+  it("takes the row below the acted one", () => {
+    expect(nextRowAfter(rows("a", "b", "c"), standing(["b", "c"]), "a")).toBe("b");
   });
   it("skips rows that left in the same pass", () => {
-    expect(nextSurvivor(["a", "b", "c"], present(["c"]), "a")).toBe("c");
+    expect(nextRowAfter(rows("a", "b", "c"), standing(["c"]), "a")).toBe("c");
   });
   it("falls back to the nearest row above at the list's end", () => {
-    expect(nextSurvivor(["a", "b", "c"], present(["a", "b"]), "c")).toBe("b");
+    expect(nextRowAfter(rows("a", "b", "c"), standing(["a", "b"]), "c")).toBe("b");
   });
-  it("answers null for the only row, and for an unknown id", () => {
-    expect(nextSurvivor(["a"], present([]), "a")).toBeNull();
-    expect(nextSurvivor(["a", "b"], present(["a", "b"]), "x")).toBeNull();
+  it("answers null for the only row, and for an id in no row", () => {
+    expect(nextRowAfter(rows("a"), standing([]), "a")).toBeNull();
+    expect(nextRowAfter(rows("a", "b"), standing(["a", "b"]), "x")).toBeNull();
+  });
+  it("finds the acted row through a member that does not lead it, and never lands on its rest", () => {
+    const before = [
+      { key: "t-c", members: [{ id: "s" }, { id: "a" }] },
+      ...rows("b2", "b3"),
+      { key: "t-x", members: [{ id: "x" }] },
+    ];
+    expect(nextRowAfter(before, standing(["t-c", "b2", "b3", "t-x"]), "a")).toBe("b2");
   });
 });
 
@@ -254,6 +284,54 @@ describe("after a verb, on the shipped shell", () => {
       expect(selId(container)).not.toBe(first);
       expect(selId(container)).not.toBeNull();
       expect(container.textContent).not.toContain("Nothing open.");
+    });
+  }
+
+  /* Our reply today puts the conversation at the top of Earlier; its open target is their letter
+     of yesterday, whose own slot is 8 rows down. The cursor must take the row below, not that slot. */
+  const yesterday = (hh: number): string => `2026-09-03T${String(hh).padStart(2, "0")}:00:00.000Z`;
+  const answered: Spec[] = [
+    { id: "s", thread: "t-c", folder: "Sent", from: "me@example.com", date: "2026-09-04T08:00:00.000Z" },
+    { id: "a", thread: "t-c", from: "c@example.com", date: yesterday(13) },
+    ...[2, 3, 4, 5, 6, 7, 8].map((n) => ({ id: `b${n}`, from: `p${n}@example.com`, date: yesterday(22 - n) })),
+    { id: "b9", from: "p9@example.com", date: yesterday(12) },
+  ];
+  for (const k of ["b", "e", "a", "Backspace"] as const) {
+    it(`after ${k} on a conversation row led by our reply, the cursor takes the row below`, async () => {
+      const { container } = await shell(answered);
+      await key("j");
+      await waitFor(() => selId(container) === "a", "the cursor on the conversation's letter");
+      await key(k);
+      await waitFor(() => selId(container) != null && selId(container) !== "a", "the selection to advance");
+      await settle();
+      expect(selId(container)).toBe("b2");
+      expect(console.error).not.toHaveBeenCalled();
+    });
+  }
+
+  /* Load older folds their May letter into our reply's row as its open target. That letter was never
+     in the three groups, so a bar verb that leaves it standing must not move the cursor. */
+  for (const which of ["reply", "forward"] as const) {
+    it(`bar ${which} on a row carried by a Load-older letter keeps the cursor on the letter`, async () => {
+      const mirror: Spec[] = [
+        { id: "s", thread: "t-c", folder: "Sent", from: "me@example.com", date: "2026-09-04T08:00:00.000Z" },
+        ...[2, 3, 4].map((n) => ({ id: `b${n}`, from: `p${n}@example.com`, date: yesterday(22 - n) })),
+      ];
+      const old = msg({ id: "o", thread: "t-c", from: "c@example.com", date: "2026-05-02T09:00:00.000Z" });
+      const { container } = await shell(mirror, [old]);
+      const load = (): HTMLElement | undefined =>
+        [...container.querySelectorAll<HTMLElement>("button")].find((b) => b.textContent?.includes("Load older mail"));
+      await waitFor(() => load() != null, "the Load older control");
+      await act(async () => { load()!.click(); });
+      await waitFor(() => rowIds(container).includes("o"), "the May letter to carry the conversation row");
+      await key("j");
+      await waitFor(() => selId(container) === "o", "the cursor on the May letter");
+      const btn = container.querySelector<HTMLElement>(which === "reply" ? "button.abar-reply" : ".abar-fwd button");
+      expect(btn).not.toBeNull();
+      await act(async () => { btn!.click(); });
+      await settle();
+      await settle();
+      expect(selId(container)).toBe("o");
     });
   }
 
