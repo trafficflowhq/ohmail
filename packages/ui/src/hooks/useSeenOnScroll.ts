@@ -151,6 +151,8 @@ export function useSeenOnScroll({
   const owningRef = useRef(false);
   const ownSeenRef = useRef(false);
   const ownTopRef = useRef(NaN);
+  /** The read rule's look while the scroller's effect is mounted (see `observe`). */
+  const lookRef = useRef<(start: boolean) => void>(() => {});
 
   useEffect(() => {
     const el = root.current;
@@ -328,6 +330,7 @@ export function useSeenOnScroll({
       clocks = next;
       if (due < Infinity) tick = window.setTimeout(() => look(false), due - now);
     };
+    lookRef.current = look;
 
     /* A key typed in a letter reaches the letter's own document, never this one, so the jump keys are
        heard on each letter's document too, from its load. WebKit runs no listener in a letter
@@ -435,6 +438,7 @@ export function useSeenOnScroll({
       judgingRef.current = false;
       io.disconnect();
       ioRef.current = null;
+      lookRef.current = () => {};
     };
   }, [root, selector, rootMargin]);
 
@@ -444,6 +448,8 @@ export function useSeenOnScroll({
     if (!el || !io) return;
     io.disconnect();
     for (const n of el.querySelectorAll(selector)) io.observe(n);
+    // Cards a window mounted under a judged scroll (one that held still while it flew) start their clocks here.
+    if (judgingRef.current) lookRef.current(true);
   }, [root, selector]);
 
   const userHasDriven = useCallback(() => userDrove.current, []);

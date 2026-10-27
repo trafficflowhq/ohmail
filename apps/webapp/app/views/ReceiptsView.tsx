@@ -266,7 +266,7 @@ export function ReceiptsView({
   const cardsShown = useRef(false);
   /* Viewers near the screen only, one more per frame — `stream-near.ts`. A signal: this stream
      fetches nothing on it. */
-  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null);
+  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null, stream.inFlight);
   const arming = useRef<() => void>(() => {});
   useVisit(
     () => {

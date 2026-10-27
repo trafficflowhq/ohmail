@@ -89,13 +89,18 @@ function rectFor(el: Element): DOMRect {
   return zero as DOMRect;
 }
 
-function setStreamScroll(stream: Element, next: number): void {
-  const max = Math.max(0, pileSize * CARD_H + shiftBelow() + grownAbove(stream, pileSize) - VIEW_H);
-  scrollTops.set(stream, Math.min(Math.max(0, next), max));
+/** Adds the mounted cards inside the viewport now to `displayed`. */
+function noteDisplayed(stream: Element): void {
   for (const c of streamCards(stream)) {
     const r = rectFor(c);
     if (r.bottom > 0 && r.top < VIEW_H) displayed.add(c.dataset.sid!);
   }
+}
+
+function setStreamScroll(stream: Element, next: number): void {
+  const max = Math.max(0, pileSize * CARD_H + shiftBelow() + grownAbove(stream, pileSize) - VIEW_H);
+  scrollTops.set(stream, Math.min(Math.max(0, next), max));
+  noteDisplayed(stream);
   stream.dispatchEvent(new Event("scroll"));
   for (const io of DeliveringIO.live) io.deliver(stream);
 }
@@ -256,12 +261,15 @@ async function wheelStream(to: number): Promise<void> {
   await act(async () => { vi.advanceTimersByTime(40); });
 }
 
-/** A move with no input event of its own (a scrollbar-thumb drag, or End): one scroll per offset. */
+/** A move with no input event of its own (a scrollbar-thumb drag, or End): one scroll per offset,
+ *  then the frames a flight needs to land (the stream holds its window while it flies). */
 async function leapStream(...offsets: number[]): Promise<void> {
   for (const top of offsets) {
     await act(async () => { setStreamScroll(streamEl(), top); });
     await act(async () => { vi.advanceTimersByTime(20); });
   }
+  for (let i = 0; i < 5; i += 1) await act(async () => { vi.advanceTimersByTime(16); });
+  noteDisplayed(streamEl()); // the cards it mounted where it rests
 }
 
 /** Renders mountReadsLive's view again, as a body landing does. */
@@ -480,6 +488,23 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
     expect(commits).toEqual([{ upToId: "r37", messageIds: ["r37", "r38", "r39"] }]);
   });
 
+  const drags: Array<{ to: string; path: number[]; after: { curs: string[]; top: number; marked: string[] } }> = [
+    { to: "mid-pile", path: [1200, 2400, 3600, 4800, 4840, 4880, 4900], after: { curs: ["r6", "r12", "r18", "r24", "r25"], top: 4986, marked: ["r25"] } },
+    { to: "the end", path: [2400, 4800, 7000, 7300, 7400], after: { curs: ["r12", "r39"], top: 7400, marked: [] } },
+  ];
+  for (const { to, path, after } of drags) {
+    it(`a scrollbar drag to ${to} rests the cursor on a card of the screen it shows, never one off it, and j starts from there`, async () => {
+      await mountReadsLive(FORTY, null);
+      await wheelStream(100);
+      curs = [];
+      await leapStream(...path);
+      marked = [];
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true })); });
+      for (let i = 0; i < 10; i += 1) await act(async () => { vi.advanceTimersByTime(20); });
+      expect({ curs, top: scrollTops.get(streamEl()), marked }).toEqual(after);
+    });
+  }
+
   it("End over frames moves the cursor once and marks and commits only the end screen", async () => {
     vi.stubGlobal("IntersectionObserver", DeliveringIO);
     await mountReadsLive(FORTY, null);
@@ -522,7 +547,8 @@ describe("a far jump ends the tracked run: nothing the visit never displayed is 
       await act(async () => { setStreamScroll(el, top); });
       await act(async () => { vi.advanceTimersByTime(16); });
     }
-    await act(async () => { vi.advanceTimersByTime(84); });
+    // Frame by frame: the stream mounts the end window once the flight has rested two frames.
+    for (const ms of [16, 16, 16, 16, 20]) await act(async () => { vi.advanceTimersByTime(ms); });
     shift = { from: 37, by: -28 };
     await act(async () => { vi.advanceTimersByTime(20); });
     expect(scrollTops.get(el), "control: the stream's anchoring took it off the end").toBe(7372);

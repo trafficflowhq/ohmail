@@ -139,12 +139,27 @@ function armGeometry(host: HTMLElement, viewport: number): HTMLElement {
 }
 let restoreRect: (() => void) | null = null;
 
+/** One jump, then the frames that let it land: a move past a viewport is a flight, and the window
+ *  commits only once two frames have passed with no scroll. */
 const scrollTo = async (scroller: HTMLElement, px: number): Promise<void> => {
   await act(async () => {
     scroller.scrollTop = px;
     scroller.dispatchEvent(new Event("scroll"));
+    for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(r));
     await new Promise((r) => setTimeout(r, 40)); // the rAF-coalesced sampler
   });
+};
+
+/** One scroll event and one frame, on fake timers. */
+const step = async (scroller: HTMLElement, px: number): Promise<void> => {
+  await act(async () => {
+    scroller.scrollTop = px;
+    scroller.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(17);
+  });
+};
+const frames = async (n: number): Promise<void> => {
+  for (let i = 0; i < n; i++) await act(async () => { vi.advanceTimersByTime(17); });
 };
 
 describe("the reading stream is a sliding window", () => {
@@ -273,6 +288,47 @@ describe("the reading stream is a sliding window", () => {
 
     const small = await mount(reads(OPENING() - 1));
     expect(small.querySelector(".stream .tail-row")).not.toBeNull();
+  });
+
+  /* End in News: WebKit animates the stream over a dozen frames, each far past the mounted
+     window. Re-committing on each one unmounted and mounted cards and their letter frames a
+     dozen times inside the animation; the desktop's web process crashed there. */
+  it("a flight holds the window and commits once, where it stops", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = await mount(reads(N));
+      const scroller = armGeometry(host, 800);
+      await frames(6); // the post-paint growth settles
+      const held = cardIndices(host);
+      let top = 0;
+      for (let s = 1; s <= 12; s++) {
+        top += 7000;
+        await step(scroller, top);
+        expect(cardIndices(host), `frame ${s} of the flight re-committed the window`).toEqual(held);
+      }
+      await frames(3);
+      const idx = cardIndices(host);
+      expect(idx).toContain(Math.floor(top / STREAM_CARD_ESTIMATE_PX));
+      expect(idx.length).toBeLessThanOrEqual(STREAM_WINDOW_MAX);
+      expectContiguous(idx);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a hand scroll still moves the window while it scrolls", async () => {
+    vi.useFakeTimers();
+    try {
+      const host = await mount(reads(N));
+      const scroller = armGeometry(host, 800);
+      await frames(6);
+      for (let top = 300; top <= 12_000; top += 300) await step(scroller, top);
+      // No rest frames: the window followed the hand.
+      expect(cardIndices(host)).toContain(Math.floor(12_000 / STREAM_CARD_ESTIMATE_PX));
+      expectContiguous(cardIndices(host));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

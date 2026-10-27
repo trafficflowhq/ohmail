@@ -324,7 +324,7 @@ export function ReadsView({
    */
   const cardsShown = useRef(false);
   /* Viewers near the screen only, one more per frame — `stream-near.ts`. */
-  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null);
+  const near = useStreamNear(mountedIds, openingIds, streamArmed, () => streamRef.current?.element() ?? null, stream.inFlight);
   const arming = useRef<() => void>(() => {});
   useVisit(
     () => {

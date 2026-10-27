@@ -300,6 +300,9 @@ export const StreamShell = forwardRef<
   };
   /** The scroll-spy's reading: run from the scroll handler's frame, and once a jump to an end rests. */
   const spyRef = useRef<() => void>(() => {});
+  /** The spy's last reading found a screen a held window had not mounted yet; `respyRef` reads it again. */
+  const owedRef = useRef(false);
+  const respyRef = useRef<() => void>(() => {});
   /** The screen before a jump to an end, taken by its first measure; `undefined` outside one. */
   const endFromRef = useRef<Screen | null | undefined>(undefined);
   const onEndLanded = () => {
@@ -430,6 +433,7 @@ export const StreamShell = forwardRef<
       landingRef.current = false;
       curRef.current = null;
       jumpRef.current = null;
+      owedRef.current = false;
       const el = divRef.current;
       // `behavior` explicit: `.stream` scrolls smoothly by default (see `scrollTo` below). The
       // scroll-spy takes its reading off this scroll and announces nothing (`quietRef`).
@@ -444,6 +448,8 @@ export const StreamShell = forwardRef<
   // Re-scan only when the mounted cards change: a re-observe re-reports every card.
   useEffect(() => {
     observerRef.current.observe();
+    // The cards a held reading waited for: read a frame later, after any jump this commit carries has begun.
+    if (owedRef.current) respyRef.current();
   }, [contentKey]);
   useEffect(() => {
     measureRef.current();
@@ -784,6 +790,12 @@ export const StreamShell = forwardRef<
         }
       }
       if (!current) current = cards[0]!;
+      // A window held while the scroll flew (`stream-window.ts`) has not mounted this screen: the cursor
+      // waits for the commit that does, never a card off the screen.
+      const port = cssRect(el);
+      const box = cssRect(current);
+      owedRef.current = port.height > 0 && (box.bottom <= port.top || box.top >= port.bottom);
+      if (owedRef.current) return;
       const id = current.dataset.sid!;
       if (quietRef.current) {
         quietRef.current = false;
@@ -824,9 +836,11 @@ export const StreamShell = forwardRef<
         spy();
       });
     };
+    respyRef.current = onScroll;
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       spyRef.current = () => {};
+      respyRef.current = () => {};
       el.removeEventListener("scroll", onScroll);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
@@ -866,6 +880,7 @@ export const StreamShell = forwardRef<
       // `ensure`) and scroll after the commit, so this is the "it left the pile" case.
       if (!card) return;
       curRef.current = id;
+      owedRef.current = false; // the jump sets the cursor
       // One landing at a time: a second jump while the first is still correcting must not have
       // two loops fighting over `scrollTop`.
       if (anchorRef.current) cancelAnimationFrame(anchorRef.current);
