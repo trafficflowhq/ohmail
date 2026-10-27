@@ -279,6 +279,12 @@ export function HistoryView({
         el.scrollTop += d;
         el.dispatchEvent(new Event("scroll"));
       }
+    } else if (held && Math.abs(win.offsetOf(held.slot) - el.scrollTop) >= 1) {
+      /* Not drawn yet, and the rows above it were priced again since the press (a page left the
+         cache and its ghosts were measured): go where the slot stands now, or the list draws past it. */
+      const was = el.scrollTop;
+      el.scrollTop = win.offsetOf(held.slot);
+      if (el.scrollTop !== was) el.dispatchEvent(new Event("scroll"));
     }
     const at = held ? held.slot : slotAt(el.scrollTop + 0.5);
     const month = tl.segments.find((s) => at >= s.start && at < s.start + s.count);

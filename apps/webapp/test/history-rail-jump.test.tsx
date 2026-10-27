@@ -258,6 +258,30 @@ describe("a rail press lands on the period pressed and opens that year", () => {
     expect((document.activeElement as HTMLElement).dataset.index).toBe(String(slot + 1));
   });
 
+  it("a month pressed before the list has drawn the jump still lands, though the rows above it were priced again", async () => {
+    const { rows, starts } = rowsOf(WINDOWED);
+    const fx = await storeFixture(rows);
+    const { host } = await mount(fx.engine);
+    await settle(4);
+    // A busy page: no frame runs from the presses until the pages land. The window still draws
+    // slot 0 when page one leaves the cache; its ghosts are measured, and every unmeasured row
+    // above the month is priced again before the month is drawn.
+    const frames: FrameRequestCallback[] = [];
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => frames.push(cb));
+    await press(host, "2025", true);
+    const slot = starts.get("2025-10")!;
+    const oct = rail(host).find((b) => b.textContent === "Oct" && !b.classList.contains("year"))!;
+    await act(async () => { oct.focus(); oct.click(); await Promise.resolve(); });
+    await settle(4);
+    raf.mockRestore();
+    await act(async () => { for (const cb of frames.splice(0)) cb(performance.now()); });
+    await landOn(host, slot);
+    expect(topRow(host), "the month's first row is the top row").toEqual({ slot, at: 0, real: true });
+    for (let i = 0; i < 10 && (document.activeElement as HTMLElement).dataset.index !== String(slot); i++) await settle(1);
+    expect(host.querySelector<HTMLElement>(".rows > .row.sel")?.dataset.index, "and the cursor").toBe(String(slot));
+    expect((document.activeElement as HTMLElement).dataset.index, "and the focus").toBe(String(slot));
+  });
+
   it("the keyboard cursor stays on screen under the note: ↓ scrolls before its row passes the bottom edge", async () => {
     rowPx = () => 80;
     const { rows } = rowsOf(WINDOWED);
