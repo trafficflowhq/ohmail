@@ -35,7 +35,7 @@ import {
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden } from "../shell/narrow";
-import { ACTED_FRESH_MS, nextSurvivor, readAfterVerb, type ActedMarker } from "../shell/after-verb";
+import { ACTED_FRESH_MS, nextRowAfter, readAfterVerb, type ActedMarker } from "../shell/after-verb";
 import { storageOwner } from "../shell/storage-owner";
 import { goFirstRun, goSettings } from "../shell/routing";
 import { sharedNotOrganizedWhy, type NotOrganizingYet } from "../shell/mail-state";
@@ -705,6 +705,8 @@ export function OhboxView({
    * person mid-triage asked with the verb itself.
    */
   const prevIds = useRef<string[]>([]);
+  /** The previous render's rows (a reference): where the acted row stood. */
+  const prevRows = useRef<readonly OhboxRowGroup[]>([]);
   /** The row a verb just took from under the cursor, and where the verb itself put the cursor. */
   const verbTook = useRef<{ id: string; at: number } | null>(null);
   const verbAdvance = useRef<string | null>(null);
@@ -714,9 +716,11 @@ export function OhboxView({
   const prevSel = useRef<string | null>(null);
   useEffect(() => {
     const before = prevIds.current;
+    const beforeRows = prevRows.current;
     const wasSel = prevSel.current;
     const ids = all.map((m) => m.id);
     prevIds.current = ids;
+    prevRows.current = navRows;
     prevSel.current = selectedId;
     const acted = lastActed?.current;
     /* A VERB TOOK THE OPEN ROW OUT OF THE LIST: remember it as it stood, for an Undo. */
@@ -729,6 +733,7 @@ export function OhboxView({
     // A delete drops the shell's selection; Park and Later keep it on the filed message (the mirror still holds it).
     if (!acted || wasSel !== acted.id || (selectedId != null && selectedId !== acted.id)) return;
     if (ids.includes(acted.id)) return; // the verb left the row in place
+    if (!before.includes(acted.id)) return; // never in the three groups: an Older-tail letter, folded into a row or not
     if (Date.now() - acted.at > ACTED_FRESH_MS) return;
     if (readColumnHidden()) return;
     lastActed.current = null;
@@ -738,9 +743,9 @@ export function OhboxView({
       onSelect(null);
       return;
     }
-    const next = nextSurvivor(before, new Set(ids), acted.id);
-    // Land on the row, not the member: a folded row stands for its open target.
-    const landing = next == null ? null : ((navRows[rowIndexOf(next)] ?? olderRowOf(next))?.openTarget.id ?? next);
+    // Walk the rows as drawn: a folded row's open target can sit far from where the row stands.
+    const next = nextRowAfter(beforeRows, new Set(navRows.map((r) => r.key)), acted.id);
+    const landing = next == null ? null : (navRows.find((r) => r.key === next)?.openTarget.id ?? null);
     if (landing != null) {
       verbAdvance.current = landing;
       // The landing is a preview, like j. Not `selectByUser`, which would let go of the acted

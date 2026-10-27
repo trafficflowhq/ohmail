@@ -67,24 +67,30 @@ export interface ActedMarker {
 
 export const ACTED_FRESH_MS = 5_000;
 
+/** A list row as the walk needs it: its key and the messages it stands for. */
+export interface RowInOrder {
+  key: string;
+  members: readonly { id: string }[];
+}
+
 /**
- * The row to advance to, computed from the order the list HELD when the acted row was still in
- * it: the first row after the acted one that is still present, else the nearest one before it.
- * `before` is the previous render's order, `present` the ids on screen now — the acted row's
- * index exists only in `before`, because by the time the pane reacts the row is gone.
+ * The row to advance to, walked over the ROWS the list held before the verb (a folded row sits
+ * where its first member places it, not where the acted message does): the first row below the
+ * one holding `actedId` that still stands, else the nearest one above. Never the acted row itself,
+ * even when part of it stays.
  */
-export function nextSurvivor(
-  before: readonly string[],
-  present: ReadonlySet<string>,
+export function nextRowAfter(
+  before: readonly RowInOrder[],
+  standing: ReadonlySet<string>,
   actedId: string,
 ): string | null {
-  const at = before.indexOf(actedId);
+  const at = before.findIndex((r) => r.members.some((m) => m.id === actedId));
   if (at < 0) return null;
   for (let i = at + 1; i < before.length; i++) {
-    if (present.has(before[i]!)) return before[i]!;
+    if (standing.has(before[i]!.key)) return before[i]!.key;
   }
   for (let i = at - 1; i >= 0; i--) {
-    if (present.has(before[i]!)) return before[i]!;
+    if (standing.has(before[i]!.key)) return before[i]!.key;
   }
   return null;
 }
