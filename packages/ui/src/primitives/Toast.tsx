@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type CSSProperties,
@@ -36,6 +37,12 @@ export interface ToastOptions {
    * notice still replaces whatever notice stands, so a refusal is never held back.
    */
   yields?: boolean;
+  /**
+   * The label of a button that closes a notice. A notice carrying it stands until that button is
+   * pressed (or a newer notice replaces it); `duration` does not apply. For a sentence the person
+   * must not miss, such as the window having been reloaded.
+   */
+  dismiss?: string;
 }
 
 export type ToastFn = (message: string, options?: ToastOptions) => void;
@@ -48,6 +55,7 @@ interface ActiveToast {
   actionKey?: string;
   onAction?: () => void;
   yields?: boolean;
+  dismiss?: string;
   key: number;
 }
 
@@ -70,7 +78,8 @@ type Timer = ReturnType<typeof setTimeout>;
  * shows beneath it on its own timer instead of replacing it. A notice replaces a notice and an
  * action an action, except that a `yields` notice waits behind one the person's act raised. A
  * notice's arrival lifts the Undo capsule clear of it, once and never while it is pressed. Both
- * slots are polite live regions, mounted at rest so neither is lost.
+ * slots are polite live regions, mounted at rest so neither is lost, each named by the sentence
+ * it holds so the accessibility tree shows what it says.
  */
 export function ToastHost({ children }: ToastHostProps) {
   const [held, setHeld] = useState<ActiveToast | null>(null);
@@ -88,6 +97,7 @@ export function ToastHost({ children }: ToastHostProps) {
   const seq = useRef(0);
   /* The one `yields` notice waiting for the notice slot; a newer one replaces it. */
   const waiting = useRef<{ toast: ActiveToast; duration: number } | null>(null);
+  const ids = useId();
 
   const release = useCallback(() => {
     if (heldTimer.current) clearTimeout(heldTimer.current);
@@ -107,14 +117,18 @@ export function ToastHost({ children }: ToastHostProps) {
     Object.assign(s, { noticeOn: true, noticeYields: next.yields === true, arrived: true });
     setNotice(next);
     setNoticeOn(true);
-    noticeTimer.current = setTimeout(() => {
-      s.noticeOn = false;
-      setNoticeOn(false);
-      const w = waiting.current;
-      // After the fade a waiting notice draws; otherwise the sentence leaves the live region.
-      noticeTimer.current = setTimeout(() => (w ? drawNotice(w.toast, w.duration) : setNotice(null)), FADE_MS);
-    }, duration);
+    noticeTimer.current = next.dismiss ? null : setTimeout(endNotice, duration);
   }, []);
+
+  // The notice's window ends (its timer, or its dismiss button).
+  const endNotice = useCallback(() => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    at.current.noticeOn = false;
+    setNoticeOn(false);
+    const w = waiting.current;
+    // After the fade a waiting notice draws; otherwise the sentence leaves the live region.
+    noticeTimer.current = setTimeout(() => (w ? drawNotice(w.toast, w.duration) : setNotice(null)), FADE_MS);
+  }, [drawNotice]);
 
   const show = useCallback<ToastFn>((message, options) => {
     const next: ActiveToast = {
@@ -123,6 +137,7 @@ export function ToastHost({ children }: ToastHostProps) {
       actionKey: options?.actionKey,
       onAction: options?.onAction,
       yields: options?.yields,
+      dismiss: options?.dismiss,
       key: ++seq.current,
     };
     const duration = options?.duration ?? 2600;
@@ -192,6 +207,7 @@ export function ToastHost({ children }: ToastHostProps) {
         className={held ? (heldOn ? "toast toast-held on" : "toast toast-held") : "toast-slot"}
         role="status"
         aria-live="polite"
+        aria-labelledby={held ? `${ids}held` : undefined}
         style={lifted}
         onPointerDown={pressStart}
         onPointerUp={pressEnd}
@@ -202,15 +218,26 @@ export function ToastHost({ children }: ToastHostProps) {
             node in the polite region, so it is announced again. */}
         {held ? (
           <>
-            <span key={held.key}>{held.message}</span>
+            <span key={held.key} id={`${ids}held`}>{held.message}</span>
             <button type="button" className="toast-act" aria-keyshortcuts={held.actionKey} onClick={fireAction}>
               {held.action}
             </button>
           </>
         ) : null}
       </div>
-      <div ref={noticeEl} className={noticeOn ? "toast on" : "toast"} role="status" aria-live="polite">
-        {notice ? <span key={notice.key}>{notice.message}</span> : null}
+      <div
+        ref={noticeEl}
+        className={noticeOn ? "toast on" : "toast"}
+        role="status"
+        aria-live="polite"
+        aria-labelledby={notice ? `${ids}notice` : undefined}
+      >
+        {notice ? <span key={notice.key} id={`${ids}notice`}>{notice.message}</span> : null}
+        {notice?.dismiss ? (
+          <button type="button" className="toast-act" onClick={endNotice}>
+            {notice.dismiss}
+          </button>
+        ) : null}
       </div>
     </ToastContext.Provider>
   );

@@ -4424,6 +4424,7 @@
     "cancel": "Abbrechen",
     "reload": "Neu laden",
     "rendererReloaded": "Das ohmail-Fenster war stehen geblieben und wurde neu geladen.",
+    "rendererReloadedDismiss": "Ausblenden",
     "updateClosing": "Das Update wird installiert. ohmail schließt sich, sobald es fertig ist.",
     "mailboxLabel": "Postfach",
     "mailboxesLabel": "Postfächer",

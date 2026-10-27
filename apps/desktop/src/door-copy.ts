@@ -405,6 +405,7 @@ const EN = {
   reload: "Reload",
   /* The shell reloaded the window after its web process died (`renderer-reloaded.ts`). */
   rendererReloaded: "ohmail's window stopped and was reloaded.",
+  rendererReloadedDismiss: "Dismiss",
   /* A quit waits for the update's install to finish writing the app (`update-closing.ts`). */
   updateClosing: "Installing the update. ohmail closes when it is done.",
   mailboxLabel: "Mailbox",

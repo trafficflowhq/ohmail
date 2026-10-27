@@ -5,12 +5,13 @@
  * before its first render, puts the address back with the view it showed, and says one sentence.
  */
 /* @reads: apps/desktop/src-tauri/src/renderer_recovery.rs */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 import { ToastHost } from "@ohmail/ui";
+import { fireEvent, within } from "@testing-library/react";
 
 import { RELOADED_PARAM, RELOADED_VALUE, RendererReloaded, takeReloadedMark } from "../src/renderer-reloaded.js";
 import { DOOR_COPY } from "../src/door-copy.js";
@@ -84,7 +85,23 @@ describe("RendererReloaded", () => {
     expect(text).toContain(DOOR_COPY.rendererReloaded);
     expect(text.split(DOOR_COPY.rendererReloaded).length - 1).toBe(1);
     const live = [...host.querySelectorAll('[role="status"][aria-live="polite"]')].map((el) => el.textContent);
-    expect(live).toContain(DOOR_COPY.rendererReloaded);
+    expect(live).toContain(DOOR_COPY.rendererReloaded + DOOR_COPY.rendererReloadedDismiss);
+  });
+
+  it("reads as a status named by the sentence, stands past its old 8 s, and leaves on its Dismiss button", async () => {
+    vi.useFakeTimers();
+    try {
+      await mount(true);
+      const status = within(host).getByRole("status", { name: DOOR_COPY.rendererReloaded });
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      expect(within(host).getByRole("status", { name: DOOR_COPY.rendererReloaded })).toBe(status);
+      const dismiss = within(status).getByRole("button", { name: DOOR_COPY.rendererReloadedDismiss });
+      await act(async () => { fireEvent.click(dismiss); vi.advanceTimersByTime(1000); });
+      expect(within(host).queryByRole("status", { name: DOOR_COPY.rendererReloaded })).toBeNull();
+      expect(host.textContent ?? "").not.toContain(DOOR_COPY.rendererReloaded);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says nothing on an ordinary launch", async () => {
@@ -94,5 +111,6 @@ describe("RendererReloaded", () => {
 
   it("the sentence is the brief's, in English", () => {
     expect(DOOR_COPY.rendererReloaded).toBe("ohmail's window stopped and was reloaded.");
+    expect(DOOR_COPY.rendererReloadedDismiss).toBe("Dismiss");
   });
 });
