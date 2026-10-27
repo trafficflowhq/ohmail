@@ -15,7 +15,7 @@ export interface OutboxRow { key: string; mutation: { kind: string } & Record<st
 /** A draft row the mirror holds. */
 export interface MirrorDraft {
   id: string; status?: unknown; subject?: unknown; body?: unknown; to?: unknown; cc?: unknown; bcc?: unknown;
-  inReplyToMessageId?: unknown; forwardOfMessageId?: unknown; updatedAt?: unknown;
+  inReplyToMessageId?: unknown; forwardOfMessageId?: unknown; updatedAt?: unknown; contentRevision?: unknown;
 }
 
 /** What a restore hands the draft keep (`LiveWorldActions.draftKeep`). */
@@ -30,7 +30,11 @@ export interface LetterKeep {
   body: string;
   files: number;
   draftId: string | null;
+  /** The version of `draftId` the words are based on: a row changed elsewhere since is never written over. */
+  revision?: string | null;
   quiet: true;
+  /** The row had changed elsewhere, so the words went to a new draft. */
+  forked?: () => void;
   /** A forward's kept files (`Letter.forwardKept`). */
   forwardParts?: readonly string[];
   row: (r: KeptRow) => void;
@@ -45,6 +49,8 @@ export interface RestoreDeps {
   drafts: () => readonly MirrorDraft[];
   /** The first completed sync of this launch. */
   firstSync: () => Promise<void>;
+  /** The next reconnect flush's end: a letter whose row a save of this phone's is still on its way to waits for it. */
+  afterFlush?: () => Promise<void>;
   /** Only these letters, by id: the ones a flush let go of ({@link settleLetters}). */
   only?: ReadonlySet<string>;
   /** The typed recipients that parse. */
@@ -59,6 +65,8 @@ export interface LetterRestore {
   unclear: number;
   /** The same for a send that answered but was never settled. */
   unconfirmed: number;
+  /** Letters whose row another device had changed since: kept as new drafts beside it. */
+  changed: number;
   /** Files past what this phone keeps with drafts, by name. */
   notKept: string[];
 }
@@ -123,22 +131,40 @@ function heldBy(l: Letter, mark: "keep" | "send", rows: readonly OutboxRow[], pa
 }
 
 export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
-  const out: LetterRestore = { kept: 0, unclear: 0, unconfirmed: 0, notKept: [] };
+  const out: LetterRestore = { kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] };
   const now = d.now ?? (() => new Date());
   let synced: Promise<void> | null = null;
   const afterSync = (): Promise<void> => (synced ??= d.firstSync().catch(() => undefined));
   const put = (l: Letter): void => d.door.put({ ...l, updatedAt: now().toISOString() });
-  const bind = (l: Letter, draftId: string): void => {
-    const next = { ...l, draftId, savedAs: wordsOf(l), keep: null, send: null };
+  const bind = (l: Letter, draftId: string, revision?: string | null): void => {
+    const next = { ...l, draftId, savedAs: wordsOf(l), revision: revision ?? (draftId === l.draftId ? l.revision ?? null : null), keep: null, send: null };
     if (rowHoldsLetter(next)) d.door.drop(l.id);
     else put(next);
   };
+  /** The row holds the words this phone last saved or queued to it. */
+  const holdsSaved = (l: Letter, r: MirrorDraft): boolean => {
+    if (l.savedAs === null) return false;
+    const [to, subject, body, cc, bcc] = JSON.parse(l.savedAs) as string[];
+    const saved = { ...l, to: to ?? "", subject: subject ?? "", body: body ?? "", cc: cc ?? "", bcc: bcc ?? "" };
+    return typeof r.subject === "string" && r.subject.trim() === subjectOf(saved)
+      && typeof r.body === "string" && r.body.trim() === saved.body.trim() && sameRecipients(saved, d.parse, r.to, r.cc, r.bcc);
+  };
+  /** A save of the letter's row this phone queued or sent unanswered: its answer moves the version the letter states. */
+  const waits = (l: Letter): boolean => d.afterFlush !== undefined && l.draftId !== null && !!l.revision
+    && d.outbox().some((r) => r.mutation.kind === "draft_save" && r.mutation.draftId === l.draftId);
   /** Make or update the letter's row, quietly; the files that do not fit are named. */
   const keep = async (l: Letter): Promise<boolean> => {
     const { fit, over } = keptFit(l.files, d.door.keptBytes(l.id));
     for (const f of over) { d.door.dropFile(f.fileId); out.notKept.push(f.filename); }
     const letter = over.length > 0 ? { ...l, files: fit } : l;
     if (over.length > 0) put(letter);
+    let revision = letter.draftId !== null ? letter.revision ?? null : null;
+    if (revision) {
+      // This phone's own landed save moved the version without the letter being told.
+      await afterSync();
+      const r = d.drafts().find((x) => x.id === letter.draftId);
+      if (r !== undefined && typeof r.contentRevision === "string" && r.contentRevision !== "" && holdsSaved(letter, r)) revision = r.contentRevision;
+    }
     const parentHere = letter.messageId !== null && d.hasMessage(letter.messageId);
     const asNew = letter.mode !== "new" && !parentHere;
     let row: KeptRow | null = null;
@@ -154,61 +180,73 @@ export async function restoreLetters(d: RestoreDeps): Promise<LetterRestore> {
       body: letter.body,
       files: letter.files.length,
       draftId: letter.draftId,
+      ...(revision ? { revision } : {}),
       quiet: true,
+      forked: () => { out.changed += 1; },
       // A forward's kept files ride its row.
       ...(!asNew && letter.mode === "forward" && letter.forwardKept ? { forwardParts: letter.forwardKept } : {}),
       row: (r) => { row = r; },
     });
     if (answer !== "kept" || row === null) return false;
     const kept = row as KeptRow;
-    if (kept.draftId !== null) bind(letter, kept.draftId);
+    if (kept.draftId !== null) bind(letter, kept.draftId, kept.revision);
     else put({ ...letter, keep: { at: now().toISOString(), key: kept.key } });
     return true;
   };
 
-  for (const l of d.door.letters()) {
-    if (d.owned.has(l.id) || (d.only !== undefined && !d.only.has(l.id))) continue;
+  let later: string[] = [];
+  const restore = async (l: Letter): Promise<void> => {
+    if (d.owned.has(l.id) || (d.only !== undefined && !d.only.has(l.id))) return;
     if (l.send !== null) {
       const send = l.send;
       const row = heldBy(l, "send", d.outbox(), d.parse);
       if (row !== undefined) {
         // The outbox sends it once; its flush settles this letter by key.
         if (send.key !== row.key) put({ ...l, send: { ...send, key: row.key } });
-        continue;
+        return;
       }
       await afterSync();
       const mine = (r: MirrorDraft): boolean => (l.draftId !== null && r.id === l.draftId) || sameRow(l, send, r, d.parse);
       const rows = d.drafts();
       if (rows.some((r) => r.status === "sent" && mine(r))) {
         d.door.drop(l.id);
-        continue;
+        return;
       }
       // The server holds the send in its row: that row is the letter, as the Drafts card shows it.
       const held = rows.find((r) => (r.status === "unverified" || r.status === "sending") && mine(r));
-      if (held !== undefined) { bind(l, held.id); continue; }
+      if (held !== undefined) { bind(l, held.id); return; }
+      if (waits(l)) { later.push(l.id); return; }
       if (await keep({ ...l, send: null })) {
         if (send.key === null) out.unclear += 1;
         else out.unconfirmed += 1;
       }
-      continue;
+      return;
     }
     if (l.keep !== null) {
       const marked = l.keep;
       const row = heldBy(l, "keep", d.outbox(), d.parse);
       if (row !== undefined) {
         if (marked.key !== row.key) put({ ...l, keep: { ...marked, key: row.key } });
-        continue;
+        return;
       }
       await afterSync();
       const twin = d.drafts().find((r) => r.status !== "sent" && sameRow(l, marked, r, d.parse));
-      if (twin !== undefined) { bind(l, twin.id); continue; }
+      if (twin !== undefined) { bind(l, twin.id); return; }
       if (await keep({ ...l, keep: null })) out.kept += 1;
-      continue;
+      return;
     }
     const worth = l.draftId !== null || l.body.trim() !== "" || (l.mode === "new" && l.subject.trim() !== "") || l.files.length > 0;
-    if (!worth) { d.door.drop(l.id); continue; }
-    if (l.draftId !== null && l.savedAs === wordsOf(l)) continue;
+    if (!worth) { d.door.drop(l.id); return; }
+    if (l.draftId !== null && l.savedAs === wordsOf(l)) return;
+    if (waits(l)) { later.push(l.id); return; }
     if (await keep(l)) out.kept += 1;
+  };
+  for (const l of d.door.letters()) await restore(l);
+  while (later.length > 0 && d.afterFlush) {
+    await d.afterFlush();
+    const again = new Set(later);
+    later = [];
+    for (const l of d.door.letters()) if (again.has(l.id)) await restore(l);
   }
   return out;
 }
@@ -218,7 +256,8 @@ export function sayLetterRestore(r: LetterRestore): Refusal | null {
   if (r.unclear > 0) return refuse("letterSendUnclear", r.unclear);
   if (r.unconfirmed > 0) return refuse("letterSendUnconfirmed", r.unconfirmed);
   if (r.kept === 0) return null;
-  return r.notKept.length > 0 ? refuse("lettersKeptWithout", r.kept, r.notKept.join(", ")) : refuse("lettersKept", r.kept);
+  if (r.notKept.length > 0) return refuse("lettersKeptWithout", r.kept, r.notKept.join(", "));
+  return r.changed > 0 ? refuse("lettersKeptChangedElsewhere", r.changed) : refuse("lettersKept", r.kept);
 }
 
 /** A flushed outcome, as `flushQueued` reports it. */

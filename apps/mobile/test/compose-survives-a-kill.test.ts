@@ -49,10 +49,13 @@ async function launch(
   const restoring = await import("../src/compose/letter-restore");
   const { letterDoor } = await import("../src/compose/letter-store");
   let dead = false;
-  const net = { offline: opts.offline === true };
+  /** cut: every write fails as a network error; swallow: a PUT reaches the origin, its answer never comes back. */
+  const net = { offline: opts.offline === true, cut: false, swallow: false };
   const fetch = (url: string, init?: RequestInit): Promise<Response> => {
     if (dead) return never();
     if (net.offline && init?.method === "POST") return Promise.reject(new TypeError("Network request failed"));
+    if (net.cut && (init?.method ?? "GET") !== "GET") return Promise.reject(new TypeError("Network request failed"));
+    if (net.swallow && init?.method === "PUT") { void globalThis.fetch(url, init).catch(() => undefined); return never(); }
     // The send route's version check (SendService), which the fake's own send route does not make.
     const send = /^\/drafts\/([^/]+)\/send$/.exec(new URL(url).pathname);
     const stated = send && typeof init?.body === "string" ? (JSON.parse(init.body) as { ifContentRevision?: string }).ifContentRevision : undefined;
@@ -75,6 +78,10 @@ async function launch(
   const letters = letterDoor(boot.store);
   keeping.openLetterSession({ door: letters, uuid });
   const actions = live.liveActions({ engine, uuid, zone: "UTC", toast, letters });
+  const flushWaiters: (() => void)[] = [];
+  let asked = (): void => undefined;
+  /** A restore waits on the reconnect flush. */
+  const waitsOnFlush = new Promise<void>((r) => { asked = r; });
   const restoreDeps = {
     door: letters,
     outbox: () => [...engine.pendingMutations(), ...engine.inFlightMutations()].map((p) => ({ key: p.key, mutation: p.mutation })),
@@ -82,6 +89,7 @@ async function launch(
     hasMessage: (id: string) => engine.read().get("message", id) !== undefined,
     drafts: () => engine.read().entries<Record<string, unknown>>("draft").map((e) => ({ ...e.entity, id: e.id })),
     firstSync: () => engine.syncOnce().then(() => undefined),
+    afterFlush: () => { asked(); return new Promise<void>((r) => { flushWaiters.push(r); }); },
     parse: live.keptRecipients,
   };
   /** `world.tsx`'s restore, as the session runs it. */
@@ -95,6 +103,7 @@ async function launch(
   const flush = async () => {
     const settled = await live.flushQueued(engine, actions.releaseConfirmed);
     const loose = restoring.settleLetters(letters, keeping.ownedLetters(), settled);
+    for (const go of flushWaiters.splice(0)) go();
     if (loose.length > 0) {
       const r = await restoring.restoreLetters({ ...restoreDeps, owned: keeping.ownedLetters(), only: new Set(loose.map((x) => x.letter)) });
       toast(refuse(r.kept > 0 ? "replyChangedElsewhere" : "replyChangedElsewhereLater"));
@@ -102,11 +111,11 @@ async function launch(
     return settled;
   };
   /** The sheet, opened: its letter on this launch's disk. */
-  const compose = (o: { draftId?: string; savedAs?: string; words?: LetterWords } = {}) => keeping.openLetterKeeper({
-    door: letters, id: uuid(), newFileId: uuid, words: o.words ?? WORDS,
-    ...(o.draftId ? { draftId: o.draftId, savedAs: o.savedAs ?? null } : {}),
+  const compose = (o: { id?: string; draftId?: string; savedAs?: string; revision?: string; words?: LetterWords } = {}) => keeping.openLetterKeeper({
+    door: letters, id: o.id ?? uuid(), newFileId: uuid, words: o.words ?? WORDS,
+    ...(o.draftId ? { draftId: o.draftId, savedAs: o.savedAs ?? null, revision: o.revision ?? null } : {}),
   });
-  return { engine, store: boot.store, actions, letters, said, restore, flush, compose, net, die: () => { dead = true; } };
+  return { engine, store: boot.store, actions, letters, said, restore, flush, waitsOnFlush, compose, net, die: () => { dead = true; } };
 }
 
 function kill(first: { die: () => void }, disk: ReturnType<typeof deviceDisk>): void {
@@ -211,7 +220,7 @@ describe("a letter being written survives a hard stop", () => {
 
       const next = await launch(disk, origin);
       const r = await next.restore();
-      expect(r).toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+      expect(r).toEqual({ kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] });
       await next.flush();
       expect(sends(fake), "the restored send went other than once").toHaveLength(1);
       expect(drafts(fake), "a restore kept a sent letter as a draft").toHaveLength(0);
@@ -336,7 +345,7 @@ describe("a letter being written survives a hard stop", () => {
       const next = await launch(disk, origin);
       const r = await next.restore();
       await next.letters.landed();
-      expect(r).toEqual({ kept: 0, unclear: 0, unconfirmed: 0, notKept: [] });
+      expect(r).toEqual({ kept: 0, unclear: 0, unconfirmed: 0, changed: 0, notKept: [] });
       expect(fake.draftRows().map((d) => d.id), "a second draft beside the held send").toEqual(["d-1"]);
       expect(next.letters.filesOf("d-1").map((f) => f.filename)).toEqual(["beach.jpg"]);
       expect(next.said).toEqual([]);
@@ -560,4 +569,194 @@ describe("a letter being written survives a hard stop", () => {
       expect({ theirs: fake.draft("d-9")?.body, rows: drafts(fake).length }).toEqual({ theirs: DESKTOP, rows: 2 });
     } finally { fake.server.close(); }
   }, 60_000);
+
+  describe("a kept letter over a row another device changed since", () => {
+    const OPENED: LetterWords = { ...WORDS, body: "First words" };
+    const DESKTOP = "Rewritten on the desktop";
+    const atRev0 = (fake: ReturnType<typeof mailServer>) => fake.addDraft({
+      id: "d-9", mailboxId: "mb-1", threadId: null, inReplyToMessageId: null, subject: "Plans", body: "First words", to: TO, cc: [], bcc: [],
+      rationale: null, status: "draft", createdAt: "2026-09-01T09:00:00.000Z", updatedAt: "2026-09-20T14:29:00.000Z", contentRevision: "rev-0",
+    } as unknown as Record<string, unknown> & { id: string });
+    const versionOf = (fake: ReturnType<typeof mailServer>) => (id: string) => (fake.draft(id) as { contentRevision?: string } | undefined)?.contentRevision;
+    /** The desktop saves d-9 over the version it read. */
+    const rewrite = (origin: string, body: string, rev: string) => globalThis.fetch(`${origin}/drafts/d-9`, {
+      method: "PUT", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subject: "Plans", body, to: TO, cc: [], bcc: [], ifContentRevision: rev }),
+    });
+
+    it("opened at rev-0, a file added, typed, killed; the desktop saved it since: the restore keeps both versions, the file with the phone's, one sentence", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        holdTheClock();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        letter.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        letter.edit({ ...WORDS, body: "Typed on the phone" });
+        vi.advanceTimersByTime(500);
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await next.restore();
+        await next.letters.landed();
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ theirs: fake.draft("d-9")?.body, mine: mine?.body, rows: drafts(fake).length, sent: sends(fake).length })
+          .toEqual({ theirs: DESKTOP, mine: "Typed on the phone", rows: 2, sent: 0 });
+        expect(next.letters.filesOf(String(mine?.id)).map((f) => f.filename), "the file did not follow the phone's words").toEqual(["plan.pdf"]);
+        expect(next.letters.filesOf("d-9"), "the phone's file stayed on the desktop's version").toEqual([]);
+        expect(next.said).toEqual([sayArg(refuse("lettersKeptChangedElsewhere", 1))]);
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("Send pressed at rev-0 and killed before its outbox row; the desktop saved it since: both versions kept, nothing sent, the caution said", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        holdTheClock();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        letter.edit({ ...WORDS, body: "Sent from the phone" });
+        letter.markSend();
+        await first.letters.landed();
+        kill(first, disk);
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await next.restore();
+        const mine = drafts(fake).find((d) => d.id !== "d-9");
+        expect({ theirs: fake.draft("d-9")?.body, mine: mine?.body, sent: sends(fake).length, said: next.said })
+          .toEqual({ theirs: DESKTOP, mine: "Sent from the phone", sent: 0, said: [sayArg(refuse("letterSendUnclear", 1))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("a confirmed save on the phone moved the row's version, typed on, killed: the restore writes in place", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        holdTheClock();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        letter.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        const saved = { ...WORDS, body: "Saved from the phone" };
+        letter.edit(saved);
+        let rev: string | undefined;
+        expect(await first.actions.draftKeep({
+          mode: "new", messageId: null, mailboxId: "mb-1", to: TO, subject: "Plans", body: saved.body, files: 0, draftId: "d-9", revision: "rev-0", quiet: true,
+          row: (r) => { rev = r.revision; },
+        })).toBe("kept");
+        letter.saved("d-9", wordsOf(saved), rev ?? null);
+        letter.edit({ ...WORDS, body: "Typed after the save" });
+        vi.advanceTimersByTime(500);
+        await first.letters.landed();
+        kill(first, disk);
+
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await next.restore();
+        expect({ body: fake.draft("d-9")?.body, rows: drafts(fake).length }).toEqual({ body: "Typed after the save", rows: 1 });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("a kept letter with a file, its row saved elsewhere, reopened from Drafts and typed on, killed: the restore writes in place", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        holdTheClock();
+        const kept = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        kept.addFile({ filename: "plan.pdf", contentType: "application/pdf", contentBase64: PHOTO, sizeBytes: 2048 });
+        kept.markKeep();
+        kept.keepAnswered({ draftId: "d-9", key: null, revision: "rev-0" });
+        kept.release();
+        expect((await rewrite(origin, DESKTOP, "rev-0")).status).toBe(200);
+        await first.engine.syncOnce();
+        const theirs = { ...WORDS, body: DESKTOP };
+        const reopened = first.compose({
+          id: first.letters.letterOf("d-9")!.id, draftId: "d-9", savedAs: wordsOf(theirs), revision: versionOf(fake)("d-9"), words: theirs,
+        });
+        reopened.edit({ ...WORDS, body: `${DESKTOP}, and the phone's line` });
+        vi.advanceTimersByTime(500);
+        await first.letters.landed();
+        kill(first, disk);
+
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await next.restore();
+        expect({ body: fake.draft("d-9")?.body, rows: drafts(fake).length }).toEqual({ body: `${DESKTOP}, and the phone's line`, rows: 1 });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    const save = (first: Awaited<ReturnType<typeof launch>>, body: string) => first.actions.draftKeep({
+      mode: "new", messageId: null, mailboxId: "mb-1", to: TO, subject: "Plans", body, files: 0, draftId: "d-9", revision: "rev-0", quiet: true, row: () => undefined,
+    });
+
+    it("an autosave queued offline lands on the reconnect, typed on, killed: the restore writes in place, nothing said of another device", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        holdTheClock();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        const queued = { ...WORDS, body: "Typed in the tunnel" };
+        letter.edit(queued);
+        first.net.cut = true;
+        await save(first, queued.body);
+        // A queued save keeps its base: the sheet tells the keeper the version it opened.
+        letter.saved("d-9", wordsOf(queued), "rev-0");
+        first.net.cut = false;
+        await first.flush();
+        expect(versionOf(fake)("d-9"), "the phone's own save did not land").not.toBe("rev-0");
+        letter.edit({ ...WORDS, body: "Typed in the tunnel, and after it" });
+        vi.advanceTimersByTime(500);
+        await first.letters.landed();
+        kill(first, disk);
+
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await next.restore();
+        expect({ body: fake.draft("d-9")?.body, rows: drafts(fake).length, said: next.said })
+          .toEqual({ body: "Typed in the tunnel, and after it", rows: 1, said: [sayArg(refuse("lettersKept", 1))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+
+    it("an autosave the server wrote but whose answer the kill swallowed, typed on meanwhile: the next launch writes in place", async () => {
+      const { fake, origin } = await server();
+      atRev0(fake);
+      const disk = deviceDisk();
+      try {
+        const first = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        await first.engine.syncOnce();
+        const letter = first.compose({ draftId: "d-9", savedAs: wordsOf(OPENED), revision: "rev-0", words: OPENED });
+        const unanswered = "Typed on the phone";
+        letter.edit({ ...WORDS, body: unanswered });
+        letter.flush();
+        first.net.swallow = true;
+        void save(first, unanswered);
+        for (let i = 0; i < 200 && fake.draft("d-9")?.body !== unanswered; i++) await new Promise((r) => setTimeout(r, 10));
+        expect(fake.draft("d-9")?.body, "the swallowed save never reached the origin").toBe(unanswered);
+        letter.edit({ ...WORDS, body: "Typed on the phone, and more while it saved" });
+        letter.flush();
+        await first.letters.landed();
+        kill(first, disk);
+
+        // world.tsx starts the restore before the reconnect flush.
+        const next = await launch(disk, origin, { revisionOf: versionOf(fake) });
+        const restored = next.restore();
+        await Promise.race([restored, next.waitsOnFlush]);
+        await next.flush();
+        await restored;
+        expect({ body: fake.draft("d-9")?.body, rows: drafts(fake).length, said: next.said })
+          .toEqual({ body: "Typed on the phone, and more while it saved", rows: 1, said: [sayArg(refuse("lettersKept", 1))] });
+      } finally { fake.server.close(); }
+    }, 60_000);
+  });
 });
