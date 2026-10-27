@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import {
   DEFAULT_STALE_AFTER_MS, META_FOLDER, MetaEnumRefusedError, createParentFirst, enumerateMetaFolder,
   isMalformed, makeMetaFolderRef, metaReadBudget, parseClaim, withServerClock,
@@ -845,7 +844,8 @@ function serializeValue(value: unknown, path: string, indent: string): string | 
  */
 export function serializeProfileDoc(doc: OrganizerProfileDoc): string {
   const out = serializeValue(doc, "", "")!;
-  if (!isDeepStrictEqual(JSON.parse(out), JSON.parse(JSON.stringify(doc)))) {
+  // Text, not util.isDeepStrictEqual: the phone's `util` polyfill lacks it. Both sides keep key order.
+  if (JSON.stringify(JSON.parse(out)) !== JSON.stringify(doc)) {
     throw new Error("the settings document did not serialize to itself");
   }
   return out;
