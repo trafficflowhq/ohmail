@@ -134,6 +134,10 @@ mod launch_window;
 // instead of a dead frame. Always compiled: every build opens the same window.
 mod renderer_recovery;
 
+// How each web process ended, read without reaping it, and other code's stderr kept beside the log.
+#[cfg(feature = "local-engine")]
+mod last_words;
+
 // What a restart hands the new copy: stdio, and none of the descriptors this launch was handed.
 // Always compiled: both restarts, the update's and the renderer's relaunch, go through it.
 mod inherited_fds;
@@ -196,8 +200,13 @@ fn main() {
         builder = launch_window::attach(builder);
     }
 
+    let context = tauri::generate_context!();
+    // Other code's stderr to `stderr.log` beside the log, before setup starts a web process. The
+    // identifier is the context's: the Flatpak overlay changes it.
+    #[cfg(feature = "local-engine")]
+    last_words::install(&context.config().identifier);
     let app = builder
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("ohmail: failed to start the Tauri runtime");
 
     // HOST MODE IS DECIDED BEFORE THE ENGINE STARTS, because the decision is part of the spawn:

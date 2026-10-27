@@ -1699,9 +1699,11 @@ impl Shell {
                 if let Err(reason) = install_log_file(dir.join(LOG_FILE_NAME)) {
                     log_line(format_args!("no log file — {reason}"));
                 }
+                crate::last_words::attach(Some(&dir));
             }
             Err(err) => {
-                log_line(format_args!("no log file — this platform named no log directory ({err})"))
+                log_line(format_args!("no log file — this platform named no log directory ({err})"));
+                crate::last_words::attach(None);
             }
         }
     }
@@ -4035,7 +4037,7 @@ fn forward_diagnostics(mut stderr: ChildStderr, inner: &Arc<Inner>) {
         match stderr.read(&mut buf) {
             Ok(0) => return,
             Ok(n) => {
-                let _ = io::stderr().write_all(&buf[..n]);
+                let _ = crate::last_words::launch_stderr().write_all(&buf[..n]);
                 tee_to_log(&buf[..n]);
                 for byte in &buf[..n] {
                     if *byte == b'\n' {
@@ -4199,8 +4201,9 @@ fn tee_to_log(bytes: &[u8]) {
 pub(crate) fn log_line(args: fmt::Arguments<'_>) {
     let line = format!("ohmail engine: {args}\n");
     // `write!` and not `eprintln!`: a windowed build may have no stderr at all, and `eprintln!`
-    // panics when the write fails. A lost log line must never take the app down.
-    let _ = io::stderr().write_all(line.as_bytes());
+    // panics when the write fails. A lost log line must never take the app down. The launch's
+    // stderr, not fd 2: fd 2 may be `stderr.log`, which holds only other code's (`last_words.rs`).
+    let _ = crate::last_words::launch_stderr().write_all(line.as_bytes());
     tee_to_log(line.as_bytes());
 }
 
@@ -4212,7 +4215,7 @@ pub(crate) fn log_line(args: fmt::Arguments<'_>) {
 /// per-write flush — only the prefix differs.
 pub(crate) fn log_json_line(line: &str) {
     let line = format!("{line}\n");
-    let _ = io::stderr().write_all(line.as_bytes());
+    let _ = crate::last_words::launch_stderr().write_all(line.as_bytes());
     tee_to_log(line.as_bytes());
 }
 
@@ -6261,7 +6264,9 @@ where
 }
 
 #[cfg(feature = "local-engine")]
-fn scrub_bundled_environment(command: &mut Command) {
+pub(crate) fn scrub_bundled_environment(command: &mut Command) {
+    // A browser outlives the app: it gets the launch's stderr, not `stderr.log`.
+    command.stderr(crate::last_words::launch_stderr_for_child());
     scrub_from(command, |key| std::env::var_os(key));
 }
 
